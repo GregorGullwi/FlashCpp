@@ -20717,11 +20717,10 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	auto register_type_aliases = [&]() {
 		for (const auto& type_alias : spec_struct.type_aliases()) {
 			// Build the qualified name using StringBuilder
-			std::string_view qualified_alias_name = StringBuilder()
+			StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(StringBuilder()
 				.append(instantiated_name)
 				.append("::")
-				.append(type_alias.alias_name)
-				.commit();
+				.append(type_alias.alias_name));
 			
 			// Check if already registered
 			if (gTypesByName.find(qualified_alias_name) != gTypesByName.end()) {
@@ -20733,7 +20732,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			
 			// Register the type alias globally with its qualified name
 			auto& alias_type_info = gTypeInfo.emplace_back(
-				std::string(qualified_alias_name),
+				qualified_alias_name,
 				alias_type_spec.type(),
 				gTypeInfo.size()
 			);
@@ -20741,7 +20740,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			alias_type_info.type_size_ = alias_type_spec.size_in_bits();
 			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
-			FLASH_LOG(Templates, Debug, "Registered type alias: ", qualified_alias_name, 
+			FLASH_LOG(Templates, Debug, "Registered type alias: ", StringTable::getStringView(qualified_alias_name), 
 				" -> type=", static_cast<int>(alias_type_spec.type()), 
 				", type_index=", alias_type_spec.type_index());
 		}
@@ -20829,7 +20828,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			// Create a NEW ConstructorDeclarationNode with the instantiated struct name
 			auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 				StringTable::getOrInternStringHandle(instantiated_name),  // Set correct parent struct name
-				StringTable::getOrInternStringHandle(orig_ctor.name())    // Constructor name
+				orig_ctor.name()    // Constructor name
 			);
 			
 			// Copy parameters
@@ -21576,8 +21575,8 @@ if (struct_type_info.getStructInfo()) {
 				
 				// Create a NEW ConstructorDeclarationNode with the instantiated struct name
 				auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-					StringTable::getOrInternStringHandle(instantiated_name),  // Set correct parent struct name
-					StringTable::getOrInternStringHandle(orig_ctor.name())    // Constructor name (same as template name)
+					instantiated_name,  // Set correct parent struct name
+					orig_ctor.name()    // Constructor name (same as template name)
 				);
 				
 				// Copy parameters
@@ -22395,8 +22394,8 @@ if (struct_type_info.getStructInfo()) {
 					
 					// Create a new constructor declaration with substituted body
 					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-						StringTable::getOrInternStringHandle(instantiated_name),
-						StringTable::getOrInternStringHandle(instantiated_name)
+						instantiated_name,
+						instantiated_name
 					);
 					
 					// Substitute and copy parameters
@@ -22501,13 +22500,12 @@ if (struct_type_info.getStructInfo()) {
 					);
 					
 					// Create a new destructor declaration with substituted body
-					std::string_view specialized_dtor_name = StringBuilder()
+					StringHandle specialized_dtor_name = StringTable::getOrInternStringHandle(StringBuilder()
 						.append("~")
-						.append(instantiated_name)
-						.commit();
+						.append(instantiated_name));
 					auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
-						StringTable::getOrInternStringHandle(instantiated_name),
-						StringTable::getOrInternStringHandle(specialized_dtor_name)
+						instantiated_name,
+						specialized_dtor_name
 					);
 					
 					new_dtor_ref.set_definition(substituted_body);
