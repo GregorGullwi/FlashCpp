@@ -5944,7 +5944,7 @@ private:
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(ctor_op.object);
 			std::string_view var_name = StringTable::getStringView(var_name_handle);
-			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
+			auto it = variable_scopes.back().variables.find(var_name);
 			if (it == variable_scopes.back().variables.end()) {
 				throw std::runtime_error("Constructor call: variable not found in variables map: " + std::string(var_name));
 			}
@@ -6171,7 +6171,7 @@ private:
 				// Load from variable
 				StringHandle var_name_handle = std::get<StringHandle>(paramValue);
 			std::string_view var_name = StringTable::getStringView(var_name_handle);
-				auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
+				auto it = variable_scopes.back().variables.find(var_name);
 				if (it != variable_scopes.back().variables.end()) {
 					int param_offset = it->second.offset;
 					if (is_reference_param) {
@@ -6489,7 +6489,7 @@ private:
 			StringHandle var_name_handle = std::get<StringHandle>(op.pointer);
 			std::string_view var_name = StringTable::getStringView(var_name_handle);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
+			auto it = current_scope.variables.find(var_name);
 			if (it == current_scope.variables.end()) {
 				assert(false && "Variable not found in scope");
 				return;
@@ -6532,7 +6532,7 @@ private:
 			StringHandle var_name_handle = std::get<StringHandle>(op.pointer);
 			std::string_view var_name = StringTable::getStringView(var_name_handle);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
+			auto it = current_scope.variables.find(var_name);
 			if (it == current_scope.variables.end()) {
 				assert(false && "Variable not found in scope");
 				return;
@@ -8093,7 +8093,7 @@ private:
 					StringHandle var_name_handle = std::get<StringHandle>(ret_val);
 			std::string_view var_name = StringTable::getStringView(var_name_handle);
 					const StackVariableScope& current_scope = variable_scopes.back();
-					auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
+					auto it = current_scope.variables.find(var_name);
 					if (it != current_scope.variables.end()) {
 						int var_offset = it->second.offset;
 						
@@ -9485,7 +9485,7 @@ private:
 			StringHandle var_name = std::get<StringHandle>(unary_op.value.value);
 		
 			// Check if it's a local variable first
-			auto var_id = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
+			auto var_id = variable_scopes.back().variables.find(var_name);
 			if (var_id != variable_scopes.back().variables.end()) {
 				// It's a local variable on the stack - use the correct size
 				auto stack_offset = var_id->second.offset;
@@ -9735,7 +9735,7 @@ private:
 			}
 		} else if (std::holds_alternative<StringHandle>(op.from.value)) {
 			StringHandle var_name = std::get<StringHandle>(op.from.value);
-			auto var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
+			auto var_it = variable_scopes.back().variables.find(var_name);
 			assert(var_it != variable_scopes.back().variables.end() && "Variable not found in variables");
 			// Check if the value is already in an XMM register
 			if (auto existing_reg = regAlloc.tryGetStackVariableRegister(var_it->second.offset); existing_reg.has_value()) {
@@ -9832,7 +9832,7 @@ private:
 			emitFloatMovFromFrame(source_xmm, stack_offset, is_float);
 		} else if (std::holds_alternative<StringHandle>(op.from.value)) {
 			StringHandle var_name = std::get<StringHandle>(op.from.value);
-			auto var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
+			auto var_it = variable_scopes.back().variables.find(var_name);
 			assert(var_it != variable_scopes.back().variables.end());
 			source_xmm = allocateXMMRegisterWithSpilling();
 			bool is_float = (op.from.type == Type::Float);
@@ -10843,7 +10843,7 @@ private:
 		} else if (std::holds_alternative<StringHandle>(op.index.value)) {
 			// Variable index stored as identifier name
 			std::string index_var_name_str = std::string(std::get<StringHandle>(op.index.value));
-			auto index_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(index_var_name_str));
+			auto index_it = variable_scopes.back().variables.find(index_var_name_handle);
 			assert(index_it != variable_scopes.back().variables.end() && "Index variable not found");
 			int64_t index_var_offset = index_it->second.offset;
 			
@@ -11036,7 +11036,7 @@ private:
 			}
 			
 			// Get array base offset
-			std::string_view lookup_name = is_member_array ? object_name : array_name_view;
+			StringHandle lookup_name_handle = is_member_array ? StringTable::getOrInternStringHandle(object_name) : array_name_handle;
 			array_base_offset = variable_scopes.back().variables[lookup_name_handle].offset;
 			
 			// Handle constant vs variable index
@@ -11803,7 +11803,7 @@ private:
 			} else {
 				StringHandle var_name_handle = std::get<StringHandle>(op.pointer);
 			std::string_view var_name = StringTable::getStringView(var_name_handle);
-				auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
+				auto it = current_scope.variables.find(var_name);
 				if (it == current_scope.variables.end()) {
 					assert(false && "Pointer variable not found");
 					return;
@@ -11994,7 +11994,7 @@ private:
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(op.pointer);
 			std::string_view var_name = StringTable::getStringView(var_name_handle);
-			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
+			auto it = current_scope.variables.find(var_name);
 			if (it == current_scope.variables.end()) {
 				assert(false && "Pointer variable not found in DereferenceStore");
 				return;
@@ -12018,7 +12018,7 @@ private:
 		} else if (std::holds_alternative<StringHandle>(op.value.value)) {
 			StringHandle var_name_handle = std::get<StringHandle>(op.value.value);
 			std::string_view var_name = StringTable::getStringView(var_name_handle);
-			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
+			auto it = current_scope.variables.find(var_name);
 			if (it != current_scope.variables.end()) {
 				emitMovFromFrameSized(
 					SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.type)},
@@ -12059,7 +12059,7 @@ private:
 		} else if (std::holds_alternative<StringHandle>(condition_value)) {
 			StringHandle var_name = std::get<StringHandle>(condition_value);
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(var_name));
+			auto it = current_scope.variables.find(var_name);
 			if (it != current_scope.variables.end()) {
 				// Check if variable is already in a register
 				if (auto reg = regAlloc.tryGetStackVariableRegister(it->second.offset); reg.has_value()) {

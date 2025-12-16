@@ -92,7 +92,8 @@ static unsigned char getTypeSizeFromTemplateArgument(const TemplateArgument& arg
 				return size;
 			}
 			// For template struct instantiations (e.g., "TC_int"), look up by name
-			std::string_view type_name = gTypeInfo[type_index].name();
+			StringHandle type_name_handle = gTypeInfo[type_index].name();
+		std::string_view type_name = StringTable::getStringView(type_name_handle);
 			auto it = gTypesByName.find(type_name);
 			if (it != gTypesByName.end() && it->second->type_size_ > 0) {
 				return it->second->type_size_;
@@ -6887,7 +6888,7 @@ ParseResult Parser::parse_type_specifier()
 								bool is_template_param = false;
 								if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index() < gTypeInfo.size()) {
 									const TypeInfo& ti = gTypeInfo[instantiated_type.type_index()];
-									if (ti.name() == param_name) {
+									if (StringTable::getStringView(ti.name()) == param_name) {
 										is_template_param = true;
 									}
 								}
@@ -9123,7 +9124,8 @@ std::optional<std::string_view> Parser::extract_template_param_name(const TypeSp
 
 	if (type_spec.type_index() < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-		auto it = template_params.find(type_info.name());
+		std::string_view type_name = StringTable::getStringView(type_info.name());
+		auto it = template_params.find(type_name);
 		if (it != template_params.end()) {
 			return it->first;
 		}

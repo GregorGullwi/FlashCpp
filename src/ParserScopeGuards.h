@@ -39,7 +39,7 @@ public:
 		// Remove all registered template parameter types from the global type map
 		for (const auto* type_info : registered_types_) {
 			if (type_info) {
-				gTypesByName.erase(std::string(type_info->name()));
+				gTypesByName.erase(std::string(StringTable::getStringView(type_info->name())));
 			}
 		}
 	}
@@ -58,7 +58,7 @@ public:
 			// Clean up current registrations first
 			for (const auto* type_info : registered_types_) {
 				if (type_info) {
-					gTypesByName.erase(std::string(type_info->name()));
+					gTypesByName.erase(std::string(StringTable::getStringView(type_info->name())));
 				}
 			}
 			registered_types_ = std::move(other.registered_types_);
