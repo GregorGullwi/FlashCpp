@@ -1361,7 +1361,7 @@ public:
 			// Function name (Phase 4: Use helper)
 			oss << "@";
 			StringHandle mangled = op.getMangledName();
-			if (mangled.id != 0) {
+			if (mangled.handle != 0) {
 				oss << StringTable::getStringView(mangled);
 			} else {
 				oss << StringTable::getStringView(op.getFunctionName());
@@ -1398,7 +1398,7 @@ public:
 			
 				// Name (Phase 4: Use helper)
 				StringHandle param_name_handle = param.getName();
-				if (param_name_handle.id != 0) {
+				if (param_name_handle.handle != 0) {
 					oss << " %" << StringTable::getStringView(param_name_handle);
 				}
 			}
@@ -1412,7 +1412,7 @@ public:
 		
 			// Struct context (Phase 4: Use helper)
 			StringHandle struct_name_handle = op.getStructName();
-			if (struct_name_handle.id != 0) {
+			if (struct_name_handle.handle != 0) {
 				oss << " [" << StringTable::getStringView(struct_name_handle) << "]";
 			}
 		}

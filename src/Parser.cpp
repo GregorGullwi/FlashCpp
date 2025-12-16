@@ -21780,7 +21780,7 @@ if (struct_type_info.getStructInfo()) {
 			// Check if this struct has a StructInfo with size 0 (likely a template, not instantiation)
 			if (member_type_info.getStructInfo() && member_type_info.getStructInfo()->total_size == 0) {
 				// This might be a template. Try to instantiate it.
-				std::string_view member_struct_name = member_type_info.name();
+				std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 				
 				// Try to instantiate with the current template arguments
 				// This assumes the member template has compatible parameters
@@ -21993,7 +21993,7 @@ if (struct_type_info.getStructInfo()) {
 					TypeIndex type_idx = substituted_type_spec.type_index();
 					if (type_idx < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_idx];
-						std::string_view type_name = type_info.name();
+						std::string_view type_name = StringTable::getStringView(type_info.name());
 						
 						// Try to find which template parameter this is
 						for (size_t i = 0; i < template_params.size(); ++i) {
