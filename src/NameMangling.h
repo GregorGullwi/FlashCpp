@@ -725,7 +725,7 @@ inline MangledName generateMangledNameFromNode(
 	const std::vector<std::string_view>& namespace_path = {}
 ) {
 	// Use the overload that accepts parameter nodes directly
-	return generateMangledNameForConstructor(ctor_node.struct_name(), ctor_node.parameter_nodes(), namespace_path);
+	return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path);
 }
 
 // Generate mangled name from a DestructorDeclarationNode

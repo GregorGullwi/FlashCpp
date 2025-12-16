@@ -4903,7 +4903,7 @@ ParseResult Parser::parse_struct_declaration()
 			std::string_view func_name;
 			bool is_const_method = false;
 			if (delayed.is_constructor && delayed.ctor_node) {
-				func_name = delayed.ctor_node->name();
+				func_name = StringTable::getStringView(delayed.ctor_node->name());
 			} else if (delayed.is_destructor && delayed.dtor_node) {
 				func_name = delayed.dtor_node->name();
 			} else if (delayed.func_node) {

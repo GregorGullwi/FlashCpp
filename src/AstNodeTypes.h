@@ -1405,6 +1405,8 @@ public:
 	FunctionDeclarationNode() = delete;
 	FunctionDeclarationNode(DeclarationNode& decl_node)
 		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+	FunctionDeclarationNode(DeclarationNode& decl_node, std::string_view parent_struct_name)
+		: decl_node_(decl_node), parent_struct_name_(parent_struct_name), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, StringHandle parent_struct_name_handle)
 		: decl_node_(decl_node), parent_struct_name_(StringTable::getStringView(parent_struct_name_handle)), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, Linkage linkage)
@@ -1800,11 +1802,11 @@ class ConstructorDeclarationNode {
 public:
 	ConstructorDeclarationNode() = delete;
 	ConstructorDeclarationNode(StringHandle struct_name_handle, StringHandle name_handle)
-		: struct_name_(StringTable::getStringView(struct_name_handle)), name_(StringTable::getStringView(name_handle)), is_implicit_(false) {}
+		: struct_name_(struct_name_handle), name_(name_handle), is_implicit_(false) {}
 
-	std::string_view struct_name() const { return struct_name_; }
-	std::string_view name() const { return name_; }
-	Token name_token() const { return Token(Token::Type::Identifier, name_, 0, 0, 0); }  // Create token on demand
+	StringHandle struct_name() const { return struct_name_; }
+	StringHandle name() const { return name_; }
+	Token name_token() const { return Token(Token::Type::Identifier, StringTable::getStringView(name_), 0, 0, 0); }  // Create token on demand
 	const std::vector<ASTNode>& parameter_nodes() const { return parameter_nodes_; }
 	const std::vector<MemberInitializer>& member_initializers() const { return member_initializers_; }
 	const std::vector<BaseInitializer>& base_initializers() const { return base_initializers_; }
@@ -1848,8 +1850,8 @@ public:
 	bool has_mangled_name() const { return !mangled_name_.empty(); }
 
 private:
-	std::string_view struct_name_;  // Points directly into source text from lexer token
-	std::string_view name_;         // Points directly into source text from lexer token
+	StringHandle struct_name_;
+	StringHandle name_;
 	std::vector<ASTNode> parameter_nodes_;
 	std::vector<MemberInitializer> member_initializers_;
 	std::vector<BaseInitializer> base_initializers_;  // Base class initializers
