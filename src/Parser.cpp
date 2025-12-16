@@ -6645,7 +6645,7 @@ ParseResult Parser::parse_type_specifier()
 						bool is_template_param = false;
 						if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index() < gTypeInfo.size()) {
 							const TypeInfo& ti = gTypeInfo[instantiated_type.type_index()];
-							if (ti.name() == param_name) {
+							if (StringTable::getStringView(ti.name()) == param_name) {
 								is_template_param = true;
 							}
 						}
@@ -9025,7 +9025,7 @@ bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guid
 		}
 		const auto& tparam = param_node.as<TemplateParameterNode>();
 		if (tparam.kind() == TemplateParameterKind::Type) {
-			template_params.emplace(std::string(StringTable::getStringView(tparam.name())), &tparam);
+			template_params.emplace(tparam.name(), &tparam);
 		}
 	}
 
@@ -15592,7 +15592,7 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 			break;
 		case Type::Enum:
 			if (type.type_index() < gTypeInfo.size()) {
-				result += std::string(gTypeInfo[type.type_index()].name());
+				result += std::string(StringTable::getStringView(gTypeInfo[type.type_index()].name()));
 			} else {
 				result += "enum";
 			}
