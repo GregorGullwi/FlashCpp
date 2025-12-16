@@ -13418,7 +13418,7 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 							if (type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) {
 								TypeIndex type_idx = type_spec.type_index();
 								if (type_idx < gTypeInfo.size()) {
-									object_struct_name = gTypeInfo[type_idx].name();
+									object_struct_name = StringTable::getStringView(gTypeInfo[type_idx].name());
 								}
 							}
 						}
@@ -19440,7 +19440,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			TypeIndex idx = type_node.type_index();
 			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, idx={}, gTypeInfo.size()={}", idx, gTypeInfo.size());
 			if (idx < gTypeInfo.size()) {
-				std::string_view type_name = gTypeInfo[idx].name();
+				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Type name: {}", type_name);
 				
 				// Check if this is a template parameter name
@@ -20195,7 +20195,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				
 				// Check for placeholder/unknown types that indicate failed resolution
 				if (type_info.name().find("_unknown") != std::string::npos) {
-					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", type_info.name());
+					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", StringTable::getStringView(type_info.name()));
 					return std::nullopt;  // Substitution failure
 				}
 			}
