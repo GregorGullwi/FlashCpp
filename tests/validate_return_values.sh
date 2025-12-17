@@ -139,7 +139,8 @@ for base in "${TEST_FILES[@]}"; do
     fi
     
     # Run the executable and get return value
-    timeout 5 "$exe" > /dev/null 2>&1
+    # Capture stderr to detect actual crashes vs normal returns
+    stderr_output=$(timeout 5 "$exe" 2>&1 > /dev/null)
     return_value=$?
     
     # Check for timeout (exit code 124)
@@ -150,8 +151,11 @@ for base in "${TEST_FILES[@]}"; do
         continue
     fi
     
-    # Check for crash signals (segfault, abort, etc.)
-    if [ $return_value -ge 128 ]; then
+    # Check for actual crashes by looking for crash indicators in stderr
+    # Real crashes will have messages like "Segmentation fault", "Illegal instruction", "Aborted", etc.
+    # Also check for "dumped core" which timeout uses
+    if echo "$stderr_output" | grep -qiE "(segmentation fault|illegal instruction|aborted|bus error|floating point exception|killed|dumped core)"; then
+        # This is a real crash
         signal=$((return_value - 128))
         echo -e "${RED}CRASH (signal $signal)${NC}"
         RUNTIME_CRASH["$base"]="Runtime crash (signal: $signal)"

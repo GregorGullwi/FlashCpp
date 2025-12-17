@@ -29,20 +29,32 @@ On Unix/Linux systems, the return value from `main()` is automatically masked to
 
 ## Summary Statistics
 
-Total test files analyzed: **643**
+Total test files analyzed: **647**
 
 ### Results Breakdown
 
 | Category | Count | Description |
 |----------|-------|-------------|
-| Valid Returns (0-255) | 555 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
+| Valid Returns (0-255) | 583 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
 | Compilation Failures | 0 | Tests that failed to compile (all expected failures excluded) |
-| Link Failures | 0 | Tests that compiled but failed to link (all expected failures excluded) |
-| Runtime Crashes | 82 | Tests that crashed during execution with various signals |
+| Link Failures | 1 | Tests that compiled but failed to link (all expected failures excluded) |
+| Runtime Crashes | 57 | Tests that crashed during execution with various signals |
 | Out-of-Range (Valid) | 0 | Tests intentionally returning >255 (noted but truncated by OS) |
 | Out-of-Range (Unknown) | 0 | Tests with unexpected >255 returns |
 
 **Note:** The OS automatically truncates return values to 0-255, so technically all observed exit codes are in the valid range. However, some tests are designed to return values >255 to test arithmetic operations.
+
+### Recent Improvements
+
+**2025-12-17 Update:**
+- Fixed validation script crash detection logic (reduced false positives from 89 to 57 actual crashes)
+  - Previous script incorrectly treated return values >= 128 as crashes
+  - Now properly detects actual crashes by checking stderr for crash messages
+  - Many tests that returned values like 127, 200, 255 were incorrectly flagged as crashes
+- Fixed heap allocation constructor/destructor calls (test_heap.cpp now passes)
+  - TempVars from heap_alloc contain pointers that need to be loaded, not addressed
+  - Applied fix to both constructor and destructor calls
+- Current state: **90.1% of tests passing** (583/647)
 
 ## Tests with Intentional Large Return Values
 
@@ -79,23 +91,41 @@ Some tests are designed to verify arithmetic operations by returning values grea
    - Observed: Exit code 110
    - **Status:** ✓ Correct behavior
 
-## Runtime Crashes (82 files)
+## Runtime Crashes (57 files)
 
 These tests crashed during execution with various signals. These are **actual failures** that need investigation:
 
 ### Common Crash Signals
 
-- **Signal 11 (SIGSEGV)**: Segmentation fault - most common (41 files)
+- **Signal 11 (SIGSEGV)**: Segmentation fault - most common (54 files)
   - Indicates null pointer dereference or invalid memory access
-  - Examples: `test_lambda_decay.cpp`, `test_array_static_size.cpp`, `test_struct_with_ref_member_wip.cpp`
+  - Examples: `test_lambda_decay.cpp`, `member_func_template_simple.cpp`, `test_pointer_declarations.cpp`
 
-- **Signal 4 (SIGILL)**: Illegal instruction
+- **Signal 4 (SIGILL)**: Illegal instruction (1 file)
   - Indicates invalid CPU instruction generated
-  - Examples: `spaceship_default.cpp`, `test_var_template_static_inline.cpp`
+  - Example: `spaceship_default.cpp`
 
-- **Signal 6 (SIGABRT)**: Abort signal
-  - Program called abort() or failed assertion
-  - Example: `test_heap.cpp`
+### Investigation Notes (2025-12-17)
+
+**test_heap.cpp - FIXED**
+- **Issue**: Constructor was being called with address of pointer variable instead of pointer value
+- **Root Cause**: TempVars from heap_alloc contain pointers, but constructor call was using LEA (load effective address) instead of MOV (load value)
+- **Fix**: Modified handleConstructorCall and handleDestructorCall to detect TempVar objects and load the pointer value instead of taking the address
+- **Status**: ✅ Now passes
+
+**member_func_template_simple.cpp - NOT FIXED**
+- **Issue**: Segmentation fault when calling template member functions
+- **Root Cause**: Parameter stack allocation bug - double parameter overwrites `this` pointer
+  - In `insert<double>`, the double parameter (in XMM0) is stored at -0x8(%rbp)
+  - The `this` pointer is also stored at -0x8(%rbp), causing it to be overwritten
+  - When the function tries to use `this`, it's corrupted
+- **Fix Required**: Stack offset allocation for function parameters needs to account for all parameter types (int, float, double)
+- **Status**: ❌ Still crashes - requires deeper fix to parameter handling
+
+**spaceship_default.cpp - NOT INVESTIGATED**
+- **Issue**: Illegal instruction (Signal 4)
+- **Likely Cause**: C++20 default spaceship operator not fully implemented
+- **Status**: ❌ Still crashes
 
 - **Signal 127+**: Various other signals
   - Unusual signal numbers suggesting potential issues
@@ -151,73 +181,67 @@ These tests crashed during execution with various signals. These are **actual fa
 ### Complete List of Crashed Tests
 
 <details>
-<summary>Click to expand full list of 82 crashed tests</summary>
+<summary>Click to expand full list of 57 crashed tests (as of 2025-12-17)</summary>
 
-1. bitwise_operations.cpp (signal 112)
-2. control_flow_comprehensive.cpp (signal 2)
-3. do_while_loops.cpp (signal 48)
-4. if_statements.cpp (signal 65)
-5. member_func_template_call.cpp (signal 11)
-6. member_func_template_simple.cpp (signal 11)
-7. member_function_template.cpp (signal 11)
-8. spaceship_basic.cpp (signal 125)
-9. spaceship_default.cpp (signal 4)
-10. template_explicit_args.cpp (signal 19)
-11. while_loops_comprehensive.cpp (signal 31)
-12. while_loops_with_break_continue.cpp (signal 89)
-13. test_abstract_class.cpp (signal 11)
-14. test_alias_ref.cpp (signal 20)
-15. test_all_mix.cpp (signal 8)
-16. test_all_xmm_registers.cpp (signal 11)
-17. test_array_static_size.cpp (signal 11)
-18. test_arrays_comprehensive.cpp (signal 11)
-19. test_comma_init.cpp (signal 8)
-20. test_comprehensive_registers.cpp (signal 11)
-21. test_conditional_false.cpp (signal 72)
-22. test_const_member_deref.cpp (signal 11)
-23. test_const_member_return.cpp (signal 127)
-24. test_const_member_with_param.cpp (signal 127)
-25. test_const_ptr_regular.cpp (signal 11)
-26. test_constructor_features.cpp (signal 34)
-27. test_ctad_const_ref.cpp (signal 106)
-28. test_ctor_deref.cpp (signal 11)
-29. test_default_constructor.cpp (signal 74)
-30. test_delegate_and_base.cpp (signal 16)
-31. test_delayed_parsing_multiple.cpp (signal 102)
-32. test_diamond_inheritance.cpp (signal 103)
-33. test_div_shift.cpp (signal 18)
-34. test_exceptions_basic.cpp (signal 11)
-35. test_exceptions_nested.cpp (signal 11)
-36. test_float_register_spilling.cpp (signal 11)
-37. test_fold_expressions.cpp (signal 66)
-38. test_fold_simple.cpp (signal 64)
-39. test_funcptr_call_noinit.cpp (signal 11)
-40. test_funcptr_global.cpp (signal 11)
-41. test_funcptr_member_init.cpp (signal 11)
-42. test_funcptr_param.cpp (signal 11)
-43. test_global_double.cpp (signal 11)
-44. test_global_float.cpp (signal 11)
-45. test_heap.cpp (signal 6)
-46. test_hex_simple.cpp (signal 127)
-47. test_if_statements.cpp (signal 45)
-48. test_inheritance_basic.cpp (signal 86)
-49. test_lambda_cpp20_comprehensive.cpp (signal 11)
-50. test_lambda_decay.cpp (signal 11)
-51. test_many_locals.cpp (signal 82)
-52. test_member_deref.cpp (signal 11)
-53. test_member_init.cpp (signal 11)
-54. test_member_return_simpleordering.cpp (signal 127)
-55. test_member_template_alias.cpp (signal 122)
-56. test_minimal_member_deref.cpp (signal 11)
-57. test_mixed_float_double_params.cpp (signal 11)
-58. test_movzx16.cpp (signal 72)
-59. test_nested_break_continue.cpp (signal 11)
-60. test_one_deref_ctor.cpp (signal 11)
-61. test_pack_expansion_simple.cpp (signal 11)
-62. test_param_passing_float.cpp (signal 11)
-63. test_perfect_forwarding_advanced.cpp (signal 11)
-64. test_pointer_declarations.cpp (signal 11)
-65. test_register_spilling.cpp (signal 11)
+1. member_func_template_call.cpp (signal 11)
+2. member_func_template_simple.cpp (signal 11)
+3. member_function_template.cpp (signal 11)
+4. spaceship_basic.cpp (signal 11)
+5. spaceship_default.cpp (signal 4)
+6. test_abstract_class.cpp (signal 11)
+7. test_all_xmm_registers.cpp (signal 11)
+8. test_call_then_cast.cpp (signal 11)
+9. test_comprehensive_registers.cpp (signal 11)
+10. test_const_member_deref.cpp (signal 11)
+11. test_const_member_return.cpp (signal 11)
+12. test_const_member_with_param.cpp (signal 11)
+13. test_const_ptr_regular.cpp (signal 11)
+14. test_constructor_expressions.cpp (signal 11)
+15. test_copy.cpp (signal 11)
+16. test_ctad_struct_lifecycle.cpp (signal 11)
+17. test_ctor_deref.cpp (signal 11)
+18. test_custom_container.cpp (signal 11)
+19. test_exceptions_basic.cpp (signal 11)
+20. test_exceptions_nested.cpp (signal 11)
+21. test_float_register_spilling.cpp (signal 11)
+22. test_funcptr_call_noinit.cpp (signal 11)
+23. test_funcptr_global.cpp (signal 11)
+24. test_funcptr_member_init.cpp (signal 11)
+25. test_funcptr_param.cpp (signal 11)
+26. test_global_double.cpp (signal 11)
+27. test_global_float.cpp (signal 11)
+28. test_lambda_copy_this_mutation.cpp (signal 11)
+29. test_lambda_cpp20_comprehensive.cpp (signal 11)
+30. test_lambda_decay.cpp (signal 11)
+31. test_lambda_init_capture_demo.cpp (signal 11)
+32. test_member_deref.cpp (signal 11)
+33. test_member_init.cpp (signal 11)
+34. test_member_return_simpleordering.cpp (signal 11)
+35. test_minimal_member_deref.cpp (signal 11)
+36. test_mixed_float_double_params.cpp (signal 11)
+37. test_one_deref_ctor.cpp (signal 11)
+38. test_pack_expansion_simple.cpp (signal 11)
+39. test_param_passing_float.cpp (signal 11)
+40. test_pointer_declarations.cpp (signal 11)
+41. test_range_for.cpp (signal 11)
+42. test_range_for_begin_end.cpp (signal 11)
+43. test_range_for_const_ref.cpp (signal 11)
+44. test_register_spilling.cpp (signal 11)
+45. test_return_simpleordering.cpp (signal 11)
+46. test_same_deref.cpp (signal 11)
+47. test_spec_member_only.cpp (signal 11)
+48. test_specialization_member_func.cpp (signal 11)
+49. test_stack_overflow.cpp (signal 11)
+50. test_struct_ref_member_simple.cpp (signal 11)
+51. test_struct_ref_members.cpp (signal 11)
+52. test_template_complex_substitution.cpp (signal 11)
+53. test_ten_mixed.cpp (signal 11)
+54. test_two_deref.cpp (signal 11)
+55. test_va_implementation.cpp (signal 11)
+56. test_varargs.cpp (signal 11)
+57. test_virtual_inheritance.cpp (signal 11)
+
+</details>
 66. test_return_simpleordering.cpp (signal 127)
 67. test_same_deref.cpp (signal 11)
 68. test_simple_div.cpp (signal 24)
@@ -291,9 +315,29 @@ The script will:
 
 ## Conclusion
 
-**Summary:**
-- 555 tests (86.3%) successfully run and return valid values
-- 82 tests (12.8%) crash during execution
+**Summary (as of 2025-12-17):**
+- 583 tests (90.1%) successfully run and return valid values
+- 57 tests (8.8%) crash during execution
+- 1 test (0.2%) fails to link
+- 0 unexpected compilation failures
+
+**Key Findings:**
+- Return value truncation is expected OS behavior, not a compiler bug
+- Most crashes are SIGSEGV (segmentation faults) suggesting memory management issues
+- Heap allocation constructor calls have been fixed
+- Member function templates still have parameter stack allocation bugs
+
+**Improvements Made:**
+1. ✅ Fixed validation script crash detection (eliminated ~32 false positives)
+2. ✅ Fixed heap allocation constructor/destructor calls (test_heap.cpp)
+3. 📝 Documented investigation findings for member template crashes
+
+**Next Steps:**
+1. Fix parameter stack allocation for template member functions
+2. Investigate spaceship operator illegal instruction issues
+3. Fix lambda capture and range-for crashes
+4. Add better error diagnostics for common crash scenarios
+5. Consider using alternative test verification methods beyond return values
 - 0 unexpected compilation or link failures
 
 **Key Findings:**
@@ -310,5 +354,6 @@ The script will:
 
 ---
 
-*Last Updated: 2025-12-13*
+*Last Updated: 2025-12-17*
 *Analysis Tool: tests/validate_return_values.sh*
+*Contributors: Automated analysis, manual investigation*
