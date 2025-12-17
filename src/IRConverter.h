@@ -8320,23 +8320,30 @@ private:
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "multiplication");
 
 		// Perform the multiplication operation: IMUL dst, src (opcode 0x0F 0xAF)
-		// Determine REX prefix based on operand size
+		// Determine if we need a REX prefix
+		bool needs_rex = (ctx.operand_size_in_bits == 64);
 		uint8_t rex_prefix = (ctx.operand_size_in_bits == 64) ? 0x48 : 0x40;
 		
 		// Check if registers need REX extensions
 		if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
 			rex_prefix |= 0x04; // Set REX.R for result_physical_reg (reg field)
+			needs_rex = true;
 		}
 		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= 8) {
 			rex_prefix |= 0x01; // Set REX.B for rhs_physical_reg (rm field)
+			needs_rex = true;
 		}
 		
 		// Build ModR/M byte
 		uint8_t modrm_byte = 0xC0 | ((static_cast<uint8_t>(ctx.result_physical_reg) & 0x07) << 3) | (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07);
 		
-		// Emit the instruction
-		std::array<uint8_t, 4> mulInst = { rex_prefix, 0x0F, 0xAF, modrm_byte };
-		textSectionData.insert(textSectionData.end(), mulInst.begin(), mulInst.end());
+		// Emit the instruction (IMUL is a two-byte opcode: 0x0F 0xAF)
+		if (needs_rex) {
+			textSectionData.push_back(rex_prefix);
+		}
+		textSectionData.push_back(0x0F);
+		textSectionData.push_back(0xAF);
+		textSectionData.push_back(modrm_byte);
 
 		// Store the result to the appropriate destination
 		storeArithmeticResult(ctx);
