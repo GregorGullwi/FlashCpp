@@ -271,16 +271,16 @@ struct OutOfLineMemberFunction {
 	std::vector<ASTNode> template_params;  // Template parameters (e.g., <typename T>)
 	ASTNode function_node;                  // FunctionDeclarationNode
 	SaveHandle body_start;                  // Handle to saved position of function body for re-parsing
-	std::vector<std::string_view> template_param_names;  // Names of template parameters
+	std::vector<StringHandle> template_param_names;  // Names of template parameters
 };
 
 // Out-of-line template static member variable definition
 struct OutOfLineMemberVariable {
 	std::vector<ASTNode> template_params;       // Template parameters (e.g., <typename T>)
-	std::string_view member_name;               // Name of the static member variable
+	StringHandle member_name;               // Name of the static member variable
 	ASTNode type_node;                          // Type of the variable (TypeSpecifierNode)
 	std::optional<ASTNode> initializer;         // Initializer expression
-	std::vector<std::string_view> template_param_names;  // Names of template parameters
+	std::vector<StringHandle> template_param_names;  // Names of template parameters
 };
 
 // Template specialization pattern - represents a pattern like T&, T*, const T, etc.
@@ -548,9 +548,8 @@ public:
 	}
 
 	// Register template parameter names for a template
-	void registerTemplateParameters(std::string_view name, const std::vector<std::string_view>& param_names) {
-		std::string key(name);
-		template_parameters_[key] = std::vector<std::string_view>(param_names.begin(), param_names.end());
+	void registerTemplateParameters(StringHandle key, const std::vector<StringHandle>& param_names) {
+		template_parameters_[key] = std::vector<StringHandle>(param_names.begin(), param_names.end());
 	}
 
 	// Register an alias template: template<typename T> using Ptr = T*;
@@ -612,7 +611,7 @@ public:
 	}
 
 	// Get template parameter names for a template
-	std::vector<std::string_view> getTemplateParameters(std::string_view name) const {
+	std::vector<StringHandle> getTemplateParameters(StringHandle name) const {
 		// Heterogeneous lookup - string_view accepted directly
 		auto it = template_parameters_.find(name);
 		if (it != template_parameters_.end()) {
@@ -868,7 +867,7 @@ private:
 	std::unordered_map<std::string, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> templates_;
 
 	// Map from template name to template parameter names (supports heterogeneous lookup)
-	std::unordered_map<std::string, std::vector<std::string_view>, TransparentStringHash, std::equal_to<>> template_parameters_;
+	std::unordered_map<StringHandle, std::vector<StringHandle>, TransparentStringHash, std::equal_to<>> template_parameters_;
 
 	// Map from alias template name to TemplateAliasNode (supports heterogeneous lookup)
 	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> alias_templates_;

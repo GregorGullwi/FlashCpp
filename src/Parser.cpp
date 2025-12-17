@@ -104,11 +104,11 @@ static unsigned char getTypeSizeFromTemplateArgument(const TemplateArgument& arg
 }
 
 // Helper function to find all local variable declarations in an AST node
-static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<std::string>& var_names) {
+static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<StringHandle>& var_names) {
 	if (node.is<VariableDeclarationNode>()) {
 		const auto& var_decl = node.as<VariableDeclarationNode>();
 		const auto& decl = var_decl.declaration();
-		var_names.insert(std::string(decl.identifier_token().value()));
+		var_names.insert(StringTable::getOrInternStringHandle(decl.identifier_token().value()));
 	} else if (node.is<BlockNode>()) {
 		const auto& block = node.as<BlockNode>();
 		const auto& stmts = block.get_statements();
@@ -140,16 +140,16 @@ static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_se
 }
 
 // Helper function to find all identifiers referenced in an AST node
-static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<std::string>& identifiers) {
+static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<StringHandle>& identifiers) {
 	if (node.is<IdentifierNode>()) {
-		identifiers.insert(std::string(node.as<IdentifierNode>().name()));
+		identifiers.insert(node.as<IdentifierNode>().nameHandle());
 	} else if (node.is<ExpressionNode>()) {
 		// ExpressionNode is a variant, so we need to check each alternative
 		const auto& expr = node.as<ExpressionNode>();
 		std::visit([&](const auto& inner_node) {
 			using T = std::decay_t<decltype(inner_node)>;
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
-				identifiers.insert(std::string(inner_node.name()));
+				identifiers.insert(inner_node.nameHandle());
 			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				findReferencedIdentifiers(ASTNode(const_cast<BinaryOperatorNode*>(&inner_node)), identifiers);
 			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
@@ -1789,7 +1789,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		consume_token();  // consume '::'
 		
 		// The class name is in decl_node.identifier_token()
-		std::string_view class_name = decl_node.identifier_token().value();
+		StringHandle class_name = StringTable::getOrInternStringHandle(decl_node.identifier_token().value());
 		
 		// Parse the actual function name
 		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
@@ -1801,16 +1801,16 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		consume_token();
 		
 		// Find the struct in the type registry
-		auto struct_iter = gTypesByName.find(StringTable::getOrInternStringHandle(class_name));
+		auto struct_iter = gTypesByName.find(class_name);
 		if (struct_iter == gTypesByName.end()) {
-			FLASH_LOG(Parser, Error, "Unknown class '", class_name, "' in out-of-line member function definition");
+			FLASH_LOG(Parser, Error, "Unknown class '", class_name.view(), "' in out-of-line member function definition");
 			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
 		}
 		
 		const TypeInfo* type_info = struct_iter->second;
 		StructTypeInfo* struct_info = const_cast<StructTypeInfo*>(type_info->getStructInfo());
 		if (!struct_info) {
-			FLASH_LOG(Parser, Error, "'", class_name, "' is not a struct/class type");
+			FLASH_LOG(Parser, Error, "'", class_name.view(), "' is not a struct/class type");
 			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
 		}
 		
@@ -1819,7 +1819,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
 		
 		// Create the FunctionDeclarationNode with parent struct name (marks it as member function)
-		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, StringTable::getOrInternStringHandle(class_name));
+		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, class_name);
 		
 		// Parse the function parameters using unified parameter list parsing (Phase 1)
 		FlashCpp::ParsedParameterList params;
@@ -1854,7 +1854,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 		
 		if (!existing_member) {
-			FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name, "::", function_name_token.value(), 
+			FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name.view(), "::", function_name_token.value(), 
 			          "' does not match any declaration in the class");
 			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
 		}
@@ -1872,7 +1872,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		auto validation_result = validate_signature_match(existing_func_ref, func_ref);
 		if (!validation_result.is_match()) {
 			FLASH_LOG(Parser, Error, validation_result.error_message, " in out-of-line definition of '", 
-					  class_name, "::", function_name_token.value(), "'");
+					  class_name.view(), "::", function_name_token.value(), "'");
 			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
 		}
 		
@@ -1937,7 +1937,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// Generate mangled name before setting definition (Phase 6 mangling)
 			compute_and_set_mangled_name(existing_func_ref);
 			if (!existing_func_ref.set_definition(*body_result.node())) {
-				FLASH_LOG(Parser, Error, "Function '", class_name, "::", function_name_token.value(), 
+				FLASH_LOG(Parser, Error, "Function '", class_name.view(), "::", function_name_token.value(), 
 						  "' already has a definition");
 				member_function_context_stack_.pop_back();
 				// func_scope automatically exits scope on return
@@ -2025,7 +2025,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 
 		const Token& identifier_token = decl_node.identifier_token();
-		std::string_view func_name = identifier_token.value();
+		StringHandle func_name = StringTable::getOrInternStringHandle(identifier_token.value());
 		
 		// C++20 Abbreviated Function Templates: Check if any parameter has auto type
 		// If so, convert this function to an implicit function template
@@ -2050,14 +2050,13 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				// Create synthetic template parameters for each auto parameter
 				// Each auto becomes a unique template type parameter: _T0, _T1, etc.
 				std::vector<ASTNode> template_params;
-				std::vector<std::string_view> template_param_names;
+				std::vector<StringHandle> template_param_names;
 				
 				for (size_t i = 0; i < auto_params.size(); ++i) {
 					// Generate synthetic parameter name like "_T0", "_T1", etc.
 					// Using underscore prefix to avoid conflicts with user-defined names
 					// StringBuilder.commit() returns a persistent string_view
-					StringBuilder sb;
-					std::string_view param_name = sb.append("_T").append(static_cast<int64_t>(i)).commit();
+					StringHandle param_name = StringTable::getOrInternStringHandle(StringBuilder().append("_T"sv).append(static_cast<int64_t>(i)));
 					
 					// Use the auto parameter's token for position/error reporting
 					Token param_token = auto_params[i].second;
@@ -2076,7 +2075,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				);
 				
 				// Register the template in the template registry
-				gTemplateRegistry.registerTemplate(func_name, template_func_node);
+				gTemplateRegistry.registerTemplate(func_name.view(), template_func_node);
 				
 				// Also register the template parameter names for lookup
 				gTemplateRegistry.registerTemplateParameters(func_name, template_param_names);
@@ -3389,12 +3388,12 @@ ParseResult Parser::parse_struct_declaration()
 							&member_func_ref,
 							body_start,
 							{},       // initializer_list_start (not used)
-							false,    // has_initializer_list
-							StringTable::getStringView(struct_name),
+							struct_name,
 							struct_type_idx,
 							&struct_ref,
-							false,  // is_constructor
-							false,  // is_destructor
+							false,    // has_initializer_list
+							false,    // is_constructor
+							false,    // is_destructor
 							nullptr,  // ctor_node
 							nullptr,  // dtor_node
 							current_template_param_names_
@@ -3696,10 +3695,10 @@ ParseResult Parser::parse_struct_declaration()
 						nullptr,  // func_node (not used for constructors)
 						body_start,
 						initializer_list_start,  // Save position of initializer list
-						has_initializer_list,     // Flag if initializer list exists
-						StringTable::getStringView(struct_name),
+						struct_name,
 						struct_type_index,
 						&struct_ref,
+						has_initializer_list,     // Flag if initializer list exists
 						true,  // is_constructor
 						false,  // is_destructor
 						&ctor_ref,  // ctor_node
@@ -3796,7 +3795,7 @@ ParseResult Parser::parse_struct_declaration()
 						auto [block_node, block_ref] = create_node_ref(BlockNode());
 						// Generate mangled name for the destructor
 						NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
-						dtor_ref.set_mangled_name(mangled.view());
+						dtor_ref.set_mangled_name(mangled);
 						dtor_ref.set_definition(block_node);
 					} else if (peek_token()->value() == "delete") {
 						consume_token(); // consume 'delete'
@@ -3838,10 +3837,10 @@ ParseResult Parser::parse_struct_declaration()
 					nullptr,  // func_node (not used for destructors)
 					body_start,
 					{},       // initializer_list_start (not used)
-					false,    // has_initializer_list
-					StringTable::getStringView(struct_name),
+					struct_name,
 					struct_type_index,
 					&struct_ref,
+					false,    // has_initializer_list
 					false,  // is_constructor
 					true,   // is_destructor
 					nullptr,  // ctor_node
@@ -4023,10 +4022,10 @@ ParseResult Parser::parse_struct_declaration()
 					&member_func_ref,
 					body_start,
 					{},       // initializer_list_start (not used)
-					false,    // has_initializer_list
-					StringTable::getStringView(struct_name),
+					struct_name,
 					struct_type_index,
 					&struct_ref,
+					false,    // has_initializer_list
 					false,  // is_constructor
 					false,  // is_destructor
 					nullptr,  // ctor_node
@@ -4900,15 +4899,15 @@ ParseResult Parser::parse_struct_declaration()
 			DeferredTemplateMemberBody deferred;
 			
 			// Get function name for matching during instantiation
-			std::string_view func_name;
+			StringHandle func_name;
 			bool is_const_method = false;
 			if (delayed.is_constructor && delayed.ctor_node) {
-				func_name = StringTable::getStringView(delayed.ctor_node->name());
+				func_name = delayed.ctor_node->name();
 			} else if (delayed.is_destructor && delayed.dtor_node) {
 				func_name = delayed.dtor_node->name();
 			} else if (delayed.func_node) {
 				const auto& decl = delayed.func_node->decl_node();
-				func_name = decl.identifier_token().value();
+				func_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				// is_const is stored in StructMemberFunctionDecl, not in FunctionDeclarationNode
 				// We'll match by name only for now
 			}
@@ -4922,10 +4921,7 @@ ParseResult Parser::parse_struct_declaration()
 			deferred.is_constructor = delayed.is_constructor;
 			deferred.is_destructor = delayed.is_destructor;
 			deferred.is_const_method = is_const_method;
-			// Copy template param names to std::string
-			for (const auto& name : delayed.template_param_names) {
-				deferred.template_param_names.push_back(std::string(name));
-			}
+			deferred.template_param_names = delayed.template_param_names;
 			pending_template_deferred_bodies_.push_back(std::move(deferred));
 		}
 		
@@ -6626,7 +6622,7 @@ ParseResult Parser::parse_type_specifier()
 					// Perform substitution for template parameters in the target type
 					for (size_t i = 0; i < template_args->size() && i < param_names.size(); ++i) {
 						const auto& arg = (*template_args)[i];
-						std::string_view param_name = param_names[i];
+						std::string_view param_name = param_names[i].view();
 						
 						// Check if the target type refers to this template parameter
 						// The target type will have Type::UserDefined and a type_index pointing to
@@ -6871,7 +6867,7 @@ ParseResult Parser::parse_type_specifier()
 							// Perform substitution for template parameters in the target type
 							for (size_t i = 0; i < member_template_args->size() && i < param_names.size(); ++i) {
 								const auto& arg = (*member_template_args)[i];
-								std::string_view param_name = param_names[i];
+								std::string_view param_name = param_names[i].view();
 								
 								// Check if the target type refers to this template parameter
 								bool is_template_param = false;
@@ -7773,7 +7769,7 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 }
 
 // Phase 5: Helper method to set up member function context and scope
-void Parser::setup_member_function_context(StructDeclarationNode* struct_node, std::string_view struct_name, size_t struct_type_index) {
+void Parser::setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, size_t struct_type_index) {
 	// Push member function context
 	member_function_context_stack_.push_back({
 		struct_name,
@@ -11000,7 +10996,7 @@ ParseResult Parser::parse_primary_expression()
 		std::optional<ASTNode> identifierType;
 		if (namespaces.empty()) {
 			// Global namespace - look up in global symbol table
-			identifierType = lookup_symbol(qual_id.name());
+			identifierType = lookup_symbol(StringTable::getOrInternStringHandle(qual_id.name()));
 		} else {
 			// Qualified with namespace - use lookup_qualified
 			identifierType = lookup_symbol_qualified(qual_id.namespaces(), qual_id.name());
@@ -11425,9 +11421,9 @@ ParseResult Parser::parse_primary_expression()
 		// Use template-aware lookup if we're parsing a template body
 		std::optional<ASTNode> identifierType;
 		if (parsing_template_body_ && !current_template_param_names_.empty()) {
-			identifierType = gSymbolTable.lookup(idenfifier_token.value(), gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+			identifierType = gSymbolTable.lookup(StringTable::getOrInternStringHandle(idenfifier_token.value()), gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
 		} else {
-			identifierType = lookup_symbol(idenfifier_token.value());
+			identifierType = lookup_symbol(StringTable::getOrInternStringHandle(idenfifier_token.value()));
 		}
 		
 		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}'", idenfifier_token.value(), identifierType.has_value() ? "found" : "not found", peek_token().has_value() ? peek_token()->value() : "N/A");
@@ -11695,7 +11691,7 @@ ParseResult Parser::parse_primary_expression()
 								// String literals are lvalues (but typically decay to pointers)
 							} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 								// Look up the identifier's type
-								auto id_type = lookup_symbol(inner.name());
+								auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
 								if (id_type.has_value()) {
 									if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
 										if (decl->type_node().template is<TypeSpecifierNode>()) {
@@ -12065,7 +12061,7 @@ ParseResult Parser::parse_primary_expression()
 										arg_type = Type::Char;  // const char*
 									} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 										// Look up the identifier's type
-										auto id_type = lookup_symbol(inner.name());
+										auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
 										if (id_type.has_value()) {
 											if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
 												if (decl->type_node().template is<TypeSpecifierNode>()) {
@@ -12616,7 +12612,7 @@ ParseResult Parser::parse_primary_expression()
 					// This is a constructor call: T(args)
 					const auto& template_param = identifierType->as<TemplateParameterReferenceNode>();
 					// Create a TypeSpecifierNode for the template parameter
-					Token param_token(Token::Type::Identifier, template_param.param_name(), idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+					Token param_token(Token::Type::Identifier, template_param.param_name().view(), idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, param_token);
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
 				}
@@ -12636,7 +12632,7 @@ ParseResult Parser::parse_primary_expression()
 							// This is a constructor call: T(args)
 							const auto& template_param = std::get<TemplateParameterReferenceNode>(expr);
 							// Create a TypeSpecifierNode for the template parameter
-							Token param_token(Token::Type::Identifier, template_param.param_name(), idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+							Token param_token(Token::Type::Identifier, template_param.param_name().view(), idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 							auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, param_token);
 							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
 						} else {
@@ -13363,7 +13359,7 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 							} else if (std::holds_alternative<IdentifierNode>(expr)) {
 								// Look up identifier type from symbol table
 								const auto& ident = std::get<IdentifierNode>(expr);
-								auto symbol = lookup_symbol(ident.name());
+								auto symbol = lookup_symbol(StringTable::getOrInternStringHandle(ident.name()));
 								if (symbol.has_value()) {
 									if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 										arg_type = decl->type_node().as<TypeSpecifierNode>().type();
@@ -13400,7 +13396,7 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 				const ExpressionNode& expr = result->as<ExpressionNode>();
 				if (std::holds_alternative<IdentifierNode>(expr)) {
 					const auto& ident = std::get<IdentifierNode>(expr);
-					auto symbol = lookup_symbol(ident.name());
+					auto symbol = lookup_symbol(ident.nameHandle());
 					if (symbol.has_value()) {
 						if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 							const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
@@ -14115,7 +14111,7 @@ ParseResult Parser::parse_lambda_expression() {
         } else {
             // Regular capture: [x] or [&x]
             // Look up the original variable to get its type
-            auto var_symbol = lookup_symbol(id_token.value());
+            auto var_symbol = lookup_symbol(StringTable::getOrInternStringHandle(id_token.value()));
             if (var_symbol.has_value()) {
                 const DeclarationNode* decl = get_decl_from_symbol(*var_symbol);
                 if (decl) {
@@ -14275,19 +14271,19 @@ ParseResult Parser::parse_lambda_expression() {
 
     if (has_capture_all) {
         // Find all identifiers referenced in the lambda body
-        std::unordered_set<std::string> referenced_vars;
+        std::unordered_set<StringHandle> referenced_vars;
         findReferencedIdentifiers(*body_result.node(), referenced_vars);
 
         // Build a set of parameter names to exclude from captures
-        std::unordered_set<std::string> param_names;
+        std::unordered_set<StringHandle> param_names;
         for (const auto& param : parameters) {
             if (param.is<DeclarationNode>()) {
-                param_names.insert(std::string(param.as<DeclarationNode>().identifier_token().value()));
+                param_names.insert(StringTable::getOrInternStringHandle(param.as<DeclarationNode>().identifier_token().value()));
             }
         }
 
         // Build a set of local variable names declared inside the lambda body
-        std::unordered_set<std::string> local_vars;
+        std::unordered_set<StringHandle> local_vars;
         findLocalVariableDeclarations(*body_result.node(), local_vars);
 
         // Convert capture-all kind to specific capture kind
@@ -14299,7 +14295,7 @@ ParseResult Parser::parse_lambda_expression() {
         // For each referenced variable, check if it's a non-local variable
         for (const auto& var_name : referenced_vars) {
             // Skip empty names or placeholders
-            if (var_name.empty() || var_name == "_") {
+			if (!var_name.isValid() || var_name.view() == "_"sv) {
                 continue;
             }
 
@@ -14404,13 +14400,12 @@ ParseResult Parser::parse_lambda_expression() {
                 // We need to determine the size of the enclosing struct
                 if (!member_function_context_stack_.empty()) {
                     const auto& context = member_function_context_stack_.back();
-                    std::string_view struct_name = context.struct_name;
-                    auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+                    StringHandle struct_name = context.struct_name;
+                    auto type_it = gTypesByName.find(struct_name);
                     if (type_it != gTypesByName.end()) {
                         const TypeInfo* enclosing_type = type_it->second;
                         const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
                         if (enclosing_struct) {
-                            // Phase 7B: Intern special member name and use StringHandle overload
                             StringHandle copy_this_member_handle = StringTable::getOrInternStringHandle("__copy_this");
                             closure_struct_info->addMember(
                                 copy_this_member_handle,            // Special member name for copied this
@@ -14430,7 +14425,7 @@ ParseResult Parser::parse_lambda_expression() {
                 continue;  // Skip the rest of processing for this capture
             }
 
-            std::string_view var_name = capture.identifier_name();
+            auto var_name = StringTable::getOrInternStringHandle(capture.identifier_name());
             TypeSpecifierNode var_type(Type::Int, TypeQualifier::None, 32);  // Default type
             
             if (capture.has_initializer()) {
@@ -14443,7 +14438,7 @@ ParseResult Parser::parse_lambda_expression() {
                     var_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
                 } else if (init_expr.is<IdentifierNode>()) {
                     // Look up the identifier's type
-                    std::string_view init_id = init_expr.as<IdentifierNode>().name();
+                    auto init_id = init_expr.as<IdentifierNode>().nameHandle();
                     auto init_symbol = lookup_symbol(init_id);
                     if (init_symbol.has_value()) {
                         const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
@@ -14458,7 +14453,7 @@ ParseResult Parser::parse_lambda_expression() {
                         // For binary operations, assume int type for arithmetic
                         var_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
                     } else if (std::holds_alternative<IdentifierNode>(expr_node)) {
-                        std::string_view init_id = std::get<IdentifierNode>(expr_node).name();
+                        auto init_id = std::get<IdentifierNode>(expr_node).nameHandle();
                         auto init_symbol = lookup_symbol(init_id);
                         if (init_symbol.has_value()) {
                             const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
@@ -14527,10 +14522,9 @@ ParseResult Parser::parse_lambda_expression() {
 					}
 				}
 			}
-			// Phase 7B: Intern capture variable name and use StringHandle overload
-			StringHandle var_name_handle = StringTable::getOrInternStringHandle(var_name);
+
 			closure_struct_info->addMember(
-				var_name_handle,
+				var_name,
 				member_type,
 				type_index,
 				member_size,
@@ -15001,7 +14995,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 }
 
 // Lookup symbol with template parameter checking
-std::optional<ASTNode> Parser::lookup_symbol_with_template_check(std::string_view identifier) {
+std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {
     // First check if it's a template parameter using the new method
     if (parsing_template_body_ && !current_template_param_names_.empty()) {
         return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
@@ -15073,7 +15067,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	}
 	else if (std::holds_alternative<IdentifierNode>(expr)) {
 		const auto& ident = std::get<IdentifierNode>(expr);
-		auto symbol = this->lookup_symbol(ident.name());
+		auto symbol = this->lookup_symbol(ident.nameHandle());
 		if (symbol.has_value()) {
 			if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 				TypeSpecifierNode type = decl->type_node().as<TypeSpecifierNode>();
@@ -15721,14 +15715,14 @@ ParseResult Parser::parse_template_declaration() {
 	// Add template parameters to the type system temporarily using RAII scope guard (Phase 6)
 	// This allows them to be used in the function body or class members
 	FlashCpp::TemplateParameterScope template_scope;
-	std::vector<std::string_view> template_param_names;  // string_view from Token storage
+	std::vector<StringHandle> template_param_names;
 	bool has_packs = false;  // Track if any parameter is a pack
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			// Add ALL template parameters to the name list (Type, NonType, and Template)
 			// This allows them to be recognized when referenced in the template body
-			template_param_names.push_back(tparam.name());  // string_view from Token
+			template_param_names.push_back(tparam.nameHandle());  // string_view from Token
 			
 			// Check if this is a parameter pack
 			has_packs |= tparam.is_variadic();
@@ -15738,7 +15732,7 @@ ParseResult Parser::parse_template_declaration() {
 			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
-				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(tparam.name()), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
+				auto& type_info = gTypeInfo.emplace_back(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
 				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
@@ -15956,7 +15950,7 @@ ParseResult Parser::parse_template_declaration() {
 		auto alias_node = emplace_node<TemplateAliasNode>(
 			std::move(template_params),
 			std::move(template_param_names),
-			alias_name,
+			StringTable::getOrInternStringHandle(alias_name),
 			type_result.node().value()
 		);
 		
@@ -16241,7 +16235,7 @@ if (struct_type_info.getStructInfo()) {
 
 			// Set up member function context so functions know they're in a class
 			member_function_context_stack_.push_back({
-				StringTable::getStringView(instantiated_name),
+				instantiated_name,
 				struct_type_info.type_index_,
 				&struct_ref
 			});
@@ -16626,10 +16620,10 @@ if (struct_type_info.getStructInfo()) {
 							&member_func_ref,
 							body_start,
 							{},       // initializer_list_start (not used)
-							false,    // has_initializer_list
-							StringTable::getStringView(instantiated_name),
+							instantiated_name,
 							struct_type_info.type_index_,
 							&struct_ref,
+							false,    // has_initializer_list
 							false,  // is_constructor
 							false,  // is_destructor
 							nullptr,  // ctor_node
@@ -17089,7 +17083,7 @@ if (struct_type_info.getStructInfo()) {
 			
 			// Set up member function context
 			member_function_context_stack_.push_back({
-				StringTable::getStringView(instantiated_name),
+				instantiated_name,
 				struct_type_info.type_index_,
 				&struct_ref
 			});
@@ -17381,10 +17375,10 @@ if (struct_type_info.getStructInfo()) {
 								nullptr,
 								body_start,
 								{},
-								false,
-								StringTable::getStringView(instantiated_name),
+								instantiated_name,
 								struct_type_index,
 								&struct_ref,
+								false,    // has_initializer_list
 								true,  // is_constructor
 								false,
 								&ctor_ref,
@@ -17462,10 +17456,10 @@ if (struct_type_info.getStructInfo()) {
 							&member_func_ref,
 							body_start,
 							{},       // initializer_list_start (not used)
-							false,    // has_initializer_list
-							StringTable::getStringView(instantiated_name),
+							instantiated_name,
 							struct_type_info.type_index_,
 							&struct_ref,
+							false,    // has_initializer_list
 							false,  // is_constructor
 							false,  // is_destructor
 							nullptr,  // ctor_node
@@ -17712,11 +17706,11 @@ if (struct_type_info.getStructInfo()) {
 		}
 
 		// Set template parameter context for current_template_param_names_
-		std::vector<std::string_view> template_param_names_for_body;
+		std::vector<StringHandle> template_param_names_for_body;
 		for (const auto& param : template_params) {
 			if (param.is<TemplateParameterNode>()) {
 				const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-				template_param_names_for_body.push_back(tparam.name());
+				template_param_names_for_body.push_back(tparam.nameHandle());
 			}
 		}
 		current_template_param_names_ = std::move(template_param_names_for_body);
@@ -18406,7 +18400,7 @@ ParseResult Parser::parse_template_parameter() {
 		consume_token(); // consume parameter name
 
 		// Create template template parameter node
-		auto param_node = emplace_node<TemplateParameterNode>(param_name, std::move(nested_params), param_name_token);
+		auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), std::move(nested_params), param_name_token);
 
 		// TODO: Handle default arguments (e.g., template<typename> class Container = std::vector)
 
@@ -18455,7 +18449,7 @@ ParseResult Parser::parse_template_parameter() {
 			consume_token(); // consume parameter name
 			
 			// Create type parameter node (concept-constrained)
-			auto param_node = emplace_node<TemplateParameterNode>(param_name, param_name_token);
+			auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), param_name_token);
 			
 			// Store the concept constraint
 			param_node.as<TemplateParameterNode>().set_concept_constraint(potential_concept);
@@ -18530,7 +18524,7 @@ ParseResult Parser::parse_template_parameter() {
 			}
 
 			// Create type parameter node
-			auto param_node = emplace_node<TemplateParameterNode>(param_name, param_name_token);
+			auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), param_name_token);
 			
 			// Set variadic flag if this is a parameter pack
 			if (is_variadic) {
@@ -18607,7 +18601,7 @@ ParseResult Parser::parse_template_parameter() {
 	}
 
 	// Create non-type parameter node
-	auto param_node = emplace_node<TemplateParameterNode>(param_name, *type_result.node(), param_name_token);
+	auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), *type_result.node(), param_name_token);
 	
 	// Set variadic flag if this is a parameter pack
 	if (is_variadic) {
@@ -18679,7 +18673,7 @@ ParseResult Parser::parse_template_template_parameter_form() {
 
 			// For template template parameters, we don't expect an identifier name
 			// Just create a type parameter node with an empty name
-			auto param_node = emplace_node<TemplateParameterNode>("", keyword_token);
+			auto param_node = emplace_node<TemplateParameterNode>(StringHandle(), keyword_token);
 
 			return saved_position.success(param_node);
 		}
@@ -18987,7 +18981,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	auto alias_node = emplace_node<TemplateAliasNode>(
 		std::move(template_params),
 		std::move(template_param_names),
-		alias_name,
+		StringTable::getOrInternStringHandle(alias_name),
 		type_result.node().value()
 	);
 
@@ -20856,7 +20850,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			
 			auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
 				StringTable::getOrInternStringHandle(instantiated_name),
-				StringTable::getOrInternStringHandle(orig_dtor.name())
+				orig_dtor.name()
 			);
 			
 			// Copy definition if present
@@ -20976,7 +20970,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Check if the initializer is a template parameter reference or identifier
 		if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
 			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(init_expr);
-			param_name_to_substitute = tparam_ref.param_name();
+			param_name_to_substitute = tparam_ref.param_name().view();
 		} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
 			const IdentifierNode& ident = std::get<IdentifierNode>(init_expr);
 			param_name_to_substitute = ident.name();
@@ -21394,7 +21388,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 							const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 							FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
-							if (auto subst = substitute_template_param_in_initializer(tparam_ref.param_name(), template_args, template_params)) {
+							if (auto subst = substitute_template_param_in_initializer(tparam_ref.param_name().view(), template_args, template_params)) {
 								substituted_initializer = subst;
 								FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", tparam_ref.param_name(), "'");
 							}
@@ -21803,7 +21797,7 @@ if (struct_type_info.getStructInfo()) {
 						identifier_name = ident.name();
 					} else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-						identifier_name = tparam_ref.param_name();
+						identifier_name = tparam_ref.param_name().view();
 					} else if (std::holds_alternative<NumericLiteralNode>(expr)) {
 						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 						const auto& val = lit.value();
@@ -22575,7 +22569,7 @@ if (struct_type_info.getStructInfo()) {
 					// Set up member function context so member variables (like 'value') are resolved
 					// as this->value instead of causing "missing identifier" errors
 					member_function_context_stack_.push_back({
-						StringTable::getStringView(instantiated_name),
+						instantiated_name,
 						struct_type_info.type_index_,
 						&instantiated_struct_ref
 					});
@@ -22681,8 +22675,7 @@ if (struct_type_info.getStructInfo()) {
 			size_t member_size = get_type_size_bits(type_spec.type()) / 8;
 			size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 			
-			// Phase 7B: Intern static member name and use StringHandle overload
-			StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(out_of_line_var.member_name);
+			StringHandle static_member_name_handle = out_of_line_var.member_name;
 			struct_info_ptr->addStaticMember(
 				static_member_name_handle,
 				type_spec.type(),
@@ -22814,7 +22807,7 @@ if (struct_type_info.getStructInfo()) {
 					         std::holds_alternative<IdentifierNode>(expr)) {
 						std::string_view param_name;
 						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-							param_name = std::get<TemplateParameterReferenceNode>(expr).param_name();
+							param_name = std::get<TemplateParameterReferenceNode>(expr).param_name().view();
 						} else {
 							param_name = std::get<IdentifierNode>(expr).name();
 						}
@@ -22912,7 +22905,7 @@ if (struct_type_info.getStructInfo()) {
 			delayed.body_start = deferred.body_start;
 			delayed.initializer_list_start = deferred.initializer_list_start;
 			delayed.has_initializer_list = deferred.has_initializer_list;
-			delayed.struct_name = StringTable::getStringView(instantiated_name);  // Use INSTANTIATED name, not template name
+			delayed.struct_name = instantiated_name;  // Use INSTANTIATED name, not template name
 			delayed.struct_type_index = struct_type_info.type_index_;  // Now valid!
 			delayed.struct_node = &instantiated_struct_ref;  // Use instantiated struct
 			delayed.is_constructor = deferred.is_constructor;
@@ -23270,7 +23263,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 		
 	member_function_context_stack_.push_back({
-		struct_name,
+		StringTable::getOrInternStringHandle(struct_name),
 		struct_type_index,
 		struct_node_ptr
 	});
@@ -23363,7 +23356,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 					struct_type_index = struct_type_it->second->type_index_;
 					
 					// Try to find the struct node in the symbol table
-					auto struct_symbol_opt = lookup_symbol(struct_name);
+					auto struct_symbol_opt = lookup_symbol(StringTable::getOrInternStringHandle(struct_name));
 					if (struct_symbol_opt.has_value() && struct_symbol_opt->is<StructDeclarationNode>()) {
 						struct_node_ptr = &const_cast<StructDeclarationNode&>(struct_symbol_opt->as<StructDeclarationNode>());
 					}
@@ -23377,7 +23370,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				
 				// Set up member function context
 				member_function_context_stack_.push_back({
-					struct_name,
+					StringTable::getOrInternStringHandle(struct_name),
 					struct_type_index,
 					struct_node_ptr
 				});
@@ -23623,7 +23616,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	}
 	
 	member_function_context_stack_.push_back({
-		struct_name,
+		StringTable::getOrInternStringHandle(struct_name),
 		struct_type_index,
 		struct_node_ptr
 	});
@@ -23686,7 +23679,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 // Returns true if successfully parsed, false if not an out-of-line definition
 std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	const std::vector<ASTNode>& template_params,
-	const std::vector<std::string_view>& template_param_names) {
+	const std::vector<StringHandle>& template_param_names) {
 
 	// Save position in case this isn't an out-of-line definition
 	SaveHandle saved_pos = save_token_position();
@@ -23791,7 +23784,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// Register the static member variable definition
 		OutOfLineMemberVariable out_of_line_var;
 		out_of_line_var.template_params = template_params;
-		out_of_line_var.member_name = function_name_token.value();  // Actually the variable name
+		out_of_line_var.member_name = StringTable::getOrInternStringHandle(function_name_token.value());  // Actually the variable name
 		out_of_line_var.type_node = return_type_node;               // Actually the variable type
 		out_of_line_var.initializer = *init_result.node();
 		out_of_line_var.template_param_names = template_param_names;
@@ -23949,14 +23942,14 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 			
 			// Also push member function context for good measure
 			// Try to find the StructDeclarationNode in the symbol table
-			auto struct_symbol_opt = lookup_symbol(struct_name);
+			auto struct_symbol_opt = lookup_symbol(StringTable::getOrInternStringHandle(struct_name));
 			StructDeclarationNode* struct_node_ptr = nullptr;
 			if (struct_symbol_opt.has_value() && struct_symbol_opt->is<StructDeclarationNode>()) {
 				struct_node_ptr = &const_cast<StructDeclarationNode&>(struct_symbol_opt->as<StructDeclarationNode>());
 			}
 			
 			MemberFunctionContext ctx;
-			ctx.struct_name = struct_name;
+			ctx.struct_name = StringTable::getOrInternStringHandle(struct_name);
 			ctx.struct_type_index = struct_type_index;
 			ctx.struct_node = struct_node_ptr;
 			member_function_context_stack_.push_back(ctx);
@@ -24030,7 +24023,7 @@ ASTNode Parser::substituteTemplateParameters(
 		// Check if this is a TemplateParameterReferenceNode
 		if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-			std::string_view param_name = tparam_ref.param_name();
+			std::string_view param_name = tparam_ref.param_name().view();
 
 			// Find which template parameter this is
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {

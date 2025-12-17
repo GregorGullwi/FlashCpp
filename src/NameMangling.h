@@ -36,17 +36,20 @@ public:
 	
 	// Construct from committed string_view (preferred - zero allocation)
 	// Note: The caller must ensure the string_view's storage outlives this MangledName
-	explicit MangledName(std::string_view committed_sv) 
+	explicit MangledName(std::string_view committed_sv)
+		: storage_(StringTable::getOrInternStringHandle(committed_sv)) {}
+	explicit MangledName(StringHandle committed_sv) 
 		: storage_(committed_sv) {}
 	
 	// Always returns a string_view (zero-copy)
-	std::string_view view() const { return storage_; }
+	std::string_view view() const { return StringTable::getStringView(storage_); }
 	
 	// Implicit conversion to string_view for convenience
-	operator std::string_view() const { return storage_; }
+	operator std::string_view() const { return StringTable::getStringView(storage_); }
+	operator StringHandle() const { return storage_; }
 	
 	// Check if empty
-	bool empty() const { return storage_.empty(); }
+	bool empty() const { return !storage_.isValid(); }
 	
 	// Comparison operators
 	bool operator==(const MangledName& other) const { return storage_ == other.storage_; }
@@ -54,7 +57,7 @@ public:
 	bool operator<(const MangledName& other) const { return storage_ < other.storage_; }
 	
 private:
-	std::string_view storage_;
+	StringHandle storage_;
 };
 
 // Helper to append CV-qualifier code (A/B/C/D) to output
@@ -698,7 +701,7 @@ inline MangledName generateMangledNameForConstructor(
 // Generate mangled name for a destructor
 // MSVC mangles destructors as ??1ClassName@Namespace@@... where 1 is the destructor marker
 inline MangledName generateMangledNameForDestructor(
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path = {}
 ) {
 	StringBuilder builder;

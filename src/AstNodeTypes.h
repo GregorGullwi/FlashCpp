@@ -25,16 +25,16 @@ using SaveHandle = size_t;
 // Deferred template member function body information
 // Used to store template member function bodies for parsing during instantiation
 struct DeferredTemplateMemberBody {
-	std::string_view function_name;       // Name of the function (for matching during instantiation)
+	StringHandle function_name;           // Name of the function (for matching during instantiation)
+	StringHandle struct_name;             // Name of the struct (from token, persistent)
 	SaveHandle body_start;                // Handle to saved position at '{'
-	SaveHandle initializer_list_start;   // Handle to saved position at ':' for constructor initializer list
-	bool has_initializer_list;            // True if constructor has an initializer list
-	std::string_view struct_name;         // Name of the struct (from token, persistent)
+	SaveHandle initializer_list_start;    // Handle to saved position at ':' for constructor initializer list
 	size_t struct_type_index;             // Type index (will be 0 for templates during definition)
+	bool has_initializer_list;            // True if constructor has an initializer list
 	bool is_constructor;                  // Special handling for constructors
 	bool is_destructor;                   // Special handling for destructors
 	bool is_const_method;                 // True if this is a const member function
-	std::vector<std::string> template_param_names; // Template parameter names (copied, not views)
+	std::vector<StringHandle> template_param_names; // Template parameter names (copied, not views)
 };
 
 // Forward declarations
@@ -1227,6 +1227,7 @@ public:
 
 	std::optional<Token> try_get_parent_token() { return parent_token_; }
 	std::string_view name() const { return identifier_.value(); }
+	StringHandle nameHandle() const { return StringTable::getOrInternStringHandle(identifier_.value()); }
 
 private:
 	Token identifier_;
@@ -1241,6 +1242,7 @@ public:
 
 	const std::vector<StringType<>>& namespaces() const { return namespaces_; }
 	std::string_view name() const { return identifier_.value(); }
+	StringHandle nameHandle() const { return StringTable::getOrInternStringHandle(identifier_.value()); }
 	const Token& identifier_token() const { return identifier_; }
 
 	// Get the full qualified name as a string (e.g., "std::print")
@@ -1572,19 +1574,20 @@ enum class TemplateParameterKind {
 class TemplateParameterNode {
 public:
 	// Type parameter: template<typename T> or template<class T>
-	TemplateParameterNode(std::string_view name, Token token)
+	TemplateParameterNode(StringHandle name, Token token)
 		: kind_(TemplateParameterKind::Type), name_(name), token_(token) {}
 
 	// Non-type parameter: template<int N>
-	TemplateParameterNode(std::string_view name, ASTNode type_node, Token token)
+	TemplateParameterNode(StringHandle name, ASTNode type_node, Token token)
 		: kind_(TemplateParameterKind::NonType), name_(name), type_node_(type_node), token_(token) {}
 
 	// Template template parameter: template<template<typename> class Container>
-	TemplateParameterNode(std::string_view name, std::vector<ASTNode> nested_params, Token token)
+	TemplateParameterNode(StringHandle name, std::vector<ASTNode> nested_params, Token token)
 		: kind_(TemplateParameterKind::Template), name_(name), nested_params_(std::move(nested_params)), token_(token) {}
 
 	TemplateParameterKind kind() const { return kind_; }
-	std::string_view name() const { return name_; }
+	std::string_view name() const { return name_.view(); }
+	StringHandle nameHandle() const { return name_; }
 	Token token() const { return token_; }
 
 	// For non-type parameters
@@ -1610,7 +1613,7 @@ public:
 
 private:
 	TemplateParameterKind kind_;
-	std::string_view name_;  // Points directly into source text from lexer token
+	StringHandle name_;  // Points directly into source text from lexer token
 	std::optional<ASTNode> type_node_;  // For non-type parameters (e.g., int N)
 	std::vector<ASTNode> nested_params_;  // For template template parameters (nested template parameters)
 	std::optional<ASTNode> default_value_;  // Default argument (e.g., typename T = int)
@@ -1653,8 +1656,8 @@ class TemplateAliasNode {
 public:
 	TemplateAliasNode() = delete;
 	TemplateAliasNode(std::vector<ASTNode> template_params,
-	                  std::vector<std::string_view> param_names,
-	                  std::string_view alias_name,
+	                  std::vector<StringHandle> param_names,
+	                  StringHandle alias_name,
 	                  ASTNode target_type)
 		: template_parameters_(std::move(template_params))
 		, template_param_names_(std::move(param_names))
@@ -1662,8 +1665,8 @@ public:
 		, target_type_(target_type) {}
 
 	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
-	const std::vector<std::string_view>& template_param_names() const { return template_param_names_; }
-	std::string_view alias_name() const { return alias_name_; }
+	const std::vector<StringHandle>& template_param_names() const { return template_param_names_; }
+	std::string_view alias_name() const { return alias_name_.view(); }
 	ASTNode target_type() const { return target_type_; }
 
 	// Get the underlying TypeSpecifierNode
@@ -1676,8 +1679,8 @@ public:
 
 private:
 	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
-	std::vector<std::string_view> template_param_names_;  // Parameter names for lookup
-	std::string_view alias_name_;  // The name of the alias (e.g., "Ptr")
+	std::vector<StringHandle> template_param_names_;  // Parameter names for lookup
+	StringHandle alias_name_;  // The name of the alias (e.g., "Ptr")
 	ASTNode target_type_;  // TypeSpecifierNode - the target type (e.g., T*)
 };
 
@@ -1866,11 +1869,11 @@ class DestructorDeclarationNode {
 public:
 	DestructorDeclarationNode() = delete;
 	DestructorDeclarationNode(StringHandle struct_name_handle, StringHandle name_handle)
-		: struct_name_(StringTable::getStringView(struct_name_handle)), name_(StringTable::getStringView(name_handle)) {}
+		: struct_name_(struct_name_handle), name_(name_handle) {}
 
-	std::string_view struct_name() const { return struct_name_; }
-	std::string_view name() const { return name_; }
-	Token name_token() const { return Token(Token::Type::Identifier, name_, 0, 0, 0); }  // Create token on demand
+	StringHandle struct_name() const { return struct_name_; }
+	StringHandle name() const { return name_; }
+	Token name_token() const { return Token(Token::Type::Identifier, StringTable::getStringView(name_), 0, 0, 0); }  // Create token on demand
 
 	const std::optional<ASTNode>& get_definition() const {
 		return definition_block_;
@@ -1884,15 +1887,15 @@ public:
 	}
 
 	// Pre-computed mangled name for consistent access across all compiler stages
-	void set_mangled_name(std::string_view name) { mangled_name_ = name; }
-	std::string_view mangled_name() const { return mangled_name_; }
-	bool has_mangled_name() const { return !mangled_name_.empty(); }
+	void set_mangled_name(StringHandle name) { mangled_name_ = name; }
+	StringHandle mangled_name() const { return mangled_name_; }
+	bool has_mangled_name() const { return mangled_name_.isValid(); }
 
 private:
-	std::string_view struct_name_;  // Points directly into source text from lexer token
-	std::string_view name_;         // Points directly into source text from lexer token
+	StringHandle struct_name_;  // Points directly into source text from lexer token
+	StringHandle name_;         // Points directly into source text from lexer token
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
-	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
+	StringHandle mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 };
 
 // Struct member with access specifier
@@ -2749,14 +2752,14 @@ private:
 // Template parameter reference node - represents a reference to a template parameter in expressions
 class TemplateParameterReferenceNode {
 public:
-	explicit TemplateParameterReferenceNode(std::string_view param_name, Token token)
+	explicit TemplateParameterReferenceNode(StringHandle param_name, Token token)
 		: param_name_(param_name), token_(token) {}
 
-	std::string_view param_name() const { return param_name_; }
+	StringHandle param_name() const { return param_name_; }
 	const Token& token() const { return token_; }
 
 private:
-	std::string_view param_name_;  // Name of the template parameter being referenced
+	StringHandle param_name_;  // Name of the template parameter being referenced
 	Token token_;                  // Token for error reporting
 };
 

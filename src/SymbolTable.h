@@ -409,9 +409,9 @@ public:
 	}
 
 	// Overload that accepts template parameters (eliminates global callback)
-	std::optional<ASTNode> lookup(std::string_view identifier, 
+	std::optional<ASTNode> lookup(StringHandle identifier, 
 								 ScopeHandle scope_limit_handle,
-								 const std::vector<std::string_view>* template_params) const {
+								 const std::vector<StringHandle>* template_params) const {
 		// Check if this is a template parameter
 		if (template_params) {
 			auto it = std::find(template_params->begin(), template_params->end(), identifier);
@@ -419,7 +419,7 @@ public:
 				// This is a template parameter - create a TemplateParameterReferenceNode
 				FLASH_LOG(Symbols, Debug, "SymbolTable lookup found template parameter '", identifier, 
 				          "' in provided template params, creating TemplateParameterReferenceNode");
-				Token token(Token::Type::Identifier, std::string(identifier), 0, 0, 0);
+				Token token(Token::Type::Identifier, StringTable::getStringView(identifier), 0, 0, 0);
 				return ASTNode::emplace_node<TemplateParameterReferenceNode>(identifier, token);
 			}
 		}

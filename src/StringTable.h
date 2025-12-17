@@ -132,6 +132,8 @@ struct StringHandle {
 		// Identity hash - handle is already unique and well-distributed
 		return static_cast<size_t>(handle);
 	}
+
+	std::string_view view() const noexcept;
 };
 
 /**
@@ -323,4 +325,8 @@ inline StringBuilder& StringBuilder::append(StringHandle sh) {
 
 inline bool StringHandle::operator==(std::string_view other) const noexcept {
 	return StringTable::getStringView(*this) == other;
+}
+
+inline std::string_view StringHandle::view() const noexcept {
+	return StringTable::getStringView(*this);
 }

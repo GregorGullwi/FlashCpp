@@ -301,7 +301,7 @@ private:
 
         // Track current struct context for member function parsing
         struct MemberFunctionContext {
-                std::string_view struct_name;  // Points directly into source text from lexer token
+                StringHandle struct_name;  // Points directly into source text from lexer token
                 size_t struct_type_index;
                 StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
         };
@@ -321,17 +321,17 @@ private:
         // Delayed function body parsing for inline member functions
         struct DelayedFunctionBody {
                 FunctionDeclarationNode* func_node;      // The function node to attach body to
-                SaveHandle body_start;                    // Handle to saved position at '{'
+                SaveHandle body_start;                   // Handle to saved position at '{'
                 SaveHandle initializer_list_start;       // Handle to saved position at ':' for constructor initializer list
-                bool has_initializer_list;                // True if constructor has an initializer list to re-parse
-                std::string_view struct_name;            // For member function context
+                StringHandle struct_name;                // For member function context
                 size_t struct_type_index;                // For member function context
                 StructDeclarationNode* struct_node;      // Pointer to struct being parsed
-                bool is_constructor;                      // Special handling for constructors
-                bool is_destructor;                       // Special handling for destructors
+                bool has_initializer_list;               // True if constructor has an initializer list to re-parse
+                bool is_constructor;                     // Special handling for constructors
+                bool is_destructor;                      // Special handling for destructors
                 ConstructorDeclarationNode* ctor_node;   // For constructors (nullptr for regular functions)
                 DestructorDeclarationNode* dtor_node;    // For destructors (nullptr for regular functions)
-                std::vector<std::string_view> template_param_names; // For template member functions
+                std::vector<StringHandle> template_param_names; // For template member functions
         };
         std::vector<DelayedFunctionBody> delayed_function_bodies_;
 
@@ -352,7 +352,7 @@ private:
 
         // Track if we're currently parsing a template class (to skip delayed body parsing)
         bool parsing_template_class_ = false;
-        std::vector<std::string_view> current_template_param_names_;  // Names of current template parameters - from Token storage
+        std::vector<StringHandle> current_template_param_names_;  // Names of current template parameters - from Token storage
 
         // Template parameter substitution for deferred template body parsing
         // Maps template parameter names to their substituted values (for non-type parameters)
@@ -465,7 +465,7 @@ private:
         ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);  // Phase 4: Unified function header parsing
         ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);  // Phase 4: Create FunctionDeclarationNode from header
         ParseResult parse_function_body_with_context(const FlashCpp::FunctionParsingContext& ctx, const FlashCpp::ParsedFunctionHeader& header, std::optional<ASTNode>& out_body);  // Phase 5: Unified body parsing
-        void setup_member_function_context(StructDeclarationNode* struct_node, std::string_view struct_name, size_t struct_type_index);  // Phase 5: Helper for member function scope setup
+        void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, size_t struct_type_index);  // Phase 5: Helper for member function scope setup
         void register_member_functions_in_scope(StructDeclarationNode* struct_node, size_t struct_type_index);  // Phase 5: Register member functions in symbol table
         void register_parameters_in_scope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
         ParseResult parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);  // Phase 5: Unified delayed body parsing
@@ -513,7 +513,7 @@ private:
         std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Instantiate member function template
         std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, const std::vector<TemplateTypeArg>& template_type_args);  // NEW: Instantiate member function template with explicit args
         std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Get mangled name for instantiated class
-        std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const std::vector<std::string_view>& template_param_names);  // NEW: Parse out-of-line template member function
+        std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const std::vector<StringHandle>& template_param_names);  // NEW: Parse out-of-line template member function
         bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
         bool deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
                 const std::vector<TypeSpecifierNode>& argument_types,
@@ -627,10 +627,10 @@ public:  // Public methods for template instantiation
         );
        
         // Lookup symbol with template parameter checking
-        std::optional<ASTNode> lookup_symbol_with_template_check(std::string_view identifier);
+        std::optional<ASTNode> lookup_symbol_with_template_check(StringHandle identifier);
 
         // Unified symbol lookup that automatically provides template parameters when parsing templates
-        std::optional<ASTNode> lookup_symbol(std::string_view identifier) const {
+        std::optional<ASTNode> lookup_symbol(StringHandle identifier) const {
             if (parsing_template_body_ && !current_template_param_names_.empty()) {
                 return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
             } else {
