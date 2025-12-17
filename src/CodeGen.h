@@ -2129,14 +2129,14 @@ private:
 	// Generate mangled name for destructor (MSVC format: ?~ClassName@ClassName@@...)
 	// Destructors have no parameters (except implicit 'this')
 	std::vector<TypeSpecifierNode> empty_params;
-	std::string dtor_name = std::string("~") + std::string(node.struct_name().view());
+	std::string_view dtor_name = StringBuilder().append("~").append(node.struct_name()).commit();
 	TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
 	dtor_decl_op.mangled_name = StringTable::getOrInternStringHandle(generateMangledNameForCall(
 		dtor_name,
 		void_type,
 		empty_params,
 		false,  // not variadic
-		std::string(node.struct_name().view())  // struct name for member function mangling
+		node.struct_name().view()  // struct name for member function mangling
 	));
 
 	// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
