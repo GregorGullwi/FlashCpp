@@ -5966,7 +5966,7 @@ private:
 		const size_t num_params = ctor_op.arguments.size();
 
 		// Look up the struct type once for use in both loops
-		auto struct_type_it = gTypesByName.find(struct_name);
+		auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 
 		// Find the actual constructor to get the correct parameter types
 		// This is more reliable than trying to infer from argument types
@@ -6054,7 +6054,7 @@ private:
 				if (num_params == 1 && paramType == Type::Struct && is_same_struct_type && !arg_is_reference) {
 					// This is likely a copy constructor, but arg_is_reference wasn't set
 					// Determine the actual CV qualifier from the constructor signature
-					auto type_it = gTypesByName.find(struct_name);
+					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 					if (type_it != gTypesByName.end()) {
 						TypeIndex struct_type_index = type_it->second->type_index_;
 						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
@@ -7421,7 +7421,7 @@ private:
 		// If this is a member function, check if we need to register vtable for this class
 		if (!struct_name.empty()) {
 			// Look up the struct type info
-			auto struct_it = gTypesByName.find(struct_name);
+			auto struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 			if (struct_it != gTypesByName.end()) {
 				const TypeInfo* type_info = struct_it->second;
 				const StructTypeInfo* struct_info = type_info->getStructInfo();

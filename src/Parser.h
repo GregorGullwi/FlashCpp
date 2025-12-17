@@ -704,7 +704,7 @@ inline void FlashCpp::FunctionScopeGuard::injectThisPointer() {
 	}
 	
 	// Find the parent struct type
-	auto type_it = gTypesByName.find(ctx_.parent_struct_name);
+	auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(ctx_.parent_struct_name));
 	if (type_it == gTypesByName.end()) {
 		return;  // Can't inject 'this' without knowing the struct type
 	}
