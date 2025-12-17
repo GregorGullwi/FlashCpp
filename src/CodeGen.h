@@ -604,7 +604,7 @@ public:
 				
 				// Call base class constructors if any
 				for (const auto& base : struct_info->base_classes) {
-					auto base_type_it = gTypesByName.find(base.name);
+					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
 					if (base_type_it != gTypesByName.end()) {
 						// Only call base constructor if the base class actually has constructors
 						// This avoids link errors when inheriting from classes without constructors
@@ -1005,7 +1005,7 @@ private:
 		if (!current_lambda_closure_type_.isValid()) {
 			return nullptr;
 		}
-		auto it = gTypesByName.find(StringTable::getStringView(current_lambda_closure_type_));
+		auto it = gTypesByName.find(current_lambda_closure_type_);
 		if (it == gTypesByName.end() || !it->second->isStruct()) {
 			return nullptr;
 		}
@@ -1133,7 +1133,7 @@ private:
 		}
 
 		StringHandle closure_type_name = lambda_ptr->generate_lambda_name();
-		auto type_it = gTypesByName.find(StringTable::getStringView(closure_type_name));
+		auto type_it = gTypesByName.find(closure_type_name);
 		if (type_it == gTypesByName.end()) {
 			return std::nullopt;
 		}
@@ -1287,7 +1287,7 @@ private:
 		// For member functions, add implicit 'this' pointer to symbol table
 		if (node.is_member_function()) {
 			// Look up the struct type to get its type index and size
-			auto type_it = gTypesByName.find(node.parent_struct_name());
+			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
 			if (type_it != gTypesByName.end()) {
 				const TypeInfo* struct_type_info = type_it->second;
 				const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -1335,7 +1335,7 @@ private:
 				// (same code for both copy and move assignment - memberwise copy/move)
 
 				// Look up the struct type
-				auto type_it = gTypesByName.find(node.parent_struct_name());
+				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
 				if (type_it != gTypesByName.end()) {
 					const TypeInfo* struct_type_info = type_it->second;
 					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -1461,7 +1461,7 @@ private:
 		// NOTE: We don't clear this until the next struct - the string must persist
 		// because IrOperands store string_view references to it
 		// For nested classes, we need to use the fully qualified name from TypeInfo
-		auto type_it = gTypesByName.find(StringTable::getStringView(struct_name));
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 		if (type_it != gTypesByName.end()) {
 			current_struct_name_ = type_it->second->name();
 		} else {
@@ -1512,7 +1512,7 @@ private:
 			}
 
 			// Generate global storage for static members
-			auto static_member_type_it = gTypesByName.find(StringTable::getStringView(node.name()));
+			auto static_member_type_it = gTypesByName.find(node.name());
 			if (static_member_type_it != gTypesByName.end()) {
 				const TypeInfo* type_info = static_member_type_it->second;
 				
@@ -2146,7 +2146,7 @@ private:
 
 		// Add 'this' pointer to symbol table for member access
 		// Look up the struct type to get its type index and size
-		auto type_it = gTypesByName.find(node.struct_name());
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.struct_name()));
 		if (type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -2177,7 +2177,7 @@ private:
 		// Step 2: Member destruction is automatic for primitive types (no action needed)
 
 		// Step 3: Call base class destructors in REVERSE order
-		auto struct_type_it = gTypesByName.find(node.struct_name());
+		auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.struct_name()));
 		if (struct_type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -4596,7 +4596,7 @@ private:
 		    current_lambda_captures_.find(var_name_str) != current_lambda_captures_.end()) {
 			// This is a captured variable - generate member access (this->x)
 			// Look up the closure struct type
-			auto type_it = gTypesByName.find(StringTable::getStringView(current_lambda_closure_type_));
+			auto type_it = gTypesByName.find(current_lambda_closure_type_);
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
@@ -4720,7 +4720,7 @@ private:
 		// This gives priority to parameters and local variables over member variables
 		if (!symbol.has_value() && current_struct_name_.isValid()) {
 			// Look up the struct type
-			auto type_it = gTypesByName.find(StringTable::getStringView(current_struct_name_));
+			auto type_it = gTypesByName.find(current_struct_name_);
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
@@ -5017,7 +5017,7 @@ private:
 			std::string struct_or_enum_name(namespaces.back());
 			
 			// Could be EnumName::EnumeratorName
-			auto type_it = gTypesByName.find(struct_or_enum_name);
+			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
 			if (type_it != gTypesByName.end() && type_it->second->isEnum()) {
 				const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
 				if (enum_info && enum_info->is_scoped) {
@@ -5030,7 +5030,7 @@ private:
 			}
 
 			// Check if this is a static member access (e.g., StructName::static_member or ns::StructName::static_member)
-			auto struct_type_it = gTypesByName.find(struct_or_enum_name);
+			auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
 			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				if (struct_info) {
@@ -5435,7 +5435,7 @@ private:
 				// Check if this is a captured variable
 				if (current_lambda_captures_.find(var_name_str) != current_lambda_captures_.end()) {
 					// Look up the closure struct type
-					auto type_it = gTypesByName.find(StringTable::getStringView(current_lambda_closure_type_));
+					auto type_it = gTypesByName.find(current_lambda_closure_type_);
 					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
@@ -6426,7 +6426,7 @@ private:
 				std::string_view lhs_name = lhs_ident.name();
 
 				// Check if this is a member variable of the current struct
-				auto type_it = gTypesByName.find(StringTable::getStringView(current_struct_name_));
+				auto type_it = gTypesByName.find(current_struct_name_);
 				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 					if (struct_info) {
@@ -6504,7 +6504,7 @@ private:
 							const TypeSpecifierNode& orig_type = type_it->second;
 
 							// Look up the closure struct to find the member
-							auto closure_type_it = gTypesByName.find(StringTable::getStringView(current_lambda_closure_type_));
+							auto closure_type_it = gTypesByName.find(current_lambda_closure_type_);
 							if (closure_type_it != gTypesByName.end() && closure_type_it->second->isStruct()) {
 								const StructTypeInfo* struct_info = closure_type_it->second->getStructInfo();
 								const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(lhs_name_str));
@@ -7952,7 +7952,7 @@ private:
 
 			// Final fallback: if we're in a member function, check the current struct's member functions
 			if (!matched_func_decl && current_struct_name_.isValid()) {
-				auto type_it = gTypesByName.find(StringTable::getStringView(current_struct_name_));
+				auto type_it = gTypesByName.find(current_struct_name_);
 				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 					if (struct_info) {
@@ -8974,7 +8974,7 @@ private:
 			if (struct_info) {
 				// For nested classes, we need the fully qualified name from TypeInfo
 				auto struct_name = struct_info->getName();
-				auto type_it = gTypesByName.find(StringTable::getStringView(struct_name));
+				auto type_it = gTypesByName.find(struct_name);
 				if (type_it != gTypesByName.end()) {
 					struct_name = type_it->second->name();
 				}
@@ -11782,7 +11782,7 @@ private:
 		// Store enclosing struct info for [this] capture support
 		info.enclosing_struct_name = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : std::string_view();
 		if (current_struct_name_.isValid()) {
-			auto type_it = gTypesByName.find(StringTable::getStringView(current_struct_name_));
+			auto type_it = gTypesByName.find(current_struct_name_);
 			if (type_it != gTypesByName.end()) {
 				info.enclosing_struct_type_index = type_it->second->type_index_;
 			}
@@ -11860,7 +11860,7 @@ private:
 		}
 
 		// Look up the closure type (registered during parsing) BEFORE moving info
-		auto type_it = gTypesByName.find(info.closure_type_name);
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(info.closure_type_name));
 		if (type_it == gTypesByName.end()) {
 			// Error: closure type not found
 			TempVar dummy = var_counter.next();
@@ -12053,7 +12053,7 @@ private:
 									
 									// Look up the offset from the enclosing lambda's struct
 									int enclosing_offset = -1;
-									auto enclosing_type_it = gTypesByName.find(StringTable::getStringView(current_lambda_closure_type_));
+									auto enclosing_type_it = gTypesByName.find(current_lambda_closure_type_);
 									if (enclosing_type_it != gTypesByName.end()) {
 										const TypeInfo* enclosing_type = enclosing_type_it->second;
 										if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
@@ -12119,7 +12119,7 @@ private:
 							
 							// Look up the offset from the enclosing lambda's struct
 							int enclosing_offset = -1;
-							auto enclosing_type_it = gTypesByName.find(StringTable::getStringView(current_lambda_closure_type_));
+							auto enclosing_type_it = gTypesByName.find(current_lambda_closure_type_);
 							if (enclosing_type_it != gTypesByName.end()) {
 								const TypeInfo* enclosing_type = enclosing_type_it->second;
 								if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
@@ -12188,7 +12188,7 @@ private:
 		if (lambda_info.closure_type_name.empty()) {
 			return;  // No closure type, can't add member functions
 		}
-		auto type_it = gTypesByName.find(lambda_info.closure_type_name);
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(lambda_info.closure_type_name));
 		if (type_it != gTypesByName.end()) {
 			TypeInfo* closure_type = const_cast<TypeInfo*>(type_it->second);
 			StructTypeInfo* struct_info = closure_type->getStructInfo();
@@ -12792,7 +12792,7 @@ private:
 		// Get struct type info for member functions
 		const TypeInfo* struct_type_info = nullptr;
 		if (inst_info.struct_name.isValid()) {
-			auto struct_type_it = gTypesByName.find(StringTable::getStringView(inst_info.struct_name));
+			auto struct_type_it = gTypesByName.find(inst_info.struct_name);
 			if (struct_type_it != gTypesByName.end()) {
 				struct_type_info = struct_type_it->second;
 			}
@@ -12931,7 +12931,7 @@ private:
 			}
 		} else {
 			// Fallback: look up by name
-			auto type_it = gTypesByName.find(StringTable::getStringView(constructor_name));
+			auto type_it = gTypesByName.find(constructor_name);
 			if (type_it != gTypesByName.end() && type_it->second->struct_info_) {
 				actual_size_bits = static_cast<int>(type_it->second->struct_info_->total_size * 8);
 				struct_info = type_it->second->struct_info_.get();

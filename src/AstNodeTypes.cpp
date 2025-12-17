@@ -8,32 +8,30 @@
 #include <cstring>
 
 std::deque<TypeInfo> gTypeInfo;
-std::unordered_map<std::string_view, const TypeInfo*> gTypesByName;
+std::unordered_map<StringHandle, const TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
 TypeInfo& add_user_type(StringHandle name) {
     auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, gTypeInfo.size());
-    gTypesByName.emplace(StringTable::getStringView(type_info.name()), &type_info);
+    gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
 TypeInfo& add_function_type(StringHandle name, Type return_type) {
     auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Function, gTypeInfo.size());
-    gTypesByName.emplace(StringTable::getStringView(type_info.name()), &type_info);
+    gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
 TypeInfo& add_struct_type(StringHandle name) {
     auto& type_info = gTypeInfo.emplace_back(name, Type::Struct, gTypeInfo.size());
-    auto result = gTypesByName.emplace(StringTable::getStringView(type_info.name()), &type_info);
-    FLASH_LOG_FORMAT(Types, Debug, "add_struct_type: Added type '{}' to gTypesByName, success={}, new size={}", 
-        StringTable::getStringView(name), result.second, gTypesByName.size());
+    gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
 TypeInfo& add_enum_type(StringHandle name) {
     auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Enum, gTypeInfo.size());
-    gTypesByName.emplace(StringTable::getStringView(type_info.name()), &type_info);
+    gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
