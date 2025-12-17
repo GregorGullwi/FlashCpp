@@ -4286,7 +4286,7 @@ private:
 				// otherwise use function_name (Phase 4: Use helpers)
 				StringHandle mangled_handle = func_decl.getMangledName();
 				StringHandle func_name_handle = func_decl.getFunctionName();
-				current_func_name = mangled_handle.handle != 0 ? StringTable::getStringView(mangled_handle) : StringTable::getStringView(func_name_handle);
+				current_func_name = mangled_handle.isValid() ? StringTable::getStringView(mangled_handle) : StringTable::getStringView(func_name_handle);
 				current_func_start = i + 1; // Instructions start after FunctionDecl
 			}
 		}
@@ -7215,9 +7215,9 @@ private:
 		StringHandle mangled_handle = func_decl.getMangledName();
 		StringHandle func_name_handle = func_decl.getFunctionName();
 		StringHandle struct_name_handle = func_decl.getStructName();
-		std::string_view mangled = StringTable::getStringView(mangled_handle);
-		std::string_view func_name = mangled_handle.handle != 0 ? mangled : StringTable::getStringView(func_name_handle);
-		std::string_view struct_name = StringTable::getStringView(struct_name_handle);
+		std::string_view mangled = mangled_handle.isValid() ? StringTable::getStringView(mangled_handle) : std::string_view{};
+		std::string_view func_name = mangled_handle.isValid() ? mangled : StringTable::getStringView(func_name_handle);
+		std::string_view struct_name = struct_name_handle.isValid() ? StringTable::getStringView(struct_name_handle) : std::string_view{};
 		
 		// Construct return type
 		TypeSpecifierNode return_type(func_decl.return_type, TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits));
@@ -7237,7 +7237,7 @@ private:
 		
 		Linkage linkage = func_decl.linkage;
 		bool is_variadic = func_decl.is_variadic;
-		std::string_view mangled_name = StringTable::getStringView(func_decl.getMangledName());  // Phase 4: Use helper
+		std::string_view mangled_name = mangled_handle.isValid() ? StringTable::getStringView(mangled_handle) : std::string_view{};  // Phase 4: Use helper
 
 		// Add function signature to the object file writer (still needed for debug info)
 		// but use the pre-computed mangled name instead of regenerating it
@@ -7328,7 +7328,9 @@ private:
 				unwind_map.push_back(entry_info);
 			}
 			
-			writer.add_function_exception_info(std::string(StringTable::getStringView(current_function_mangled_name_)), current_function_offset_, function_length, try_blocks, unwind_map);
+			writer.add_function_exception_info(
+				current_function_mangled_name_.isValid() ? std::string(StringTable::getStringView(current_function_mangled_name_)) : std::string(),
+				current_function_offset_, function_length, try_blocks, unwind_map);
 		
 			// Clean up the previous function's variable scope
 			// This happens when we start a NEW function, ensuring the previous function's scope is removed
@@ -12666,7 +12668,9 @@ private:
 			}
 
 			// Add exception handling information (required for x64) - once per function
-			writer.add_function_exception_info(std::string(StringTable::getStringView(current_function_mangled_name_)), current_function_offset_, function_length);
+			writer.add_function_exception_info(
+				current_function_mangled_name_.isValid() ? std::string(StringTable::getStringView(current_function_mangled_name_)) : std::string(),
+				current_function_offset_, function_length);
 
 			// Clear the current function state
 			current_function_name_ = StringHandle();
