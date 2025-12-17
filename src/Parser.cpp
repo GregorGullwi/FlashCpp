@@ -3024,7 +3024,7 @@ ParseResult Parser::parse_struct_declaration()
 	// For nested classes, also register with the simple name so it can be referenced
 	// from within the nested class itself (e.g., in constructors)
 	if (is_nested_class) {
-		gTypesByName.emplace(struct_name, &struct_type_info);
+		gTypesByName.emplace(StringTable::getStringView(struct_name), &struct_type_info);
 	}
 
 	// Check for alignas specifier after struct name (if not already specified)
@@ -8337,12 +8337,20 @@ ParseResult Parser::parse_statement_or_declaration()
 		}
 		restore_token_position(saved_pos);
 		
+		FLASH_LOG_FORMAT(Parser, Debug, "Checking if '{}' is a type in gTypesByName (size={})", type_name, gTypesByName.size());
 		auto type_it = gTypesByName.find(type_name);
+		FLASH_LOG_FORMAT(Parser, Debug, "Type lookup result for '{}': {}", type_name, type_it != gTypesByName.end() ? "found" : "not found");
 		if (type_it != gTypesByName.end()) {
+			FLASH_LOG_FORMAT(Parser, Debug, "Type '{}' is struct={}, enum={}, type_size={}", 
+				type_name, 
+				type_it->second->isStruct(),
+				type_it->second->isEnum(),
+				type_it->second->type_size_);
 			// Check if it's a struct, enum, or typedef (but not a struct/enum that happens to have type_size_ set)
 			bool is_typedef = (type_it->second->type_size_ > 0 && !type_it->second->isStruct() && !type_it->second->isEnum());
 			if (type_it->second->isStruct() || type_it->second->isEnum() || is_typedef) {
 				// This is a struct/enum/typedef type declaration
+				FLASH_LOG_FORMAT(Parser, Debug, "Calling parse_variable_declaration for type '{}'", type_name);
 				return parse_variable_declaration();
 			}
 		}
@@ -11592,7 +11600,7 @@ ParseResult Parser::parse_primary_expression()
 		// If identifier not found in symbol table, check if it's a class/struct type name
 		// This handles constructor calls like Widget(42)
 		if (!identifierType.has_value()) {
-			auto type_it = gTypesByName.find(std::string(idenfifier_token.value()));
+			auto type_it = gTypesByName.find(idenfifier_token.value());
 			if (type_it != gTypesByName.end() && peek_token().has_value() && peek_token()->value() == "(") {
 				// This is a constructor call - handle it directly here
 				consume_token();  // consume '('
@@ -11983,7 +11991,7 @@ ParseResult Parser::parse_primary_expression()
 			// Identifier already consumed at line 1621
 			if (consume_punctuator("("sv)) {
 				// First, check if this is a type name (constructor call)
-				auto type_it = gTypesByName.find(std::string(idenfifier_token.value()));
+				auto type_it = gTypesByName.find(idenfifier_token.value());
 				if (type_it != gTypesByName.end()) {
 					// This is a constructor call: TypeName(args)
 					// Parse constructor arguments
@@ -22701,7 +22709,7 @@ if (struct_type_info.getStructInfo()) {
 
 	// Copy static members from the primary template
 	// Get the primary template's StructTypeInfo
-	auto primary_type_it = gTypesByName.find(std::string(template_name));
+	auto primary_type_it = gTypesByName.find(template_name);
 	if (primary_type_it != gTypesByName.end()) {
 		const TypeInfo* primary_type_info = primary_type_it->second;
 		const StructTypeInfo* primary_struct_info = primary_type_info->getStructInfo();
@@ -23358,7 +23366,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				// Look up the struct type index and node for the member function context
 				TypeIndex struct_type_index = 0;
 				StructDeclarationNode* struct_node_ptr = nullptr;
-				auto struct_type_it = gTypesByName.find(std::string(struct_name));
+				auto struct_type_it = gTypesByName.find(struct_name);
 				if (struct_type_it != gTypesByName.end()) {
 					struct_type_index = struct_type_it->second->type_index_;
 					
@@ -23924,7 +23932,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	ASTNode this_decl_node;  // Need to keep this alive for the duration of parsing
 	if (setup_member_context) {
 		// Find the struct in the type system
-		auto struct_type_it = gTypesByName.find(std::string(struct_name));
+		auto struct_type_it = gTypesByName.find(struct_name);
 		if (struct_type_it != gTypesByName.end()) {
 			const TypeInfo* type_info = struct_type_it->second;
 			

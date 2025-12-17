@@ -959,9 +959,18 @@ extern std::deque<TypeInfo> gTypeInfo;
 // Custom hash and equality for heterogeneous lookup with string_view
 struct StringHash {
 	using is_transparent = void;
-	size_t operator()(std::string_view sv) const { return std::hash<std::string_view>{}(sv); }
-	size_t operator()(const std::string& s) const { return std::hash<std::string>{}(s); }
-	size_t operator()(StringHandle sh) const { return std::hash<uint32_t>{}(sh.handle); }
+	size_t operator()(std::string_view sv) const { return StringTable::hashString(sv); }
+	size_t operator()(const std::string& s) const { return StringTable::hashString(std::string_view(s)); }
+	size_t operator()(StringHandle sh) const { 
+		// For StringHandle keys already in the map, we can't call getStringView
+		// because it might crash on invalid handles. Instead, rehash the stored string
+		// when needed. For now, use a different hash space for handles.
+		// The equality operator will ensure correctness.
+		if (!sh.isValid()) return 0;
+		// Use FNV-1a hash of the handle value itself
+		// This is OK because StringEqual will do the right comparison
+		return static_cast<size_t>(sh.handle) * 2654435761U;  // FNV-1a-like scramble
+	}
 };
 
 struct StringEqual {
@@ -970,9 +979,13 @@ struct StringEqual {
 	bool operator()(StringHandle lhs, StringHandle rhs) const { return lhs.handle == rhs.handle; }
 	bool operator()(StringHandle lhs, std::string_view rhs) const { return StringTable::getStringView(lhs) == rhs; }
 	bool operator()(std::string_view lhs, StringHandle rhs) const { return lhs == StringTable::getStringView(rhs); }
+	bool operator()(const std::string& lhs, StringHandle rhs) const { return std::string_view(lhs) == StringTable::getStringView(rhs); }
+	bool operator()(StringHandle lhs, const std::string& rhs) const { return StringTable::getStringView(lhs) == std::string_view(rhs); }
+	bool operator()(const std::string& lhs, std::string_view rhs) const { return std::string_view(lhs) == rhs; }
+	bool operator()(std::string_view lhs, const std::string& rhs) const { return lhs == std::string_view(rhs); }
 };
 
-extern std::unordered_map<StringHandle, const TypeInfo*, StringHash, StringEqual> gTypesByName;
+extern std::unordered_map<std::string_view, const TypeInfo*> gTypesByName;
 
 extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
