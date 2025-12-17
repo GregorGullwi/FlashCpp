@@ -282,6 +282,13 @@ private:
     void ensure_temp_capacity(size_t needed) {
         // Handle initial state where temp_start_ is nullptr
         size_t current_size = (temp_start_ != nullptr) ? (temp_write_ptr_ - temp_start_) : 0;
+        
+        // Check for integer overflow
+        if (needed > SIZE_MAX - current_size) {
+            assert(false && "StringBuilder: requested size would overflow");
+            return;
+        }
+        
         size_t new_size = current_size + needed;
         
         if (temp_capacity_ < new_size) {
@@ -293,13 +300,20 @@ private:
                 new_capacity = 512;
             }
             
-            // Grow by 16x if current capacity is insufficient
+            // Grow by 16x if current capacity is insufficient (as requested)
             while (new_capacity < new_size) {
+                // Check for overflow before multiplication
+                if (new_capacity > SIZE_MAX / 16) {
+                    // Can't grow by 16x without overflow, use new_size instead
+                    new_capacity = new_size;
+                    break;
+                }
                 new_capacity *= 16;
             }
             
             // Allocate new buffer from temporary allocator
             char* new_start = gTemporaryChunkedStringAllocator.allocate(new_capacity);
+            assert(new_start != nullptr && "StringBuilder: allocation failed");
             
             // Copy existing data if any
             if (current_size > 0) {
