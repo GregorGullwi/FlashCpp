@@ -1227,11 +1227,11 @@ private:
 		// For nested classes, we need to use the fully qualified name from TypeInfo
 		std::string_view struct_name_for_function;
 		if (!current_struct_name_.empty()) {
-			struct_name_for_function = *current_struct_name_;
+			struct_name_for_function = current_struct_name_;
 		} else if (node.is_member_function()) {
 			struct_name_for_function = node.parent_struct_name();
 		} else {
-			struct_name_for_function = "";
+			struct_name_for_function = ""sv;
 		}
 		func_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_function);
 		
@@ -1601,7 +1601,7 @@ private:
 		// Create constructor declaration with typed payload
 		FunctionDeclOp ctor_decl_op;
 		// For nested classes, use current_struct_name_ which contains the fully qualified name
-		std::string_view struct_name_for_ctor = current_struct_name_.empty() ? StringTable::getStringView(node.struct_name()) : StringTable::getStringView(*current_struct_name_);
+		std::string_view struct_name_for_ctor = current_struct_name_.empty() ? StringTable::getStringView(node.struct_name()) : current_struct_name_;
 		
 		// Extract just the last component of the class name for the constructor function name
 		// For "Outer::Inner", we want "Inner" as the function name
@@ -1689,7 +1689,7 @@ private:
 			
 			// Build constructor call: StructName::StructName(this, args...)
 			ConstructorCallOp ctor_op;
-			ctor_op.struct_name = StringTable::getOrInternStringHandle(node.struct_name());
+			ctor_op.struct_name = node.struct_name();
 			ctor_op.object = StringTable::getOrInternStringHandle("this");
 
 			// Add constructor arguments from delegating initializer
@@ -1872,7 +1872,7 @@ private:
 							member_load.result.value = member_value;
 							member_load.result.type = member.type;
 							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
-							member_load.object = StringTable::getOrInternStringHandle("other");  // Load from 'other' parameter
+							member_load.object = StringTable::getOrInternStringHandle("other"sv);  // Load from 'other' parameter
 							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
 							member_load.is_reference = member.is_reference;
@@ -1887,7 +1887,7 @@ private:
 							member_store.value.type = member.type;
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
 							member_store.value.value = member_value;
-							member_store.object = "this"sv;
+							member_store.object = StringTable::getOrInternStringHandle("this"sv);
 							member_store.member_name = member.getName();
 							member_store.offset = static_cast<int>(member.offset);
 							member_store.is_reference = member.is_reference;
@@ -1993,7 +1993,7 @@ private:
 									const auto& expr_node = init_expr.as<ExpressionNode>();
 									if (std::holds_alternative<IdentifierNode>(expr_node)) {
 										const auto& id_node = std::get<IdentifierNode>(expr_node);
-										std::string_view init_name = id_node.name();
+										auto init_name = StringTable::getOrInternStringHandle(id_node.name());
 										
 										// Look up the identifier in the symbol table
 										std::optional<ASTNode> init_symbol = symbol_table.lookup(init_name);
@@ -2118,7 +2118,7 @@ private:
 
 	// Create destructor declaration with typed payload
 	FunctionDeclOp dtor_decl_op;
-	dtor_decl_op.function_name = StringTable::getOrInternStringHandle(std::string("~") + std::string(StringTable::getStringView(node.struct_name())));  // Destructor name
+	dtor_decl_op.function_name = StringTable::getOrInternStringHandle(StringBuilder().append("~"sv).append(node.struct_name()));  // Destructor name
 	dtor_decl_op.struct_name = StringTable::getOrInternStringHandle(node.struct_name());
 	dtor_decl_op.return_type = Type::Void;  // Destructors don't have a return type
 	dtor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
@@ -2504,18 +2504,10 @@ private:
 		size_t current_for = for_counter++;
 		
 		// Use a single StringBuilder and commit each label before starting the next
-		StringBuilder label_sb;
-		label_sb.append("for_start_").append(current_for);
-		std::string_view loop_start_label = label_sb.commit();
-		
-		label_sb.append("for_body_").append(current_for);
-		std::string_view loop_body_label = label_sb.commit();
-		
-		label_sb.append("for_increment_").append(current_for);
-		std::string_view loop_increment_label = label_sb.commit();
-		
-		label_sb.append("for_end_").append(current_for);
-		std::string_view loop_end_label = label_sb.commit();
+		auto loop_start_label = StringTable::createStringHandle(StringBuilder().append("for_start_").append(current_for));
+		auto loop_body_label = StringTable::createStringHandle(StringBuilder().append("for_body_").append(current_for));
+		auto loop_increment_label = StringTable::createStringHandle(StringBuilder().append("for_increment_").append(current_for));
+		auto loop_end_label = StringTable::createStringHandle(StringBuilder().append("for_end_").append(current_for));
 
 		// Execute init statement (if present)
 		if (node.has_init()) {
@@ -2533,7 +2525,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: evaluate condition
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
 
 		// Evaluate condition (if present, otherwise infinite loop)
 		if (node.has_condition()) {
@@ -2541,14 +2533,14 @@ private:
 
 			// Generate conditional branch: if true goto body, else goto end
 			CondBranchOp cond_branch;
-			cond_branch.label_true = StringTable::getOrInternStringHandle(loop_body_label);
-			cond_branch.label_false = StringTable::getOrInternStringHandle(loop_end_label);
+			cond_branch.label_true = loop_body_label;
+			cond_branch.label_false = loop_end_label;
 			cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 		}
 
 		// Loop body label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_body_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
 
 		// Visit loop body
 		// Always call visit() to let visitBlockNode handle scope creation if needed
@@ -2556,7 +2548,7 @@ private:
 		visit(body_stmt);
 
 		// Loop increment label (for continue statements)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_increment_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
 
 		// Execute update/increment expression (if present)
 		if (node.has_update()) {
@@ -2564,10 +2556,10 @@ private:
 		}
 
 		// Branch back to loop start
-		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start_label}, Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -2583,15 +2575,9 @@ private:
 		size_t current_while = while_counter++;
 		
 		// Use a single StringBuilder and commit each label before starting the next
-		StringBuilder label_sb;
-		label_sb.append("while_start_").append(current_while);
-		std::string_view loop_start_label = label_sb.commit();
-		
-		label_sb.append("while_body_").append(current_while);
-		std::string_view loop_body_label = label_sb.commit();
-		
-		label_sb.append("while_end_").append(current_while);
-		std::string_view loop_end_label = label_sb.commit();
+		auto loop_start_label = StringTable::createStringHandle(StringBuilder().append("while_start_").append(current_while));
+		auto loop_body_label = StringTable::createStringHandle(StringBuilder().append("while_body_").append(current_while));
+		auto loop_end_label = StringTable::createStringHandle(StringBuilder().append("while_end_").append(current_while));
 		
 		// Mark loop begin for break/continue support
 		// For while loops, continue jumps to loop_start (re-evaluate condition)
@@ -2603,7 +2589,7 @@ private:
 
 		// Loop start: evaluate condition
 		LabelOp start_lbl;
-		start_lbl.label_name = StringTable::getOrInternStringHandle(loop_start_label);
+		start_lbl.label_name = loop_start_label;
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, std::move(start_lbl), Token()));
 
 		// Evaluate condition
@@ -2611,13 +2597,13 @@ private:
 
 		// Generate conditional branch: if true goto body, else goto end
 		CondBranchOp cond_branch;
-		cond_branch.label_true = StringTable::getOrInternStringHandle(loop_body_label);
-		cond_branch.label_false = StringTable::getOrInternStringHandle(loop_end_label);
+		cond_branch.label_true = loop_body_label;
+		cond_branch.label_false = loop_end_label;
 		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_body_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
 
 		// Visit loop body
 		// Always call visit() to let visitBlockNode handle scope creation if needed
@@ -2626,11 +2612,11 @@ private:
 
 		// Branch back to loop start (re-evaluate condition)
 		BranchOp branch_to_start;
-		branch_to_start.target_label = StringTable::getOrInternStringHandle(loop_start_label);
+		branch_to_start.target_label = loop_start_label;
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_start), Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -2642,15 +2628,9 @@ private:
 		size_t current_do_while = do_while_counter++;
 		
 		// Use a single StringBuilder and commit each label before starting the next
-		StringBuilder label_sb;
-		label_sb.append("do_while_start_").append(current_do_while);
-		std::string_view loop_start_label = label_sb.commit();
-		
-		label_sb.append("do_while_condition_").append(current_do_while);
-		std::string_view loop_condition_label = label_sb.commit();
-		
-		label_sb.append("do_while_end_").append(current_do_while);
-		std::string_view loop_end_label = label_sb.commit();
+		auto loop_start_label = StringTable::createStringHandle(StringBuilder().append("do_while_start_").append(current_do_while));
+		auto loop_condition_label = StringTable::createStringHandle(StringBuilder().append("do_while_condition_").append(current_do_while));
+		auto loop_end_label = StringTable::createStringHandle(StringBuilder().append("do_while_end_").append(current_do_while));
 		
 		// Mark loop begin for break/continue support
 		// For do-while loops, continue jumps to condition check (not body start)
@@ -2661,7 +2641,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: execute body first (do-while always executes at least once)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
 
 		// Visit loop body
 		// Always call visit() to let visitBlockNode handle scope creation if needed
@@ -2669,20 +2649,20 @@ private:
 		visit(body_stmt);
 
 		// Condition check label (for continue statements)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_condition_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_condition_label}, Token()));
 
 		// Evaluate condition
 		auto condition_operands = visitExpressionNode(node.get_condition().as<ExpressionNode>());
 
 		// Generate conditional branch: if true goto start, else goto end
 		CondBranchOp cond_branch;
-		cond_branch.label_true = StringTable::getOrInternStringHandle(loop_start_label);
-		cond_branch.label_false = StringTable::getOrInternStringHandle(loop_end_label);
+		cond_branch.label_true = loop_start_label;
+		cond_branch.label_false = loop_end_label;
 		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -2691,11 +2671,8 @@ private:
 	void visitSwitchStatementNode(const SwitchStatementNode& node) {
 		// Generate unique labels for this switch statement
 		static size_t switch_counter = 0;
-		StringBuilder end_sb, default_sb;
-		end_sb.append("switch_end_").append(switch_counter);
-		default_sb.append("switch_default_").append(switch_counter);
-		std::string_view switch_end_label = end_sb.commit();
-		std::string_view default_label = default_sb.commit();
+		StringHandle default_label = StringTable::getOrInternStringHandle(StringBuilder().append("switch_default_").append(switch_counter));
+		StringHandle switch_end_label = StringTable::getOrInternStringHandle(StringBuilder().append("switch_end_").append(switch_counter));
 		switch_counter++;
 		
 		// Evaluate the switch condition
@@ -2811,7 +2788,7 @@ private:
 			const DefaultLabelNode& default_node = stmt.as<DefaultLabelNode>();
 
 			// Default label
-			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(default_label)}, Token()));				// Execute default statements
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = default_label}, Token()));				// Execute default statements
 				if (default_node.has_statement()) {
 					auto default_stmt = default_node.get_statement();
 					if (default_stmt->is<BlockNode>()) {
@@ -2826,7 +2803,7 @@ private:
 		});
 
 		// Switch end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(switch_end_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = switch_end_label}, Token()));
 
 		// Mark switch end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -2841,22 +2818,10 @@ private:
 
 		// Generate unique labels and counter for this ranged for loop
 		static size_t ranged_for_counter = 0;
-		
-		StringBuilder start_sb;
-		start_sb.append("ranged_for_start_").append(ranged_for_counter);
-		std::string_view loop_start_label = start_sb.commit();
-		
-		StringBuilder body_sb;
-		body_sb.append("ranged_for_body_").append(ranged_for_counter);
-		std::string_view loop_body_label = body_sb.commit();
-		
-		StringBuilder increment_sb;
-		increment_sb.append("ranged_for_increment_").append(ranged_for_counter);
-		std::string_view loop_increment_label = increment_sb.commit();
-		
-		StringBuilder end_sb;
-		end_sb.append("ranged_for_end_").append(ranged_for_counter);
-		std::string_view loop_end_label = end_sb.commit();
+		auto loop_start_label = StringTable::createStringHandle(StringBuilder().append("ranged_for_start_").append(ranged_for_counter));
+		auto loop_body_label = StringTable::createStringHandle(StringBuilder().append("ranged_for_body_").append(ranged_for_counter));
+		auto loop_increment_label = StringTable::createStringHandle(StringBuilder().append("ranged_for_increment_").append(ranged_for_counter));
+		auto loop_end_label = StringTable::createStringHandle(StringBuilder().append("ranged_for_end_").append(ranged_for_counter));
 		
 		ranged_for_counter++;
 		
@@ -2929,9 +2894,9 @@ private:
 	}
 
 	void visitRangedForArray(const RangedForStatementNode& node, std::string_view array_name,
-	                         const DeclarationNode& array_decl, std::string_view loop_start_label,
-	                         std::string_view loop_body_label, std::string_view loop_increment_label,
-	                         std::string_view loop_end_label, size_t counter) {
+	                         const DeclarationNode& array_decl, StringHandle loop_start_label,
+	                         StringHandle loop_body_label, StringHandle loop_increment_label,
+	                         StringHandle loop_end_label, size_t counter) {
 		auto loop_var_decl = node.get_loop_variable_decl();
 
 		// Unified pointer-based approach: use begin/end pointers for arrays too
@@ -3014,7 +2979,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: evaluate condition (__begin != __end)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
 
 		// Create condition: __begin != __end
 		auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -3026,13 +2991,13 @@ private:
 
 		// Generate conditional branch
 		CondBranchOp cond_branch;
-		cond_branch.label_true = StringTable::getOrInternStringHandle(loop_body_label);
-		cond_branch.label_false = StringTable::getOrInternStringHandle(loop_end_label);
+		cond_branch.label_true = loop_body_label;
+		cond_branch.label_false = loop_end_label;
 		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_body_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
 
 		// Declare and initialize the loop variable
 		// For references (T& x or const T& x), we need the pointer value directly
@@ -3084,7 +3049,7 @@ private:
 		}
 
 		// Loop increment label (for continue statements)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_increment_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
 
 		// Increment pointer: ++__begin
 		auto increment_begin = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -3094,19 +3059,19 @@ private:
 		visitExpressionNode(increment_expr.as<ExpressionNode>());
 
 		// Branch back to loop start
-		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start_label}, Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
 	}
 
 	void visitRangedForBeginEnd(const RangedForStatementNode& node, std::string_view range_name,
-	                            const TypeSpecifierNode& range_type, std::string_view loop_start_label,
-	                            std::string_view loop_body_label, std::string_view loop_increment_label,
-	                            std::string_view loop_end_label, size_t counter) {
+	                            const TypeSpecifierNode& range_type, StringHandle loop_start_label,
+	                            StringHandle loop_body_label, StringHandle loop_increment_label,
+	                            StringHandle loop_end_label, size_t counter) {
 		auto loop_var_decl = node.get_loop_variable_decl();
 
 		// Get the struct type info
@@ -3123,8 +3088,8 @@ private:
 		}
 
 		// Check for begin() and end() methods
-		const StructMemberFunction* begin_func = struct_info->findMemberFunction("begin");
-		const StructMemberFunction* end_func = struct_info->findMemberFunction("end");
+		const StructMemberFunction* begin_func = struct_info->findMemberFunction("begin"sv);
+		const StructMemberFunction* end_func = struct_info->findMemberFunction("end"sv);
 
 		if (!begin_func || !end_func) {
 			FLASH_LOG(Codegen, Error, "Range-based for loop requires type to have both begin() and end() methods");
@@ -3206,7 +3171,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::LoopBegin, std::move(loop_begin), Token()));
 
 		// Loop start: evaluate condition (__begin != __end)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start_label}, Token()));
 
 		// Create condition: __begin != __end
 		auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -3218,13 +3183,13 @@ private:
 
 		// Generate conditional branch
 		CondBranchOp cond_branch;
-		cond_branch.label_true = StringTable::getOrInternStringHandle(loop_body_label);
-		cond_branch.label_false = StringTable::getOrInternStringHandle(loop_end_label);
+		cond_branch.label_true = loop_body_label;
+		cond_branch.label_false = loop_end_label;
 		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 		// Loop body label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_body_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body_label}, Token()));
 
 		// Declare and initialize the loop variable
 		// For references (T& x or const T& x), we need the iterator value directly
@@ -3269,7 +3234,7 @@ private:
 		}
 
 		// Loop increment label (for continue statements)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_increment_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
 
 		// Increment iterator: ++__begin
 		auto increment_begin = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
@@ -3279,10 +3244,10 @@ private:
 		visitExpressionNode(increment_expr.as<ExpressionNode>());
 
 		// Branch back to loop start
-		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(loop_start_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start_label}, Token()));
 
 		// Loop end label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(loop_end_label)}, Token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end_label}, Token()));
 
 		// Mark loop end
 		ir_.addInstruction(IrOpcode::LoopEnd, {}, Token());
@@ -3384,7 +3349,7 @@ private:
 					VariableDeclOp decl_op;
 					decl_op.type = type_node.type();
 					decl_op.size_in_bits = static_cast<int>(type_node.size_in_bits());
-					decl_op.var_name = exception_var_name;
+					decl_op.var_name = StringTable::getOrInternStringHandle(exception_var_name);
 					
 					// Create a TypedValue for the initializer
 					TypedValue init_value;
@@ -3914,7 +3879,7 @@ private:
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
 								ctor_op.struct_name = type_info.name();
-								ctor_op.object = decl.identifier_token().value();
+								ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 
 								// Get constructor parameter types for reference handling
 								const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
@@ -4317,8 +4282,8 @@ private:
 							
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = std::string(type_info.name());
-							ctor_op.object = decl.identifier_token().value();
+							ctor_op.struct_name = type_info.name();
+							ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 							
 							// Get constructor parameter types for reference handling
 							const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
@@ -4405,8 +4370,8 @@ private:
 						} else if (has_copy_init) {
 							// Generate copy constructor call
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = std::string(type_info.name());
-							ctor_op.object = decl.identifier_token().value();
+							ctor_op.struct_name = type_info.name();
+							ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 
 							// Add initializer as copy constructor parameter
 							const ASTNode& init_node = *node.initializer();
@@ -4438,8 +4403,8 @@ private:
 							if (needs_default_ctor_call) {
 								// Generate default constructor call
 								ConstructorCallOp ctor_op;
-								ctor_op.struct_name = std::string(type_info.name());
-								ctor_op.object = decl.identifier_token().value();
+								ctor_op.struct_name = type_info.name();
+								ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 								
 								// If the constructor has parameters with default values, generate the default arguments
 								if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
@@ -4474,7 +4439,7 @@ private:
 				if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
 					registerVariableWithDestructor(
 						std::string(decl.identifier_token().value()),
-						std::string(type_info.name())
+						std::string(StringTable::getStringView(type_info.name()))
 					);
 				}
 			}
@@ -4786,11 +4751,7 @@ private:
 						// This is a static member access - generate GlobalLoad IR
 						// Static members are stored as globals with qualified names
 						// Note: Namespaces are already included in current_struct_name_ via mangling
-						StringBuilder qualified_name_builder;
-						qualified_name_builder.append(current_struct_name_);
-						qualified_name_builder.append("::");
-						qualified_name_builder.append(var_name_str);
-						std::string_view qualified_name = qualified_name_builder.commit();
+						auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(current_struct_name_).append("::"sv).append(var_name_str));
 						
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
@@ -4917,7 +4878,7 @@ private:
 				if (type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
 					constexpr int POINTER_SIZE_BITS = 64;  // x64 pointer size
-					return { type_node.type(), POINTER_SIZE_BITS, identifierNode.name(), 0ULL };
+					return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
 				}
 				
 				// For non-array references, we need to dereference to get the value
@@ -4936,7 +4897,7 @@ private:
 				
 				deref_op.pointee_type = pointee_type;
 				deref_op.pointee_size_in_bits = pointee_size;
-				deref_op.pointer = identifierNode.name();  // The reference parameter holds the address
+				deref_op.pointer = StringTable::getOrInternStringHandle(identifierNode.name());  // The reference parameter holds the address
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
 				
 				TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
@@ -4952,7 +4913,7 @@ private:
 			}
 			// Include type_index for struct types (needed for proper name mangling)
 			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-			return { type_node.type(), size_bits, identifierNode.name(), static_cast<unsigned long long>(type_index) };
+			return { type_node.type(), size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), static_cast<unsigned long long>(type_index) };
 		}
 
 		// Check if it's a VariableDeclarationNode
@@ -5000,7 +4961,7 @@ private:
 				}
 				// Include type_index for struct types
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return { type_node.type(), size_bits, identifierNode.name(), static_cast<unsigned long long>(type_index) };
+				return { type_node.type(), size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), static_cast<unsigned long long>(type_index) };
 			}
 		}
 		
@@ -5026,8 +4987,8 @@ private:
 			op.result.type = Type::FunctionPointer;
 			op.result.size_in_bits = 64;
 			op.result.value = func_addr_var;
-			op.function_name = identifierNode.name();
-			op.mangled_name = mangled;
+			op.function_name = StringTable::getOrInternStringHandle(identifierNode.name());
+			op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
 
 			// Return the function address as a pointer (64 bits)
@@ -5085,11 +5046,7 @@ private:
 						// Use qualified name as the global symbol name: OwnerStructName::static_member
 						// The owner_struct is the struct that actually defines the static member
 						// (could be a base class)
-						StringBuilder qualified_name_sb;
-						qualified_name_sb.append(StringTable::getStringView(owner_struct->getName()));
-						qualified_name_sb.append("::");
-						qualified_name_sb.append(qualifiedIdNode.name());
-						op.global_name = qualified_name_sb.commit();
+						op.global_name = StringTable::getOrInternStringHandle(StringBuilder().append(owner_struct->getName()).append("::"sv).append(qualifiedIdNode.name()));
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 						// Return the temp variable that will hold the loaded value
@@ -5114,7 +5071,7 @@ private:
 		if (!found_symbol.has_value()) {
 			// For external functions (like std::print), we might not have them in our symbol table
 			// Return a placeholder - the actual linking will happen later
-			return { Type::Int, 32, qualifiedIdNode.name(), 0ULL };
+			return { Type::Int, 32,  StringTable::getOrInternStringHandle(qualifiedIdNode.name()), 0ULL };
 		}
 
 		if (found_symbol->is<DeclarationNode>()) {
@@ -5132,7 +5089,7 @@ private:
 				op.result.type = type_node.type();
 				op.result.size_in_bits = static_cast<int>(type_node.size_in_bits());
 				op.result.value = result_temp;
-				op.global_name = qualifiedIdNode.name();  // Use the identifier name
+				op.global_name = StringTable::getOrInternStringHandle(qualifiedIdNode.name());  // Use the identifier name
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 				// Return the temp variable that will hold the loaded value
@@ -5141,7 +5098,7 @@ private:
 			} else {
 				// Local variable - just return the name
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return { type_node.type(), static_cast<int>(type_node.size_in_bits()), qualifiedIdNode.name(), static_cast<unsigned long long>(type_index) };
+				return { type_node.type(), static_cast<int>(type_node.size_in_bits()),  StringTable::getOrInternStringHandle(qualifiedIdNode.name()), static_cast<unsigned long long>(type_index) };
 			}
 		}
 
@@ -5158,7 +5115,7 @@ private:
 			op.result.type = type_node.type();
 			op.result.size_in_bits = size_bits;
 			op.result.value = result_temp;
-			op.global_name = qualifiedIdNode.name();  // Use the identifier name
+			op.global_name = StringTable::getOrInternStringHandle(qualifiedIdNode.name());  // Use the identifier name
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 			// Return the temp variable that will hold the loaded value
@@ -5170,7 +5127,7 @@ private:
 		if (found_symbol->is<FunctionDeclarationNode>()) {
 			// This is a function - just return the name for function calls
 			// The actual function call handling is done elsewhere
-			return { Type::Function, 64, qualifiedIdNode.name(), 0ULL };
+			return { Type::Function, 64, StringTable::getOrInternStringHandle(qualifiedIdNode.name()), 0ULL };
 		}
 
 		// If we get here, the symbol is not a supported type
@@ -5309,13 +5266,13 @@ private:
 				out.clear();
 				out.emplace_back(static_local_it->second.type);
 				out.emplace_back(static_cast<int>(static_local_it->second.size_in_bits));
-				out.emplace_back(static_local_it->second.mangled_name);  // Already a StringHandle
+				out.emplace_back(static_local_it->second.mangled_name);
 				return true;
 			}
 
-			std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+			std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
 			if (!symbol.has_value() && global_symbol_table_) {
-				symbol = global_symbol_table_->lookup(identifier.name());
+				symbol = global_symbol_table_->lookup(identifier_handle);
 			}
 			if (!symbol.has_value()) {
 				return false;
@@ -5333,7 +5290,7 @@ private:
 			out.clear();
 			out.emplace_back(type_node->type());
 			out.emplace_back(static_cast<int>(type_node->size_in_bits()));
-			out.emplace_back(identifier.name());
+			out.emplace_back(identifier_handle);
 			return true;
 		};
 
@@ -5391,7 +5348,7 @@ private:
 				member_load.result.value = ptr_temp;
 				member_load.result.type = member->type;
 				member_load.result.size_in_bits = 64;  // pointer
-				member_load.object = object_name;
+				member_load.object = StringTable::getOrInternStringHandle(object_name);
 				member_load.member_name = StringTable::getOrInternStringHandle(member_name);
 				member_load.offset = static_cast<int>(member->offset);
 				member_load.is_reference = true;
@@ -5435,7 +5392,7 @@ private:
 				member_load.result.value = current_val;
 				member_load.result.type = member->type;
 				member_load.result.size_in_bits = member_size_bits;
-				member_load.object = object_name;
+				member_load.object = StringTable::getOrInternStringHandle(object_name);
 				member_load.member_name = StringTable::getOrInternStringHandle(member_name);
 				member_load.offset = static_cast<int>(member->offset);
 				member_load.is_reference = false;
@@ -5455,7 +5412,7 @@ private:
 				
 				// Store back to member
 				MemberStoreOp store_op;
-				store_op.object = object_name;
+				store_op.object = StringTable::getOrInternStringHandle(object_name);
 				store_op.member_name = StringTable::getOrInternStringHandle(member_name);
 				store_op.offset = static_cast<int>(member->offset);
 				store_op.value = { member->type, member_size_bits, result_var };
@@ -5901,9 +5858,9 @@ private:
 
 		// Generate unique labels for this ternary
 		static size_t ternary_counter = 0;
-		std::string_view true_label = StringBuilder().append("ternary_true_").append(ternary_counter).commit();
-		std::string_view false_label = StringBuilder().append("ternary_false_").append(ternary_counter).commit();
-		std::string_view end_label = StringBuilder().append("ternary_end_").append(ternary_counter).commit();
+		auto true_label = StringTable::createStringHandle(StringBuilder().append("ternary_true_").append(ternary_counter));
+		auto false_label = StringTable::createStringHandle(StringBuilder().append("ternary_false_").append(ternary_counter));
+		auto end_label = StringTable::createStringHandle(StringBuilder().append("ternary_end_").append(ternary_counter));
 		ternary_counter++;
 
 		// Evaluate the condition
@@ -5911,13 +5868,13 @@ private:
 	
 		// Generate conditional branch: if condition true goto true_label, else goto false_label
 		CondBranchOp cond_branch;
-		cond_branch.label_true = StringTable::getOrInternStringHandle(true_label);
-		cond_branch.label_false = StringTable::getOrInternStringHandle(false_label);
+		cond_branch.label_true = true_label;
+		cond_branch.label_false = false_label;
 		cond_branch.condition = toTypedValue(std::span<const IrOperand>(condition_operands.data(), condition_operands.size()));
 		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), ternaryNode.get_token()));
 
 		// True branch label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(true_label)}, ternaryNode.get_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = true_label}, ternaryNode.get_token()));
 		
 		// Evaluate true expression
 		auto true_operands = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>());
@@ -5940,7 +5897,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, ternaryNode.get_token()));
 
 		// False branch label
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(false_label)}, ternaryNode.get_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = false_label}, ternaryNode.get_token()));
 	
 		// Evaluate false expression
 		auto false_operands = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
@@ -5955,7 +5912,7 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_false_op), ternaryNode.get_token()));
 		
 		// End label (merge point)
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, ternaryNode.get_token()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, ternaryNode.get_token()));
 		
 		// Return the result variable
 		return { result_type, result_size, result_var, 0ULL };
@@ -6062,7 +6019,7 @@ private:
 												ArrayStoreOp payload;
 												payload.element_type = element_type;
 												payload.element_size_in_bits = element_size;
-												payload.array = StringBuilder().append(object_name).append(".").append(member_name).commit();
+												payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
 												payload.member_offset = static_cast<int64_t>(member->offset);
 												payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
 												
@@ -6141,7 +6098,7 @@ private:
 				ArrayStoreOp payload;
 				payload.element_type = std::get<Type>(arrayAccessIrOperands[0]);
 				payload.element_size_in_bits = std::get<int>(arrayAccessIrOperands[1]);
-				payload.array = array_name;
+				payload.array = StringTable::getOrInternStringHandle(array_name);
 				payload.member_offset = 0;  // Not a member array
 				payload.is_pointer_to_array = is_pointer_to_array;
 				
@@ -6268,7 +6225,7 @@ private:
 							load_ref.result.value = ref_ptr_temp;
 							load_ref.result.type = member->type;
 							load_ref.result.size_in_bits = 64;  // Pointer is always 64-bit
-							load_ref.object = object_name;
+							load_ref.object = StringTable::getOrInternStringHandle(object_name);
 							load_ref.member_name = StringTable::getOrInternStringHandle(member_name);
 							load_ref.offset = static_cast<int>(member->offset);
 							load_ref.is_reference = true;  // Load the pointer value
@@ -6303,7 +6260,7 @@ private:
 							member_store.value.type = member->type;
 							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
 							member_store.value.value = member_value;
-							member_store.object = object_name;
+							member_store.object = StringTable::getOrInternStringHandle(object_name);
 							member_store.member_name = StringTable::getOrInternStringHandle(member_name);
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
@@ -6432,12 +6389,12 @@ private:
 										TempVar ret_var = var_counter.next();
 										std::vector<IrOperand> call_operands;
 										call_operands.emplace_back(ret_var);
-										call_operands.emplace_back(std::string(StringTable::getStringView(copy_assign_op->getName())));  // "operator="
+										call_operands.emplace_back(copy_assign_op->getName());  // "operator="
 
 										// Add 'this' pointer (the LHS object)
 										call_operands.emplace_back(lhs_type.type());
 										call_operands.emplace_back(static_cast<int>(lhs_type.size_in_bits()));
-										call_operands.emplace_back(lhs_name);
+										call_operands.emplace_back(StringTable::getOrInternStringHandle(lhs_name));
 
 										// Generate IR for the RHS value
 										auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
@@ -6609,7 +6566,7 @@ private:
 						assign_op.result = result_var;
 						assign_op.lhs.type = lhs_type.type();
 						assign_op.lhs.size_in_bits = static_cast<int>(lhs_type.size_in_bits());
-						assign_op.lhs.value = lhs_name;
+						assign_op.lhs.value = StringTable::getOrInternStringHandle(lhs_name);
 						assign_op.rhs = toTypedValue(rhsIrOperands);
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 						
@@ -6646,7 +6603,7 @@ private:
 
 					// Generate GlobalStore IR: global_store @global_name, %value
 					std::vector<IrOperand> store_operands;
-					store_operands.emplace_back(lhs_name);  // global name
+					store_operands.emplace_back(StringTable::getOrInternStringHandle(lhs_name));  // global name
 					
 					// Extract the value from RHS (rhsIrOperands[2])
 					if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
@@ -6692,14 +6649,14 @@ private:
 				const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 				
 				// Get the LHS value - can be an identifier, member access, or other expression
-				std::variant<std::string_view, TempVar> lhs_value;
+				std::variant<StringHandle, TempVar> lhs_value;
 				TypeIndex lhs_type_index = 0;
 				
 				if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 					// Simple identifier case: p1 <=> p2
 					const auto& lhs_id = std::get<IdentifierNode>(lhs_expr);
 					std::string_view lhs_name = lhs_id.name();
-					lhs_value = lhs_name;
+					lhs_value = StringTable::getOrInternStringHandle(lhs_name);
 					
 					// Get the struct type info from symbol table
 					auto symbol = symbol_table.lookup(lhs_name);
@@ -6789,13 +6746,13 @@ private:
 								return_type_node,
 								param_types,
 								false, // not variadic
-								type_info.name()
+								StringTable::getStringView(type_info.name())
 							);
 							
 							// Create the call operation
 							CallOp call_op;
 							call_op.result = result_var;
-							call_op.function_name = std::string(mangled_name);
+							call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 							call_op.return_type = return_type;
 							call_op.return_size_in_bits = return_size;
 							call_op.is_member_function = true;
@@ -7503,7 +7460,7 @@ private:
 		}
 		
 		// va_list_ir[2] contains the variable/temp identifier
-		std::variant<std::string_view, TempVar> va_list_var;
+		std::variant<StringHandle, TempVar> va_list_var;
 		if (std::holds_alternative<TempVar>(va_list_ir[2])) {
 			va_list_var = std::get<TempVar>(va_list_ir[2]);
 		} else if (std::holds_alternative<StringHandle>(va_list_ir[2])) {
@@ -7531,13 +7488,12 @@ private:
 				// va_list is a variable name - load its value (which is a pointer) into a TempVar
 				va_list_struct_ptr = var_counter.next();
 				StringHandle var_name_handle = std::get<StringHandle>(va_list_var);
-			std::string_view var_name = StringTable::getStringView(var_name_handle);
 				
 				// Use Assignment to load the pointer value from the variable
 				AssignmentOp load_pointer;
 				load_pointer.result = va_list_struct_ptr;
 				load_pointer.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
-				load_pointer.rhs = TypedValue{Type::UnsignedLongLong, 64, var_name};
+				load_pointer.rhs = TypedValue{Type::UnsignedLongLong, 64, var_name_handle};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_pointer), functionCallNode.called_from()));
 			}
 			
@@ -7760,12 +7716,12 @@ private:
 			struct_addr_op.result = va_list_struct_addr;
 			struct_addr_op.pointee_type = Type::Char;
 			struct_addr_op.pointee_size_in_bits = 8;
-			struct_addr_op.operand = std::string("__varargs_va_list_struct__");
+			struct_addr_op.operand = StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(struct_addr_op), functionCallNode.called_from()));
 			
 			// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
 			// Get the va_list variable from arg0_ir[2]
-			std::variant<std::string_view, TempVar> va_list_var;
+			std::variant<StringHandle, TempVar> va_list_var;
 			if (std::holds_alternative<TempVar>(arg0_ir[2])) {
 				va_list_var = std::get<TempVar>(arg0_ir[2]);
 			} else if (std::holds_alternative<StringHandle>(arg0_ir[2])) {
@@ -7804,7 +7760,7 @@ private:
 			
 			addr_op.pointee_type = param_type.type();
 			addr_op.pointee_size_in_bits = static_cast<int>(param_type.size_in_bits());
-			addr_op.operand = last_param_name;
+			addr_op.operand = StringTable::getOrInternStringHandle(last_param_name);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
 			
 			// Add 8 bytes (64 bits) to get to the next parameter slot
@@ -7816,7 +7772,7 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
 			
 			// Assign to va_list variable
-			std::variant<std::string_view, TempVar> va_list_var;
+			std::variant<StringHandle, TempVar> va_list_var;
 			if (std::holds_alternative<TempVar>(arg0_ir[2])) {
 				va_list_var = std::get<TempVar>(arg0_ir[2]);
 			} else if (std::holds_alternative<StringHandle>(arg0_ir[2])) {
@@ -7898,7 +7854,7 @@ private:
 				// Add the indirect call instruction
 				IndirectCallOp op{
 					.result = ret_var,
-					.function_pointer = func_name_view,
+					.function_pointer = StringTable::getOrInternStringHandle(func_name_view),
 					.arguments = std::move(arguments)
 				};
 				ir_.addInstruction(IrOpcode::IndirectCall, std::move(op), functionCallNode.called_from());
@@ -7915,13 +7871,13 @@ private:
 		}
 
 		// Get the function declaration to extract parameter types for mangling
-		std::string function_name = std::string(func_name_view);
+		std::string_view function_name = func_name_view;
 		const FunctionDeclarationNode* matched_func_decl = nullptr;
 		
 		// Check if FunctionCallNode has a pre-computed mangled name (for namespace-scoped functions)
 		// If so, use it directly and skip the lookup logic
 		if (functionCallNode.has_mangled_name()) {
-			function_name = std::string(functionCallNode.mangled_name());
+			function_name = functionCallNode.mangled_name();
 			FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name from FunctionCallNode: {}", function_name);
 			// We don't need to find matched_func_decl since we already have the mangled name
 			// The mangled name is sufficient for generating the call instruction
@@ -7944,131 +7900,131 @@ private:
 			// DeclarationNode that was selected by overload resolution
 			FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}", 
 				func_name_view, all_overloads.size(), gSymbolTable_overloads.size());
-		for (const auto& overload : all_overloads) {
-			if (overload.is<FunctionDeclarationNode>()) {
-				const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
-				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
-				FLASH_LOG_FORMAT(Codegen, Debug, "  Checking overload at {}, looking for {}", 
-					(void*)overload_decl, (void*)&decl_node);
-				if (overload_decl == &decl_node) {
-					// Found the matching overload
-					matched_func_decl = overload_func_decl;
+			for (const auto& overload : all_overloads) {
+				if (overload.is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
+					const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
+					FLASH_LOG_FORMAT(Codegen, Debug, "  Checking overload at {}, looking for {}", 
+						(void*)overload_decl, (void*)&decl_node);
+					if (overload_decl == &decl_node) {
+						// Found the matching overload
+						matched_func_decl = overload_func_decl;
 
-					// Use pre-computed mangled name if available, otherwise generate it
-					if (matched_func_decl->has_mangled_name()) {
-						function_name = matched_func_decl->mangled_name();
-						FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name: {}", function_name);
-					} else if (matched_func_decl->linkage() != Linkage::C) {
-						function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
-						FLASH_LOG_FORMAT(Codegen, Debug, "Generated mangled name (no pre-computed): {}", function_name);
+						// Use pre-computed mangled name if available, otherwise generate it
+						if (matched_func_decl->has_mangled_name()) {
+							function_name = matched_func_decl->mangled_name();
+							FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name: {}", function_name);
+						} else if (matched_func_decl->linkage() != Linkage::C) {
+							function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
+							FLASH_LOG_FORMAT(Codegen, Debug, "Generated mangled name (no pre-computed): {}", function_name);
+						}
+						break;
 					}
-					break;
 				}
 			}
-		}
 	
-		// Fallback: if pointer comparison failed (e.g., for template instantiations),
-		// try to find the function by checking if there's only one overload with this name
-		if (!matched_func_decl && all_overloads.size() == 1 && all_overloads[0].is<FunctionDeclarationNode>()) {
-			matched_func_decl = &all_overloads[0].as<FunctionDeclarationNode>();
+			// Fallback: if pointer comparison failed (e.g., for template instantiations),
+			// try to find the function by checking if there's only one overload with this name
+			if (!matched_func_decl && all_overloads.size() == 1 && all_overloads[0].is<FunctionDeclarationNode>()) {
+				matched_func_decl = &all_overloads[0].as<FunctionDeclarationNode>();
 		
-			// Use pre-computed mangled name if available, otherwise generate it
-			if (matched_func_decl->has_mangled_name()) {
-				function_name = matched_func_decl->mangled_name();
-				FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name (fallback 1): {}", function_name);
-			} else if (matched_func_decl->linkage() != Linkage::C) {
-				function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
+				// Use pre-computed mangled name if available, otherwise generate it
+				if (matched_func_decl->has_mangled_name()) {
+					function_name = matched_func_decl->mangled_name();
+					FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name (fallback 1): {}", function_name);
+				} else if (matched_func_decl->linkage() != Linkage::C) {
+					function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
+				}
 			}
-		}
 
-		// Additional fallback: check gSymbolTable directly (for member functions added during delayed parsing)
-		if (!matched_func_decl && gSymbolTable_overloads.size() == 1 && gSymbolTable_overloads[0].is<FunctionDeclarationNode>()) {
-			matched_func_decl = &gSymbolTable_overloads[0].as<FunctionDeclarationNode>();
+			// Additional fallback: check gSymbolTable directly (for member functions added during delayed parsing)
+			if (!matched_func_decl && gSymbolTable_overloads.size() == 1 && gSymbolTable_overloads[0].is<FunctionDeclarationNode>()) {
+				matched_func_decl = &gSymbolTable_overloads[0].as<FunctionDeclarationNode>();
 		
-			// Use pre-computed mangled name if available, otherwise generate it
-			if (matched_func_decl->has_mangled_name()) {
-				function_name = matched_func_decl->mangled_name();
-				FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name (fallback 2): {}", function_name);
-			} else if (matched_func_decl->linkage() != Linkage::C) {
-				function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
+				// Use pre-computed mangled name if available, otherwise generate it
+				if (matched_func_decl->has_mangled_name()) {
+					function_name = matched_func_decl->mangled_name();
+					FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name (fallback 2): {}", function_name);
+				} else if (matched_func_decl->linkage() != Linkage::C) {
+					function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
+				}
 			}
-		}
 
-		// Final fallback: if we're in a member function, check the current struct's member functions
-		if (!matched_func_decl && !current_struct_name_.empty()) {
-			auto type_it = gTypesByName.find(std::string(current_struct_name_));
-			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
-				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-				if (struct_info) {
-					for (const auto& member_func : struct_info->member_functions) {
-						if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-							const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-							if (func_decl.decl_node().identifier_token().value() == func_name_view) {
-								// Found matching member function
-								matched_func_decl = &func_decl;
+			// Final fallback: if we're in a member function, check the current struct's member functions
+			if (!matched_func_decl && !current_struct_name_.empty()) {
+				auto type_it = gTypesByName.find(std::string(current_struct_name_));
+				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+					if (struct_info) {
+						for (const auto& member_func : struct_info->member_functions) {
+							if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+								const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+								if (func_decl.decl_node().identifier_token().value() == func_name_view) {
+									// Found matching member function
+									matched_func_decl = &func_decl;
 								
-								// Use pre-computed mangled name if available, otherwise generate it
-								if (matched_func_decl->has_mangled_name()) {
-									function_name = matched_func_decl->mangled_name();
-								} else if (matched_func_decl->linkage() != Linkage::C) {
-									function_name = generateMangledNameForCall(*matched_func_decl, current_struct_name_);
+									// Use pre-computed mangled name if available, otherwise generate it
+									if (matched_func_decl->has_mangled_name()) {
+										function_name = matched_func_decl->mangled_name();
+									} else if (matched_func_decl->linkage() != Linkage::C) {
+										function_name = generateMangledNameForCall(*matched_func_decl, current_struct_name_);
+									}
+									break;
 								}
-								break;
 							}
 						}
 					}
-				}
 				
-				// If not found in current struct, check base classes
-				if (!matched_func_decl && struct_info) {
-					// Search through base classes recursively
-					std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
-						for (const auto& base_spec : current_struct->base_classes) {
-							// Look up base class in gTypeInfo
-							if (base_spec.type_index < gTypeInfo.size()) {
-								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
-								if (base_type_info.isStruct()) {
-									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
-									if (base_struct_info) {
-										// Check member functions in base class
-										for (const auto& member_func : base_struct_info->member_functions) {
-											if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-												const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-												if (func_decl.decl_node().identifier_token().value() == func_name_view) {
-													// Found matching member function in base class
-													matched_func_decl = &func_decl;
+					// If not found in current struct, check base classes
+					if (!matched_func_decl && struct_info) {
+						// Search through base classes recursively
+						std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
+							for (const auto& base_spec : current_struct->base_classes) {
+								// Look up base class in gTypeInfo
+								if (base_spec.type_index < gTypeInfo.size()) {
+									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+									if (base_type_info.isStruct()) {
+										const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+										if (base_struct_info) {
+											// Check member functions in base class
+											for (const auto& member_func : base_struct_info->member_functions) {
+												if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+													const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+													if (func_decl.decl_node().identifier_token().value() == func_name_view) {
+														// Found matching member function in base class
+														matched_func_decl = &func_decl;
 													
-													// Use pre-computed mangled name if available
-													if (matched_func_decl->has_mangled_name()) {
-														function_name = matched_func_decl->mangled_name();
-													} else if (matched_func_decl->linkage() != Linkage::C) {
-														// Generate mangled name with base class name
-														function_name = generateMangledNameForCall(*matched_func_decl, StringTable::getStringView(base_struct_info->getName()));
+														// Use pre-computed mangled name if available
+														if (matched_func_decl->has_mangled_name()) {
+															function_name = matched_func_decl->mangled_name();
+														} else if (matched_func_decl->linkage() != Linkage::C) {
+															// Generate mangled name with base class name
+															function_name = generateMangledNameForCall(*matched_func_decl, StringTable::getStringView(base_struct_info->getName()));
+														}
+														return; // Stop searching once found
 													}
-													return; // Stop searching once found
 												}
 											}
-										}
-										// Recursively search base classes of this base class
-										if (!matched_func_decl) {
-											searchBaseClasses(base_struct_info);
+											// Recursively search base classes of this base class
+											if (!matched_func_decl) {
+												searchBaseClasses(base_struct_info);
+											}
 										}
 									}
 								}
 							}
-						}
-					};
-					searchBaseClasses(struct_info);
+						};
+						searchBaseClasses(struct_info);
+					}
 				}
 			}
-		}
-	} // End of symbol table lookup (only if no pre-computed mangled name)
+		} // End of symbol table lookup (only if no pre-computed mangled name)
 	
 		// Always add the return variable and function name (mangled for overload resolution)
 		FLASH_LOG_FORMAT(Codegen, Debug, "Final function_name for call: '{}'", function_name);
 		TempVar ret_var = var_counter.next();
 		irOperands.emplace_back(ret_var);
-		irOperands.emplace_back(function_name);
+		irOperands.emplace_back(StringTable::getOrInternStringHandle(function_name));
 
 		// Process arguments - match them with parameter types
 		size_t arg_index = 0;
@@ -8142,7 +8098,7 @@ private:
 						// Argument is already a reference - just pass it through
 						irOperands.emplace_back(type_node.type());
 						irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
-						irOperands.emplace_back(identifier.name());
+						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 					} else {
 						// Argument is a value - take its address
 						TempVar addr_var = var_counter.next();
@@ -8161,14 +8117,16 @@ private:
 					}
 				} else if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 					// Argument is a reference but parameter expects a value - dereference
-				TempVar deref_var = var_counter.next();
+					TempVar deref_var = var_counter.next();
 
-				DereferenceOp deref_op;
-				deref_op.result = deref_var;
-				deref_op.pointee_type = type_node.type();
-				deref_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
-				deref_op.pointer = identifier.name();
-				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));					// Pass the dereferenced value
+					DereferenceOp deref_op;
+					deref_op.result = deref_var;
+					deref_op.pointee_type = type_node.type();
+					deref_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
+					deref_op.pointer = StringTable::getOrInternStringHandle(identifier.name());
+					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
+					
+					// Pass the dereferenced value
 					irOperands.emplace_back(type_node.type());
 					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
 					irOperands.emplace_back(deref_var);
@@ -8178,10 +8136,9 @@ private:
 					int arg_size = (type_node.pointer_depth() > 0) ? 64 : static_cast<int>(type_node.size_in_bits());
 					irOperands.emplace_back(type_node.type());
 					irOperands.emplace_back(arg_size);
-					irOperands.emplace_back(identifier.name());
+					irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 				}
-			}
-			else {
+			} else {
 				// Not an identifier - could be a literal, expression result, etc.
 				// Check if parameter expects a reference and argument is a literal
 				if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
@@ -8246,7 +8203,7 @@ private:
 		// Create CallOp structure
 		CallOp call_op;
 		call_op.result = ret_var;
-		call_op.function_name = function_name;
+		call_op.function_name = StringTable::getOrInternStringHandle(function_name);
 		
 		// Get return type information
 		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
@@ -8349,8 +8306,8 @@ private:
 			// For capturing lambdas, we must call operator() with the closure object.
 			if (lambda.captures().empty()) {
 				// Non-capturing lambda: call __invoke directly
-				std::string closure_type_name = lambda.generate_lambda_name();
-				std::string invoke_name = closure_type_name + "_invoke";
+				StringHandle closure_type_name = lambda.generate_lambda_name();
+				StringHandle invoke_name = StringTable::getOrInternStringHandle(StringBuilder().append(closure_type_name).append("_invoke"sv));
 
 				// Generate a direct function call to __invoke
 				TempVar ret_var = var_counter.next();
@@ -8491,14 +8448,14 @@ private:
 				
 				// Generate mangled name for __invoke (matching how it's defined in generateLambdaInvokeFunction)
 				std::string_view mangled = generateMangledNameForCall(
-					invoke_name,
+					StringTable::getStringView(invoke_name),
 					return_type_node,
 					param_types,
 					false,  // not variadic
 					""  // not a member function
 				);
 				
-				call_op.function_name = std::string(mangled);
+				call_op.function_name = StringTable::getOrInternStringHandle(mangled);
 				call_op.is_member_function = false;
 				call_op.is_variadic = false;  // Lambdas cannot be variadic in C++20
 
@@ -8516,7 +8473,7 @@ private:
 						TypedValue arg;
 						arg.type = type_node.type();
 						arg.size_in_bits = static_cast<int>(type_node.size_in_bits());
-						arg.value = identifier.name();
+						arg.value = StringTable::getOrInternStringHandle(identifier.name());
 						call_op.args.push_back(arg);
 					} else {
 						// Convert argumentIrOperands to TypedValue
@@ -8717,7 +8674,7 @@ private:
 								// TODO: Need to handle object expression properly
 								assert(false && "Function pointer member call on expression not yet supported");
 							} else {
-								member_load.object = object_name;
+								member_load.object = StringTable::getOrInternStringHandle(object_name);
 							}
 							
 							member_load.member_name = StringTable::getOrInternStringHandle(func_name);  // Member name
@@ -8971,7 +8928,7 @@ private:
 			vcall_op.result.value = ret_var;
 			vcall_op.object_type = object_type.type();
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
-			vcall_op.object = object_name;
+			vcall_op.object = StringTable::getOrInternStringHandle(object_name);
 			vcall_op.vtable_index = vtable_index;
 
 			// Generate IR for function arguments
@@ -8988,7 +8945,7 @@ private:
 					TypedValue tv;
 					tv.type = type_node.type();
 					tv.size_in_bits = static_cast<int>(type_node.size_in_bits());
-					tv.value = identifier.name();
+					tv.value = StringTable::getOrInternStringHandle(identifier.name());
 					vcall_op.arguments.push_back(tv);
 				}
 				else {
@@ -9010,18 +8967,18 @@ private:
 			std::vector<TypeSpecifierNode> param_types;
 			
 			// Check if this is an instantiated template function
-			std::string function_name;
 			std::string_view func_name = func_decl_node.identifier_token().value();
+			StringHandle function_name;
 			
 			// Check if this is a member function - use struct_info to determine
 			if (struct_info) {
 				// For nested classes, we need the fully qualified name from TypeInfo
-				std::string_view struct_name = StringTable::getStringView(struct_info->getName());
-				auto type_it = gTypesByName.find(std::string(struct_name));
+				auto struct_name = struct_info->getName();
+				auto type_it = gTypesByName.find(struct_name);
 				if (type_it != gTypesByName.end()) {
 					struct_name = type_it->second->name();
 				}
-				std::string qualified_template_name = std::string(struct_name) + "::" + std::string(func_name);
+				auto qualified_template_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_name).append("::"sv).append(func_name));
 				
 				// Check if this is a template that has been instantiated
 				auto template_opt = gTemplateRegistry.lookupTemplate(qualified_template_name);
@@ -9055,10 +9012,7 @@ private:
 					std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
 					
 					// Build qualified function name with mangled template name
-					function_name.reserve(struct_name.size() + 2 + mangled_func_name.size());
-					function_name += struct_name;
-					function_name += "::";
-					function_name += mangled_func_name;
+					function_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_name).append("::"sv).append(mangled_func_name));
 				} else {
 					// Regular member function (not a template) - generate proper mangled name
 					// Use the function declaration from struct_info if available (has correct parameters)
@@ -9071,7 +9025,7 @@ private:
 					const auto& return_type_node = func_for_mangling->decl_node().type_node().as<TypeSpecifierNode>();
 					
 					// Check if this is a generic lambda call (lambda with auto parameters)
-					bool is_generic_lambda = struct_name.substr(0, 9) == "__lambda_";
+					bool is_generic_lambda = StringTable::getStringView(struct_name).substr(0, 9) == "__lambda_"sv;
 					if (is_generic_lambda) {
 						// For generic lambdas, we need to deduce auto parameter types from arguments
 						// Collect argument types first
@@ -9129,7 +9083,7 @@ private:
 									
 									// Also store the deduced type in LambdaInfo for use by generateLambdaOperatorCallFunction
 									for (auto& lambda_info : collected_lambdas_) {
-										if (std::string(lambda_info.closure_type_name) == std::string(struct_name)) {
+										if (lambda_info.closure_type_name == struct_name) {
 											lambda_info.setDeducedType(arg_idx, deduced_type);
 											break;
 										}
@@ -9153,23 +9107,23 @@ private:
 					
 					// Generate proper mangled name including parameter types
 					std::string_view mangled = generateMangledNameForCall(
-						std::string(func_name),
+						func_name,
 						return_type_node,
 						param_types,
 						func_for_mangling->is_variadic(),
-						struct_name
+						StringTable::getStringView(struct_name)
 					);
-					function_name = std::string(mangled);
+					function_name = StringTable::getOrInternStringHandle(mangled);
 				}
 			} else {
 				// Non-member function or fallback
-				function_name = std::string(func_name);
+				function_name = StringTable::getOrInternStringHandle(func_name);
 			}
 			
 			// Create CallOp structure
 			CallOp call_op;
 			call_op.result = ret_var;
-			call_op.function_name = std::move(function_name);
+			call_op.function_name = function_name;
 			
 			// Get return type information
 			const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();
@@ -9190,7 +9144,7 @@ private:
 			call_op.args.push_back(TypedValue{
 				.type = object_type.type(),
 				.size_in_bits = static_cast<int>(object_type.size_in_bits()),
-				.value = IrValue(object_name)
+				.value = IrValue(StringTable::getOrInternStringHandle(object_name))
 			});
 
 			// Generate IR for function arguments and add to CallOp
@@ -9238,7 +9192,7 @@ private:
 						call_op.args.push_back(TypedValue{
 							.type = Type::FunctionPointer,
 							.size_in_bits = 64,  // Pointer size
-							.value = IrValue(identifier.name())
+							.value = IrValue(StringTable::getOrInternStringHandle(identifier.name()))
 						});
 					} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 						const auto& decl_node = symbol->as<DeclarationNode>();
@@ -9252,7 +9206,7 @@ private:
 								call_op.args.push_back(TypedValue{
 									.type = type_node.type(),
 									.size_in_bits = static_cast<int>(type_node.size_in_bits()),
-									.value = IrValue(identifier.name()),
+									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 									.is_reference = true
 								});
 							} else {
@@ -9279,7 +9233,7 @@ private:
 							call_op.args.push_back(TypedValue{
 								.type = type_node.type(),
 								.size_in_bits = static_cast<int>(type_node.size_in_bits()),
-								.value = IrValue(identifier.name())
+								.value = IrValue(StringTable::getOrInternStringHandle(identifier.name()))
 							});
 						}
 					} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
@@ -9296,7 +9250,7 @@ private:
 								call_op.args.push_back(TypedValue{
 									.type = type_node.type(),
 									.size_in_bits = static_cast<int>(type_node.size_in_bits()),
-									.value = IrValue(identifier.name()),
+									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 									.is_reference = true
 								});
 							} else {
@@ -9323,7 +9277,7 @@ private:
 							call_op.args.push_back(TypedValue{
 								.type = type_node.type(),
 								.size_in_bits = static_cast<int>(type_node.size_in_bits()),
-								.value = IrValue(identifier.name())
+								.value = IrValue(StringTable::getOrInternStringHandle(identifier.name()))
 							});
 						}
 					} else {
@@ -9508,7 +9462,7 @@ private:
 										payload.result = result_var;
 										payload.element_type = element_type;
 										payload.element_size_in_bits = element_size_bits;
-										payload.array = StringBuilder().append(object_name).append(".").append(member_name).commit();
+										payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
 										payload.member_offset = static_cast<int64_t>(member->offset);
 										payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
 										
@@ -9632,7 +9586,7 @@ private:
 		std::string_view member_name = memberAccessNode.member_name();
 
 		// Variables to hold the base object info
-		std::variant<std::string_view, TempVar> base_object;
+		std::variant<StringHandle, TempVar> base_object;
 		Type base_type = Type::Void;
 		size_t base_type_index = 0;
 
@@ -9688,7 +9642,7 @@ private:
 						return {};
 					}
 
-					base_object = object_name;
+					base_object = StringTable::getOrInternStringHandle(object_name);
 					base_type = object_type.type();
 					base_type_index = object_type.type_index();
 				}
@@ -9769,7 +9723,7 @@ private:
 							load_copy_this.result.value = copy_this_ref;
 							load_copy_this.result.type = Type::Struct;
 							load_copy_this.result.size_in_bits = 64;  // Pointer size
-							load_copy_this.object = "this"sv;  // Lambda's this (the closure)
+							load_copy_this.object = StringTable::getOrInternStringHandle("this"sv);  // Lambda's this (the closure)
 							load_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 							load_copy_this.offset = -1;
 							load_copy_this.is_reference = false;
@@ -9788,7 +9742,7 @@ private:
 							load_this.result.value = this_ptr;
 							load_this.result.type = Type::Void;
 							load_this.result.size_in_bits = 64;
-							load_this.object = "this"sv;  // Lambda's this (the closure)
+							load_this.object = StringTable::getOrInternStringHandle("this"sv);  // Lambda's this (the closure)
 							load_this.member_name = StringTable::getOrInternStringHandle("__this");
 							load_this.offset = -1;
 							load_this.is_reference = false;
@@ -9890,7 +9844,7 @@ private:
 					return {};
 				}
 
-				base_object = object_name;
+				base_object = StringTable::getOrInternStringHandle(object_name);
 				base_type = object_type.type();
 				base_type_index = object_type.type_index();
 			}
@@ -9963,7 +9917,7 @@ private:
 			// Use the owner_struct name, not the current struct, to get the correct qualified name
 			StringBuilder qualified_name_sb;
 			qualified_name_sb.append(StringTable::getStringView(owner_struct->getName()));
-			qualified_name_sb.append("::");
+			qualified_name_sb.append("::"sv);
 			qualified_name_sb.append(member_name);
 			std::string_view qualified_name = qualified_name_sb.commit();
 			
@@ -9977,7 +9931,7 @@ private:
 			global_load.result.value = result_var;
 			global_load.result.type = static_member->type;
 			global_load.result.size_in_bits = static_cast<int>(static_member->size * 8);
-			global_load.global_name = qualified_name;
+			global_load.global_name = StringTable::getOrInternStringHandle(qualified_name);
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(global_load), Token()));
 			
@@ -11612,14 +11566,14 @@ private:
 			const auto& type_node = typeidNode.operand().as<TypeSpecifierNode>();
 
 			// Get type information
-			std::string_view type_name;
+			StringHandle type_name;
 			if (type_node.type() == Type::Struct) {
 				TypeIndex type_idx = type_node.type_index();
 				if (type_idx < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[type_idx];
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
-						type_name = StringTable::getStringView(struct_info->getName());
+						type_name = struct_info->getName();
 					}
 				}
 			}
@@ -11637,7 +11591,7 @@ private:
 			auto expr_operands = visitExpressionNode(typeidNode.operand().as<ExpressionNode>());
 
 			// Extract IrValue from expression result
-			std::variant<std::string_view, TempVar> operand_value;
+			std::variant<StringHandle, TempVar> operand_value;
 			if (std::holds_alternative<TempVar>(expr_operands[2])) {
 				operand_value = std::get<TempVar>(expr_operands[2]);
 			} else if (std::holds_alternative<StringHandle>(expr_operands[2])) {
@@ -11693,13 +11647,12 @@ private:
 			// For a named variable, load it into a temp first
 			source_ptr = var_counter.next();
 			StringHandle var_name_handle = std::get<StringHandle>(expr_operands[2]);
-			std::string_view var_name = StringTable::getStringView(var_name_handle);
 			
 			// Generate assignment to load the variable into the temp
 			AssignmentOp load_op;
 			load_op.result = source_ptr;
 			load_op.lhs = TypedValue{std::get<Type>(expr_operands[0]), std::get<int>(expr_operands[1]), source_ptr};
-			load_op.rhs = TypedValue{std::get<Type>(expr_operands[0]), std::get<int>(expr_operands[1]), var_name};
+			load_op.rhs = TypedValue{std::get<Type>(expr_operands[0]), std::get<int>(expr_operands[1]), var_name_handle};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_op), dynamicCastNode.cast_token()));
 		} else {
 			source_ptr = TempVar{0};
@@ -11776,8 +11729,8 @@ private:
 			for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
 				// Generate destructor call
 				DestructorCallOp dtor_op;
-				dtor_op.struct_name = it->struct_name;
-				dtor_op.object = it->variable_name;  // Use std::string directly
+				dtor_op.struct_name = StringTable::getOrInternStringHandle(it->struct_name);
+				dtor_op.object = StringTable::getOrInternStringHandle(it->variable_name);
 				ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
 			}
 			scope_stack_.pop_back();
@@ -11931,7 +11884,7 @@ private:
 			VariableDeclOp lambda_decl_op;
 			lambda_decl_op.type = Type::Struct;
 			lambda_decl_op.size_in_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
-			lambda_decl_op.var_name = closure_var_name;
+			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 			lambda_decl_op.custom_alignment = 0;
 			lambda_decl_op.is_reference = false;
 			lambda_decl_op.is_rvalue_reference = false;
@@ -11948,7 +11901,7 @@ private:
 			VariableDeclOp lambda_decl_op;
 			lambda_decl_op.type = Type::Struct;
 			lambda_decl_op.size_in_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
-			lambda_decl_op.var_name = closure_var_name;
+			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 			lambda_decl_op.custom_alignment = 0;
 			lambda_decl_op.is_reference = false;
 			lambda_decl_op.is_rvalue_reference = false;
@@ -11978,7 +11931,7 @@ private:
 							store_this.value.type = Type::Void;
 							store_this.value.size_in_bits = 64;
 							store_this.value.value = TempVar(1);
-							store_this.object = closure_var_name;
+							store_this.object = StringTable::getOrInternStringHandle(closure_var_name);
 							store_this.member_name = StringTable::getOrInternStringHandle("__this");
 							store_this.offset = static_cast<int>(member->offset);
 							store_this.is_reference = false;
@@ -12001,7 +11954,7 @@ private:
 							store_copy_this.value.type = Type::Void;
 							store_copy_this.value.size_in_bits = 64;
 							store_copy_this.value.value = TempVar(1);  // 'this' pointer
-							store_copy_this.object = closure_var_name;
+							store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
 							store_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 							store_copy_this.offset = static_cast<int>(member->offset);
 							store_copy_this.is_reference = false;
@@ -12014,7 +11967,7 @@ private:
 
 					std::string_view var_name = capture.identifier_name();  // Already a persistent string_view from AST
 					std::string var_name_str(var_name);  // Single conversion for both uses below
-					const StructMember* member = struct_info->findMember(var_name_str);
+					const StructMember* member = struct_info->findMember(var_name);
 
 					if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
 						// Check if this variable is a captured variable from an enclosing lambda
@@ -12060,7 +12013,7 @@ private:
 								continue;
 							}
 							
-							member_store.object = closure_var_name;
+							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
 							member_store.member_name = member->getName();
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
@@ -12104,7 +12057,7 @@ private:
 									if (enclosing_type_it != gTypesByName.end()) {
 										const TypeInfo* enclosing_type = enclosing_type_it->second;
 										if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
-											const StructMember* enclosing_member = enclosing_struct->findMember(var_name_str);
+											const StructMember* enclosing_member = enclosing_struct->findMember(var_name);
 											if (enclosing_member) {
 												enclosing_offset = static_cast<int>(enclosing_member->offset);
 											}
@@ -12123,7 +12076,7 @@ private:
 									addr_op.result = addr_temp;
 									addr_op.pointee_type = orig_type.type();
 									addr_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
-									addr_op.operand = std::string(var_name);  // AddressOfOp::operand supports std::string
+									addr_op.operand = StringTable::getOrInternStringHandle(var_name);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 								}
 							} else {
@@ -12132,7 +12085,7 @@ private:
 								addr_op.result = addr_temp;
 								addr_op.pointee_type = orig_type.type();
 								addr_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
-								addr_op.operand = std::string(var_name);  // AddressOfOp::operand supports std::string
+								addr_op.operand = StringTable::getOrInternStringHandle(var_name);
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 							}
 
@@ -12141,7 +12094,7 @@ private:
 							member_store.value.type = member->type;
 							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
 							member_store.value.value = addr_temp;
-							member_store.object = closure_var_name;  // Already a persistent string_view
+							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);  // Already a persistent string_view
 							member_store.member_name = member->getName();
 							member_store.offset = static_cast<int>(member->offset);
 							member_store.is_reference = member->is_reference;
@@ -12185,10 +12138,10 @@ private:
 							member_store.value.value = loaded_value;
 						} else {
 							// Regular variable - use directly (var_name is already a persistent string_view from AST)
-							member_store.value.value = var_name;
+							member_store.value.value = StringTable::getOrInternStringHandle(var_name);
 						}
 						
-						member_store.object = closure_var_name;  // Already a persistent string_view
+						member_store.object = StringTable::getOrInternStringHandle(closure_var_name);  // Already a persistent string_view
 						member_store.member_name = member->getName();
 						member_store.offset = static_cast<int>(member->offset);
 						member_store.is_reference = member->is_reference;
@@ -12208,7 +12161,7 @@ private:
 		// - value: closure_var_name (the allocated closure variable)
 		// - type_index: the type index for the closure struct
 		int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
-		return {Type::Struct, closure_size_bits, closure_var_name, static_cast<unsigned long long>(closure_type->type_index_)};
+		return {Type::Struct, closure_size_bits, StringTable::getOrInternStringHandle(closure_var_name), static_cast<unsigned long long>(closure_type->type_index_)};
 	}
 
 
@@ -12288,7 +12241,7 @@ private:
 	void generateLambdaOperatorCallFunction(const LambdaInfo& lambda_info) {
 		// Generate function declaration for operator()
 		FunctionDeclOp func_decl_op;
-		func_decl_op.function_name = std::string("operator()");  // Phase 4: Variant needs explicit type
+		func_decl_op.function_name = StringTable::getOrInternStringHandle("operator()"sv);  // Phase 4: Variant needs explicit type
 		func_decl_op.struct_name = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);  // Phase 4: Variant needs explicit type
 		func_decl_op.return_type = lambda_info.return_type;
 		func_decl_op.return_size_in_bits = lambda_info.return_size;
@@ -12335,7 +12288,7 @@ private:
 			false,  // not variadic
 			lambda_info.closure_type_name
 		);
-		func_decl_op.mangled_name = mangled;
+		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 
 		// Add parameters - use parameter_nodes to get complete type information
 		param_idx = 0;
@@ -12474,8 +12427,8 @@ private:
 	void generateLambdaInvokeFunction(const LambdaInfo& lambda_info) {
 		// Generate function declaration for __invoke
 		FunctionDeclOp func_decl_op;
-		func_decl_op.function_name = std::string(lambda_info.invoke_name);  // Phase 4: Variant needs explicit type
-		func_decl_op.struct_name = std::string("");  // Phase 4: no struct name (static function)
+		func_decl_op.function_name = StringTable::getOrInternStringHandle(lambda_info.invoke_name);  // Variant needs explicit type
+		func_decl_op.struct_name = StringHandle();  // no struct name (static function)
 		func_decl_op.return_type = lambda_info.return_type;
 		func_decl_op.return_size_in_bits = lambda_info.return_size;
 		func_decl_op.return_pointer_depth = 0;  // pointer depth
@@ -12519,7 +12472,7 @@ private:
 			false,  // not variadic
 			""  // not a member function
 		);
-		func_decl_op.mangled_name = mangled;
+		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 
 		// Add parameters - use parameter_nodes to get complete type information
 		param_idx = 0;
@@ -12757,15 +12710,8 @@ private:
 			template_decl.identifier_token().file_index()
 		);
 
-		// Build function name - use StringBuilder to create persistent string_view
-		StringBuilder func_name_builder;
-		func_name_builder.append(inst_info.mangled_name);
-		std::string_view full_func_name = func_name_builder.commit();
-		
-		// Also create persistent string_view for struct name
-		StringBuilder struct_name_builder;
-		struct_name_builder.append(inst_info.struct_name);
-		std::string_view struct_name_view = struct_name_builder.commit();
+		StringHandle full_func_name = StringTable::getOrInternStringHandle(inst_info.mangled_name);
+		StringHandle struct_name = StringTable::getOrInternStringHandle(inst_info.struct_name);
 
 		// Generate function declaration IR using typed payload
 		FunctionDeclOp func_decl_op;
@@ -12777,8 +12723,8 @@ private:
 		func_decl_op.return_pointer_depth = static_cast<int>(return_type.pointer_depth());
 		
 		// Add function name and struct name
-		func_decl_op.function_name = std::string(full_func_name);
-		func_decl_op.struct_name = std::string(struct_name_view);
+		func_decl_op.function_name = full_func_name;
+		func_decl_op.struct_name = struct_name;
 		
 		// Add linkage (C++)
 		func_decl_op.linkage = Linkage::None;
@@ -12802,15 +12748,14 @@ private:
 					func_param.type = concrete_type;
 					func_param.size_in_bits = static_cast<int>(get_type_size_bits(concrete_type));
 					func_param.pointer_depth = 0;  // pointer depth
-					func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
 				} else {
 					// Use original parameter type
 					const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 					func_param.type = param_type.type();
 					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
 					func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
-					func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
 				}
+				func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
 				func_param.is_reference = false;
 				func_param.is_rvalue_reference = false;
 				func_param.cv_qualifier = CVQualifier::None;
@@ -12958,14 +12903,14 @@ private:
 
 		// For constructor calls, we need to generate a constructor call instruction
 		// In C++, constructors are named after the class
-		std::string constructor_name;
+		StringHandle constructor_name;
 		if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
 			// If type_index is set, use it
 			if (type_spec.type_index() != 0) {
 				constructor_name = gTypeInfo[type_spec.type_index()].name();
 			} else {
 				// Otherwise, use the token value (the identifier name)
-				constructor_name = std::string(type_spec.token().value());
+				constructor_name = StringTable::getOrInternStringHandle(type_spec.token().value());
 			}
 		} else {
 			// For basic types, constructors might not exist, but we can handle them as value construction

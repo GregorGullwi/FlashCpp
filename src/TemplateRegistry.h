@@ -634,6 +634,10 @@ public:
 		return std::nullopt;
 	}
 	
+	std::optional<ASTNode> lookupTemplate(StringHandle name) const {
+		return lookupTemplate(StringTable::getStringView(name));
+	}
+
 	// Look up all template overloads for a given name
 	// Returns a reference to the internal vector for efficiency
 	const std::vector<ASTNode>* lookupAllTemplates(std::string_view name) const {

@@ -204,6 +204,11 @@ public:
 		return handle;
 	}
 
+	static StringHandle createStringHandle(StringBuilder& sb) {
+		return createStringHandle(sb.commit());	// Just do a commit() for now, optimize later
+	}
+
+
 	/**
 	 * @brief Get or create an interned string handle
 	 * Returns existing handle if string is already interned, creates new one otherwise.
@@ -309,6 +314,6 @@ inline StringBuilder& StringBuilder::append(StringHandle sh) {
 	return append(StringTable::getStringView(sh));
 }
 
-bool StringHandle::operator==(std::string_view other) const noexcept {
+inline bool StringHandle::operator==(std::string_view other) const noexcept {
 	return StringTable::getStringView(*this) == other;
 }

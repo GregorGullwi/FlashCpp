@@ -784,9 +784,9 @@ struct AssignmentOp {
 
 // Loop begin (marks loop start with labels for break/continue)
 struct LoopBeginOp {
-	std::string_view loop_start_label;                    // Label for loop start
-	std::string_view loop_end_label;                      // Label for break
-	std::string_view loop_increment_label;                // Label for continue
+	StringHandle loop_start_label;                    // Label for loop start
+	StringHandle loop_end_label;                      // Label for break
+	StringHandle loop_increment_label;                // Label for continue
 };
 
 // Function parameter information

@@ -139,7 +139,7 @@ int main(int argc, char *argv[]) {
     // Handle log level setting from command line
     if (argsparser.hasOption("log-level")) {
         auto level_str = argsparser.optionValue("log-level");
-        if (std::holds_alternative<StringHandle>(level_str)) {
+        if (std::holds_alternative<std::string_view>(level_str)) {
             std::string_view level_sv = std::get<std::string_view>(level_str);
             size_t colon_pos = level_sv.find(':');
             if (colon_pos != std::string_view::npos) {
@@ -171,7 +171,7 @@ int main(int argc, char *argv[]) {
 
     if (argsparser.hasOption("o")) {
         auto output_file = argsparser.optionValue("o");
-        if (std::holds_alternative<StringHandle>(output_file))
+        if (std::holds_alternative<std::string_view>(output_file))
             context.setOutputFile(std::get<std::string_view>(output_file));
     }
 
@@ -188,39 +188,39 @@ int main(int argc, char *argv[]) {
     
     // Compiler mode - default is MSVC, use -fgcc-compat or -fclang-compat for GCC/Clang mode
     // Enables compiler-specific builtin macros like __SIZE_TYPE__, __PTRDIFF_TYPE__, etc.
-    if (argsparser.hasFlag("fgcc-compat") || argsparser.hasFlag("fclang-compat")) {
+    if (argsparser.hasFlag("fgcc-compat"sv) || argsparser.hasFlag("fclang-compat"sv)) {
         context.setCompilerMode(CompileContext::CompilerMode::GCC);
     }
 
     // Name mangling style - auto-detected by platform but can be overridden
     // for cross-compilation support
     if (argsparser.hasOption("fmangling")) {
-        auto mangling_opt = argsparser.optionValue("fmangling");
-        if (std::holds_alternative<StringHandle>(mangling_opt)) {
+        auto mangling_opt = argsparser.optionValue("fmangling"sv);
+        if (std::holds_alternative<std::string_view>(mangling_opt)) {
             std::string_view mangling_str = std::get<std::string_view>(mangling_opt);
-            FLASH_LOG(General, Info, "Using name mangling style: ", mangling_str);
+            FLASH_LOG(General, Info, "Using name mangling style: "sv, mangling_str);
             if (mangling_str == "msvc") {
                 setManglingStyle(context, CompileContext::ManglingStyle::MSVC);
-            } else if (mangling_str == "itanium") {
+            } else if (mangling_str == "itanium"sv) {
                 setManglingStyle(context, CompileContext::ManglingStyle::Itanium);
             } else {
-                FLASH_LOG(General, Warning, "Unknown mangling style: ", mangling_str, " (use 'msvc' or 'itanium')");
+                FLASH_LOG(General, Warning, "Unknown mangling style: "sv, mangling_str, " (use 'msvc' or 'itanium')"sv);
             }
         }
     } else {
         // Auto-detect based on platform if not specified
         #if defined(_WIN32) || defined(_WIN64)
             setManglingStyle(context, CompileContext::ManglingStyle::MSVC);
-            FLASH_LOG(General, Debug, "Auto-detected name mangling style: MSVC (Windows)");
+            FLASH_LOG(General, Debug, "Auto-detected name mangling style: MSVC (Windows)"sv);
         #else
             setManglingStyle(context, CompileContext::ManglingStyle::Itanium);
-            FLASH_LOG(General, Debug, "Auto-detected name mangling style: Itanium (Linux/Unix)");
+            FLASH_LOG(General, Debug, "Auto-detected name mangling style: Itanium (Linux/Unix)"sv);
         #endif
     }
 
-    bool show_debug = argsparser.hasFlag("d") || argsparser.hasFlag("debug");
-    bool show_perf_stats = argsparser.hasFlag("perf-stats") || argsparser.hasFlag("stats");
-    bool show_timing = argsparser.hasFlag("time") || argsparser.hasFlag("timing") || show_perf_stats;
+    bool show_debug = argsparser.hasFlag("d"sv) || argsparser.hasFlag("debug"sv);
+    bool show_perf_stats = argsparser.hasFlag("perf-stats"sv) || argsparser.hasFlag("stats"sv);
+    bool show_timing = argsparser.hasFlag("time"sv) || argsparser.hasFlag("timing"sv) || show_perf_stats;
 
     // Always show basic timing information (total time + breakdown)
     bool show_basic_timing = true;
