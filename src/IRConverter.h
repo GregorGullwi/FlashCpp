@@ -7281,9 +7281,9 @@ private:
 			
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
-			// Update function length (uses unmangled name for debug info)
-			writer.update_function_length(std::string(StringTable::getStringView(current_function_name_)), function_length);
-			writer.set_function_debug_range(std::string(StringTable::getStringView(current_function_name_)), 0, 0);	// doesn't seem needed
+			// Update function length
+			writer.update_function_length(mangled, function_length);
+			writer.set_function_debug_range(mangled, 0, 0);	// doesn't seem needed
 
 			// Add exception handling information (required for x64) - uses mangled name
 			// Convert try blocks to ObjectFileWriter format

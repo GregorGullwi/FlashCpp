@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <vector>
 #include <string_view>
@@ -64,6 +64,29 @@ public:
         return chunk->current_ptr();
     }
 
+    bool tryFree(char* ptr, size_t size) {
+        if (chunks_.empty())
+            return false;
+
+        Chunk* chunk = current_chunk();
+
+        char* chunk_start = chunk->data_.data();
+        char* chunk_end   = chunk_start + chunk->data_.size();
+
+        // Must belong to the current chunk
+        if (ptr < chunk_start || ptr >= chunk_end)
+            return false;
+
+        // Must be the most recent allocation
+        if (ptr + size != chunk->current_ptr())
+            return false;
+
+        // Rewind allocation
+        chunk->next_free_ -= size; 
+
+        return true;
+    }
+
     Chunk* current_chunk() { return chunks_.back().get(); }
 
     // StringTable support - get current chunk index (0-based)
@@ -115,10 +138,9 @@ private:
 
 extern ChunkedStringAllocator gChunkedStringAllocator;
 
-// Temporary allocator for StringBuilder with smaller initial chunk size (512 bytes)
+// Temporary allocator for StringBuilder with smaller initial chunk size (1 MB)
 // This allocator is used for building strings before committing to the main allocator
-// Grows by 16x when capacity is exceeded
-inline ChunkedStringAllocator gTemporaryChunkedStringAllocator(512);
+inline ChunkedStringAllocator gTemporaryChunkedStringAllocator(1024*1024);
 
 // Global to track which StringBuilder is currently active (for detecting parallel usage in same scope)
 // Using 'inline' instead of 'static' to ensure a single definition across all translation units
@@ -129,11 +151,11 @@ class StringBuilder {
 public:
     explicit StringBuilder(ChunkedStringAllocator& allocator = gChunkedStringAllocator)
         : alloc_(allocator),
-          previous_builder_(gCurrentStringBuilder),  // Save the currently active builder (for nested support)
-          is_committed_(false),
           temp_start_(nullptr),
           temp_write_ptr_(nullptr),
-          temp_capacity_(0) {
+          temp_capacity_(0),
+          previous_builder_(gCurrentStringBuilder),  // Save the currently active builder (for nested support)
+          is_committed_(false) {
         // Use temporary chunk allocator for building - this makes nesting work naturally
         // since each StringBuilder has independent storage in the temporary allocator
         // Start with 512 bytes, will grow by 16x if needed
@@ -224,15 +246,7 @@ public:
         std::string_view result(ptr, len);
         
         // Reset temporary state and mark as committed
-        temp_start_ = nullptr;
-        temp_write_ptr_ = nullptr;
-        temp_capacity_ = 0;
-        is_committed_ = true;
-        
-        // Restore previous builder
-        if (gCurrentStringBuilder == this) {
-            gCurrentStringBuilder = previous_builder_;
-        }
+        reset();
         
         return result;
     }
@@ -247,6 +261,8 @@ public:
     }
 
     void reset() {
+        gTemporaryChunkedStringAllocator.tryFree(temp_start_, temp_capacity_);
+
         temp_start_ = nullptr;
         temp_write_ptr_ = nullptr;
         temp_capacity_ = 0;
@@ -297,7 +313,7 @@ private:
             
             if (new_capacity == 0) {
                 // First allocation - use the temporary allocator's chunk size (512 bytes)
-                new_capacity = 512;
+                new_capacity = std::max(needed, 64ull);
             }
             
             // Grow by 16x if current capacity is insufficient (as requested)
@@ -312,6 +328,7 @@ private:
             }
             
             // Allocate new buffer from temporary allocator
+            gTemporaryChunkedStringAllocator.tryFree(temp_start_, temp_capacity_);
             char* new_start = gTemporaryChunkedStringAllocator.allocate(new_capacity);
             assert(new_start != nullptr && "StringBuilder: allocation failed");
             

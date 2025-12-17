@@ -681,11 +681,11 @@ public:
 		// Placeholder
 	}
 
-	void update_function_length(const std::string& name, uint32_t code_length) {
+	void update_function_length(const std::string_view manged_name, uint32_t code_length) {
 		// Placeholder
 	}
 
-	void set_function_debug_range(const std::string& name, uint32_t prologue_size, uint32_t epilogue_size) {
+	void set_function_debug_range(const std::string_view manged_name, uint32_t prologue_size, uint32_t epilogue_size) {
 		// Placeholder
 	}
 

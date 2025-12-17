@@ -102,6 +102,7 @@ struct StringHandle {
 
 	// Extract offset (low 24 bits) - subtract 1 to get actual offset
 	uint32_t offset() const {
+		assert(isValid());
 		return (handle & OFFSET_MASK) - 1;
 	}
 
@@ -182,10 +183,10 @@ public:
 		
 		// Find which chunk contains the allocated pointer (safe from race conditions)
 		char* ptr = reinterpret_cast<char*>(metadata);
-		size_t chunk_idx = gChunkedStringAllocator.findChunkIndex(ptr);
-		assert(chunk_idx != SIZE_MAX && "Allocated pointer must be in a valid chunk");
+		assert(gChunkedStringAllocator.findChunkIndex(ptr) == gChunkedStringAllocator.getChunkIndex() && "Allocated pointer must be in a valid chunk");
 		
 		// Calculate offset within that chunk
+		size_t chunk_idx = gChunkedStringAllocator.getChunkIndex();
 		char* chunk_start = gChunkedStringAllocator.getChunkPointer(chunk_idx, 0);
 		size_t offset = ptr - chunk_start;
 
