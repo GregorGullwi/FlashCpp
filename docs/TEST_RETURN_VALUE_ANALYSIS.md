@@ -325,7 +325,7 @@ The script will:
 
 ## Conclusion
 
-**Summary (as of 2025-12-17):**
+**Summary (as of 2025-12-17 - Updated):**
 - 583 tests (90.1%) successfully run and return valid values
 - 57 tests (8.8%) crash during execution
 - 1 test (0.2%) fails to link
@@ -336,31 +336,24 @@ The script will:
 - Most crashes are SIGSEGV (segmentation faults) suggesting memory management issues
 - Heap allocation constructor calls have been fixed
 - Member function templates still have parameter stack allocation bugs
+- Multi-level pointer dereference has a subtle bug in pointer depth tracking through IR operands
 
 **Improvements Made:**
 1. ✅ Fixed validation script crash detection (eliminated ~32 false positives)
 2. ✅ Fixed heap allocation constructor/destructor calls (test_heap.cpp)
 3. 📝 Documented investigation findings for member template crashes
+4. 🔬 Investigated multi-level pointer dereference crash (test_pointer_declarations.cpp)
+   - Identified root cause: pointer depth tracking issue in IR operand flow
+   - Applied partial fix to return pointer_depth for pointer types
+   - Fix incomplete - needs more work on how operands propagate through nested expressions
 
 **Next Steps:**
-1. Fix parameter stack allocation for template member functions
-2. Investigate spaceship operator illegal instruction issues
-3. Fix lambda capture and range-for crashes
-4. Add better error diagnostics for common crash scenarios
-5. Consider using alternative test verification methods beyond return values
-- 0 unexpected compilation or link failures
-
-**Key Findings:**
-- Return value truncation is expected OS behavior, not a compiler bug
-- Most crashes are SIGSEGV (segmentation faults) suggesting memory management issues
-- Member function templates and lambda features have higher crash rates
-- Exception handling is incomplete on Linux platform
-
-**Next Steps:**
-1. Fix high-priority crashes (member templates, lambdas, inheritance)
-2. Implement proper exception handling for Linux/ELF
-3. Add better error diagnostics for common crash scenarios
-4. Consider using alternative test verification methods beyond return values
+1. Complete the pointer depth tracking fix for multi-level pointers
+2. Fix parameter stack allocation for template member functions
+3. Investigate spaceship operator illegal instruction issues
+4. Fix lambda capture and range-for crashes
+5. Add better error diagnostics for common crash scenarios
+6. Consider using alternative test verification methods beyond return values
 
 ---
 
