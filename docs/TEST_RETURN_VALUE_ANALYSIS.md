@@ -122,6 +122,16 @@ These tests crashed during execution with various signals. These are **actual fa
 - **Fix Required**: Stack offset allocation for function parameters needs to account for all parameter types (int, float, double)
 - **Status**: ❌ Still crashes - requires deeper fix to parameter handling
 
+**test_pointer_declarations.cpp - INVESTIGATION IN PROGRESS**
+- **Issue**: Segmentation fault when dereferencing multi-level pointers (`***ppp`)
+- **Root Cause**: Dereference size calculation bug - pointer depth tracking issue
+  - When dereferencing `int***`, the IR incorrectly uses 32-bit dereference instead of 64-bit
+  - The first two dereferences should load 64-bit pointers, only the final one should load 32-bit int
+  - Problem: The 4th element in IrOperands is used for both `type_index` (for structs) and `pointer_depth` (for pointers), causing confusion
+  - When looking up pointer variables, the code returns `type_index=0` instead of the actual `pointer_depth`
+- **Partial Fix**: Modified `generateIdentifierIr` and `tryBuildIdentifierOperand` to return pointer_depth in 4th position for pointer types
+- **Status**: ❌ Still investigating - the fix doesn't fully work yet, needs more investigation into how operands flow through nested dereferences
+
 **spaceship_default.cpp - NOT INVESTIGATED**
 - **Issue**: Illegal instruction (Signal 4)
 - **Likely Cause**: C++20 default spaceship operator not fully implemented

@@ -4911,9 +4911,11 @@ private:
 			if (size_bits == 0 && type_node.pointer_depth() == 0) {
 				size_bits = get_type_size_bits(type_node.type());
 			}
-			// Include type_index for struct types (needed for proper name mangling)
-			TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-			return { type_node.type(), size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), static_cast<unsigned long long>(type_index) };
+			// For the 4th element: use pointer_depth for pointer types, type_index for struct types
+			unsigned long long fourth_element = (type_node.pointer_depth() > 0) 
+				? static_cast<unsigned long long>(type_node.pointer_depth())
+				: ((type_node.type() == Type::Struct) ? static_cast<unsigned long long>(type_node.type_index()) : 0ULL);
+			return { type_node.type(), size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
 		}
 
 		// Check if it's a VariableDeclarationNode
@@ -5267,6 +5269,7 @@ private:
 				out.emplace_back(static_local_it->second.type);
 				out.emplace_back(static_cast<int>(static_local_it->second.size_in_bits));
 				out.emplace_back(static_local_it->second.mangled_name);
+				out.emplace_back(0ULL); // pointer depth - assume 0 for static locals for now
 				return true;
 			}
 
@@ -5291,6 +5294,11 @@ private:
 			out.emplace_back(type_node->type());
 			out.emplace_back(static_cast<int>(type_node->size_in_bits()));
 			out.emplace_back(identifier_handle);
+			// For the 4th element: use pointer_depth for pointer types, type_index for struct types
+			unsigned long long fourth_element = (type_node->pointer_depth() > 0)
+				? static_cast<unsigned long long>(type_node->pointer_depth())
+				: ((type_node->type() == Type::Struct) ? static_cast<unsigned long long>(type_node->type_index()) : 0ULL);
+			out.emplace_back(fourth_element);
 			return true;
 		};
 
@@ -5753,6 +5761,12 @@ private:
 		}
 		else if (unaryOperatorNode.op() == "&") {
 			// Address-of operator: &x
+			// Get the current pointer depth from operandIrOperands
+			unsigned long long operand_ptr_depth = 0;
+			if (operandIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
+				operand_ptr_depth = std::get<unsigned long long>(operandIrOperands[3]);
+			}
+			
 			// Create typed payload
 			AddressOfOp op;
 			op.result = result_var;
@@ -5769,8 +5783,8 @@ private:
 			}
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
-			// Return 64-bit pointer
-			return { operandType, 64, result_var, 0ULL };
+			// Return 64-bit pointer with incremented pointer depth
+			return { operandType, 64, result_var, operand_ptr_depth + 1 };
 		}
 		else if (unaryOperatorNode.op() == "*") {
 			// Dereference operator: *x
@@ -5781,8 +5795,12 @@ private:
 			int element_size = 64; // Default to pointer size
 			int pointer_depth = 0;
 			
-			// Look up the pointer operand to determine its pointer depth
-			if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			// First, try to get pointer depth from operandIrOperands (for TempVar results from previous operations)
+			if (operandIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
+				pointer_depth = static_cast<int>(std::get<unsigned long long>(operandIrOperands[3]));
+			}
+			// Otherwise, look up the pointer operand to determine its pointer depth from symbol table
+			else if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 				const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 				if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 					const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
@@ -5836,8 +5854,9 @@ private:
 		
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, op, Token()));
 		
-			// Return the dereferenced value with the element type size
-			return { operandType, element_size, result_var, 0ULL };
+			// Return the dereferenced value with the decremented pointer depth
+			unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
+			return { operandType, element_size, result_var, result_ptr_depth };
 		}
 		else {
 			assert(false && "Unary operator not implemented yet");
