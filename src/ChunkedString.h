@@ -122,13 +122,17 @@ inline class StringBuilder* gCurrentStringBuilder = nullptr;
 
 class StringBuilder {
 public:
+    // Initial capacity for the temporary buffer - tuned to reduce small allocations
+    // while not wasting too much memory for short strings
+    static constexpr size_t INITIAL_BUFFER_CAPACITY = 256;
+    
     explicit StringBuilder(ChunkedStringAllocator& allocator = gChunkedStringAllocator)
         : alloc_(allocator),
           previous_builder_(gCurrentStringBuilder),  // Save the currently active builder (for nested support)
           is_committed_(false) {
         // Use temporary std::string for building - this makes nesting work naturally
         // since each StringBuilder has independent storage
-        temp_buffer_.reserve(256);  // Reserve some space to avoid small allocations
+        temp_buffer_.reserve(INITIAL_BUFFER_CAPACITY);
     }
     
     ~StringBuilder() {
