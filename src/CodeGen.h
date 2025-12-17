@@ -2113,13 +2113,13 @@ private:
 		var_counter = TempVar(2);
 
 	// Set current function name for static local variable mangling
-	current_function_name_ = StringTable::getOrInternStringHandle(node.name());
+	current_function_name_ = node.name();
 	static_local_names_.clear();
 
 	// Create destructor declaration with typed payload
 	FunctionDeclOp dtor_decl_op;
 	dtor_decl_op.function_name = StringTable::getOrInternStringHandle(StringBuilder().append("~"sv).append(node.struct_name()));  // Destructor name
-	dtor_decl_op.struct_name = StringTable::getOrInternStringHandle(node.struct_name());
+	dtor_decl_op.struct_name = node.struct_name();
 	dtor_decl_op.return_type = Type::Void;  // Destructors don't have a return type
 	dtor_decl_op.return_size_in_bits = 0;  // Size is 0 for void
 	dtor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
@@ -2129,14 +2129,14 @@ private:
 	// Generate mangled name for destructor (MSVC format: ?~ClassName@ClassName@@...)
 	// Destructors have no parameters (except implicit 'this')
 	std::vector<TypeSpecifierNode> empty_params;
-	std::string dtor_name = std::string("~") + std::string(node.struct_name());
+	std::string dtor_name = std::string("~") + std::string(node.struct_name().view());
 	TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
 	dtor_decl_op.mangled_name = StringTable::getOrInternStringHandle(generateMangledNameForCall(
 		dtor_name,
 		void_type,
 		empty_params,
 		false,  // not variadic
-		std::string(node.struct_name())  // struct name for member function mangling
+		std::string(node.struct_name().view())  // struct name for member function mangling
 	));
 
 	// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
@@ -2146,7 +2146,7 @@ private:
 
 		// Add 'this' pointer to symbol table for member access
 		// Look up the struct type to get its type index and size
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.struct_name()));
+		auto type_it = gTypesByName.find(node.struct_name());
 		if (type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -2177,7 +2177,7 @@ private:
 		// Step 2: Member destruction is automatic for primitive types (no action needed)
 
 		// Step 3: Call base class destructors in REVERSE order
-		auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.struct_name()));
+		auto struct_type_it = gTypesByName.find(node.struct_name());
 		if (struct_type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -12887,7 +12887,7 @@ private:
 	std::vector<IrOperand> generateTemplateParameterReferenceIr(const TemplateParameterReferenceNode& templateParamRefNode) {
 		// This should not happen during normal code generation - template parameters should be substituted
 		// during template instantiation. If we get here, it means template instantiation failed.
-		std::string param_name = std::string(templateParamRefNode.param_name());
+		std::string param_name = std::string(templateParamRefNode.param_name().view());
 		std::cerr << "Error: Template parameter '" << param_name << "' was not substituted during template instantiation\n";
 		std::cerr << "This indicates a bug in template instantiation - template parameters should be replaced with concrete types/values\n";
 		assert(false && "Template parameter reference found during code generation - should have been substituted");

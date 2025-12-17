@@ -18872,7 +18872,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Parse template parameter list
 	std::vector<ASTNode> template_params;
-	std::vector<std::string_view> template_param_names;
+	std::vector<StringHandle> template_param_names;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {
@@ -18882,7 +18882,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	// Extract parameter names for later lookup
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
-			template_param_names.push_back(param.as<TemplateParameterNode>().name());
+			template_param_names.push_back(param.as<TemplateParameterNode>().nameHandle());
 		}
 	}
 
