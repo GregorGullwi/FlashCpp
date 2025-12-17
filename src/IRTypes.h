@@ -646,7 +646,7 @@ struct MemberStoreOp {
 	const TypeInfo* struct_type_info;               // Parent struct type (nullptr if not available)
 	bool is_reference;                              // True if member is declared as T& (describes member declaration, not access)
 	bool is_rvalue_reference;                       // True if member is declared as T&& (describes member declaration, not access)
-	std::string_view vtable_symbol;                 // For vptr initialization - stores vtable symbol name
+	StringHandle vtable_symbol;						// For vptr initialization - stores vtable symbol name
 };
 
 // Label definition

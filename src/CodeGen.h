@@ -1779,7 +1779,7 @@ private:
 				if (struct_info->has_vtable) {
 					// Use the pre-generated vtable symbol from struct_info
 					// The vtable symbol is generated once during buildVTable()
-					std::string_view vtable_symbol = struct_info->vtable_symbol;
+					auto vtable_symbol = StringTable::getOrInternStringHandle(struct_info->vtable_symbol);
 					
 					// Create a MemberStore instruction to store vtable address to offset 0 (vptr)
 					MemberStoreOp vptr_store;

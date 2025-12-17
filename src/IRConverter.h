@@ -6804,7 +6804,7 @@ private:
 
 		// Store global variable info for later use
 		GlobalVariableInfo global_info;
-		global_info.name = StringTable::getStringView(op.var_name);
+		global_info.name = op.var_name;
 		global_info.type = op.type;
 		global_info.is_initialized = op.is_initialized;
 		global_info.size_in_bytes = (op.size_in_bits / 8) * op.element_count;
@@ -11120,19 +11120,18 @@ private:
 		int32_t object_base_offset = 0;
 		bool is_pointer_access = false;  // true if object is 'this' or a reference parameter (both are pointers)
 		bool is_global_access = false;   // true if object is a global variable
-		std::string_view global_object_name;  // name for global variable access
+		StringHandle global_object_name;  // name for global variable access
 		const StackVariableScope& current_scope = variable_scopes.back();
 
 		// Get object base offset
 		if (std::holds_alternative<StringHandle>(op.object)) {
 			StringHandle object_name_handle = std::get<StringHandle>(op.object);
-			std::string_view object_name = StringTable::getStringView(object_name_handle);
-			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(object_name));
+			auto it = current_scope.variables.find(object_name_handle);
 			if (it == current_scope.variables.end()) {
 				// Not found in local scope - check if it's a global variable
 				bool found_global = false;
 				for (const auto& global : global_variables_) {
-					if (global.name == object_name) {
+					if (global.name == object_name_handle) {
 						found_global = true;
 						is_global_access = true;
 						global_object_name = global.name;
@@ -11147,7 +11146,7 @@ private:
 				object_base_offset = it->second.offset;
 
 				// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
-				if (object_name == "this" || reference_stack_info_.count(object_base_offset) > 0) {
+				if (StringTable::getStringView(object_name_handle) == "this"sv || reference_stack_info_.count(object_base_offset) > 0) {
 					is_pointer_access = true;
 				}
 			}
@@ -11214,7 +11213,7 @@ private:
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
-				pending_global_relocations_.push_back({reloc_offset, StringTable::getOrInternStringHandle(global_object_name), IMAGE_REL_AMD64_REL32});
+				pending_global_relocations_.push_back({reloc_offset, global_object_name, IMAGE_REL_AMD64_REL32});
 				
 				// If offset != 0, add it to addr_reg
 				if (op.offset != 0) {
@@ -11257,7 +11256,7 @@ private:
 		if (is_global_access) {
 			// LEA temp_reg, [RIP + global] with relocation
 			uint32_t reloc_offset = emitLeaRipRelative(temp_reg);
-			pending_global_relocations_.push_back({reloc_offset, StringTable::getOrInternStringHandle(global_object_name), IMAGE_REL_AMD64_REL32});
+			pending_global_relocations_.push_back({reloc_offset, global_object_name, IMAGE_REL_AMD64_REL32});
 			
 			// Load member from [temp_reg + offset]
 			bool is_float_type = (op.result.type == Type::Float || op.result.type == Type::Double);
@@ -11343,7 +11342,7 @@ private:
 		const MemberStoreOp& op = std::any_cast<const MemberStoreOp&>(instruction.getTypedPayload());
 
 		// Check if this is a vtable pointer initialization (vptr)
-		if (!op.vtable_symbol.empty()) {
+		if (op.vtable_symbol.isValid()) {
 			// This is a vptr initialization - load vtable address and store to offset 0
 			// Get the object's base stack offset
 			int32_t object_base_offset = 0;
@@ -11351,8 +11350,7 @@ private:
 			
 			if (std::holds_alternative<StringHandle>(op.object)) {
 				StringHandle object_name_handle = std::get<StringHandle>(op.object);
-			std::string_view object_name = StringTable::getStringView(object_name_handle);
-				auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(object_name));
+				auto it = current_scope.variables.find(object_name_handle);
 				if (it == current_scope.variables.end()) {
 					assert(false && "Struct object not found in scope");
 					return;
@@ -11365,7 +11363,7 @@ private:
 			uint32_t relocation_offset = emitLeaRipRelative(X64Register::RAX);
 			
 			// Add a relocation for the vtable symbol
-			writer.add_relocation(relocation_offset, std::string(op.vtable_symbol));
+			writer.add_relocation(relocation_offset, StringTable::getStringView(op.vtable_symbol));
 			
 			// Store vtable pointer to [RCX + 0] (this pointer is in RCX, vptr is at offset 0)
 			// First load 'this' pointer into RCX
@@ -11384,7 +11382,7 @@ private:
 		double literal_double_value = 0.0;
 		bool is_double_literal = false;
 		bool is_variable = false;
-		std::string variable_name;
+		StringHandle variable_name;
 
 		if (std::holds_alternative<TempVar>(op.value.value)) {
 			// TempVar - handled below
@@ -11397,9 +11395,9 @@ private:
 			literal_double_value = std::get<double>(op.value.value);
 		} else if (std::holds_alternative<StringHandle>(op.value.value)) {
 			is_variable = true;
-			variable_name = std::string(StringTable::getStringView(std::get<StringHandle>(op.value.value)));
+			variable_name = std::get<StringHandle>(op.value.value);
 		} else {
-			assert(false && "Value must be TempVar, unsigned long long, double, or string_view");
+			assert(false && "Value must be TempVar, unsigned long long, double, or StringHandle");
 			return;
 		}
 
@@ -11410,12 +11408,11 @@ private:
 
 		if (std::holds_alternative<StringHandle>(op.object)) {
 			StringHandle object_name_handle = std::get<StringHandle>(op.object);
-			std::string_view object_name = StringTable::getStringView(object_name_handle);
 			
 			// First check if this is a global variable
 			bool is_global_variable = false;
 			for (const auto& global : global_variables_) {
-				if (global.name == object_name) {
+				if (global.name == object_name_handle) {
 					is_global_variable = true;
 					break;
 				}
@@ -11445,7 +11442,7 @@ private:
 					}
 				} else if (is_variable) {
 					const StackVariableScope& current_scope = variable_scopes.back();
-					auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(variable_name));
+					auto it = current_scope.variables.find(variable_name);
 					if (it == current_scope.variables.end()) {
 						assert(false && "Variable not found in scope");
 						return;
@@ -11527,7 +11524,7 @@ private:
 			}
 			
 			// Not a global - look in local scope
-			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(object_name));
+			auto it = current_scope.variables.find(object_name_handle);
 			if (it == current_scope.variables.end()) {
 				assert(false && "Struct object not found in scope");
 				return;
@@ -11535,7 +11532,7 @@ private:
 			object_base_offset = it->second.offset;
 
 			// Check if this is the 'this' pointer or a reference parameter
-			if (object_name == "this" || reference_stack_info_.count(object_base_offset) > 0) {
+			if (StringTable::getStringView(object_name_handle) == "this"sv || reference_stack_info_.count(object_base_offset) > 0) {
 				is_pointer_access = true;
 			}
 		} else {
@@ -11569,7 +11566,7 @@ private:
 			if (is_variable) {
 				// Check if this variable is itself a reference (e.g., reference parameter)
 				const StackVariableScope& current_scope = variable_scopes.back();
-				auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(variable_name));
+				auto it = current_scope.variables.find(variable_name);
 				if (it != current_scope.variables.end()) {
 					int32_t var_offset = it->second.offset;
 					// Check if this stack variable is a reference
@@ -11623,7 +11620,7 @@ private:
 			// Check if this is a vtable symbol (check vtable_symbol field in MemberStoreOp)
 			// This will be handled separately below
 			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(variable_name));
+			auto it = current_scope.variables.find(variable_name);
 			if (it == current_scope.variables.end()) {
 				assert(false && "Variable not found in scope");
 				return;
@@ -12610,7 +12607,7 @@ private:
 		// Emit global variables to .data or .bss sections FIRST
 		// This creates the symbols that relocations will reference
 		for (const auto& global : global_variables_) {
-			writer.add_global_variable_data(global.name, global.size_in_bytes, 
+			writer.add_global_variable_data(StringTable::getStringView(global.name), global.size_in_bytes, 
 			                                global.is_initialized, global.init_data);
 		}
 
@@ -12998,7 +12995,7 @@ private:
 
 	// Global variable tracking
 	struct GlobalVariableInfo {
-		std::string_view name;
+		StringHandle name;
 		Type type;
 		size_t size_in_bytes;
 		bool is_initialized;

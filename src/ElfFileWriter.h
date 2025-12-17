@@ -468,11 +468,11 @@ public:
 		// - Function pointers (8 bytes each)
 		
 		// First, emit typeinfo if available
-		StringBuilder typeinfo_builder;
 		std::string typeinfo_symbol;
 		if (rtti_info && rtti_info->itanium_type_info) {
 			// Generate typeinfo symbol name: _ZTI + mangled class name
 			// For now, use the class name length-prefixed
+			StringBuilder typeinfo_builder;
 			typeinfo_builder.append("_ZTI").append(class_name.length()).append(class_name);
 			typeinfo_symbol = std::string(typeinfo_builder.commit());
 			
@@ -1488,9 +1488,7 @@ private:
 		}
 
 		// Symbol doesn't exist, create it
-		// Convert string_view to std::string to ensure null-termination for C API
-		std::string name_str(name);
-		return accessor->add_symbol(*string_accessor_, name_str.c_str(), value, size, bind, type, ELFIO::STV_DEFAULT, section_index);
+		return accessor->add_symbol(*string_accessor_, name.data(), value, size, bind, type, ELFIO::STV_DEFAULT, section_index);
 	}
 
 	/**
