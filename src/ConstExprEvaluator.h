@@ -2438,11 +2438,11 @@ public:
 				break;
 
 			case TypeTraitKind::IsBoundedArray:
-				result = type_spec.is_array() & (type_spec.array_size() > 0) & !is_reference & (pointer_depth == 0);
+				result = type_spec.is_array() & int(type_spec.array_size() > 0) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsUnboundedArray:
-				result = type_spec.is_array() & (type_spec.array_size() <= 0) & !is_reference & (pointer_depth == 0);
+				result = type_spec.is_array() & int(type_spec.array_size() == 0) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsAggregate:

@@ -784,9 +784,9 @@ struct AssignmentOp {
 
 // Loop begin (marks loop start with labels for break/continue)
 struct LoopBeginOp {
-	StringHandle loop_start_label;                    // Label for loop start
-	StringHandle loop_end_label;                      // Label for break
-	StringHandle loop_increment_label;                // Label for continue
+	std::string_view loop_start_label;                    // Label for loop start
+	std::string_view loop_end_label;                      // Label for break
+	std::string_view loop_increment_label;                // Label for continue
 };
 
 // Function parameter information
@@ -1065,7 +1065,7 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	if (std::holds_alternative<TempVar>(op.result)) {
 		oss << std::get<TempVar>(op.result).var_number;
 	} else if (std::holds_alternative<StringHandle>(op.result)) {
-		oss << StringTable::getStringView(std::get<StringHandle>(op.result));
+		oss << std::get<std::string_view>(op.result);
 	}
 	oss << " = " << op_name << " ";
 	
@@ -1084,7 +1084,7 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
 		oss << '%' << std::get<TempVar>(op.lhs.value).var_number;
 	} else if (std::holds_alternative<StringHandle>(op.lhs.value)) {
-		oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.lhs.value));
+		oss << '%' << std::get<std::string_view>(op.lhs.value);
 	}
 	
 	oss << ", ";
@@ -1097,7 +1097,7 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
 		oss << '%' << std::get<TempVar>(op.rhs.value).var_number;
 	} else if (std::holds_alternative<StringHandle>(op.rhs.value)) {
-		oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.rhs.value));
+		oss << '%' << std::get<std::string_view>(op.rhs.value);
 	}
 	
 	return oss.str();
@@ -1327,7 +1327,7 @@ public:
 				} else if (std::holds_alternative<TempVar>(val)) {
 					oss << '%' << std::get<TempVar>(val).var_number;
 				} else if (std::holds_alternative<StringHandle>(val)) {
-					oss << '%' << StringTable::getStringView(std::get<StringHandle>(val));
+					oss << '%' << std::get<std::string_view>(val);
 				} else if (std::holds_alternative<double>(val)) {
 					oss << std::get<double>(val);
 				}
@@ -1482,7 +1482,7 @@ public:
 			} else if (std::holds_alternative<TempVar>(val)) {
 				oss << '%' << std::get<TempVar>(val).var_number;
 			} else if (std::holds_alternative<StringHandle>(val)) {
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(val));
+				oss << '%' << std::get<std::string_view>(val);
 			}
 		
 			oss << ", label %" << op.getLabelTrue();   // Phase 4: Use helper
@@ -1566,7 +1566,7 @@ public:
 			else if (std::holds_alternative<TempVar>(op.index.value))
 				oss << '%' << std::get<TempVar>(op.index.value).var_number;
 			else if (std::holds_alternative<StringHandle>(op.index.value))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.index.value));
+				oss << '%' << std::get<std::string_view>(op.index.value);
 		}
 		break;
 
@@ -1576,8 +1576,12 @@ public:
 			const ArrayStoreOp& op = std::any_cast<const ArrayStoreOp&>(getTypedPayload());
 			oss << "array_store [" << static_cast<int>(op.element_type) << "][" << op.element_size_in_bits << "] ";
 				
-			if (std::holds_alternative<StringHandle>(op.array))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.array));
+			if (std::holds_alternative<std::string>(op.array)) {
+				std::cerr << "Error: ArrayStoreOp.array should use string_view (via StringBuilder), not std::string\n";
+				assert(false && "ArrayStoreOp.array should use string_view (via StringBuilder), not std::string");
+			}
+			else if (std::holds_alternative<StringHandle>(op.array))
+				oss << '%' << std::get<std::string_view>(op.array);
 			else
 				oss << '%' << std::get<TempVar>(op.array).var_number;
 				
@@ -1601,7 +1605,7 @@ public:
 			
 			// Array
 			if (std::holds_alternative<StringHandle>(op.array))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.array));
+				oss << '%' << std::get<std::string_view>(op.array);
 			else if (std::holds_alternative<TempVar>(op.array))
 				oss << '%' << std::get<TempVar>(op.array).var_number;
 			
@@ -1633,7 +1637,7 @@ public:
 			oss << "[" << static_cast<int>(op.pointee_type) << "]" << op.pointee_size_in_bits << " ";
 		
 			if (std::holds_alternative<StringHandle>(op.pointer))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.pointer));
+				oss << '%' << std::get<std::string_view>(op.pointer);
 			else if (std::holds_alternative<TempVar>(op.pointer))
 				oss << '%' << std::get<TempVar>(op.pointer).var_number;
 		}
@@ -1646,7 +1650,7 @@ public:
 			oss << "store_through_ptr [" << static_cast<int>(op.pointee_type) << "]" << op.pointee_size_in_bits << " ";
 		
 			if (std::holds_alternative<StringHandle>(op.pointer))
-				oss << "%" << StringTable::getStringView(std::get<StringHandle>(op.pointer));
+				oss << "%" << std::get<std::string_view>(op.pointer);
 			else if (std::holds_alternative<TempVar>(op.pointer))
 				oss << "%" << std::get<TempVar>(op.pointer).var_number;
 			
@@ -1658,7 +1662,7 @@ public:
 			else if (std::holds_alternative<TempVar>(op.value.value))
 				oss << "%" << std::get<TempVar>(op.value.value).var_number;
 			else if (std::holds_alternative<StringHandle>(op.value.value))
-				oss << "%" << StringTable::getStringView(std::get<StringHandle>(op.value.value));
+				oss << "%" << std::get<std::string_view>(op.value.value);
 		}
 		break;
 		
@@ -1672,7 +1676,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.result.value))
 				oss << std::get<TempVar>(op.result.value).var_number;
 			else if (std::holds_alternative<StringHandle>(op.result.value))
-				oss << StringTable::getStringView(std::get<StringHandle>(op.result.value));
+				oss << std::get<std::string_view>(op.result.value);
 
 			oss << " = member_access ";
 		
@@ -1687,7 +1691,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.object))
 				oss << '%' << std::get<TempVar>(op.object).var_number;
 			else if (std::holds_alternative<StringHandle>(op.object))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.object));
+				oss << '%' << std::get<std::string_view>(op.object);
 
 			oss << "." << op.member_name;
 			oss << " (offset: " << op.offset << ")";
@@ -1719,7 +1723,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.object))
 				oss << '%' << std::get<TempVar>(op.object).var_number;
 			else if (std::holds_alternative<StringHandle>(op.object))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.object));
+				oss << '%' << std::get<std::string_view>(op.object);
 
 			oss << "." << op.member_name;
 			oss << " (offset: " << op.offset << ")";
@@ -1744,7 +1748,7 @@ public:
 
 			// Object can be either string_view or TempVar
 			if (std::holds_alternative<StringHandle>(op.object))
-				oss << StringTable::getStringView(std::get<StringHandle>(op.object));
+				oss << std::get<std::string_view>(op.object);
 			else if (std::holds_alternative<TempVar>(op.object))
 				oss << std::get<TempVar>(op.object).var_number;
 
@@ -1767,7 +1771,7 @@ public:
 				if (std::holds_alternative<TempVar>(arg.value))
 					oss << '%' << std::get<TempVar>(arg.value).var_number;
 				else if (std::holds_alternative<StringHandle>(arg.value))
-					oss << '%' << StringTable::getStringView(std::get<StringHandle>(arg.value));
+					oss << '%' << std::get<std::string_view>(arg.value);
 				else if (std::holds_alternative<unsigned long long>(arg.value))
 					oss << std::get<unsigned long long>(arg.value);
 				else if (std::holds_alternative<double>(arg.value))
@@ -1783,8 +1787,8 @@ public:
 			oss << "destructor_call " << op.struct_name << " %";
 
 			// Object can be either string or TempVar
-			if (std::holds_alternative<StringHandle>(op.object))
-				oss << StringTable::getStringView(std::get<StringHandle>(op.object));
+			if (std::holds_alternative<std::string>(op.object))
+				oss << std::get<std::string>(op.object);
 			else if (std::holds_alternative<TempVar>(op.object))
 				oss << std::get<TempVar>(op.object).var_number;
 		}
@@ -1808,7 +1812,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.object))
 				oss << std::get<TempVar>(op.object).var_number;
 			else if (std::holds_alternative<StringHandle>(op.object))
-				oss << StringTable::getStringView(std::get<StringHandle>(op.object));
+				oss << std::get<std::string_view>(op.object);
 
 			// VTable index
 			oss << ", vtable[" << op.vtable_index << "]";
@@ -1834,7 +1838,7 @@ public:
 					else if (std::holds_alternative<TempVar>(arg.value))
 						oss << '%' << std::get<TempVar>(arg.value).var_number;
 					else if (std::holds_alternative<StringHandle>(arg.value))
-						oss << '%' << StringTable::getStringView(std::get<StringHandle>(arg.value));
+						oss << '%' << std::get<std::string_view>(arg.value);
 				}
 				oss << ")";
 			}
@@ -1850,7 +1854,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.result))
 				oss << std::get<TempVar>(op.result).var_number;
 			else if (std::holds_alternative<StringHandle>(op.result))
-				oss << StringTable::getStringView(std::get<StringHandle>(op.result));
+				oss << std::get<std::string_view>(op.result);
 
 			oss << " = string_literal " << op.content;
 		}
@@ -1879,7 +1883,7 @@ public:
 			else if (std::holds_alternative<unsigned long long>(op.count))
 				oss << std::get<unsigned long long>(op.count);
 			else if (std::holds_alternative<StringHandle>(op.count))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.count));
+				oss << '%' << std::get<std::string_view>(op.count);
 		}
 		break;
 		
@@ -1891,7 +1895,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.pointer))
 				oss << '%' << std::get<TempVar>(op.pointer).var_number;
 			else if (std::holds_alternative<StringHandle>(op.pointer))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.pointer));
+				oss << '%' << std::get<std::string_view>(op.pointer);
 		}
 		break;
 		
@@ -1903,7 +1907,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.pointer))
 				oss << '%' << std::get<TempVar>(op.pointer).var_number;
 			else if (std::holds_alternative<StringHandle>(op.pointer))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.pointer));
+				oss << '%' << std::get<std::string_view>(op.pointer);
 		}
 		break;
 		
@@ -1915,7 +1919,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.address))
 				oss << '%' << std::get<TempVar>(op.address).var_number;
 			else if (std::holds_alternative<StringHandle>(op.address))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.address));
+				oss << '%' << std::get<std::string_view>(op.address);
 			else if (std::holds_alternative<unsigned long long>(op.address))
 				oss << std::get<unsigned long long>(op.address);
 			oss << " [" << static_cast<int>(op.type) << "][" << op.size_in_bytes << "]";
@@ -1928,7 +1932,7 @@ public:
 			auto& op = getTypedPayload<TypeidOp>();
 			oss << '%' << op.result.var_number << " = typeid ";
 			if (std::holds_alternative<StringHandle>(op.operand)) {
-				oss << StringTable::getStringView(std::get<StringHandle>(op.operand));
+				oss << std::get<std::string_view>(op.operand);
 			} else {
 				oss << '%' << std::get<TempVar>(op.operand).var_number;
 			}
@@ -2032,7 +2036,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.lhs.value))
 				oss << std::get<TempVar>(op.lhs.value).var_number;
 			else if (std::holds_alternative<StringHandle>(op.lhs.value))
-				oss << StringTable::getStringView(std::get<StringHandle>(op.lhs.value));
+				oss << std::get<std::string_view>(op.lhs.value);
 			else if (std::holds_alternative<unsigned long long>(op.lhs.value))
 				oss << std::get<unsigned long long>(op.lhs.value);
 
@@ -2044,7 +2048,7 @@ public:
 			else if (std::holds_alternative<TempVar>(op.rhs.value))
 				oss << '%' << std::get<TempVar>(op.rhs.value).var_number;
 			else if (std::holds_alternative<StringHandle>(op.rhs.value))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.rhs.value));
+				oss << '%' << std::get<std::string_view>(op.rhs.value);
 			else if (std::holds_alternative<double>(op.rhs.value))
 				oss << std::get<double>(op.rhs.value);
 		}
@@ -2085,7 +2089,7 @@ public:
 				else if (std::holds_alternative<TempVar>(init.value))
 					oss << '%' << std::get<TempVar>(init.value).var_number;
 				else if (std::holds_alternative<StringHandle>(init.value))
-					oss << '%' << StringTable::getStringView(std::get<StringHandle>(init.value));
+					oss << '%' << std::get<std::string_view>(init.value);
 			}
 			break;
 		}
@@ -2115,7 +2119,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.result.value)) {
 				oss << '%' << std::get<TempVar>(op.result.value).var_number;
 			} else if (std::holds_alternative<StringHandle>(op.result.value)) {
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.result.value));
+				oss << '%' << std::get<std::string_view>(op.result.value);
 			}
 			oss << " = global_load @" << op.getGlobalName();  // Phase 4: Use helper
 		}
@@ -2137,7 +2141,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.result.value)) {
 				oss << '%' << std::get<TempVar>(op.result.value).var_number;
 			} else if (std::holds_alternative<StringHandle>(op.result.value)) {
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.result.value));
+				oss << '%' << std::get<std::string_view>(op.result.value);
 			}
 			oss << " = function_address @" << op.getFunctionName();  // Phase 4: Use helper
 		}
@@ -2153,7 +2157,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.function_pointer)) {
 				oss << '%' << std::get<TempVar>(op.function_pointer).var_number;
 			} else {
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.function_pointer));
+				oss << '%' << std::get<std::string_view>(op.function_pointer);
 			}
 
 			// Arguments with type information
@@ -2167,7 +2171,7 @@ public:
 				if (std::holds_alternative<TempVar>(arg.value)) {
 					oss << '%' << std::get<TempVar>(arg.value).var_number;
 				} else if (std::holds_alternative<StringHandle>(arg.value)) {
-					oss << '%' << StringTable::getStringView(std::get<StringHandle>(arg.value));
+					oss << '%' << std::get<std::string_view>(arg.value);
 				} else if (std::holds_alternative<unsigned long long>(arg.value)) {
 					oss << std::get<unsigned long long>(arg.value);
 				} else if (std::holds_alternative<double>(arg.value)) {
@@ -2199,7 +2203,7 @@ public:
 			if (std::holds_alternative<TempVar>(op.from.value)) {
 				oss << '%' << std::get<TempVar>(op.from.value).var_number;
 			} else if (std::holds_alternative<StringHandle>(op.from.value)) {
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.from.value));
+				oss << '%' << std::get<std::string_view>(op.from.value);
 			} else if (std::holds_alternative<unsigned long long>(op.from.value)) {
 				oss << std::get<unsigned long long>(op.from.value);
 			} else if (std::holds_alternative<double>(op.from.value)) {

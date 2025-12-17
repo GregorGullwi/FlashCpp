@@ -138,7 +138,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			if (type_node.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
 				output += 'V';
-				output += type_info.name();
+				output += StringTable::getStringView(type_info.name());
 				output += "@@";
 			} else {
 				output += 'H';  // Fallback to int if type not found
@@ -238,7 +238,7 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 			// Format: <length><name>
 			if (type_node.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-				auto struct_name = type_info.name();
+				auto struct_name = StringTable::getStringView(type_info.name());
 				output += std::to_string(struct_name.size());
 				output += struct_name;
 			} else {
@@ -725,7 +725,7 @@ inline MangledName generateMangledNameFromNode(
 	const std::vector<std::string_view>& namespace_path = {}
 ) {
 	// Use the overload that accepts parameter nodes directly
-	return generateMangledNameForConstructor(ctor_node.struct_name(), ctor_node.parameter_nodes(), namespace_path);
+	return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path);
 }
 
 // Generate mangled name from a DestructorDeclarationNode

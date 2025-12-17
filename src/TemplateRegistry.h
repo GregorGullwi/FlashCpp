@@ -23,6 +23,7 @@ struct TransparentStringHash {
 	size_t operator()(const char* str) const { return hash_type{}(str); }
 	size_t operator()(std::string_view str) const { return hash_type{}(str); }
 	size_t operator()(const std::string& str) const { return hash_type{}(str); }
+	size_t operator()(StringHandle sh) const { return std::hash<uint32_t>{}(sh.handle); }
 };
 
 // Full type representation for template arguments
@@ -433,7 +434,7 @@ struct TemplatePattern {
 			
 			if (pattern_arg.type_index > 0 && pattern_arg.type_index < gTypeInfo.size()) {
 				const TypeInfo& param_type_info = gTypeInfo[pattern_arg.type_index];
-				param_name = std::string(param_type_info.name());
+				param_name = std::string(StringTable::getStringView(param_type_info.name()));
 				found_param = true;
 				FLASH_LOG(Templates, Trace, "  Found parameter name '", param_name, "' from pattern_arg.type_index=", pattern_arg.type_index);
 			}
@@ -633,6 +634,10 @@ public:
 		return std::nullopt;
 	}
 	
+	std::optional<ASTNode> lookupTemplate(StringHandle name) const {
+		return lookupTemplate(StringTable::getStringView(name));
+	}
+
 	// Look up all template overloads for a given name
 	// Returns a reference to the internal vector for efficiency
 	const std::vector<ASTNode>* lookupAllTemplates(std::string_view name) const {
@@ -845,12 +850,12 @@ public:
 	std::unordered_map<std::string, std::vector<TemplatePattern>, TransparentStringHash, std::equal_to<>> specialization_patterns_;
 	
 	// Register mapping from instantiated name to pattern name (for partial specializations)
-	void register_instantiation_pattern(std::string_view instantiated_name, std::string_view pattern_name) {
-		instantiation_to_pattern_[std::string(instantiated_name)] = std::string(pattern_name);
+	void register_instantiation_pattern(StringHandle instantiated_name, StringHandle pattern_name) {
+		instantiation_to_pattern_[instantiated_name] = pattern_name;
 	}
 	
 	// Look up which pattern was used for an instantiation
-	std::optional<std::string_view> get_instantiation_pattern(std::string_view instantiated_name) const {
+	std::optional<StringHandle> get_instantiation_pattern(StringHandle instantiated_name) const {
 		auto it = instantiation_to_pattern_.find(instantiated_name);
 		if (it != instantiation_to_pattern_.end()) {
 			return it->second;
@@ -889,7 +894,7 @@ private:
 	// Map from instantiated struct name to the pattern struct name used (for partial specializations)
 	// Example: "Wrapper_int_0" -> "Wrapper_pattern__"
 	// This allows looking up member aliases from the correct specialization
-	std::unordered_map<std::string, std::string, TransparentStringHash, std::equal_to<>> instantiation_to_pattern_;
+	std::unordered_map<StringHandle, StringHandle, TransparentStringHash, std::equal_to<>> instantiation_to_pattern_;
 };
 
 // Global template registry

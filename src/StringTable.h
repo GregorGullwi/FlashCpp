@@ -111,6 +111,9 @@ struct StringHandle {
 	}
 
 	// Comparison operators (for use in maps/sets)
+	bool operator==(std::string_view other) const noexcept;
+
+	// Comparison operators (for use in maps/sets)
 	bool operator==(const StringHandle& other) const noexcept {
 		return handle == other.handle;
 	}
@@ -195,8 +198,16 @@ public:
 		std::memcpy(content, str.data(), str.size());
 		content[str.size()] = '\0';  // Null terminator
 
-		return StringHandle(static_cast<uint32_t>(chunk_idx), static_cast<uint32_t>(offset));
+		StringHandle handle(static_cast<uint32_t>(chunk_idx), static_cast<uint32_t>(offset));
+		// Store in intern map (key is string_view pointing to the interned data)
+		getInternMap()[std::string_view(content, metadata->length)] = handle;
+		return handle;
 	}
+
+	static StringHandle createStringHandle(StringBuilder& sb) {
+		return createStringHandle(sb.commit());	// Just do a commit() for now, optimize later
+	}
+
 
 	/**
 	 * @brief Get or create an interned string handle
@@ -210,13 +221,19 @@ public:
 		}
 
 		// Create new handle
-		StringHandle handle = createStringHandle(str);
+		return createStringHandle(str);
+	}
 
-		// Store in intern map (key is string_view pointing to the interned data)
-		std::string_view interned_view = getStringView(handle);
-		getInternMap()[interned_view] = handle;
+	static StringHandle getOrInternStringHandle(StringBuilder& sb) {
+		// Check if already interned
+		auto it = getInternMap().find(sb.preview());
+		if (it != getInternMap().end()) {
+			sb.reset();
+			return it->second;
+		}
 
-		return handle;
+		// Create new handle
+		return createStringHandle(sb.commit());
 	}
 
 	/**
@@ -290,4 +307,13 @@ namespace std {
 			return handle.hash();
 		}
 	};
+}
+
+// StringBuilder extension for StringHandle support (defined here to avoid circular dependency)
+inline StringBuilder& StringBuilder::append(StringHandle sh) {
+	return append(StringTable::getStringView(sh));
+}
+
+inline bool StringHandle::operator==(std::string_view other) const noexcept {
+	return StringTable::getStringView(*this) == other;
 }
