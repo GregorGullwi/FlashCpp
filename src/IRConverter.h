@@ -4573,7 +4573,7 @@ private:
 			// and a TempVar entry
 			if (it != variable_scopes.back().variables.end() && it->second.offset == INT_MIN) {
 				FLASH_LOG(Codegen, Debug, "  Found with INT_MIN, last_allocated_variable: '", last_allocated_variable_name_, "', offset: ", last_allocated_variable_offset_);
-				if (!last_allocated_variable_name_.empty() && last_allocated_variable_offset_ != 0) {
+				if (last_allocated_variable_name_.isValid() && last_allocated_variable_offset_ != 0) {
 					// Use the last allocated variable's offset for this TempVar
 					// Update the TempVar entry so future lookups are O(1)
 					it->second.offset = last_allocated_variable_offset_;
@@ -6818,7 +6818,6 @@ private:
 		
 		TempVar result_temp = std::get<TempVar>(op.result.value);
 		StringHandle global_name_handle = op.getGlobalName();
-		std::string global_name(StringTable::getStringView(global_name_handle));  // Phase 4: Use helper
 		int size_in_bits = op.result.size_in_bits;
 		Type result_type = op.result.type;
 		bool is_floating_point = (result_type == Type::Float || result_type == Type::Double);
@@ -6838,7 +6837,7 @@ private:
 		}
 
 		// Add a pending relocation for this global variable reference
-		pending_global_relocations_.push_back({reloc_offset, global_name, IMAGE_REL_AMD64_REL32});
+		pending_global_relocations_.push_back({reloc_offset, global_name_handle, IMAGE_REL_AMD64_REL32});
 
 		// Store the loaded value/address to the stack
 		int result_offset = allocateStackSlotForTempVar(result_temp.var_number);
@@ -6889,13 +6888,13 @@ private:
 			emitFloatMovFromFrame(X64Register::XMM0, source_offset, is_float);
 			// Store to global using RIP-relative addressing
 			uint32_t reloc_offset = emitFloatMovRipRelativeStore(X64Register::XMM0, is_float);
-			pending_global_relocations_.push_back({reloc_offset, std::string(StringTable::getStringView(global_name)), IMAGE_REL_AMD64_REL32});
+			pending_global_relocations_.push_back({reloc_offset, global_name, IMAGE_REL_AMD64_REL32});
 		} else {
 			// Load integer value into RAX
 			emitMovFromFrameBySize(X64Register::RAX, source_offset, size_in_bits);
 			// Store to global using RIP-relative addressing
 			uint32_t reloc_offset = emitMovRipRelativeStore(X64Register::RAX, size_in_bits);
-			pending_global_relocations_.push_back({reloc_offset, std::string(StringTable::getStringView(global_name)), IMAGE_REL_AMD64_REL32});
+			pending_global_relocations_.push_back({reloc_offset, global_name, IMAGE_REL_AMD64_REL32});
 		}
 	}
 
@@ -7127,7 +7126,7 @@ private:
 		} // end if (is_initialized)
 		
 		// Add debug information for the local variable
-		if (!current_function_name_.empty()) {
+		if (current_function_name_.isValid()) {
 			uint32_t type_index;
 			switch (var_type) {
 				case Type::Int: type_index = 0x74; break;
@@ -7251,7 +7250,7 @@ private:
 		}
 		
 		// Finalize previous function before starting new one
-		if (!current_function_name_.empty()) {
+		if (current_function_name_.isValid()) {
 			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
@@ -7283,8 +7282,8 @@ private:
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
 			// Update function length (uses unmangled name for debug info)
-			writer.update_function_length(current_function_name_, function_length);
-			writer.set_function_debug_range(current_function_name_, 0, 0);	// doesn't seem needed
+			writer.update_function_length(std::string(StringTable::getStringView(current_function_name_)), function_length);
+			writer.set_function_debug_range(std::string(StringTable::getStringView(current_function_name_)), 0, 0);	// doesn't seem needed
 
 			// Add exception handling information (required for x64) - uses mangled name
 			// Convert try blocks to ObjectFileWriter format
@@ -7325,11 +7324,11 @@ private:
 			for (const auto& unwind_entry : current_function_unwind_map_) {
 				ObjectFileWriter::UnwindMapEntryInfo entry_info;
 				entry_info.to_state = unwind_entry.to_state;
-				entry_info.action = unwind_entry.action;
+				entry_info.action = unwind_entry.action.isValid() ? std::string(StringTable::getStringView(unwind_entry.action)) : std::string();
 				unwind_map.push_back(entry_info);
 			}
 			
-			writer.add_function_exception_info(current_function_mangled_name_, current_function_offset_, function_length, try_blocks, unwind_map);
+			writer.add_function_exception_info(std::string(StringTable::getStringView(current_function_mangled_name_)), current_function_offset_, function_length, try_blocks, unwind_map);
 		
 			// Clean up the previous function's variable scope
 			// This happens when we start a NEW function, ensuring the previous function's scope is removed
@@ -7393,7 +7392,7 @@ private:
 		
 		// Save function prologue information before setup
 		current_function_offset_ = static_cast<uint32_t>(textSectionData.size());
-		current_function_name_ = func_name;
+		current_function_name_ = func_name_handle;
 		current_function_prologue_offset_ = 0;
 		
 		uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
@@ -7401,8 +7400,8 @@ private:
 		functionSymbols[std::string(func_name)] = func_offset;
 
 		// Track function for debug information
-		current_function_name_ = func_name_str;
-		current_function_mangled_name_ = mangled_name;
+		current_function_name_ = func_name_handle;
+		current_function_mangled_name_ = mangled_handle;
 		current_function_offset_ = func_offset;
 		current_function_is_variadic_ = is_variadic;
 
@@ -7434,7 +7433,7 @@ private:
 					// Check if we've already registered this vtable
 					bool vtable_exists = false;
 					for (const auto& vt : vtables_) {
-						if (vt.vtable_symbol == vtable_symbol) {
+						if (vt.vtable_symbol == StringTable::getOrInternStringHandle(vtable_symbol)) {
 							vtable_exists = true;
 							break;
 						}
@@ -7443,8 +7442,8 @@ private:
 					if (!vtable_exists) {
 						// Register this vtable - we'll populate function symbols as we encounter them
 						VTableInfo vtable_info;
-						vtable_info.vtable_symbol = vtable_symbol;
-						vtable_info.class_name = struct_name;
+						vtable_info.vtable_symbol = StringTable::getOrInternStringHandle(vtable_symbol);
+						vtable_info.class_name = StringTable::getOrInternStringHandle(struct_name);
 						
 						// Reserve space for vtable entries
 						vtable_info.function_symbols.resize(struct_info->vtable.size());
@@ -7964,7 +7963,7 @@ private:
 		
 		// Add line mapping for the return statement itself (only for functions without function calls)
 		// For functions with function calls (like main), the closing brace is already mapped in handleFunctionCall
-		if (instruction.getLineNumber() > 0 && current_function_name_ != "main") {	// TODO: Is main special case still needed here?
+		if (instruction.getLineNumber() > 0 && current_function_name_ != StringTable::getOrInternStringHandle("main")) {	// TODO: Is main special case still needed here?
 			addLineMapping(instruction.getLineNumber());
 		}
 
@@ -8984,7 +8983,7 @@ private:
 		enum class Kind { Stack, Global };
 		Kind kind = Kind::Stack;
 		int32_t stack_offset = 0;
-		std::string global_name;
+		StringHandle global_name;
 
 		static UnaryOperandLocation stack(int32_t offset) {
 			UnaryOperandLocation loc;
@@ -8993,7 +8992,7 @@ private:
 			return loc;
 		}
 
-		static UnaryOperandLocation global(std::string name) {
+		static UnaryOperandLocation global(StringHandle name) {
 			UnaryOperandLocation loc;
 			loc.kind = Kind::Global;
 			loc.global_name = name;
@@ -9012,18 +9011,18 @@ private:
 			if (auto offset = findIdentifierStackOffset(name); offset.has_value()) {
 				return UnaryOperandLocation::stack(offset.value());
 			}
-			return UnaryOperandLocation::global(std::string(name));
+			return UnaryOperandLocation::global(StringTable::getOrInternStringHandle(name));
 		}
 
 		if (instruction.isOperandType<std::string>(operand_index)) {
-			return UnaryOperandLocation::global(instruction.getOperandAs<std::string>(operand_index));
+			return UnaryOperandLocation::global(StringTable::getOrInternStringHandle(instruction.getOperandAs<std::string>(operand_index)));
 		}
 
 		assert(false && "Unsupported operand type for unary operation");
 		return UnaryOperandLocation::stack(0);
 	}
 
-	void appendRipRelativePlaceholder(const std::string& global_name) {
+	void appendRipRelativePlaceholder(StringHandle global_name) {
 		uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
 		textSectionData.push_back(0x00);
 		textSectionData.push_back(0x00);
@@ -9128,7 +9127,7 @@ private:
 		}
 	}
 
-	void loadValueFromGlobal(const std::string& global_name, int size_in_bits, X64Register target_reg) {
+	void loadValueFromGlobal(StringHandle global_name, int size_in_bits, X64Register target_reg) {
 		uint8_t reg_bits = static_cast<uint8_t>(target_reg) & 0x07;
 		bool needs_rex = static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8);
 		switch (size_in_bits) {
@@ -9255,7 +9254,7 @@ private:
 		return false;
 	}
 
-	void storeValueToGlobal(const std::string& global_name, int size_in_bits, X64Register source_reg) {
+	void storeValueToGlobal(StringHandle global_name, int size_in_bits, X64Register source_reg) {
 		uint8_t reg_bits = static_cast<uint8_t>(source_reg) & 0x07;
 		bool needs_rex = static_cast<uint8_t>(source_reg) >= static_cast<uint8_t>(X64Register::R8);
 		switch (size_in_bits) {
@@ -9355,7 +9354,7 @@ private:
 			if (auto offset = findIdentifierStackOffset(name); offset.has_value()) {
 				return UnaryOperandLocation::stack(offset.value());
 			}
-			return UnaryOperandLocation::global(std::string(StringTable::getStringView(name)));
+			return UnaryOperandLocation::global(name);
 		}
 
 		// IrValue can also contain immediate values (unsigned long long, double)
@@ -11209,7 +11208,7 @@ private:
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
 				textSectionData.push_back(0x00);
-				pending_global_relocations_.push_back({reloc_offset, std::string(global_object_name), IMAGE_REL_AMD64_REL32});
+				pending_global_relocations_.push_back({reloc_offset, StringTable::getOrInternStringHandle(global_object_name), IMAGE_REL_AMD64_REL32});
 				
 				// If offset != 0, add it to addr_reg
 				if (op.offset != 0) {
@@ -11252,7 +11251,7 @@ private:
 		if (is_global_access) {
 			// LEA temp_reg, [RIP + global] with relocation
 			uint32_t reloc_offset = emitLeaRipRelative(temp_reg);
-			pending_global_relocations_.push_back({reloc_offset, std::string(global_object_name), IMAGE_REL_AMD64_REL32});
+			pending_global_relocations_.push_back({reloc_offset, StringTable::getOrInternStringHandle(global_object_name), IMAGE_REL_AMD64_REL32});
 			
 			// Load member from [temp_reg + offset]
 			bool is_float_type = (op.result.type == Type::Float || op.result.type == Type::Double);
@@ -11482,7 +11481,7 @@ private:
 					textSectionData.push_back((disp_with_offset >> 24) & 0xFF);
 					
 					// Add relocation for the global variable (with offset already included in displacement)
-					pending_global_relocations_.push_back({reloc_offset, std::string(object_name), IMAGE_REL_AMD64_REL32});
+					pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32});
 				} else {
 					// Integer store: MOV [RIP + disp32], reg
 					int size_in_bits = op.value.size_in_bits;
@@ -11514,7 +11513,7 @@ private:
 					textSectionData.push_back((disp_with_offset >> 24) & 0xFF);
 					
 					// Add relocation
-					pending_global_relocations_.push_back({reloc_offset, std::string(object_name), IMAGE_REL_AMD64_REL32});
+					pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32});
 				}
 				
 				regAlloc.release(value_reg);
@@ -12624,20 +12623,20 @@ private:
 				base_class_names_sv.push_back(name);
 			}
 			
-			writer.add_vtable(vtable.vtable_symbol, func_symbols_sv, vtable.class_name, 
+			writer.add_vtable(StringTable::getStringView(vtable.vtable_symbol), func_symbols_sv, StringTable::getStringView(vtable.class_name), 
 			                  base_class_names_sv, vtable.base_class_info, vtable.rtti_info);
 		}
 
 		// Now add pending global variable relocations (after symbols are created)
 		for (const auto& reloc : pending_global_relocations_) {
-			writer.add_text_relocation(reloc.offset, reloc.symbol_name, reloc.type);
+			writer.add_text_relocation(reloc.offset, std::string(StringTable::getStringView(reloc.symbol_name)), reloc.type);
 		}
 
 		// Patch all pending branches before finalizing
 		patchBranches();
 
 		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
-		if (!current_function_name_.empty()) {
+		if (current_function_name_.isValid()) {
 			// Calculate actual stack space needed: named vars + outgoing args + TempVars
 			size_t temp_vars_space = (next_temp_var_offset_ > 8) ? (next_temp_var_offset_ - 8) : 0;
 			size_t named_and_shadow = current_function_named_vars_size_;
@@ -12659,7 +12658,7 @@ private:
 			uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
 			// Update function length
-			writer.update_function_length(current_function_name_, function_length);
+			writer.update_function_length(std::string(StringTable::getStringView(current_function_name_)), function_length);
 
 			// Set debug range to match reference exactly
 			if (function_length > 13) {
@@ -12667,10 +12666,10 @@ private:
 			}
 
 			// Add exception handling information (required for x64) - once per function
-			writer.add_function_exception_info(current_function_mangled_name_, current_function_offset_, function_length);
+			writer.add_function_exception_info(std::string(StringTable::getStringView(current_function_mangled_name_)), current_function_offset_, function_length);
 
 			// Clear the current function state
-			current_function_name_.clear();
+			current_function_name_ = StringHandle();
 			current_function_offset_ = 0;
 		}
 
@@ -12933,7 +12932,7 @@ private:
 
 	// Debug information tracking
 	void addLineMapping(uint32_t line_number, int32_t manual_offset = 0) {
-		if (!current_function_name_.empty()) {
+		if (current_function_name_.isValid()) {
 			uint32_t code_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_ + manual_offset;
 			writer.add_line_mapping(code_offset, line_number);
 		}
@@ -12961,15 +12960,15 @@ private:
 	RegisterAllocator regAlloc;
 
 	// Debug information tracking
-	std::string current_function_name_;
-	std::string current_function_mangled_name_;  // Changed from string_view to prevent dangling pointer
+	StringHandle current_function_name_;
+	StringHandle current_function_mangled_name_;  // Changed from string_view to prevent dangling pointer
 	uint32_t current_function_offset_ = 0;
 	bool current_function_is_variadic_ = false;
 	int32_t current_function_varargs_reg_save_offset_ = 0;  // Offset of varargs register save area (Linux only)
 
 	// Pending function info for exception handling
 	struct PendingFunctionInfo {
-		std::string name;
+		StringHandle name;
 		uint32_t offset;
 		uint32_t length;
 	};
@@ -13003,8 +13002,8 @@ private:
 
 	// VTable tracking
 	struct VTableInfo {
-		std::string vtable_symbol;  // e.g., "??_7Base@@6B@" or "_ZTV4Base"
-		std::string class_name;
+		StringHandle vtable_symbol;  // e.g., "??_7Base@@6B@" or "_ZTV4Base"
+		StringHandle class_name;
 		std::vector<std::string> function_symbols;  // Mangled function names in vtable order
 		std::vector<std::string> base_class_names;  // Base class names for RTTI (legacy)
 		std::vector<ObjectFileWriter::BaseClassDescriptorInfo> base_class_info; // Detailed base class info for RTTI
@@ -13015,7 +13014,7 @@ private:
 	// Pending global variable relocations (added after symbols are created)
 	struct PendingGlobalRelocation {
 		uint64_t offset;
-		std::string symbol_name;
+		StringHandle symbol_name;
 		uint32_t type;
 	};
 	std::vector<PendingGlobalRelocation> pending_global_relocations_;
@@ -13029,7 +13028,7 @@ private:
 	bool needs_dynamic_cast_runtime_ = false;
 
 	// Track most recently allocated named variable for TempVar linking
-	std::string last_allocated_variable_name_;
+	StringHandle last_allocated_variable_name_;
 	int32_t last_allocated_variable_offset_ = 0;
 
 	// Prologue patching for stack allocation
@@ -13060,12 +13059,12 @@ private:
 		TempVar temp_var;  // Stack location of the object
 		TypeIndex type_index;  // Type of the object (for finding destructor)
 		int state_when_constructed;  // State number when object was constructed
-		std::string destructor_name;  // Mangled name of the destructor (if known)
+		StringHandle destructor_name;  // Mangled name of the destructor (if known)
 	};
 
 	struct UnwindMapEntry {
 		int to_state;  // State to transition to after unwinding
-		std::string action;  // Name of destructor to call (or empty for no action)
+		StringHandle action;  // Name of destructor to call (or empty for no action)
 	};
 
 	std::vector<TryBlock> current_function_try_blocks_;  // Try blocks in current function
