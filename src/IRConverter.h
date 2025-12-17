@@ -1917,6 +1917,11 @@ struct RegisterAllocator
 
 	// Find a register to spill (prefer non-dirty registers, avoid RSP/RBP)
 	std::optional<X64Register> findRegisterToSpill() {
+		return findRegisterToSpill(X64Register::Count);
+	}
+
+	// Find a register to spill, excluding a specific register
+	std::optional<X64Register> findRegisterToSpill(X64Register exclude) {
 		// Single pass: prefer non-dirty registers, but accept dirty ones if needed
 		X64Register best_candidate = X64Register::Count;
 		bool found_dirty = false;
@@ -1925,7 +1930,8 @@ struct RegisterAllocator
 		for (size_t i = static_cast<size_t>(X64Register::RAX); i <= static_cast<size_t>(X64Register::R15); ++i) {
 			if (registers[i].isAllocated &&
 			    registers[i].reg != X64Register::RSP &&
-			    registers[i].reg != X64Register::RBP) {
+			    registers[i].reg != X64Register::RBP &&
+			    registers[i].reg != exclude) {
 
 				if (!registers[i].isDirty) {
 					// Found a clean register - best case, return immediately
@@ -3942,8 +3948,8 @@ private:
 							// If RHS register conflicts with result register, we need to handle it
 							// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 							if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-								// Allocate a NEW register for RHS (LHS stays where it is)
-								ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+								// Allocate a NEW register for RHS, excluding the LHS register
+								ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 							}
 							
 							// Load the pointer into the register
@@ -3959,8 +3965,8 @@ private:
 							// If RHS register conflicts with result register, we need to handle it
 							// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 							if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-								// Allocate a NEW register for RHS (LHS stays where it is)
-								ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+								// Allocate a NEW register for RHS, excluding the LHS register
+								ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 							}
 							
 							emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, ctx.operand_size_in_bits);
@@ -4017,8 +4023,8 @@ private:
 						// If RHS register conflicts with result register, we need to handle it
 						// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 						if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-							// Allocate a NEW register for RHS (LHS stays where it is)
-							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+							// Allocate a NEW register for RHS, excluding the LHS register
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 						}
 						
 						// Load the pointer into the register
@@ -4033,8 +4039,8 @@ private:
 						// If RHS register conflicts with result register, we need to handle it
 						// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 						if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-							// Allocate a NEW register for RHS (LHS stays where it is)
-							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+							// Allocate a NEW register for RHS, excluding the LHS register
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 						}
 						
 						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_stack_var_addr, ctx.operand_size_in_bits);
@@ -4051,8 +4057,8 @@ private:
 			// If RHS register conflicts with result register, we need to handle it
 			// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 			if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-				// Allocate a NEW register for RHS (LHS stays where it is)
-				ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+				// Allocate a NEW register for RHS, excluding the LHS register
+				ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 			}
 
 			// Load the literal value into the register
@@ -5536,16 +5542,21 @@ private:
 
 	// Allocate a register, spilling one to the stack if necessary
 	X64Register allocateRegisterWithSpilling() {
-		// Try to allocate a free register first
+		return allocateRegisterWithSpilling(X64Register::Count);
+	}
+
+	// Allocate a register, spilling one to the stack if necessary, excluding a specific register
+	X64Register allocateRegisterWithSpilling(X64Register exclude) {
+		// Try to allocate a free register first (excluding the specified one)
 		for (auto& reg : regAlloc.registers) {
-			if (!reg.isAllocated && reg.reg < X64Register::XMM0) {
+			if (!reg.isAllocated && reg.reg < X64Register::XMM0 && reg.reg != exclude) {
 				reg.isAllocated = true;
 				return reg.reg;
 			}
 		}
 
-		// No free registers - need to spill one
-		auto reg_to_spill = regAlloc.findRegisterToSpill();
+		// No free registers - need to spill one (excluding the specified one)
+		auto reg_to_spill = regAlloc.findRegisterToSpill(exclude);
 		if (!reg_to_spill.has_value()) {
 			throw std::runtime_error("No registers available for spilling");
 		}
