@@ -5772,6 +5772,7 @@ private:
 			op.result = result_var;
 			op.pointee_type = operandType;
 			op.pointee_size_in_bits = std::get<int>(operandIrOperands[1]);
+			op.operand_pointer_depth = static_cast<int>(operand_ptr_depth);  // NEW: Set pointer depth
 			
 			// Get the operand - it's at index 2 in operandIrOperands
 			if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
@@ -5842,6 +5843,7 @@ private:
 			op.result = result_var;
 			op.pointee_type = operandType;
 			op.pointee_size_in_bits = element_size;
+			op.pointer_depth = pointer_depth;  // NEW: Set pointer depth
 		
 			// Get the pointer operand - it's at index 2 in operandIrOperands
 			if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
