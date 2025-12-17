@@ -3375,7 +3375,7 @@ ParseResult Parser::parse_struct_declaration()
 						SaveHandle body_start = save_token_position();
 
 						// Look up the struct type
-						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+						auto type_it = gTypesByName.find(struct_name);
 						size_t struct_type_idx = 0;
 						if (type_it != gTypesByName.end()) {
 							struct_type_idx = type_it->second->type_index_;
@@ -3501,7 +3501,7 @@ ParseResult Parser::parse_struct_declaration()
 						// Also register the qualified name using the StructDeclarationNode's qualified_name()
 						// This ensures consistency with the type lookup
 						auto qualified_name = StringTable::getOrInternStringHandle(qualified_nested_name);
-						if (gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name)) == gTypesByName.end()) {
+						if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
 							gTypesByName.emplace(qualified_name, nested_type_it->second);
 						}
 					}
@@ -3678,7 +3678,7 @@ ParseResult Parser::parse_struct_declaration()
 					SaveHandle body_start = save_token_position();
 
 					// Look up the struct type
-					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+					auto type_it = gTypesByName.find(struct_name);
 					size_t struct_type_index = 0;
 					if (type_it != gTypesByName.end()) {
 						struct_type_index = type_it->second->type_index_;
@@ -3824,7 +3824,7 @@ ParseResult Parser::parse_struct_declaration()
 				SaveHandle body_start = save_token_position();
 
 				// Look up the struct type
-				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+				auto type_it = gTypesByName.find(struct_name);
 				size_t struct_type_index = 0;
 				if (type_it != gTypesByName.end()) {
 					struct_type_index = type_it->second->type_index_;
@@ -4009,7 +4009,7 @@ ParseResult Parser::parse_struct_declaration()
 				SaveHandle body_start = save_token_position();
 
 				// Look up the struct type to get its type index
-				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+				auto type_it = gTypesByName.find(struct_name);
 				size_t struct_type_index = 0;
 				if (type_it != gTypesByName.end()) {
 					struct_type_index = type_it->second->type_index_;
@@ -4881,7 +4881,7 @@ ParseResult Parser::parse_struct_declaration()
 		auto qualified_name = struct_ref.qualified_name();
 		// Register the qualified name as an alias in gTypesByName
 		// It points to the same TypeInfo as the simple name
-		if (gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name)) == gTypesByName.end()) {
+		if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
 			gTypesByName.emplace(qualified_name, &struct_type_info);
 		}
 	}
@@ -6264,7 +6264,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 		// This is a C library type being brought in via using ::type; or using ::__gnu_cxx::type;
 		// Register it as a struct type (opaque) so it can be recognized
-		if (gTypesByName.find(StringTable::getOrInternStringHandle(type_name)) == gTypesByName.end()) {
+		if (gTypesByName.find(type_name) == gTypesByName.end()) {
 			// Add the type to gTypeInfo as a struct type
 			auto& type_info = gTypeInfo.emplace_back(type_name, Type::Struct, gTypeInfo.size());
 			type_info.type_size_ = type_it->second; // Set the size in bits
@@ -6553,7 +6553,7 @@ ParseResult Parser::parse_type_specifier()
 		consume_token();
 
 		// Look up the struct type
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
+		auto type_it = gTypesByName.find(type_name);
 		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 			const TypeInfo* struct_type_info = type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -15035,7 +15035,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		auto closure_name = lambda.generate_lambda_name();
 
 		// Look up the closure type in the type system
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(closure_name));
+		auto type_it = gTypesByName.find(closure_name);
 		if (type_it != gTypesByName.end()) {
 			const TypeInfo* closure_type = type_it->second;
 			// Get closure size in bits from struct info
@@ -15194,7 +15194,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		auto closure_name = lambda.generate_lambda_name();
 
 		// Look up the closure type in the type system
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(closure_name));
+		auto type_it = gTypesByName.find(closure_name);
 		if (type_it != gTypesByName.end()) {
 			const TypeInfo* closure_type = type_it->second;
 			// Get closure size in bits from struct info
@@ -17368,7 +17368,7 @@ if (struct_type_info.getStructInfo()) {
 						if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
 							SaveHandle body_start = save_token_position();
 							
-							auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
+							auto type_it = gTypesByName.find(instantiated_name);
 							size_t struct_type_index = 0;
 							if (type_it != gTypesByName.end()) {
 								struct_type_index = type_it->second->type_index_;
@@ -20722,7 +20722,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				.append(type_alias.alias_name));
 			
 			// Check if already registered
-			if (gTypesByName.find(StringTable::getOrInternStringHandle(qualified_alias_name)) != gTypesByName.end()) {
+			if (gTypesByName.find(qualified_alias_name) != gTypesByName.end()) {
 				continue;  // Already registered
 			}
 			
@@ -21010,7 +21010,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
 
 	// Check if we already have this instantiation
-	auto existing_type = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
+	auto existing_type = gTypesByName.find(instantiated_name);
 	if (existing_type != gTypesByName.end()) {
 		return std::nullopt;
 	}
@@ -21459,7 +21459,7 @@ if (struct_type_info.getStructInfo()) {
 				.append(type_alias.alias_name));
 			
 			// Check if already registered
-			if (gTypesByName.find(StringTable::getOrInternStringHandle(qualified_alias_name)) != gTypesByName.end()) {
+			if (gTypesByName.find(qualified_alias_name) != gTypesByName.end()) {
 				continue;  // Already registered
 			}
 			
@@ -21729,7 +21729,7 @@ if (struct_type_info.getStructInfo()) {
 	instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args_to_use));
 
 	// Check if we already have this instantiation (after filling defaults)
-	existing_type = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
+	existing_type = gTypesByName.find(instantiated_name);
 	if (existing_type != gTypesByName.end()) {
 		FLASH_LOG(Templates, Debug, "Type already exists, returning nullopt");
 		// Already instantiated, return the existing struct node
@@ -22701,7 +22701,7 @@ if (struct_type_info.getStructInfo()) {
 
 	// Copy static members from the primary template
 	// Get the primary template's StructTypeInfo
-	auto primary_type_it = gTypesByName.find(std::string(template_name));
+	auto primary_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(template_name));
 	if (primary_type_it != gTypesByName.end()) {
 		const TypeInfo* primary_type_info = primary_type_it->second;
 		const StructTypeInfo* primary_struct_info = primary_type_info->getStructInfo();
