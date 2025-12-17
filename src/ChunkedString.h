@@ -114,6 +114,11 @@ public:
 
     // StringTable support - resolve chunk index and offset to pointer
     char* getChunkPointer(size_t chunk_idx, size_t offset) const {
+        if (chunk_idx >= chunks_.size()) {
+            std::cerr << "ERROR: chunk_idx=" << chunk_idx << " >= chunks_.size()=" << chunks_.size() << std::endl;
+            std::cerr << "       this=" << (void*)this << std::endl;
+            std::cerr << "       chunks_.data()=" << (void*)chunks_.data() << std::endl;
+        }
         assert(chunk_idx < chunks_.size() && "Invalid chunk index");
         return chunks_[chunk_idx]->data_.data() + offset;
     }

@@ -7208,6 +7208,11 @@ private:
 		// Use typed payload path
 		const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
 		
+		// DEBUG: Print raw handle values from the payload
+		FLASH_LOG(Codegen, Debug, "RAW handleFunctionDecl payload: mangled_name.handle=", func_decl.mangled_name.handle,
+		          " function_name.handle=", func_decl.function_name.handle,
+		          " struct_name.handle=", func_decl.struct_name.handle);
+		
 		// Use mangled name if available (for member functions like lambda operator()),
 		// otherwise use function_name. This is important for nested lambdas where multiple
 		// operator() functions would otherwise have the same name.
@@ -7215,6 +7220,11 @@ private:
 		StringHandle mangled_handle = func_decl.getMangledName();
 		StringHandle func_name_handle = func_decl.getFunctionName();
 		StringHandle struct_name_handle = func_decl.getStructName();
+		
+		FLASH_LOG(Codegen, Debug, "handleFunctionDecl: mangled_handle.handle=", mangled_handle.handle, 
+		          " func_name_handle.handle=", func_name_handle.handle,
+		          " struct_name_handle.handle=", struct_name_handle.handle);
+		
 		std::string_view mangled = mangled_handle.isValid() ? StringTable::getStringView(mangled_handle) : std::string_view{};
 		std::string_view func_name = mangled_handle.isValid() ? mangled : StringTable::getStringView(func_name_handle);
 		std::string_view struct_name = struct_name_handle.isValid() ? StringTable::getStringView(struct_name_handle) : std::string_view{};
@@ -7251,6 +7261,19 @@ private:
 		
 		// Finalize previous function before starting new one
 		if (current_function_name_.isValid()) {
+			// SAFETY CHECK: Verify current_function_mangled_name_ is still valid
+			// (protect against memory corruption)
+			if (current_function_mangled_name_.handle >= 0x80000000) {
+				FLASH_LOG(Codegen, Error, "MEMORY CORRUPTION DETECTED: current_function_mangled_name_.handle=",
+				          current_function_mangled_name_.handle, " (looks like INT_MIN cast to uint32_t)");
+				FLASH_LOG(Codegen, Error, "  Resetting to invalid handle to prevent crash");
+				current_function_mangled_name_ = StringHandle();  // Reset to invalid
+			}
+			
+			FLASH_LOG(Codegen, Debug, "Finalizing previous function, current_function_mangled_name_ handle=", current_function_mangled_name_.handle, 
+			          " isValid=", current_function_mangled_name_.isValid(),
+			          " chunk_idx=", current_function_mangled_name_.chunkIndex(),
+			          " offset=", current_function_mangled_name_.isValid() ? current_function_mangled_name_.offset() : 0);
 			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
@@ -7404,6 +7427,7 @@ private:
 		// Track function for debug information
 		current_function_name_ = func_name_handle;
 		current_function_mangled_name_ = mangled_handle;
+		FLASH_LOG(Codegen, Debug, "Setting current_function_mangled_name_ to ", current_function_mangled_name_.handle);
 		current_function_offset_ = func_offset;
 		current_function_is_variadic_ = is_variadic;
 
