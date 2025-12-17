@@ -92,8 +92,9 @@ static unsigned char getTypeSizeFromTemplateArgument(const TemplateArgument& arg
 				return size;
 			}
 			// For template struct instantiations (e.g., "TC_int"), look up by name
-			const std::string& type_name = gTypeInfo[type_index].name_;
-			auto it = gTypesByName.find(type_name);
+			StringHandle type_name_handle = gTypeInfo[type_index].name();
+		std::string_view type_name = StringTable::getStringView(type_name_handle);
+			auto it = gTypesByName.find(type_name_handle);
 			if (it != gTypesByName.end() && it->second->type_size_ > 0) {
 				return it->second->type_size_;
 			}
@@ -103,11 +104,11 @@ static unsigned char getTypeSizeFromTemplateArgument(const TemplateArgument& arg
 }
 
 // Helper function to find all local variable declarations in an AST node
-static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<std::string>& var_names) {
+static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<StringHandle>& var_names) {
 	if (node.is<VariableDeclarationNode>()) {
 		const auto& var_decl = node.as<VariableDeclarationNode>();
 		const auto& decl = var_decl.declaration();
-		var_names.insert(std::string(decl.identifier_token().value()));
+		var_names.insert(StringTable::getOrInternStringHandle(decl.identifier_token().value()));
 	} else if (node.is<BlockNode>()) {
 		const auto& block = node.as<BlockNode>();
 		const auto& stmts = block.get_statements();
@@ -139,16 +140,16 @@ static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_se
 }
 
 // Helper function to find all identifiers referenced in an AST node
-static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<std::string>& identifiers) {
+static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<StringHandle>& identifiers) {
 	if (node.is<IdentifierNode>()) {
-		identifiers.insert(std::string(node.as<IdentifierNode>().name()));
+		identifiers.insert(node.as<IdentifierNode>().nameHandle());
 	} else if (node.is<ExpressionNode>()) {
 		// ExpressionNode is a variant, so we need to check each alternative
 		const auto& expr = node.as<ExpressionNode>();
 		std::visit([&](const auto& inner_node) {
 			using T = std::decay_t<decltype(inner_node)>;
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
-				identifiers.insert(std::string(inner_node.name()));
+				identifiers.insert(inner_node.nameHandle());
 			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				findReferencedIdentifiers(ASTNode(const_cast<BinaryOperatorNode*>(&inner_node)), identifiers);
 			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
@@ -1788,7 +1789,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		consume_token();  // consume '::'
 		
 		// The class name is in decl_node.identifier_token()
-		std::string_view class_name = decl_node.identifier_token().value();
+		StringHandle class_name = StringTable::getOrInternStringHandle(decl_node.identifier_token().value());
 		
 		// Parse the actual function name
 		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
@@ -1802,14 +1803,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Find the struct in the type registry
 		auto struct_iter = gTypesByName.find(class_name);
 		if (struct_iter == gTypesByName.end()) {
-			FLASH_LOG(Parser, Error, "Unknown class '", class_name, "' in out-of-line member function definition");
+			FLASH_LOG(Parser, Error, "Unknown class '", class_name.view(), "' in out-of-line member function definition");
 			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
 		}
 		
 		const TypeInfo* type_info = struct_iter->second;
 		StructTypeInfo* struct_info = const_cast<StructTypeInfo*>(type_info->getStructInfo());
 		if (!struct_info) {
-			FLASH_LOG(Parser, Error, "'", class_name, "' is not a struct/class type");
+			FLASH_LOG(Parser, Error, "'", class_name.view(), "' is not a struct/class type");
 			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
 		}
 		
@@ -1846,14 +1847,14 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Search for existing member function declaration with the same name
 		StructMemberFunction* existing_member = nullptr;
 		for (auto& member : struct_info->member_functions) {
-			if (member.name == function_name_token.value()) {
+			if (member.getName() == StringTable::getOrInternStringHandle(function_name_token.value())) {
 				existing_member = &member;
 				break;
 			}
 		}
 		
 		if (!existing_member) {
-			FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name, "::", function_name_token.value(), 
+			FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name.view(), "::", function_name_token.value(), 
 			          "' does not match any declaration in the class");
 			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
 		}
@@ -1871,7 +1872,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		auto validation_result = validate_signature_match(existing_func_ref, func_ref);
 		if (!validation_result.is_match()) {
 			FLASH_LOG(Parser, Error, validation_result.error_message, " in out-of-line definition of '", 
-					  class_name, "::", function_name_token.value(), "'");
+					  class_name.view(), "::", function_name_token.value(), "'");
 			return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
 		}
 		
@@ -1936,7 +1937,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// Generate mangled name before setting definition (Phase 6 mangling)
 			compute_and_set_mangled_name(existing_func_ref);
 			if (!existing_func_ref.set_definition(*body_result.node())) {
-				FLASH_LOG(Parser, Error, "Function '", class_name, "::", function_name_token.value(), 
+				FLASH_LOG(Parser, Error, "Function '", class_name.view(), "::", function_name_token.value(), 
 						  "' already has a definition");
 				member_function_context_stack_.pop_back();
 				// func_scope automatically exits scope on return
@@ -2024,7 +2025,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 
 		const Token& identifier_token = decl_node.identifier_token();
-		std::string_view func_name = identifier_token.value();
+		StringHandle func_name = StringTable::getOrInternStringHandle(identifier_token.value());
 		
 		// C++20 Abbreviated Function Templates: Check if any parameter has auto type
 		// If so, convert this function to an implicit function template
@@ -2049,14 +2050,13 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				// Create synthetic template parameters for each auto parameter
 				// Each auto becomes a unique template type parameter: _T0, _T1, etc.
 				std::vector<ASTNode> template_params;
-				std::vector<std::string_view> template_param_names;
+				std::vector<StringHandle> template_param_names;
 				
 				for (size_t i = 0; i < auto_params.size(); ++i) {
 					// Generate synthetic parameter name like "_T0", "_T1", etc.
 					// Using underscore prefix to avoid conflicts with user-defined names
 					// StringBuilder.commit() returns a persistent string_view
-					StringBuilder sb;
-					std::string_view param_name = sb.append("_T").append(static_cast<int64_t>(i)).commit();
+					StringHandle param_name = StringTable::getOrInternStringHandle(StringBuilder().append("_T"sv).append(static_cast<int64_t>(i)));
 					
 					// Use the auto parameter's token for position/error reporting
 					Token param_token = auto_params[i].second;
@@ -2075,7 +2075,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				);
 				
 				// Register the template in the template registry
-				gTemplateRegistry.registerTemplate(func_name, template_func_node);
+				gTemplateRegistry.registerTemplate(func_name.view(), template_func_node);
 				
 				// Also register the template parameter names for lookup
 				gTemplateRegistry.registerTemplateParameters(func_name, template_param_names);
@@ -2441,7 +2441,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			return ParseResult::error("Expected alias name after 'using'", peek_token().value_or(Token()));
 		}
 		
-		std::string_view alias_name = alias_token->value();
+		StringHandle alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 		consume_token(); // consume alias name
 		
 		// Check for '='
@@ -2472,10 +2472,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		
 		// Also register it globally
 		const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-		auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+		auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
 		alias_type_info.type_index_ = type_spec.type_index();
 		alias_type_info.type_size_ = type_spec.size_in_bits();
-		gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 		
 		return ParseResult::success();
 	}
@@ -2519,28 +2519,28 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			consume_token(); // consume 'struct' or 'class'
 			
 			// Check if there's a struct name or if it's anonymous
-			std::string_view struct_name;
+			std::string_view struct_name_view;
 			
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-				struct_name = peek_token()->value();
+				struct_name_view = peek_token()->value();
 				consume_token(); // consume struct name
 			} else {
 				// Anonymous struct - generate a unique name using StringBuilder for persistent storage
-				struct_name = StringBuilder()
+				struct_name_view = StringBuilder()
 					.append("__anonymous_typedef_struct_")
 					.append(ast_nodes_.size())
 					.commit();
 			}
 			
 			// Register the struct type early
-			TypeInfo& struct_type_info = add_struct_type(std::string(struct_name));
+			StringHandle struct_name = StringTable::getOrInternStringHandle(struct_name_view);
+			TypeInfo& struct_type_info = add_struct_type(struct_name);
 			TypeIndex struct_type_index = struct_type_info.type_index_;
-			
 			// Create struct declaration node
 			auto [struct_node, struct_ref_inner] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 			
 			// Create StructTypeInfo
-			auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name), is_class ? AccessSpecifier::Private : AccessSpecifier::Public);
+			auto struct_info = std::make_unique<StructTypeInfo>(struct_name, is_class ? AccessSpecifier::Private : AccessSpecifier::Public);
 			
 			// Expect opening brace
 			if (!consume_punctuator("{")) {
@@ -2661,8 +2661,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					}
 				}
 				
+				// Phase 7B: Intern member name and use StringHandle overload
+				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				struct_info->addMember(
-					std::string(decl.identifier_token().value()),
+					member_name_handle,
 					member_type_spec.type(),
 					member_type_spec.type_index(),
 					member_size_in_bits,
@@ -2690,7 +2692,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
 				return ParseResult::error("Expected alias name after struct definition", *current_token_);
 			}
-			std::string_view alias_name = alias_token->value();
+			auto alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 			
 			// Consume semicolon
 			if (!consume_punctuator(";")) {
@@ -2712,10 +2714,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Register the alias globally
-			auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+			auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
 			alias_type_info.type_index_ = type_spec.type_index();
 			alias_type_info.type_size_ = type_spec.size_in_bits();
-			gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			return ParseResult::success();
 		}
@@ -2725,21 +2727,20 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			consume_token(); // consume 'enum'
 			
 			// Check if there's an enum name or if it's anonymous
-			std::string_view enum_name;
+			StringHandle enum_name;
 			
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-				enum_name = peek_token()->value();
+				enum_name = StringTable::getOrInternStringHandle(peek_token()->value());
 				consume_token(); // consume enum name
 			} else {
 				// Anonymous enum - generate a unique name using StringBuilder for persistent storage
-				enum_name = StringBuilder()
+				enum_name = StringTable::getOrInternStringHandle(StringBuilder()
 					.append("__anonymous_typedef_enum_")
-					.append(std::to_string(ast_nodes_.size()))
-					.commit();
+					.append(ast_nodes_.size()));
 			}
 			
 			// Register the enum type early
-			TypeInfo& enum_type_info = add_enum_type(std::string(enum_name));
+			TypeInfo& enum_type_info = add_enum_type(enum_name);
 			TypeIndex enum_type_index = enum_type_info.type_index_;
 			
 			// Create enum declaration node
@@ -2764,7 +2765,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Create enum type info
-			auto enum_info = std::make_unique<EnumTypeInfo>(std::string(enum_name), is_scoped);
+			auto enum_info = std::make_unique<EnumTypeInfo>(enum_name, is_scoped);
 			
 			// Determine underlying type
 			Type underlying_type = Type::Int;
@@ -2815,7 +2816,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				
 				auto enumerator_node = emplace_node<EnumeratorNode>(*enumerator_name_token, enumerator_value);
 				enum_ref.add_enumerator(enumerator_node);
-				enum_info->addEnumerator(std::string(enumerator_name_token->value()), value);
+				// Phase 7B: Intern enumerator name and use StringHandle overload
+				StringHandle enumerator_name_handle = StringTable::getOrInternStringHandle(enumerator_name_token->value());
+				enum_info->addEnumerator(enumerator_name_handle, value);
 				
 				// For unscoped enums, add to current scope
 				if (!is_scoped) {
@@ -2854,7 +2857,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
 				return ParseResult::error("Expected alias name after enum definition", *current_token_);
 			}
-			std::string_view alias_name = alias_token->value();
+			auto alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 			
 			// Consume semicolon
 			if (!consume_punctuator(";")) {
@@ -2872,10 +2875,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Register the alias globally
-			auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+			auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
 			alias_type_info.type_index_ = type_spec.type_index();
 			alias_type_info.type_size_ = type_spec.size_in_bits();
-			gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			return ParseResult::success();
 		}
@@ -2917,7 +2920,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		return ParseResult::error("Expected alias name in typedef", peek_token().value_or(Token()));
 	}
 	
-	std::string_view alias_name = alias_token->value();
+	auto alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 	consume_token(); // consume alias name
 	
 	// Consume semicolon
@@ -2934,10 +2937,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	}
 	
 	// Also register it globally
-	auto& alias_type_info = gTypeInfo.emplace_back(std::string(alias_name), type_spec.type(), gTypeInfo.size());
+	auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
-	gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 	
 	return ParseResult::success();
 }
@@ -2971,7 +2974,7 @@ ParseResult Parser::parse_struct_declaration()
 		return ParseResult::error("Expected struct/class name", name_token.value_or(Token()));
 	}
 
-	std::string_view struct_name = name_token->value();
+	auto struct_name = StringTable::getOrInternStringHandle(name_token->value());
 
 	// Check for template specialization arguments after struct name
 	// e.g., struct MyStruct<int>, struct MyStruct<T&>
@@ -3001,19 +3004,18 @@ ParseResult Parser::parse_struct_declaration()
 	// Create a persistent qualified name for nested classes (e.g., "Outer::Inner")
 	// This is used when creating member functions so they reference the correct struct type
 	// For top-level classes, qualified_struct_name equals struct_name
-	std::string_view qualified_struct_name = struct_name;
-	std::string type_name = std::string(struct_name);
+	StringHandle qualified_struct_name = struct_name;
+	StringHandle type_name = struct_name;
 	if (is_nested_class) {
 		// We're inside a struct, so this is a nested class
 		// Use the qualified name (e.g., "Outer::Inner") for the TypeInfo entry
 		const auto& context = struct_parsing_context_stack_.back();
 		// Build the qualified name using StringBuilder for a persistent allocation
-		qualified_struct_name = StringBuilder()
+		qualified_struct_name = StringTable::getOrInternStringHandle(StringBuilder()
 			.append(context.struct_name)
 			.append("::")
-			.append(struct_name)
-			.commit();
-		type_name = std::string(qualified_struct_name);
+			.append(struct_name));
+		type_name = qualified_struct_name;
 	}
 
 	TypeInfo& struct_type_info = add_struct_type(type_name);
@@ -3021,7 +3023,7 @@ ParseResult Parser::parse_struct_declaration()
 	// For nested classes, also register with the simple name so it can be referenced
 	// from within the nested class itself (e.g., in constructors)
 	if (is_nested_class) {
-		gTypesByName.emplace(std::string(struct_name), &struct_type_info);
+		gTypesByName.emplace(struct_name, &struct_type_info);
 	}
 
 	// Check for alignas specifier after struct name (if not already specified)
@@ -3033,10 +3035,10 @@ ParseResult Parser::parse_struct_declaration()
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 
 	// Push struct parsing context for nested class support
-	struct_parsing_context_stack_.push_back({struct_name, &struct_ref});
+	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name), &struct_ref});
 
 	// Create StructTypeInfo early so we can add base classes to it
-	auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name), struct_ref.default_access());
+	auto struct_info = std::make_unique<StructTypeInfo>(struct_name, struct_ref.default_access());
 	struct_info->is_union = is_union;
 
 	// Apply pack alignment from #pragma pack BEFORE adding members
@@ -3132,7 +3134,7 @@ ParseResult Parser::parse_struct_declaration()
 		}
 
 		// Look up base class type
-		auto base_type_it = gTypesByName.find(base_class_name);
+		auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
 		if (base_type_it == gTypesByName.end()) {
 			return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
 		}
@@ -3258,13 +3260,17 @@ ParseResult Parser::parse_struct_declaration()
 					// Add to StructTypeInfo
 					const auto& friend_decl = friend_node->as<FriendDeclarationNode>();
 					if (friend_decl.kind() == FriendKind::Class) {
-						struct_info->addFriendClass(std::string(friend_decl.name()));
+						StringHandle friend_class_name_handle = friend_decl.name();
+						struct_info->addFriendClass(friend_class_name_handle);
 					} else if (friend_decl.kind() == FriendKind::Function) {
-						struct_info->addFriendFunction(std::string(friend_decl.name()));
+						StringHandle friend_func_name_handle = friend_decl.name();
+						struct_info->addFriendFunction(friend_func_name_handle);
 					} else if (friend_decl.kind() == FriendKind::MemberFunction) {
+						StringHandle friend_class_name_handle = friend_decl.class_name();
+						StringHandle friend_func_name_handle = friend_decl.name();
 						struct_info->addFriendMemberFunction(
-							std::string(friend_decl.class_name()),
-							std::string(friend_decl.name()));
+							friend_class_name_handle,
+							friend_func_name_handle);
 					}
 				}
 
@@ -3382,12 +3388,12 @@ ParseResult Parser::parse_struct_declaration()
 							&member_func_ref,
 							body_start,
 							{},       // initializer_list_start (not used)
-							false,    // has_initializer_list
 							struct_name,
 							struct_type_idx,
 							&struct_ref,
-							false,  // is_constructor
-							false,  // is_destructor
+							false,    // has_initializer_list
+							false,    // is_constructor
+							false,    // is_destructor
 							nullptr,  // ctor_node
 							nullptr,  // dtor_node
 							current_template_param_names_
@@ -3401,7 +3407,7 @@ ParseResult Parser::parse_struct_declaration()
 					
 					// Also register in StructTypeInfo
 					struct_info->member_functions.emplace_back(
-						std::string(decl_node.identifier_token().value()),
+						StringTable::getOrInternStringHandle(decl_node.identifier_token().value()),
 						member_func_node,
 						current_access,
 						false,  // is_virtual
@@ -3442,8 +3448,10 @@ ParseResult Parser::parse_struct_declaration()
 				size_t static_member_alignment = get_type_alignment(type_spec.type(), static_member_size);
 
 				// Add to struct's static members
+				// Phase 7B: Intern static member name and use StringHandle overload
+				StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				struct_info->addStaticMember(
-					std::string(decl.identifier_token().value()),
+					static_member_name_handle,
 					type_spec.type(),
 					type_spec.type_index(),
 					static_member_size,
@@ -3480,7 +3488,7 @@ ParseResult Parser::parse_struct_declaration()
 						.append("::")
 						.append(nested_struct.name())
 						.commit();
-					auto nested_type_it = gTypesByName.find(qualified_nested_name);
+					auto nested_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_nested_name));
 					if (nested_type_it != gTypesByName.end()) {
 						const StructTypeInfo* nested_info_const = nested_type_it->second->getStructInfo();
 						if (nested_info_const) {
@@ -3491,7 +3499,7 @@ ParseResult Parser::parse_struct_declaration()
 
 						// Also register the qualified name using the StructDeclarationNode's qualified_name()
 						// This ensures consistency with the type lookup
-						std::string qualified_name = nested_struct.qualified_name();
+						auto qualified_name = StringTable::getOrInternStringHandle(qualified_nested_name);
 						if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
 							gTypesByName.emplace(qualified_name, nested_type_it->second);
 						}
@@ -3541,7 +3549,7 @@ ParseResult Parser::parse_struct_declaration()
 				discard_saved_token(saved_pos);
 				// This is a constructor
 				// Use qualified_struct_name for nested classes so the member function references the correct type
-				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(qualified_struct_name, ctor_name);
+				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(qualified_struct_name, StringTable::getOrInternStringHandle(ctor_name));
 
 				// Parse parameters using unified parameter list parsing (Phase 1)
 				FlashCpp::ParsedParameterList params;
@@ -3687,10 +3695,10 @@ ParseResult Parser::parse_struct_declaration()
 						nullptr,  // func_node (not used for constructors)
 						body_start,
 						initializer_list_start,  // Save position of initializer list
-						has_initializer_list,     // Flag if initializer list exists
 						struct_name,
 						struct_type_index,
 						&struct_ref,
+						has_initializer_list,     // Flag if initializer list exists
 						true,  // is_constructor
 						false,  // is_destructor
 						&ctor_ref,  // ctor_node
@@ -3743,7 +3751,7 @@ ParseResult Parser::parse_struct_declaration()
 			}
 
 			// Use qualified_struct_name for nested classes so the member function references the correct type
-			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(qualified_struct_name, dtor_name);
+			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(qualified_struct_name, StringTable::getOrInternStringHandle(dtor_name));
 
 			// Parse override/final specifiers for destructors
 			bool is_override = false;
@@ -3787,7 +3795,7 @@ ParseResult Parser::parse_struct_declaration()
 						auto [block_node, block_ref] = create_node_ref(BlockNode());
 						// Generate mangled name for the destructor
 						NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
-						dtor_ref.set_mangled_name(mangled.view());
+						dtor_ref.set_mangled_name(mangled);
 						dtor_ref.set_definition(block_node);
 					} else if (peek_token()->value() == "delete") {
 						consume_token(); // consume 'delete'
@@ -3829,10 +3837,10 @@ ParseResult Parser::parse_struct_declaration()
 					nullptr,  // func_node (not used for destructors)
 					body_start,
 					{},       // initializer_list_start (not used)
-					false,    // has_initializer_list
 					struct_name,
 					struct_type_index,
 					&struct_ref,
+					false,    // has_initializer_list
 					false,  // is_constructor
 					true,   // is_destructor
 					nullptr,  // ctor_node
@@ -4014,10 +4022,10 @@ ParseResult Parser::parse_struct_declaration()
 					&member_func_ref,
 					body_start,
 					{},       // initializer_list_start (not used)
-					false,    // has_initializer_list
 					struct_name,
 					struct_type_index,
 					&struct_ref,
+					false,    // has_initializer_list
 					false,  // is_constructor
 					false,  // is_destructor
 					nullptr,  // ctor_node
@@ -4254,7 +4262,7 @@ ParseResult Parser::parse_struct_declaration()
 				Type::Struct,
 				struct_type_info.type_index_,
 				static_cast<unsigned char>(0),  // Size will be set later
-				Token(Token::Type::Identifier, struct_name, var_name_token->line(), var_name_token->column(), var_name_token->file_index())
+				Token(Token::Type::Identifier, StringTable::getStringView(struct_name), var_name_token->line(), var_name_token->column(), var_name_token->file_index())
 			);
 
 			auto var_decl = emplace_node<DeclarationNode>(var_type_spec, *var_name_token);
@@ -4326,8 +4334,10 @@ ParseResult Parser::parse_struct_declaration()
 			referenced_size_bits = referenced_size_bits ? referenced_size_bits : (type_spec.size_in_bits());
 			member_alignment = sizeof(void*);
 		}
+		// Phase 7B: Intern member name and use StringHandle overload
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 		struct_info->addMember(
-			std::string(decl.identifier_token().value()),
+			member_name_handle,
 			type_spec.type(),
 			type_spec.type_index(),
 			member_size,
@@ -4417,8 +4427,10 @@ ParseResult Parser::parse_struct_declaration()
 			const DeclarationNode& decl = func.decl_node();
 
 			// Add member function to struct type info
+			// Phase 7B: Intern function name and use StringHandle overload
+			StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 			struct_info->addMemberFunction(
-				std::string(decl.identifier_token().value()),
+				func_name_handle,
 				func_decl.function_declaration,
 				func_decl.access,
 				func_decl.is_virtual,
@@ -4865,7 +4877,7 @@ ParseResult Parser::parse_struct_declaration()
 
 	// If this is a nested class, also register it with its qualified name
 	if (struct_ref.is_nested()) {
-		std::string qualified_name = struct_ref.qualified_name();
+		auto qualified_name = struct_ref.qualified_name();
 		// Register the qualified name as an alias in gTypesByName
 		// It points to the same TypeInfo as the simple name
 		if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
@@ -4887,7 +4899,7 @@ ParseResult Parser::parse_struct_declaration()
 			DeferredTemplateMemberBody deferred;
 			
 			// Get function name for matching during instantiation
-			std::string_view func_name;
+			StringHandle func_name;
 			bool is_const_method = false;
 			if (delayed.is_constructor && delayed.ctor_node) {
 				func_name = delayed.ctor_node->name();
@@ -4895,7 +4907,7 @@ ParseResult Parser::parse_struct_declaration()
 				func_name = delayed.dtor_node->name();
 			} else if (delayed.func_node) {
 				const auto& decl = delayed.func_node->decl_node();
-				func_name = decl.identifier_token().value();
+				func_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				// is_const is stored in StructMemberFunctionDecl, not in FunctionDeclarationNode
 				// We'll match by name only for now
 			}
@@ -4909,10 +4921,7 @@ ParseResult Parser::parse_struct_declaration()
 			deferred.is_constructor = delayed.is_constructor;
 			deferred.is_destructor = delayed.is_destructor;
 			deferred.is_const_method = is_const_method;
-			// Copy template param names to std::string
-			for (const auto& name : delayed.template_param_names) {
-				deferred.template_param_names.push_back(std::string(name));
-			}
+			deferred.template_param_names = delayed.template_param_names;
 			pending_template_deferred_bodies_.push_back(std::move(deferred));
 		}
 		
@@ -4978,26 +4987,25 @@ ParseResult Parser::parse_enum_declaration()
 	}
 
 	// Parse enum name (optional for anonymous enums)
-	std::string_view enum_name;
+	StringHandle enum_name;
 	//bool is_anonymous = false;
 	
 	// Check if next token is an identifier (name) or : or { (anonymous enum)
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 		auto name_token = consume_token();
-		enum_name = name_token->value();
+		enum_name = StringTable::getOrInternStringHandle(name_token->value());
 	} else if (peek_token().has_value() && 
 	           (peek_token()->value() == ":" || peek_token()->value() == "{")) {
 		// Anonymous enum - generate a unique name
 		static int anonymous_enum_counter = 0;
-		static std::string temp_string;
-		enum_name = temp_string = "__anonymous_enum_" + std::to_string(anonymous_enum_counter++);
+		enum_name = StringTable::getOrInternStringHandle(StringBuilder().append("__anonymous_enum_").append(std::to_string(anonymous_enum_counter++)));
 		//is_anonymous = true;
 	} else {
 		return ParseResult::error("Expected enum name, ':', or '{'", *peek_token());
 	}
 
 	// Register the enum type in the global type system EARLY
-	TypeInfo& enum_type_info = add_enum_type(std::string(enum_name));
+	TypeInfo& enum_type_info = add_enum_type(enum_name);
 
 	// Create enum declaration node
 	auto [enum_node, enum_ref] = emplace_node_ref<EnumDeclarationNode>(enum_name, is_scoped);
@@ -5023,7 +5031,7 @@ ParseResult Parser::parse_enum_declaration()
 	}
 
 	// Create enum type info
-	auto enum_info = std::make_unique<EnumTypeInfo>(std::string(enum_name), is_scoped);
+	auto enum_info = std::make_unique<EnumTypeInfo>(enum_name, is_scoped);
 
 	// Determine underlying type (default is int)
 	Type underlying_type = Type::Int;
@@ -5083,7 +5091,9 @@ ParseResult Parser::parse_enum_declaration()
 		enum_ref.add_enumerator(enumerator_node);
 
 		// Add enumerator to enum type info
-		enum_info->addEnumerator(std::string(enumerator_name), value);
+		// Phase 7B: Intern enumerator name and use StringHandle overload
+		StringHandle enumerator_name_handle = StringTable::getOrInternStringHandle(enumerator_name);
+		enum_info->addEnumerator(enumerator_name_handle, value);
 
 		// For unscoped enums, add enumerator to current scope as a constant
 		// This allows unscoped enum values to be used without qualification
@@ -5216,15 +5226,13 @@ ParseResult Parser::parse_typedef_declaration()
 	// Check if this is an inline struct/class definition: typedef struct { ... } alias;
 	// or typedef struct Name { ... } alias;
 	bool is_inline_struct = false;
-	std::string struct_name_for_typedef_storage;  // Storage for generated names
-	std::string_view struct_name_for_typedef;
+	StringHandle struct_name_for_typedef;
 	TypeIndex struct_type_index = 0;
 
 	// Check if this is an inline enum definition: typedef enum { ... } alias;
 	// or typedef enum _Name { ... } alias;
 	bool is_inline_enum = false;
-	std::string enum_name_for_typedef_storage;
-	std::string_view enum_name_for_typedef;
+	StringHandle enum_name_for_typedef;
 	TypeIndex enum_type_index = 0;
 
 	if (peek_token().has_value() && peek_token()->value() == "enum") {
@@ -5247,8 +5255,7 @@ ParseResult Parser::parse_typedef_declaration()
 		if (peek_token().has_value() && peek_token()->value() == "{") {
 			// Pattern 1: typedef enum { ... } alias;
 			is_inline_enum = true;
-			enum_name_for_typedef_storage = "__anonymous_typedef_enum_" + std::to_string(ast_nodes_.size());
-			enum_name_for_typedef = enum_name_for_typedef_storage;
+			enum_name_for_typedef = StringTable::getOrInternStringHandle(StringBuilder().append("__anonymous_typedef_enum_"sv).append(ast_nodes_.size()));
 		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 			auto enum_name_token = peek_token();
 			consume_token(); // consume enum name
@@ -5258,7 +5265,7 @@ ParseResult Parser::parse_typedef_declaration()
 				// Pattern 2: typedef enum _Name { ... } alias;
 				// or typedef enum _Name : type { ... } alias;
 				is_inline_enum = true;
-				enum_name_for_typedef = enum_name_token->value();
+				enum_name_for_typedef = StringTable::getOrInternStringHandle(enum_name_token->value());
 			} else {
 				// Not an inline definition, restore position and parse normally
 				current_token_ = next_pos;
@@ -5285,8 +5292,7 @@ ParseResult Parser::parse_typedef_declaration()
 			is_inline_struct = true;
 			// Use a unique temporary name for the struct/union (will be replaced by typedef alias)
 			// Use the current AST size to make it unique
-			struct_name_for_typedef_storage = "__anonymous_typedef_struct_" + std::to_string(ast_nodes_.size());
-			struct_name_for_typedef = struct_name_for_typedef_storage;
+			struct_name_for_typedef = StringTable::getOrInternStringHandle(StringBuilder().append("__anonymous_typedef_struct_"sv).append(ast_nodes_.size()));
 		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 			auto struct_name_token = peek_token();
 			consume_token(); // consume struct/union name
@@ -5294,7 +5300,7 @@ ParseResult Parser::parse_typedef_declaration()
 			if (peek_token().has_value() && peek_token()->value() == "{") {
 				// Pattern 2/4: typedef struct/union Name { ... } alias;
 				is_inline_struct = true;
-				struct_name_for_typedef = struct_name_token->value();
+				struct_name_for_typedef = StringTable::getOrInternStringHandle(struct_name_token->value());
 			} else {
 				// Not an inline definition, restore position and parse normally
 				current_token_ = next_pos;
@@ -5315,7 +5321,7 @@ ParseResult Parser::parse_typedef_declaration()
 		// We need to manually parse the enum body since we already consumed the keyword and name
 
 		// Register the enum type early
-		TypeInfo& enum_type_info = add_enum_type(std::string(enum_name_for_typedef));
+		TypeInfo& enum_type_info = add_enum_type(enum_name_for_typedef);
 		enum_type_index = enum_type_info.type_index_;
 
 		// Create enum declaration node
@@ -5344,7 +5350,7 @@ ParseResult Parser::parse_typedef_declaration()
 		}
 
 		// Create enum type info
-		auto enum_info = std::make_unique<EnumTypeInfo>(std::string(enum_name_for_typedef), is_scoped);
+		auto enum_info = std::make_unique<EnumTypeInfo>(enum_name_for_typedef, is_scoped);
 
 		// Determine underlying type (default is int)
 		Type underlying_type = Type::Int;
@@ -5399,7 +5405,9 @@ ParseResult Parser::parse_typedef_declaration()
 			// Add enumerator
 			auto enumerator_node = emplace_node<EnumeratorNode>(*enumerator_name_token, enumerator_value);
 			enum_ref.add_enumerator(enumerator_node);
-			enum_info->addEnumerator(std::string(enumerator_name_token->value()), value);
+			// Phase 7B: Intern enumerator name and use StringHandle overload
+			StringHandle enumerator_name_handle = StringTable::getOrInternStringHandle(enumerator_name_token->value());
+			enum_info->addEnumerator(enumerator_name_handle, value);
 
 			// For unscoped enums, add enumerator to current scope as a constant
 			// This allows unscoped enum values to be used without qualification
@@ -5445,17 +5453,17 @@ ParseResult Parser::parse_typedef_declaration()
 		// We need to manually parse the struct body since we already consumed the keyword and name
 
 		// Register the struct type early
-		TypeInfo& struct_type_info = add_struct_type(std::string(struct_name_for_typedef));
+		TypeInfo& struct_type_info = add_struct_type(struct_name_for_typedef);
 		struct_type_index = struct_type_info.type_index_;
 
 		// Create struct declaration node
 		auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name_for_typedef, false);
 
 		// Push struct parsing context
-		struct_parsing_context_stack_.push_back({struct_name_for_typedef, &struct_ref});
+		struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name_for_typedef), &struct_ref});
 
 		// Create StructTypeInfo
-		auto struct_info = std::make_unique<StructTypeInfo>(std::string(struct_name_for_typedef), AccessSpecifier::Public);
+		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public);
 
 		// Apply pack alignment from #pragma pack
 		size_t pack_alignment = context_.getCurrentPackAlignment();
@@ -5614,8 +5622,10 @@ ParseResult Parser::parse_typedef_declaration()
 				referenced_size_bits = referenced_size_bits ? referenced_size_bits : member_type_spec.size_in_bits();
 				member_alignment = sizeof(void*);
 			}
+			// Phase 7B: Intern member name and use StringHandle overload
+			StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 			struct_info->addMember(
-				std::string(decl.identifier_token().value()),
+				member_name_handle,
 				member_type_spec.type(),
 				member_type_spec.type_index(),
 				member_size,
@@ -5643,7 +5653,7 @@ ParseResult Parser::parse_typedef_declaration()
 			Type::Struct,
 			struct_type_index,
 			static_cast<unsigned char>(struct_type_info.getStructInfo()->total_size * 8),
-			Token(Token::Type::Identifier, struct_name_for_typedef, 0, 0, 0)
+			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0)
 		);
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
 	} else {
@@ -5716,11 +5726,11 @@ ParseResult Parser::parse_typedef_declaration()
 	// Register the typedef alias in the type system
 	// The typedef should resolve to the underlying type, not be a new UserDefined type
 	// We create a TypeInfo entry that mirrors the underlying type
-	auto& alias_type_info = gTypeInfo.emplace_back(std::string(qualified_alias_name), type_spec.type(), gTypeInfo.size());
+	auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(qualified_alias_name), type_spec.type(), gTypeInfo.size());
 	alias_type_info.type_index_ = type_spec.type_index();
 	alias_type_info.type_size_ = type_spec.size_in_bits();
 	alias_type_info.pointer_depth_ = type_spec.pointer_depth();
-	gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+	gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 
 	// Update the type_node with the modified type_spec (with pointers)
 	type_node = emplace_node<TypeSpecifierNode>(type_spec);
@@ -5755,7 +5765,7 @@ ParseResult Parser::parse_friend_declaration()
 			return ParseResult::error("Expected ';' after friend class declaration", *current_token_);
 		}
 
-		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, class_name_token->value());
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, StringTable::getOrInternStringHandle(class_name_token->value()));
 		return saved_position.success(friend_node);
 	}
 
@@ -5815,10 +5825,10 @@ ParseResult Parser::parse_friend_declaration()
 	ASTNode friend_node;
 	if (last_qualifier.empty()) {
 		// Friend function
-		friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, function_name);
+		friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, StringTable::getOrInternStringHandle(function_name));
 	} else {
 		// Friend member function
-		friend_node = emplace_node<FriendDeclarationNode>(FriendKind::MemberFunction, function_name, std::string(last_qualifier));
+		friend_node = emplace_node<FriendDeclarationNode>(FriendKind::MemberFunction, StringTable::getOrInternStringHandle(function_name), StringTable::getOrInternStringHandle(std::string(last_qualifier)));
 	}
 
 	return saved_position.success(friend_node);
@@ -6076,11 +6086,10 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 					
 					// Create a TypeInfo for the alias that points to the underlying type
-					std::string alias_name(alias_token->value());
-					auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
+					auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(alias_token->value()), type_spec.type(), gTypeInfo.size());
 					alias_type_info.type_index_ = type_spec.type_index();
 					alias_type_info.type_size_ = type_spec.size_in_bits();
-					gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 				}
 
 				// Return success (no AST node needed for type aliases)
@@ -6226,46 +6235,46 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	// and register it in gTypesByName so it can be used as a type
 	// Common C library types that need to be registered as opaque types
 	static const std::unordered_map<std::string_view, size_t> c_library_types = {
-		{"div_t", 64},      // struct with two ints
-		{"ldiv_t", 128},    // struct with two longs
-		{"lldiv_t", 128},   // struct with two long longs
-		{"size_t", 64},     // typically unsigned long
-		{"ptrdiff_t", 64},  // typically long
-		{"wchar_t", 32},    // typically int
-		{"mbstate_t", 64},  // opaque type
-		{"fpos_t", 128},    // opaque type
-		{"FILE", 128},      // opaque struct
-		{"time_t", 64},     // typically long
-		{"clock_t", 64},    // typically long
-		{"tm", 256}         // struct with multiple fields
+		{"div_t"sv, 64},      // struct with two ints
+		{"ldiv_t"sv, 128},    // struct with two longs
+		{"lldiv_t"sv, 128},   // struct with two long longs
+		{"size_t"sv, 64},     // typically unsigned long
+		{"ptrdiff_t"sv, 64},  // typically long
+		{"wchar_t"sv, 32},    // typically int
+		{"mbstate_t"sv, 64},  // opaque type
+		{"fpos_t"sv, 128},    // opaque type
+		{"FILE"sv, 128},      // opaque struct
+		{"time_t"sv, 64},     // typically long
+		{"clock_t"sv, 64},    // typically long
+		{"tm"sv, 256}         // struct with multiple fields
 	};
 	
-	std::string_view type_name = identifier_token.value();
-	auto type_it = c_library_types.find(type_name);
+	auto type_it = c_library_types.find(identifier_token.value());
 	// Check if this is from global namespace or __gnu_cxx namespace
 	bool is_from_global = namespace_path.empty();
 	bool is_from_gnu_cxx = (namespace_path.size() == 1 && 
 	                         namespace_path[0] == "__gnu_cxx");
 	
 	if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
+		StringHandle type_name = StringTable::getOrInternStringHandle(identifier_token.value());
+
 		// This is a C library type being brought in via using ::type; or using ::__gnu_cxx::type;
 		// Register it as a struct type (opaque) so it can be recognized
-		std::string type_name_str(type_name);
-		if (gTypesByName.find(type_name_str) == gTypesByName.end()) {
+		if (gTypesByName.find(type_name) == gTypesByName.end()) {
 			// Add the type to gTypeInfo as a struct type
-			auto& type_info = gTypeInfo.emplace_back(type_name_str, Type::Struct, gTypeInfo.size());
+			auto& type_info = gTypeInfo.emplace_back(type_name, Type::Struct, gTypeInfo.size());
 			type_info.type_size_ = type_it->second; // Set the size in bits
 			
 			// Create a minimal StructTypeInfo so it's recognized as a struct
-			auto struct_info = std::make_unique<StructTypeInfo>(type_name_str, AccessSpecifier::Public);
+			auto struct_info = std::make_unique<StructTypeInfo>(type_name, AccessSpecifier::Public);
 			struct_info->total_size = type_it->second / 8; // Convert bits to bytes
 			type_info.setStructInfo(std::move(struct_info));
 if (type_info.getStructInfo()) {
 	type_info.type_size_ = type_info.getStructInfo()->total_size;
 }
 			
-			gTypesByName.emplace(type_info.name_, &type_info);
-			FLASH_LOG(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", type_name_str, type_it->second);
+			gTypesByName.emplace(type_name, &type_info);
+			FLASH_LOG_FORMAT(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", StringTable::getStringView(type_name), type_it->second);
 		}
 	}
 
@@ -6535,7 +6544,7 @@ ParseResult Parser::parse_type_specifier()
 			                          current_token_opt.value_or(Token()));
 		}
 
-		std::string type_name(current_token_opt->value());
+		StringHandle type_name = StringTable::getOrInternStringHandle(current_token_opt->value());
 		Token type_name_token = *current_token_opt;
 		consume_token();
 
@@ -6613,7 +6622,7 @@ ParseResult Parser::parse_type_specifier()
 					// Perform substitution for template parameters in the target type
 					for (size_t i = 0; i < template_args->size() && i < param_names.size(); ++i) {
 						const auto& arg = (*template_args)[i];
-						std::string_view param_name = param_names[i];
+						std::string_view param_name = param_names[i].view();
 						
 						// Check if the target type refers to this template parameter
 						// The target type will have Type::UserDefined and a type_index pointing to
@@ -6621,7 +6630,7 @@ ParseResult Parser::parse_type_specifier()
 						bool is_template_param = false;
 						if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index() < gTypeInfo.size()) {
 							const TypeInfo& ti = gTypeInfo[instantiated_type.type_index()];
-							if (ti.name_ == param_name) {
+							if (StringTable::getStringView(ti.name()) == param_name) {
 								is_template_param = true;
 							}
 						}
@@ -6696,7 +6705,7 @@ ParseResult Parser::parse_type_specifier()
 					// This will be resolved during instantiation of the containing template
 					
 					// Look up the TypeInfo for the template parameter
-					auto type_it = gTypesByName.find(type_name);
+					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 					if (type_it != gTypesByName.end()) {
 						TypeIndex type_idx = type_it->second - &gTypeInfo[0];
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
@@ -6768,7 +6777,7 @@ ParseResult Parser::parse_type_specifier()
 					qualified_type_name += "::" + std::string(qualified_node.identifier_token().value());
 					
 					// Look up the fully qualified type (e.g., "Traits_int::nested")
-					auto qual_type_it = gTypesByName.find(qualified_type_name);
+					auto qual_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
 					if (qual_type_it != gTypesByName.end()) {
 						const TypeInfo* type_info = qual_type_it->second;
 						
@@ -6805,7 +6814,7 @@ ParseResult Parser::parse_type_specifier()
 						
 						// If not found, check if this instantiation came from a partial specialization pattern
 						if (!member_alias_opt.has_value()) {
-							auto pattern_name_opt = gTemplateRegistry.get_instantiation_pattern(instantiated_name);
+							auto pattern_name_opt = gTemplateRegistry.get_instantiation_pattern(StringTable::getOrInternStringHandle(instantiated_name));
 							if (pattern_name_opt.has_value()) {
 								// This instantiation came from a partial specialization
 								// Look up the member alias from the pattern
@@ -6858,13 +6867,13 @@ ParseResult Parser::parse_type_specifier()
 							// Perform substitution for template parameters in the target type
 							for (size_t i = 0; i < member_template_args->size() && i < param_names.size(); ++i) {
 								const auto& arg = (*member_template_args)[i];
-								std::string_view param_name = param_names[i];
+								std::string_view param_name = param_names[i].view();
 								
 								// Check if the target type refers to this template parameter
 								bool is_template_param = false;
 								if (instantiated_type.type() == Type::UserDefined && instantiated_type.type_index() < gTypeInfo.size()) {
 									const TypeInfo& ti = gTypeInfo[instantiated_type.type_index()];
-									if (ti.name_ == param_name) {
+									if (StringTable::getStringView(ti.name()) == param_name) {
 										is_template_param = true;
 									}
 								}
@@ -6942,7 +6951,7 @@ ParseResult Parser::parse_type_specifier()
 					return ParseResult::error("Unknown nested type: " + qualified_type_name, type_name_token);
 				}
 				
-				auto inst_type_it = gTypesByName.find(instantiated_name);
+				auto inst_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
 				if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
 					const TypeInfo* struct_type_info = inst_type_it->second;
 					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -6997,7 +7006,7 @@ ParseResult Parser::parse_type_specifier()
 				
 				std::string_view instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
 				
-				auto inst_type_it = gTypesByName.find(instantiated_name);
+				auto inst_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
 				if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
 					const TypeInfo* struct_type_info = inst_type_it->second;
 					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -7014,7 +7023,7 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		// Check if this is a registered struct type
-		auto type_it = gTypesByName.find(type_name);
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 			// This is a struct type (or a typedef to a struct type)
 			const TypeInfo* struct_type_info = type_it->second;
@@ -7671,7 +7680,7 @@ ParseResult Parser::parse_function_body_with_context(
 	    ctx.kind == FlashCpp::FunctionKind::Constructor ||
 	    ctx.kind == FlashCpp::FunctionKind::Destructor) {
 		// Find the parent struct type
-		auto type_it = gTypesByName.find(ctx.parent_struct_name);
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(ctx.parent_struct_name));
 		if (type_it != gTypesByName.end()) {
 			// Create 'this' pointer type: StructName*
 			auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
@@ -7744,7 +7753,7 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 				if (!base_struct_info) continue;
 				for (const auto& member_func : base_struct_info->member_functions) {
 					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-						gSymbolTable.insert(std::string_view(member_func.name), member_func.function_decl);
+						gSymbolTable.insert(StringTable::getStringView(member_func.getName()), member_func.function_decl);
 					}
 				}
 				for (const auto& nested_base : base_struct_info->base_classes) {
@@ -7760,7 +7769,7 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 }
 
 // Phase 5: Helper method to set up member function context and scope
-void Parser::setup_member_function_context(StructDeclarationNode* struct_node, std::string_view struct_name, size_t struct_type_index) {
+void Parser::setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, size_t struct_type_index) {
 	// Push member function context
 	member_function_context_stack_.push_back({
 		struct_name,
@@ -7911,7 +7920,9 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 						for (const auto& base : delayed.struct_node->base_classes()) {
 							if (base.name == init_name) {
 								is_base_init = true;
-								delayed.ctor_node->add_base_initializer(std::string(init_name), std::move(init_args));
+								// Phase 7B: Intern base class name and use StringHandle overload
+								StringHandle base_name_handle = StringTable::getOrInternStringHandle(init_name);
+								delayed.ctor_node->add_base_initializer(base_name_handle, std::move(init_args));
 								break;
 							}
 						}
@@ -8322,7 +8333,7 @@ ParseResult Parser::parse_statement_or_declaration()
 		}
 		restore_token_position(saved_pos);
 		
-		auto type_it = gTypesByName.find(type_name);
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 		if (type_it != gTypesByName.end()) {
 			// Check if it's a struct, enum, or typedef (but not a struct/enum that happens to have type_size_ set)
 			bool is_typedef = (type_it->second->type_size_ > 0 && !type_it->second->isStruct() && !type_it->second->isEnum());
@@ -8845,7 +8856,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			// Validate member name exists in struct
 			bool member_found = false;
 			for (const auto& member : struct_info.members) {
-				if (member.name == member_name) {
+				if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
 					member_found = true;
 					break;
 				}
@@ -9098,7 +9109,8 @@ std::optional<std::string_view> Parser::extract_template_param_name(const TypeSp
 
 	if (type_spec.type_index() < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-		auto it = template_params.find(type_info.name_);
+		std::string_view type_name = StringTable::getStringView(type_info.name());
+		auto it = template_params.find(type_name);
 		if (it != template_params.end()) {
 			return it->first;
 		}
@@ -9141,7 +9153,7 @@ bool Parser::instantiate_deduced_template(std::string_view class_name,
 	}
 
 	std::string_view instantiated_name = get_instantiated_class_name(class_name, template_args);
-	auto type_it = gTypesByName.find(instantiated_name);
+	auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
 	if (type_it == gTypesByName.end() || !type_it->second->isStruct()) {
 		return false;
 	}
@@ -10984,7 +10996,7 @@ ParseResult Parser::parse_primary_expression()
 		std::optional<ASTNode> identifierType;
 		if (namespaces.empty()) {
 			// Global namespace - look up in global symbol table
-			identifierType = lookup_symbol(qual_id.name());
+			identifierType = lookup_symbol(StringTable::getOrInternStringHandle(qual_id.name()));
 		} else {
 			// Qualified with namespace - use lookup_qualified
 			identifierType = lookup_symbol_qualified(qual_id.namespaces(), qual_id.name());
@@ -11409,9 +11421,9 @@ ParseResult Parser::parse_primary_expression()
 		// Use template-aware lookup if we're parsing a template body
 		std::optional<ASTNode> identifierType;
 		if (parsing_template_body_ && !current_template_param_names_.empty()) {
-			identifierType = gSymbolTable.lookup(idenfifier_token.value(), gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+			identifierType = gSymbolTable.lookup(StringTable::getOrInternStringHandle(idenfifier_token.value()), gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
 		} else {
-			identifierType = lookup_symbol(idenfifier_token.value());
+			identifierType = lookup_symbol(StringTable::getOrInternStringHandle(idenfifier_token.value()));
 		}
 		
 		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}'", idenfifier_token.value(), identifierType.has_value() ? "found" : "not found", peek_token().has_value() ? peek_token()->value() : "N/A");
@@ -11480,10 +11492,10 @@ ParseResult Parser::parse_primary_expression()
 				
 				if (instantiated.has_value()) {
 					const auto& inst_struct = instantiated->as<StructDeclarationNode>();
-					FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated class template: {}", inst_struct.name());
+					FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated class template: {}", StringTable::getStringView(inst_struct.name()));
 					
 					// Look up the instantiated template
-					identifierType = gSymbolTable.lookup(inst_struct.name());
+					identifierType = gSymbolTable.lookup(StringTable::getStringView(inst_struct.name()));
 					
 					// Check for :: after template arguments (Template<T>::member)
 					if (peek_token().has_value() && peek_token()->value() == "::") {
@@ -11496,7 +11508,7 @@ ParseResult Parser::parse_primary_expression()
 					}
 					
 					// Return identifier reference to the instantiated template
-					Token inst_token(Token::Type::Identifier, inst_struct.name(), 
+					Token inst_token(Token::Type::Identifier, StringTable::getStringView(inst_struct.name()), 
 					                final_identifier.line(), final_identifier.column(), final_identifier.file_index());
 					result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
 					return ParseResult::success(*result);
@@ -11576,7 +11588,7 @@ ParseResult Parser::parse_primary_expression()
 		// If identifier not found in symbol table, check if it's a class/struct type name
 		// This handles constructor calls like Widget(42)
 		if (!identifierType.has_value()) {
-			auto type_it = gTypesByName.find(std::string(idenfifier_token.value()));
+			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(idenfifier_token.value()));
 			if (type_it != gTypesByName.end() && peek_token().has_value() && peek_token()->value() == "(") {
 				// This is a constructor call - handle it directly here
 				consume_token();  // consume '('
@@ -11679,7 +11691,7 @@ ParseResult Parser::parse_primary_expression()
 								// String literals are lvalues (but typically decay to pointers)
 							} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 								// Look up the identifier's type
-								auto id_type = lookup_symbol(inner.name());
+								auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
 								if (id_type.has_value()) {
 									if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
 										if (decl->type_node().template is<TypeSpecifierNode>()) {
@@ -11781,14 +11793,14 @@ ParseResult Parser::parse_primary_expression()
 					// Also check base class members
 					for (const auto& base : struct_node->base_classes()) {
 						// Look up the base class type
-						auto base_type_it = gTypesByName.find(base.name);
+						auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
 						if (base_type_it != gTypesByName.end()) {
 							const TypeInfo* base_type_info = base_type_it->second;
 							const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 
 							if (base_struct_info) {
 								// Check if the identifier is a member of the base class (recursively)
-								const StructMember* member = base_struct_info->findMemberRecursive(std::string(idenfifier_token.value()));
+								const StructMember* member = base_struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
 								if (member) {
 									// This is an inherited member variable! Transform it into this->member
 									Token this_token(Token::Type::Keyword, "this",
@@ -11820,7 +11832,7 @@ ParseResult Parser::parse_primary_expression()
 						if (struct_info) {
 							// FIRST check static members (these don't use this->)
 							// Use findStaticMemberRecursive to also search base classes
-							auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(idenfifier_token.value());
+							auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(idenfifier_token.value()));
 							if (static_member) {
 								// Found static member! Create a simple identifier node
 								// Static members are accessed directly, not via this->
@@ -11840,7 +11852,7 @@ ParseResult Parser::parse_primary_expression()
 							
 							// Check instance members (these use this->)
 							for (const auto& member : struct_info->members) {
-								if (member.name == idenfifier_token.value()) {
+								if (member.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
 									// This is a member variable! Transform it into this->member
 									Token this_token(Token::Type::Keyword, "this",
 									                 idenfifier_token.line(), idenfifier_token.column(),
@@ -11857,7 +11869,7 @@ ParseResult Parser::parse_primary_expression()
 							}
 							
 							// Also check base class members
-							const StructMember* member = struct_info->findMemberRecursive(std::string(idenfifier_token.value()));
+							const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
 							if (member) {
 								// This is an inherited member variable! Transform it into this->member
 								Token this_token(Token::Type::Keyword, "this",
@@ -11930,7 +11942,7 @@ ParseResult Parser::parse_primary_expression()
 									// Check member functions in this base class
 									// StructMemberFunction has function_decl which is an ASTNode
 									for (const auto& member_func : base_struct_info->member_functions) {
-										if (member_func.name == idenfifier_token.value()) {
+										if (member_func.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
 											// Found matching member function in base class
 											if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 												gSymbolTable.insert(idenfifier_token.value(), member_func.function_decl);
@@ -11967,7 +11979,7 @@ ParseResult Parser::parse_primary_expression()
 			// Identifier already consumed at line 1621
 			if (consume_punctuator("("sv)) {
 				// First, check if this is a type name (constructor call)
-				auto type_it = gTypesByName.find(std::string(idenfifier_token.value()));
+				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(idenfifier_token.value()));
 				if (type_it != gTypesByName.end()) {
 					// This is a constructor call: TypeName(args)
 					// Parse constructor arguments
@@ -12049,7 +12061,7 @@ ParseResult Parser::parse_primary_expression()
 										arg_type = Type::Char;  // const char*
 									} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 										// Look up the identifier's type
-										auto id_type = lookup_symbol(inner.name());
+										auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
 										if (id_type.has_value()) {
 											if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
 												if (decl->type_node().template is<TypeSpecifierNode>()) {
@@ -12600,7 +12612,7 @@ ParseResult Parser::parse_primary_expression()
 					// This is a constructor call: T(args)
 					const auto& template_param = identifierType->as<TemplateParameterReferenceNode>();
 					// Create a TypeSpecifierNode for the template parameter
-					Token param_token(Token::Type::Identifier, template_param.param_name(), idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+					Token param_token(Token::Type::Identifier, template_param.param_name().view(), idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, param_token);
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
 				}
@@ -12620,7 +12632,7 @@ ParseResult Parser::parse_primary_expression()
 							// This is a constructor call: T(args)
 							const auto& template_param = std::get<TemplateParameterReferenceNode>(expr);
 							// Create a TypeSpecifierNode for the template parameter
-							Token param_token(Token::Type::Identifier, template_param.param_name(), idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+							Token param_token(Token::Type::Identifier, template_param.param_name().view(), idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 							auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, param_token);
 							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
 						} else {
@@ -13050,7 +13062,7 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 							if (struct_info) {
 								std::string_view member_name = member_access->member_name();
 								for (const auto& member : struct_info->members) {
-									if (member.name == member_name) {
+									if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
 										if (member.type == Type::FunctionPointer) {
 											is_function_pointer_call = true;
 										}
@@ -13347,7 +13359,7 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 							} else if (std::holds_alternative<IdentifierNode>(expr)) {
 								// Look up identifier type from symbol table
 								const auto& ident = std::get<IdentifierNode>(expr);
-								auto symbol = lookup_symbol(ident.name());
+								auto symbol = lookup_symbol(StringTable::getOrInternStringHandle(ident.name()));
 								if (symbol.has_value()) {
 									if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 										arg_type = decl->type_node().as<TypeSpecifierNode>().type();
@@ -13384,14 +13396,14 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 				const ExpressionNode& expr = result->as<ExpressionNode>();
 				if (std::holds_alternative<IdentifierNode>(expr)) {
 					const auto& ident = std::get<IdentifierNode>(expr);
-					auto symbol = lookup_symbol(ident.name());
+					auto symbol = lookup_symbol(ident.nameHandle());
 					if (symbol.has_value()) {
 						if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 							const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
 							if (type_spec.type() == Type::UserDefined || type_spec.type() == Type::Struct) {
 								TypeIndex type_idx = type_spec.type_index();
 								if (type_idx < gTypeInfo.size()) {
-									object_struct_name = gTypeInfo[type_idx].name_;
+									object_struct_name = StringTable::getStringView(gTypeInfo[type_idx].name());
 								}
 							}
 						}
@@ -14099,7 +14111,7 @@ ParseResult Parser::parse_lambda_expression() {
         } else {
             // Regular capture: [x] or [&x]
             // Look up the original variable to get its type
-            auto var_symbol = lookup_symbol(id_token.value());
+            auto var_symbol = lookup_symbol(StringTable::getOrInternStringHandle(id_token.value()));
             if (var_symbol.has_value()) {
                 const DeclarationNode* decl = get_decl_from_symbol(*var_symbol);
                 if (decl) {
@@ -14259,19 +14271,19 @@ ParseResult Parser::parse_lambda_expression() {
 
     if (has_capture_all) {
         // Find all identifiers referenced in the lambda body
-        std::unordered_set<std::string> referenced_vars;
+        std::unordered_set<StringHandle> referenced_vars;
         findReferencedIdentifiers(*body_result.node(), referenced_vars);
 
         // Build a set of parameter names to exclude from captures
-        std::unordered_set<std::string> param_names;
+        std::unordered_set<StringHandle> param_names;
         for (const auto& param : parameters) {
             if (param.is<DeclarationNode>()) {
-                param_names.insert(std::string(param.as<DeclarationNode>().identifier_token().value()));
+                param_names.insert(StringTable::getOrInternStringHandle(param.as<DeclarationNode>().identifier_token().value()));
             }
         }
 
         // Build a set of local variable names declared inside the lambda body
-        std::unordered_set<std::string> local_vars;
+        std::unordered_set<StringHandle> local_vars;
         findLocalVariableDeclarations(*body_result.node(), local_vars);
 
         // Convert capture-all kind to specific capture kind
@@ -14283,7 +14295,7 @@ ParseResult Parser::parse_lambda_expression() {
         // For each referenced variable, check if it's a non-local variable
         for (const auto& var_name : referenced_vars) {
             // Skip empty names or placeholders
-            if (var_name.empty() || var_name == "_") {
+			if (!var_name.isValid() || var_name.view() == "_"sv) {
                 continue;
             }
 
@@ -14338,7 +14350,7 @@ ParseResult Parser::parse_lambda_expression() {
     // Register the lambda closure type in the type system immediately
     // This allows auto type deduction to work
     const auto& lambda = lambda_node.as<LambdaExpressionNode>();
-    std::string closure_name = lambda.generate_lambda_name();
+    auto closure_name = lambda.generate_lambda_name();
 
     // Get captures from the lambda node (since we moved them above)
     const auto& lambda_captures = lambda.captures();
@@ -14365,8 +14377,10 @@ ParseResult Parser::parse_lambda_expression() {
                 TypeSpecifierNode ptr_type(Type::Void, TypeQualifier::None, 64);
                 ptr_type.add_pointer_level();  // Make it a void*
                 
+                // Phase 7B: Intern special member name and use StringHandle overload
+                StringHandle this_member_handle = StringTable::getOrInternStringHandle("__this");
                 closure_struct_info->addMember(
-                    "__this",           // Special member name for captured this
+                    this_member_handle,  // Special member name for captured this
                     Type::Void,         // Base type (will be treated as pointer)
                     0,                  // No type index
                     8,                  // Pointer size on x64
@@ -14386,14 +14400,15 @@ ParseResult Parser::parse_lambda_expression() {
                 // We need to determine the size of the enclosing struct
                 if (!member_function_context_stack_.empty()) {
                     const auto& context = member_function_context_stack_.back();
-                    std::string_view struct_name = context.struct_name;
+                    StringHandle struct_name = context.struct_name;
                     auto type_it = gTypesByName.find(struct_name);
                     if (type_it != gTypesByName.end()) {
                         const TypeInfo* enclosing_type = type_it->second;
                         const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
                         if (enclosing_struct) {
+                            StringHandle copy_this_member_handle = StringTable::getOrInternStringHandle("__copy_this");
                             closure_struct_info->addMember(
-                                "__copy_this",                      // Special member name for copied this
+                                copy_this_member_handle,            // Special member name for copied this
                                 Type::Struct,                       // Struct type
                                 enclosing_type->type_index_,        // Type index of enclosing struct
                                 enclosing_struct->total_size,       // Size of the entire struct
@@ -14410,7 +14425,7 @@ ParseResult Parser::parse_lambda_expression() {
                 continue;  // Skip the rest of processing for this capture
             }
 
-            std::string_view var_name = capture.identifier_name();
+            auto var_name = StringTable::getOrInternStringHandle(capture.identifier_name());
             TypeSpecifierNode var_type(Type::Int, TypeQualifier::None, 32);  // Default type
             
             if (capture.has_initializer()) {
@@ -14423,7 +14438,7 @@ ParseResult Parser::parse_lambda_expression() {
                     var_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
                 } else if (init_expr.is<IdentifierNode>()) {
                     // Look up the identifier's type
-                    std::string_view init_id = init_expr.as<IdentifierNode>().name();
+                    auto init_id = init_expr.as<IdentifierNode>().nameHandle();
                     auto init_symbol = lookup_symbol(init_id);
                     if (init_symbol.has_value()) {
                         const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
@@ -14438,7 +14453,7 @@ ParseResult Parser::parse_lambda_expression() {
                         // For binary operations, assume int type for arithmetic
                         var_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
                     } else if (std::holds_alternative<IdentifierNode>(expr_node)) {
-                        std::string_view init_id = std::get<IdentifierNode>(expr_node).name();
+                        auto init_id = std::get<IdentifierNode>(expr_node).nameHandle();
                         auto init_symbol = lookup_symbol(init_id);
                         if (init_symbol.has_value()) {
                             const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
@@ -14507,8 +14522,9 @@ ParseResult Parser::parse_lambda_expression() {
 					}
 				}
 			}
+
 			closure_struct_info->addMember(
-				std::string(var_name),
+				var_name,
 				member_type,
 				type_index,
 				member_size,
@@ -14555,7 +14571,7 @@ ParseResult Parser::parse_lambda_expression() {
 
     // Add operator() as a member function
     StructMemberFunction operator_call_member(
-        "operator()",
+        StringTable::getOrInternStringHandle("operator()"),
         operator_call_func_node,  // Use the original ASTNode, not a copy
         AccessSpecifier::Public,
         false,  // not constructor
@@ -14941,7 +14957,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 		// Look up the type name using type_index
 		if (result_type_index < gTypeInfo.size()) {
 			const TypeInfo& type_info = gTypeInfo[result_type_index];
-			std::string_view type_name = type_info.name_;
+			std::string_view type_name = StringTable::getStringView(type_info.name());
 
 			// Try to find which template parameter this is
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
@@ -14979,7 +14995,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 }
 
 // Lookup symbol with template parameter checking
-std::optional<ASTNode> Parser::lookup_symbol_with_template_check(std::string_view identifier) {
+std::optional<ASTNode> Parser::lookup_symbol_with_template_check(StringHandle identifier) {
     // First check if it's a template parameter using the new method
     if (parsing_template_body_ && !current_template_param_names_.empty()) {
         return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
@@ -15010,7 +15026,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	// Handle lambda expressions directly (not wrapped in ExpressionNode)
 	if (expr_node.is<LambdaExpressionNode>()) {
 		const auto& lambda = expr_node.as<LambdaExpressionNode>();
-		std::string closure_name = lambda.generate_lambda_name();
+		auto closure_name = lambda.generate_lambda_name();
 
 		// Look up the closure type in the type system
 		auto type_it = gTypesByName.find(closure_name);
@@ -15051,7 +15067,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	}
 	else if (std::holds_alternative<IdentifierNode>(expr)) {
 		const auto& ident = std::get<IdentifierNode>(expr);
-		auto symbol = this->lookup_symbol(ident.name());
+		auto symbol = this->lookup_symbol(ident.nameHandle());
 		if (symbol.has_value()) {
 			if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 				TypeSpecifierNode type = decl->type_node().as<TypeSpecifierNode>();
@@ -15145,7 +15161,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						// Look up the member function
 						std::string_view func_name = decl.decl_node().identifier_token().value();
 						for (const auto& member_func : struct_info->member_functions) {
-							if (member_func.name == func_name && 
+							if (member_func.getName() == StringTable::getOrInternStringHandle(func_name) && 
 								member_func.function_decl.is<FunctionDeclarationNode>()) {
 								// Found the real function - use its return type
 								const FunctionDeclarationNode& real_func = 
@@ -15169,7 +15185,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	else if (std::holds_alternative<LambdaExpressionNode>(expr)) {
 		// For lambda expressions, return the closure struct type
 		const auto& lambda = std::get<LambdaExpressionNode>(expr);
-		std::string closure_name = lambda.generate_lambda_name();
+		auto closure_name = lambda.generate_lambda_name();
 
 		// Look up the closure type in the type system
 		auto type_it = gTypesByName.find(closure_name);
@@ -15248,7 +15264,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info) {
 					// Look up the member
-					const StructMember* member = struct_info->findMemberRecursive(std::string(member_name));
+					const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
 					if (member) {
 						// Return the member's type
 						// member->size is in bytes, TypeSpecifierNode expects bits
@@ -15552,14 +15568,14 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 		case Type::Auto: result += "auto"; break;
 		case Type::Struct:
 			if (type.type_index() < gTypeInfo.size()) {
-				result += std::string(gTypeInfo[type.type_index()].name_);
+				result += std::string(StringTable::getStringView(gTypeInfo[type.type_index()].name()));
 			} else {
 				result += "struct";
 			}
 			break;
 		case Type::Enum:
 			if (type.type_index() < gTypeInfo.size()) {
-				result += std::string(gTypeInfo[type.type_index()].name_);
+				result += std::string(StringTable::getStringView(gTypeInfo[type.type_index()].name()));
 			} else {
 				result += "enum";
 			}
@@ -15699,14 +15715,14 @@ ParseResult Parser::parse_template_declaration() {
 	// Add template parameters to the type system temporarily using RAII scope guard (Phase 6)
 	// This allows them to be used in the function body or class members
 	FlashCpp::TemplateParameterScope template_scope;
-	std::vector<std::string_view> template_param_names;  // string_view from Token storage
+	std::vector<StringHandle> template_param_names;
 	bool has_packs = false;  // Track if any parameter is a pack
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			// Add ALL template parameters to the name list (Type, NonType, and Template)
 			// This allows them to be recognized when referenced in the template body
-			template_param_names.push_back(tparam.name());  // string_view from Token
+			template_param_names.push_back(tparam.nameHandle());  // string_view from Token
 			
 			// Check if this is a parameter pack
 			has_packs |= tparam.is_variadic();
@@ -15716,8 +15732,8 @@ ParseResult Parser::parse_template_declaration() {
 			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
-				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name_, &type_info);
+				auto& type_info = gTypeInfo.emplace_back(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, gTypeInfo.size());
+				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
 		}
@@ -15934,7 +15950,7 @@ ParseResult Parser::parse_template_declaration() {
 		auto alias_node = emplace_node<TemplateAliasNode>(
 			std::move(template_params),
 			std::move(template_param_names),
-			alias_name,
+			StringTable::getOrInternStringHandle(alias_name),
 			type_result.node().value()
 		);
 		
@@ -16088,7 +16104,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Now parse the class body as a regular struct
 			// But we need to give it a unique name that includes the template arguments
-			std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
+			auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
 
 			// Create a struct node with the instantiated name
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
@@ -16097,10 +16113,10 @@ ParseResult Parser::parse_template_declaration() {
 			);
 
 			// Create struct type info first so we can reference it
-			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+			TypeInfo& struct_type_info = add_struct_type(instantiated_name);
 
 			// Create struct info for tracking members - required before parsing static members
-			auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), struct_ref.default_access());
+			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
 			
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek_token().has_value() && peek_token()->value() == ":") {
@@ -16186,7 +16202,7 @@ ParseResult Parser::parse_template_declaration() {
 					}
 
 					// Look up base class type
-					auto base_type_it = gTypesByName.find(base_class_name);
+					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
 					if (base_type_it == gTypesByName.end()) {
 						return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
 					}
@@ -16336,8 +16352,10 @@ if (struct_type_info.getStructInfo()) {
 						size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
 						// Register the static member
+						// Phase 7B: Intern static member name and use StringHandle overload
+						StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 						struct_type_info.getStructInfo()->addStaticMember(
-							std::string(decl.identifier_token().value()),
+							static_member_name_handle,
 							type_spec.type(),
 							type_spec.type_index(),
 							member_size,
@@ -16370,7 +16388,7 @@ if (struct_type_info.getStructInfo()) {
 						discard_saved_token(saved_pos);
 						
 						// This is a constructor - use instantiated_name as the struct name
-						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, ctor_name);
+						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(ctor_name));
 						
 						// Parse parameters using unified parse_parameter_list (Phase 1)
 						FlashCpp::ParsedParameterList params;
@@ -16602,10 +16620,10 @@ if (struct_type_info.getStructInfo()) {
 							&member_func_ref,
 							body_start,
 							{},       // initializer_list_start (not used)
-							false,    // has_initializer_list
 							instantiated_name,
 							struct_type_info.type_index_,
 							&struct_ref,
+							false,    // has_initializer_list
 							false,  // is_constructor
 							false,  // is_destructor
 							nullptr,  // ctor_node
@@ -16748,8 +16766,10 @@ if (struct_type_info.getStructInfo()) {
 					referenced_size_bits = referenced_size_bits ? referenced_size_bits : type_spec.size_in_bits();
 					member_alignment = sizeof(void*);
 				}
+				// Phase 7B: Intern member name and use StringHandle overload
+				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				struct_info_ptr->addMember(
-					std::string(decl.identifier_token().value()),
+					member_name_handle,
 					type_spec.type(),
 					type_spec.type_index(),
 					member_size,
@@ -16783,8 +16803,10 @@ if (struct_type_info.getStructInfo()) {
 					const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
 					const DeclarationNode& decl = func_decl.decl_node();
 
+					// Phase 7B: Intern function name and use StringHandle overload
+					StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 					struct_info_ptr->addMemberFunction(
-						std::string(decl.identifier_token().value()),
+						func_name_handle,
 						member_func_decl.function_declaration,
 						member_func_decl.access,
 						member_func_decl.is_virtual,
@@ -16938,7 +16960,7 @@ if (struct_type_info.getStructInfo()) {
 					pattern_name += "V";
 				}
 			}
-			std::string_view instantiated_name = StringBuilder().append(pattern_name).commit();
+			auto instantiated_name = StringTable::getOrInternStringHandle(StringBuilder().append(pattern_name));
 			
 			// Create a struct node for this specialization
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
@@ -16947,10 +16969,10 @@ if (struct_type_info.getStructInfo()) {
 			);
 			
 			// Create struct type info early so we can add base classes
-			TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+			TypeInfo& struct_type_info = add_struct_type(instantiated_name);
 			
 			// Create StructTypeInfo for this specialization
-			auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), struct_ref.default_access());
+			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
 			
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek_token().has_value() && peek_token()->value() == ":") {
@@ -17036,7 +17058,7 @@ if (struct_type_info.getStructInfo()) {
 					}
 
 					// Look up base class type
-					auto base_type_it = gTypesByName.find(base_class_name);
+					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
 					if (base_type_it == gTypesByName.end()) {
 						return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
 					}
@@ -17151,8 +17173,10 @@ if (struct_type_info.getStructInfo()) {
 						size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
 						// Register the static member
+						// Phase 7B: Intern static member name and use StringHandle overload
+						StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 						struct_info->addStaticMember(
-							std::string(decl.identifier_token().value()),
+							static_member_name_handle,
 							type_spec.type(),
 							type_spec.type_index(),
 							member_size,
@@ -17205,7 +17229,7 @@ if (struct_type_info.getStructInfo()) {
 						discard_saved_token(saved_pos);
 						
 						// This is a constructor - use instantiated_name as the struct name
-						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, ctor_name);
+						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(ctor_name));
 						
 						// Parse parameters using unified parse_parameter_list (Phase 1)
 						FlashCpp::ParsedParameterList params;
@@ -17351,10 +17375,10 @@ if (struct_type_info.getStructInfo()) {
 								nullptr,
 								body_start,
 								{},
-								false,
 								instantiated_name,
 								struct_type_index,
 								&struct_ref,
+								false,    // has_initializer_list
 								true,  // is_constructor
 								false,
 								&ctor_ref,
@@ -17412,7 +17436,7 @@ if (struct_type_info.getStructInfo()) {
 					
 					// Create a new FunctionDeclarationNode with member function info
 					auto [member_func_node, member_func_ref] =
-						emplace_node_ref<FunctionDeclarationNode>(func_decl_node, instantiated_name);
+						emplace_node_ref<FunctionDeclarationNode>(func_decl_node, StringTable::getStringView(instantiated_name));
 					
 					// Copy parameters from the parsed function
 					for (const auto& param : func_decl.parameter_nodes()) {
@@ -17432,10 +17456,10 @@ if (struct_type_info.getStructInfo()) {
 							&member_func_ref,
 							body_start,
 							{},       // initializer_list_start (not used)
-							false,    // has_initializer_list
 							instantiated_name,
 							struct_type_info.type_index_,
 							&struct_ref,
+							false,    // has_initializer_list
 							false,  // is_constructor
 							false,  // is_destructor
 							nullptr,  // ctor_node
@@ -17532,8 +17556,10 @@ if (struct_type_info.getStructInfo()) {
 				
 				bool is_ref_member = type_spec.is_reference();
 				bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
+				// Phase 7B: Intern member name and use StringHandle overload
+				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				struct_info->addMember(
-					std::string(decl.identifier_token().value()),
+					member_name_handle,
 					type_spec.type(),
 					type_spec.type_index(),
 					member_size,
@@ -17565,8 +17591,10 @@ if (struct_type_info.getStructInfo()) {
 					const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
 					const DeclarationNode& decl = func_decl.decl_node();
 					
+					// Phase 7B: Intern function name and use StringHandle overload
+					StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 					struct_info->addMemberFunction(
-						std::string(decl.identifier_token().value()),
+						func_name_handle,
 						member_func_decl.function_declaration,
 						member_func_decl.access,
 						member_func_decl.is_virtual,
@@ -17678,11 +17706,11 @@ if (struct_type_info.getStructInfo()) {
 		}
 
 		// Set template parameter context for current_template_param_names_
-		std::vector<std::string_view> template_param_names_for_body;
+		std::vector<StringHandle> template_param_names_for_body;
 		for (const auto& param : template_params) {
 			if (param.is<TemplateParameterNode>()) {
 				const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
-				template_param_names_for_body.push_back(tparam.name());
+				template_param_names_for_body.push_back(tparam.nameHandle());
 			}
 		}
 		current_template_param_names_ = std::move(template_param_names_for_body);
@@ -18009,7 +18037,7 @@ if (struct_type_info.getStructInfo()) {
 		// Register the template in the template registry
 		// If we're in a namespace, register with both simple and qualified names
 		const StructDeclarationNode& struct_decl = decl_node.as<StructDeclarationNode>();
-		std::string_view simple_name = struct_decl.name();
+		std::string_view simple_name = StringTable::getStringView(struct_decl.name());
 		
 		// Register with simple name (for backward compatibility and unqualified lookups)
 		gTemplateRegistry.registerTemplate(simple_name, template_class_node);
@@ -18372,7 +18400,7 @@ ParseResult Parser::parse_template_parameter() {
 		consume_token(); // consume parameter name
 
 		// Create template template parameter node
-		auto param_node = emplace_node<TemplateParameterNode>(param_name, std::move(nested_params), param_name_token);
+		auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), std::move(nested_params), param_name_token);
 
 		// TODO: Handle default arguments (e.g., template<typename> class Container = std::vector)
 
@@ -18421,7 +18449,7 @@ ParseResult Parser::parse_template_parameter() {
 			consume_token(); // consume parameter name
 			
 			// Create type parameter node (concept-constrained)
-			auto param_node = emplace_node<TemplateParameterNode>(param_name, param_name_token);
+			auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), param_name_token);
 			
 			// Store the concept constraint
 			param_node.as<TemplateParameterNode>().set_concept_constraint(potential_concept);
@@ -18496,7 +18524,7 @@ ParseResult Parser::parse_template_parameter() {
 			}
 
 			// Create type parameter node
-			auto param_node = emplace_node<TemplateParameterNode>(param_name, param_name_token);
+			auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), param_name_token);
 			
 			// Set variadic flag if this is a parameter pack
 			if (is_variadic) {
@@ -18573,7 +18601,7 @@ ParseResult Parser::parse_template_parameter() {
 	}
 
 	// Create non-type parameter node
-	auto param_node = emplace_node<TemplateParameterNode>(param_name, *type_result.node(), param_name_token);
+	auto param_node = emplace_node<TemplateParameterNode>(StringTable::getOrInternStringHandle(param_name), *type_result.node(), param_name_token);
 	
 	// Set variadic flag if this is a parameter pack
 	if (is_variadic) {
@@ -18645,7 +18673,7 @@ ParseResult Parser::parse_template_template_parameter_form() {
 
 			// For template template parameters, we don't expect an identifier name
 			// Just create a type parameter node with an empty name
-			auto param_node = emplace_node<TemplateParameterNode>("", keyword_token);
+			auto param_node = emplace_node<TemplateParameterNode>(StringHandle(), keyword_token);
 
 			return saved_position.success(param_node);
 		}
@@ -18796,8 +18824,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name_, &type_info);
+				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(tparam.name()), Type::UserDefined, gTypeInfo.size());
+				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -18819,8 +18847,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	// Add to struct as a member function template
 	// Register the template in the global registry with qualified name (ClassName::functionName)
-	std::string qualified_name = std::string(struct_node.name()) + "::" + std::string(decl_node.identifier_token().value());
-	gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
+	auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_node.name()).append("::"sv).append(decl_node.identifier_token().value()));
+	gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_func_node);
 
 	// template_scope automatically cleans up template parameters when it goes out of scope
 
@@ -18844,7 +18872,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Parse template parameter list
 	std::vector<ASTNode> template_params;
-	std::vector<std::string_view> template_param_names;
+	std::vector<StringHandle> template_param_names;
 
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {
@@ -18854,7 +18882,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	// Extract parameter names for later lookup
 	for (const auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
-			template_param_names.push_back(param.as<TemplateParameterNode>().name());
+			template_param_names.push_back(param.as<TemplateParameterNode>().nameHandle());
 		}
 	}
 
@@ -18870,8 +18898,8 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		if (param.is<TemplateParameterNode>()) {
 			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			if (tparam.kind() == TemplateParameterKind::Type) {
-				auto& type_info = gTypeInfo.emplace_back(std::string(tparam.name()), Type::UserDefined, gTypeInfo.size());
-				gTypesByName.emplace(type_info.name_, &type_info);
+				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(tparam.name()), Type::UserDefined, gTypeInfo.size());
+				gTypesByName.emplace(type_info.name(), &type_info);
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -18953,7 +18981,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	auto alias_node = emplace_node<TemplateAliasNode>(
 		std::move(template_params),
 		std::move(template_param_names),
-		alias_name,
+		StringTable::getOrInternStringHandle(alias_name),
 		type_result.node().value()
 	);
 
@@ -19070,7 +19098,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating constant expression: {}::{}", type_name, member_name);
 		
 		// Look up the type - it should be an instantiated template class
-		auto type_it = gTypesByName.find(type_name);
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 		if (type_it == gTypesByName.end()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Type {} not found in type system", type_name);
 			return std::nullopt;
@@ -19089,7 +19117,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		}
 		
 		// Look for the static member with the given name
-		const StructStaticMember* static_member = struct_info->findStaticMember(member_name);
+		const StructStaticMember* static_member = struct_info->findStaticMember(StringTable::getOrInternStringHandle(member_name));
 		if (!static_member) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
 			return std::nullopt;
@@ -19133,7 +19161,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating constant expression: {}::{}", type_name, member_name);
 		
 		// Look up the type - it should be an instantiated template class
-		auto type_it = gTypesByName.find(type_name);
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 		if (type_it == gTypesByName.end()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Type {} not found in type system", type_name);
 			return std::nullopt;
@@ -19152,7 +19180,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		}
 		
 		// Look for the static member with the given name
-		const StructStaticMember* static_member = struct_info->findStaticMember(member_name);
+		const StructStaticMember* static_member = struct_info->findStaticMember(StringTable::getOrInternStringHandle(member_name));
 		if (!static_member) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
 			return std::nullopt;
@@ -19395,7 +19423,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			TypeIndex idx = type_node.type_index();
 			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, idx={}, gTypeInfo.size()={}", idx, gTypeInfo.size());
 			if (idx < gTypeInfo.size()) {
-				std::string_view type_name = gTypeInfo[idx].name_;
+				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Type name: {}", type_name);
 				
 				// Check if this is a template parameter name
@@ -19610,9 +19638,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			std::string_view param_name = param_names[i];
 			Type concrete_type = template_args[i].type_value;
 
-			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
 			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
-			gTypesByName.emplace(type_info.name_, &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
 
@@ -19823,7 +19851,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					TypeIndex type_index = arg_type.type_index();
 					if (type_index < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_index];
-						std::string_view instantiated_name = type_info.name_;
+						std::string_view instantiated_name = StringTable::getStringView(type_info.name());
 						
 						// Parse the instantiated name to extract template name and type arguments
 						// Format: template_name_type1_type2_...
@@ -20058,9 +20086,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				should_reparse = true;
 			} else if (orig_return_type.type_index() < gTypeInfo.size()) {
 				const TypeInfo& orig_type_info = gTypeInfo[orig_return_type.type_index()];
-				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", orig_type_info.name_);
+				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", StringTable::getStringView(orig_type_info.name()));
 				// Re-parse if type contains _unknown (template-dependent marker)
-				should_reparse = (orig_type_info.name_.find("_unknown") != std::string::npos);
+				should_reparse = (StringTable::getStringView(orig_type_info.name()).find("_unknown") != std::string::npos);
 			} else {
 				should_reparse = false;
 			}
@@ -20095,7 +20123,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			const TemplateTypeArg& arg = template_args_as_type_args[i];
 			
 			// Add this template parameter -> concrete type mapping
-			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), arg.base_type, gTypeInfo.size());
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size());
 			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
 			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
 			// instead of staying as UserDefined, which would cause toString() to return "unknown"
@@ -20110,7 +20138,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					type_info.type_size_ = 0;  // Will be resolved later
 				}
 			}
-			gTypesByName.emplace(type_info.name_, &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);
 		}
 		
@@ -20149,8 +20177,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
 				
 				// Check for placeholder/unknown types that indicate failed resolution
-				if (type_info.name_.find("_unknown") != std::string::npos) {
-					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", type_info.name_);
+				if (StringTable::getStringView(type_info.name()).find("_unknown") != std::string::npos) {
+					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: Return type contains unresolved template: {}", StringTable::getStringView(type_info.name()));
 					return std::nullopt;  // Substitution failure
 				}
 			}
@@ -20165,7 +20193,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		for (size_t i = 0; i < param_names.size() && i < template_args_as_type_args.size(); ++i) {
 			std::string_view param_name = param_names[i];
 			const TemplateTypeArg& arg = template_args_as_type_args[i];
-			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), arg.base_type, gTypeInfo.size());
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size());
 			// Set type_size_ so parse_type_specifier treats this as a typedef
 			// Only call getBasicTypeSizeInBits for basic types (Void through LongDouble)
 			if (arg.base_type >= Type::Void && arg.base_type <= Type::LongDouble) {
@@ -20178,7 +20206,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					type_info.type_size_ = 0;  // Will be resolved later
 				}
 			}
-			gTypesByName.emplace(type_info.name_, &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope2.addParameter(&type_info);
 		}
 		
@@ -20335,9 +20363,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			std::string_view param_name = param_names[i];
 			Type concrete_type = template_args[i].type_value;
 
-			auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
 			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
-			gTypesByName.emplace(type_info.name_, &type_info);
+			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}
 
@@ -20682,11 +20710,10 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	auto register_type_aliases = [&]() {
 		for (const auto& type_alias : spec_struct.type_aliases()) {
 			// Build the qualified name using StringBuilder
-			std::string_view qualified_alias_name = StringBuilder()
+			StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(StringBuilder()
 				.append(instantiated_name)
 				.append("::")
-				.append(type_alias.alias_name)
-				.commit();
+				.append(type_alias.alias_name));
 			
 			// Check if already registered
 			if (gTypesByName.find(qualified_alias_name) != gTypesByName.end()) {
@@ -20698,22 +20725,22 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			
 			// Register the type alias globally with its qualified name
 			auto& alias_type_info = gTypeInfo.emplace_back(
-				std::string(qualified_alias_name),
+				qualified_alias_name,
 				alias_type_spec.type(),
 				gTypeInfo.size()
 			);
 			alias_type_info.type_index_ = alias_type_spec.type_index();
 			alias_type_info.type_size_ = alias_type_spec.size_in_bits();
-			gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
-			FLASH_LOG(Templates, Debug, "Registered type alias: ", qualified_alias_name, 
+			FLASH_LOG(Templates, Debug, "Registered type alias: ", StringTable::getStringView(qualified_alias_name), 
 				" -> type=", static_cast<int>(alias_type_spec.type()), 
 				", type_index=", alias_type_spec.type_index());
 		}
 	};
 	
 	// Check if we already have this instantiation
-	auto existing_type = gTypesByName.find(instantiated_name);
+	auto existing_type = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
 	if (existing_type != gTypesByName.end()) {
 		FLASH_LOG(Templates, Debug, "Full spec already instantiated: ", instantiated_name);
 		
@@ -20727,8 +20754,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	FLASH_LOG(Templates, Debug, "Instantiating full specialization: ", instantiated_name);
 	
 	// Create TypeInfo for the specialization
-	TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
-	auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), spec_struct.default_access());
+	TypeInfo& struct_type_info = add_struct_type(StringTable::getOrInternStringHandle(instantiated_name));
+	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access());
 	
 	// Copy members from the specialization
 	for (const auto& member_decl : spec_struct.members()) {
@@ -20747,8 +20774,10 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		}
 		size_t member_alignment = get_type_alignment(member_type, member_size);
 		
+		// Phase 7B: Intern member name and use StringHandle overload
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 		struct_info->addMember(
-			std::string(decl.identifier_token().value()),
+			member_name_handle,
 			member_type,
 			member_type_index,
 			member_size,
@@ -20764,13 +20793,13 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// Copy static members
 	// Look up the specialization's StructTypeInfo to get static members
 	// (The specialization should have been parsed and its TypeInfo registered already)
-	std::string spec_name_lookup = std::string(spec_struct.name());
+	auto spec_name_lookup = spec_struct.name();
 	auto spec_type_it = gTypesByName.find(spec_name_lookup);
 	if (spec_type_it != gTypesByName.end()) {
 		const StructTypeInfo* spec_struct_info = spec_type_it->second->getStructInfo();
 		if (spec_struct_info) {
 			for (const auto& static_member : spec_struct_info->static_members) {
-				FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.name);
+				FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.getName());
 				struct_info->static_members.push_back(static_member);
 			}
 		}
@@ -20791,7 +20820,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			
 			// Create a NEW ConstructorDeclarationNode with the instantiated struct name
 			auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-				instantiated_name,  // Set correct parent struct name
+				StringTable::getOrInternStringHandle(instantiated_name),  // Set correct parent struct name
 				orig_ctor.name()    // Constructor name
 			);
 			
@@ -20820,7 +20849,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			const DestructorDeclarationNode& orig_dtor = mem_func.function_declaration.as<DestructorDeclarationNode>();
 			
 			auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
-				instantiated_name,
+				StringTable::getOrInternStringHandle(instantiated_name),
 				orig_dtor.name()
 			);
 			
@@ -20849,8 +20878,10 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				new_func.set_definition(*orig_func.get_definition());
 			}
 			
+			// Phase 7B: Intern function name and use StringHandle overload
+			StringHandle func_name_handle = StringTable::getOrInternStringHandle(orig_func.decl_node().identifier_token().value());
 			struct_info->addMemberFunction(
-				std::string(orig_func.decl_node().identifier_token().value()),
+				func_name_handle,
 				new_func_node,
 				mem_func.access,
 				mem_func.is_virtual,
@@ -20939,7 +20970,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Check if the initializer is a template parameter reference or identifier
 		if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
 			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(init_expr);
-			param_name_to_substitute = tparam_ref.param_name();
+			param_name_to_substitute = tparam_ref.param_name().view();
 		} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
 			const IdentifierNode& ident = std::get<IdentifierNode>(init_expr);
 			param_name_to_substitute = ident.name();
@@ -20970,7 +21001,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 	
 	// Generate the instantiated class name first
-	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
+	auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
 
 	// Check if we already have this instantiation
 	auto existing_type = gTypesByName.find(instantiated_name);
@@ -21030,8 +21061,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// For now, if members use template parameters, we substitute them
 		
 		// Create struct type info first
-		TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
-		auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), pattern_struct.default_access());
+		TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+		auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, pattern_struct.default_access());
 		
 		// Handle base classes from the pattern
 		// Base classes need to be instantiated with concrete template arguments
@@ -21102,7 +21133,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::string_view base_class_name = base_name_str;
 			
 			// Look up the base class type
-			auto base_type_it = gTypesByName.find(base_class_name);
+			auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
 			if (base_type_it != gTypesByName.end()) {
 				const TypeInfo* base_type_info = base_type_it->second;
 				struct_info->addBaseClass(base_class_name, base_type_info->type_index_, pattern_base.access, pattern_base.is_virtual);
@@ -21169,8 +21200,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
 				member_decl.default_initializer, template_args, template_params);
 			
+			// Phase 7B: Intern member name and use StringHandle overload
+			StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 			struct_info->addMember(
-				std::string(decl.identifier_token().value()),
+				member_name_handle,
 				member_type,
 				member_type_index,
 				member_size,
@@ -21222,8 +21255,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// The key issue is that member functions need parent_struct_name set correctly
 				
 				// Just add the function as-is to the struct info and AST
+				// Phase 7B: Intern function name and use StringHandle overload
+				StringHandle func_name_handle = StringTable::getOrInternStringHandle(orig_decl.identifier_token().value());
 				struct_info->addMemberFunction(
-					std::string(orig_decl.identifier_token().value()),
+					func_name_handle,
 					mem_func.function_declaration,
 					mem_func.access,
 					mem_func.is_virtual,
@@ -21236,14 +21271,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Copy static members from the pattern
 		// Get the pattern's StructTypeInfo
-		auto pattern_type_it = gTypesByName.find(std::string(pattern_struct.name()));
+		auto pattern_type_it = gTypesByName.find(pattern_struct.name());
 		if (pattern_type_it != gTypesByName.end()) {
 			const TypeInfo* pattern_type_info = pattern_type_it->second;
 			const StructTypeInfo* pattern_struct_info = pattern_type_info->getStructInfo();
 			if (pattern_struct_info) {
 				FLASH_LOG(Templates, Debug, "Copying ", pattern_struct_info->static_members.size(), " static members from pattern");
 				for (const auto& static_member : pattern_struct_info->static_members) {
-					FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.name);
+					FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.getName());
 					
 					// Check if initializer contains sizeof...(pack_name) and substitute with pack size
 					std::optional<ASTNode> substituted_initializer = static_member.initializer;
@@ -21353,7 +21388,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 							const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 							FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
-							if (auto subst = substitute_template_param_in_initializer(tparam_ref.param_name(), template_args, template_params)) {
+							if (auto subst = substitute_template_param_in_initializer(tparam_ref.param_name().view(), template_args, template_params)) {
 								substituted_initializer = subst;
 								FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", tparam_ref.param_name(), "'");
 							}
@@ -21370,8 +21405,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					
+					// Phase 7B: Intern static member name and use StringHandle overload
+					StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(static_member.getName()));
 					struct_info->addStaticMember(
-						static_member.name,
+						static_member_name_handle,
 						static_member.type,
 						static_member.type_index,
 						static_member.size,
@@ -21410,11 +21447,10 @@ if (struct_type_info.getStructInfo()) {
 		
 		for (const auto& type_alias : pattern_struct.type_aliases()) {
 			// Build the qualified name: enable_if_true_int::type
-			std::string_view qualified_alias_name = StringBuilder()
+			auto qualified_alias_name = StringTable::getOrInternStringHandle(StringBuilder()
 				.append(instantiated_name)
 				.append("::")
-				.append(type_alias.alias_name)
-				.commit();
+				.append(type_alias.alias_name));
 			
 			// Check if already registered
 			if (gTypesByName.find(qualified_alias_name) != gTypesByName.end()) {
@@ -21493,13 +21529,13 @@ if (struct_type_info.getStructInfo()) {
 			
 			// Register the type alias globally with its qualified name
 			auto& alias_type_info = gTypeInfo.emplace_back(
-				std::string(qualified_alias_name),
+				qualified_alias_name,
 				substituted_type,
 				gTypeInfo.size()
 			);
 			alias_type_info.type_index_ = substituted_type_index;
 			alias_type_info.type_size_ = substituted_size;
-			gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+			gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 			
 			FLASH_LOG(Templates, Debug, "Registered type alias from pattern: ", qualified_alias_name, 
 				" -> type=", static_cast<int>(substituted_type), 
@@ -21684,7 +21720,7 @@ if (struct_type_info.getStructInfo()) {
 	const std::vector<TemplateTypeArg>& template_args_to_use = filled_template_args;
 
 	// Generate the instantiated class name (again, with filled args)
-	instantiated_name = get_instantiated_class_name(template_name, template_args_to_use);
+	instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args_to_use));
 
 	// Check if we already have this instantiation (after filling defaults)
 	existing_type = gTypesByName.find(instantiated_name);
@@ -21697,10 +21733,10 @@ if (struct_type_info.getStructInfo()) {
 	}
 
 	// Create a new struct type for the instantiation (but don't create AST node for template instantiations)
-	TypeInfo& struct_type_info = add_struct_type(std::string(instantiated_name));
+	TypeInfo& struct_type_info = add_struct_type(instantiated_name);
 	
 	// Create StructTypeInfo
-	auto struct_info = std::make_unique<StructTypeInfo>(std::string(instantiated_name), AccessSpecifier::Public);
+	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public);
 
 	// Copy members from the template, substituting template parameters with concrete types
 	for (const auto& member_decl : class_decl.members()) {
@@ -21725,7 +21761,7 @@ if (struct_type_info.getStructInfo()) {
 			// Check if this struct has a StructInfo with size 0 (likely a template, not instantiation)
 			if (member_type_info.getStructInfo() && member_type_info.getStructInfo()->total_size == 0) {
 				// This might be a template. Try to instantiate it.
-				std::string_view member_struct_name = member_type_info.name_;
+				std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 				
 				// Try to instantiate with the current template arguments
 				// This assumes the member template has compatible parameters
@@ -21734,7 +21770,7 @@ if (struct_type_info.getStructInfo()) {
 				// If instantiation succeeded, look up the instantiated type
 				std::string_view inst_name_view = get_instantiated_class_name(member_struct_name, template_args_to_use);
 				std::string inst_name(inst_name_view);
-				auto inst_type_it = gTypesByName.find(inst_name);
+				auto inst_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
 				if (inst_type_it != gTypesByName.end()) {
 					// Update member_type_index to point to the instantiated type
 					member_type_index = inst_type_it->second->type_index_;
@@ -21761,7 +21797,7 @@ if (struct_type_info.getStructInfo()) {
 						identifier_name = ident.name();
 					} else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-						identifier_name = tparam_ref.param_name();
+						identifier_name = tparam_ref.param_name().view();
 					} else if (std::holds_alternative<NumericLiteralNode>(expr)) {
 						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 						const auto& val = lit.value();
@@ -21887,8 +21923,10 @@ if (struct_type_info.getStructInfo()) {
 		std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
 			member_decl.default_initializer, template_args_to_use, template_params);
 	
+		// Phase 7B: Intern member name and use StringHandle overload
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 		struct_info->addMember(
-			std::string(decl.identifier_token().value()),
+			member_name_handle,
 			member_type,
 			member_type_index,
 			member_size,
@@ -21908,10 +21946,10 @@ if (struct_type_info.getStructInfo()) {
 	for (const auto& nested_class : class_decl.nested_classes()) {
 		if (nested_class.is<StructDeclarationNode>()) {
 			const StructDeclarationNode& nested_struct = nested_class.as<StructDeclarationNode>();
-			std::string qualified_name = std::string(instantiated_name) + "::" + std::string(nested_struct.name());
+			auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(nested_struct.name()));
 			
 			// Create a new StructTypeInfo for the nested class
-			auto nested_struct_info = std::make_unique<StructTypeInfo>(qualified_name, nested_struct.default_access());
+			auto nested_struct_info = std::make_unique<StructTypeInfo>((qualified_name), nested_struct.default_access());
 			
 			// Copy and substitute members from the nested class
 			for (const auto& member_decl : nested_struct.members()) {
@@ -21936,7 +21974,7 @@ if (struct_type_info.getStructInfo()) {
 					TypeIndex type_idx = substituted_type_spec.type_index();
 					if (type_idx < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_idx];
-						std::string_view type_name = type_info.name_;
+						std::string_view type_name = StringTable::getStringView(type_info.name());
 						
 						// Try to find which template parameter this is
 						for (size_t i = 0; i < template_params.size(); ++i) {
@@ -21971,8 +22009,10 @@ if (struct_type_info.getStructInfo()) {
 				
 				bool is_ref_member = substituted_type_spec.is_reference();
 				bool is_rvalue_ref_member = substituted_type_spec.is_rvalue_reference();
+				// Phase 7B: Intern member name and use StringHandle overload
+				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				nested_struct_info->addMember(
-					std::string(decl.identifier_token().value()),
+					member_name_handle,
 					substituted_type_spec.type(),
 					substituted_type_spec.type_index(),
 					member_size,
@@ -21991,16 +22031,16 @@ if (struct_type_info.getStructInfo()) {
 			// Register the nested class in the type system
 			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size());
 			nested_type_info.setStructInfo(std::move(nested_struct_info));
-if (nested_type_info.getStructInfo()) {
-	nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
-}
+			if (nested_type_info.getStructInfo()) {
+				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
+			}
 			gTypesByName.emplace(qualified_name, &nested_type_info);
 		}
 	}
 
 	// Copy type aliases from the template with template parameter substitution
 	for (const auto& type_alias : class_decl.type_aliases()) {
-		std::string qualified_alias_name = std::string(instantiated_name) + "::" + std::string(type_alias.alias_name);
+		auto qualified_alias_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(type_alias.alias_name));
 		
 		// Get the aliased type and substitute template parameters
 		const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
@@ -22015,7 +22055,7 @@ if (nested_type_info.getStructInfo()) {
 			TypeIndex type_idx = alias_type_spec.type_index();
 			if (type_idx < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_idx];
-				std::string_view type_name = type_info.name_;
+				std::string_view type_name = StringTable::getStringView(type_info.name());
 				
 				// Try to find which template parameter this is
 				for (size_t i = 0; i < template_params.size(); ++i) {
@@ -22035,7 +22075,7 @@ if (nested_type_info.getStructInfo()) {
 		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, substituted_type, gTypeInfo.size());
 		alias_type_info.type_index_ = substituted_type_index;
 		alias_type_info.type_size_ = substituted_size;
-		gTypesByName.emplace(alias_type_info.name_, &alias_type_info);
+		gTypesByName.emplace(qualified_alias_name, &alias_type_info);
 	}
 
 	// Finalize the struct layout
@@ -22211,8 +22251,10 @@ if (nested_type_info.getStructInfo()) {
 				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
 				
 				// Also add to struct_info so it can be found during codegen
+				// Phase 7B: Intern function name and use StringHandle overload
+				StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				struct_info_ptr->addMemberFunction(
-					std::string(decl.identifier_token().value()),
+					func_name_handle,
 					new_func_node,
 					mem_func.access,
 					mem_func.is_virtual,
@@ -22310,8 +22352,10 @@ if (nested_type_info.getStructInfo()) {
 				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
 				
 				// Also add to struct_info so it can be found during codegen
+				// Phase 7B: Intern function name and use StringHandle overload
+				StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 				struct_info_ptr->addMemberFunction(
-					std::string(decl.identifier_token().value()),
+					func_name_handle,
 					new_func_node,
 					mem_func.access,
 					mem_func.is_virtual,
@@ -22393,7 +22437,9 @@ if (nested_type_info.getStructInfo()) {
 						new_ctor_ref.add_member_initializer(init.member_name, init.initializer_expr);
 					}
 					for (const auto& init : ctor_decl.base_initializers()) {
-						new_ctor_ref.add_base_initializer(init.base_class_name, init.arguments);
+						// Phase 7B: Intern base class name and use StringHandle overload
+						StringHandle base_name_handle = init.getBaseClassName();
+						new_ctor_ref.add_base_initializer(base_name_handle, init.arguments);
 					}
 					if (ctor_decl.delegating_initializer().has_value()) {
 						new_ctor_ref.set_delegating_initializer(ctor_decl.delegating_initializer()->arguments);
@@ -22446,10 +22492,9 @@ if (nested_type_info.getStructInfo()) {
 					);
 					
 					// Create a new destructor declaration with substituted body
-					std::string_view specialized_dtor_name = StringBuilder()
+					StringHandle specialized_dtor_name = StringTable::getOrInternStringHandle(StringBuilder()
 						.append("~")
-						.append(instantiated_name)
-						.commit();
+						.append(instantiated_name));
 					auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
 						instantiated_name,
 						specialized_dtor_name
@@ -22630,8 +22675,9 @@ if (nested_type_info.getStructInfo()) {
 			size_t member_size = get_type_size_bits(type_spec.type()) / 8;
 			size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 			
+			StringHandle static_member_name_handle = out_of_line_var.member_name;
 			struct_info_ptr->addStaticMember(
-				std::string(out_of_line_var.member_name),
+				static_member_name_handle,
 				type_spec.type(),
 				type_spec.type_index(),
 				member_size,
@@ -22648,7 +22694,7 @@ if (nested_type_info.getStructInfo()) {
 
 	// Copy static members from the primary template
 	// Get the primary template's StructTypeInfo
-	auto primary_type_it = gTypesByName.find(std::string(template_name));
+	auto primary_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(template_name));
 	if (primary_type_it != gTypesByName.end()) {
 		const TypeInfo* primary_type_info = primary_type_it->second;
 		const StructTypeInfo* primary_struct_info = primary_type_info->getStructInfo();
@@ -22761,7 +22807,7 @@ if (nested_type_info.getStructInfo()) {
 					         std::holds_alternative<IdentifierNode>(expr)) {
 						std::string_view param_name;
 						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-							param_name = std::get<TemplateParameterReferenceNode>(expr).param_name();
+							param_name = std::get<TemplateParameterReferenceNode>(expr).param_name().view();
 						} else {
 							param_name = std::get<IdentifierNode>(expr).name();
 						}
@@ -22775,8 +22821,10 @@ if (nested_type_info.getStructInfo()) {
 				}
 				
 				// Use struct_info_ptr instead of struct_info (which was moved)
+				// Phase 7B: Intern static member name and use StringHandle overload
+				StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(static_member.getName()));
 				struct_info_ptr->addStaticMember(
-					static_member.name,
+					static_member_name_handle,
 					static_member.type,
 					static_member.type_index,
 					static_member.size,
@@ -23050,7 +23098,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 	if (return_type == Type::UserDefined && return_type_index < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[return_type_index];
-		std::string_view type_name = type_info.name_;
+		std::string_view type_name = StringTable::getStringView(type_info.name());
 
 		// Try to find which template parameter this is
 		for (size_t i = 0; i < template_params.size(); ++i) {
@@ -23097,7 +23145,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 			if (param_type == Type::UserDefined && param_type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[param_type_index];
-				std::string_view type_name = type_info.name_;
+				std::string_view type_name = StringTable::getStringView(type_info.name());
 
 				// Try to find which template parameter this is
 				for (size_t i = 0; i < template_params.size(); ++i) {
@@ -23154,9 +23202,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		std::string_view param_name = param_names[i];
 		Type concrete_type = template_args[i].type_value;
 
-		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
 		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
-		gTypesByName.emplace(type_info.name_, &type_info);
+		gTypesByName.emplace(type_info.name(), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 
@@ -23167,7 +23215,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	restore_lexer_position_only(func_decl.template_body_position());
 
 	// Look up the struct type info
-	auto struct_type_it = gTypesByName.find(struct_name);
+	auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 	if (struct_type_it == gTypesByName.end()) {
 		// Clean up and return error - template_scope RAII handles type cleanup
 		restore_token_position(current_pos);
@@ -23215,7 +23263,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 		
 	member_function_context_stack_.push_back({
-		struct_name,
+		StringTable::getOrInternStringHandle(struct_name),
 		struct_type_index,
 		struct_node_ptr
 	});
@@ -23303,12 +23351,12 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				// Look up the struct type index and node for the member function context
 				TypeIndex struct_type_index = 0;
 				StructDeclarationNode* struct_node_ptr = nullptr;
-				auto struct_type_it = gTypesByName.find(std::string(struct_name));
+				auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 				if (struct_type_it != gTypesByName.end()) {
 					struct_type_index = struct_type_it->second->type_index_;
 					
 					// Try to find the struct node in the symbol table
-					auto struct_symbol_opt = lookup_symbol(struct_name);
+					auto struct_symbol_opt = lookup_symbol(StringTable::getOrInternStringHandle(struct_name));
 					if (struct_symbol_opt.has_value() && struct_symbol_opt->is<StructDeclarationNode>()) {
 						struct_node_ptr = &const_cast<StructDeclarationNode&>(struct_symbol_opt->as<StructDeclarationNode>());
 					}
@@ -23322,7 +23370,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				
 				// Set up member function context
 				member_function_context_stack_.push_back({
-					struct_name,
+					StringTable::getOrInternStringHandle(struct_name),
 					struct_type_index,
 					struct_node_ptr
 				});
@@ -23422,7 +23470,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 	if (return_type == Type::UserDefined && return_type_index < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[return_type_index];
-		std::string_view type_name = type_info.name_;
+		std::string_view type_name = StringTable::getStringView(type_info.name());
 
 		// Try to find which template parameter this is
 		for (size_t i = 0; i < template_params.size(); ++i) {
@@ -23469,7 +23517,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 
 			if (param_type == Type::UserDefined && param_type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[param_type_index];
-				std::string_view type_name = type_info.name_;
+				std::string_view type_name = StringTable::getStringView(type_info.name());
 
 				// Try to find which template parameter this is
 				for (size_t i = 0; i < template_params.size(); ++i) {
@@ -23527,9 +23575,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		Type concrete_type = template_args[i].type_value;
 
 		// TypeInfo constructor requires std::string, but we keep param_name as string_view elsewhere
-		auto& type_info = gTypeInfo.emplace_back(std::string(param_name), concrete_type, gTypeInfo.size());
+		auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
 		type_info.type_size_ = getTypeSizeFromTemplateArgument(template_args[i]);
-		gTypesByName.emplace(type_info.name_, &type_info);
+		gTypesByName.emplace(type_info.name(), &type_info);
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 
@@ -23540,7 +23588,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	restore_lexer_position_only(func_decl.template_body_position());
 
 	// Look up the struct type info
-	auto struct_type_it = gTypesByName.find(struct_name);
+	auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 	if (struct_type_it == gTypesByName.end()) {
 		FLASH_LOG(Templates, Debug, "Struct type not found: ", struct_name);
 		// Clean up and return error - template_scope RAII handles type cleanup
@@ -23568,7 +23616,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	}
 	
 	member_function_context_stack_.push_back({
-		struct_name,
+		StringTable::getOrInternStringHandle(struct_name),
 		struct_type_index,
 		struct_node_ptr
 	});
@@ -23631,7 +23679,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 // Returns true if successfully parsed, false if not an out-of-line definition
 std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	const std::vector<ASTNode>& template_params,
-	const std::vector<std::string_view>& template_param_names) {
+	const std::vector<StringHandle>& template_param_names) {
 
 	// Save position in case this isn't an out-of-line definition
 	SaveHandle saved_pos = save_token_position();
@@ -23736,7 +23784,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// Register the static member variable definition
 		OutOfLineMemberVariable out_of_line_var;
 		out_of_line_var.template_params = template_params;
-		out_of_line_var.member_name = function_name_token.value();  // Actually the variable name
+		out_of_line_var.member_name = StringTable::getOrInternStringHandle(function_name_token.value());  // Actually the variable name
 		out_of_line_var.type_node = return_type_node;               // Actually the variable type
 		out_of_line_var.initializer = *init_result.node();
 		out_of_line_var.template_param_names = template_param_names;
@@ -23850,17 +23898,17 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	FlashCpp::TemplateParameterScope template_scope;
 	for (size_t i = 0; i < template_param_names.size() && i < concrete_types.size(); ++i) {
 		Type concrete_type = concrete_types[i];
-		std::string_view param_name = template_param_names[i];
+		auto param_name = StringTable::getOrInternStringHandle(template_param_names[i]);
 
 		// Add a TypeInfo for this concrete type with the template parameter name
 		auto& type_info = gTypeInfo.emplace_back(
-			std::string(param_name),
+			param_name,
 			concrete_type,
 			gTypeInfo.size()
 		);
 
 		// Register in global type lookup
-		gTypesByName[std::string(param_name)] = &type_info;
+		gTypesByName[param_name] = &type_info;
 		template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 	}
 
@@ -23869,7 +23917,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	ASTNode this_decl_node;  // Need to keep this alive for the duration of parsing
 	if (setup_member_context) {
 		// Find the struct in the type system
-		auto struct_type_it = gTypesByName.find(std::string(struct_name));
+		auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 		if (struct_type_it != gTypesByName.end()) {
 			const TypeInfo* type_info = struct_type_it->second;
 			
@@ -23894,14 +23942,14 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 			
 			// Also push member function context for good measure
 			// Try to find the StructDeclarationNode in the symbol table
-			auto struct_symbol_opt = lookup_symbol(struct_name);
+			auto struct_symbol_opt = lookup_symbol(StringTable::getOrInternStringHandle(struct_name));
 			StructDeclarationNode* struct_node_ptr = nullptr;
 			if (struct_symbol_opt.has_value() && struct_symbol_opt->is<StructDeclarationNode>()) {
 				struct_node_ptr = &const_cast<StructDeclarationNode&>(struct_symbol_opt->as<StructDeclarationNode>());
 			}
 			
 			MemberFunctionContext ctx;
-			ctx.struct_name = struct_name;
+			ctx.struct_name = StringTable::getOrInternStringHandle(struct_name);
 			ctx.struct_type_index = struct_type_index;
 			ctx.struct_node = struct_node_ptr;
 			member_function_context_stack_.push_back(ctx);
@@ -23975,7 +24023,7 @@ ASTNode Parser::substituteTemplateParameters(
 		// Check if this is a TemplateParameterReferenceNode
 		if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
-			std::string_view param_name = tparam_ref.param_name();
+			std::string_view param_name = tparam_ref.param_name().view();
 
 			// Find which template parameter this is
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
@@ -24210,7 +24258,7 @@ ASTNode Parser::substituteTemplateParameters(
 		// Check if this is a user-defined type that matches a template parameter
 		if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
 			const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-			std::string_view type_name = type_info.name_;
+			std::string_view type_name = StringTable::getStringView(type_info.name());
 
 			// Check if this type name matches a template parameter
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {

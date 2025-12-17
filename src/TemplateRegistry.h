@@ -23,6 +23,7 @@ struct TransparentStringHash {
 	size_t operator()(const char* str) const { return hash_type{}(str); }
 	size_t operator()(std::string_view str) const { return hash_type{}(str); }
 	size_t operator()(const std::string& str) const { return hash_type{}(str); }
+	size_t operator()(StringHandle sh) const { return std::hash<uint32_t>{}(sh.handle); }
 };
 
 // Full type representation for template arguments
@@ -270,16 +271,16 @@ struct OutOfLineMemberFunction {
 	std::vector<ASTNode> template_params;  // Template parameters (e.g., <typename T>)
 	ASTNode function_node;                  // FunctionDeclarationNode
 	SaveHandle body_start;                  // Handle to saved position of function body for re-parsing
-	std::vector<std::string_view> template_param_names;  // Names of template parameters
+	std::vector<StringHandle> template_param_names;  // Names of template parameters
 };
 
 // Out-of-line template static member variable definition
 struct OutOfLineMemberVariable {
 	std::vector<ASTNode> template_params;       // Template parameters (e.g., <typename T>)
-	std::string_view member_name;               // Name of the static member variable
+	StringHandle member_name;               // Name of the static member variable
 	ASTNode type_node;                          // Type of the variable (TypeSpecifierNode)
 	std::optional<ASTNode> initializer;         // Initializer expression
-	std::vector<std::string_view> template_param_names;  // Names of template parameters
+	std::vector<StringHandle> template_param_names;  // Names of template parameters
 };
 
 // Template specialization pattern - represents a pattern like T&, T*, const T, etc.
@@ -433,7 +434,7 @@ struct TemplatePattern {
 			
 			if (pattern_arg.type_index > 0 && pattern_arg.type_index < gTypeInfo.size()) {
 				const TypeInfo& param_type_info = gTypeInfo[pattern_arg.type_index];
-				param_name = std::string(param_type_info.name_);
+				param_name = std::string(StringTable::getStringView(param_type_info.name()));
 				found_param = true;
 				FLASH_LOG(Templates, Trace, "  Found parameter name '", param_name, "' from pattern_arg.type_index=", pattern_arg.type_index);
 			}
@@ -547,9 +548,8 @@ public:
 	}
 
 	// Register template parameter names for a template
-	void registerTemplateParameters(std::string_view name, const std::vector<std::string_view>& param_names) {
-		std::string key(name);
-		template_parameters_[key] = std::vector<std::string_view>(param_names.begin(), param_names.end());
+	void registerTemplateParameters(StringHandle key, const std::vector<StringHandle>& param_names) {
+		template_parameters_[key] = std::vector<StringHandle>(param_names.begin(), param_names.end());
 	}
 
 	// Register an alias template: template<typename T> using Ptr = T*;
@@ -611,7 +611,7 @@ public:
 	}
 
 	// Get template parameter names for a template
-	std::vector<std::string_view> getTemplateParameters(std::string_view name) const {
+	std::vector<StringHandle> getTemplateParameters(StringHandle name) const {
 		// Heterogeneous lookup - string_view accepted directly
 		auto it = template_parameters_.find(name);
 		if (it != template_parameters_.end()) {
@@ -633,6 +633,10 @@ public:
 		return std::nullopt;
 	}
 	
+	std::optional<ASTNode> lookupTemplate(StringHandle name) const {
+		return lookupTemplate(StringTable::getStringView(name));
+	}
+
 	// Look up all template overloads for a given name
 	// Returns a reference to the internal vector for efficiency
 	const std::vector<ASTNode>* lookupAllTemplates(std::string_view name) const {
@@ -845,12 +849,12 @@ public:
 	std::unordered_map<std::string, std::vector<TemplatePattern>, TransparentStringHash, std::equal_to<>> specialization_patterns_;
 	
 	// Register mapping from instantiated name to pattern name (for partial specializations)
-	void register_instantiation_pattern(std::string_view instantiated_name, std::string_view pattern_name) {
-		instantiation_to_pattern_[std::string(instantiated_name)] = std::string(pattern_name);
+	void register_instantiation_pattern(StringHandle instantiated_name, StringHandle pattern_name) {
+		instantiation_to_pattern_[instantiated_name] = pattern_name;
 	}
 	
 	// Look up which pattern was used for an instantiation
-	std::optional<std::string_view> get_instantiation_pattern(std::string_view instantiated_name) const {
+	std::optional<StringHandle> get_instantiation_pattern(StringHandle instantiated_name) const {
 		auto it = instantiation_to_pattern_.find(instantiated_name);
 		if (it != instantiation_to_pattern_.end()) {
 			return it->second;
@@ -863,7 +867,7 @@ private:
 	std::unordered_map<std::string, std::vector<ASTNode>, TransparentStringHash, std::equal_to<>> templates_;
 
 	// Map from template name to template parameter names (supports heterogeneous lookup)
-	std::unordered_map<std::string, std::vector<std::string_view>, TransparentStringHash, std::equal_to<>> template_parameters_;
+	std::unordered_map<StringHandle, std::vector<StringHandle>, TransparentStringHash, std::equal_to<>> template_parameters_;
 
 	// Map from alias template name to TemplateAliasNode (supports heterogeneous lookup)
 	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> alias_templates_;
@@ -889,7 +893,7 @@ private:
 	// Map from instantiated struct name to the pattern struct name used (for partial specializations)
 	// Example: "Wrapper_int_0" -> "Wrapper_pattern__"
 	// This allows looking up member aliases from the correct specialization
-	std::unordered_map<std::string, std::string, TransparentStringHash, std::equal_to<>> instantiation_to_pattern_;
+	std::unordered_map<StringHandle, StringHandle, TransparentStringHash, std::equal_to<>> instantiation_to_pattern_;
 };
 
 // Global template registry

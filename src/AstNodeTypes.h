@@ -16,6 +16,7 @@
 #include "ChunkedAnyVector.h"
 #include "StackString.h"
 #include "Lexer.h"
+#include "StringTable.h"
 
 // SaveHandle type for parser save/restore operations
 // Matches Parser::SaveHandle typedef in Parser.h
@@ -24,16 +25,16 @@ using SaveHandle = size_t;
 // Deferred template member function body information
 // Used to store template member function bodies for parsing during instantiation
 struct DeferredTemplateMemberBody {
-	std::string_view function_name;       // Name of the function (for matching during instantiation)
+	StringHandle function_name;           // Name of the function (for matching during instantiation)
+	StringHandle struct_name;             // Name of the struct (from token, persistent)
 	SaveHandle body_start;                // Handle to saved position at '{'
-	SaveHandle initializer_list_start;   // Handle to saved position at ':' for constructor initializer list
-	bool has_initializer_list;            // True if constructor has an initializer list
-	std::string_view struct_name;         // Name of the struct (from token, persistent)
+	SaveHandle initializer_list_start;    // Handle to saved position at ':' for constructor initializer list
 	size_t struct_type_index;             // Type index (will be 0 for templates during definition)
+	bool has_initializer_list;            // True if constructor has an initializer list
 	bool is_constructor;                  // Special handling for constructors
 	bool is_destructor;                   // Special handling for destructors
 	bool is_const_method;                 // True if this is a const member function
-	std::vector<std::string> template_param_names; // Template parameter names (copied, not views)
+	std::vector<StringHandle> template_param_names; // Template parameter names (copied, not views)
 };
 
 // Forward declarations
@@ -253,7 +254,7 @@ struct FunctionSignature {
 
 // Struct member information
 struct StructMember {
-	std::string name;
+	StringHandle name;
 	Type type;
 	TypeIndex type_index;   // Index into gTypeInfo for complex types (structs, etc.)
 	size_t offset;          // Offset in bytes from start of struct
@@ -265,16 +266,20 @@ struct StructMember {
 	bool is_rvalue_reference; // True if member is an rvalue reference
 	std::optional<ASTNode> default_initializer;  // C++11 default member initializer
 
-	StructMember(std::string n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align,
+	StructMember(StringHandle n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align,
 	            AccessSpecifier acc = AccessSpecifier::Public,
 	            std::optional<ASTNode> init = std::nullopt,
 	            bool is_ref = false,
 	            bool is_rvalue_ref = false,
 	            size_t ref_size_bits = 0)
-		: name(std::move(n)), type(t), type_index(tidx), offset(off), size(sz),
+		: name(n), type(t), type_index(tidx), offset(off), size(sz),
 		  referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
 		  access(acc), is_reference(is_ref), is_rvalue_reference(is_rvalue_ref),
 		  default_initializer(std::move(init)) {}
+	
+	StringHandle getName() const {
+		return name;
+	}
 };
 
 // Forward declaration for member function support
@@ -282,7 +287,7 @@ class FunctionDeclarationNode;
 
 // Struct member function information
 struct StructMemberFunction {
-	std::string name;
+	StringHandle name;
 	ASTNode function_decl;  // FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
 	AccessSpecifier access; // Access level (public/protected/private)
 	bool is_constructor;    // True if this is a constructor
@@ -301,10 +306,14 @@ struct StructMemberFunction {
 	bool is_const = false;          // True if const member function (e.g., void foo() const)
 	bool is_volatile = false;       // True if volatile member function (e.g., void foo() volatile)
 
-	StructMemberFunction(std::string n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
+	StructMemberFunction(StringHandle n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
 	                     bool is_ctor = false, bool is_dtor = false, bool is_op_overload = false, std::string_view op_symbol = "")
-		: name(std::move(n)), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
+		: name(n), function_decl(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
 		  is_operator_overload(is_op_overload), operator_symbol(op_symbol) {}
+	
+	StringHandle getName() const {
+		return name;
+	}
 };
 
 // MSVC RTTI structures - multi-component format for runtime compatibility
@@ -433,7 +442,7 @@ struct RTTITypeInfo {
 
 // Static member information
 struct StructStaticMember {
-	std::string name;
+	StringHandle name;
 	Type type;
 	TypeIndex type_index;   // Index into gTypeInfo for complex types
 	size_t size;            // Size in bytes
@@ -442,15 +451,19 @@ struct StructStaticMember {
 	std::optional<ASTNode> initializer;  // Optional initializer expression
 	bool is_const;          // True if declared with const qualifier
 
-	StructStaticMember(std::string n, Type t, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
+	StructStaticMember(StringHandle n, Type t, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
 	                   std::optional<ASTNode> init = std::nullopt, bool is_const_val = false)
-		: name(std::move(n)), type(t), type_index(tidx), size(sz), alignment(align), access(acc),
+		: name(n), type(t), type_index(tidx), size(sz), alignment(align), access(acc),
 		  initializer(init), is_const(is_const_val) {}
+	
+	StringHandle getName() const {
+		return name;
+	}
 };
 
 // Struct type information
 struct StructTypeInfo {
-	std::string name;
+	StringHandle name;
 	std::vector<StructMember> members;
 	std::vector<StructStaticMember> static_members;  // Static members
 	std::vector<StructMemberFunction> member_functions;
@@ -477,18 +490,22 @@ struct StructTypeInfo {
 	RTTITypeInfo* rtti_info = nullptr;  // Runtime type information (for polymorphic classes)
 
 	// Friend declarations support (Phase 2)
-	std::vector<std::string> friend_functions_;      // Friend function names
-	std::vector<std::string> friend_classes_;        // Friend class names
-	std::vector<std::pair<std::string, std::string>> friend_member_functions_;  // (class, function)
+	std::vector<StringHandle> friend_functions_;      // Friend function names
+	std::vector<StringHandle> friend_classes_;        // Friend class names
+	std::vector<std::pair<StringHandle, StringHandle>> friend_member_functions_;  // (class, function)
 
 	// Nested class support (Phase 2)
 	std::vector<StructTypeInfo*> nested_classes_;    // Nested classes
 	StructTypeInfo* enclosing_class_ = nullptr;      // Enclosing class (if this is nested)
 
-	StructTypeInfo(std::string n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false)
-		: name(std::move(n)), default_access(default_acc), is_union(union_type) {}
+	StructTypeInfo(StringHandle n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false)
+		: name(n), default_access(default_acc), is_union(union_type) {}
+	
+	StringHandle getName() const {
+		return name;
+	}
 
-	void addMember(const std::string& member_name, Type member_type, TypeIndex type_index,
+	void addMember(StringHandle member_name, Type member_type, TypeIndex type_index,
 	               size_t member_size, size_t member_alignment, AccessSpecifier access,
 	               std::optional<ASTNode> default_initializer,
 	               bool is_reference,
@@ -517,7 +534,8 @@ struct StructTypeInfo {
 		alignment = std::max(alignment, effective_alignment);
 	}
 
-	void addMemberFunction(const std::string& function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
+	// StringHandle overload for addMemberFunction - Phase 7A
+	void addMemberFunction(StringHandle function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
 	                       bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
 		auto& func = member_functions.emplace_back(function_name, function_decl, access, false, false);
 		func.is_virtual = is_virtual;
@@ -527,19 +545,23 @@ struct StructTypeInfo {
 	}
 
 	void addConstructor(ASTNode constructor_decl, AccessSpecifier access = AccessSpecifier::Public) {
-		member_functions.emplace_back(name, constructor_decl, access, true, false);
+		member_functions.emplace_back(getName(), constructor_decl, access, true, false);
 	}
 
 	void addDestructor(ASTNode destructor_decl, AccessSpecifier access = AccessSpecifier::Public, bool is_virtual = false) {
-		auto& dtor = member_functions.emplace_back("~" + name, destructor_decl, access, false, true, false, "");
+		StringBuilder sb;
+		sb.append('~').append(StringTable::getStringView(getName()));
+		StringHandle dtor_name_handle = StringTable::getOrInternStringHandle(sb.commit());
+		auto& dtor = member_functions.emplace_back(dtor_name_handle, destructor_decl, access, false, true, false, "");
 		dtor.is_virtual = is_virtual;
 	}
 
 	void addOperatorOverload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
 	                         bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
-		std::string op_name = "operator";
-		op_name += operator_symbol;
-		auto& func = member_functions.emplace_back(op_name, function_decl, access, false, false, true, operator_symbol);
+		StringBuilder sb;
+		sb.append("operator").append(operator_symbol);
+		StringHandle op_name_handle = StringTable::getOrInternStringHandle(sb.commit());
+		auto& func = member_functions.emplace_back(op_name_handle, function_decl, access, false, false, true, operator_symbol);
 		func.is_virtual = is_virtual;
 		func.is_pure_virtual = is_pure_virtual;
 		func.is_override = is_override;
@@ -588,9 +610,9 @@ struct StructTypeInfo {
 	}
 
 	// Find static member by name
-	const StructStaticMember* findStaticMember(std::string_view name) const {
+	const StructStaticMember* findStaticMember(StringHandle name) const {
 		for (const auto& static_member : static_members) {
-			if (static_member.name == name) {
+			if (static_member.getName() == name) {
 				return &static_member;
 			}
 		}
@@ -598,17 +620,17 @@ struct StructTypeInfo {
 	}
 
 	// Add static member
-	void addStaticMember(const std::string& name, Type type, TypeIndex type_index, size_t size, size_t alignment,
+	void addStaticMember(StringHandle name, Type type, TypeIndex type_index, size_t size, size_t alignment,
 	                     AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, bool is_const = false) {
 		static_members.push_back(StructStaticMember(name, type, type_index, size, alignment, access, initializer, is_const));
 	}
 
 	// Find member recursively through base classes
-	const StructMember* findMemberRecursive(std::string_view member_name) const;
+	const StructMember* findMemberRecursive(StringHandle member_name) const;
 	
 	// Find static member recursively through base classes
 	// Returns a pair of the static member and the StructTypeInfo that defines it
-	std::pair<const StructStaticMember*, const StructTypeInfo*> findStaticMemberRecursive(std::string_view member_name) const;
+	std::pair<const StructStaticMember*, const StructTypeInfo*> findStaticMemberRecursive(StringHandle member_name) const;
 
 	void set_custom_alignment(size_t align) {
 		custom_alignment = align;
@@ -618,17 +640,31 @@ struct StructTypeInfo {
 		pack_alignment = align;
 	}
 
-	const StructMember* findMember(const std::string& name) const {
+	const StructMember* findMember(std::string_view name) const {
+		StringHandle name_handle = StringTable::getOrInternStringHandle(name);
 		for (const auto& member : members) {
-			if (member.name == name) {
+			if (member.getName() == name_handle) {
 				return &member;
 			}
 		}
 		return nullptr;
 	}
 
-	const StructMemberFunction* findMemberFunction(const std::string& name) const {
+	// StringHandle overload for findMember - Phase 7A
+	const StructMember* findMember(StringHandle name) const {
+		for (const auto& member : members) {
+			// Compare by handle directly for O(1) comparison
+			if (member.getName() == name) {
+				return &member;
+			}
+		}
+		return nullptr;
+	}
+
+	// StringHandle overload for findMemberFunction - Phase 7A
+	const StructMemberFunction* findMemberFunction(StringHandle name) const {
 		for (const auto& func : member_functions) {
+			// Compare by handle directly for O(1) comparison
 			if (func.name == name) {
 				return &func;
 			}
@@ -636,30 +672,55 @@ struct StructTypeInfo {
 		return nullptr;
 	}
 
-	// Friend declaration support methods
-	void addFriendFunction(const std::string& func_name) {
+	// Convenience overload that interns string_view
+	const StructMemberFunction* findMemberFunction(std::string_view name) const {
+		return findMemberFunction(StringTable::getOrInternStringHandle(name));
+	}
+
+	// Friend declaration support methods - Phase 7A (StringHandle only)
+	void addFriendFunction(StringHandle func_name) {
 		friend_functions_.push_back(func_name);
 	}
 
-	void addFriendClass(const std::string& class_name) {
+	void addFriendClass(StringHandle class_name) {
 		friend_classes_.push_back(class_name);
 	}
 
-	void addFriendMemberFunction(const std::string& class_name, const std::string& func_name) {
+	void addFriendMemberFunction(StringHandle class_name, StringHandle func_name) {
 		friend_member_functions_.emplace_back(class_name, func_name);
 	}
 
 	bool isFriendFunction(std::string_view func_name) const {
-		return std::find(friend_functions_.begin(), friend_functions_.end(), func_name) != friend_functions_.end();
+		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+		return std::find(friend_functions_.begin(), friend_functions_.end(), func_name_handle) != friend_functions_.end();
 	}
 
-	bool isFriendClass(const std::string& class_name) const {
+	bool isFriendClass(std::string_view class_name) const {
+		StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
+		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name_handle) != friend_classes_.end();
+	}
+
+	// StringHandle overload for isFriendClass - Phase 7A
+	bool isFriendClass(StringHandle class_name) const {
 		return std::find(friend_classes_.begin(), friend_classes_.end(), class_name) != friend_classes_.end();
 	}
 
-	bool isFriendMemberFunction(const std::string& class_name, const std::string& func_name) const {
-		auto it = std::find(friend_member_functions_.begin(), friend_member_functions_.end(),
-		                    std::make_pair(class_name, func_name));
+	bool isFriendMemberFunction(std::string_view class_name, std::string_view func_name) const {
+		StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
+		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
+		                       [class_name_handle, func_name_handle](const auto& pair) {
+		                           return pair.first == class_name_handle && pair.second == func_name_handle;
+		                       });
+		return it != friend_member_functions_.end();
+	}
+
+	// StringHandle overload for isFriendMemberFunction - Phase 7A
+	bool isFriendMemberFunction(StringHandle class_name, StringHandle func_name) const {
+		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
+		                       [class_name, func_name](const auto& pair) {
+		                           return pair.first == class_name && pair.second == func_name;
+		                       });
 		return it != friend_member_functions_.end();
 	}
 
@@ -684,11 +745,14 @@ struct StructTypeInfo {
 	}
 
 	// Get fully qualified name (e.g., "Outer::Inner")
-	std::string getQualifiedName() const {
+	StringHandle getQualifiedName() const {
+		StringBuilder sb;
 		if (enclosing_class_) {
-			return enclosing_class_->getQualifiedName() + "::" + name;
+			sb.append(StringTable::getStringView(enclosing_class_->getQualifiedName()));
+			sb.append("::");
 		}
-		return name;
+		sb.append(StringTable::getStringView(getName()));
+		return StringTable::getOrInternStringHandle(sb.commit());
 	}
 
 	// Find default constructor (no parameters)
@@ -801,39 +865,47 @@ struct StructTypeInfo {
 
 // Enumerator information
 struct Enumerator {
-	std::string name;
+	StringHandle name;
 	long long value;  // Enumerator value (always an integer)
 
-	Enumerator(std::string n, long long v)
-		: name(std::move(n)), value(v) {}
+	Enumerator(StringHandle n, long long v)
+		: name(n), value(v) {}
+	
+	StringHandle getName() const {
+		return name;
+	}
 };
 
 // Enum type information
 struct EnumTypeInfo {
-	std::string name;
+	StringHandle name;
 	bool is_scoped;                  // true for enum class, false for enum
 	Type underlying_type;            // Underlying type (default: int)
 	unsigned char underlying_size;   // Size in bits of underlying type
 	std::vector<Enumerator> enumerators;
 
-	EnumTypeInfo(std::string n, bool scoped = false, Type underlying = Type::Int, unsigned char size = 32)
-		: name(std::move(n)), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
+	EnumTypeInfo(StringHandle n, bool scoped = false, Type underlying = Type::Int, unsigned char size = 32)
+		: name(n), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
+	
+	StringHandle getName() const {
+		return name;
+	}
 
-	void addEnumerator(const std::string& enumerator_name, long long value) {
+	void addEnumerator(StringHandle enumerator_name, long long value) {
 		enumerators.emplace_back(enumerator_name, value);
 	}
 
-	const Enumerator* findEnumerator(const std::string& name) const {
+	const Enumerator* findEnumerator(StringHandle name_str) const {
 		for (const auto& enumerator : enumerators) {
-			if (enumerator.name == name) {
+			if (enumerator.getName() == name_str) {
 				return &enumerator;
 			}
 		}
 		return nullptr;
 	}
 
-	long long getEnumeratorValue(const std::string& name) const {
-		const Enumerator* e = findEnumerator(name);
+	long long getEnumeratorValue(StringHandle name_str) const {
+		const Enumerator* e = findEnumerator(name_str);
 		return e ? e->value : 0;
 	}
 };
@@ -841,9 +913,9 @@ struct EnumTypeInfo {
 struct TypeInfo
 {
 	TypeInfo() : type_(Type::Void), type_index_(0) {}
-	TypeInfo(std::string name, Type type, TypeIndex idx) : name_(std::move(name)), type_(type), type_index_(idx) {}
+	TypeInfo(StringHandle name, Type type, TypeIndex idx) : name_(name), type_(type), type_index_(idx) {}
 
-	std::string name_;
+	StringHandle name_;  // Pure StringHandle
 	Type type_;
 	TypeIndex type_index_;
 
@@ -859,7 +931,9 @@ struct TypeInfo
 	// For typedef of pointer types, store the pointer depth
 	size_t pointer_depth_ = 0;
 
-	std::string_view name() { return name_; };
+	StringHandle name() const { 
+		return name_;
+	};
 
 	// Helper methods for struct types
 	bool isStruct() const { return type_ == Type::Struct; }
@@ -884,27 +958,31 @@ extern std::deque<TypeInfo> gTypeInfo;
 
 // Custom hash and equality for heterogeneous lookup with string_view
 struct StringHash {
-	using is_transparent = void;
-	size_t operator()(std::string_view sv) const { return std::hash<std::string_view>{}(sv); }
-	size_t operator()(const std::string& s) const { return std::hash<std::string>{}(s); }
+	// No transparent lookup - all keys must be StringHandle
+	size_t operator()(StringHandle sh) const { 
+		// Use identity hash - the handle value is already well-distributed
+		return std::hash<uint32_t>{}(sh.handle); 
+	}
 };
 
 struct StringEqual {
-	using is_transparent = void;
-	bool operator()(std::string_view lhs, std::string_view rhs) const { return lhs == rhs; }
+	// No transparent lookup - all keys must be StringHandle
+	bool operator()(StringHandle lhs, StringHandle rhs) const { 
+		return lhs.handle == rhs.handle; 
+	}
 };
 
-extern std::unordered_map<std::string, const TypeInfo*, StringHash, StringEqual> gTypesByName;
+extern std::unordered_map<StringHandle, const TypeInfo*, StringHash, StringEqual> gTypesByName;
 
 extern std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
-TypeInfo& add_user_type(std::string name);
+TypeInfo& add_user_type(StringHandle name);
 
-TypeInfo& add_function_type(std::string name, Type /*return_type*/);
+TypeInfo& add_function_type(StringHandle name, Type /*return_type*/);
 
-TypeInfo& add_struct_type(std::string name);
+TypeInfo& add_struct_type(StringHandle name);
 
-TypeInfo& add_enum_type(std::string name);
+TypeInfo& add_enum_type(StringHandle name);
 
 void initialize_native_types();
 
@@ -1149,6 +1227,7 @@ public:
 
 	std::optional<Token> try_get_parent_token() { return parent_token_; }
 	std::string_view name() const { return identifier_.value(); }
+	StringHandle nameHandle() const { return StringTable::getOrInternStringHandle(identifier_.value()); }
 
 private:
 	Token identifier_;
@@ -1163,6 +1242,7 @@ public:
 
 	const std::vector<StringType<>>& namespaces() const { return namespaces_; }
 	std::string_view name() const { return identifier_.value(); }
+	StringHandle nameHandle() const { return StringTable::getOrInternStringHandle(identifier_.value()); }
 	const Token& identifier_token() const { return identifier_; }
 
 	// Get the full qualified name as a string (e.g., "std::print")
@@ -1329,6 +1409,8 @@ public:
 		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, std::string_view parent_struct_name)
 		: decl_node_(decl_node), parent_struct_name_(parent_struct_name), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+	FunctionDeclarationNode(DeclarationNode& decl_node, StringHandle parent_struct_name_handle)
+		: decl_node_(decl_node), parent_struct_name_(StringTable::getStringView(parent_struct_name_handle)), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, Linkage linkage)
 		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 
@@ -1492,19 +1574,20 @@ enum class TemplateParameterKind {
 class TemplateParameterNode {
 public:
 	// Type parameter: template<typename T> or template<class T>
-	TemplateParameterNode(std::string_view name, Token token)
+	TemplateParameterNode(StringHandle name, Token token)
 		: kind_(TemplateParameterKind::Type), name_(name), token_(token) {}
 
 	// Non-type parameter: template<int N>
-	TemplateParameterNode(std::string_view name, ASTNode type_node, Token token)
+	TemplateParameterNode(StringHandle name, ASTNode type_node, Token token)
 		: kind_(TemplateParameterKind::NonType), name_(name), type_node_(type_node), token_(token) {}
 
 	// Template template parameter: template<template<typename> class Container>
-	TemplateParameterNode(std::string_view name, std::vector<ASTNode> nested_params, Token token)
+	TemplateParameterNode(StringHandle name, std::vector<ASTNode> nested_params, Token token)
 		: kind_(TemplateParameterKind::Template), name_(name), nested_params_(std::move(nested_params)), token_(token) {}
 
 	TemplateParameterKind kind() const { return kind_; }
-	std::string_view name() const { return name_; }
+	std::string_view name() const { return name_.view(); }
+	StringHandle nameHandle() const { return name_; }
 	Token token() const { return token_; }
 
 	// For non-type parameters
@@ -1530,7 +1613,7 @@ public:
 
 private:
 	TemplateParameterKind kind_;
-	std::string_view name_;  // Points directly into source text from lexer token
+	StringHandle name_;  // Points directly into source text from lexer token
 	std::optional<ASTNode> type_node_;  // For non-type parameters (e.g., int N)
 	std::vector<ASTNode> nested_params_;  // For template template parameters (nested template parameters)
 	std::optional<ASTNode> default_value_;  // Default argument (e.g., typename T = int)
@@ -1573,8 +1656,8 @@ class TemplateAliasNode {
 public:
 	TemplateAliasNode() = delete;
 	TemplateAliasNode(std::vector<ASTNode> template_params,
-	                  std::vector<std::string_view> param_names,
-	                  std::string_view alias_name,
+	                  std::vector<StringHandle> param_names,
+	                  StringHandle alias_name,
 	                  ASTNode target_type)
 		: template_parameters_(std::move(template_params))
 		, template_param_names_(std::move(param_names))
@@ -1582,8 +1665,8 @@ public:
 		, target_type_(target_type) {}
 
 	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
-	const std::vector<std::string_view>& template_param_names() const { return template_param_names_; }
-	std::string_view alias_name() const { return alias_name_; }
+	const std::vector<StringHandle>& template_param_names() const { return template_param_names_; }
+	std::string_view alias_name() const { return alias_name_.view(); }
 	ASTNode target_type() const { return target_type_; }
 
 	// Get the underlying TypeSpecifierNode
@@ -1596,8 +1679,8 @@ public:
 
 private:
 	std::vector<ASTNode> template_parameters_;  // TemplateParameterNode instances
-	std::vector<std::string_view> template_param_names_;  // Parameter names for lookup
-	std::string_view alias_name_;  // The name of the alias (e.g., "Ptr")
+	std::vector<StringHandle> template_param_names_;  // Parameter names for lookup
+	StringHandle alias_name_;  // The name of the alias (e.g., "Ptr")
 	ASTNode target_type_;  // TypeSpecifierNode - the target type (e.g., T*)
 };
 
@@ -1698,11 +1781,15 @@ struct MemberInitializer {
 
 // Base class initializer for constructor initializer lists
 struct BaseInitializer {
-	std::string base_class_name;
+	StringHandle base_class_name;
 	std::vector<ASTNode> arguments;
 
-	BaseInitializer(std::string name, std::vector<ASTNode> args)
-		: base_class_name(std::move(name)), arguments(std::move(args)) {}
+	BaseInitializer(StringHandle name, std::vector<ASTNode> args)
+		: base_class_name(name), arguments(std::move(args)) {}
+	
+	StringHandle getBaseClassName() const {
+		return base_class_name;
+	}
 };
 
 // Delegating constructor initializer (C++11 feature)
@@ -1717,12 +1804,12 @@ struct DelegatingInitializer {
 class ConstructorDeclarationNode {
 public:
 	ConstructorDeclarationNode() = delete;
-	ConstructorDeclarationNode(std::string_view struct_name, std::string_view name)
-		: struct_name_(struct_name), name_(name), is_implicit_(false) {}
+	ConstructorDeclarationNode(StringHandle struct_name_handle, StringHandle name_handle)
+		: struct_name_(struct_name_handle), name_(name_handle), is_implicit_(false) {}
 
-	std::string_view struct_name() const { return struct_name_; }
-	std::string_view name() const { return name_; }
-	Token name_token() const { return Token(Token::Type::Identifier, name_, 0, 0, 0); }  // Create token on demand
+	StringHandle struct_name() const { return struct_name_; }
+	StringHandle name() const { return name_; }
+	Token name_token() const { return Token(Token::Type::Identifier, StringTable::getStringView(name_), 0, 0, 0); }  // Create token on demand
 	const std::vector<ASTNode>& parameter_nodes() const { return parameter_nodes_; }
 	const std::vector<MemberInitializer>& member_initializers() const { return member_initializers_; }
 	const std::vector<BaseInitializer>& base_initializers() const { return base_initializers_; }
@@ -1737,8 +1824,8 @@ public:
 		member_initializers_.emplace_back(member_name, initializer_expr);
 	}
 
-	void add_base_initializer(std::string base_name, std::vector<ASTNode> args) {
-		base_initializers_.emplace_back(std::move(base_name), std::move(args));
+	void add_base_initializer(StringHandle base_name, std::vector<ASTNode> args) {
+		base_initializers_.emplace_back(base_name, std::move(args));
 	}
 
 	void set_delegating_initializer(std::vector<ASTNode> args) {
@@ -1766,8 +1853,8 @@ public:
 	bool has_mangled_name() const { return !mangled_name_.empty(); }
 
 private:
-	std::string_view struct_name_;  // Points directly into source text from lexer token
-	std::string_view name_;         // Points directly into source text from lexer token
+	StringHandle struct_name_;
+	StringHandle name_;
 	std::vector<ASTNode> parameter_nodes_;
 	std::vector<MemberInitializer> member_initializers_;
 	std::vector<BaseInitializer> base_initializers_;  // Base class initializers
@@ -1781,12 +1868,12 @@ private:
 class DestructorDeclarationNode {
 public:
 	DestructorDeclarationNode() = delete;
-	DestructorDeclarationNode(std::string_view struct_name, std::string_view name)
-		: struct_name_(struct_name), name_(name) {}
+	DestructorDeclarationNode(StringHandle struct_name_handle, StringHandle name_handle)
+		: struct_name_(struct_name_handle), name_(name_handle) {}
 
-	std::string_view struct_name() const { return struct_name_; }
-	std::string_view name() const { return name_; }
-	Token name_token() const { return Token(Token::Type::Identifier, name_, 0, 0, 0); }  // Create token on demand
+	StringHandle struct_name() const { return struct_name_; }
+	StringHandle name() const { return name_; }
+	Token name_token() const { return Token(Token::Type::Identifier, StringTable::getStringView(name_), 0, 0, 0); }  // Create token on demand
 
 	const std::optional<ASTNode>& get_definition() const {
 		return definition_block_;
@@ -1800,15 +1887,15 @@ public:
 	}
 
 	// Pre-computed mangled name for consistent access across all compiler stages
-	void set_mangled_name(std::string_view name) { mangled_name_ = name; }
-	std::string_view mangled_name() const { return mangled_name_; }
-	bool has_mangled_name() const { return !mangled_name_.empty(); }
+	void set_mangled_name(StringHandle name) { mangled_name_ = name; }
+	StringHandle mangled_name() const { return mangled_name_; }
+	bool has_mangled_name() const { return mangled_name_.isValid(); }
 
 private:
-	std::string_view struct_name_;  // Points directly into source text from lexer token
-	std::string_view name_;         // Points directly into source text from lexer token
+	StringHandle struct_name_;  // Points directly into source text from lexer token
+	StringHandle name_;         // Points directly into source text from lexer token
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
-	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
+	StringHandle mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 };
 
 // Struct member with access specifier
@@ -1850,16 +1937,16 @@ struct StructMemberFunctionDecl {
 class FriendDeclarationNode {
 public:
 	// Friend class declaration: friend class ClassName;
-	explicit FriendDeclarationNode(FriendKind kind, std::string_view name)
-		: kind_(kind), name_(name), class_name_("") {}
+	explicit FriendDeclarationNode(FriendKind kind, StringHandle name)
+		: kind_(kind), name_(name) {}
 
 	// Friend member function declaration: friend void ClassName::functionName();
-	FriendDeclarationNode(FriendKind kind, std::string_view name, std::string_view class_name)
+	FriendDeclarationNode(FriendKind kind, StringHandle name, StringHandle class_name)
 		: kind_(kind), name_(name), class_name_(class_name) {}
 
 	FriendKind kind() const { return kind_; }
-	std::string_view name() const { return name_; }
-	std::string_view class_name() const { return class_name_; }
+	StringHandle name() const { return name_; }
+	StringHandle class_name() const { return class_name_; }
 
 	// For friend functions, store the function declaration
 	void set_function_declaration(ASTNode decl) { function_decl_ = decl; }
@@ -1867,27 +1954,27 @@ public:
 
 private:
 	FriendKind kind_;
-	std::string_view name_;           // Function or class name
-	std::string_view class_name_;     // For member functions: the class name
+	StringHandle name_;           // Function or class name
+	StringHandle class_name_;     // For member functions: the class name
 	std::optional<ASTNode> function_decl_;  // For friend functions
 };
 
 // Type alias declaration (using alias = type;)
 struct TypeAliasDecl {
-	std::string_view alias_name;  // The alias name
+	StringHandle alias_name;  // The alias name
 	ASTNode type_node;            // TypeSpecifierNode representing the aliased type
 	AccessSpecifier access;       // Access specifier (public/private/protected)
 
-	TypeAliasDecl(std::string_view name, ASTNode type, AccessSpecifier acc)
+	TypeAliasDecl(StringHandle name, ASTNode type, AccessSpecifier acc)
 		: alias_name(name), type_node(type), access(acc) {}
 };
 
 class StructDeclarationNode {
 public:
-	explicit StructDeclarationNode(std::string_view name, bool is_class = false)
+	explicit StructDeclarationNode(StringHandle name, bool is_class = false)
 		: name_(name), is_class_(is_class) {}
 
-	std::string_view name() const { return name_; }
+	StringHandle name() const { return name_; }
 	const std::vector<StructMemberDecl>& members() const { return members_; }
 	const std::vector<StructMemberFunctionDecl>& member_functions() const { return member_functions_; }
 	std::vector<StructMemberFunctionDecl>& member_functions() { return member_functions_; }
@@ -1961,7 +2048,7 @@ public:
 	}
 
 	// Type alias support
-	void add_type_alias(std::string_view alias_name, ASTNode type_node, AccessSpecifier access) {
+	void add_type_alias(StringHandle alias_name, ASTNode type_node, AccessSpecifier access) {
 		type_aliases_.emplace_back(alias_name, type_node, access);
 	}
 
@@ -1982,15 +2069,15 @@ public:
 	}
 
 	// Get fully qualified name (e.g., "Outer::Inner")
-	std::string qualified_name() const {
+	StringHandle qualified_name() const {
 		if (enclosing_class_) {
-			return enclosing_class_->qualified_name() + "::" + std::string(name_);
+			return StringTable::getOrInternStringHandle(StringBuilder().append(enclosing_class_->qualified_name()).append("::"sv).append(name_).commit());
 		}
-		return std::string(name_);
+		return name_;
 	}
 
 private:
-	std::string_view name_;  // Points directly into source text from lexer token
+	StringHandle name_;  // Points directly into source text from lexer token
 	std::vector<StructMemberDecl> members_;
 	std::vector<StructMemberFunctionDecl> member_functions_;
 	std::vector<BaseClassSpecifier> base_classes_;  // Base classes for inheritance
@@ -2141,8 +2228,8 @@ private:
 // Enum declaration node - represents enum or enum class
 class EnumDeclarationNode {
 public:
-	explicit EnumDeclarationNode(std::string_view name, bool is_scoped = false)
-		: name_(name), is_scoped_(is_scoped), underlying_type_() {}
+	explicit EnumDeclarationNode(StringHandle name_handle, bool is_scoped = false)
+		: name_(StringTable::getStringView(name_handle)), is_scoped_(is_scoped), underlying_type_() {}
 
 	std::string_view name() const { return name_; }
 	bool is_scoped() const { return is_scoped_; }  // true for enum class, false for enum
@@ -2647,8 +2734,8 @@ public:
 	size_t lambda_id() const { return lambda_id_; }
 
 	// Generate a unique name for the lambda's generated function
-	std::string generate_lambda_name() const {
-		return "__lambda_" + std::to_string(lambda_id_);
+	StringHandle generate_lambda_name() const {
+		return StringTable::getOrInternStringHandle(StringBuilder().append("__lambda_"sv).append(lambda_id_));
 	}
 
 private:
@@ -2665,14 +2752,14 @@ private:
 // Template parameter reference node - represents a reference to a template parameter in expressions
 class TemplateParameterReferenceNode {
 public:
-	explicit TemplateParameterReferenceNode(std::string_view param_name, Token token)
+	explicit TemplateParameterReferenceNode(StringHandle param_name, Token token)
 		: param_name_(param_name), token_(token) {}
 
-	std::string_view param_name() const { return param_name_; }
+	StringHandle param_name() const { return param_name_; }
 	const Token& token() const { return token_; }
 
 private:
-	std::string_view param_name_;  // Name of the template parameter being referenced
+	StringHandle param_name_;  // Name of the template parameter being referenced
 	Token token_;                  // Token for error reporting
 };
 

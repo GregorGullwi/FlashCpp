@@ -8,30 +8,30 @@
 #include <cstring>
 
 std::deque<TypeInfo> gTypeInfo;
-std::unordered_map<std::string, const TypeInfo*, StringHash, StringEqual> gTypesByName;
+std::unordered_map<StringHandle, const TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<Type, const TypeInfo*> gNativeTypes;
 
-TypeInfo& add_user_type(std::string name) {
+TypeInfo& add_user_type(StringHandle name) {
     auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, gTypeInfo.size());
-    gTypesByName.emplace(type_info.name_, &type_info);
+    gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
-TypeInfo& add_function_type(std::string name, Type return_type) {
+TypeInfo& add_function_type(StringHandle name, Type return_type) {
     auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Function, gTypeInfo.size());
-    gTypesByName.emplace(type_info.name_, &type_info);
+    gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
-TypeInfo& add_struct_type(std::string name) {
-    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Struct, gTypeInfo.size());
-    gTypesByName.emplace(type_info.name_, &type_info);
+TypeInfo& add_struct_type(StringHandle name) {
+    auto& type_info = gTypeInfo.emplace_back(name, Type::Struct, gTypeInfo.size());
+    gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
-TypeInfo& add_enum_type(std::string name) {
+TypeInfo& add_enum_type(StringHandle name) {
     auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Enum, gTypeInfo.size());
-    gTypesByName.emplace(type_info.name_, &type_info);
+    gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
@@ -42,58 +42,58 @@ void initialize_native_types() {
     }
 
     // Add basic native types
-    auto& void_type = gTypeInfo.emplace_back("void", Type::Void, gTypeInfo.size());
+    auto& void_type = gTypeInfo.emplace_back(StringTable::createStringHandle("void"sv), Type::Void, gTypeInfo.size());
     gNativeTypes[Type::Void] = &void_type;
 
-    auto& bool_type = gTypeInfo.emplace_back("bool", Type::Bool, gTypeInfo.size());
+    auto& bool_type = gTypeInfo.emplace_back(StringTable::createStringHandle("bool"sv), Type::Bool, gTypeInfo.size());
     gNativeTypes[Type::Bool] = &bool_type;
 
-    auto& char_type = gTypeInfo.emplace_back("char", Type::Char, gTypeInfo.size());
+    auto& char_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, gTypeInfo.size());
     gNativeTypes[Type::Char] = &char_type;
 
-    auto& uchar_type = gTypeInfo.emplace_back("uchar", Type::UnsignedChar, gTypeInfo.size());
+    auto& uchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uchar"sv), Type::UnsignedChar, gTypeInfo.size());
     gNativeTypes[Type::UnsignedChar] = &uchar_type;
 
-    auto& short_type = gTypeInfo.emplace_back("short", Type::Short, gTypeInfo.size());
+    auto& short_type = gTypeInfo.emplace_back(StringTable::createStringHandle("short"sv), Type::Short, gTypeInfo.size());
     gNativeTypes[Type::Short] = &short_type;
 
-    auto& ushort_type = gTypeInfo.emplace_back("ushort", Type::UnsignedShort, gTypeInfo.size());
+    auto& ushort_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ushort"sv), Type::UnsignedShort, gTypeInfo.size());
     gNativeTypes[Type::UnsignedShort] = &ushort_type;
 
-    auto& int_type = gTypeInfo.emplace_back("int", Type::Int, gTypeInfo.size());
+    auto& int_type = gTypeInfo.emplace_back(StringTable::createStringHandle("int"sv), Type::Int, gTypeInfo.size());
     gNativeTypes[Type::Int] = &int_type;
 
-    auto& uint_type = gTypeInfo.emplace_back("uint", Type::UnsignedInt, gTypeInfo.size());
+    auto& uint_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uint"sv), Type::UnsignedInt, gTypeInfo.size());
     gNativeTypes[Type::UnsignedInt] = &uint_type;
 
-    auto& long_type = gTypeInfo.emplace_back("long", Type::Long, gTypeInfo.size());
+    auto& long_type = gTypeInfo.emplace_back(StringTable::createStringHandle("long"sv), Type::Long, gTypeInfo.size());
     gNativeTypes[Type::Long] = &long_type;
 
-    auto& ulong_type = gTypeInfo.emplace_back("ulong", Type::UnsignedLong, gTypeInfo.size());
+    auto& ulong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulong"sv), Type::UnsignedLong, gTypeInfo.size());
     gNativeTypes[Type::UnsignedLong] = &ulong_type;
 
-    auto& longlong_type = gTypeInfo.emplace_back("longlong", Type::LongLong, gTypeInfo.size());
+    auto& longlong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longlong"sv), Type::LongLong, gTypeInfo.size());
     gNativeTypes[Type::LongLong] = &longlong_type;
 
-    auto& ulonglong_type = gTypeInfo.emplace_back("ulonglong", Type::UnsignedLongLong, gTypeInfo.size());
+    auto& ulonglong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulonglong"sv), Type::UnsignedLongLong, gTypeInfo.size());
     gNativeTypes[Type::UnsignedLongLong] = &ulonglong_type;
 
-    auto& float_type = gTypeInfo.emplace_back("float", Type::Float, gTypeInfo.size());
+    auto& float_type = gTypeInfo.emplace_back(StringTable::createStringHandle("float"sv), Type::Float, gTypeInfo.size());
     gNativeTypes[Type::Float] = &float_type;
 
-    auto& double_type = gTypeInfo.emplace_back("double", Type::Double, gTypeInfo.size());
+    auto& double_type = gTypeInfo.emplace_back(StringTable::createStringHandle("double"sv), Type::Double, gTypeInfo.size());
     gNativeTypes[Type::Double] = &double_type;
 
-    auto& longdouble_type = gTypeInfo.emplace_back("longdouble", Type::LongDouble, gTypeInfo.size());
+    auto& longdouble_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longdouble"sv), Type::LongDouble, gTypeInfo.size());
     gNativeTypes[Type::LongDouble] = &longdouble_type;
 
-    auto& auto_type = gTypeInfo.emplace_back("auto", Type::Auto, gTypeInfo.size());
+    auto& auto_type = gTypeInfo.emplace_back(StringTable::createStringHandle("auto"sv), Type::Auto, gTypeInfo.size());
     gNativeTypes[Type::Auto] = &auto_type;
 
-    auto& function_pointer_type = gTypeInfo.emplace_back("function_pointer", Type::FunctionPointer, gTypeInfo.size());
+    auto& function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("function_pointer"sv), Type::FunctionPointer, gTypeInfo.size());
     gNativeTypes[Type::FunctionPointer] = &function_pointer_type;
 
-    auto& member_function_pointer_type = gTypeInfo.emplace_back("member_function_pointer", Type::MemberFunctionPointer, gTypeInfo.size());
+    auto& member_function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("member_function_pointer"sv), Type::MemberFunctionPointer, gTypeInfo.size());
     gNativeTypes[Type::MemberFunctionPointer] = &member_function_pointer_type;
 }
 
@@ -714,14 +714,14 @@ void StructTypeInfo::buildVTable() {
         has_vtable = true;
 
         // Get function name for matching
-        const std::string& func_name = func.name;
+        StringHandle func_name = func.getName();
 
         // Check if this function overrides a base class virtual function
         int override_index = -1;
         const StructMemberFunction* base_func_ptr = nullptr;
         for (size_t i = 0; i < vtable.size(); ++i) {
             const StructMemberFunction* base_func = vtable[i];
-            if (base_func != nullptr && base_func->name == func_name) {
+            if (base_func != nullptr && base_func->getName() == func_name) {
                 override_index = static_cast<int>(i);
                 base_func_ptr = base_func;
                 break;
@@ -766,13 +766,14 @@ void StructTypeInfo::buildVTable() {
             // Itanium C++ ABI: _ZTV + length + name
             // e.g., class "Base" -> "_ZTV4Base"
             vtable_sb.append("_ZTV");
-            vtable_sb.append(static_cast<uint64_t>(name.size()));
-            vtable_sb.append(name);
+            std::string_view name_sv = StringTable::getStringView(getName());
+            vtable_sb.append(static_cast<uint64_t>(name_sv.size()));
+            vtable_sb.append(name_sv);
         } else {
             // MSVC: ??_7 + name + @@6B@
             // e.g., class "Base" -> "??_7Base@@6B@"
             vtable_sb.append("??_7");
-            vtable_sb.append(name);
+            vtable_sb.append(StringTable::getStringView(getName()));
             vtable_sb.append("@@6B@");
         }
         
@@ -794,10 +795,10 @@ void StructTypeInfo::updateAbstractFlag() {
 }
 
 // Find member recursively through base classes
-const StructMember* StructTypeInfo::findMemberRecursive(std::string_view member_name) const {
+const StructMember* StructTypeInfo::findMemberRecursive(StringHandle member_name) const {
     // First, check own members
     for (const auto& member : members) {
-        if (member.name == member_name) {
+        if (member.getName() == member_name) {
             return &member;
         }
     }
@@ -816,7 +817,7 @@ const StructMember* StructTypeInfo::findMemberRecursive(std::string_view member_
             if (base_member) {
                 // Found in base class - need to return adjusted member
                 // Note: We can't modify the base_member, so we use a thread_local static
-                static thread_local StructMember adjusted_member("", Type::Void, 0, 0, 0, 0);
+                static thread_local StructMember adjusted_member(StringHandle(), Type::Void, 0, 0, 0, 0);
                 adjusted_member = *base_member;
                 adjusted_member.offset += base.offset;  // Adjust offset by base class offset
                 return &adjusted_member;
@@ -827,10 +828,10 @@ const StructMember* StructTypeInfo::findMemberRecursive(std::string_view member_
     return nullptr;  // Not found
 }
 
-std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::findStaticMemberRecursive(std::string_view member_name) const {
+std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::findStaticMemberRecursive(StringHandle member_name) const {
     // First, check own static members
     for (const auto& static_member : static_members) {
-        if (static_member.name == member_name) {
+        if (static_member.getName() == member_name) {
             return { &static_member, this };
         }
     }
@@ -872,10 +873,11 @@ void StructTypeInfo::buildRTTI() {
     static std::vector<MSVCBaseClassDescriptor> bcd_storage;
 
     // Create mangled and demangled names
-    std::string mangled_name = ".?AV" + name + "@@";  // MSVC-style mangling for classes
+    std::string name_str(StringTable::getStringView(getName()));
+    std::string mangled_name = ".?AV" + name_str + "@@";  // MSVC-style mangling for classes
 
     // Allocate RTTI info
-    rtti_storage.emplace_back(mangled_name.c_str(), name.c_str(), base_classes.size());
+    rtti_storage.emplace_back(mangled_name.c_str(), name_str.c_str(), base_classes.size());
     rtti_info = &rtti_storage.back();
 
     // Build ??_R0 - Type Descriptor
@@ -1004,18 +1006,28 @@ void StructTypeInfo::buildRTTI() {
     
     // Create Itanium-style mangled name
     // Itanium uses length-prefixed names: "3Foo" for class Foo
-    StringBuilder builder;
-    builder.append(name.length()).append(name);
-    std::string_view itanium_mangled = builder.commit();
+    std::string_view name_sv = StringTable::getStringView(getName());
+    
+    // Calculate required size for "LENGTH" + name + null terminator
+    size_t length_digits = std::to_string(name_sv.length()).length();
+    size_t total_size = length_digits + name_sv.length() + 1;
     
     // Allocate permanent storage for the name string (persists for program lifetime)
-    char* itanium_name = (char*)malloc(itanium_mangled.length() + 1);
+    char* itanium_name = (char*)malloc(total_size);
     if (!itanium_name) {
         // Allocation failed - Itanium RTTI won't be available
         return;
     }
-    strncpy(itanium_name, itanium_mangled.data(), itanium_mangled.length());
-    itanium_name[itanium_mangled.length()] = '\0';  // Ensure null termination
+    
+    // Write length prefix and name directly to buffer
+    int written = snprintf(itanium_name, total_size, "%zu%.*s", 
+                          name_sv.length(), 
+                          static_cast<int>(name_sv.length()), 
+                          name_sv.data());
+    if (written < 0 || static_cast<size_t>(written) >= total_size) {
+        free(itanium_name);
+        return;
+    }
     itanium_name_storage.push_back(itanium_name);
     
     if (base_classes.empty()) {

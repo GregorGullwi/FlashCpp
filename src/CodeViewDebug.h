@@ -383,10 +383,10 @@ public:
     void addFunctionParameter(const std::string& name, uint32_t type_index, int32_t stack_offset);
 
     // Update function length for a previously added function
-    void updateFunctionLength(const std::string& name, uint32_t code_length);
+    void updateFunctionLength(const std::string_view manged_name, uint32_t code_length);
 
     // Set debug range information for a function
-    void setFunctionDebugRange(const std::string& name, uint32_t prologue_size, uint32_t epilogue_size);
+    void setFunctionDebugRange(const std::string_view manged_name, uint32_t prologue_size, uint32_t epilogue_size);
 
     // Set the text section number for symbol references
     void setTextSectionNumber(uint16_t section_number);

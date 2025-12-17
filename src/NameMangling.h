@@ -36,17 +36,20 @@ public:
 	
 	// Construct from committed string_view (preferred - zero allocation)
 	// Note: The caller must ensure the string_view's storage outlives this MangledName
-	explicit MangledName(std::string_view committed_sv) 
+	explicit MangledName(std::string_view committed_sv)
+		: storage_(StringTable::getOrInternStringHandle(committed_sv)) {}
+	explicit MangledName(StringHandle committed_sv) 
 		: storage_(committed_sv) {}
 	
 	// Always returns a string_view (zero-copy)
-	std::string_view view() const { return storage_; }
+	std::string_view view() const { return StringTable::getStringView(storage_); }
 	
 	// Implicit conversion to string_view for convenience
-	operator std::string_view() const { return storage_; }
+	operator std::string_view() const { return StringTable::getStringView(storage_); }
+	operator StringHandle() const { return storage_; }
 	
 	// Check if empty
-	bool empty() const { return storage_.empty(); }
+	bool empty() const { return !storage_.isValid(); }
 	
 	// Comparison operators
 	bool operator==(const MangledName& other) const { return storage_ == other.storage_; }
@@ -54,7 +57,7 @@ public:
 	bool operator<(const MangledName& other) const { return storage_ < other.storage_; }
 	
 private:
-	std::string_view storage_;
+	StringHandle storage_;
 };
 
 // Helper to append CV-qualifier code (A/B/C/D) to output
@@ -138,7 +141,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			if (type_node.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
 				output += 'V';
-				output += type_info.name_;
+				output += StringTable::getStringView(type_info.name());
 				output += "@@";
 			} else {
 				output += 'H';  // Fallback to int if type not found
@@ -238,7 +241,7 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 			// Format: <length><name>
 			if (type_node.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-				auto struct_name = type_info.name_;
+				auto struct_name = StringTable::getStringView(type_info.name());
 				output += std::to_string(struct_name.size());
 				output += struct_name;
 			} else {
@@ -698,7 +701,7 @@ inline MangledName generateMangledNameForConstructor(
 // Generate mangled name for a destructor
 // MSVC mangles destructors as ??1ClassName@Namespace@@... where 1 is the destructor marker
 inline MangledName generateMangledNameForDestructor(
-	std::string_view struct_name,
+	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path = {}
 ) {
 	StringBuilder builder;
@@ -725,7 +728,7 @@ inline MangledName generateMangledNameFromNode(
 	const std::vector<std::string_view>& namespace_path = {}
 ) {
 	// Use the overload that accepts parameter nodes directly
-	return generateMangledNameForConstructor(ctor_node.struct_name(), ctor_node.parameter_nodes(), namespace_path);
+	return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path);
 }
 
 // Generate mangled name from a DestructorDeclarationNode

@@ -127,6 +127,10 @@ public:
 		return false;
 	}
 
+	bool insert(StringHandle identifierHandle, ASTNode node) {
+		return insert(StringTable::getStringView(identifierHandle), node);	// This should probably be the other way around
+	}
+
 	bool insert(std::string_view identifier, ASTNode node) {
 		auto& current_scope = symbol_table_stack_.back();
 		// First, try to find the identifier without interning
@@ -283,10 +287,21 @@ public:
 		return lookup(identifier).has_value();
 	}
 
+	bool contains(StringHandle identifierHandle) const {
+		return lookup(StringTable::getStringView(identifierHandle)).has_value();
+	}
+
 	std::optional<ASTNode> lookup(std::string_view identifier) const {
 		return lookup(identifier, get_current_scope_handle());
 	}
 
+	std::optional<ASTNode> lookup(StringHandle identifierHandle) const {
+		return lookup(StringTable::getStringView(identifierHandle), get_current_scope_handle());
+	}
+
+	std::optional<ASTNode> lookup_with_template_check(StringHandle identifier, std::function<bool(std::string_view)> is_template_param) const {
+		return lookup_with_template_check(StringTable::getStringView(identifier), std::move(is_template_param));
+	}
 	// Lookup with template parameter checking callback
 	std::optional<ASTNode> lookup_with_template_check(std::string_view identifier, std::function<bool(std::string_view)> is_template_param) const {
 		// First check if it's a template parameter
@@ -301,6 +316,13 @@ public:
 
 	// Check if an identifier is a template parameter (called from Parser)
 	bool is_template_parameter(std::string_view name) const;
+	bool is_template_parameter(StringHandle name) const {
+		return is_template_parameter(StringTable::getStringView(name));
+	}
+
+	std::optional<ASTNode> lookup(StringHandle identifier, ScopeHandle scope_limit_handle) const {
+		return lookup(StringTable::getStringView(identifier), scope_limit_handle);
+	}
 
 	std::optional<ASTNode> lookup(std::string_view identifier, ScopeHandle scope_limit_handle) const {
 		// Build the current namespace path once (for efficiency)
@@ -387,9 +409,9 @@ public:
 	}
 
 	// Overload that accepts template parameters (eliminates global callback)
-	std::optional<ASTNode> lookup(std::string_view identifier, 
+	std::optional<ASTNode> lookup(StringHandle identifier, 
 								 ScopeHandle scope_limit_handle,
-								 const std::vector<std::string_view>* template_params) const {
+								 const std::vector<StringHandle>* template_params) const {
 		// Check if this is a template parameter
 		if (template_params) {
 			auto it = std::find(template_params->begin(), template_params->end(), identifier);
@@ -397,7 +419,7 @@ public:
 				// This is a template parameter - create a TemplateParameterReferenceNode
 				FLASH_LOG(Symbols, Debug, "SymbolTable lookup found template parameter '", identifier, 
 				          "' in provided template params, creating TemplateParameterReferenceNode");
-				Token token(Token::Type::Identifier, std::string(identifier), 0, 0, 0);
+				Token token(Token::Type::Identifier, StringTable::getStringView(identifier), 0, 0, 0);
 				return ASTNode::emplace_node<TemplateParameterReferenceNode>(identifier, token);
 			}
 		}
@@ -712,7 +734,7 @@ public:
 	}
 
 	// Lookup a nested class by qualified name (e.g., "Outer::Inner")
-	std::optional<ASTNode> lookup_nested_class(std::string_view outer_class, std::string_view inner_class) const {
+	std::optional<ASTNode> lookup_nested_class(std::string_view outer_class, StringHandle inner_class) const {
 		// First find the outer class
 		auto outer = lookup(outer_class);
 		if (!outer.has_value() || !outer->is<StructDeclarationNode>()) {

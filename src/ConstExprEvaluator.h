@@ -1515,8 +1515,9 @@ public:
 		
 		// Member not found in initializer list - check for default member initializers
 		// Look through the struct's member declarations
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 		for (const auto& member : struct_info->members) {
-			if (member.name == member_name && member.default_initializer.has_value()) {
+			if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
 				// Found a default member initializer
 				return evaluate(member.default_initializer.value(), context);
 			}
@@ -1567,8 +1568,9 @@ public:
 		}
 		
 		// Check for default member initializer
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 		for (const auto& member : struct_info->members) {
-			if (member.name == member_name && member.default_initializer.has_value()) {
+			if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
 				return member.default_initializer.value();
 			}
 		}
@@ -1712,8 +1714,9 @@ public:
 		
 		// Find the intermediate member's type from the struct's member list
 		const StructMember* intermediate_member_info = nullptr;
+		StringHandle intermediate_member_handle = StringTable::getOrInternStringHandle(intermediate_member);
 		for (const auto& member : base_struct_info->members) {
-			if (member.name == intermediate_member) {
+			if (member.getName() == intermediate_member_handle) {
 				intermediate_member_info = &member;
 				break;
 			}
@@ -1780,8 +1783,9 @@ public:
 		}
 		
 		// Check for default member initializer
+		StringHandle final_member_name_handle = StringTable::getOrInternStringHandle(final_member_name);
 		for (const auto& member : inner_struct_info->members) {
-			if (member.name == final_member_name && member.default_initializer.has_value()) {
+			if (member.getName() == final_member_name_handle && member.default_initializer.has_value()) {
 				return evaluate(member.default_initializer.value(), context);
 			}
 		}
@@ -1898,9 +1902,10 @@ public:
 		
 		// Look up the actual member function in the struct's type info
 		const FunctionDeclarationNode* actual_func = nullptr;
+		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 		for (const auto& member_func : struct_info->member_functions) {
 			if (member_func.is_constructor || member_func.is_destructor) continue;
-			if (member_func.name != func_name) continue;
+			if (member_func.getName() != func_name_handle) continue;
 			
 			if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 				actual_func = &member_func.function_decl.as<FunctionDeclarationNode>();
@@ -2103,10 +2108,10 @@ public:
 		
 		// Also check for default member initializers for members not in the initializer list
 		for (const auto& member : struct_info->members) {
-			if (member_bindings.find(member.name) == member_bindings.end() && member.default_initializer.has_value()) {
+			std::string_view name_view = StringTable::getStringView(member.getName());
+			if (member_bindings.find(name_view) == member_bindings.end() && member.default_initializer.has_value()) {
 				auto default_result = evaluate(member.default_initializer.value(), context);
 				if (default_result.success) {
-					std::string_view name_view(member.name);
 					member_bindings[name_view] = default_result;
 				}
 			}
@@ -2433,11 +2438,11 @@ public:
 				break;
 
 			case TypeTraitKind::IsBoundedArray:
-				result = type_spec.is_array() & (type_spec.array_size() > 0) & !is_reference & (pointer_depth == 0);
+				result = type_spec.is_array() & int(type_spec.array_size() > 0) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsUnboundedArray:
-				result = type_spec.is_array() & (type_spec.array_size() <= 0) & !is_reference & (pointer_depth == 0);
+				result = type_spec.is_array() & int(type_spec.array_size() == 0) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsAggregate:
