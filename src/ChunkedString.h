@@ -109,6 +109,7 @@ public:
                 return i;
             }
         }
+        assert(false && "Expected chunk index to be found");
         return SIZE_MAX;  // Not found
     }
 

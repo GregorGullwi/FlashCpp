@@ -11484,11 +11484,12 @@ private:
 			// where value is TempVar, string_view, unsigned long long, or double
 			IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 				using T = std::decay_t<decltype(arg)>;
-				if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, std::string_view> ||
+				if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
 				              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 					return arg;
 				} else {
 					// This shouldn't happen for expression values, but default to 0
+					assert(false && "Couldn't match IrValue to a known type");
 					return 0ULL;
 				}
 			}, expr_operands[2]);
@@ -11508,10 +11509,11 @@ private:
 			TempVar result_temp = var_counter.next();
 			IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 				using T = std::decay_t<decltype(arg)>;
-				if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, std::string_view> ||
+				if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
 				              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 					return arg;
 				} else {
+					assert(false && "Couldn't match IrValue to a known type");
 					return 0ULL;
 				}
 			}, expr_operands[2]);
@@ -11531,10 +11533,11 @@ private:
 			TempVar result_temp = var_counter.next();
 			IrValue from_value = std::visit([](auto&& arg) -> IrValue {
 				using T = std::decay_t<decltype(arg)>;
-				if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, std::string_view> ||
+				if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
 				              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 					return arg;
 				} else {
+					assert(false && "Couldn't match IrValue to a known type");
 					return 0ULL;
 				}
 			}, expr_operands[2]);
