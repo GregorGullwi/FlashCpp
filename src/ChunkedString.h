@@ -139,6 +139,11 @@ public:
         // Start with 512 bytes, will grow by 16x if needed
     }
     
+    // Prevent copying and assignment since StringBuilder manages temporary state
+    // and interacts with global tracking
+    StringBuilder(const StringBuilder&) = delete;
+    StringBuilder& operator=(const StringBuilder&) = delete;
+    
     ~StringBuilder() {
         // Verify that commit() or reset() was called
         assert(is_committed_ && "did you forget to call commit() or reset() on the StringBuilder?");
@@ -201,6 +206,15 @@ public:
     }
 
     std::string_view commit() {
+        // Handle case where nothing was appended
+        if (temp_start_ == nullptr) {
+            is_committed_ = true;
+            if (gCurrentStringBuilder == this) {
+                gCurrentStringBuilder = previous_builder_;
+            }
+            return std::string_view("", 0);
+        }
+        
         size_t len = temp_write_ptr_ - temp_start_;
         
         // Copy the temporary buffer to the permanent allocator
@@ -224,6 +238,10 @@ public:
     }
 
     std::string_view preview() const {
+        // Handle case where nothing was appended yet
+        if (temp_start_ == nullptr) {
+            return std::string_view("", 0);
+        }
         size_t len = temp_write_ptr_ - temp_start_;
         return std::string_view(temp_start_, len);
     }
@@ -262,7 +280,8 @@ private:
     }
 
     void ensure_temp_capacity(size_t needed) {
-        size_t current_size = temp_write_ptr_ - temp_start_;
+        // Handle initial state where temp_start_ is nullptr
+        size_t current_size = (temp_start_ != nullptr) ? (temp_write_ptr_ - temp_start_) : 0;
         size_t new_size = current_size + needed;
         
         if (temp_capacity_ < new_size) {
