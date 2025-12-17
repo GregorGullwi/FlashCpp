@@ -4961,9 +4961,11 @@ private:
 				if (size_bits == 0 && type_node.pointer_depth() == 0) {
 					size_bits = get_type_size_bits(type_node.type());
 				}
-				// Include type_index for struct types
-				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
-				return { type_node.type(), size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), static_cast<unsigned long long>(type_index) };
+				// For the 4th element: use pointer_depth for pointer types, type_index for struct types
+				unsigned long long fourth_element = (type_node.pointer_depth() > 0) 
+					? static_cast<unsigned long long>(type_node.pointer_depth())
+					: ((type_node.type() == Type::Struct) ? static_cast<unsigned long long>(type_node.type_index()) : 0ULL);
+				return { type_node.type(), size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
 			}
 		}
 		
