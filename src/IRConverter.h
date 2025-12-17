@@ -3938,6 +3938,14 @@ private:
 						if (ref_it != reference_stack_info_.end()) {
 							// This is a reference - load the pointer first, then dereference
 							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+							
+							// If RHS register conflicts with result register, we need to handle it
+							// Strategy: Keep LHS in its register, allocate a fresh register for RHS
+							if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
+								// Allocate a NEW register for RHS (LHS stays where it is)
+								ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+							}
+							
 							// Load the pointer into the register
 							emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
 							// Now dereference: load from [register + 0]
@@ -3947,6 +3955,14 @@ private:
 							// Not a reference, load normally
 							// For integers, use regular MOV
 							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+							
+							// If RHS register conflicts with result register, we need to handle it
+							// Strategy: Keep LHS in its register, allocate a fresh register for RHS
+							if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
+								// Allocate a NEW register for RHS (LHS stays where it is)
+								ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+							}
+							
 							emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, ctx.operand_size_in_bits);
 						}
 						regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
@@ -3997,6 +4013,14 @@ private:
 					if (ref_it != reference_stack_info_.end()) {
 						// This is a reference - load the pointer first, then dereference
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+						
+						// If RHS register conflicts with result register, we need to handle it
+						// Strategy: Keep LHS in its register, allocate a fresh register for RHS
+						if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
+							// Allocate a NEW register for RHS (LHS stays where it is)
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+						}
+						
 						// Load the pointer into the register
 						emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
 						// Now dereference: load from [register + 0]
@@ -4005,6 +4029,22 @@ private:
 					} else {
 						// Not a reference, load normally with correct size
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+						
+						// If RHS register conflicts with result register, we need to handle it
+						// Strategy: Move LHS to the RHS register, then allocate a fresh register for RHS
+						if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
+							// Save the LHS info before we reassign the register
+							int old_offset = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)].stackVariableOffset;
+							int old_size = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)].size_in_bits;
+							bool was_dirty = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)].isDirty;
+							
+							// Now allocate a NEW register for RHS (the old one will stay with LHS)
+							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+							
+							// The result register still holds LHS and is correctly tracked
+							// No move needed - LHS stays where it is, RHS gets a different register
+						}
+						
 						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_stack_var_addr, ctx.operand_size_in_bits);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
@@ -4015,6 +4055,13 @@ private:
 			// RHS is a literal value
 			auto rhs_value = std::get<unsigned long long>(bin_op.rhs.value);
 			ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+
+			// If RHS register conflicts with result register, we need to handle it
+			// Strategy: Keep LHS in its register, allocate a fresh register for RHS
+			if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
+				// Allocate a NEW register for RHS (LHS stays where it is)
+				ctx.rhs_physical_reg = allocateRegisterWithSpilling();
+			}
 
 			// Load the literal value into the register
 			// mov reg, imm64
@@ -4136,6 +4183,28 @@ private:
 					);
 				}
 				regAlloc.set_stack_variable_offset(ctx.result_physical_reg, stack_offset, ctx.result_value.size_in_bits);
+			}
+		}
+
+		// Final safety check: if LHS and RHS ended up in the same register, we need to fix it
+		// This can happen when all registers are in use and spilling picks the same register twice
+		if (ctx.result_physical_reg == ctx.rhs_physical_reg && !is_floating_point_type(ctx.result_value.type)) {
+			// Get the LHS variable's stack location and reload it into a different register
+			auto& reg_info = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)];
+			if (reg_info.stackVariableOffset != INT_MIN) {
+				// Allocate a fresh register for LHS and reload it from the stack
+				X64Register new_lhs_reg = allocateRegisterWithSpilling();
+				emitMovFromFrameBySize(new_lhs_reg, reg_info.stackVariableOffset, reg_info.size_in_bits);
+				
+				// Update tracking: the new register now holds the LHS variable
+				regAlloc.set_stack_variable_offset(new_lhs_reg, reg_info.stackVariableOffset, reg_info.size_in_bits);
+				regAlloc.registers[static_cast<int>(new_lhs_reg)].isDirty = reg_info.isDirty;
+				
+				// Clear the old register's tracking (it now only holds RHS)
+				regAlloc.registers[static_cast<int>(ctx.result_physical_reg)].stackVariableOffset = INT_MIN;
+				regAlloc.registers[static_cast<int>(ctx.result_physical_reg)].isDirty = false;
+				
+				ctx.result_physical_reg = new_lhs_reg;
 			}
 		}
 
