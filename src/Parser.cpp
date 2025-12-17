@@ -18853,8 +18853,8 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 
 	// Add to struct as a member function template
 	// Register the template in the global registry with qualified name (ClassName::functionName)
-	std::string qualified_name = std::string(StringTable::getStringView(struct_node.name())) + "::" + std::string(decl_node.identifier_token().value());
-	gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
+	auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_node.name()).append("::"sv).append(decl_node.identifier_token().value()));
+	gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_func_node);
 
 	// template_scope automatically cleans up template parameters when it goes out of scope
 

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <vector>
 #include <string_view>
@@ -64,6 +64,29 @@ public:
         return chunk->current_ptr();
     }
 
+    bool tryFree(char* ptr, size_t size) {
+        if (chunks_.empty())
+            return false;
+
+        Chunk* chunk = current_chunk();
+
+        char* chunk_start = chunk->data_.data();
+        char* chunk_end   = chunk_start + chunk->data_.size();
+
+        // Must belong to the current chunk
+        if (ptr < chunk_start || ptr >= chunk_end)
+            return false;
+
+        // Must be the most recent allocation
+        if (ptr + size != chunk->current_ptr())
+            return false;
+
+        // Rewind allocation
+        chunk->next_free_ -= size; 
+
+        return true;
+    }
+
     Chunk* current_chunk() { return chunks_.back().get(); }
 
     // StringTable support - get current chunk index (0-based)
@@ -115,7 +138,11 @@ private:
 
 extern ChunkedStringAllocator gChunkedStringAllocator;
 
-// Global to track which StringBuilder is currently active (for detecting overlapping usage)
+// Temporary allocator for StringBuilder with smaller initial chunk size (1 MB)
+// This allocator is used for building strings before committing to the main allocator
+inline ChunkedStringAllocator gTemporaryChunkedStringAllocator(1024*1024);
+
+// Global to track which StringBuilder is currently active (for detecting parallel usage in same scope)
 // Using 'inline' instead of 'static' to ensure a single definition across all translation units
 // (C++17 inline variables)
 inline class StringBuilder* gCurrentStringBuilder = nullptr;
@@ -123,17 +150,36 @@ inline class StringBuilder* gCurrentStringBuilder = nullptr;
 class StringBuilder {
 public:
     explicit StringBuilder(ChunkedStringAllocator& allocator = gChunkedStringAllocator)
-        : alloc_(allocator), chunk_(allocator.current_chunk()), buf_start_(chunk_->current_ptr()), write_ptr_(buf_start_) {}
+        : alloc_(allocator),
+          temp_start_(nullptr),
+          temp_write_ptr_(nullptr),
+          temp_capacity_(0),
+          previous_builder_(gCurrentStringBuilder),  // Save the currently active builder (for nested support)
+          is_committed_(false) {
+        // Use temporary chunk allocator for building - this makes nesting work naturally
+        // since each StringBuilder has independent storage in the temporary allocator
+        // Start with 512 bytes, will grow by 16x if needed
+    }
+    
+    // Prevent copying and assignment since StringBuilder manages temporary state
+    // and interacts with global tracking
+    StringBuilder(const StringBuilder&) = delete;
+    StringBuilder& operator=(const StringBuilder&) = delete;
+    
     ~StringBuilder() {
-        assert(buf_start_ == write_ptr_ && "did you forget to call commit() on the StringBuilder?");
+        // Verify that commit() or reset() was called
+        assert(is_committed_ && "did you forget to call commit() or reset() on the StringBuilder?");
+        // Restore previous builder if this was the active one
+        if (gCurrentStringBuilder == this) {
+            gCurrentStringBuilder = previous_builder_;
+        }
     }
 
     StringBuilder& append(std::string_view sv) {
-        assert((gCurrentStringBuilder == nullptr || gCurrentStringBuilder == this) && "More than one StringBuilder in the same scope detected. Call .commit() or .reset() before you start with the next string!");
-        gCurrentStringBuilder = this;
-        ensure_capacity(sv.size());
-        std::memcpy(write_ptr_, sv.data(), sv.size());
-        write_ptr_ += sv.size();
+        handle_activation();
+        ensure_temp_capacity(sv.size());
+        std::memcpy(temp_write_ptr_, sv.data(), sv.size());
+        temp_write_ptr_ += sv.size();
         return *this;
     }
 
@@ -141,10 +187,9 @@ public:
     StringBuilder& append(struct StringHandle sh);
 
     StringBuilder& append(char c) {
-        assert((gCurrentStringBuilder == nullptr || gCurrentStringBuilder == this) && "More than one StringBuilder in the same scope detected. Call .commit() or .reset() before you start with the next string!");
-        gCurrentStringBuilder = this;
-        ensure_capacity(1);
-        *write_ptr_++ = c;
+        handle_activation();
+        ensure_temp_capacity(1);
+        *temp_write_ptr_++ = c;
         return *this;
     }
 
@@ -183,43 +228,126 @@ public:
     }
 
     std::string_view commit() {
-        size_t len = write_ptr_ - buf_start_;
-        // Add null terminator directly (don't use append() which would set gCurrentStringBuilder)
-        ensure_capacity(1);
-        *write_ptr_++ = '\0';
-        chunk_->allocate(len + 1);
-        std::string_view return_str(buf_start_, len);
-        buf_start_ = write_ptr_ = chunk_->current_ptr();
-        gCurrentStringBuilder = nullptr;  // Reset AFTER all operations
-        return return_str;
+        // Handle case where nothing was appended
+        if (temp_start_ == nullptr) {
+            is_committed_ = true;
+            if (gCurrentStringBuilder == this) {
+                gCurrentStringBuilder = previous_builder_;
+            }
+            return std::string_view("", 0);
+        }
+        
+        size_t len = temp_write_ptr_ - temp_start_;
+        
+        // Copy the temporary buffer to the permanent allocator
+        char* ptr = alloc_.allocate(len + 1);
+        std::memcpy(ptr, temp_start_, len);
+        ptr[len] = '\0';
+        std::string_view result(ptr, len);
+        
+        // Reset temporary state and mark as committed
+        reset();
+        
+        return result;
     }
 
-    std::string_view preview() {
-        size_t len = write_ptr_ - buf_start_;
-        return std::string_view(buf_start_, len);
+    std::string_view preview() const {
+        // Handle case where nothing was appended yet
+        if (temp_start_ == nullptr) {
+            return std::string_view("", 0);
+        }
+        size_t len = temp_write_ptr_ - temp_start_;
+        return std::string_view(temp_start_, len);
     }
 
     void reset() {
-        gCurrentStringBuilder = nullptr;
-        buf_start_ = write_ptr_ = chunk_->current_ptr();
+        gTemporaryChunkedStringAllocator.tryFree(temp_start_, temp_capacity_);
+
+        temp_start_ = nullptr;
+        temp_write_ptr_ = nullptr;
+        temp_capacity_ = 0;
+        is_committed_ = true;
+        
+        // Restore previous builder
+        if (gCurrentStringBuilder == this) {
+            gCurrentStringBuilder = previous_builder_;
+        }
     }
 
 private:
-    void ensure_capacity(size_t needed) {
-        size_t len = write_ptr_ - buf_start_;
-        size_t new_len = len + needed;
-        if (chunk_->remaining() < new_len)
-        {
-            char* new_buf_start = alloc_.peek_allocate(new_len);
-            std::memcpy(new_buf_start, buf_start_, len);
-            write_ptr_ = new_buf_start + len;
-            buf_start_ = new_buf_start;
-            chunk_ = alloc_.current_chunk();
+    void handle_activation() {
+        // Detect parallel usage: if there's already an active builder and it's NOT our parent
+        // (i.e., not the previous_builder_), then we have parallel usage in the same scope
+        if (gCurrentStringBuilder != nullptr && 
+            gCurrentStringBuilder != this && 
+            gCurrentStringBuilder != previous_builder_) {
+            // Parallel usage detected - this is an error
+            assert(false && "Parallel StringBuilder usage detected in the same scope! "
+                           "You have two StringBuilders being used at the same time. "
+                           "Call .commit() or .reset() on the first builder before using the second one.");
+        }
+        
+        // Set this builder as the current one (previous_builder_ was already saved in constructor)
+        // This is safe for nested usage since the inner builder will restore gCurrentStringBuilder
+        // when it commits/resets
+        if (gCurrentStringBuilder != this) {
+            gCurrentStringBuilder = this;
+        }
+    }
+
+    void ensure_temp_capacity(size_t needed) {
+        // Handle initial state where temp_start_ is nullptr
+        size_t current_size = (temp_start_ != nullptr) ? (temp_write_ptr_ - temp_start_) : 0;
+        
+        // Check for integer overflow
+        if (needed > SIZE_MAX - current_size) {
+            assert(false && "StringBuilder: requested size would overflow");
+            return;
+        }
+        
+        size_t new_size = current_size + needed;
+        
+        if (temp_capacity_ < new_size) {
+            // Need to grow or allocate initial buffer
+            size_t new_capacity = temp_capacity_;
+            
+            if (new_capacity == 0) {
+                // First allocation - use the temporary allocator's chunk size (512 bytes)
+                new_capacity = std::max(needed, 64ull);
+            }
+            
+            // Grow by 16x if current capacity is insufficient (as requested)
+            while (new_capacity < new_size) {
+                // Check for overflow before multiplication
+                if (new_capacity > SIZE_MAX / 16) {
+                    // Can't grow by 16x without overflow, use new_size instead
+                    new_capacity = new_size;
+                    break;
+                }
+                new_capacity *= 16;
+            }
+            
+            // Allocate new buffer from temporary allocator
+            gTemporaryChunkedStringAllocator.tryFree(temp_start_, temp_capacity_);
+            char* new_start = gTemporaryChunkedStringAllocator.allocate(new_capacity);
+            assert(new_start != nullptr && "StringBuilder: allocation failed");
+            
+            // Copy existing data if any
+            if (current_size > 0) {
+                std::memcpy(new_start, temp_start_, current_size);
+            }
+            
+            // Update pointers
+            temp_start_ = new_start;
+            temp_write_ptr_ = new_start + current_size;
+            temp_capacity_ = new_capacity;
         }
     }
 
     ChunkedStringAllocator& alloc_;
-    Chunk* chunk_;
-    char* buf_start_ = nullptr;
-    char* write_ptr_ = nullptr;
+    char* temp_start_;           // Start of temporary buffer in gTemporaryChunkedStringAllocator
+    char* temp_write_ptr_;       // Current write position in temporary buffer
+    size_t temp_capacity_;       // Total capacity of temporary buffer
+    StringBuilder* previous_builder_;  // Stack of nested StringBuilders
+    bool is_committed_;          // Whether commit() or reset() was called
 };

@@ -10924,14 +10924,14 @@ private:
 			case TypeTraitKind::IsBoundedArray:
 				// __is_bounded_array - array with known bound (e.g., int[10])
 				// Check if it's an array and the size is known
-				result = type_spec.is_array() & (type_spec.array_size() > 0) &
+				result = type_spec.is_array() & int(type_spec.array_size() > 0) &
 			         !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsUnboundedArray:
 				// __is_unbounded_array - array with unknown bound (e.g., int[])
 				// Check if it's an array and the size is unknown (0 or negative)
-				result = type_spec.is_array() & (type_spec.array_size() <= 0) &
+				result = type_spec.is_array() & int(type_spec.array_size() <= 0) &
 			         !is_reference & (pointer_depth == 0);
 				break;
 

@@ -784,12 +784,12 @@ public:
 		debug_builder_.addFunctionParameter(name, type_index, stack_offset);
 	}
 
-	void update_function_length(const std::string& name, uint32_t code_length) {
-		debug_builder_.updateFunctionLength(name, code_length);
+	void update_function_length(const std::string_view manged_name, uint32_t code_length) {
+		debug_builder_.updateFunctionLength(manged_name, code_length);
 	}
 
-	void set_function_debug_range(const std::string& name, uint32_t prologue_size, uint32_t epilogue_size) {
-		debug_builder_.setFunctionDebugRange(name, prologue_size, epilogue_size);
+	void set_function_debug_range(const std::string_view manged_name, uint32_t prologue_size, uint32_t epilogue_size) {
+		debug_builder_.setFunctionDebugRange(manged_name, prologue_size, epilogue_size);
 	}
 
 	void finalize_current_function() {

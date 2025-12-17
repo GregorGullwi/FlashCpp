@@ -245,26 +245,26 @@ void DebugInfoBuilder::addFunctionParameter(const std::string& name, uint32_t ty
     }
 }
 
-void DebugInfoBuilder::updateFunctionLength(const std::string& name, uint32_t code_length) {
+void DebugInfoBuilder::updateFunctionLength(const std::string_view manged_name, uint32_t code_length) {
     // Find the function and update its length
     for (auto& func : functions_) {
-        if (func.name == name) {
+        if (func.mangled_name == manged_name) {
             func.code_length = code_length;
             break;
         }
     }
 }
 
-void DebugInfoBuilder::setFunctionDebugRange(const std::string& name, uint32_t prologue_size, uint32_t epilogue_size) {
+void DebugInfoBuilder::setFunctionDebugRange(const std::string_view manged_name, uint32_t prologue_size, uint32_t epilogue_size) {
     // Find the function and update its debug range information
     for (auto& func : functions_) {
-        if (func.name == name) {
+        if (func.mangled_name == manged_name) {
             func.prologue_size = prologue_size;
             func.epilogue_size = epilogue_size;
             func.debug_start_offset = prologue_size;  // Debug starts after prologue
             func.debug_end_offset = func.code_length - epilogue_size;  // Debug ends before epilogue
 
-            if (g_enable_debug_output) std::cerr << "DEBUG: Set debug range for function " << name
+            if (g_enable_debug_output) std::cerr << "DEBUG: Set debug range for function " << manged_name
                       << " - prologue_size=" << prologue_size
                       << ", epilogue_size=" << epilogue_size
                       << ", debug_start=" << func.debug_start_offset
