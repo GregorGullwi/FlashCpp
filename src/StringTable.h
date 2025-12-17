@@ -239,9 +239,13 @@ public:
 
 	/**
 	 * @brief Resolve handle to string_view (O(1))
+	 * Returns empty string_view if handle is invalid
 	 */
 	static std::string_view getStringView(StringHandle handle) {
-		assert(handle.isValid() && "Invalid StringHandle");
+		// Handle invalid handles gracefully by returning empty string_view
+		if (!handle.isValid()) {
+			return std::string_view{};
+		}
 		
 		char* ptr = gChunkedStringAllocator.getChunkPointer(
 			handle.chunkIndex(), 
@@ -255,9 +259,13 @@ public:
 
 	/**
 	 * @brief Get pre-computed hash for a handle (O(1))
+	 * Returns 0 if handle is invalid
 	 */
 	static uint64_t getHash(StringHandle handle) {
-		assert(handle.isValid() && "Invalid StringHandle");
+		// Handle invalid handles gracefully by returning 0
+		if (!handle.isValid()) {
+			return 0;
+		}
 		
 		char* ptr = gChunkedStringAllocator.getChunkPointer(
 			handle.chunkIndex(), 
