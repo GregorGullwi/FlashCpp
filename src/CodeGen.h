@@ -142,7 +142,7 @@ public:
 		if (node.is<FunctionDeclarationNode>()) {
 			visitFunctionDeclarationNode(node.as<FunctionDeclarationNode>());
 			// Clear function context after completing a top-level function
-			current_function_name_.clear();
+			current_function_name_ = StringHandle();
 		}
 		else if (node.is<ReturnStatementNode>()) {
 			visitReturnStatementNode(node.as<ReturnStatementNode>());
@@ -213,12 +213,12 @@ public:
 		else if (node.is<ConstructorDeclarationNode>()) {
 			visitConstructorDeclarationNode(node.as<ConstructorDeclarationNode>());
 			// Clear function context after completing a top-level constructor
-			current_function_name_.clear();
+			current_function_name_ = StringHandle();
 		}
 		else if (node.is<DestructorDeclarationNode>()) {
 			visitDestructorDeclarationNode(node.as<DestructorDeclarationNode>());
 			// Clear function context after completing a top-level destructor
-			current_function_name_.clear();
+			current_function_name_ = StringHandle();
 		}
 		else if (node.is<DeclarationNode>()) {
 			// Forward declarations or global variable declarations
@@ -321,7 +321,7 @@ public:
 	void generateCollectedLocalStructMembers() {
 		for (const auto& member_info : collected_local_struct_members_) {
 			// Temporarily restore context
-			std::string saved_function = current_function_name_;
+			StringHandle saved_function = current_function_name_;
 			current_struct_name_ = member_info.struct_name;
 			current_function_name_ = member_info.enclosing_function_name;
 			
@@ -856,7 +856,7 @@ private:
 
 	// Get the current function name
 	std::string_view getCurrentFunctionName() const {
-		return current_function_name_;
+		return current_function_name_.isValid() ? StringTable::getStringView(current_function_name_) : std::string_view();
 	}
 
 	// Helper function to check if access to a member function is allowed
@@ -1002,10 +1002,10 @@ private:
 
 	// Get the current lambda's closure StructTypeInfo, or nullptr if not in a lambda
 	const StructTypeInfo* getCurrentClosureStruct() const {
-		if (current_lambda_closure_type_.empty()) {
+		if (!current_lambda_closure_type_.isValid()) {
 			return nullptr;
 		}
-		auto it = gTypesByName.find(current_lambda_closure_type_);
+		auto it = gTypesByName.find(std::string(StringTable::getStringView(current_lambda_closure_type_)));
 		if (it == gTypesByName.end() || !it->second->isStruct()) {
 			return nullptr;
 		}
@@ -1014,7 +1014,7 @@ private:
 
 	// Check if we're in a lambda with [*this] capture
 	bool isInCopyThisLambda() const {
-		if (current_lambda_closure_type_.empty()) {
+		if (!current_lambda_closure_type_.isValid()) {
 			return false;
 		}
 		auto capture_it = current_lambda_captures_.find("this");
@@ -1028,7 +1028,7 @@ private:
 
 	// Check if we're in a lambda with [this] pointer capture
 	bool isInThisPointerLambda() const {
-		if (current_lambda_closure_type_.empty()) {
+		if (!current_lambda_closure_type_.isValid()) {
 			return false;
 		}
 		auto capture_it = current_lambda_captures_.find("this");
@@ -1161,7 +1161,7 @@ private:
 
 		// Set current function name for static local variable mangling
 		const DeclarationNode& func_decl = node.decl_node();
-		current_function_name_ = std::string(func_decl.identifier_token().value());
+		current_function_name_ = StringTable::getOrInternStringHandle(func_decl.identifier_token().value());
 		
 		// Set current function return type and size for type checking in return statements
 		const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
@@ -1174,7 +1174,7 @@ private:
 		// Clear current_struct_name_ if this is not a member function
 		// This prevents struct context from leaking into free functions
 		if (!node.is_member_function()) {
-			current_struct_name_.clear();
+			current_struct_name_ = StringHandle();
 		}
 
 		if (FLASH_LOG_ENABLED(Codegen, Debug)) {
@@ -1226,8 +1226,8 @@ private:
 		// otherwise use the function node's parent_struct_name
 		// For nested classes, we need to use the fully qualified name from TypeInfo
 		std::string_view struct_name_for_function;
-		if (!current_struct_name_.empty()) {
-			struct_name_for_function = current_struct_name_;
+		if (current_struct_name_.isValid()) {
+			struct_name_for_function = StringTable::getStringView(current_struct_name_);
 		} else if (node.is_member_function()) {
 			struct_name_for_function = node.parent_struct_name();
 		} else {
@@ -1452,10 +1452,10 @@ private:
 
 		// Generate member functions for both global and local structs
 		// Save the enclosing function context so member function visits don't clobber it
-		std::string saved_enclosing_function = current_function_name_;
+		StringHandle saved_enclosing_function = current_function_name_;
 		
 		// Check if this is a local struct (declared inside a function)
-		bool is_local_struct = !current_function_name_.empty();
+		bool is_local_struct = current_function_name_.isValid();
 		
 		// Set struct context so member functions know which struct they belong to
 		// NOTE: We don't clear this until the next struct - the string must persist
@@ -1463,9 +1463,9 @@ private:
 		// For nested classes, we need to use the fully qualified name from TypeInfo
 		auto type_it = gTypesByName.find(std::string(struct_name));
 		if (type_it != gTypesByName.end()) {
-			current_struct_name_ = std::string(StringTable::getStringView(type_it->second->name()));
+			current_struct_name_ = type_it->second->name();
 		} else {
-			current_struct_name_ = std::string(struct_name);
+			current_struct_name_ = StringTable::getOrInternStringHandle(struct_name);
 		}
 		
 		// For local structs, collect member functions for deferred generation
@@ -1595,13 +1595,13 @@ private:
 		var_counter = TempVar(2);
 
 		// Set current function name for static local variable mangling
-		current_function_name_ = std::string(StringTable::getStringView(node.name()));
+		current_function_name_ = node.name();
 		static_local_names_.clear();
 
 		// Create constructor declaration with typed payload
 		FunctionDeclOp ctor_decl_op;
 		// For nested classes, use current_struct_name_ which contains the fully qualified name
-		std::string_view struct_name_for_ctor = current_struct_name_.empty() ? StringTable::getStringView(node.struct_name()) : current_struct_name_;
+		std::string_view struct_name_for_ctor = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : StringTable::getStringView(node.struct_name());
 		
 		// Extract just the last component of the class name for the constructor function name
 		// For "Outer::Inner", we want "Inner" as the function name
@@ -2113,7 +2113,7 @@ private:
 		var_counter = TempVar(2);
 
 	// Set current function name for static local variable mangling
-	current_function_name_ = std::string(node.name());
+	current_function_name_ = StringTable::getOrInternStringHandle(node.name());
 	static_local_names_.clear();
 
 	// Create destructor declaration with typed payload
@@ -2286,8 +2286,8 @@ private:
 				}
 				
 				// Store the deduced type for this function
-				if (!current_function_name_.empty()) {
-					deduced_auto_return_types_[current_function_name_] = deduced_type;
+				if (current_function_name_.isValid()) {
+					deduced_auto_return_types_[std::string(StringTable::getStringView(current_function_name_))] = deduced_type;
 				}
 				
 				// Update current function return type for subsequent return statements
@@ -4592,11 +4592,11 @@ private:
 	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode) {
 		// Check if this is a captured variable in a lambda
 		std::string var_name_str(identifierNode.name());
-		if (!current_lambda_closure_type_.empty() &&
+		if (current_lambda_closure_type_.isValid() &&
 		    current_lambda_captures_.find(var_name_str) != current_lambda_captures_.end()) {
 			// This is a captured variable - generate member access (this->x)
 			// Look up the closure struct type
-			auto type_it = gTypesByName.find(current_lambda_closure_type_);
+			auto type_it = gTypesByName.find(std::string(StringTable::getStringView(current_lambda_closure_type_)));
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
@@ -4718,9 +4718,9 @@ private:
 
 		// Only check if it's a member variable if NOT found in symbol tables
 		// This gives priority to parameters and local variables over member variables
-		if (!symbol.has_value() && !current_struct_name_.empty()) {
+		if (!symbol.has_value() && current_struct_name_.isValid()) {
 			// Look up the struct type
-			auto type_it = gTypesByName.find(std::string(current_struct_name_));
+			auto type_it = gTypesByName.find(std::string(StringTable::getStringView(current_struct_name_)));
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
@@ -5426,7 +5426,7 @@ private:
 		
 		// Check if this is an increment/decrement on a captured variable in a lambda
 		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && 
-		    !current_lambda_closure_type_.empty() && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+		    current_lambda_closure_type_.isValid() && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
@@ -5435,7 +5435,7 @@ private:
 				// Check if this is a captured variable
 				if (current_lambda_captures_.find(var_name_str) != current_lambda_captures_.end()) {
 					// Look up the closure struct type
-					auto type_it = gTypesByName.find(current_lambda_closure_type_);
+					auto type_it = gTypesByName.find(std::string(StringTable::getStringView(current_lambda_closure_type_)));
 					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
@@ -6419,14 +6419,14 @@ private:
 		}
 
 		// Special handling for assignment to member variables in member functions
-		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && !current_struct_name_.empty()) {
+		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && current_struct_name_.isValid()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 				std::string_view lhs_name = lhs_ident.name();
 
 				// Check if this is a member variable of the current struct
-				auto type_it = gTypesByName.find(std::string(current_struct_name_));
+				auto type_it = gTypesByName.find(std::string(StringTable::getStringView(current_struct_name_)));
 				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 					if (struct_info) {
@@ -6479,7 +6479,7 @@ private:
 		}
 
 		// Special handling for assignment to captured-by-reference variable inside lambda
-		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && !current_lambda_closure_type_.empty()) {
+		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && current_lambda_closure_type_.isValid()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
@@ -6504,7 +6504,7 @@ private:
 							const TypeSpecifierNode& orig_type = type_it->second;
 
 							// Look up the closure struct to find the member
-							auto closure_type_it = gTypesByName.find(current_lambda_closure_type_);
+							auto closure_type_it = gTypesByName.find(std::string(StringTable::getStringView(current_lambda_closure_type_)));
 							if (closure_type_it != gTypesByName.end() && closure_type_it->second->isStruct()) {
 								const StructTypeInfo* struct_info = closure_type_it->second->getStructInfo();
 								const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(lhs_name_str));
@@ -7951,8 +7951,8 @@ private:
 			}
 
 			// Final fallback: if we're in a member function, check the current struct's member functions
-			if (!matched_func_decl && !current_struct_name_.empty()) {
-				auto type_it = gTypesByName.find(std::string(current_struct_name_));
+			if (!matched_func_decl && current_struct_name_.isValid()) {
+				auto type_it = gTypesByName.find(std::string(StringTable::getStringView(current_struct_name_)));
 				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 					if (struct_info) {
@@ -7967,7 +7967,7 @@ private:
 									if (matched_func_decl->has_mangled_name()) {
 										function_name = matched_func_decl->mangled_name();
 									} else if (matched_func_decl->linkage() != Linkage::C) {
-										function_name = generateMangledNameForCall(*matched_func_decl, current_struct_name_);
+										function_name = generateMangledNameForCall(*matched_func_decl, StringTable::getStringView(current_struct_name_));
 									}
 									break;
 								}
@@ -8413,7 +8413,7 @@ private:
 						// Schedule this instantiation
 						GenericLambdaInstantiation inst;
 						inst.lambda_id = lambda.lambda_id();
-						inst.instantiation_key = instantiation_key;
+						inst.instantiation_key = StringTable::getOrInternStringHandle(instantiation_key);
 						for (size_t i = 0; i < auto_param_indices.size() && i < deduced_param_types.size(); ++i) {
 							inst.deduced_types.push_back({auto_param_indices[i], deduced_param_types[i]});
 						}
@@ -9709,7 +9709,7 @@ private:
 					const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
 					std::string_view ptr_name = ptr_ident.name();
 					
-					if (ptr_name == "this" && !current_lambda_closure_type_.empty() && 
+					if (ptr_name == "this" && current_lambda_closure_type_.isValid() && 
 					    current_lambda_captures_.find("this") != current_lambda_captures_.end()) {
 						is_lambda_this = true;
 						// We're in a lambda that captured [this] or [*this]
@@ -11780,9 +11780,9 @@ private:
 		info.lambda_token = lambda.lambda_token();
 		
 		// Store enclosing struct info for [this] capture support
-		info.enclosing_struct_name = current_struct_name_;
-		if (!current_struct_name_.empty()) {
-			auto type_it = gTypesByName.find(current_struct_name_);
+		info.enclosing_struct_name = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : std::string_view();
+		if (current_struct_name_.isValid()) {
+			auto type_it = gTypesByName.find(std::string(StringTable::getStringView(current_struct_name_)));
 			if (type_it != gTypesByName.end()) {
 				info.enclosing_struct_type_index = type_it->second->type_index_;
 			}
@@ -11971,7 +11971,7 @@ private:
 
 					if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
 						// Check if this variable is a captured variable from an enclosing lambda
-						bool is_captured_from_enclosing = !current_lambda_closure_type_.empty() &&
+						bool is_captured_from_enclosing = current_lambda_closure_type_.isValid() &&
 						                                   current_lambda_captures_.count(var_name_str) > 0;
 
 						// Handle init-captures
@@ -12343,7 +12343,7 @@ private:
 		current_function_return_size_ = lambda_info.return_size;
 
 		// Set lambda context for captured variable access
-		current_lambda_closure_type_ = lambda_info.closure_type_name;
+		current_lambda_closure_type_ = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);
 		current_lambda_enclosing_struct_type_index_ = lambda_info.enclosing_struct_type_index;
 		current_lambda_captures_.clear();
 		current_lambda_capture_kinds_.clear();
@@ -12411,7 +12411,7 @@ private:
 		}
 
 		// Clear lambda context
-		current_lambda_closure_type_.clear();
+		current_lambda_closure_type_ = StringHandle();
 		current_lambda_captures_.clear();
 		current_lambda_capture_kinds_.clear();
 		current_lambda_capture_types_.clear();
@@ -12610,8 +12610,8 @@ private:
 	Parser* parser_;  // Reference to parser for template instantiation
 
 	// Current function name (for mangling static local variables)
-	std::string current_function_name_;
-	std::string current_struct_name_;  // For tracking which struct we're currently visiting member functions for
+	StringHandle current_function_name_;
+	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
 	Type current_function_return_type_;  // Current function's return type
 	int current_function_return_size_;   // Current function's return size in bits
 	
@@ -12650,15 +12650,15 @@ private:
 	struct GenericLambdaInstantiation {
 		size_t lambda_id;
 		std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_types;  // param_index -> deduced type
-		std::string instantiation_key;  // Unique key for this instantiation
+		StringHandle instantiation_key;  // Unique key for this instantiation
 	};
 	std::vector<GenericLambdaInstantiation> pending_generic_lambda_instantiations_;
 	std::unordered_set<std::string> generated_generic_lambda_instantiations_;  // Track already generated ones
 	
 	// Structure to hold info for local struct member functions
 	struct LocalStructMemberInfo {
-		std::string struct_name;
-		std::string enclosing_function_name;
+		StringHandle struct_name;
+		StringHandle enclosing_function_name;
 		ASTNode member_function_node;
 	};
 	
@@ -12667,9 +12667,9 @@ private:
 	
 	// Structure to hold template instantiation info for deferred generation
 	struct TemplateInstantiationInfo {
-		std::string qualified_template_name;  // e.g., "Container::insert"
-		std::string mangled_name;  // e.g., "insert_int"
-		std::string struct_name;   // e.g., "Container"
+		StringHandle qualified_template_name;  // e.g., "Container::insert"
+		StringHandle mangled_name;  // e.g., "insert_int"
+		StringHandle struct_name;   // e.g., "Container"
 		std::vector<Type> template_args;  // Concrete types
 		SaveHandle body_position;  // Handle to saved position where the template body starts
 		std::vector<std::string_view> template_param_names;  // e.g., ["U"]
@@ -12688,7 +12688,7 @@ private:
 
 	// Current lambda context (for tracking captured variables)
 	// When generating lambda body, this contains the closure type name
-	std::string current_lambda_closure_type_;
+	StringHandle current_lambda_closure_type_;
 	std::unordered_set<std::string> current_lambda_captures_;
 	std::unordered_map<std::string, LambdaCaptureNode::CaptureKind> current_lambda_capture_kinds_;
 	std::unordered_map<std::string, TypeSpecifierNode> current_lambda_capture_types_;
@@ -12704,14 +12704,14 @@ private:
 		// Create mangled name token
 		Token mangled_token(
 			Token::Type::Identifier,
-			inst_info.mangled_name,
+			StringTable::getStringView(inst_info.mangled_name),
 			template_decl.identifier_token().line(),
 			template_decl.identifier_token().column(),
 			template_decl.identifier_token().file_index()
 		);
 
-		StringHandle full_func_name = StringTable::getOrInternStringHandle(inst_info.mangled_name);
-		StringHandle struct_name = StringTable::getOrInternStringHandle(inst_info.struct_name);
+		StringHandle full_func_name = inst_info.mangled_name;
+		StringHandle struct_name = inst_info.struct_name;
 
 		// Generate function declaration IR using typed payload
 		FunctionDeclOp func_decl_op;
@@ -12780,7 +12780,7 @@ private:
 		// Create mangled name token
 		Token mangled_token(
 			Token::Type::Identifier,
-			inst_info.mangled_name,
+			StringTable::getStringView(inst_info.mangled_name),
 			template_decl.identifier_token().line(),
 			template_decl.identifier_token().column(),
 			template_decl.identifier_token().file_index()
@@ -12791,8 +12791,8 @@ private:
 
 		// Get struct type info for member functions
 		const TypeInfo* struct_type_info = nullptr;
-		if (!inst_info.struct_name.empty()) {
-			auto struct_type_it = gTypesByName.find(inst_info.struct_name);
+		if (inst_info.struct_name.isValid()) {
+			auto struct_type_it = gTypesByName.find(std::string(StringTable::getStringView(inst_info.struct_name)));
 			if (struct_type_it != gTypesByName.end()) {
 				struct_type_info = struct_type_it->second;
 			}
@@ -12852,7 +12852,7 @@ private:
 			inst_info.body_position,
 			inst_info.template_param_names,
 			inst_info.template_args,
-			inst_info.struct_name,  // Pass struct name
+			inst_info.struct_name.isValid() ? StringTable::getStringView(inst_info.struct_name) : std::string_view(),  // Pass struct name
 			struct_type_info ? struct_type_info->type_index_ : 0  // Pass type index
 		);
 
