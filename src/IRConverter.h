@@ -4031,18 +4031,10 @@ private:
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 						
 						// If RHS register conflicts with result register, we need to handle it
-						// Strategy: Move LHS to the RHS register, then allocate a fresh register for RHS
+						// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 						if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-							// Save the LHS info before we reassign the register
-							int old_offset = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)].stackVariableOffset;
-							int old_size = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)].size_in_bits;
-							bool was_dirty = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)].isDirty;
-							
-							// Now allocate a NEW register for RHS (the old one will stay with LHS)
+							// Allocate a NEW register for RHS (LHS stays where it is)
 							ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-							
-							// The result register still holds LHS and is correctly tracked
-							// No move needed - LHS stays where it is, RHS gets a different register
 						}
 						
 						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_stack_var_addr, ctx.operand_size_in_bits);
