@@ -6022,22 +6022,26 @@ private:
 			object_offset = it->second.offset;
 		}
 
-		// Check if the object is 'this' (a pointer that needs to be reloaded)
-		bool object_is_this_pointer = false;
-		if (std::holds_alternative<StringHandle>(ctor_op.object)) {
+		// Check if the object is a pointer (needs to be loaded, not addressed)
+		// This includes 'this' pointer and TempVars from heap_alloc
+		bool object_is_pointer = false;
+		if (std::holds_alternative<TempVar>(ctor_op.object)) {
+			// TempVars are always pointers in constructor calls (from heap_alloc)
+			object_is_pointer = true;
+		} else if (std::holds_alternative<StringHandle>(ctor_op.object)) {
 			StringHandle obj_handle = std::get<StringHandle>(ctor_op.object);
-			object_is_this_pointer = (StringTable::getStringView(obj_handle) == "this");
+			object_is_pointer = (StringTable::getStringView(obj_handle) == "this");
 		}
 
 		// Load the address of the object into the first parameter register ('this' pointer)
 		// Use platform-specific register: RDI on Linux, RCX on Windows
 		X64Register this_reg = getIntParamReg<TWriterClass>(0);
-		if (object_is_this_pointer) {
-			// For 'this' pointer: reload the pointer value (not its address)
+		if (object_is_pointer) {
+			// For pointers (this, heap-allocated): reload the pointer value (not its address)
 			// MOV this_reg, [RBP + object_offset]
 			emitMovFromFrame(this_reg, object_offset);
 		} else {
-			// For regular objects: get the address
+			// For regular stack objects: get the address
 			// LEA this_reg, [RBP + object_offset]
 			auto lea_inst = generateLeaFromFrame(this_reg, object_offset);
 			textSectionData.insert(textSectionData.end(), lea_inst.op_codes.begin(), lea_inst.op_codes.begin() + lea_inst.size_in_bytes);
@@ -6307,13 +6311,36 @@ private:
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(dtor_op.object);
-			std::string_view var_name = StringTable::getStringView(var_name_handle);
+			auto it = variable_scopes.back().variables.find(var_name_handle);
+			if (it == variable_scopes.back().variables.end()) {
+				throw std::runtime_error("Destructor call: variable not found in variables map: " + std::string(StringTable::getStringView(var_name_handle)));
+			}
+			object_offset = it->second.offset;
+		}
+
+		// Check if the object is a pointer (needs to be loaded, not addressed)
+		// This includes 'this' pointer and TempVars from heap_alloc
+		bool object_is_pointer = false;
+		if (std::holds_alternative<TempVar>(dtor_op.object)) {
+			// TempVars are always pointers in destructor calls (from heap_free)
+			object_is_pointer = true;
+		} else if (std::holds_alternative<StringHandle>(dtor_op.object)) {
+			StringHandle obj_handle = std::get<StringHandle>(dtor_op.object);
+			object_is_pointer = (StringTable::getStringView(obj_handle) == "this");
 		}
 
 		// Load the address of the object into the first parameter register ('this' pointer)
 		// Use platform-specific register: RDI on Linux, RCX on Windows
 		X64Register this_reg = getIntParamReg<TWriterClass>(0);
-		emitLeaFromFrame(this_reg, object_offset);
+		if (object_is_pointer) {
+			// For pointers (this, heap-allocated): reload the pointer value (not its address)
+			// MOV this_reg, [RBP + object_offset]
+			emitMovFromFrame(this_reg, object_offset);
+		} else {
+			// For regular stack objects: get the address
+			// LEA this_reg, [RBP + object_offset]
+			emitLeaFromFrame(this_reg, object_offset);
+		}
 
 		// Generate the call instruction
 		// For nested classes, split "Outer::Inner" into class="Outer" and function="~Inner"
