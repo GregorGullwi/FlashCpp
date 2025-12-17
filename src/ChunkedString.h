@@ -314,7 +314,7 @@ private:
             
             if (new_capacity == 0) {
                 // First allocation - use the temporary allocator's chunk size (512 bytes)
-                new_capacity = std::max(needed, 64ull);
+                new_capacity = std::max<size_t>(needed, 64);
             }
             
             // Grow by 16x if current capacity is insufficient (as requested)
