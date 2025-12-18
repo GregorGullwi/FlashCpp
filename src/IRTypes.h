@@ -390,6 +390,9 @@ enum class ValueCategory {
 	PRValue
 };
 
+// Type alias for operand values (used in LValueInfo and elsewhere)
+using IrValue = std::variant<unsigned long long, double, TempVar, StringHandle>;
+
 // Information about an lvalue's storage location
 struct LValueInfo {
 	enum class Kind {
@@ -417,9 +420,8 @@ struct LValueInfo {
 	std::optional<StringHandle> member_name;
 	
 	// For ArrayElement: the computed index value
-	// NOTE: For now we store the index TempVar; in the future we might store TypedValue
-	// to handle constant indices as well
-	std::optional<TempVar> array_index;
+	// Can be a constant (unsigned long long), TempVar, or StringHandle
+	std::optional<IrValue> array_index;
 	
 	// For ArrayElement: whether the array base is a pointer (int* arr) or array (int arr[])
 	bool is_pointer_to_array = false;
@@ -861,9 +863,6 @@ private:
 // ============================================================================
 // Typed IR Operand Structures
 // ============================================================================
-
-// Type alias for operand values (subset of IrOperand variant)
-using IrValue = std::variant<unsigned long long, double, TempVar, StringHandle>;
 
 // Typed value - combines IrValue with its type information
 struct TypedValue {
