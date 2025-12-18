@@ -697,6 +697,55 @@ private:
 	std::unordered_map<size_t, TempVarMetadata> metadata_;
 };
 
+// ============================================================================
+// TempVar convenience methods for metadata access
+// ============================================================================
+// These methods are defined here (after GlobalTempVarMetadataStorage)
+// to avoid forward declaration issues
+// ============================================================================
+
+inline void setTempVarMetadata(const TempVar& temp, TempVarMetadata meta) {
+	GlobalTempVarMetadataStorage::instance().setMetadata(temp, std::move(meta));
+}
+
+inline TempVarMetadata getTempVarMetadata(const TempVar& temp) {
+	return GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+}
+
+inline bool isTempVarLValue(const TempVar& temp) {
+	return GlobalTempVarMetadataStorage::instance().isLValue(temp);
+}
+
+inline bool isTempVarXValue(const TempVar& temp) {
+	return GlobalTempVarMetadataStorage::instance().isXValue(temp);
+}
+
+inline bool isTempVarPRValue(const TempVar& temp) {
+	return GlobalTempVarMetadataStorage::instance().isPRValue(temp);
+}
+
+inline std::optional<LValueInfo> getTempVarLValueInfo(const TempVar& temp) {
+	return GlobalTempVarMetadataStorage::instance().getLValueInfo(temp);
+}
+
+// Helper to create a TempVar with lvalue metadata
+inline TempVar makeLValueTempVar(TempVar temp, LValueInfo lv_info) {
+	setTempVarMetadata(temp, TempVarMetadata::makeLValue(std::move(lv_info)));
+	return temp;
+}
+
+// Helper to create a TempVar with xvalue metadata
+inline TempVar makeXValueTempVar(TempVar temp, LValueInfo lv_info) {
+	setTempVarMetadata(temp, TempVarMetadata::makeXValue(std::move(lv_info)));
+	return temp;
+}
+
+// Helper to create a TempVar with prvalue metadata
+inline TempVar makePRValueTempVar(TempVar temp) {
+	setTempVarMetadata(temp, TempVarMetadata::makePRValue());
+	return temp;
+}
+
 class OperandStorage {
 public:
 	OperandStorage() : start_index_(0), count_(0) {}
