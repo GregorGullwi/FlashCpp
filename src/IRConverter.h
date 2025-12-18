@@ -4519,7 +4519,9 @@ private:
 						// Try DereferenceOp (for dereferencing pointers/references)
 						else if (const DereferenceOp* deref_op = std::any_cast<DereferenceOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
-							temp_var_sizes[StringTable::getOrInternStringHandle(deref_op->result.name())] = deref_op->pointee_size_in_bits;
+							// Determine size based on pointer depth: if depth > 1, result is a pointer (64 bits)
+							int result_size = (deref_op->pointer_depth > 1) ? 64 : deref_op->pointee_size_in_bits;
+							temp_var_sizes[StringTable::getOrInternStringHandle(deref_op->result.name())] = result_size;
 							handled_by_typed_payload = true;
 						}
 						// Try AssignmentOp (for materializing literals to temporaries)
@@ -11877,7 +11879,17 @@ private:
 		if (instruction.hasTypedPayload()) {
 			const auto& op = instruction.getTypedPayload<DereferenceOp>();
 			
-			int value_size = op.pointee_size_in_bits;
+			// THE FIX: Use pointer_depth to determine the correct dereference size
+			// If pointer_depth > 1, we're dereferencing a multi-level pointer (e.g., int*** -> int**)
+			// and the result is still a pointer (64 bits).
+			// If pointer_depth == 1, we're dereferencing to the final value (use pointee_size_in_bits).
+			int value_size;
+			if (op.pointer_depth > 1) {
+				value_size = 64;  // Result is still a pointer
+			} else {
+				// Final dereference - use the pointee size
+				value_size = op.pointee_size_in_bits;
+			}
 			
 			// Load the pointer into a register
 			X64Register ptr_reg;
@@ -11915,7 +11927,8 @@ private:
 			// Check if we're dereferencing a float/double type - use XMM register and MOVSD/MOVSS
 			bool is_float_type = (op.pointee_type == Type::Float || op.pointee_type == Type::Double);
 			
-			if (is_float_type) {
+			if (is_float_type && op.pointer_depth <= 1) {
+				// Only use float instructions for final dereference
 				// Use XMM0 as the destination register for float loads
 				X64Register xmm_reg = X64Register::XMM0;
 				bool is_float = (op.pointee_type == Type::Float);

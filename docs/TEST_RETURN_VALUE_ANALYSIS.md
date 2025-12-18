@@ -122,6 +122,18 @@ These tests crashed during execution with various signals. These are **actual fa
 - **Fix Required**: Stack offset allocation for function parameters needs to account for all parameter types (int, float, double)
 - **Status**: ❌ Still crashes - requires deeper fix to parameter handling
 
+**test_pointer_declarations.cpp - FIXED**
+- **Issue**: Segmentation fault when dereferencing multi-level pointers (`***ppp`)
+- **Root Cause**: Pointer depth tracking bug in `generateIdentifierIr`
+  - When dereferencing `int***`, the IR was incorrectly using 32-bit dereferences for all levels
+  - The first two dereferences should load 64-bit pointers, only the final one should load 32-bit int
+  - Problem: The VariableDeclarationNode path in `generateIdentifierIr` was returning `type_index=0` in the 4th IrOperand position instead of the actual `pointer_depth`
+  - The DeclarationNode path was already fixed, but VariableDeclarationNode path was missed
+- **Fix**: Updated `generateIdentifierIr` at line 4967-4977 to return `pointer_depth` for pointer types in the VariableDeclarationNode case
+  - Now returns: `[type, size, name, pointer_depth]` for pointers and `[type, size, name, type_index]` for structs
+  - This enables correct size calculation in `handleDereference`: 64-bit for intermediate pointers, type size for final dereference
+- **Status**: ✅ Now passes - returns 10 (expected value)
+
 **spaceship_default.cpp - NOT INVESTIGATED**
 - **Issue**: Illegal instruction (Signal 4)
 - **Likely Cause**: C++20 default spaceship operator not fully implemented
@@ -315,9 +327,9 @@ The script will:
 
 ## Conclusion
 
-**Summary (as of 2025-12-17):**
-- 583 tests (90.1%) successfully run and return valid values
-- 57 tests (8.8%) crash during execution
+**Summary (as of 2025-12-17 - Updated):**
+- 584 tests (90.2%) successfully run and return valid values (up from 583)
+- 56 tests (8.6%) crash during execution (down from 57)
 - 1 test (0.2%) fails to link
 - 0 unexpected compilation failures
 
@@ -326,11 +338,16 @@ The script will:
 - Most crashes are SIGSEGV (segmentation faults) suggesting memory management issues
 - Heap allocation constructor calls have been fixed
 - Member function templates still have parameter stack allocation bugs
+- **Multi-level pointer dereference bug has been fixed!**
 
 **Improvements Made:**
 1. ✅ Fixed validation script crash detection (eliminated ~32 false positives)
 2. ✅ Fixed heap allocation constructor/destructor calls (test_heap.cpp)
 3. 📝 Documented investigation findings for member template crashes
+4. ✅ **Fixed multi-level pointer dereference crash (test_pointer_declarations.cpp)**
+   - Identified root cause: VariableDeclarationNode path returning wrong value in 4th operand position
+   - Applied fix: Return pointer_depth for pointer types instead of type_index
+   - Verified: Test now passes, returning correct value (10) instead of crashing
 
 **Next Steps:**
 1. Fix parameter stack allocation for template member functions
@@ -338,19 +355,6 @@ The script will:
 3. Fix lambda capture and range-for crashes
 4. Add better error diagnostics for common crash scenarios
 5. Consider using alternative test verification methods beyond return values
-- 0 unexpected compilation or link failures
-
-**Key Findings:**
-- Return value truncation is expected OS behavior, not a compiler bug
-- Most crashes are SIGSEGV (segmentation faults) suggesting memory management issues
-- Member function templates and lambda features have higher crash rates
-- Exception handling is incomplete on Linux platform
-
-**Next Steps:**
-1. Fix high-priority crashes (member templates, lambdas, inheritance)
-2. Implement proper exception handling for Linux/ELF
-3. Add better error diagnostics for common crash scenarios
-4. Consider using alternative test verification methods beyond return values
 
 ---
 

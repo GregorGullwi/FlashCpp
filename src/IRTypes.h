@@ -714,6 +714,7 @@ struct AddressOfOp {
 	Type pointee_type;                               // Type of the variable we're taking address of
 	int pointee_size_in_bits;                        // Size of pointee
 	std::variant<StringHandle, TempVar> operand;  // Variable or temp to take address of
+	int operand_pointer_depth = 0;                   // NEW: Pointer depth of operand
 };
 
 // Dereference operator (*ptr)
@@ -722,6 +723,7 @@ struct DereferenceOp {
 	Type pointee_type;                               // Type being dereferenced to
 	int pointee_size_in_bits;                        // Size of dereferenced value
 	std::variant<StringHandle, TempVar> pointer; // Pointer to dereference
+	int pointer_depth = 0;                           // NEW: Pointer depth (how many levels of indirection)
 };
 
 // Dereference store operator (*ptr = value)
@@ -1630,7 +1632,14 @@ public:
 			assert(hasTypedPayload() && "Dereference instruction must use typed payload");
 			const auto& op = getTypedPayload<DereferenceOp>();
 			oss << '%' << op.result.var_number << " = dereference ";
-			oss << "[" << static_cast<int>(op.pointee_type) << "]" << op.pointee_size_in_bits << " ";
+			
+			// Show pointer depth for debugging
+			int deref_size = (op.pointer_depth > 1) ? 64 : op.pointee_size_in_bits;
+			oss << "[" << static_cast<int>(op.pointee_type) << "]" << deref_size;
+			if (op.pointer_depth > 0) {
+				oss << " (ptr_depth=" << op.pointer_depth << ")";
+			}
+			oss << " ";
 		
 			if (std::holds_alternative<StringHandle>(op.pointer))
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.pointer));
