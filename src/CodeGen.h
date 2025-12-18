@@ -961,18 +961,56 @@ private:
 		switch (lv_info.kind) {
 			case LValueInfo::Kind::ArrayElement: {
 				// Array element assignment: arr[i] = value
-				// TODO: Need index information from ArrayAccessOp
-				// Currently LValueInfo doesn't store the computed index
-				FLASH_LOG(Codegen, Debug, "  -> ArrayStore (not yet implemented via metadata)");
-				return false;
+				FLASH_LOG(Codegen, Debug, "  -> ArrayStore (handled via metadata)");
+				
+				// Check if we have the index stored in metadata
+				if (!lv_info.array_index.has_value()) {
+					FLASH_LOG(Codegen, Debug, "     No index in metadata, falling back");
+					return false;
+				}
+				
+				ArrayStoreOp payload;
+				payload.element_type = std::get<Type>(lhs_operands[0]);
+				payload.element_size_in_bits = std::get<int>(lhs_operands[1]);
+				payload.array = lv_info.base;
+				payload.member_offset = lv_info.offset;
+				payload.is_pointer_to_array = lv_info.is_pointer_to_array;
+				
+				// Set index from metadata
+				TempVar index_temp = lv_info.array_index.value();
+				payload.index.value = index_temp;
+				payload.index.type = std::get<Type>(lhs_operands[0]);  // Use element type for now
+				payload.index.size_in_bits = 32;  // Assume 32-bit index
+				
+				// Set value to store
+				payload.value = toTypedValue(rhs_operands);
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), token));
+				return true;
 			}
 
 			case LValueInfo::Kind::Member: {
 				// Member assignment: obj.member = value
-				// TODO: Need member_name which is not in LValueInfo
-				// Could extend LValueInfo to include StringHandle member_name
-				FLASH_LOG(Codegen, Debug, "  -> MemberStore (not yet implemented via metadata)");
-				return false;
+				FLASH_LOG(Codegen, Debug, "  -> MemberStore (handled via metadata)");
+				
+				// Check if we have member_name stored in metadata
+				if (!lv_info.member_name.has_value()) {
+					FLASH_LOG(Codegen, Debug, "     No member_name in metadata, falling back");
+					return false;
+				}
+				
+				MemberStoreOp member_store;
+				member_store.value = toTypedValue(rhs_operands);
+				member_store.object = lv_info.base;
+				member_store.member_name = lv_info.member_name.value();
+				member_store.offset = lv_info.offset;
+				member_store.struct_type_info = nullptr;
+				member_store.is_reference = false;
+				member_store.is_rvalue_reference = false;
+				member_store.vtable_symbol = StringHandle();
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+				return true;
 			}
 
 			case LValueInfo::Kind::Indirect: {
@@ -9745,6 +9783,11 @@ private:
 											qualified_name,
 											0  // offset computed dynamically by index
 										);
+										// Store index information for unified assignment handler
+										if (std::holds_alternative<TempVar>(index_operands[2])) {
+											lvalue_info.array_index = std::get<TempVar>(index_operands[2]);
+										}
+										lvalue_info.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
 										setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 										// Create typed payload for ArrayAccess with qualified member name
@@ -9847,6 +9890,11 @@ private:
 				: std::variant<StringHandle, TempVar>(std::get<TempVar>(array_operands[2])),
 			0  // offset computed dynamically by index
 		);
+		// Store index information for unified assignment handler
+		if (std::holds_alternative<TempVar>(index_operands[2])) {
+			lvalue_info.array_index = std::get<TempVar>(index_operands[2]);
+		}
+		lvalue_info.is_pointer_to_array = is_pointer_to_array;
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 		// Create typed payload for ArrayAccess
@@ -10326,6 +10374,8 @@ private:
 			base_object,
 			static_cast<int>(member->offset)
 		);
+		// Store member name for unified assignment handler
+		lvalue_info.member_name = StringTable::getOrInternStringHandle(member_name);
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 		// Build MemberLoadOp
