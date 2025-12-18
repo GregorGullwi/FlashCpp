@@ -6249,32 +6249,141 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		{"tm"sv, 256}         // struct with multiple fields
 	};
 	
-	auto type_it = c_library_types.find(identifier_token.value());
-	// Check if this is from global namespace or __gnu_cxx namespace
-	bool is_from_global = namespace_path.empty();
-	bool is_from_gnu_cxx = (namespace_path.size() == 1 && 
-	                         namespace_path[0] == "__gnu_cxx");
+	// Check if the identifier refers to an existing type in the source namespace
+	// Build the source type name (either global or qualified with namespace_path)
+	StringHandle source_type_name;
+	if (namespace_path.empty()) {
+		// using ::identifier; - refers to global namespace
+		source_type_name = StringTable::getOrInternStringHandle(identifier_token.value());
+	} else {
+		// using ns1::ns2::identifier; - build qualified name
+		StringBuilder sb;
+		for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+			sb.append(ns).append("::");
+#else
+			sb.append(ns.view()).append("::");
+#endif
+		}
+		sb.append(identifier_token.value());
+		source_type_name = StringTable::getOrInternStringHandle(sb.commit());
+	}
 	
-	if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
-		StringHandle type_name = StringTable::getOrInternStringHandle(identifier_token.value());
-
-		// This is a C library type being brought in via using ::type; or using ::__gnu_cxx::type;
-		// Register it as a struct type (opaque) so it can be recognized
-		if (gTypesByName.find(type_name) == gTypesByName.end()) {
-			// Add the type to gTypeInfo as a struct type
-			auto& type_info = gTypeInfo.emplace_back(type_name, Type::Struct, gTypeInfo.size());
-			type_info.type_size_ = type_it->second; // Set the size in bits
-			
-			// Create a minimal StructTypeInfo so it's recognized as a struct
-			auto struct_info = std::make_unique<StructTypeInfo>(type_name, AccessSpecifier::Public);
-			struct_info->total_size = type_it->second / 8; // Convert bits to bytes
-			type_info.setStructInfo(std::move(struct_info));
-if (type_info.getStructInfo()) {
-	type_info.type_size_ = type_info.getStructInfo()->total_size;
-}
-			
-			gTypesByName.emplace(type_name, &type_info);
-			FLASH_LOG_FORMAT(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", StringTable::getStringView(type_name), type_it->second);
+	// Look up the type in gTypesByName
+	auto existing_type_it = gTypesByName.find(source_type_name);
+	
+	// If not found with qualified name, try the unqualified name
+	// This handles cases like: using ::__gnu_cxx::lldiv_t; where __gnu_cxx::lldiv_t
+	// might itself be an alias to ::lldiv_t
+	if (existing_type_it == gTypesByName.end() && !namespace_path.empty()) {
+		StringHandle unqualified_source = StringTable::getOrInternStringHandle(identifier_token.value());
+		auto unqualified_it = gTypesByName.find(unqualified_source);
+		if (unqualified_it != gTypesByName.end()) {
+			existing_type_it = unqualified_it;
+			source_type_name = unqualified_source;  // Update to use the unqualified name that was found
+			FLASH_LOG_FORMAT(Parser, Debug, "Using declaration: qualified name {} not found, using unqualified name {}", 
+			                 StringTable::getStringView(source_type_name), StringTable::getStringView(unqualified_source));
+		}
+	}
+	
+	// If we're inside a namespace, we need to register the type with a qualified name
+	// so that "std::lldiv_t" can be recognized as a type
+	auto current_namespace_path = gSymbolTable.build_current_namespace_path();
+	if (!current_namespace_path.empty()) {
+		// Build qualified name for the target: std::identifier
+		StringBuilder target_sb;
+		for (const auto& ns : current_namespace_path) {
+#if USE_OLD_STRING_APPROACH
+			target_sb.append(ns).append("::");
+#else
+			target_sb.append(ns.view()).append("::");
+#endif
+		}
+		target_sb.append(identifier_token.value());
+		StringHandle target_type_name = StringTable::getOrInternStringHandle(target_sb.commit());
+		
+		// Check if target name is already registered (avoid duplicates)
+		if (gTypesByName.find(target_type_name) == gTypesByName.end()) {
+			if (existing_type_it != gTypesByName.end()) {
+				// Found existing type - create alias pointing to it
+				const TypeInfo* source_type = existing_type_it->second;
+				auto& alias_type_info = gTypeInfo.emplace_back(target_type_name, source_type->type_, gTypeInfo.size());
+				alias_type_info.type_index_ = source_type->type_index_;
+				alias_type_info.type_size_ = source_type->type_size_;
+				alias_type_info.pointer_depth_ = source_type->pointer_depth_;
+				
+				// If the source type has StructInfo, we don't copy it - we rely on type_index_ to point to it
+				// This is the same pattern used for typedef resolution (see lines 6557-6565, 7032-7040)
+				
+				gTypesByName.emplace(target_type_name, &alias_type_info);
+				FLASH_LOG_FORMAT(Parser, Debug, "Registered type alias from using declaration: {} -> {}", 
+				                 StringTable::getStringView(target_type_name), StringTable::getStringView(source_type_name));
+				
+				// Also register with the unqualified name within the current namespace scope
+				// This allows code inside the namespace to use the type without qualification
+				// e.g., inside namespace std, both "std::lldiv_t" and "lldiv_t" should work
+				StringHandle unqualified_name = StringTable::getOrInternStringHandle(identifier_token.value());
+				if (gTypesByName.find(unqualified_name) == gTypesByName.end()) {
+					gTypesByName.emplace(unqualified_name, &alias_type_info);
+					FLASH_LOG_FORMAT(Parser, Debug, "Also registered unqualified type name: {}", 
+					                 StringTable::getStringView(unqualified_name));
+				}
+			} else {
+				// Type not found in source namespace - check if it's a known C library type
+				auto type_it = c_library_types.find(identifier_token.value());
+				bool is_from_global = namespace_path.empty();
+				bool is_from_gnu_cxx = (namespace_path.size() == 1 && namespace_path[0] == "__gnu_cxx");
+				
+				if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
+					// Create opaque C library type
+					auto& type_info = gTypeInfo.emplace_back(target_type_name, Type::Struct, gTypeInfo.size());
+					type_info.type_size_ = type_it->second;
+					
+					auto struct_info = std::make_unique<StructTypeInfo>(target_type_name, AccessSpecifier::Public);
+					struct_info->total_size = type_it->second / 8;
+					type_info.setStructInfo(std::move(struct_info));
+					if (type_info.getStructInfo()) {
+						type_info.type_size_ = type_info.getStructInfo()->total_size;
+					}
+					
+					gTypesByName.emplace(target_type_name, &type_info);
+					FLASH_LOG_FORMAT(Parser, Debug, "Registered opaque C library type from using declaration: {} (size {} bits)", 
+					                 StringTable::getStringView(target_type_name), type_it->second);
+					
+					// Also register with the unqualified name within the current namespace scope
+					StringHandle unqualified_name = StringTable::getOrInternStringHandle(identifier_token.value());
+					if (gTypesByName.find(unqualified_name) == gTypesByName.end()) {
+						gTypesByName.emplace(unqualified_name, &type_info);
+						FLASH_LOG_FORMAT(Parser, Debug, "Also registered unqualified type name: {}", 
+						                 StringTable::getStringView(unqualified_name));
+					}
+				}
+			}
+		}
+	} else {
+		// We're in global namespace - check if we need to register a C library type
+		auto type_it = c_library_types.find(identifier_token.value());
+		bool is_from_global = namespace_path.empty();
+		bool is_from_gnu_cxx = (namespace_path.size() == 1 && namespace_path[0] == "__gnu_cxx");
+		
+		if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
+			StringHandle type_name = StringTable::getOrInternStringHandle(identifier_token.value());
+			if (gTypesByName.find(type_name) == gTypesByName.end()) {
+				// Create opaque C library type in global namespace
+				auto& type_info = gTypeInfo.emplace_back(type_name, Type::Struct, gTypeInfo.size());
+				type_info.type_size_ = type_it->second;
+				
+				auto struct_info = std::make_unique<StructTypeInfo>(type_name, AccessSpecifier::Public);
+				struct_info->total_size = type_it->second / 8;
+				type_info.setStructInfo(std::move(struct_info));
+				if (type_info.getStructInfo()) {
+					type_info.type_size_ = type_info.getStructInfo()->total_size;
+				}
+				
+				gTypesByName.emplace(type_name, &type_info);
+				FLASH_LOG_FORMAT(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", 
+				                 StringTable::getStringView(type_name), type_it->second);
+			}
 		}
 	}
 
