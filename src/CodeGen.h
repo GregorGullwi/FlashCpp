@@ -11731,9 +11731,44 @@ private:
 		};
 		ir_.addInstruction(IrOpcode::DynamicCast, std::move(op), dynamicCastNode.cast_token());
 
-		// Return the casted pointer/reference
+		// Get result type and size for metadata and return value
 		Type result_type = target_type_node.type();
 		int result_size = static_cast<int>(target_type_node.size_in_bits());
+
+		// Mark value category for reference types
+		if (target_type_node.is_rvalue_reference()) {
+			FLASH_LOG(Codegen, Debug, "dynamic_cast to rvalue reference: marking as xvalue");
+			
+			// Create LValueInfo for this xvalue
+			std::variant<StringHandle, TempVar> base;
+			if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+				base = std::get<StringHandle>(expr_operands[2]);
+			} else if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				base = std::get<TempVar>(expr_operands[2]);
+			} else {
+				base = result_temp;
+			}
+			
+			LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
+			setTempVarMetadata(result_temp, TempVarMetadata::makeXValue(lvalue_info, result_type, result_size));
+		} else if (target_type_node.is_lvalue_reference()) {
+			FLASH_LOG(Codegen, Debug, "dynamic_cast to lvalue reference: marking as lvalue");
+			
+			// Create LValueInfo for this lvalue
+			std::variant<StringHandle, TempVar> base;
+			if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+				base = std::get<StringHandle>(expr_operands[2]);
+			} else if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				base = std::get<TempVar>(expr_operands[2]);
+			} else {
+				base = result_temp;
+			}
+			
+			LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
+			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, result_type, result_size));
+		}
+
+		// Return the casted pointer/reference
 		return { result_type, result_size, result_temp, 0ULL };
 	}
 
@@ -11748,6 +11783,78 @@ private:
 		const auto& target_type_node = constCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
+		
+		// Special handling for rvalue reference casts: const_cast<T&&>(expr)
+		// This produces an xvalue - has identity but can be moved from
+		if (target_type_node.is_rvalue_reference()) {
+			FLASH_LOG(Codegen, Debug, "const_cast to rvalue reference: marking as xvalue");
+			
+			// Create a new TempVar to hold the xvalue result
+			TempVar result_var = var_counter.next();
+			
+			// Create LValueInfo for this xvalue
+			std::variant<StringHandle, TempVar> base;
+			if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+				base = std::get<StringHandle>(expr_operands[2]);
+			} else if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				base = std::get<TempVar>(expr_operands[2]);
+			} else {
+				FLASH_LOG(Codegen, Warning, "const_cast<T&&>: unexpected value type in expr_operands[2]");
+				base = result_var;
+			}
+			
+			LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
+			
+			// Mark as xvalue (expiring value - can be moved from)
+			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type, target_size));
+			
+			// Generate AddressOf operation to get the address of the source
+			if (std::holds_alternative<StringHandle>(base)) {
+				AddressOfOp addr_op;
+				addr_op.result = result_var;
+				addr_op.pointee_type = target_type;
+				addr_op.pointee_size_in_bits = target_size;
+				addr_op.operand = std::get<StringHandle>(base);
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), constCastNode.cast_token()));
+			} else {
+				FLASH_LOG(Codegen, Debug, "const_cast<T&&>: source is TempVar (stack location), using directly");
+			}
+			
+			// Return the xvalue with reference semantics (64-bit pointer size)
+			return { target_type, 64, result_var, 0ULL };
+		}
+		
+		// Special handling for lvalue reference casts: const_cast<T&>(expr)
+		// This produces an lvalue
+		if (target_type_node.is_lvalue_reference()) {
+			FLASH_LOG(Codegen, Debug, "const_cast to lvalue reference");
+			
+			TempVar result_var = var_counter.next();
+			
+			std::variant<StringHandle, TempVar> base;
+			if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+				base = std::get<StringHandle>(expr_operands[2]);
+			} else if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				base = std::get<TempVar>(expr_operands[2]);
+			} else {
+				base = result_var;
+			}
+			
+			LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, target_type, target_size));
+			
+			// Generate AddressOf for lvalue reference as well
+			if (std::holds_alternative<StringHandle>(base)) {
+				AddressOfOp addr_op;
+				addr_op.result = result_var;
+				addr_op.pointee_type = target_type;
+				addr_op.pointee_size_in_bits = target_size;
+				addr_op.operand = std::get<StringHandle>(base);
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), constCastNode.cast_token()));
+			}
+			
+			return { target_type, 64, result_var, 0ULL };
+		}
 		
 		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
 		// For code generation purposes, we just return the expression with the new type metadata
@@ -11766,6 +11873,78 @@ private:
 		const auto& target_type_node = reinterpretCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
+		
+		// Special handling for rvalue reference casts: reinterpret_cast<T&&>(expr)
+		// This produces an xvalue - has identity but can be moved from
+		if (target_type_node.is_rvalue_reference()) {
+			FLASH_LOG(Codegen, Debug, "reinterpret_cast to rvalue reference: marking as xvalue");
+			
+			// Create a new TempVar to hold the xvalue result
+			TempVar result_var = var_counter.next();
+			
+			// Create LValueInfo for this xvalue
+			std::variant<StringHandle, TempVar> base;
+			if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+				base = std::get<StringHandle>(expr_operands[2]);
+			} else if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				base = std::get<TempVar>(expr_operands[2]);
+			} else {
+				FLASH_LOG(Codegen, Warning, "reinterpret_cast<T&&>: unexpected value type in expr_operands[2]");
+				base = result_var;
+			}
+			
+			LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
+			
+			// Mark as xvalue (expiring value - can be moved from)
+			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type, target_size));
+			
+			// Generate AddressOf operation to get the address of the source
+			if (std::holds_alternative<StringHandle>(base)) {
+				AddressOfOp addr_op;
+				addr_op.result = result_var;
+				addr_op.pointee_type = target_type;
+				addr_op.pointee_size_in_bits = target_size;
+				addr_op.operand = std::get<StringHandle>(base);
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), reinterpretCastNode.cast_token()));
+			} else {
+				FLASH_LOG(Codegen, Debug, "reinterpret_cast<T&&>: source is TempVar (stack location), using directly");
+			}
+			
+			// Return the xvalue with reference semantics (64-bit pointer size)
+			return { target_type, 64, result_var, 0ULL };
+		}
+		
+		// Special handling for lvalue reference casts: reinterpret_cast<T&>(expr)
+		// This produces an lvalue
+		if (target_type_node.is_lvalue_reference()) {
+			FLASH_LOG(Codegen, Debug, "reinterpret_cast to lvalue reference");
+			
+			TempVar result_var = var_counter.next();
+			
+			std::variant<StringHandle, TempVar> base;
+			if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+				base = std::get<StringHandle>(expr_operands[2]);
+			} else if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				base = std::get<TempVar>(expr_operands[2]);
+			} else {
+				base = result_var;
+			}
+			
+			LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, target_type, target_size));
+			
+			// Generate AddressOf for lvalue reference as well
+			if (std::holds_alternative<StringHandle>(base)) {
+				AddressOfOp addr_op;
+				addr_op.result = result_var;
+				addr_op.pointee_type = target_type;
+				addr_op.pointee_size_in_bits = target_size;
+				addr_op.operand = std::get<StringHandle>(base);
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), reinterpretCastNode.cast_token()));
+			}
+			
+			return { target_type, 64, result_var, 0ULL };
+		}
 		
 		// reinterpret_cast reinterprets the bits without conversion
 		// For code generation purposes, we just return the expression with the new type metadata
