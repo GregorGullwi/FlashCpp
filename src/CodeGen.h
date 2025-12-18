@@ -11441,6 +11441,94 @@ private:
 		Type source_type = std::get<Type>(expr_operands[0]);
 		int source_size = std::get<int>(expr_operands[1]);
 
+		// Special handling for rvalue reference casts: static_cast<T&&>(expr)
+		// This produces an xvalue - has identity but can be moved from
+		// Equivalent to std::move
+		if (target_type_node.is_rvalue_reference()) {
+			FLASH_LOG(Codegen, Debug, "static_cast to rvalue reference: marking as xvalue");
+			
+			// Get the lvalue from which we're casting
+			// The expression should be an lvalue (variable, member access, etc.)
+			if (!std::holds_alternative<StringHandle>(expr_operands[2])) {
+				FLASH_LOG(Codegen, Warning, "static_cast<T&&>: expression is not a named variable");
+				// For now, just pass through - this might be a TempVar
+				// TODO: Handle TempVar case properly
+			}
+			
+			// Create a new TempVar to hold the xvalue result
+			TempVar result_var = var_counter.next();
+			
+			// Create LValueInfo for this xvalue
+			// The base is the source expression's value
+			std::variant<StringHandle, TempVar> base;
+			if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+				base = std::get<StringHandle>(expr_operands[2]);
+			} else if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				base = std::get<TempVar>(expr_operands[2]);
+			} else {
+				// Fallback - create a temp var for the value
+				FLASH_LOG(Codegen, Warning, "static_cast<T&&>: unexpected value type in expr_operands[2]");
+				base = result_var;
+			}
+			
+			LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
+			
+			// Mark as xvalue (expiring value - can be moved from)
+			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type, target_size));
+			
+			// For rvalue references, we need to pass the address, not the value
+			// Generate an AddressOf operation to get the address of the source
+			if (std::holds_alternative<StringHandle>(base)) {
+				AddressOfOp addr_op;
+				addr_op.result = result_var;
+				addr_op.pointee_type = target_type;
+				addr_op.pointee_size_in_bits = target_size;
+				addr_op.operand = std::get<StringHandle>(base);
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), staticCastNode.cast_token()));
+			} else {
+				// For TempVar, we might need different handling
+				// For now, just assign the TempVar as-is
+				FLASH_LOG(Codegen, Debug, "static_cast<T&&>: source is TempVar, using as-is");
+			}
+			
+			// Return the xvalue with reference semantics
+			// Size is 64 bits (pointer size) for references
+			return { target_type, 64, result_var, 0ULL };
+		}
+
+		// Special handling for lvalue reference casts: static_cast<T&>(expr)
+		// This produces an lvalue
+		if (target_type_node.is_lvalue_reference()) {
+			FLASH_LOG(Codegen, Debug, "static_cast to lvalue reference");
+			
+			// Similar to rvalue reference, but mark as lvalue instead of xvalue
+			TempVar result_var = var_counter.next();
+			
+			std::variant<StringHandle, TempVar> base;
+			if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+				base = std::get<StringHandle>(expr_operands[2]);
+			} else if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				base = std::get<TempVar>(expr_operands[2]);
+			} else {
+				base = result_var;
+			}
+			
+			LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, target_type, target_size));
+			
+			// Generate AddressOf for lvalue reference as well
+			if (std::holds_alternative<StringHandle>(base)) {
+				AddressOfOp addr_op;
+				addr_op.result = result_var;
+				addr_op.pointee_type = target_type;
+				addr_op.pointee_size_in_bits = target_size;
+				addr_op.operand = std::get<StringHandle>(base);
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), staticCastNode.cast_token()));
+			}
+			
+			return { target_type, 64, result_var, 0ULL };
+		}
+
 		// Special handling for pointer casts (e.g., char* to double*, int* to void*, etc.)
 		// Pointer casts should NOT generate type conversions - they're just reinterpretations
 		if (target_pointer_depth > 0) {
