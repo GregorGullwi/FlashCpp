@@ -5316,6 +5316,83 @@ private:
 		// Special handling for &arr[index] - generate address directly without loading value
 		if (unaryOperatorNode.op() == "&" && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			
+			// Handle &arr[index].member (member access on array element)
+			if (std::holds_alternative<MemberAccessNode>(operandExpr)) {
+				const MemberAccessNode& memberAccess = std::get<MemberAccessNode>(operandExpr);
+				const ASTNode& object_node = memberAccess.object();
+				
+				// Check if the object is an array subscript
+				if (object_node.is<ExpressionNode>()) {
+					const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
+					if (std::holds_alternative<ArraySubscriptNode>(obj_expr)) {
+						const ArraySubscriptNode& arraySubscript = std::get<ArraySubscriptNode>(obj_expr);
+						
+						// Get the array and index operands
+						auto array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
+						auto index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
+						
+						// Check that we have valid operands
+						if (array_operands.size() >= 3 && index_operands.size() >= 3) {
+							Type element_type = std::get<Type>(array_operands[0]);
+							int element_size_bits = std::get<int>(array_operands[1]);
+							
+							// Get the struct type index
+							TypeIndex type_index = 0;
+							if (array_operands.size() >= 4 && std::holds_alternative<unsigned long long>(array_operands[3])) {
+								type_index = static_cast<TypeIndex>(std::get<unsigned long long>(array_operands[3]));
+							}
+							
+							// Look up member information
+							if (type_index > 0 && type_index < gTypeInfo.size() && element_type == Type::Struct) {
+								const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
+								if (struct_info) {
+									std::string_view member_name = memberAccess.member_name();
+									StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
+									const StructMember* member = struct_info->findMemberRecursive(member_handle);
+									
+									if (member) {
+										// First, get the address of the array element
+										TempVar elem_addr_var = var_counter.next();
+										ArrayElementAddressOp elem_addr_payload;
+										elem_addr_payload.result = elem_addr_var;
+										elem_addr_payload.element_type = element_type;
+										elem_addr_payload.element_size_in_bits = element_size_bits;
+										
+										// Set array (either variable name or temp)
+										if (std::holds_alternative<StringHandle>(array_operands[2])) {
+											elem_addr_payload.array = std::get<StringHandle>(array_operands[2]);
+										} else if (std::holds_alternative<TempVar>(array_operands[2])) {
+											elem_addr_payload.array = std::get<TempVar>(array_operands[2]);
+										}
+										
+										// Set index as TypedValue
+										elem_addr_payload.index = toTypedValue(std::span<const IrOperand>(&index_operands[0], 3));
+										
+										ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(elem_addr_payload), arraySubscript.bracket_token()));
+										
+										// Now compute the member address by adding the member offset
+										// We need to add the offset to the pointer value
+										// Treat the pointer as a 64-bit integer for arithmetic purposes
+										TempVar member_addr_var = var_counter.next();
+										BinaryOp add_offset;
+										add_offset.lhs = { Type::UnsignedLongLong, 64, elem_addr_var };  // pointer treated as integer
+										add_offset.rhs = { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member->offset) };
+										add_offset.result = member_addr_var;
+										
+										ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), memberAccess.member_token()));
+										
+										// Return pointer to member (64-bit pointer)
+										return { member->type, 64, member_addr_var, 0ULL };
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			
+			// Handle &arr[index] (without member access)
 			if (std::holds_alternative<ArraySubscriptNode>(operandExpr)) {
 				const ArraySubscriptNode& arraySubscript = std::get<ArraySubscriptNode>(operandExpr);
 				
