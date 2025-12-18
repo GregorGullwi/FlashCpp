@@ -11486,9 +11486,10 @@ private:
 				addr_op.operand = std::get<StringHandle>(base);
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), staticCastNode.cast_token()));
 			} else {
-				// For TempVar, we might need different handling
-				// For now, just assign the TempVar as-is
-				FLASH_LOG(Codegen, Debug, "static_cast<T&&>: source is TempVar, using as-is");
+				// For TempVar, the value is already on the stack with an address
+				// We just use the TempVar directly as it represents a stack location
+				// The TempVar will be treated as a reference by the function call handler
+				FLASH_LOG(Codegen, Debug, "static_cast<T&&>: source is TempVar (stack location), using directly");
 			}
 			
 			// Return the xvalue with reference semantics
@@ -11524,6 +11525,9 @@ private:
 				addr_op.pointee_size_in_bits = target_size;
 				addr_op.operand = std::get<StringHandle>(base);
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), staticCastNode.cast_token()));
+			} else {
+				// For TempVar, the value is already on the stack with an address
+				FLASH_LOG(Codegen, Debug, "static_cast<T&>: source is TempVar (stack location), using directly");
 			}
 			
 			return { target_type, 64, result_var, 0ULL };
