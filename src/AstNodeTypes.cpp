@@ -131,6 +131,10 @@ bool is_floating_point_type(Type type) {
     }
 }
 
+bool is_struct_type(Type type) {
+    return type == Type::Struct || type == Type::UserDefined;
+}
+
 bool is_signed_integer_type(Type type) {
     switch (type) {
         case Type::Char:  // char is signed by default in most implementations

@@ -5386,7 +5386,7 @@ private:
 		
 		// For struct types (Struct or UserDefined), use the size from operands, not get_type_size_bits
 		int toSize;
-		if (toType == Type::Struct || toType == Type::UserDefined) {
+		if (is_struct_type(toType)) {
 			// Preserve the original size for struct types
 			toSize = fromSize;
 		} else {
@@ -5794,7 +5794,7 @@ private:
 							const DeclarationNode* object_decl = get_decl_from_symbol(*symbol);
 							if (object_decl) {
 								const TypeSpecifierNode& object_type = object_decl->type_node().as<TypeSpecifierNode>();
-								if (object_type.type() == Type::Struct || object_type.type() == Type::UserDefined) {
+								if (is_struct_type(object_type.type())) {
 									TypeIndex type_index = object_type.type_index();
 									if (type_index < gTypeInfo.size()) {
 										const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
@@ -9284,7 +9284,7 @@ private:
 						const auto& decl_node = symbol->as<DeclarationNode>();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
-						if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) {
+						if (is_struct_type(type_node.type())) {
 							TypeIndex struct_type_index = type_node.type_index();
 							if (struct_type_index < gTypeInfo.size()) {
 								const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
@@ -9547,7 +9547,7 @@ private:
 					// Verify this is a struct type (or a reference to a struct type)
 					// References are automatically dereferenced for member access
 					// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
-					if (object_type.type() != Type::Struct && object_type.type() != Type::UserDefined) {
+					if (!is_struct_type(object_type.type())) {
 						FLASH_LOG(Codegen, Error, "member access '.' on non-struct type '", object_name, "'");
 						return {};
 					}
@@ -12968,7 +12968,7 @@ private:
 		// For constructor calls, we need to generate a constructor call instruction
 		// In C++, constructors are named after the class
 		StringHandle constructor_name;
-		if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
+		if (is_struct_type(type_spec.type())) {
 			// If type_index is set, use it
 			if (type_spec.type_index() != 0) {
 				constructor_name = gTypeInfo[type_spec.type_index()].name();

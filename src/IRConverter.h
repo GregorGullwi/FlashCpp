@@ -10876,7 +10876,7 @@ private:
 		Type element_type = op.element_type;
 		bool is_floating_point = (element_type == Type::Float || element_type == Type::Double);
 		bool is_float = (element_type == Type::Float);
-		bool is_struct = (element_type == Type::Struct || element_type == Type::UserDefined);
+		bool is_struct = is_struct_type(element_type);
 		
 		// Phase 5 Optimization: Use value category metadata for LEA vs MOV decision
 		// For struct types, always use LEA (original behavior)
