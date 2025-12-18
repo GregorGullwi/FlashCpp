@@ -6341,6 +6341,32 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					
 					auto struct_info = std::make_unique<StructTypeInfo>(target_type_name, AccessSpecifier::Public);
 					struct_info->total_size = type_it->second / 8;
+					
+					// Add members for div_t, ldiv_t, and lldiv_t
+					std::string_view type_name_view = identifier_token.value();
+					if (type_name_view == "div_t") {
+						// div_t has two int members: quot and rem
+						StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
+						StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
+						struct_info->addMember(quot_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
+						struct_info->addMember(rem_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
+					} else if (type_name_view == "ldiv_t") {
+						// ldiv_t has two long members: quot and rem
+						StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
+						StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
+						struct_info->addMember(quot_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+						struct_info->addMember(rem_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+					} else if (type_name_view == "lldiv_t") {
+						// lldiv_t has two long long members: quot and rem
+						StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
+						StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
+						struct_info->addMember(quot_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+						struct_info->addMember(rem_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+					}
+					
+					// Finalize the struct layout
+					struct_info->finalize();
+					
 					type_info.setStructInfo(std::move(struct_info));
 					if (type_info.getStructInfo()) {
 						type_info.type_size_ = type_info.getStructInfo()->total_size;
@@ -6375,6 +6401,32 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				
 				auto struct_info = std::make_unique<StructTypeInfo>(type_name, AccessSpecifier::Public);
 				struct_info->total_size = type_it->second / 8;
+				
+				// Add members for div_t, ldiv_t, and lldiv_t
+				std::string_view type_name_view = identifier_token.value();
+				if (type_name_view == "div_t") {
+					// div_t has two int members: quot and rem
+					StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
+					StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
+					struct_info->addMember(quot_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
+					struct_info->addMember(rem_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
+				} else if (type_name_view == "ldiv_t") {
+					// ldiv_t has two long members: quot and rem
+					StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
+					StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
+					struct_info->addMember(quot_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+					struct_info->addMember(rem_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+				} else if (type_name_view == "lldiv_t") {
+					// lldiv_t has two long long members: quot and rem
+					StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
+					StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
+					struct_info->addMember(quot_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+					struct_info->addMember(rem_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+				}
+				
+				// Finalize the struct layout
+				struct_info->finalize();
+				
 				type_info.setStructInfo(std::move(struct_info));
 				if (type_info.getStructInfo()) {
 					type_info.type_size_ = type_info.getStructInfo()->total_size;
