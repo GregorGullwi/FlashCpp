@@ -6107,31 +6107,23 @@ private:
 												// member->size is the total array size in bytes
 												// Calculate element size from member type
 												Type element_type = member->type;
-												int element_size_bytes = 0;
-												
 												// Get element size based on type
-												if (element_type == Type::Int || element_type == Type::UnsignedInt) {
-													element_size_bytes = 4;
-												} else if (element_type == Type::Long || element_type == Type::UnsignedLong) {
-													element_size_bytes = 8;
-												} else if (element_type == Type::Short || element_type == Type::UnsignedShort) {
-													element_size_bytes = 2;
-												} else if (element_type == Type::Char || element_type == Type::UnsignedChar) {
-													element_size_bytes = 1;
-												} else if (element_type == Type::Bool) {
-													element_size_bytes = 1;
-												} else if (element_type == Type::Float) {
-													element_size_bytes = 4;
-												} else if (element_type == Type::Double) {
-													element_size_bytes = 8;
-												} else if (element_type == Type::Struct || element_type == Type::UserDefined) {
+												int element_size_bytes;
+												if (element_type == Type::Struct || element_type == Type::UserDefined) {
 													// For struct types, get size from type info
 													if (member->type_index < gTypeInfo.size()) {
 														const TypeInfo& elem_type_info = gTypeInfo[member->type_index];
 														if (elem_type_info.getStructInfo()) {
 															element_size_bytes = static_cast<int>(elem_type_info.getStructInfo()->total_size);
+														} else {
+															element_size_bytes = 0;
 														}
+													} else {
+														element_size_bytes = 0;
 													}
+												} else {
+													// Use existing helper for primitive types
+													element_size_bytes = get_type_size_bits(element_type) / 8;
 												}
 												
 												int element_size = element_size_bytes * 8;  // Convert to bits
@@ -9651,20 +9643,7 @@ private:
 										int array_length = 1;  // Default if not an array
 										// TODO: Get actual array length from type info
 										// For now, use a heuristic: if size is larger than element type, it's an array
-										int base_element_size = 0;
-										if (element_type == Type::Int || element_type == Type::UnsignedInt) {
-											base_element_size = 32;
-										} else if (element_type == Type::Long || element_type == Type::UnsignedLong) {
-											base_element_size = 64;
-										} else if (element_type == Type::Short || element_type == Type::UnsignedShort) {
-											base_element_size = 16;
-										} else if (element_type == Type::Char || element_type == Type::UnsignedChar || element_type == Type::Bool) {
-											base_element_size = 8;
-										} else if (element_type == Type::Float) {
-											base_element_size = 32;
-										} else if (element_type == Type::Double) {
-											base_element_size = 64;
-										}
+										int base_element_size = get_type_size_bits(element_type);  // Use existing helper
 										
 										if (base_element_size > 0 && element_size_bits > base_element_size) {
 											// It's an array

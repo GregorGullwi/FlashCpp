@@ -156,12 +156,18 @@ if (std::holds_alternative<MemberAccessNode>(expr) ||
 - [x] Document current approach
 - [x] Identify opportunities
 
-### Step 2: Create Unified Assignment Handler (NEXT)
+### Step 2: Create Unified Assignment Handler (IN PROGRESS)
+- [x] Simplify type size calculations using existing helper
 - [ ] Create `handleLValueAssignment()` function
 - [ ] Query LValueInfo::Kind to determine assignment type
 - [ ] Route to appropriate store instruction
 - [ ] Add comprehensive logging
 - [ ] Run in parallel with existing code
+
+**Progress Update:**
+- Replaced 2 instances of repeated type size calculation (26 lines → 11 lines)
+- All 651 tests pass ✓
+- Next: Create unified assignment handler
 
 ### Step 3: Validate and Migrate
 - [ ] Compare results between old and new paths
