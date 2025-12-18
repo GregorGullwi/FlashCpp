@@ -4842,6 +4842,15 @@ private:
 								deref_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
 								deref_op.pointer = ptr_temp;
 								ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
+								
+								// Mark as lvalue with Indirect metadata for unified assignment handler
+								// This represents dereferencing a pointer: *ptr
+								LValueInfo lvalue_info(
+									LValueInfo::Kind::Indirect,
+									ptr_temp,  // The pointer temp var
+									0  // offset is 0 for dereference
+								);
+								setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
 								TypeIndex type_index = (orig_type.type() == Type::Struct) ? orig_type.type_index() : 0;
 								return { orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, static_cast<unsigned long long>(type_index) };
@@ -6350,6 +6359,7 @@ private:
 		}
 
 		// Special handling for assignment to captured-by-reference variable inside lambda
+		// Now that captured-by-reference identifiers are marked with lvalue metadata, use unified handler
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && current_lambda_closure_type_.isValid()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
@@ -6364,50 +6374,20 @@ private:
 					if (kind_it != current_lambda_capture_kinds_.end() &&
 					    kind_it->second == LambdaCaptureNode::CaptureKind::ByReference) {
 						// This is assignment to a captured-by-reference variable
-						// We need to store through the pointer in the closure
-
-						// Generate IR for the RHS value
+						// Handle via unified handler (identifiers are now marked as lvalues)
+						auto lhsIrOperands = visitExpressionNode(lhs_expr);
 						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-
-						// Get the original type from capture types
-						auto type_it = current_lambda_capture_types_.find(lhs_name_str);
-						if (type_it != current_lambda_capture_types_.end()) {
-							const TypeSpecifierNode& orig_type = type_it->second;
-
-							// Look up the closure struct to find the member
-							auto closure_type_it = gTypesByName.find(current_lambda_closure_type_);
-							if (closure_type_it != gTypesByName.end() && closure_type_it->second->isStruct()) {
-								const StructTypeInfo* struct_info = closure_type_it->second->getStructInfo();
-								const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(lhs_name_str));
-								if (member) {
-									// First, load the pointer from the closure member
-									TempVar ptr_temp = var_counter.next();
-									MemberLoadOp member_load;
-									member_load.result.value = ptr_temp;
-									member_load.result.type = member->type;
-									member_load.result.size_in_bits = 64;  // pointer size
-									member_load.object = StringTable::getOrInternStringHandle("this");
-									member_load.member_name = member->getName();
-									member_load.offset = static_cast<int>(member->offset);
-									member_load.is_reference = member->is_reference;
-									member_load.is_rvalue_reference = member->is_rvalue_reference;
-									member_load.struct_type_info = nullptr;
-									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), binaryOperatorNode.get_token()));
-
-									// Store through the pointer using helper
-									emitDereferenceStore(
-										toTypedValue(rhsIrOperands),
-										orig_type.type(),
-										static_cast<int>(orig_type.size_in_bits()),
-										ptr_temp,
-										binaryOperatorNode.get_token()
-									);
-
-									// Return the RHS value (assignment expression returns the assigned value)
-									return rhsIrOperands;
-								}
-							}
+						
+						// Handle assignment using unified lvalue metadata handler
+						if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+							// Assignment was handled successfully via metadata
+							FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for captured-by-reference assignment (", lhs_name, ")");
+							return rhsIrOperands;
 						}
+						
+						// This shouldn't happen with proper metadata, but log for debugging
+						FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for captured-by-reference assignment: ", lhs_name);
+						return { Type::Int, 32, TempVar{0} };
 					}
 				}
 			}
