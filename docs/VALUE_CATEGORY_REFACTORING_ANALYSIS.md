@@ -15,10 +15,18 @@
    - Added `is_pointer_to_array` field for type information
    - Updated metadata creation in array and member access IR generation
 
-3. **Infrastructure Benefits**
-   - Centralized assignment logic vs distributed special cases
+3. **Store Operation Helpers**
+   - Created `emitArrayStore()` helper function
+   - Created `emitMemberStore()` helper function
+   - Created `emitDereferenceStore()` helper function
+   - Refactored unified handler and special-case code to use helpers
+   - Reduced code duplication across assignment handling
+
+4. **Infrastructure Benefits**
+   - Centralized store operation emission logic
    - Easier to extend for new lvalue types
    - Better separation of concerns (AST vs codegen)
+   - Reduced duplicate code in special-case handlers
 
 ### Current Status 🔄
 - Unified handler is **fully implemented** and **tested** for all lvalue types
@@ -229,17 +237,28 @@ Unified handler requires evaluating LHS (which emits Load + metadata), then emit
 
 **Recommended:** Option 3 for now, Option 2 for future major refactoring
 
-### Step 4: Validate and Migrate (Future Work)
-- [ ] Choose migration approach (see Step 3)
-- [ ] Redirect special-case handlers to call unified handler
+### Step 3: Validate and Migrate (Partially Complete)
+- [x] Choose migration approach: Option 3 (Hybrid) - special cases use helper functions
+- [x] Create store operation helpers
+- [x] Refactor special cases to use helpers
+- [ ] Redirect remaining special-case handlers to use helpers
 - [ ] Compare results between old and new paths with logging
-- [ ] Remove special-case pattern matching once validated
+- [ ] Remove deprecated pattern matching once all handlers use helpers
 - [ ] Update documentation
 
-### Step 4: Extract Common Helpers
-- [ ] Extract type size calculation helper
-- [ ] Extract other repeated patterns
-- [ ] Refactor code to use helpers
+### Step 4 (Extract Common Helpers): ✅ COMPLETE
+- [x] Extract store instruction helpers (ArrayStore, MemberStore, DereferenceStore)
+- [x] Refactor unified handler to use helpers
+- [x] Refactor special-case handlers to use helpers
+- [x] Reduce code duplication
+
+**Progress Update:**
+- ✅ Created three helper functions: `emitArrayStore()`, `emitMemberStore()`, `emitDereferenceStore()`
+- ✅ Refactored unified handler to use these helpers (cleaner, more maintainable)
+- ✅ Refactored member variable assignment special-case to use `emitMemberStore()` helper
+- ✅ Refactored captured-by-reference assignment to use `emitDereferenceStore()` helper
+- ✅ All 651 tests pass
+- **Code Impact**: Reduced ~20 lines of duplicate Store operation construction code
 
 ## Estimated Impact
 
