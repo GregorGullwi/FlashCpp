@@ -6231,6 +6231,29 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		std::string_view(identifier_token.value())
 	);
 
+	// Helper function to add standard members to C library div_t-style structs
+	auto add_div_struct_members = [](StructTypeInfo* struct_info, std::string_view type_name) {
+		if (type_name == "div_t") {
+			// div_t has two int members: quot and rem
+			StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
+			StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
+			struct_info->addMember(quot_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
+			struct_info->addMember(rem_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
+		} else if (type_name == "ldiv_t") {
+			// ldiv_t has two long members: quot and rem
+			StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
+			StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
+			struct_info->addMember(quot_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+			struct_info->addMember(rem_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+		} else if (type_name == "lldiv_t") {
+			// lldiv_t has two long long members: quot and rem
+			StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
+			StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
+			struct_info->addMember(quot_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+			struct_info->addMember(rem_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+		}
+	};
+
 	// Check if the identifier is a known type from the global namespace or __gnu_cxx namespace (C library types)
 	// and register it in gTypesByName so it can be used as a type
 	// Common C library types that need to be registered as opaque types
@@ -6343,26 +6366,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					struct_info->total_size = type_it->second / 8;
 					
 					// Add members for div_t, ldiv_t, and lldiv_t
-					std::string_view type_name_view = identifier_token.value();
-					if (type_name_view == "div_t") {
-						// div_t has two int members: quot and rem
-						StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
-						StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
-						struct_info->addMember(quot_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
-						struct_info->addMember(rem_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
-					} else if (type_name_view == "ldiv_t") {
-						// ldiv_t has two long members: quot and rem
-						StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
-						StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
-						struct_info->addMember(quot_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
-						struct_info->addMember(rem_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
-					} else if (type_name_view == "lldiv_t") {
-						// lldiv_t has two long long members: quot and rem
-						StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
-						StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
-						struct_info->addMember(quot_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
-						struct_info->addMember(rem_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
-					}
+					add_div_struct_members(struct_info.get(), identifier_token.value());
 					
 					// Finalize the struct layout
 					struct_info->finalize();
@@ -6403,26 +6407,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				struct_info->total_size = type_it->second / 8;
 				
 				// Add members for div_t, ldiv_t, and lldiv_t
-				std::string_view type_name_view = identifier_token.value();
-				if (type_name_view == "div_t") {
-					// div_t has two int members: quot and rem
-					StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
-					StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
-					struct_info->addMember(quot_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
-					struct_info->addMember(rem_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
-				} else if (type_name_view == "ldiv_t") {
-					// ldiv_t has two long members: quot and rem
-					StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
-					StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
-					struct_info->addMember(quot_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
-					struct_info->addMember(rem_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
-				} else if (type_name_view == "lldiv_t") {
-					// lldiv_t has two long long members: quot and rem
-					StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
-					StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
-					struct_info->addMember(quot_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
-					struct_info->addMember(rem_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
-				}
+				add_div_struct_members(struct_info.get(), identifier_token.value());
 				
 				// Finalize the struct layout
 				struct_info->finalize();
