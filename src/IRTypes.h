@@ -412,6 +412,18 @@ struct LValueInfo {
 	// Using raw pointer to avoid circular dependency and keep it lightweight
 	const LValueInfo* parent = nullptr;
 	
+	// Additional metadata for specific kinds (optional to keep structure lightweight)
+	// For Member: the member name
+	std::optional<StringHandle> member_name;
+	
+	// For ArrayElement: the computed index value
+	// NOTE: For now we store the index TempVar; in the future we might store TypedValue
+	// to handle constant indices as well
+	std::optional<TempVar> array_index;
+	
+	// For ArrayElement: whether the array base is a pointer (int* arr) or array (int arr[])
+	bool is_pointer_to_array = false;
+	
 	// Constructor for simple cases
 	LValueInfo(Kind k, std::variant<StringHandle, TempVar> b, int off = 0)
 		: kind(k), base(b), offset(off) {}
