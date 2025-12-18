@@ -271,14 +271,31 @@ Unified handler requires evaluating LHS (which emits Load + metadata), then emit
 - ✅ Builds successfully
 - ℹ️  Dereference context handling deferred - current unified handler already works for dereference assignments
 
-#### Step 3.3: Update Assignment Operator
-- [ ] Modify assignment handling to pass LValueAddress context for LHS
-- [ ] Use unified handler with metadata from LHS evaluation
-- [ ] Remove special-case pattern matching for array/member assignments
+#### Step 3.3: Update Assignment Operator ⚠️ PARTIALLY COMPLETE (DISABLED)
+- [x] Implement LValueAddress context-aware assignment handling
+- [x] Modify assignment handling to pass LValueAddress context for LHS
+- [x] Use unified handler with metadata from LHS evaluation
+- [ ] Fix template type handling (member size calculation issue)
+- [ ] Re-enable once template issue is resolved
+
+**Progress Update:**
+- ✅ Implemented assignment operator integration with LValueAddress context
+- ✅ Successfully tested on non-template cases
+- ⚠️  Discovered issue with template member types (size calculation)
+- 🔒 Disabled new path (line 6240: `if (false && ...`) until template issue is fixed
+- ✅ All 651 tests pass with new path disabled
+
+**Known Issue:**
+Template member assignments fail because `member->size` for template types may be incorrect in LValueAddress context. Legacy Load context path works correctly.
+
+**Next Steps:**
+1. Fix template type size handling
+2. Re-enable unified handler
+3. Remove special-case pattern matching
 
 #### Step 3.4: Validate and Test
-- [ ] Run test suite (all 651 tests must pass)
-- [ ] Verify no redundant IR instructions generated
+- [x] Run test suite (all 651 tests must pass) ✅
+- [ ] Verify no redundant IR instructions generated (pending re-enable)
 - [ ] Compare generated IR before/after to ensure equivalence
    - Con: Doesn't fully eliminate pattern matching
 
