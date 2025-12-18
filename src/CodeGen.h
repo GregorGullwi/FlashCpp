@@ -4943,6 +4943,16 @@ private:
 						member_load.struct_type_info = nullptr;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+						
+						// Mark as lvalue with member metadata for unified assignment handler
+						LValueInfo lvalue_info(
+							LValueInfo::Kind::Member,
+							StringTable::getOrInternStringHandle("this"),
+							static_cast<int>(member->offset)
+						);
+						lvalue_info.member_name = member->getName();
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+						
 						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
 						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
 					}
@@ -6304,6 +6314,7 @@ private:
 		}
 
 		// Special handling for assignment to member variables in member functions
+		// Now that implicit member access is marked with lvalue metadata, try unified handler first
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && current_struct_name_.isValid()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
@@ -6317,33 +6328,43 @@ private:
 					if (struct_info) {
 						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(lhs_name)));
 						if (member) {
-						// This is an assignment to a member variable: member = value
-						// Generate MemberStore instead of regular Assignment
-
-						// Generate IR for the RHS value
-						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-
-						// Build MemberStore operation using helper
-						// Add only the value from RHS (rhsIrOperands = [type, size, value])
-						if (rhsIrOperands.size() >= 3) {
-							// Use helper to emit MemberStore
-							TypedValue value_tv;
-							value_tv.type = member->type;
-							value_tv.size_in_bits = static_cast<int>(member->size * 8);
-							value_tv.value = toIrValue(rhsIrOperands[2]);
+							// This is an assignment to a member variable: member = value
 							
-							emitMemberStore(
-								value_tv,
-								StringTable::getOrInternStringHandle("this"),  // implicit this pointer
-								StringTable::getOrInternStringHandle(lhs_name),
-								static_cast<int>(member->offset),
-								member->is_reference,
-								member->is_rvalue_reference,
-								binaryOperatorNode.get_token()
-							);
+							// Try unified handler first (now that we mark identifiers as lvalues)
+							auto lhsIrOperands = visitExpressionNode(lhs_expr);
+							auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 							
-							// Return the RHS value as the result
-							return rhsIrOperands;
+							// Try to handle assignment using unified lvalue metadata handler
+							if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+								// Assignment was handled successfully via metadata
+								FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for implicit member assignment (", lhs_name, ")");
+								return rhsIrOperands;
+							}
+							
+							// Fallback to legacy code if unified handler didn't work
+							FLASH_LOG(Codegen, Info, "Unified handler failed for implicit member assignment, using legacy path");
+							
+							// Build MemberStore operation using helper (legacy path)
+							// Add only the value from RHS (rhsIrOperands = [type, size, value])
+							if (rhsIrOperands.size() >= 3) {
+								// Use helper to emit MemberStore
+								TypedValue value_tv;
+								value_tv.type = member->type;
+								value_tv.size_in_bits = static_cast<int>(member->size * 8);
+								value_tv.value = toIrValue(rhsIrOperands[2]);
+								
+								emitMemberStore(
+									value_tv,
+									StringTable::getOrInternStringHandle("this"),  // implicit this pointer
+									StringTable::getOrInternStringHandle(lhs_name),
+									static_cast<int>(member->offset),
+									member->is_reference,
+									member->is_rvalue_reference,
+									binaryOperatorNode.get_token()
+								);
+								
+								// Return the RHS value as the result
+								return rhsIrOperands;
 						} else {
 							// Error: invalid RHS operands
 							return { Type::Int, 32, TempVar{0} };
