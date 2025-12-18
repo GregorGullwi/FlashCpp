@@ -980,8 +980,15 @@ private:
 				TempVar index_temp = lv_info.array_index.value();
 				TypedValue index_tv;
 				index_tv.value = index_temp;
-				index_tv.type = std::get<Type>(lhs_operands[0]);  // Use element type for now
-				index_tv.size_in_bits = 32;  // Assume 32-bit index
+				index_tv.type = Type::Int;  // Index type (typically int)
+				index_tv.size_in_bits = 32;  // Standard index size
+				
+				// Build TypedValue for value with LHS type/size but RHS value
+				// This is important: the size must match the array element type
+				TypedValue value_tv;
+				value_tv.type = std::get<Type>(lhs_operands[0]);
+				value_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+				value_tv.value = toIrValue(rhs_operands[2]);
 				
 				// Emit the store using helper
 				emitArrayStore(
@@ -989,7 +996,7 @@ private:
 					std::get<int>(lhs_operands[1]),   // element_size_bits
 					lv_info.base,                      // array
 					index_tv,                          // index
-					toTypedValue(rhs_operands),        // value
+					value_tv,                          // value (with LHS type/size, RHS value)
 					lv_info.offset,                    // member_offset
 					lv_info.is_pointer_to_array,       // is_pointer_to_array
 					token
@@ -1014,14 +1021,21 @@ private:
 					return false;
 				}
 				
+				// Build TypedValue with LHS type/size but RHS value
+				// This is important: the size must match the member being stored to, not the RHS
+				TypedValue value_tv;
+				value_tv.type = std::get<Type>(lhs_operands[0]);
+				value_tv.size_in_bits = lhs_size;
+				value_tv.value = toIrValue(rhs_operands[2]);
+				
 				// Emit the store using helper
 				emitMemberStore(
-					toTypedValue(rhs_operands),     // value
-					lv_info.base,                   // object
-					lv_info.member_name.value(),    // member_name
-					lv_info.offset,                 // offset
-					false,                          // is_reference
-					false,                          // is_rvalue_reference
+					value_tv,                           // value (with LHS type/size, RHS value)
+					lv_info.base,                       // object
+					lv_info.member_name.value(),        // member_name
+					lv_info.offset,                     // offset
+					false,                              // is_reference
+					false,                              // is_rvalue_reference
 					token
 				);
 				return true;
@@ -6243,9 +6257,7 @@ private:
 
 		// Special handling for assignment to array subscript or member access
 		// Use LValueAddress context to avoid redundant Load instructions
-		// DISABLED: Template type handling needs more work (member size calculation issue)
-		// TODO: Re-enable once template member size handling is fixed
-		if (false && op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			
 			// Check if LHS is an array subscript or member access (lvalue expressions)
