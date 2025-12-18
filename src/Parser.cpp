@@ -9412,6 +9412,19 @@ ParseResult Parser::parse_unary_expression()
 			type_spec.add_pointer_level(ptr_cv);
 		}
 
+		// Parse reference declarators: & or &&
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+			if (peek_token()->value() == "&&") {
+				// Rvalue reference
+				consume_token(); // consume '&&'
+				type_spec.set_reference(true);  // true = rvalue reference
+			} else if (peek_token()->value() == "&") {
+				// Lvalue reference
+				consume_token(); // consume '&'
+				type_spec.set_reference(false);  // false = lvalue reference
+			}
+		}
+
 		// Expect '>'
 		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
 		    peek_token()->value() != ">") {
@@ -9482,6 +9495,19 @@ ParseResult Parser::parse_unary_expression()
 			}
 
 			type_spec.add_pointer_level(ptr_cv);
+		}
+
+		// Parse reference declarators: & or &&
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+			if (peek_token()->value() == "&&") {
+				// Rvalue reference
+				consume_token(); // consume '&&'
+				type_spec.set_reference(true);  // true = rvalue reference
+			} else if (peek_token()->value() == "&") {
+				// Lvalue reference
+				consume_token(); // consume '&'
+				type_spec.set_reference(false);  // false = lvalue reference
+			}
 		}
 
 		// Expect '>'
@@ -9556,6 +9582,19 @@ ParseResult Parser::parse_unary_expression()
 			type_spec.add_pointer_level(ptr_cv);
 		}
 
+		// Parse reference declarators: & or &&
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+			if (peek_token()->value() == "&&") {
+				// Rvalue reference
+				consume_token(); // consume '&&'
+				type_spec.set_reference(true);  // true = rvalue reference
+			} else if (peek_token()->value() == "&") {
+				// Lvalue reference
+				consume_token(); // consume '&'
+				type_spec.set_reference(false);  // false = lvalue reference
+			}
+		}
+
 		// Expect '>'
 		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
 		    peek_token()->value() != ">") {
@@ -9626,6 +9665,19 @@ ParseResult Parser::parse_unary_expression()
 			}
 
 			type_spec.add_pointer_level(ptr_cv);
+		}
+
+		// Parse reference declarators: & or &&
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+			if (peek_token()->value() == "&&") {
+				// Rvalue reference
+				consume_token(); // consume '&&'
+				type_spec.set_reference(true);  // true = rvalue reference
+			} else if (peek_token()->value() == "&") {
+				// Lvalue reference
+				consume_token(); // consume '&'
+				type_spec.set_reference(false);  // false = lvalue reference
+			}
 		}
 
 		// Expect '>'
