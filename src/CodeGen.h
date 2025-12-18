@@ -6314,7 +6314,7 @@ private:
 		}
 
 		// Special handling for assignment to member variables in member functions
-		// Now that implicit member access is marked with lvalue metadata, try unified handler first
+		// Now that implicit member access is marked with lvalue metadata, use unified handler
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && current_struct_name_.isValid()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
@@ -6329,46 +6329,20 @@ private:
 						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(lhs_name)));
 						if (member) {
 							// This is an assignment to a member variable: member = value
-							
-							// Try unified handler first (now that we mark identifiers as lvalues)
+							// Handle via unified handler (identifiers are now marked as lvalues)
 							auto lhsIrOperands = visitExpressionNode(lhs_expr);
 							auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 							
-							// Try to handle assignment using unified lvalue metadata handler
+							// Handle assignment using unified lvalue metadata handler
 							if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
 								// Assignment was handled successfully via metadata
-								FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for implicit member assignment (", lhs_name, ")");
+								FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for implicit member assignment (", lhs_name, ")");
 								return rhsIrOperands;
 							}
 							
-							// Fallback to legacy code if unified handler didn't work
-							FLASH_LOG(Codegen, Info, "Unified handler failed for implicit member assignment, using legacy path");
-							
-							// Build MemberStore operation using helper (legacy path)
-							// Add only the value from RHS (rhsIrOperands = [type, size, value])
-							if (rhsIrOperands.size() >= 3) {
-								// Use helper to emit MemberStore
-								TypedValue value_tv;
-								value_tv.type = member->type;
-								value_tv.size_in_bits = static_cast<int>(member->size * 8);
-								value_tv.value = toIrValue(rhsIrOperands[2]);
-								
-								emitMemberStore(
-									value_tv,
-									StringTable::getOrInternStringHandle("this"),  // implicit this pointer
-									StringTable::getOrInternStringHandle(lhs_name),
-									static_cast<int>(member->offset),
-									member->is_reference,
-									member->is_rvalue_reference,
-									binaryOperatorNode.get_token()
-								);
-								
-								// Return the RHS value as the result
-								return rhsIrOperands;
-						} else {
-							// Error: invalid RHS operands
+							// This shouldn't happen with proper metadata, but log for debugging
+							FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for implicit member assignment: ", lhs_name);
 							return { Type::Int, 32, TempVar{0} };
-						}
 						}
 					}
 				}
