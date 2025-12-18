@@ -5690,10 +5690,11 @@ private:
 			// Store element size for pointer arithmetic in the IR
 			if (is_pointer) {
 				// For pointers, we use a BinaryOp to add element_size instead
+				// Use UnsignedLongLong for pointer arithmetic (pointers are 64-bit addresses)
 			if (unaryOperatorNode.is_prefix()) {
 				// ++ptr becomes: ptr = ptr + element_size
 				BinaryOp add_op{
-					.lhs = { operandType, 64, std::holds_alternative<StringHandle>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
+					.lhs = { Type::UnsignedLongLong, 64, std::holds_alternative<StringHandle>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
 					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
 					.result = result_var,
 				};
@@ -5701,8 +5702,8 @@ private:
 					if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
 						AssignmentOp assign_op;
 						assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
-						assign_op.lhs = { operandType, 64, std::get<StringHandle>(operandIrOperands[2]) };
-						assign_op.rhs = { operandType, 64, result_var };
+						assign_op.lhs = { Type::UnsignedLongLong, 64, std::get<StringHandle>(operandIrOperands[2]) };
+						assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 					}
 					// Return pointer value (64-bit)
@@ -5715,14 +5716,14 @@ private:
 					AssignmentOp save_op;
 					if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
 						save_op.result = old_value;
-						save_op.lhs = { operandType, 64, old_value };
+						save_op.lhs = { Type::UnsignedLongLong, 64, old_value };
 						save_op.rhs = toTypedValue(operandIrOperands);
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), Token()));
 					}
 					
 				// ptr = ptr + element_size
 				BinaryOp add_op{
-					.lhs = { operandType, 64, std::holds_alternative<StringHandle>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
+					.lhs = { Type::UnsignedLongLong, 64, std::holds_alternative<StringHandle>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
 					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
 					.result = result_var,
 				};
@@ -5730,8 +5731,8 @@ private:
 					if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
 						AssignmentOp assign_op;
 						assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
-						assign_op.lhs = { operandType, 64, std::get<StringHandle>(operandIrOperands[2]) };
-						assign_op.rhs = { operandType, 64, result_var };
+						assign_op.lhs = { Type::UnsignedLongLong, 64, std::get<StringHandle>(operandIrOperands[2]) };
+						assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 					}
 					// Return old pointer value
@@ -5790,10 +5791,11 @@ private:
 			// Store element size for pointer arithmetic in the IR
 			if (is_pointer) {
 				// For pointers, we use a BinaryOp to subtract element_size instead
+				// Use UnsignedLongLong for pointer arithmetic (pointers are 64-bit addresses)
 			if (unaryOperatorNode.is_prefix()) {
 				// --ptr becomes: ptr = ptr - element_size
 				BinaryOp sub_op{
-					.lhs = { operandType, 64, std::holds_alternative<StringHandle>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
+					.lhs = { Type::UnsignedLongLong, 64, std::holds_alternative<StringHandle>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
 					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
 					.result = result_var,
 				};
@@ -5801,8 +5803,8 @@ private:
 					if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
 						AssignmentOp assign_op;
 						assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
-						assign_op.lhs = { operandType, 64, std::get<StringHandle>(operandIrOperands[2]) };
-						assign_op.rhs = { operandType, 64, result_var };
+						assign_op.lhs = { Type::UnsignedLongLong, 64, std::get<StringHandle>(operandIrOperands[2]) };
+						assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 					}
 					// Return pointer value (64-bit)
@@ -5815,14 +5817,14 @@ private:
 					AssignmentOp save_op;
 					if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
 						save_op.result = old_value;
-						save_op.lhs = { operandType, 64, old_value };
+						save_op.lhs = { Type::UnsignedLongLong, 64, old_value };
 						save_op.rhs = toTypedValue(operandIrOperands);
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), Token()));
 					}
 					
 				// ptr = ptr - element_size
 				BinaryOp sub_op{
-					.lhs = { operandType, 64, std::holds_alternative<StringHandle>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
+					.lhs = { Type::UnsignedLongLong, 64, std::holds_alternative<StringHandle>(operandIrOperands[2]) ? std::get<StringHandle>(operandIrOperands[2]) : IrValue{} },
 					.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
 					.result = result_var,
 				};
@@ -5830,8 +5832,8 @@ private:
 					if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
 						AssignmentOp assign_op;
 						assign_op.result = std::get<StringHandle>(operandIrOperands[2]);
-						assign_op.lhs = { operandType, 64, std::get<StringHandle>(operandIrOperands[2]) };
-						assign_op.rhs = { operandType, 64, result_var };
+						assign_op.lhs = { Type::UnsignedLongLong, 64, std::get<StringHandle>(operandIrOperands[2]) };
+						assign_op.rhs = { Type::UnsignedLongLong, 64, result_var };
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 					}
 					// Return old pointer value
@@ -9616,6 +9618,7 @@ private:
 		// If so, we need to get the base type size, not the pointer size (64)
 		// Look up the identifier to get the actual type info
 		bool is_pointer_to_array = false;
+		size_t element_type_index = 0;  // Track type_index for struct elements
 		const ExpressionNode& arr_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(arr_expr)) {
 			const IdentifierNode& arr_ident = std::get<IdentifierNode>(arr_expr);
@@ -9633,6 +9636,11 @@ private:
 				
 				if (decl_ptr) {
 					const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+					
+					// Capture type_index for struct types (important for member access on array elements)
+					if (type_node.type() == Type::Struct) {
+						element_type_index = type_node.type_index();
+					}
 					
 					// If it's a pointer type, use the base type size (not 64)
 					if (type_node.pointer_depth() > 0) {
@@ -9684,8 +9692,8 @@ private:
 		// Create instruction with typed payload
 		ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
-		// Return the result with the element type
-		return { element_type, element_size_bits, result_var, 0ULL };
+		// Return the result with the element type and type_index (important for struct arrays)
+		return { element_type, element_size_bits, result_var, element_type_index };
 	}
 
 	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode) {
@@ -9903,6 +9911,39 @@ private:
 					base_type = pointer_type;
 					base_type_index = pointer_type_index;
 				}
+			}
+			// Case 4: Array subscript (e.g., arr[i].member)
+			else if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+				const ArraySubscriptNode& array_sub = std::get<ArraySubscriptNode>(expr);
+				
+				// Generate IR for the array subscript expression
+				// This will evaluate arr[i] and return the element
+				auto array_operands = generateArraySubscriptIr(array_sub);
+				if (array_operands.empty() || array_operands.size() < 3) {
+					FLASH_LOG(Codegen, Error, "Failed to evaluate array subscript for member access");
+					return {};
+				}
+				
+				// Extract type information from the evaluated array element
+				// array_operands = [type, size_bits, temp_var, type_index (optional)]
+				Type element_type = std::get<Type>(array_operands[0]);
+				
+				// Get the type_index if available (for struct elements)
+				size_t element_type_index = 0;
+				if (array_operands.size() >= 4 && std::holds_alternative<unsigned long long>(array_operands[3])) {
+					element_type_index = static_cast<size_t>(std::get<unsigned long long>(array_operands[3]));
+				}
+				
+				// The array element should be stored in a temp var
+				if (std::holds_alternative<TempVar>(array_operands[2])) {
+					base_object = std::get<TempVar>(array_operands[2]);
+				} else {
+					FLASH_LOG(Codegen, Error, "Array subscript result has unsupported value type");
+					return {};
+				}
+				
+				base_type = element_type;
+				base_type_index = element_type_index;
 			}
 			else {
 				FLASH_LOG(Codegen, Error, "member access on unsupported expression type");
