@@ -227,12 +227,52 @@ Unified handler requires evaluating LHS (which emits Load + metadata), then emit
    - Pro: Simple, works now
    - Con: Extra IR instructions (could be optimized away later)
    
-2. **Add lvalue context flag:** Pass "want address not value" flag to visitExpressionNode
+2. **Add lvalue context flag:** Pass "want address not value" flag to visitExpressionNode ✅ **CHOSEN**
    - Pro: Clean, no redundant IR
    - Con: Requires refactoring entire expression evaluation chain
+   - **Status**: Implementation in progress
    
 3. **Hybrid approach:** Keep special cases but have them delegate to unified handler
    - Pro: No redundant IR, incremental migration
+   - Con: Doesn't fully eliminate pattern matching
+   - **Status**: Implemented as interim solution
+
+**Implementation Plan for Option 2 (LValue Context Flag):**
+
+#### Step 3.1: Define Expression Evaluation Context ✅ COMPLETE
+- [x] Create `ExpressionContext` enum (Load, LValueAddress, etc.)
+- [x] Add optional context parameter to `visitExpressionNode`
+- [x] Default to Load context for backward compatibility
+- [x] Add context parameter to `generateArraySubscriptIr`
+- [x] Add context parameter to `generateMemberAccessIr`
+
+**Progress Update:**
+- ✅ Created `ExpressionContext` enum with Load and LValueAddress values
+- ✅ Updated `visitExpressionNode` signature with optional context parameter (default: Load)
+- ✅ Updated function signatures for array and member access generators
+- ✅ All existing code continues to work (backward compatible)
+- ✅ Builds successfully
+
+#### Step 3.2: Update LValue Expression Generators
+- [ ] Modify `generateArraySubscriptIr` to check context
+  - When context is LValueAddress, skip Load instruction
+  - Return address/metadata only
+- [ ] Modify `generateMemberAccessIr` to check context
+  - When context is LValueAddress, skip Load instruction
+  - Return address/metadata only
+- [ ] Modify `generateUnaryOperatorIr` (dereference) to check context
+  - When context is LValueAddress, skip Dereference instruction
+  - Return pointer value only
+
+#### Step 3.3: Update Assignment Operator
+- [ ] Modify assignment handling to pass LValueAddress context for LHS
+- [ ] Use unified handler with metadata from LHS evaluation
+- [ ] Remove special-case pattern matching for array/member assignments
+
+#### Step 3.4: Validate and Test
+- [ ] Run test suite (all 651 tests must pass)
+- [ ] Verify no redundant IR instructions generated
+- [ ] Compare generated IR before/after to ensure equivalence
    - Con: Doesn't fully eliminate pattern matching
 
 **Recommended:** Option 3 for now, Option 2 for future major refactoring

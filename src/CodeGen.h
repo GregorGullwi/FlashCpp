@@ -122,6 +122,13 @@ struct LambdaInfo {
 	}
 };
 
+// Expression evaluation context
+// Determines how an expression should be evaluated
+enum class ExpressionContext {
+	Load,           // Evaluate and load the value (default, rvalue context)
+	LValueAddress   // Evaluate to get the address without loading (lvalue context for assignment)
+};
+
 class AstToIr {
 public:
 	AstToIr() = delete;  // Require valid references
@@ -4615,7 +4622,8 @@ private:
 		}
 	}
 
-	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode) {
+	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode, 
+	                                            ExpressionContext context = ExpressionContext::Load) {
 		if (std::holds_alternative<IdentifierNode>(exprNode)) {
 			const auto& expr = std::get<IdentifierNode>(exprNode);
 			return generateIdentifierIr(expr);
@@ -4660,11 +4668,11 @@ private:
 		}
 		else if (std::holds_alternative<ArraySubscriptNode>(exprNode)) {
 			const auto& expr = std::get<ArraySubscriptNode>(exprNode);
-			return generateArraySubscriptIr(expr);
+			return generateArraySubscriptIr(expr, context);
 		}
 		else if (std::holds_alternative<MemberAccessNode>(exprNode)) {
 			const auto& expr = std::get<MemberAccessNode>(exprNode);
-			return generateMemberAccessIr(expr);
+			return generateMemberAccessIr(expr, context);
 		}
 		else if (std::holds_alternative<SizeofExprNode>(exprNode)) {
 			const auto& sizeof_node = std::get<SizeofExprNode>(exprNode);
@@ -9765,7 +9773,8 @@ private:
 		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var, static_cast<unsigned long long>(return_type.type_index()) };
 	}
 
-	std::vector<IrOperand> generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode) {
+	std::vector<IrOperand> generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
+	                                                 ExpressionContext context = ExpressionContext::Load) {
 		// Generate IR for array[index] expression
 		// This computes the address: base_address + (index * element_size)
 
@@ -9979,7 +9988,8 @@ private:
 		return { element_type, element_size_bits, result_var, element_type_index };
 	}
 
-	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode) {
+	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
+	                                               ExpressionContext context = ExpressionContext::Load) {
 		std::vector<IrOperand> irOperands;
 
 		// Get the object being accessed
