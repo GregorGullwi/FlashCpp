@@ -253,16 +253,23 @@ Unified handler requires evaluating LHS (which emits Load + metadata), then emit
 - ✅ All existing code continues to work (backward compatible)
 - ✅ Builds successfully
 
-#### Step 3.2: Update LValue Expression Generators
-- [ ] Modify `generateArraySubscriptIr` to check context
+#### Step 3.2: Update LValue Expression Generators ✅ COMPLETE
+- [x] Modify `generateArraySubscriptIr` to check context
   - When context is LValueAddress, skip Load instruction
   - Return address/metadata only
-- [ ] Modify `generateMemberAccessIr` to check context
+  - Handles both regular arrays and member arrays
+- [x] Modify `generateMemberAccessIr` to check context
   - When context is LValueAddress, skip Load instruction
   - Return address/metadata only
-- [ ] Modify `generateUnaryOperatorIr` (dereference) to check context
-  - When context is LValueAddress, skip Dereference instruction
-  - Return pointer value only
+- [ ] Modify `generateUnaryOperatorIr` (dereference) to check context (deferred - not needed for current use cases)
+
+**Progress Update:**
+- ✅ Updated `generateArraySubscriptIr` to skip ArrayAccess instruction when context is LValueAddress
+- ✅ Updated member array case in `generateArraySubscriptIr` to skip Load
+- ✅ Updated `generateMemberAccessIr` to skip MemberLoad instruction when context is LValueAddress
+- ✅ Both functions now return metadata only (no IR emitted) in LValueAddress context
+- ✅ Builds successfully
+- ℹ️  Dereference context handling deferred - current unified handler already works for dereference assignments
 
 #### Step 3.3: Update Assignment Operator
 - [ ] Modify assignment handling to pass LValueAddress context for LHS

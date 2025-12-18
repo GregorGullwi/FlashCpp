@@ -9865,7 +9865,14 @@ private:
 											payload.index.value = std::get<StringHandle>(index_operands[2]);
 										}
 
-										// Create instruction with typed payload
+										// When context is LValueAddress, skip the load and return address/metadata only
+										if (context == ExpressionContext::LValueAddress) {
+											// Don't emit ArrayAccess instruction (no load)
+											// Just return the metadata with the result temp var
+											return { element_type, element_size_bits, result_var, 0ULL };
+										}
+
+										// Create instruction with typed payload (Load context - default)
 										ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 										// Return the result with the element type
@@ -9981,7 +9988,15 @@ private:
 			payload.index.value = std::get<StringHandle>(index_operands[2]);
 		}
 
-		// Create instruction with typed payload
+		// When context is LValueAddress, skip the load and return address/metadata only
+		if (context == ExpressionContext::LValueAddress) {
+			// Don't emit ArrayAccess instruction (no load)
+			// Just return the metadata with the result temp var
+			// The metadata contains all information needed for store operations
+			return { element_type, element_size_bits, result_var, element_type_index };
+		}
+
+		// Create instruction with typed payload (Load context - default)
 		ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 		// Return [element_type, element_size_bits, result_var, struct_type_index (for struct arrays, 0 otherwise)]
@@ -10455,7 +10470,21 @@ private:
 		member_load.is_rvalue_reference = member->is_rvalue_reference;
 		member_load.struct_type_info = nullptr;
 
-		// Add the member access instruction
+		// When context is LValueAddress, skip the load and return address/metadata only
+		if (context == ExpressionContext::LValueAddress) {
+			// Don't emit MemberAccess instruction (no load)
+			// Just return the metadata with the result temp var
+			// The metadata contains all information needed for store operations
+			if (member->type == Type::Struct) {
+				// Format: [type, size_bits, temp_var, type_index]
+				return { member->type, static_cast<int>(member->size * 8), result_var, static_cast<unsigned long long>(member->type_index) };
+			} else {
+				// Format: [type, size_bits, temp_var]
+				return { member->type, static_cast<int>(member->size * 8), result_var };
+			}
+		}
+
+		// Add the member access instruction (Load context - default)
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
 		// Return the result variable with its type, size, and optionally type_index
