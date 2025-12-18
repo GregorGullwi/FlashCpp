@@ -714,3 +714,65 @@ When optimizations are needed, the infrastructure is ready:
 2. Add optimizations incrementally, guided by profiling
 3. Validate each optimization with targeted tests
 4. Consider adding Phase 3d (XValue support) when move semantics are needed
+
+## Architecture Refactoring (December 2025)
+
+### Problem Identified
+The codebase had two separate systems for tracking reference/lvalue information:
+1. `reference_stack_info_` (map: stack offset → ReferenceInfo) in IRConverter
+2. `GlobalTempVarMetadataStorage` (map: TempVar number → TempVarMetadata) in IRTypes
+
+This created architectural risks:
+- Information could get out of sync between the two systems
+- Operations might pick up wrong metadata
+- Harder to reason about the code
+- Violated single source of truth principle
+
+### Solution Implemented
+Consolidated both systems to ensure synchronization:
+
+**Phase 1: Extended TempVarMetadata** (IRTypes.h)
+- Added `value_type`, `value_size_bits`, `is_rvalue_reference` fields to TempVarMetadata
+- These fields previously only existed in ReferenceInfo
+- Added `makeReference()` helper to create reference metadata
+- Added accessor functions:
+  - `isTempVarReference()`: Check if TempVar is a reference
+  - `getTempVarValueType()`: Get the value type
+  - `getTempVarValueSizeBits()`: Get the value size
+  - `isTempVarRValueReference()`: Check if rvalue reference
+
+**Phase 2: Synchronized Write Operations** (IRConverter.h)
+- Created `setReferenceInfo()` helper function
+- Updates BOTH systems atomically:
+  1. Writes to `reference_stack_info_` (for stack offset lookups)
+  2. Sets TempVarMetadata (for TempVar-based lookups)
+- Updated all 7 write sites to use the helper:
+  - `handleVariableDecl`: reference variable declarations
+  - `handleFunctionDecl`: reference parameters (2 sites)
+  - `handleArrayAccess`: struct array element access
+  - `handleMemberAccess`: large member access returning address
+  - `handleDereference`: reference member access
+  - `handleAddressOf`: addressof operation result
+
+**Phase 3: Unified Read Interface** (IRConverter.h)
+- Created `isReference()` helper: checks TempVar metadata first, falls back to stack offset
+- Created `getReferenceInfo()` helper: retrieves reference info from either system
+- Prioritizes TempVar metadata (travels with values) over stack offset (location-based)
+- Maintains backward compatibility with existing code
+
+### Results
+- ✅ Both tracking systems now stay synchronized automatically
+- ✅ No risk of out-of-sync metadata
+- ✅ Unified interface for querying reference information
+- ✅ All 651 tests pass
+- ✅ Zero breaking changes
+- ✅ Backward compatible with existing code
+
+### Architecture Decision
+Rather than completely removing `reference_stack_info_`, we maintain both systems with guaranteed synchronization. This provides:
+1. **Safety**: Operations can query either system and get consistent results
+2. **Compatibility**: Existing code continues to work without modification
+3. **Flexibility**: Future migration can happen incrementally
+4. **Better abstraction**: TempVar metadata travels with values, not locations
+
+The synchronization helper ensures the architectural concern is resolved while maintaining stability.

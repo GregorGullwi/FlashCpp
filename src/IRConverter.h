@@ -4399,6 +4399,55 @@ private:
 		bool is_rvalue_reference = false;
 	};
 	
+	// Helper function to set reference information in both storage systems
+	// This ensures metadata stays synchronized between stack offset tracking and TempVar metadata
+	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var = TempVar()) {
+		// Always update the stack offset map (for named variables and legacy lookups)
+		reference_stack_info_[stack_offset] = ReferenceInfo{
+			.value_type = value_type,
+			.value_size_bits = value_size_bits,
+			.is_rvalue_reference = is_rvalue_ref
+		};
+		
+		// If we have a valid TempVar, also update its metadata
+		if (temp_var.var_number != 0) {
+			setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, value_size_bits, is_rvalue_ref));
+		}
+	}
+	
+	// Helper function to check if a TempVar or stack offset is a reference
+	// Checks TempVar metadata first (preferred), then falls back to stack offset lookup
+	bool isReference(TempVar temp_var, int32_t stack_offset) const {
+		// Check TempVar metadata first (more reliable, travels with the value)
+		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
+			return true;
+		}
+		
+		// Fall back to stack offset lookup (for named variables or legacy code)
+		return reference_stack_info_.find(stack_offset) != reference_stack_info_.end();
+	}
+	
+	// Helper function to get reference info for a TempVar or stack offset
+	// Returns the reference info from TempVar metadata if available, otherwise from stack offset map
+	std::optional<ReferenceInfo> getReferenceInfo(TempVar temp_var, int32_t stack_offset) const {
+		// Check TempVar metadata first
+		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
+			return ReferenceInfo{
+				.value_type = getTempVarValueType(temp_var),
+				.value_size_bits = getTempVarValueSizeBits(temp_var),
+				.is_rvalue_reference = isTempVarRValueReference(temp_var)
+			};
+		}
+		
+		// Fall back to stack offset lookup
+		auto it = reference_stack_info_.find(stack_offset);
+		if (it != reference_stack_info_.end()) {
+			return it->second;
+		}
+		
+		return std::nullopt;
+	}
+	
 	StackSpaceSize calculateFunctionStackSpace(std::string_view func_name, StackVariableScope& var_scope, size_t param_count) {
 		StackSpaceSize func_stack_space{};
 
@@ -7047,11 +7096,7 @@ private:
 		//last_allocated_variable_offset_ = var_it->second.offset;
 
 		if (is_reference) {
-			reference_stack_info_[var_it->second.offset] = ReferenceInfo{
-				.value_type = var_type,
-				.value_size_bits = op.size_in_bits,
-				.is_rvalue_reference = is_rvalue_reference
-			};
+			setReferenceInfo(var_it->second.offset, var_type, op.size_in_bits, is_rvalue_reference);
 			int32_t dst_offset = var_it->second.offset;
 			X64Register pointer_reg = allocateRegisterWithSpilling();
 			bool pointer_initialized = false;
@@ -7747,11 +7792,8 @@ private:
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
 				bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
 				if (is_reference) {
-					reference_stack_info_[offset] = ReferenceInfo{
-						.value_type = param_type,
-						.value_size_bits = param_size,
-						.is_rvalue_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE)
-					};
+					setReferenceInfo(offset, param_type, param_size, 
+						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE));
 				}
 
 				// Add parameter to debug information
@@ -7849,11 +7891,7 @@ private:
 
 				// Track reference parameters
 				if (param.is_reference) {
-					reference_stack_info_[offset] = ReferenceInfo{
-						.value_type = param.type,
-						.value_size_bits = param.size_in_bits,
-						.is_rvalue_reference = param.is_rvalue_reference
-					};
+					setReferenceInfo(offset, param.type, param.size_in_bits, param.is_rvalue_reference);
 				}
 
 				// Add parameter to debug information
@@ -11051,11 +11089,7 @@ private:
 		// Phase 5: Mark the result temp var as holding a pointer/reference when using LEA
 		// This allows subsequent operations to properly handle the address
 		if (optimize_lea) {
-			reference_stack_info_[result_offset] = ReferenceInfo{
-				.value_type = element_type,
-				.value_size_bits = element_size_bits,
-				.is_rvalue_reference = false
-			};
+			setReferenceInfo(result_offset, element_type, element_size_bits, false, result_var);
 		}
 		
 		// Release the base register
@@ -11424,11 +11458,7 @@ private:
 			regAlloc.release(addr_reg);
 			
 			// Mark this temp var as containing a pointer/address
-			reference_stack_info_[result_offset] = ReferenceInfo{
-				.value_type = op.result.type,
-				.value_size_bits = op.result.size_in_bits,
-				.is_rvalue_reference = false
-			};
+			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits, false, result_var);
 			return;
 		}
 
@@ -11502,11 +11532,7 @@ private:
 		if (op.is_reference) {
 			emitMovToFrame(temp_reg, result_offset);
 			regAlloc.release(temp_reg);
-			reference_stack_info_[result_offset] = ReferenceInfo{
-				.value_type = op.result.type,
-				.value_size_bits = op.result.size_in_bits,
-				.is_rvalue_reference = op.is_rvalue_reference
-			};
+			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits, op.is_rvalue_reference, result_var);
 			return;
 		}
 
@@ -11889,11 +11915,7 @@ private:
 			// Mark the result as holding a pointer (so it's treated like a reference)
 			// This ensures that when passed to reference parameters, we MOV (load the pointer)
 			// instead of LEA (taking address of the temp variable holding the pointer)
-			reference_stack_info_[result_offset] = ReferenceInfo{
-				.value_type = op.pointee_type,
-				.value_size_bits = op.pointee_size_in_bits,
-				.is_rvalue_reference = false
-			};
+			setReferenceInfo(result_offset, op.pointee_type, op.pointee_size_in_bits, false, op.result);
 			
 			return;
 		}

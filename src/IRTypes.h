@@ -432,23 +432,33 @@ struct TempVarMetadata {
 	// Whether this temp is the result of std::move or similar
 	bool is_move_result = false;
 	
+	// Fields previously tracked in ReferenceInfo (for reference/pointer dereferencing)
+	// These are used by IRConverter when loading values through references
+	Type value_type = Type::Invalid;
+	int value_size_bits = 0;
+	bool is_rvalue_reference = false;
+	
 	// Constructor
 	TempVarMetadata() = default;
 	
 	// Helper to create lvalue metadata
-	static TempVarMetadata makeLValue(LValueInfo lv_info) {
+	static TempVarMetadata makeLValue(LValueInfo lv_info, Type type = Type::Invalid, int size_bits = 0) {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::LValue;
 		meta.lvalue_info = lv_info;
+		meta.value_type = type;
+		meta.value_size_bits = size_bits;
 		return meta;
 	}
 	
 	// Helper to create xvalue metadata
-	static TempVarMetadata makeXValue(LValueInfo lv_info) {
+	static TempVarMetadata makeXValue(LValueInfo lv_info, Type type = Type::Invalid, int size_bits = 0) {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::XValue;
 		meta.lvalue_info = lv_info;
 		meta.is_move_result = true;
+		meta.value_type = type;
+		meta.value_size_bits = size_bits;
 		return meta;
 	}
 	
@@ -456,6 +466,17 @@ struct TempVarMetadata {
 	static TempVarMetadata makePRValue() {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::PRValue;
+		return meta;
+	}
+	
+	// Helper to create reference metadata (for compatibility with old ReferenceInfo usage)
+	static TempVarMetadata makeReference(Type type, int size_bits, bool is_rvalue_ref = false) {
+		TempVarMetadata meta;
+		meta.category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
+		meta.is_address = true;  // References hold addresses
+		meta.value_type = type;
+		meta.value_size_bits = size_bits;
+		meta.is_rvalue_reference = is_rvalue_ref;
 		return meta;
 	}
 };
@@ -726,6 +747,30 @@ inline bool isTempVarPRValue(const TempVar& temp) {
 
 inline std::optional<LValueInfo> getTempVarLValueInfo(const TempVar& temp) {
 	return GlobalTempVarMetadataStorage::instance().getLValueInfo(temp);
+}
+
+// Check if a TempVar is a reference (has is_address flag set)
+inline bool isTempVarReference(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.is_address && (meta.category == ValueCategory::LValue || meta.category == ValueCategory::XValue);
+}
+
+// Get the value type of a reference TempVar (returns Invalid if not a reference)
+inline Type getTempVarValueType(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.value_type;
+}
+
+// Get the value size in bits of a reference TempVar (returns 0 if not a reference)
+inline int getTempVarValueSizeBits(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.value_size_bits;
+}
+
+// Check if a TempVar is an rvalue reference
+inline bool isTempVarRValueReference(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.is_rvalue_reference;
 }
 
 // Helper to create a TempVar with lvalue metadata
