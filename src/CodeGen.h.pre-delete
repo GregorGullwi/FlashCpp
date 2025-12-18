@@ -6303,6 +6303,567 @@ private:
 			}
 		}
 
+		// Legacy special handling for assignment to array subscript (fallback)
+		// This code path should not be reached with proper LValueAddress context
+		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+			if (std::holds_alternative<ArraySubscriptNode>(lhs_expr)) {
+				FLASH_LOG(Codegen, Info, "LEGACY array subscript handler invoked - unified handler was not used");
+				// This is an array subscript assignment: arr[index] = value
+				const ArraySubscriptNode& array_subscript = std::get<ArraySubscriptNode>(lhs_expr);
+
+				// Generate IR for the RHS value
+				auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+				// Get array information FIRST to check if it's a member array
+				const ExpressionNode& array_expr = array_subscript.array_expr().as<ExpressionNode>();
+				
+				// Check if this is a member array access: obj.array[index] = value
+				if (std::holds_alternative<MemberAccessNode>(array_expr)) {
+					const MemberAccessNode& member_access = std::get<MemberAccessNode>(array_expr);
+					const ASTNode& object_node = member_access.object();
+					std::string_view member_name = member_access.member_name();
+
+					// Handle this->member[index] or obj.member[index]
+					if (object_node.is<ExpressionNode>()) {
+						const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
+						if (std::holds_alternative<IdentifierNode>(obj_expr)) {
+							const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
+							std::string_view object_name = object_ident.name();
+
+							// Look up the object in the symbol table
+							const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+							if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+								const auto& decl_node = symbol->as<DeclarationNode>();
+								const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+
+								if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) {
+									// Get the struct type info
+									TypeIndex struct_type_index = type_node.type_index();
+									if (struct_type_index < gTypeInfo.size()) {
+										const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
+										const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+										
+										if (struct_info) {
+											const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
+											if (member) {
+												// Get index information
+												auto indexIrOperands = visitExpressionNode(array_subscript.index_expr().as<ExpressionNode>());
+
+												// Determine element type and size
+												// For arrays, member->type is the array element type
+												// member->size is the total array size in bytes
+												// Calculate element size from member type
+												Type element_type = member->type;
+												// Get element size based on type
+												int element_size_bytes;
+												if (element_type == Type::Struct || element_type == Type::UserDefined) {
+													// For struct types, get size from type info
+													if (member->type_index < gTypeInfo.size()) {
+														const TypeInfo& elem_type_info = gTypeInfo[member->type_index];
+														if (elem_type_info.getStructInfo()) {
+															element_size_bytes = static_cast<int>(elem_type_info.getStructInfo()->total_size);
+														} else {
+															element_size_bytes = 0;
+														}
+													} else {
+														element_size_bytes = 0;
+													}
+												} else {
+													// Use existing helper for primitive types
+													element_size_bytes = get_type_size_bits(element_type) / 8;
+												}
+												
+												int element_size = element_size_bytes * 8;  // Convert to bits
+
+												// Create typed payload for member ArrayStore
+												ArrayStoreOp payload;
+												payload.element_type = element_type;
+												payload.element_size_in_bits = element_size;
+												payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
+												payload.member_offset = static_cast<int64_t>(member->offset);
+												payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
+												
+												// Set index as TypedValue
+												payload.index.type = std::get<Type>(indexIrOperands[0]);
+												payload.index.size_in_bits = std::get<int>(indexIrOperands[1]);
+												if (std::holds_alternative<unsigned long long>(indexIrOperands[2])) {
+													payload.index.value = std::get<unsigned long long>(indexIrOperands[2]);
+												} else if (std::holds_alternative<TempVar>(indexIrOperands[2])) {
+													payload.index.value = std::get<TempVar>(indexIrOperands[2]);
+												} else if (std::holds_alternative<StringHandle>(indexIrOperands[2])) {
+													payload.index.value = std::get<StringHandle>(indexIrOperands[2]);
+												}
+												
+												// Set value as TypedValue
+												payload.value.type = std::get<Type>(rhsIrOperands[0]);
+												payload.value.size_in_bits = std::get<int>(rhsIrOperands[1]);
+												if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
+													payload.value.value = std::get<unsigned long long>(rhsIrOperands[2]);
+												} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+													payload.value.value = std::get<TempVar>(rhsIrOperands[2]);
+												} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
+													payload.value.value = std::get<StringHandle>(rhsIrOperands[2]);
+												}
+
+												ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), binaryOperatorNode.get_token()));
+
+												// Return the RHS value as the result
+												return rhsIrOperands;
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					// If we couldn't handle the member array access, fall through to error
+					return { Type::Int, 32, TempVar{0} };
+				}
+				
+				// NOT a member array - handle as regular array subscript
+				// Generate IR for the array subscript to get the address
+				auto arrayAccessIrOperands = generateArraySubscriptIr(array_subscript);
+
+				// The arrayAccessIrOperands contains [type, size, temp_var]
+				// where temp_var holds the address of the array element
+				// We need to generate an ArrayStore instruction
+				// Format: [element_type, element_size, array_name, index_type, index_size, index_value, value]
+
+				if (!std::holds_alternative<IdentifierNode>(array_expr)) {
+					// Error: array must be an identifier for now
+					return { Type::Int, 32, TempVar{0} };
+				}
+
+				const IdentifierNode& array_ident = std::get<IdentifierNode>(array_expr);
+				std::string_view array_name = array_ident.name();
+
+				// Check if the array is a pointer type
+				bool is_pointer_to_array = false;
+				std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(array_name);
+				}
+				if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+					const auto& decl_node = symbol->as<DeclarationNode>();
+					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+					if (type_node.pointer_depth() > 0) {
+						is_pointer_to_array = true;
+					}
+				}
+
+				// Get index information
+				auto indexIrOperands = visitExpressionNode(array_subscript.index_expr().as<ExpressionNode>());
+
+				// Create typed payload for ArrayStore
+				ArrayStoreOp payload;
+				payload.element_type = std::get<Type>(arrayAccessIrOperands[0]);
+				payload.element_size_in_bits = std::get<int>(arrayAccessIrOperands[1]);
+				payload.array = StringTable::getOrInternStringHandle(array_name);
+				payload.member_offset = 0;  // Not a member array
+				payload.is_pointer_to_array = is_pointer_to_array;
+				
+				// Set index as TypedValue
+				payload.index.type = std::get<Type>(indexIrOperands[0]);
+				payload.index.size_in_bits = std::get<int>(indexIrOperands[1]);
+				if (std::holds_alternative<unsigned long long>(indexIrOperands[2])) {
+					payload.index.value = std::get<unsigned long long>(indexIrOperands[2]);
+				} else if (std::holds_alternative<TempVar>(indexIrOperands[2])) {
+					payload.index.value = std::get<TempVar>(indexIrOperands[2]);
+				} else if (std::holds_alternative<StringHandle>(indexIrOperands[2])) {
+					payload.index.value = std::get<StringHandle>(indexIrOperands[2]);
+				}
+				
+				// Set value as TypedValue
+				payload.value.type = std::get<Type>(rhsIrOperands[0]);
+				payload.value.size_in_bits = std::get<int>(rhsIrOperands[1]);
+				if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
+					payload.value.value = std::get<unsigned long long>(rhsIrOperands[2]);
+				} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+					payload.value.value = std::get<TempVar>(rhsIrOperands[2]);
+				} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
+					payload.value.value = std::get<StringHandle>(rhsIrOperands[2]);
+				}
+
+				ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), binaryOperatorNode.get_token()));
+
+				// Return the RHS value as the result
+				return rhsIrOperands;
+			}
+			else if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+				// Legacy special handling for member access assignment (fallback)
+				// This code path should not be reached with proper LValueAddress context
+				const MemberAccessNode& member_access = std::get<MemberAccessNode>(lhs_expr);
+
+				// Generate IR for the RHS value
+				auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+				// Get the object and member information
+				const ASTNode& object_node = member_access.object();
+				std::string_view member_name = member_access.member_name();
+
+				// Unwrap ExpressionNode if needed
+				if (object_node.is<ExpressionNode>()) {
+					const ExpressionNode& expr = object_node.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						const IdentifierNode& object_ident = std::get<IdentifierNode>(expr);
+						std::string_view object_name = object_ident.name();
+
+						// Look up the object in the symbol table (local first, then global)
+						std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+						if (!symbol.has_value() && global_symbol_table_) {
+							// Not found locally - try global symbol table
+							symbol = global_symbol_table_->lookup(object_name);
+						}
+						
+						if (!symbol.has_value()) {
+							// Error: variable not found
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						// Get declaration from symbol (could be DeclarationNode or VariableDeclarationNode)
+						const DeclarationNode* decl_ptr = get_decl_from_symbol(*symbol);
+						if (!decl_ptr) {
+							// Error: not a declaration
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+
+						if (type_node.type() != Type::Struct && type_node.type() != Type::UserDefined) {
+							// Error: not a struct type
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						// Get the struct type info
+						TypeIndex struct_type_index = type_node.type_index();
+						if (struct_type_index >= gTypeInfo.size()) {
+							// Error: invalid type index
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
+						const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+						if (!struct_info) {
+							// Error: struct info not found
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
+						if (!member) {
+							// Error: member not found
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						// Build MemberStore operation
+						IrValue member_value;
+						// Add only the value from RHS (rhsIrOperands = [type, size, value])
+						// We only need the value (index 2)
+						if (rhsIrOperands.size() >= 3) {
+							// Extract value from rhsIrOperands[2]
+							if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+								member_value = std::get<TempVar>(rhsIrOperands[2]);
+							} else if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
+								member_value = std::get<unsigned long long>(rhsIrOperands[2]);
+							} else if (std::holds_alternative<double>(rhsIrOperands[2])) {
+								member_value = std::get<double>(rhsIrOperands[2]);
+							} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
+								member_value = std::get<StringHandle>(rhsIrOperands[2]);
+							} else {
+								member_value = 0ULL;  // fallback
+							}
+						} else {
+							// Error: invalid RHS operands
+							return { Type::Int, 32, TempVar{0} };
+						}
+
+						// Check if this is an assignment to a reference member
+						// Reference members need special handling: they store a pointer, so assignment
+						// should store THROUGH the pointer, not TO the member itself
+						if (member->is_reference || member->is_rvalue_reference) {
+							// Step 1: Load the reference (pointer) from the member
+							TempVar ref_ptr_temp = var_counter.next();
+							MemberLoadOp load_ref;
+							load_ref.result.value = ref_ptr_temp;
+							load_ref.result.type = member->type;
+							load_ref.result.size_in_bits = 64;  // Pointer is always 64-bit
+							load_ref.object = StringTable::getOrInternStringHandle(object_name);
+							load_ref.member_name = StringTable::getOrInternStringHandle(member_name);
+							load_ref.offset = static_cast<int>(member->offset);
+							load_ref.is_reference = true;  // Load the pointer value
+							load_ref.is_rvalue_reference = member->is_rvalue_reference;
+							load_ref.struct_type_info = nullptr;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_ref), binaryOperatorNode.get_token()));
+							
+							// Step 2: Store the value through the pointer (using Assignment to a dereferenced pointer)
+							// Create a synthetic dereference + assignment
+							// First, dereference the pointer to get an lvalue
+							TempVar deref_temp = var_counter.next();
+							DereferenceOp deref_op;
+							deref_op.result = deref_temp;
+							deref_op.pointer = ref_ptr_temp;
+							deref_op.pointee_type = member->type;
+							deref_op.pointee_size_in_bits = static_cast<int>(member->size * 8);
+							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), binaryOperatorNode.get_token()));
+							
+							// Now assign to the dereferenced value
+							AssignmentOp assign_op;
+							assign_op.lhs.type = member->type;
+							assign_op.lhs.size_in_bits = static_cast<int>(member->size * 8);
+							assign_op.lhs.value = ref_ptr_temp;  // Use the pointer directly for indirect store
+							assign_op.rhs.type = member->type;
+							assign_op.rhs.size_in_bits = static_cast<int>(member->size * 8);
+							assign_op.rhs.value = member_value;
+							assign_op.is_pointer_store = true;  // Flag to indicate this is a store through pointer
+							ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+						} else {
+							// Normal member store for non-reference members
+							MemberStoreOp member_store;
+							member_store.value.type = member->type;
+							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
+							member_store.value.value = member_value;
+							member_store.object = StringTable::getOrInternStringHandle(object_name);
+							member_store.member_name = StringTable::getOrInternStringHandle(member_name);
+							member_store.offset = static_cast<int>(member->offset);
+							member_store.is_reference = member->is_reference;
+							member_store.is_rvalue_reference = member->is_rvalue_reference;
+							member_store.struct_type_info = nullptr;
+
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));
+						}
+
+						// Return the RHS value as the result
+						return rhsIrOperands;
+					}
+					else if (std::holds_alternative<MemberAccessNode>(expr)) {
+						// Nested member access: obj.member1.member2 = value
+						// Call generateMemberAccessIr to recursively evaluate the nested object
+						const MemberAccessNode& nested_object = std::get<MemberAccessNode>(expr);
+						auto objectIrOperands = generateMemberAccessIr(nested_object);
+						
+						if (objectIrOperands.empty() || objectIrOperands.size() < 3) {
+							FLASH_LOG(Codegen, Error, "Failed to generate IR for nested member access in assignment");
+							throw std::runtime_error("Nested member access IR generation failed");
+						}
+						
+						// objectIrOperands contains [type, size, temp_var] (and possibly type_index)
+						// The temp_var holds the result of the nested member access
+						if (!std::holds_alternative<TempVar>(objectIrOperands[2])) {
+							FLASH_LOG(Codegen, Error, "Nested member access object did not evaluate to a temporary variable");
+							throw std::runtime_error("Expected TempVar for nested member access object");
+						}
+						
+						TempVar nested_object_temp = std::get<TempVar>(objectIrOperands[2]);
+						
+						// Get the type index if available (for proper member lookup)
+						unsigned long long type_index = 0;
+						if (objectIrOperands.size() >= 4) {
+							type_index = std::get<unsigned long long>(objectIrOperands[3]);
+						}
+						
+						// Now find the member info for the final member in the outer MemberAccessNode
+						std::string_view final_member_name = member_access.member_name();
+						
+						// Find the TypeInfo for the nested object's type
+						const TypeInfo* type_info = nullptr;
+						for (const auto& ti : gTypeInfo) {
+							if (ti.type_index_ == type_index) {
+								type_info = &ti;
+								break;
+							}
+						}
+						
+						if (!type_info || !type_info->getStructInfo()) {
+							FLASH_LOG(Codegen, Error, "Type info not found for nested member access object with type_index: ", type_index);
+							throw std::runtime_error("Type info not found for nested member access");
+						}
+						
+						const StructTypeInfo* struct_info = type_info->getStructInfo();
+						bool found_member = false;
+						int member_offset = 0;
+						const StructMember* member_info = nullptr;
+					
+						StringHandle final_member_name_handle = StringTable::getOrInternStringHandle(final_member_name);
+						for (const auto& member : struct_info->members) {
+							if (member.getName() == final_member_name_handle) {
+								member_offset = static_cast<int>(member.offset);  // Already in bytes
+								member_info = &member;
+								found_member = true;
+								break;
+							}
+						}
+					
+						if (!found_member) {
+							FLASH_LOG(Codegen, Error, "Member '", final_member_name, "' not found in struct type");
+							throw std::runtime_error(std::string("Member not found: ") + std::string(final_member_name));
+						}
+					
+						// Create MemberStore operation using the nested object's temp var
+						MemberStoreOp member_store;
+						member_store.object = nested_object_temp;
+						member_store.member_name = StringTable::getOrInternStringHandle(final_member_name);
+						member_store.offset = member_offset;
+						member_store.is_reference = member_info->is_reference;
+						member_store.is_rvalue_reference = member_info->is_rvalue_reference;
+						
+						// Set value as TypedValue
+						member_store.value.type = std::get<Type>(rhsIrOperands[0]);
+						member_store.value.size_in_bits = std::get<int>(rhsIrOperands[1]);
+						if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<unsigned long long>(rhsIrOperands[2]);
+						} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<TempVar>(rhsIrOperands[2]);
+						} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<StringHandle>(rhsIrOperands[2]);
+						}
+						
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));
+						
+						// Return the RHS value as the result
+						return rhsIrOperands;
+					}
+					else if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+						// Array element member access: array[index].member = value
+						const ArraySubscriptNode& array_subscript = std::get<ArraySubscriptNode>(expr);
+						
+						// Generate IR for the array element address
+						auto arrayElemIrOperands = generateArraySubscriptIr(array_subscript);
+						
+						if (arrayElemIrOperands.empty() || arrayElemIrOperands.size() < 3) {
+							FLASH_LOG(Codegen, Error, "Failed to generate IR for array subscript in member access assignment");
+							return { Type::Int, 32, TempVar{0} };
+						}
+						
+						// arrayElemIrOperands contains [type, size, temp_var] where temp_var holds the array element
+						// For struct array elements, this temp var should hold the ADDRESS of the element (not the value)
+						if (!std::holds_alternative<TempVar>(arrayElemIrOperands[2])) {
+							FLASH_LOG(Codegen, Error, "Array subscript did not evaluate to a temporary variable");
+							return { Type::Int, 32, TempVar{0} };
+						}
+						
+						TempVar array_elem_temp = std::get<TempVar>(arrayElemIrOperands[2]);
+						
+						// Get type index to find the struct info
+						unsigned long long type_index = 0;
+						if (arrayElemIrOperands.size() >= 4) {
+							type_index = std::get<unsigned long long>(arrayElemIrOperands[3]);
+						}
+						
+						// Find the TypeInfo for the array element's type
+						const TypeInfo* type_info = nullptr;
+						Type element_type = std::get<Type>(arrayElemIrOperands[0]);
+						
+						if (element_type == Type::Struct || element_type == Type::UserDefined) {
+							for (const auto& ti : gTypeInfo) {
+								if (ti.type_index_ == type_index) {
+									type_info = &ti;
+									break;
+								}
+							}
+						}
+						
+						if (!type_info || !type_info->getStructInfo()) {
+							FLASH_LOG(Codegen, Error, "Type info not found for array element with type_index: ", type_index);
+							return { Type::Int, 32, TempVar{0} };
+						}
+						
+						const StructTypeInfo* struct_info = type_info->getStructInfo();
+						std::string_view final_member_name = member_access.member_name();
+						
+						// Find the member in the struct
+						StringHandle final_member_name_handle = StringTable::getOrInternStringHandle(final_member_name);
+						const StructMember* member_info = struct_info->findMemberRecursive(final_member_name_handle);
+						
+						if (!member_info) {
+							FLASH_LOG(Codegen, Error, "Member '", final_member_name, "' not found in struct type");
+							return { Type::Int, 32, TempVar{0} };
+						}
+						
+						// Create MemberStore operation using the array element's temp var
+						MemberStoreOp member_store;
+						member_store.object = array_elem_temp;
+						member_store.member_name = final_member_name_handle;
+						member_store.offset = static_cast<int>(member_info->offset);
+						member_store.is_reference = member_info->is_reference;
+						member_store.is_rvalue_reference = member_info->is_rvalue_reference;
+						member_store.struct_type_info = nullptr;
+						
+						// Set value as TypedValue
+						member_store.value.type = std::get<Type>(rhsIrOperands[0]);
+						member_store.value.size_in_bits = std::get<int>(rhsIrOperands[1]);
+						if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<unsigned long long>(rhsIrOperands[2]);
+						} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<TempVar>(rhsIrOperands[2]);
+						} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<StringHandle>(rhsIrOperands[2]);
+						} else if (std::holds_alternative<double>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<double>(rhsIrOperands[2]);
+						}
+						
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));
+						
+						// Return the RHS value as the result
+						return rhsIrOperands;
+					}
+				}
+				else if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+					// Check if this is a struct assignment that needs operator=
+					const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
+					std::string_view lhs_name = lhs_ident.name();
+
+					// Look up the LHS in the symbol table
+					const std::optional<ASTNode> lhs_symbol = symbol_table.lookup(lhs_name);
+					if (lhs_symbol.has_value() && lhs_symbol->is<DeclarationNode>()) {
+						const auto& lhs_decl = lhs_symbol->as<DeclarationNode>();
+						const auto& lhs_type = lhs_decl.type_node().as<TypeSpecifierNode>();
+
+						// Check if this is a struct type
+						if (lhs_type.type() == Type::Struct) {
+							TypeIndex struct_type_index = lhs_type.type_index();
+							if (struct_type_index < gTypeInfo.size()) {
+								const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
+								const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+
+								// Check if the struct has an operator=
+								if (struct_info && struct_info->hasCopyAssignmentOperator()) {
+									const StructMemberFunction* copy_assign_op = struct_info->findCopyAssignmentOperator();
+									if (copy_assign_op) {
+										// Generate a member function call to operator=
+										// Format: [ret_var, function_name, this_type, this_size, this_name, param_type, param_size, param_value]
+
+										TempVar ret_var = var_counter.next();
+										std::vector<IrOperand> call_operands;
+										call_operands.emplace_back(ret_var);
+										call_operands.emplace_back(copy_assign_op->getName());  // "operator="
+
+										// Add 'this' pointer (the LHS object)
+										call_operands.emplace_back(lhs_type.type());
+										call_operands.emplace_back(static_cast<int>(lhs_type.size_in_bits()));
+										call_operands.emplace_back(StringTable::getOrInternStringHandle(lhs_name));
+
+										// Generate IR for the RHS value
+										auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+										// Add the RHS as the parameter
+										call_operands.emplace_back(rhsIrOperands[0]);  // type
+										call_operands.emplace_back(rhsIrOperands[1]);  // size
+										call_operands.emplace_back(rhsIrOperands[2]);  // value
+
+										// Add the function call instruction
+										ir_.addInstruction(IrOpcode::FunctionCall, std::move(call_operands), binaryOperatorNode.get_token());
+
+										// Return the LHS value as the result (operator= returns *this)
+										return { lhs_type.type(), static_cast<int>(lhs_type.size_in_bits()), ret_var, 0ULL };
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// Special handling for assignment to member variables in member functions
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && current_struct_name_.isValid()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
