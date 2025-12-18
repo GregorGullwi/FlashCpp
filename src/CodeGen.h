@@ -926,6 +926,83 @@ private:
 		return false;
 	}
 
+	// Helper function to handle assignment using lvalue metadata
+	// Queries LValueInfo::Kind and routes to appropriate store instruction
+	// Returns true if assignment was handled via lvalue metadata, false otherwise
+	//
+	// USAGE: Call this after evaluating both LHS and RHS expressions.
+	//        If it returns true, the assignment was handled and caller should skip normal assignment logic.
+	//        If it returns false, fall back to normal assignment or special-case handling.
+	//
+	// CURRENT LIMITATIONS:
+	// - ArrayElement and Member cases need additional metadata (index, member_name) not currently in LValueInfo
+	// - Only Indirect (dereference) case is fully implemented
+	// - Future work: Extend LValueInfo or pass additional context to handle all cases
+	bool handleLValueAssignment(const std::vector<IrOperand>& lhs_operands,
+	                            const std::vector<IrOperand>& rhs_operands,
+	                            const Token& token) {
+		// Check if LHS has a TempVar with lvalue metadata
+		if (lhs_operands.size() < 3 || !std::holds_alternative<TempVar>(lhs_operands[2])) {
+			return false;
+		}
+
+		TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
+		auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
+		
+		if (!lvalue_info_opt.has_value()) {
+			return false;
+		}
+
+		const LValueInfo& lv_info = lvalue_info_opt.value();
+		
+		FLASH_LOG(Codegen, Debug, "handleLValueAssignment: kind=", static_cast<int>(lv_info.kind));
+
+		// Route to appropriate store instruction based on LValueInfo::Kind
+		switch (lv_info.kind) {
+			case LValueInfo::Kind::ArrayElement: {
+				// Array element assignment: arr[i] = value
+				// TODO: Need index information from ArrayAccessOp
+				// Currently LValueInfo doesn't store the computed index
+				FLASH_LOG(Codegen, Debug, "  -> ArrayStore (not yet implemented via metadata)");
+				return false;
+			}
+
+			case LValueInfo::Kind::Member: {
+				// Member assignment: obj.member = value
+				// TODO: Need member_name which is not in LValueInfo
+				// Could extend LValueInfo to include StringHandle member_name
+				FLASH_LOG(Codegen, Debug, "  -> MemberStore (not yet implemented via metadata)");
+				return false;
+			}
+
+			case LValueInfo::Kind::Indirect: {
+				// Dereference assignment: *ptr = value
+				// This case works because we have all needed info in LValueInfo
+				FLASH_LOG(Codegen, Debug, "  -> DereferenceStore (handled via metadata)");
+				
+				DereferenceStoreOp store_op;
+				store_op.value = toTypedValue(rhs_operands);
+				store_op.pointee_type = std::get<Type>(lhs_operands[0]);
+				store_op.pointee_size_in_bits = std::get<int>(lhs_operands[1]);
+				store_op.pointer = lv_info.base;
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
+				return true;
+			}
+
+			case LValueInfo::Kind::Direct:
+			case LValueInfo::Kind::Temporary:
+				// Direct variable assignment - handled by regular assignment logic
+				FLASH_LOG(Codegen, Debug, "  -> Regular assignment (Direct/Temporary)");
+				return false;
+
+			default:
+				return false;
+		}
+
+		return false;
+	}
+
 	const DeclarationNode& requireDeclarationNode(const ASTNode& node, std::string_view context) const {
 		try {
 			return node.as<DeclarationNode>();
@@ -6831,6 +6908,13 @@ private:
 		// Generate IR for the left-hand side and right-hand side of the operation
 		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
 		auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+		// Try unified lvalue-based assignment handler (uses value category metadata)
+		// This handles assignments like *ptr = value using lvalue metadata
+		if (op == "=" && handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+			// Assignment was handled via lvalue metadata, return RHS as result
+			return rhsIrOperands;
+		}
 
 		// Get the types and sizes of the operands
 		Type lhsType = std::get<Type>(lhsIrOperands[0]);
