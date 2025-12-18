@@ -1007,6 +1007,13 @@ private:
 					return false;
 				}
 				
+				// Safety check: validate size is reasonable (not 0 or negative)
+				int lhs_size = std::get<int>(lhs_operands[1]);
+				if (lhs_size <= 0 || lhs_size > 1024) {
+					FLASH_LOG(Codegen, Debug, "     Invalid size in metadata (", lhs_size, "), falling back");
+					return false;
+				}
+				
 				// Emit the store using helper
 				emitMemberStore(
 					toTypedValue(rhs_operands),     // value
@@ -6234,7 +6241,50 @@ private:
 			return rhsIrOperands;
 		}
 
-		// Special handling for assignment to array subscript
+		// Special handling for assignment to array subscript or member access
+		// Use LValueAddress context to avoid redundant Load instructions
+		// DISABLED: Template type handling needs more work (member size calculation issue)
+		// TODO: Re-enable once template member size handling is fixed
+		if (false && op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+			
+			// Check if LHS is an array subscript or member access (lvalue expressions)
+			if (std::holds_alternative<ArraySubscriptNode>(lhs_expr) || 
+			    std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+				
+				// Evaluate LHS with LValueAddress context (no Load instruction)
+				auto lhsIrOperands = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
+				
+				// Safety check: if LHS evaluation failed or returned invalid size, fall through to legacy code
+				bool use_unified_handler = !lhsIrOperands.empty();
+				if (use_unified_handler && lhsIrOperands.size() >= 2) {
+					int lhs_size = std::get<int>(lhsIrOperands[1]);
+					if (lhs_size <= 0 || lhs_size > 1024) {
+						use_unified_handler = false;  // Invalid size, use legacy code
+					}
+				} else {
+					use_unified_handler = false;
+				}
+				
+				if (use_unified_handler) {
+					// Evaluate RHS normally (Load context)
+					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					
+					// Try to handle assignment using unified lvalue metadata handler
+					if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+						// Assignment was handled successfully via metadata
+						return rhsIrOperands;
+					}
+					
+					// If metadata handler didn't work, fall through to legacy code
+					// This shouldn't happen with proper metadata, but provides a safety net
+				}
+				// If use_unified_handler is false, fall through to legacy handlers below
+			}
+		}
+
+		// Legacy special handling for assignment to array subscript (fallback)
+		// This code path should not be reached with proper LValueAddress context
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<ArraySubscriptNode>(lhs_expr)) {
@@ -6420,7 +6470,8 @@ private:
 				return rhsIrOperands;
 			}
 			else if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
-				// This is a member access assignment: obj.member = value
+				// Legacy special handling for member access assignment (fallback)
+				// This code path should not be reached with proper LValueAddress context
 				const MemberAccessNode& member_access = std::get<MemberAccessNode>(lhs_expr);
 
 				// Generate IR for the RHS value
