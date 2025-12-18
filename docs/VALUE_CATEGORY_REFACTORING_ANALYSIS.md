@@ -156,18 +156,22 @@ if (std::holds_alternative<MemberAccessNode>(expr) ||
 - [x] Document current approach
 - [x] Identify opportunities
 
-### Step 2: Create Unified Assignment Handler (IN PROGRESS)
+### Step 2: Create Unified Assignment Handler (IN PROGRESS → PARTIALLY COMPLETE)
 - [x] Simplify type size calculations using existing helper
-- [ ] Create `handleLValueAssignment()` function
-- [ ] Query LValueInfo::Kind to determine assignment type
-- [ ] Route to appropriate store instruction
-- [ ] Add comprehensive logging
-- [ ] Run in parallel with existing code
+- [x] Create `handleLValueAssignment()` function
+- [x] Query LValueInfo::Kind to determine assignment type
+- [x] Route to appropriate store instruction for Indirect (dereference) case
+- [x] Add comprehensive logging
+- [x] Integrate with existing code (runs before general assignment)
 
-**Progress Update:**
-- Replaced 2 instances of repeated type size calculation (26 lines → 11 lines)
-- All 651 tests pass ✓
-- Next: Create unified assignment handler
+**Progress Update (Latest):**
+- ✅ Implemented unified `handleLValueAssignment()` helper function (84 lines)
+- ✅ Successfully handles dereference assignments (*ptr = value) using lvalue metadata
+- ✅ Integrated into generateBinaryOperatorIr() flow
+- ✅ All 651 tests pass
+- ⚠️  ArrayElement and Member cases need extended metadata (member_name, index)
+- 📝 Documented limitations and future work in code comments
+- Next: Extend LValueInfo or use alternative approach for remaining cases
 
 ### Step 3: Validate and Migrate
 - [ ] Compare results between old and new paths
@@ -181,6 +185,17 @@ if (std::holds_alternative<MemberAccessNode>(expr) ||
 - [ ] Refactor code to use helpers
 
 ## Estimated Impact
+
+### Progress So Far (Current Implementation)
+- **Code Added**: +84 lines for unified handler framework
+- **Cases Handled**: 1 of 3 major assignment types (Indirect/dereference)
+- **Tests Passing**: 651/651 (100%)
+- **New Functionality**: Dereference assignments now use value category metadata
+
+### Future Impact (When Complete)
+- **Code Reduction**: ~600 lines (60% reduction in assignment-related code)
+- **Cases to Handle**: ArrayElement, Member, Direct assignments
+- **Architectural Improvement**: Centralized assignment logic vs distributed special cases
 
 ### Lines of Code
 - **Current**: ~1000 lines of special case handling and pattern matching
@@ -199,13 +214,31 @@ if (std::holds_alternative<MemberAccessNode>(expr) ||
 
 ## Next Steps
 
-1. Implement `handleLValueAssignment()` with logging
-2. Run tests and compare behavior
-3. Document any discrepancies
-4. Iterate until behaviors match
-5. Remove old code paths
-6. Extract and consolidate helpers
-7. Update documentation
+### Immediate (Completed)
+1. ✅ Implement `handleLValueAssignment()` with logging
+2. ✅ Run tests and validate behavior (all 651 tests pass)
+3. ✅ Document implementation and limitations
+
+### Short Term (Next Phase)
+1. Extend LValueInfo to support additional metadata:
+   - Add optional `StringHandle member_name` for Member assignments
+   - Add optional `TypedValue index` for ArrayElement assignments
+   - OR: Create extended variants (LValueInfoMember, LValueInfoArray)
+2. Implement ArrayElement handler in `handleLValueAssignment()`
+3. Implement Member handler in `handleLValueAssignment()`
+4. Validate that new handlers produce identical IR to special-case code
+
+### Medium Term (Future Refactoring)
+1. Once unified handler covers all cases, mark special-case handlers as deprecated
+2. Run both paths in parallel with assertions comparing results
+3. Gradually remove special-case handlers after validation
+4. Extract and consolidate remaining helper functions
+5. Update documentation to reflect new architecture
+
+### Long Term (Optimization)
+1. Consider removing Load instructions when LHS is only used for Store
+2. Optimize away redundant address calculations
+3. Explore other uses of value category metadata for optimization
 
 ## References
 - Original fix: `docs/STRUCT_ARRAY_MEMBER_ACCESS_FIX.md`
