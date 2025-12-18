@@ -969,23 +969,24 @@ private:
 					return false;
 				}
 				
-				ArrayStoreOp payload;
-				payload.element_type = std::get<Type>(lhs_operands[0]);
-				payload.element_size_in_bits = std::get<int>(lhs_operands[1]);
-				payload.array = lv_info.base;
-				payload.member_offset = lv_info.offset;
-				payload.is_pointer_to_array = lv_info.is_pointer_to_array;
-				
-				// Set index from metadata
+				// Build TypedValue for index from metadata
 				TempVar index_temp = lv_info.array_index.value();
-				payload.index.value = index_temp;
-				payload.index.type = std::get<Type>(lhs_operands[0]);  // Use element type for now
-				payload.index.size_in_bits = 32;  // Assume 32-bit index
+				TypedValue index_tv;
+				index_tv.value = index_temp;
+				index_tv.type = std::get<Type>(lhs_operands[0]);  // Use element type for now
+				index_tv.size_in_bits = 32;  // Assume 32-bit index
 				
-				// Set value to store
-				payload.value = toTypedValue(rhs_operands);
-				
-				ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), token));
+				// Emit the store using helper
+				emitArrayStore(
+					std::get<Type>(lhs_operands[0]),  // element_type
+					std::get<int>(lhs_operands[1]),   // element_size_bits
+					lv_info.base,                      // array
+					index_tv,                          // index
+					toTypedValue(rhs_operands),        // value
+					lv_info.offset,                    // member_offset
+					lv_info.is_pointer_to_array,       // is_pointer_to_array
+					token
+				);
 				return true;
 			}
 
@@ -999,17 +1000,16 @@ private:
 					return false;
 				}
 				
-				MemberStoreOp member_store;
-				member_store.value = toTypedValue(rhs_operands);
-				member_store.object = lv_info.base;
-				member_store.member_name = lv_info.member_name.value();
-				member_store.offset = lv_info.offset;
-				member_store.struct_type_info = nullptr;
-				member_store.is_reference = false;
-				member_store.is_rvalue_reference = false;
-				member_store.vtable_symbol = StringHandle();
-				
-				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+				// Emit the store using helper
+				emitMemberStore(
+					toTypedValue(rhs_operands),     // value
+					lv_info.base,                   // object
+					lv_info.member_name.value(),    // member_name
+					lv_info.offset,                 // offset
+					false,                          // is_reference
+					false,                          // is_rvalue_reference
+					token
+				);
 				return true;
 			}
 
@@ -1018,13 +1018,14 @@ private:
 				// This case works because we have all needed info in LValueInfo
 				FLASH_LOG(Codegen, Debug, "  -> DereferenceStore (handled via metadata)");
 				
-				DereferenceStoreOp store_op;
-				store_op.value = toTypedValue(rhs_operands);
-				store_op.pointee_type = std::get<Type>(lhs_operands[0]);
-				store_op.pointee_size_in_bits = std::get<int>(lhs_operands[1]);
-				store_op.pointer = lv_info.base;
-				
-				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
+				// Emit the store using helper
+				emitDereferenceStore(
+					toTypedValue(rhs_operands),     // value
+					std::get<Type>(lhs_operands[0]), // pointee_type
+					std::get<int>(lhs_operands[1]),  // pointee_size_in_bits
+					lv_info.base,                    // pointer
+					token
+				);
 				return true;
 			}
 
@@ -1039,6 +1040,59 @@ private:
 		}
 
 		return false;
+	}
+
+	// Helper functions to emit store instructions
+	// These can be used by both the unified handler and special-case code
+	
+	// Emit ArrayStore instruction
+	void emitArrayStore(Type element_type, int element_size_bits,
+	                    std::variant<StringHandle, TempVar> array,
+	                    const TypedValue& index, const TypedValue& value,
+	                    int64_t member_offset, bool is_pointer_to_array,
+	                    const Token& token) {
+		ArrayStoreOp payload;
+		payload.element_type = element_type;
+		payload.element_size_in_bits = element_size_bits;
+		payload.array = array;
+		payload.index = index;
+		payload.value = value;
+		payload.member_offset = member_offset;
+		payload.is_pointer_to_array = is_pointer_to_array;
+		
+		ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), token));
+	}
+	
+	// Emit MemberStore instruction
+	void emitMemberStore(const TypedValue& value,
+	                     std::variant<StringHandle, TempVar> object,
+	                     StringHandle member_name, int offset,
+	                     bool is_reference = false, bool is_rvalue_reference = false,
+	                     const Token& token = Token()) {
+		MemberStoreOp member_store;
+		member_store.value = value;
+		member_store.object = object;
+		member_store.member_name = member_name;
+		member_store.offset = offset;
+		member_store.struct_type_info = nullptr;
+		member_store.is_reference = is_reference;
+		member_store.is_rvalue_reference = is_rvalue_reference;
+		member_store.vtable_symbol = StringHandle();
+		
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+	}
+	
+	// Emit DereferenceStore instruction
+	void emitDereferenceStore(const TypedValue& value, Type pointee_type, int pointee_size_bits,
+	                          std::variant<StringHandle, TempVar> pointer,
+	                          const Token& token) {
+		DereferenceStoreOp store_op;
+		store_op.value = value;
+		store_op.pointee_type = pointee_type;
+		store_op.pointee_size_in_bits = pointee_size_bits;
+		store_op.pointer = pointer;
+		
+		ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
 	}
 
 	const DeclarationNode& requireDeclarationNode(const ASTNode& node, std::string_view context) const {
@@ -6750,40 +6804,31 @@ private:
 						// Generate IR for the RHS value
 						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
-						// Build MemberStore operation
-						IrValue member_value;
+						// Build MemberStore operation using helper
 						// Add only the value from RHS (rhsIrOperands = [type, size, value])
 						if (rhsIrOperands.size() >= 3) {
-							// Extract value from rhsIrOperands[2]
-							if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
-								member_value = std::get<TempVar>(rhsIrOperands[2]);
-							} else if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
-								member_value = std::get<unsigned long long>(rhsIrOperands[2]);
-							} else if (std::holds_alternative<double>(rhsIrOperands[2])) {
-								member_value = std::get<double>(rhsIrOperands[2]);
-							} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
-								member_value = std::get<StringHandle>(rhsIrOperands[2]);
-							} else {
-								member_value = 0ULL;  // fallback
-							}
+							// Use helper to emit MemberStore
+							TypedValue value_tv;
+							value_tv.type = member->type;
+							value_tv.size_in_bits = static_cast<int>(member->size * 8);
+							value_tv.value = toIrValue(rhsIrOperands[2]);
+							
+							emitMemberStore(
+								value_tv,
+								StringTable::getOrInternStringHandle("this"),  // implicit this pointer
+								StringTable::getOrInternStringHandle(lhs_name),
+								static_cast<int>(member->offset),
+								member->is_reference,
+								member->is_rvalue_reference,
+								binaryOperatorNode.get_token()
+							);
+							
+							// Return the RHS value as the result
+							return rhsIrOperands;
 						} else {
 							// Error: invalid RHS operands
 							return { Type::Int, 32, TempVar{0} };
 						}
-
-						MemberStoreOp member_store;
-						member_store.value.type = member->type;
-						member_store.value.size_in_bits = static_cast<int>(member->size * 8);
-						member_store.value.value = member_value;
-						member_store.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
-						member_store.member_name = StringTable::getOrInternStringHandle(lhs_name);
-						member_store.offset = static_cast<int>(member->offset);
-						member_store.is_reference = member->is_reference;
-						member_store.is_rvalue_reference = member->is_rvalue_reference;
-						member_store.struct_type_info = nullptr;
-
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));							// Return the RHS value as the result
-							return rhsIrOperands;
 						}
 					}
 				}
@@ -6835,13 +6880,14 @@ private:
 									member_load.struct_type_info = nullptr;
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), binaryOperatorNode.get_token()));
 
-									// Store through the pointer using DereferenceStore
-									DereferenceStoreOp store_op;
-									store_op.pointer = ptr_temp;
-									store_op.value = toTypedValue(rhsIrOperands);
-									store_op.pointee_type = orig_type.type();
-									store_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
-									ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), binaryOperatorNode.get_token()));
+									// Store through the pointer using helper
+									emitDereferenceStore(
+										toTypedValue(rhsIrOperands),
+										orig_type.type(),
+										static_cast<int>(orig_type.size_in_bits()),
+										ptr_temp,
+										binaryOperatorNode.get_token()
+									);
 
 									// Return the RHS value (assignment expression returns the assigned value)
 									return rhsIrOperands;
