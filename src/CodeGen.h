@@ -9692,7 +9692,7 @@ private:
 		// Create instruction with typed payload
 		ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
-		// Return the result with the element type and type_index (important for struct arrays)
+		// Return [element_type, element_size_bits, result_var, struct_type_index (for struct arrays, 0 otherwise)]
 		return { element_type, element_size_bits, result_var, element_type_index };
 	}
 
@@ -9918,6 +9918,7 @@ private:
 				
 				// Generate IR for the array subscript expression
 				// This will evaluate arr[i] and return the element
+				// array_operands = [element_type, element_size_bits, temp_var, struct_type_index (optional)]
 				auto array_operands = generateArraySubscriptIr(array_sub);
 				if (array_operands.empty() || array_operands.size() < 3) {
 					FLASH_LOG(Codegen, Error, "Failed to evaluate array subscript for member access");
