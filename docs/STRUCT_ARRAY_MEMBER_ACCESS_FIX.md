@@ -512,7 +512,28 @@ approach:
    - All existing tests still pass ✓
    - Value category system compiles and links ✓
 
-2. **Phase 3b: Simple Lvalue Marking (NEXT)**
+2. **Phase 3b: Simple Lvalue Marking ✓ COMPLETE**
+- [x] Mark array element access as lvalues in generateArraySubscriptIr
+- [x] Mark member access as lvalues in generateMemberAccessIr  
+- [x] Mark dereference operations as lvalues in generateUnaryOperatorIr
+- [x] Verify all tests pass (649/649 tests ✓)
+
+**Files Modified:**
+- `src/CodeGen.h`: Added lvalue metadata marking in 3 key locations
+  - Line ~9654: obj.array[index] array element access
+  - Line ~9745: arr[index] array element access  
+  - Line ~10236: obj.member member access
+  - Line ~5948: *ptr dereference operation
+
+**Testing:**
+- All 649 tests pass ✓
+- No regressions ✓
+- Value category metadata now tracked for:
+  - Array element access (arr[i])
+  - Member access (obj.member)
+  - Dereference operations (*ptr)
+
+**Phase 3c: PRValue Marking (NEXT)**
    - Mark variable references as lvalues
    - Mark dereference operations (*ptr) as lvalues
    - Mark array element access (arr[i]) as lvalues

@@ -5946,6 +5946,15 @@ private:
 			}
 		
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, op, Token()));
+			
+			// Mark dereference result as lvalue (Option 2: Value Category Tracking)
+			// *ptr is an lvalue - it designates the dereferenced object
+			LValueInfo lvalue_info(
+				LValueInfo::Kind::Indirect,
+				op.pointer,
+				0  // offset is 0 for simple dereference
+			);
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 		
 			// Return the dereferenced value with the decremented pointer depth
 			unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
@@ -9652,6 +9661,16 @@ private:
 
 										// Create a temporary variable for the result
 										TempVar result_var = var_counter.next();
+										
+										// Mark array element access as lvalue (Option 2: Value Category Tracking)
+										StringHandle qualified_name = StringTable::getOrInternStringHandle(
+											StringBuilder().append(object_name).append(".").append(member_name));
+										LValueInfo lvalue_info(
+											LValueInfo::Kind::ArrayElement,
+											qualified_name,
+											0  // offset computed dynamically by index
+										);
+										setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 										// Create typed payload for ArrayAccess with qualified member name
 										ArrayAccessOp payload;
@@ -9743,6 +9762,17 @@ private:
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
+		
+		// Mark array element access as lvalue (Option 2: Value Category Tracking)
+		// arr[i] is an lvalue - it designates an object with a stable address
+		LValueInfo lvalue_info(
+			LValueInfo::Kind::ArrayElement,
+			std::holds_alternative<StringHandle>(array_operands[2])
+				? std::variant<StringHandle, TempVar>(std::get<StringHandle>(array_operands[2]))
+				: std::variant<StringHandle, TempVar>(std::get<TempVar>(array_operands[2])),
+			0  // offset computed dynamically by index
+		);
+		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 		// Create typed payload for ArrayAccess
 		ArrayAccessOp payload;
@@ -10213,6 +10243,15 @@ private:
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
+		
+		// Mark member access as lvalue (Option 2: Value Category Tracking)
+		// obj.member is an lvalue - it designates a specific object member
+		LValueInfo lvalue_info(
+			LValueInfo::Kind::Member,
+			base_object,
+			static_cast<int>(member->offset)
+		);
+		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 		// Build MemberLoadOp
 		MemberLoadOp member_load;
