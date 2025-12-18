@@ -4415,6 +4415,39 @@ private:
 		}
 	}
 	
+	// Helper function to check if a TempVar or stack offset is a reference
+	// Checks TempVar metadata first (preferred), then falls back to stack offset lookup
+	bool isReference(TempVar temp_var, int32_t stack_offset) const {
+		// Check TempVar metadata first (more reliable, travels with the value)
+		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
+			return true;
+		}
+		
+		// Fall back to stack offset lookup (for named variables or legacy code)
+		return reference_stack_info_.find(stack_offset) != reference_stack_info_.end();
+	}
+	
+	// Helper function to get reference info for a TempVar or stack offset
+	// Returns the reference info from TempVar metadata if available, otherwise from stack offset map
+	std::optional<ReferenceInfo> getReferenceInfo(TempVar temp_var, int32_t stack_offset) const {
+		// Check TempVar metadata first
+		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
+			return ReferenceInfo{
+				.value_type = getTempVarValueType(temp_var),
+				.value_size_bits = getTempVarValueSizeBits(temp_var),
+				.is_rvalue_reference = isTempVarRValueReference(temp_var)
+			};
+		}
+		
+		// Fall back to stack offset lookup
+		auto it = reference_stack_info_.find(stack_offset);
+		if (it != reference_stack_info_.end()) {
+			return it->second;
+		}
+		
+		return std::nullopt;
+	}
+	
 	StackSpaceSize calculateFunctionStackSpace(std::string_view func_name, StackVariableScope& var_scope, size_t param_count) {
 		StackSpaceSize func_stack_space{};
 
