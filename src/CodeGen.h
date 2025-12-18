@@ -950,6 +950,7 @@ private:
 	                            const Token& token) {
 		// Check if LHS has a TempVar with lvalue metadata
 		if (lhs_operands.size() < 3 || !std::holds_alternative<TempVar>(lhs_operands[2])) {
+			FLASH_LOG(Codegen, Info, "handleLValueAssignment: FAIL - size=", lhs_operands.size(), " has_tempvar=", (lhs_operands.size() >= 3 ? std::holds_alternative<TempVar>(lhs_operands[2]) : false));
 			return false;
 		}
 
@@ -957,6 +958,7 @@ private:
 		auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
 		
 		if (!lvalue_info_opt.has_value()) {
+			FLASH_LOG(Codegen, Info, "handleLValueAssignment: FAIL - no lvalue metadata for temp=", lhs_temp.var_number);
 			return false;
 		}
 
@@ -972,14 +974,16 @@ private:
 				
 				// Check if we have the index stored in metadata
 				if (!lv_info.array_index.has_value()) {
-					FLASH_LOG(Codegen, Debug, "     No index in metadata, falling back");
+					FLASH_LOG(Codegen, Info, "     ArrayElement: No index in metadata, falling back");
 					return false;
 				}
 				
+				FLASH_LOG(Codegen, Info, "     ArrayElement: Has index in metadata, proceeding with unified handler");
+				
 				// Build TypedValue for index from metadata
-				TempVar index_temp = lv_info.array_index.value();
+				IrValue index_value = lv_info.array_index.value();
 				TypedValue index_tv;
-				index_tv.value = index_temp;
+				index_tv.value = index_value;
 				index_tv.type = Type::Int;  // Index type (typically int)
 				index_tv.size_in_bits = 32;  // Standard index size
 				
@@ -6272,9 +6276,11 @@ private:
 				if (use_unified_handler && lhsIrOperands.size() >= 2) {
 					int lhs_size = std::get<int>(lhsIrOperands[1]);
 					if (lhs_size <= 0 || lhs_size > 1024) {
+						FLASH_LOG(Codegen, Info, "Unified handler skipped: invalid size (", lhs_size, ")");
 						use_unified_handler = false;  // Invalid size, use legacy code
 					}
 				} else {
+					FLASH_LOG(Codegen, Info, "Unified handler skipped: empty or insufficient operands");
 					use_unified_handler = false;
 				}
 				
@@ -6285,11 +6291,13 @@ private:
 					// Try to handle assignment using unified lvalue metadata handler
 					if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
 						// Assignment was handled successfully via metadata
+						FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for array/member assignment");
 						return rhsIrOperands;
 					}
 					
 					// If metadata handler didn't work, fall through to legacy code
 					// This shouldn't happen with proper metadata, but provides a safety net
+					FLASH_LOG(Codegen, Info, "Unified handler returned false, falling through to legacy code");
 				}
 				// If use_unified_handler is false, fall through to legacy handlers below
 			}
@@ -6300,6 +6308,7 @@ private:
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<ArraySubscriptNode>(lhs_expr)) {
+				FLASH_LOG(Codegen, Info, "LEGACY array subscript handler invoked - unified handler was not used");
 				// This is an array subscript assignment: arr[index] = value
 				const ArraySubscriptNode& array_subscript = std::get<ArraySubscriptNode>(lhs_expr);
 
@@ -9902,9 +9911,7 @@ private:
 											0  // offset computed dynamically by index
 										);
 										// Store index information for unified assignment handler
-										if (std::holds_alternative<TempVar>(index_operands[2])) {
-											lvalue_info.array_index = std::get<TempVar>(index_operands[2]);
-										}
+										lvalue_info.array_index = toIrValue(index_operands[2]);
 										lvalue_info.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
 										setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
@@ -10016,9 +10023,9 @@ private:
 			0  // offset computed dynamically by index
 		);
 		// Store index information for unified assignment handler
-		if (std::holds_alternative<TempVar>(index_operands[2])) {
-			lvalue_info.array_index = std::get<TempVar>(index_operands[2]);
-		}
+		// Support both constant and variable indices
+		lvalue_info.array_index = toIrValue(index_operands[2]);
+		FLASH_LOG(Codegen, Debug, "Array index stored in metadata (supports constants and variables)");
 		lvalue_info.is_pointer_to_array = is_pointer_to_array;
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
