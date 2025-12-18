@@ -10828,9 +10828,10 @@ private:
 		Type element_type = op.element_type;
 		bool is_floating_point = (element_type == Type::Float || element_type == Type::Double);
 		bool is_float = (element_type == Type::Float);
+		bool is_struct = (element_type == Type::Struct || element_type == Type::UserDefined);
 		
 		// For floating-point, we'll use XMM0 for the loaded value
-		// For integers, we allocate a general-purpose register
+		// For integers and struct addresses, we allocate a general-purpose register
 		X64Register base_reg = allocateRegisterWithSpilling();
 		
 		// Get the array base address (from stack or register)
@@ -10888,24 +10889,33 @@ private:
 				int64_t offset_bytes = index_value * element_size_bytes;
 				emitAddImmToReg(textSectionData, base_reg, offset_bytes);
 
-				// Load value from [base_reg] with appropriate instruction
-				if (is_floating_point) {
-					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
-				} else {
-					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+				// For struct types, keep the address in base_reg
+				// For primitive types, load the value
+				if (!is_struct) {
+					// Load value from [base_reg] with appropriate instruction
+					if (is_floating_point) {
+						emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
+					} else {
+						emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+					}
 				}
 			} else {
 				// Array is a regular variable - use direct stack offset
 				int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
 					
-				// Load from [RBP + offset] with appropriate instruction
-				if (is_floating_point) {
-					emitFloatMovFromFrame(X64Register::XMM0, static_cast<int32_t>(element_offset), is_float);
+				if (is_struct) {
+					// For struct types, compute the address using LEA
+					emitLEAFromFrame(textSectionData, base_reg, element_offset);
 				} else {
-					emitMovFromFrameSized(
-						SizedRegister{base_reg, 64, false},
-						SizedStackSlot{static_cast<int32_t>(element_offset), element_size_bits, isSignedType(op.element_type)}
-					);
+					// Load from [RBP + offset] with appropriate instruction
+					if (is_floating_point) {
+						emitFloatMovFromFrame(X64Register::XMM0, static_cast<int32_t>(element_offset), is_float);
+					} else {
+						emitMovFromFrameSized(
+							SizedRegister{base_reg, 64, false},
+							SizedStackSlot{static_cast<int32_t>(element_offset), element_size_bits, isSignedType(op.element_type)}
+						);
+					}
 				}
 			}
 		} else if (std::holds_alternative<TempVar>(op.index.value)) {
@@ -10928,10 +10938,15 @@ private:
 				emitLoadFromFrame(textSectionData, index_reg, index_var_offset, index_size_bytes);
 				emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 				emitAddRegs(textSectionData, base_reg, index_reg);
-				if (is_floating_point) {
-					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
-				} else {
-					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+				
+				// For struct types, keep the address in base_reg
+				// For primitive types, load the value
+				if (!is_struct) {
+					if (is_floating_point) {
+						emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
+					} else {
+						emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+					}
 				}
 			} else {
 				// Array is a regular variable
@@ -10941,10 +10956,15 @@ private:
 				int64_t combined_offset = array_base_offset + member_offset;
 				emitLEAFromFrame(textSectionData, base_reg, combined_offset);
 				emitAddRegs(textSectionData, base_reg, index_reg);
-				if (is_floating_point) {
-					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
-				} else {
-					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+				
+				// For struct types, keep the address in base_reg
+				// For primitive types, load the value
+				if (!is_struct) {
+					if (is_floating_point) {
+						emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
+					} else {
+						emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+					}
 				}
 			}
 			
@@ -10977,10 +10997,15 @@ private:
 				
 			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 			emitAddRegs(textSectionData, base_reg, index_reg);
-			if (is_floating_point) {
-				emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
-			} else {
-				emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+			
+			// For struct types, keep the address in base_reg
+			// For primitive types, load the value
+			if (!is_struct) {
+				if (is_floating_point) {
+					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
+				} else {
+					emitLoadFromAddressInReg(textSectionData, base_reg, base_reg, element_size_bytes);
+				}
 			}
 			
 			// Release the index register
@@ -10995,6 +11020,16 @@ private:
 				SizedRegister{base_reg, 64, false},  // source: 64-bit register
 				SizedStackSlot{static_cast<int32_t>(result_offset), 64, false}  // dest: 64-bit
 			);
+		}
+		
+		// For struct types, mark the result temp var as holding a pointer
+		// This allows MemberAccess to properly dereference it
+		if (is_struct) {
+			reference_stack_info_[result_offset] = ReferenceInfo{
+				.value_type = element_type,
+				.value_size_bits = element_size_bits,
+				.is_rvalue_reference = false
+			};
 		}
 		
 		// Release the base register

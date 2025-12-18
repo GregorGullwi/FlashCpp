@@ -6472,6 +6472,90 @@ private:
 						// Return the RHS value as the result
 						return rhsIrOperands;
 					}
+					else if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+						// Array element member access: array[index].member = value
+						const ArraySubscriptNode& array_subscript = std::get<ArraySubscriptNode>(expr);
+						
+						// Generate IR for the array element address
+						auto arrayElemIrOperands = generateArraySubscriptIr(array_subscript);
+						
+						if (arrayElemIrOperands.empty() || arrayElemIrOperands.size() < 3) {
+							FLASH_LOG(Codegen, Error, "Failed to generate IR for array subscript in member access assignment");
+							return { Type::Int, 32, TempVar{0} };
+						}
+						
+						// arrayElemIrOperands contains [type, size, temp_var] where temp_var holds the array element
+						// For struct array elements, this temp var should hold the ADDRESS of the element (not the value)
+						if (!std::holds_alternative<TempVar>(arrayElemIrOperands[2])) {
+							FLASH_LOG(Codegen, Error, "Array subscript did not evaluate to a temporary variable");
+							return { Type::Int, 32, TempVar{0} };
+						}
+						
+						TempVar array_elem_temp = std::get<TempVar>(arrayElemIrOperands[2]);
+						
+						// Get type index to find the struct info
+						unsigned long long type_index = 0;
+						if (arrayElemIrOperands.size() >= 4) {
+							type_index = std::get<unsigned long long>(arrayElemIrOperands[3]);
+						}
+						
+						// Find the TypeInfo for the array element's type
+						const TypeInfo* type_info = nullptr;
+						Type element_type = std::get<Type>(arrayElemIrOperands[0]);
+						
+						if (element_type == Type::Struct || element_type == Type::UserDefined) {
+							for (const auto& ti : gTypeInfo) {
+								if (ti.type_index_ == type_index) {
+									type_info = &ti;
+									break;
+								}
+							}
+						}
+						
+						if (!type_info || !type_info->getStructInfo()) {
+							FLASH_LOG(Codegen, Error, "Type info not found for array element with type_index: ", type_index);
+							return { Type::Int, 32, TempVar{0} };
+						}
+						
+						const StructTypeInfo* struct_info = type_info->getStructInfo();
+						std::string_view final_member_name = member_access.member_name();
+						
+						// Find the member in the struct
+						StringHandle final_member_name_handle = StringTable::getOrInternStringHandle(final_member_name);
+						const StructMember* member_info = struct_info->findMemberRecursive(final_member_name_handle);
+						
+						if (!member_info) {
+							FLASH_LOG(Codegen, Error, "Member '", final_member_name, "' not found in struct type");
+							return { Type::Int, 32, TempVar{0} };
+						}
+						
+						// Create MemberStore operation using the array element's temp var
+						MemberStoreOp member_store;
+						member_store.object = array_elem_temp;
+						member_store.member_name = final_member_name_handle;
+						member_store.offset = static_cast<int>(member_info->offset);
+						member_store.is_reference = member_info->is_reference;
+						member_store.is_rvalue_reference = member_info->is_rvalue_reference;
+						member_store.struct_type_info = nullptr;
+						
+						// Set value as TypedValue
+						member_store.value.type = std::get<Type>(rhsIrOperands[0]);
+						member_store.value.size_in_bits = std::get<int>(rhsIrOperands[1]);
+						if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<unsigned long long>(rhsIrOperands[2]);
+						} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<TempVar>(rhsIrOperands[2]);
+						} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<StringHandle>(rhsIrOperands[2]);
+						} else if (std::holds_alternative<double>(rhsIrOperands[2])) {
+							member_store.value.value = std::get<double>(rhsIrOperands[2]);
+						}
+						
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));
+						
+						// Return the RHS value as the result
+						return rhsIrOperands;
+					}
 				}
 				else if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 					// Check if this is a struct assignment that needs operator=
