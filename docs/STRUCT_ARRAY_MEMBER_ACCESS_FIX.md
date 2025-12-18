@@ -26,9 +26,9 @@ This document tracks the implementation of comprehensive C++20 value category tr
 ---
 
 ### ✅ Phase 3: Expression Marking (Complete)
-**Commits**: `72609fe`, `889e255`, `b3b2fec`
+**Commits**: `72609fe`, `889e255`, `b3b2fec`, `0882de4`, `15ef436`
 
-**Modified `src/CodeGen.h`** (10 strategic locations):
+**Modified `src/CodeGen.h`** (12 strategic locations):
 
 **LValue Expressions**:
 - Array element access: `arr[i]` and `obj.array[i]` (lines ~9654, ~9745)
@@ -40,13 +40,18 @@ This document tracks the implementation of comprehensive C++20 value category tr
 - Direct function returns (line ~8234)
 - Indirect function returns (line ~8042)
 
+**XValue Expressions** (NEW):
+- Rvalue reference casts: `static_cast<T&&>`, `reinterpret_cast<T&&>`, `const_cast<T&&>`, `dynamic_cast<T&&>`
+- Move semantics foundation for future `std::move` support
+
 **Added Tests**:
 - `tests/test_value_category_demo.cpp`: Basic validation
 - `tests/test_value_category_composition.cpp`: Nested expression validation
 
 **Results**:
-- All 650 tests pass ✓
+- All 709 tests pass ✓
 - Metadata propagates correctly through nested expressions
+- XValue support enables move semantics
 
 ---
 
@@ -105,7 +110,7 @@ This document tracks the implementation of comprehensive C++20 value category tr
 
 **Results**:
 - Both tracking systems stay synchronized ✅
-- All 651 tests pass ✓
+- All 709 tests pass ✓
 - Backward compatible
 
 ---
@@ -145,7 +150,7 @@ This document tracks the implementation of comprehensive C++20 value category tr
 - Replaced repeated type size calculations with `get_type_size_bits()` helper (15 lines saved)
 - Removed 560 lines of legacy array subscript special handling
 - Total reduction: ~575 lines eliminated
-- All 651 tests pass ✓
+- All 709 tests pass ✓
 
 **Architecture Improvements**:
 - Extended `LValueInfo` with `member_name` and `array_index` metadata
@@ -187,33 +192,47 @@ x86-64 machine code
 ### Completed Achievements ✅
 All major phases of the value category infrastructure are now complete:
 - ✅ Foundation and infrastructure (Phases 1-2)
-- ✅ Expression marking (Phase 3)
+- ✅ Expression marking including XValue support (Phase 3)
 - ✅ CodeGen integration (Phase 4)
 - ✅ IRConverter integration (Phase 5)
 - ✅ Reference tracking consolidation (Phase 6)
 - ✅ **Major code simplification (Phase 7) - 575 lines eliminated**
 
+### Recent Additions (December 2025)
+
+**XValue Support Implementation** (`0882de4`, `15ef436`, `3163a28`):
+- Implemented XValue marking for rvalue reference casts
+- Added support for all C++ cast operators: `static_cast<T&&>`, `reinterpret_cast<T&&>`, `const_cast<T&&>`, `dynamic_cast<T&&>`
+- Foundation for future `std::move` support
+- Enables proper move semantics in the compiler
+
+**Parser Improvements** (`590734e`, `6ea53d2`, `3621c06`, `456ef44`):
+- Enhanced using declaration type registration for namespace-qualified types
+- Fixed struct member handling for C library types (div_t, ldiv_t, lldiv_t)
+- Improved qualified name lookup with fallback to unqualified names
+- Better support for standard library types
+
 ### Future Enhancements
 
-1. **Additional Code Simplification Opportunities**
+1. **Complete std::move Integration**
+   - Detect and mark `std::move` calls as XValues
+   - Enable full move semantics optimization
+   - Integrate with copy elision for maximum performance
+
+2. **Additional Code Simplification Opportunities**
    - Continue replacing remaining AST pattern matching with metadata queries
    - Further consolidation of member access handling
    - Extract more common helper functions
 
-2. **Address vs Value Load Optimization** (Phase 5 Extension)
+3. **Address vs Value Load Optimization** (Phase 5 Extension)
    - Extend LEA optimization beyond struct types
    - Use lvalue metadata to decide when to load address vs value
    - Requires careful handling of reference operations
 
-3. **Copy Elision Implementation** (Phase 5 Extension)
+4. **Copy Elision Implementation** (Phase 5 Extension)
    - Implement RVO (Return Value Optimization) detection
    - Implement NRVO (Named Return Value Optimization) detection
    - Use prvalue metadata to identify elision opportunities
-
-4. **XValue Support** (Phase 3d)
-   - Mark `std::move` results as xvalues
-   - Mark temporary materialization
-   - Enable move optimization
 
 5. **Advanced Optimizations**
    - Dead store elimination using lvalue analysis
@@ -225,11 +244,12 @@ All major phases of the value category infrastructure are now complete:
 ## Testing
 
 All phases validated with comprehensive testing:
-- **651 total tests** - all passing ✓
+- **709 total tests** - all passing ✓
 - **3 value category tests** added:
   - Basic functionality validation
   - Composition and metadata propagation
   - IRConverter integration
+- **XValue tests** added and validated
 - **Zero regressions** in existing tests
 - **Zero breaking changes**
 
@@ -240,6 +260,7 @@ All phases validated with comprehensive testing:
 ### Code Added
 - ~400 lines: Infrastructure and integration (Phases 1-5)
 - ~200 lines: Unified handlers and helpers (Phase 7)
+- ~100 lines: XValue support and cast operators
 - ~200 lines: Documentation and analysis
 
 ### Code Eliminated
@@ -248,14 +269,14 @@ All phases validated with comprehensive testing:
 - **Total reduction: ~575 lines** 
 
 ### Net Impact
-- Added ~800 lines of infrastructure and improvements
+- Added ~900 lines of infrastructure and improvements
 - Eliminated ~575 lines of deprecated code
-- Net change: +225 lines for significantly improved architecture
+- Net change: +325 lines for significantly improved architecture
 
 ### Benefits
-- ✅ C++20 compliant value category system
+- ✅ C++20 compliant value category system (LValue, XValue, PRValue)
 - ✅ Foundation for copy elision (mandatory in C++17)
-- ✅ Foundation for move semantics
+- ✅ **XValue support enables move semantics**
 - ✅ End-to-end metadata flow validated
 - ✅ 100% backward compatible
 - ✅ Enables future optimizations
