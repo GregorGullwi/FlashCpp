@@ -13574,8 +13574,8 @@ ParseResult Parser::parse_for_loop() {
 
     // Check if increment is empty (next token is closing paren)
     if (!consume_punctuator(")"sv)) {
-        // Not empty, parse increment expression
-        ParseResult inc_result = parse_expression();
+        // Not empty, parse increment expression (allow comma operator)
+        ParseResult inc_result = parse_expression(MIN_PRECEDENCE);
         if (inc_result.is_error()) {
             return inc_result;
         }
