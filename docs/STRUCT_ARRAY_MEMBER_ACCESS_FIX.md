@@ -496,7 +496,53 @@ to avoid forward declaration issues with std::variant.
 Placed convenience functions AFTER GlobalTempVarMetadataStorage to avoid
 circular dependencies while maintaining a clean API.
 
-### Phase 3: Parser Integration (NEXT)
+### Phase 3: Parser Integration (IN PROGRESS)
+**Date:** 2025-12-18
+
+**Current Status:**
+Infrastructure is in place and tested. Ready for incremental integration
+into the parser and code generation.
+
+**Strategy:**
+Rather than modifying all code generation at once, we'll take an incremental
+approach:
+
+1. **Phase 3a: Foundation (COMPLETE)**
+   - Infrastructure validated with test case ✓
+   - All existing tests still pass ✓
+   - Value category system compiles and links ✓
+
+2. **Phase 3b: Simple Lvalue Marking (NEXT)**
+   - Mark variable references as lvalues
+   - Mark dereference operations (*ptr) as lvalues
+   - Mark array element access (arr[i]) as lvalues
+   - Mark member access (obj.member) as lvalues
+
+3. **Phase 3c: PRValue Marking**
+   - Mark literals as prvalues
+   - Mark arithmetic operations as prvalues
+   - Mark function returns as prvalues
+
+4. **Phase 3d: XValue Support (FUTURE)**
+   - Mark std::move results as xvalues
+   - Mark temporary materialization as xvalues
+
+**Files Modified (Phase 3a):**
+- `tests/test_value_category_demo.cpp`: Demo test case
+
+**Testing:**
+- All 648 tests pass ✓
+- New demo test compiles and runs correctly (returns 15) ✓
+- No regressions ✓
+
+**Next Steps:**
+The infrastructure is ready. When integration continues, start with:
+- `generateIdentifierIr()`: Mark variable loads
+- `generateMemberAccessIr()`: Mark member accesses
+- `generateArraySubscriptIr()`: Mark array element accesses
+- `generateBinaryOperatorIr()`: Handle dereference operator
+
+### Phase 4: CodeGen Integration (TODO)
 - [ ] Add convenience methods to TempVar for metadata access
 - [ ] Add builder pattern for creating TempVars with metadata
 - [ ] Update documentation comments on TempVar
