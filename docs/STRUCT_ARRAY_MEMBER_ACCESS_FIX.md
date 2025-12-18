@@ -584,18 +584,41 @@ metadata is available throughout the IR generation pipeline. This approach
 is simpler than post-processing and integrates naturally with the existing
 code flow.
 
-### Phase 5: IRConverter Updates (DOCUMENTED FOR FUTURE WORK)
+### Phase 5: IRConverter Updates ✓ PARTIALLY IMPLEMENTED
 **Date:** 2025-12-18
 
 **Status:**
-Foundation is complete. Metadata is tracked and available for use.
-IRConverter can now access value category information via helper functions:
+Foundation infrastructure has been added to IRConverter with logging and preparation
+for future optimizations. Conservative approach taken to ensure stability.
+
+**IRConverter Changes Made:**
+
+1. **Value Category Awareness in handleArrayAccess** (IRConverter.h ~line 10816)
+   - Added check for `isTempVarLValue(result_var)` to detect lvalue usage
+   - Added logging to track when LEA vs MOV decisions are made
+   - Conservative implementation: only use LEA for struct types (safe, existing behavior)
+   - Foundation ready for future optimization: could extend to primitive lvalues
+
+2. **Copy Elision Detection in handleFunctionCall** (IRConverter.h ~line 5621)
+   - Added check for `isTempVarPRValue(call_op.result)` to detect prvalue returns  
+   - Added logging to track prvalue function returns
+   - TODO comment marks location for future RVO/NRVO implementation
+   - Foundation ready: can detect when returns can be elided
+
+**Architecture Decision:**
+Conservative approach ensures stability while adding infrastructure for future work:
+- Metadata is queried and logged, validating the integration
+- Optimization points are marked with TODO comments
+- Future work can incrementally enable optimizations with confidence
+
+**Helper Functions Available:**
+IRConverter can now access value category information via:
 - `isTempVarLValue(temp)` - Check if a TempVar is an lvalue
 - `isTempVarXValue(temp)` - Check if a TempVar is an xvalue  
 - `isTempVarPRValue(temp)` - Check if a TempVar is a prvalue
 - `getTempVarLValueInfo(temp)` - Get lvalue storage info
 
-**Potential Optimizations (Future Work):**
+**Potential Optimizations (Documented, Infrastructure Ready):**
 
 1. **Address vs Value Load Optimization**
    - For lvalues, IRConverter could generate address loads (LEA) instead of

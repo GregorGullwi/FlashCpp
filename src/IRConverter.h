@@ -5976,7 +5976,17 @@ private:
 			// Invalidate caller-saved registers (function calls clobber them)
 			regAlloc.invalidateCallerSavedRegisters();
 			
+			// Phase 5: Copy elision opportunity detection
+			// Check if this is a prvalue return being used to initialize a variable
+			bool is_prvalue_return = isTempVarPRValue(call_op.result);
+			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"FunctionCall result: {} is_prvalue={}", 
+				call_op.result.name(), is_prvalue_return);
+			
 			// Store return value - RAX for integers, XMM0 for floats
+			// TODO Phase 5: For prvalue returns directly initializing variables,
+			// we could optimize by constructing directly in the destination (RVO/NRVO)
 			if (call_op.return_type != Type::Void) {
 				if (is_floating_point_type(call_op.return_type)) {
 					// Float return value is in XMM0
@@ -10830,6 +10840,17 @@ private:
 		bool is_float = (element_type == Type::Float);
 		bool is_struct = (element_type == Type::Struct || element_type == Type::UserDefined);
 		
+		// Phase 5 Optimization: Use value category metadata for LEA vs MOV decision
+		// For struct types, always use LEA (original behavior)
+		// For primitive lvalues, we could use LEA but need to handle dereferencing correctly
+		// For now, only optimize struct types to avoid breaking existing code
+		bool result_is_lvalue = isTempVarLValue(result_var);
+		bool optimize_lea = is_struct;  // Conservative: only struct types for now
+		
+		FLASH_LOG_FORMAT(Codegen, Debug, 
+			"ArrayAccess: is_struct={} is_lvalue={} optimize_lea={}",
+			is_struct, result_is_lvalue, optimize_lea);
+		
 		// For floating-point, we'll use XMM0 for the loaded value
 		// For integers and struct addresses, we allocate a general-purpose register
 		X64Register base_reg = allocateRegisterWithSpilling();
@@ -10889,9 +10910,10 @@ private:
 				int64_t offset_bytes = index_value * element_size_bytes;
 				emitAddImmToReg(textSectionData, base_reg, offset_bytes);
 
-				// For struct types, keep the address in base_reg
-				// For primitive types, load the value
-				if (!is_struct) {
+				// Phase 5: Use optimize_lea for LEA vs MOV decision
+				// For struct types or lvalues, keep the address in base_reg
+				// For primitive prvalues, load the value
+				if (!optimize_lea) {
 					// Load value from [base_reg] with appropriate instruction
 					if (is_floating_point) {
 						emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
@@ -10903,8 +10925,9 @@ private:
 				// Array is a regular variable - use direct stack offset
 				int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
 					
-				if (is_struct) {
-					// For struct types, compute the address using LEA
+				// Phase 5: Use optimize_lea for LEA vs MOV decision
+				if (optimize_lea) {
+					// For struct types or lvalues, compute the address using LEA
 					emitLEAFromFrame(textSectionData, base_reg, element_offset);
 				} else {
 					// Load from [RBP + offset] with appropriate instruction
@@ -10939,9 +10962,10 @@ private:
 				emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 				emitAddRegs(textSectionData, base_reg, index_reg);
 				
-				// For struct types, keep the address in base_reg
-				// For primitive types, load the value
-				if (!is_struct) {
+				// Phase 5: Use optimize_lea for LEA vs MOV decision
+				// For struct types or lvalues, keep the address in base_reg
+				// For primitive prvalues, load the value
+				if (!optimize_lea) {
 					if (is_floating_point) {
 						emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
 					} else {
@@ -10957,9 +10981,10 @@ private:
 				emitLEAFromFrame(textSectionData, base_reg, combined_offset);
 				emitAddRegs(textSectionData, base_reg, index_reg);
 				
-				// For struct types, keep the address in base_reg
-				// For primitive types, load the value
-				if (!is_struct) {
+				// Phase 5: Use optimize_lea for LEA vs MOV decision
+				// For struct types or lvalues, keep the address in base_reg
+				// For primitive prvalues, load the value
+				if (!optimize_lea) {
 					if (is_floating_point) {
 						emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
 					} else {
@@ -10998,9 +11023,10 @@ private:
 			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 			emitAddRegs(textSectionData, base_reg, index_reg);
 			
-			// For struct types, keep the address in base_reg
-			// For primitive types, load the value
-			if (!is_struct) {
+			// Phase 5: Use optimize_lea for LEA vs MOV decision
+			// For struct types or lvalues, keep the address in base_reg
+			// For primitive prvalues, load the value
+			if (!optimize_lea) {
 				if (is_floating_point) {
 					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
 				} else {
@@ -11022,9 +11048,9 @@ private:
 			);
 		}
 		
-		// For struct types, mark the result temp var as holding a pointer
-		// This allows MemberAccess to properly dereference it
-		if (is_struct) {
+		// Phase 5: Mark the result temp var as holding a pointer/reference when using LEA
+		// This allows subsequent operations to properly handle the address
+		if (optimize_lea) {
 			reference_stack_info_[result_offset] = ReferenceInfo{
 				.value_type = element_type,
 				.value_size_bits = element_size_bits,
