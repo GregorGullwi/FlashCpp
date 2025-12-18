@@ -4,6 +4,7 @@
 #include <string>
 #include <variant>
 #include <vector>
+#include <unordered_map>
 #include <any>
 #include <sstream>
 #include <cassert>
@@ -360,6 +361,105 @@ struct TempVar
 
 #include "StringTable.h"  // For StringHandle support
 
+// ============================================================================
+// Value Category Tracking (C++20 Compliance - Option 2 Implementation)
+// ============================================================================
+// C++20 defines three primary value categories:
+// - lvalue: expression that designates an object (has identity, can take address)
+// - xvalue: expiring value (rvalue reference, std::move result)
+// - prvalue: pure rvalue (temporary, literal, function return by value)
+//
+// This system enables:
+// - Copy elision (RVO/NRVO)
+// - Move semantics optimization
+// - Dead store elimination
+// - Proper reference binding
+// ============================================================================
+
+enum class ValueCategory {
+	// lvalue - has identity and cannot be moved from
+	// Examples: variables, array elements, struct members, dereferenced pointers
+	LValue,
+	
+	// xvalue - has identity and can be moved from (expiring value)
+	// Examples: std::move(x), a.m where a is rvalue, array[i] where array is rvalue
+	XValue,
+	
+	// prvalue - pure rvalue, no identity
+	// Examples: literals (42, 3.14), function returns by value, arithmetic operations
+	PRValue
+};
+
+// Information about an lvalue's storage location
+struct LValueInfo {
+	enum class Kind {
+		Direct,        // Direct variable access: x
+		Indirect,      // Through pointer dereference: *ptr
+		Member,        // Struct member access: obj.member
+		ArrayElement,  // Array element access: arr[i]
+		Temporary      // Temporary materialization
+	};
+	
+	Kind kind;
+	
+	// Base object (variable name or temp var)
+	std::variant<StringHandle, TempVar> base;
+	
+	// Offset in bytes from base (for members, array elements)
+	int offset;
+	
+	// For nested access (e.g., arr[i].member), pointer to parent lvalue info
+	// Using raw pointer to avoid circular dependency and keep it lightweight
+	const LValueInfo* parent = nullptr;
+	
+	// Constructor for simple cases
+	LValueInfo(Kind k, std::variant<StringHandle, TempVar> b, int off = 0)
+		: kind(k), base(b), offset(off) {}
+};
+
+// Metadata attached to TempVar for value category tracking
+struct TempVarMetadata {
+	// Value category of this temporary
+	ValueCategory category = ValueCategory::PRValue;
+	
+	// If this is an lvalue or xvalue, information about its storage location
+	std::optional<LValueInfo> lvalue_info;
+	
+	// Whether this temp represents an address (pointer) rather than a value
+	// Helps distinguish between &x (address-of) vs x (value)
+	bool is_address = false;
+	
+	// Whether this temp is the result of std::move or similar
+	bool is_move_result = false;
+	
+	// Constructor
+	TempVarMetadata() = default;
+	
+	// Helper to create lvalue metadata
+	static TempVarMetadata makeLValue(LValueInfo lv_info) {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::LValue;
+		meta.lvalue_info = lv_info;
+		return meta;
+	}
+	
+	// Helper to create xvalue metadata
+	static TempVarMetadata makeXValue(LValueInfo lv_info) {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::XValue;
+		meta.lvalue_info = lv_info;
+		meta.is_move_result = true;
+		return meta;
+	}
+	
+	// Helper to create prvalue metadata
+	static TempVarMetadata makePRValue() {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::PRValue;
+		return meta;
+	}
+};
+
 using IrOperand = std::variant<int, unsigned long long, double, bool, char, Type, TempVar, StringHandle>;
 
 // ============================================================================
@@ -495,6 +595,106 @@ private:
 	// Using vector for better performance with reserve()
 	std::vector<IrOperand> operands_;
 	size_t reserved_capacity_ = 0;
+};
+
+// ============================================================================
+// Global TempVar Metadata Storage (Option 2 Implementation)
+// ============================================================================
+// Stores value category and lvalue information for all TempVars
+// Uses sparse storage - only TempVars with metadata are stored
+// ============================================================================
+class GlobalTempVarMetadataStorage {
+public:
+	static GlobalTempVarMetadataStorage& instance() {
+		static GlobalTempVarMetadataStorage storage;
+		return storage;
+	}
+	
+	// Set metadata for a TempVar
+	void setMetadata(const TempVar& temp, TempVarMetadata metadata) {
+		metadata_[temp.var_number] = std::move(metadata);
+	}
+	
+	// Get metadata for a TempVar (returns default if not found)
+	TempVarMetadata getMetadata(const TempVar& temp) const {
+		auto it = metadata_.find(temp.var_number);
+		if (it != metadata_.end()) {
+			return it->second;
+		}
+		// Default: prvalue with no lvalue info
+		return TempVarMetadata::makePRValue();
+	}
+	
+	// Check if a TempVar has metadata
+	bool hasMetadata(const TempVar& temp) const {
+		return metadata_.find(temp.var_number) != metadata_.end();
+	}
+	
+	// Check if a TempVar is an lvalue
+	bool isLValue(const TempVar& temp) const {
+		auto it = metadata_.find(temp.var_number);
+		return it != metadata_.end() && it->second.category == ValueCategory::LValue;
+	}
+	
+	// Check if a TempVar is an xvalue
+	bool isXValue(const TempVar& temp) const {
+		auto it = metadata_.find(temp.var_number);
+		return it != metadata_.end() && it->second.category == ValueCategory::XValue;
+	}
+	
+	// Check if a TempVar is a prvalue
+	bool isPRValue(const TempVar& temp) const {
+		auto it = metadata_.find(temp.var_number);
+		return it == metadata_.end() || it->second.category == ValueCategory::PRValue;
+	}
+	
+	// Get lvalue info if available
+	std::optional<LValueInfo> getLValueInfo(const TempVar& temp) const {
+		auto it = metadata_.find(temp.var_number);
+		if (it != metadata_.end()) {
+			return it->second.lvalue_info;
+		}
+		return std::nullopt;
+	}
+	
+	// Clear all metadata (useful for testing and between compilation units)
+	void clear() {
+		metadata_.clear();
+	}
+	
+	// Get statistics
+	size_t size() const {
+		return metadata_.size();
+	}
+	
+	// Print statistics
+	void printStats() const {
+		FLASH_LOG_FORMAT(General, Debug,
+			"TempVar metadata entries: {}", metadata_.size());
+		
+		size_t lvalue_count = 0;
+		size_t xvalue_count = 0;
+		size_t prvalue_count = 0;
+		
+		for (const auto& [var_num, meta] : metadata_) {
+			switch (meta.category) {
+				case ValueCategory::LValue: ++lvalue_count; break;
+				case ValueCategory::XValue: ++xvalue_count; break;
+				case ValueCategory::PRValue: ++prvalue_count; break;
+			}
+		}
+		
+		FLASH_LOG_FORMAT(General, Debug,
+			"  LValues: {}, XValues: {}, PRValues: {}",
+			lvalue_count, xvalue_count, prvalue_count);
+	}
+
+private:
+	GlobalTempVarMetadataStorage() = default;
+	
+	// Map from TempVar number to metadata
+	// Using unordered_map for O(1) lookup and sparse storage
+	std::unordered_map<size_t, TempVarMetadata> metadata_;
 };
 
 class OperandStorage {

@@ -424,3 +424,68 @@ void emit_member_store_ir(const MemberAccessNode& member_access, const ASTNode& 
 - IRTypes.h: Lines 102-111 (opcodes)
 - IRTypes.h: Lines 641-687 (op structures)
 - Parser.cpp: ~976KB (IR generation)
+
+## Option 2 Implementation Progress (Started 2025-12-18)
+
+### Phase 1: Foundation - IR Type System Updates ✓ COMPLETE
+**Date:** 2025-12-18
+
+**Changes Made:**
+1. **Added ValueCategory enum** (IRTypes.h after StringTable.h include)
+   - `LValue`: has identity, cannot be moved from
+   - `XValue`: has identity, can be moved from (expiring value)
+   - `PRValue`: pure rvalue, no identity
+   
+2. **Added LValueInfo structure** (IRTypes.h)
+   - Tracks storage location for lvalues/xvalues
+   - Supports nested access (arr[i].member)
+   - Stores base, offset, and parent info
+   - Five kinds: Direct, Indirect, Member, ArrayElement, Temporary
+
+3. **Added TempVarMetadata structure** (IRTypes.h)
+   - Tracks value category for each TempVar
+   - Optional lvalue_info for lvalues/xvalues
+   - Flags for address vs value, move results
+   - Helper factory methods: makeLValue(), makeXValue(), makePRValue()
+
+4. **Added GlobalTempVarMetadataStorage class** (IRTypes.h)
+   - Singleton storage for all TempVar metadata
+   - Sparse storage using unordered_map
+   - O(1) lookup and modification
+   - Helper methods: isLValue(), isXValue(), isPRValue()
+   - Statistics tracking and logging
+
+**Files Modified:**
+- `src/IRTypes.h`: Added ~200 lines for value category infrastructure
+
+**Testing:**
+- All 648 tests pass ✓
+- No regressions ✓
+- Build successful with clang++ ✓
+
+**Architecture Decision:**
+Placed value category structures AFTER TempVar and StringHandle definitions
+to avoid forward declaration issues with std::variant.
+
+### Phase 2: TempVar Enhancement (NEXT)
+- [ ] Add convenience methods to TempVar for metadata access
+- [ ] Add builder pattern for creating TempVars with metadata
+- [ ] Update documentation comments on TempVar
+
+### Phase 3: Parser Integration (TODO)
+- [ ] Add lvalue context tracking in expression parsing
+- [ ] Propagate lvalue info through parse tree
+- [ ] Mark lvalue expressions appropriately
+
+### Phase 4: CodeGen Integration (TODO)
+- [ ] Propagate lvalue metadata through AST-to-IR conversion
+- [ ] Update handlers to preserve lvalue info
+
+### Phase 5: IRConverter Updates (TODO)
+- [ ] Use lvalue metadata for optimal code generation
+- [ ] Implement address vs value load decisions
+
+### Phase 6: Optimization Passes (FUTURE)
+- [ ] Copy elision (RVO/NRVO)
+- [ ] Move optimization
+- [ ] Dead store elimination
