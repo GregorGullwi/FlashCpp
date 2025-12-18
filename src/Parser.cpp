@@ -6299,13 +6299,14 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	// This handles cases like: using ::__gnu_cxx::lldiv_t; where __gnu_cxx::lldiv_t
 	// might itself be an alias to ::lldiv_t
 	if (existing_type_it == gTypesByName.end() && !namespace_path.empty()) {
+		StringHandle qualified_source = source_type_name;  // Save the qualified name for logging
 		StringHandle unqualified_source = StringTable::getOrInternStringHandle(identifier_token.value());
 		auto unqualified_it = gTypesByName.find(unqualified_source);
 		if (unqualified_it != gTypesByName.end()) {
 			existing_type_it = unqualified_it;
 			source_type_name = unqualified_source;  // Update to use the unqualified name that was found
 			FLASH_LOG_FORMAT(Parser, Debug, "Using declaration: qualified name {} not found, using unqualified name {}", 
-			                 StringTable::getStringView(source_type_name), StringTable::getStringView(unqualified_source));
+			                 StringTable::getStringView(qualified_source), StringTable::getStringView(unqualified_source));
 		}
 	}
 	
