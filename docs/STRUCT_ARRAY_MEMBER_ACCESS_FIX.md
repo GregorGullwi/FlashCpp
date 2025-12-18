@@ -533,7 +533,27 @@ approach:
   - Member access (obj.member)
   - Dereference operations (*ptr)
 
-**Phase 3c: PRValue Marking (NEXT)**
+**Phase 3c: PRValue Marking ✓ COMPLETE**
+- [x] Mark arithmetic operation results as prvalues in generateBinaryOperatorIr
+- [x] Mark comparison operation results as prvalues in generateBinaryOperatorIr
+- [x] Mark function call returns as prvalues in generateFunctionCallIr
+- [x] Verify all tests pass (649/649 tests ✓)
+
+**Files Modified:**
+- `src/CodeGen.h`: Added prvalue metadata marking in 3 key locations
+  - Line ~7204: Arithmetic and comparison operations (binary operators)
+  - Line ~8234: Direct function call returns
+  - Line ~8042: Indirect function call returns (function pointers)
+
+**Testing:**
+- All 649 tests pass ✓
+- No regressions ✓
+- Value category metadata now tracked for:
+  - Arithmetic operations (a + b, a * b, etc.)
+  - Comparison operations (a == b, a < b, etc.)
+  - Function returns (func(), (*fp)(), etc.)
+
+**Phase 3d: XValue Support (FUTURE)**
    - Mark variable references as lvalues
    - Mark dereference operations (*ptr) as lvalues
    - Mark array element access (arr[i]) as lvalues

@@ -7202,6 +7202,10 @@ private:
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
+		
+		// Mark arithmetic/comparison result as prvalue (Option 2: Value Category Tracking)
+		// Binary operations produce temporary values (prvalues) with no persistent identity
+		setTempVarMetadata(result_var, TempVarMetadata::makePRValue());
 
 		// Generate the IR for the operation based on the operator and operand types
 		// Use a lookup table approach for better performance and maintainability
@@ -8037,6 +8041,9 @@ private:
 				// Generate IndirectCall IR: [result_var, func_ptr_var, arg1, arg2, ...]
 				TempVar ret_var = var_counter.next();
 				
+				// Mark function return value as prvalue (Option 2: Value Category Tracking)
+				setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
+				
 				// Generate IR for function arguments
 				std::vector<TypedValue> arguments;
 				functionCallNode.arguments().visit([&](ASTNode argument) {
@@ -8228,6 +8235,11 @@ private:
 		// Always add the return variable and function name (mangled for overload resolution)
 		FLASH_LOG_FORMAT(Codegen, Debug, "Final function_name for call: '{}'", function_name);
 		TempVar ret_var = var_counter.next();
+		
+		// Mark function return value as prvalue (Option 2: Value Category Tracking)
+		// Function returns (by value) produce temporaries with no persistent identity
+		setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
+		
 		irOperands.emplace_back(ret_var);
 		irOperands.emplace_back(StringTable::getOrInternStringHandle(function_name));
 
