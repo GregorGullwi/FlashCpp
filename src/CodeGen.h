@@ -5337,7 +5337,7 @@ private:
 							Type element_type = std::get<Type>(array_operands[0]);
 							int element_size_bits = std::get<int>(array_operands[1]);
 							
-							// Get the struct type index
+							// Get the struct type index (4th element of array_operands contains type_index for struct types)
 							TypeIndex type_index = 0;
 							if (array_operands.size() >= 4 && std::holds_alternative<unsigned long long>(array_operands[3])) {
 								type_index = static_cast<TypeIndex>(std::get<unsigned long long>(array_operands[3]));
@@ -5374,16 +5374,17 @@ private:
 										// Now compute the member address by adding the member offset
 										// We need to add the offset to the pointer value
 										// Treat the pointer as a 64-bit integer for arithmetic purposes
+										constexpr int POINTER_SIZE_BITS = 64;
 										TempVar member_addr_var = var_counter.next();
 										BinaryOp add_offset;
-										add_offset.lhs = { Type::UnsignedLongLong, 64, elem_addr_var };  // pointer treated as integer
-										add_offset.rhs = { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member->offset) };
+										add_offset.lhs = { Type::UnsignedLongLong, POINTER_SIZE_BITS, elem_addr_var };  // pointer treated as integer
+										add_offset.rhs = { Type::UnsignedLongLong, POINTER_SIZE_BITS, static_cast<unsigned long long>(member->offset) };
 										add_offset.result = member_addr_var;
 										
 										ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), memberAccess.member_token()));
 										
-										// Return pointer to member (64-bit pointer)
-										return { member->type, 64, member_addr_var, 0ULL };
+										// Return pointer to member (64-bit pointer, 0 for no additional type info)
+										return { member->type, POINTER_SIZE_BITS, member_addr_var, 0ULL };
 									}
 								}
 							}
