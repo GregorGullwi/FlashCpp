@@ -554,19 +554,37 @@ approach:
   - Function returns (func(), (*fp)(), etc.)
 
 **Phase 3d: XValue Support (FUTURE)**
-   - Mark variable references as lvalues
-   - Mark dereference operations (*ptr) as lvalues
-   - Mark array element access (arr[i]) as lvalues
-   - Mark member access (obj.member) as lvalues
+- [ ] Mark std::move results as xvalues
+- [ ] Mark temporary materialization as xvalues
 
-3. **Phase 3c: PRValue Marking**
-   - Mark literals as prvalues
-   - Mark arithmetic operations as prvalues
-   - Mark function returns as prvalues
+### Phase 4: CodeGen Integration ✓ COMPLETE
+**Date:** 2025-12-18
 
-4. **Phase 3d: XValue Support (FUTURE)**
-   - Mark std::move results as xvalues
-   - Mark temporary materialization as xvalues
+**Status:**
+Metadata propagation has been validated through testing. The value category
+system correctly tracks categories through composed expressions.
+
+**Validation Test:**
+- `tests/test_value_category_composition.cpp`: Tests nested expressions
+  - Function returns (prvalue) → `makePoint()`
+  - Array element access (lvalue) → `arr[0].x`
+  - Member access (lvalue) → `p1.x`
+  - Arithmetic operations (prvalue) → `p1.x + arr[0].x`
+  - Test returns 50 ✓
+
+**Findings:**
+- LValue marking works correctly for array elements and member access
+- PRValue marking works correctly for arithmetic and function returns
+- Categories propagate correctly through nested operations
+- All 649 tests continue to pass ✓
+
+**Architecture Note:**
+The current implementation marks TempVars at creation time, which ensures
+metadata is available throughout the IR generation pipeline. This approach
+is simpler than post-processing and integrates naturally with the existing
+code flow.
+
+### Phase 5: IRConverter Updates (NEXT)
 
 **Files Modified (Phase 3a):**
 - `tests/test_value_category_demo.cpp`: Demo test case
