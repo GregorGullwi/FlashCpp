@@ -8313,17 +8313,25 @@ private:
 										var_size / 8, var_offset, return_slot_param_offset);
 									
 									// Copy struct from var_offset to address in dest_reg
-									// For now, copy in 8-byte chunks
+									// Copy in 8-byte chunks (or smaller for the last chunk)
 									int struct_size_bytes = var_size / 8;
-									for (int i = 0; i < struct_size_bytes; i += 8) {
+									int bytes_copied = 0;
+									while (bytes_copied < struct_size_bytes) {
+										int chunk_size = (struct_size_bytes - bytes_copied >= 8) ? 8 : struct_size_bytes - bytes_copied;
 										// Load from source
-										emitMovFromFrame(X64Register::RAX, var_offset + i);
-										// Store to destination [dest_reg + i]
-										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, i, 8);
+										if (chunk_size == 8) {
+											emitMovFromFrame(X64Register::RAX, var_offset + bytes_copied);
+										} else {
+											// For smaller chunks, use appropriately sized load
+											emitMovFromFrameBySize(X64Register::RAX, var_offset + bytes_copied, chunk_size * 8);
+										}
+										// Store to destination [dest_reg + bytes_copied]
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, chunk_size);
+										bytes_copied += chunk_size;
 									}
 									
 									FLASH_LOG_FORMAT(Codegen, Debug,
-										"Struct copy complete: copied {} bytes", struct_size_bytes);
+										"Struct copy complete: copied {} bytes", bytes_copied);
 								}
 							} else if (is_float_return) {
 								// Load floating-point value into XMM0
@@ -8416,17 +8424,25 @@ private:
 										var_size / 8, var_offset, return_slot_param_offset);
 									
 									// Copy struct from var_offset to address in dest_reg
-									// Copy in 8-byte chunks
+									// Copy in 8-byte chunks (or smaller for the last chunk)
 									int struct_size_bytes = var_size / 8;
-									for (int i = 0; i < struct_size_bytes; i += 8) {
+									int bytes_copied = 0;
+									while (bytes_copied < struct_size_bytes) {
+										int chunk_size = (struct_size_bytes - bytes_copied >= 8) ? 8 : struct_size_bytes - bytes_copied;
 										// Load from source
-										emitMovFromFrame(X64Register::RAX, var_offset + i);
-										// Store to destination [dest_reg + i]
-										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, i, 8);
+										if (chunk_size == 8) {
+											emitMovFromFrame(X64Register::RAX, var_offset + bytes_copied);
+										} else {
+											// For smaller chunks, use appropriately sized load
+											emitMovFromFrameBySize(X64Register::RAX, var_offset + bytes_copied, chunk_size * 8);
+										}
+										// Store to destination [dest_reg + bytes_copied]
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, chunk_size);
+										bytes_copied += chunk_size;
 									}
 									
 									FLASH_LOG_FORMAT(Codegen, Debug,
-										"Struct copy complete: copied {} bytes", struct_size_bytes);
+										"Struct copy complete: copied {} bytes", bytes_copied);
 								}
 							} else if (is_float_return) {
 								// Load floating-point value into XMM0
