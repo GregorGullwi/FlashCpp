@@ -1124,6 +1124,44 @@ private:
 			return false;
 		}
 		
+		// Lookup member info to get is_reference flags
+		bool member_is_reference = false;
+		bool member_is_rvalue_reference = false;
+		
+		// Try to get struct type info from the base object
+		if (std::holds_alternative<StringHandle>(lv_info.base)) {
+			StringHandle base_name_handle = std::get<StringHandle>(lv_info.base);
+			std::string_view base_name = StringTable::getStringView(base_name_handle);
+			
+			// Look up the base object in symbol table
+			std::optional<ASTNode> symbol = symbol_table.lookup(base_name);
+			if (!symbol.has_value() && global_symbol_table_) {
+				symbol = global_symbol_table_->lookup(base_name);
+			}
+			
+			if (symbol.has_value()) {
+				const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+				if (decl) {
+					const TypeSpecifierNode& type_node = decl->type_node().as<TypeSpecifierNode>();
+					if (is_struct_type(type_node.type())) {
+						TypeIndex type_index = type_node.type_index();
+						if (type_index < gTypeInfo.size()) {
+							const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
+							if (struct_info) {
+								const StructMember* member = struct_info->findMemberRecursive(lv_info.member_name.value());
+								if (member) {
+									member_is_reference = member->is_reference;
+									member_is_rvalue_reference = member->is_rvalue_reference;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		// Note: For TempVar base, we don't have easy access to type info, so we default to false
+		// This is acceptable since most compound assignments don't involve reference members
+		
 		MemberLoadOp load_op;
 		load_op.result.value = current_value_temp;
 		load_op.result.type = std::get<Type>(lhs_operands[0]);
@@ -1131,32 +1169,35 @@ private:
 		load_op.object = lv_info.base;
 		load_op.member_name = lv_info.member_name.value();
 		load_op.offset = lv_info.offset;
-		// Use metadata for reference info if available, otherwise default to false
-		load_op.is_reference = false;  // TODO: Get from metadata if available
-		load_op.is_rvalue_reference = false;  // TODO: Get from metadata if available
+		load_op.is_reference = member_is_reference;
+		load_op.is_rvalue_reference = member_is_rvalue_reference;
 		load_op.struct_type_info = nullptr;
 		
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), token));
 		
 		// Now perform the operation (e.g., Add for +=, Subtract for -=, etc.)
 		TempVar result_temp = var_counter.next();
-		IrOpcode operation_opcode;
 		
 		// Map compound assignment operator to the corresponding operation
-		if (op == "+=") operation_opcode = IrOpcode::Add;
-		else if (op == "-=") operation_opcode = IrOpcode::Subtract;
-		else if (op == "*=") operation_opcode = IrOpcode::Multiply;
-		else if (op == "/=") operation_opcode = IrOpcode::Divide;
-		else if (op == "%=") operation_opcode = IrOpcode::Modulo;
-		else if (op == "&=") operation_opcode = IrOpcode::BitwiseAnd;
-		else if (op == "|=") operation_opcode = IrOpcode::BitwiseOr;
-		else if (op == "^=") operation_opcode = IrOpcode::BitwiseXor;
-		else if (op == "<<=") operation_opcode = IrOpcode::ShiftLeft;
-		else if (op == ">>=") operation_opcode = IrOpcode::ShiftRight;
-		else {
+		static const std::unordered_map<std::string_view, IrOpcode> compound_op_map = {
+			{"+=", IrOpcode::Add},
+			{"-=", IrOpcode::Subtract},
+			{"*=", IrOpcode::Multiply},
+			{"/=", IrOpcode::Divide},
+			{"%=", IrOpcode::Modulo},
+			{"&=", IrOpcode::BitwiseAnd},
+			{"|=", IrOpcode::BitwiseOr},
+			{"^=", IrOpcode::BitwiseXor},
+			{"<<=", IrOpcode::ShiftLeft},
+			{">>=", IrOpcode::ShiftRight}
+		};
+		
+		auto op_it = compound_op_map.find(op);
+		if (op_it == compound_op_map.end()) {
 			FLASH_LOG(Codegen, Debug, "     Unsupported compound assignment operator: ", op);
 			return false;
 		}
+		IrOpcode operation_opcode = op_it->second;
 		
 		// Create the binary operation
 		BinaryOp bin_op;
@@ -1179,8 +1220,8 @@ private:
 			lv_info.base,
 			lv_info.member_name.value(),
 			lv_info.offset,
-			false,  // TODO: Get from metadata if available
-			false,  // TODO: Get from metadata if available
+			member_is_reference,
+			member_is_rvalue_reference,
 			token
 		);
 		
@@ -6628,8 +6669,12 @@ private:
 
 		// Special handling for compound assignment to array subscript or member access
 		// Use LValueAddress context for the LHS, similar to regular assignment
-		if ((op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=" || 
-		     op == "&=" || op == "|=" || op == "^=" || op == "<<=" || op == ">>=") &&
+		// Helper lambda to check if operator is a compound assignment
+		static const std::unordered_set<std::string_view> compound_assignment_ops = {
+			"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="
+		};
+		
+		if (compound_assignment_ops.count(op) > 0 &&
 		    binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			
