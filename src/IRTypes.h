@@ -326,7 +326,7 @@ constexpr auto make_temp_array() {
 	return make_temp_array(std::make_index_sequence<N>{});
 }
 
-constexpr auto raw_temp_names = make_temp_array<64>();
+constexpr auto raw_temp_names = make_temp_array<256>();
 
 // Create string_view version from raw names
 constexpr auto make_view_array() {
@@ -353,6 +353,11 @@ struct TempVar
 		// var_number=0 is a sentinel (invalid/uninitialized), return empty string
 		if (var_number == 0) {
 			return ""; // Sentinel value - no valid name
+		}
+		// Bounds check - temp_name_array has 256 entries (0-255)
+		if (var_number - 1 >= 256) {
+			FLASH_LOG(General, Error, "TempVar::name() - var_number out of bounds: ", var_number, " (max is 256)");
+			return "temp_INVALID"; // Return a safe fallback
 		}
 		return temp_name_array[var_number - 1];
 	}
