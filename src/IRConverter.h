@@ -6100,6 +6100,7 @@ private:
 
 		// Get the object's stack offset
 		int object_offset = 0;
+		bool object_is_pointer = false;  // Declare early so RVO branch can set it
 		
 		// If using return slot (RVO), get offset from return_slot_offset instead
 		if (ctor_op.use_return_slot && ctor_op.return_slot_offset.has_value()) {
@@ -6110,7 +6111,29 @@ private:
 				object_offset);
 		} else if (std::holds_alternative<TempVar>(ctor_op.object)) {
 			const TempVar temp_var = std::get<TempVar>(ctor_op.object);
-			object_offset = getStackOffsetFromTempVar(temp_var);
+			
+			// Check if this constructor is RVO-eligible and function has hidden return param
+			// If so, construct directly into __return_slot instead of local temporary
+			if (current_function_has_hidden_return_param_ && isTempVarRVOEligible(temp_var)) {
+				// Find __return_slot variable
+				auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+				if (return_slot_it != variable_scopes.back().variables.end()) {
+					// Load the return slot address (which is stored in __return_slot parameter)
+					int return_slot_param_offset = return_slot_it->second.offset;
+					object_offset = return_slot_param_offset;
+					object_is_pointer = true;  // __return_slot holds an address, needs to be loaded
+					
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"RVO: Constructor for temp_{} will construct into return slot (loading address from offset {})",
+						temp_var.var_number, return_slot_param_offset);
+				} else {
+					object_offset = getStackOffsetFromTempVar(temp_var);
+					object_is_pointer = true;  // TempVars are always pointers in constructor calls
+				}
+			} else {
+				object_offset = getStackOffsetFromTempVar(temp_var);
+				object_is_pointer = true;  // TempVars are always pointers in constructor calls
+			}
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(ctor_op.object);
 			auto it = variable_scopes.back().variables.find(var_name_handle);
@@ -6118,17 +6141,7 @@ private:
 				throw std::runtime_error("Constructor call: variable not found in variables map: " + std::string(StringTable::getStringView(var_name_handle)));
 			}
 			object_offset = it->second.offset;
-		}
-
-		// Check if the object is a pointer (needs to be loaded, not addressed)
-		// This includes 'this' pointer and TempVars from heap_alloc
-		bool object_is_pointer = false;
-		if (std::holds_alternative<TempVar>(ctor_op.object)) {
-			// TempVars are always pointers in constructor calls (from heap_alloc)
-			object_is_pointer = true;
-		} else if (std::holds_alternative<StringHandle>(ctor_op.object)) {
-			StringHandle obj_handle = std::get<StringHandle>(ctor_op.object);
-			object_is_pointer = (StringTable::getStringView(obj_handle) == "this");
+			object_is_pointer = (StringTable::getStringView(var_name_handle) == "this");
 		}
 
 		// Load the address of the object into the first parameter register ('this' pointer)
