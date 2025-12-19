@@ -7659,6 +7659,30 @@ private:
 		return {Type::Void, 0, 0ULL, 0ULL};
 	}
 	
+	// Helper to detect if a function call is std::move
+	bool isStdMoveCall(std::string_view func_name, const FunctionCallNode& functionCallNode, const DeclarationNode& decl_node) const {
+		if (func_name != "move") {
+			return false;
+		}
+		
+		// Check if this is from std namespace by looking at the mangled name
+		std::string_view mangled = functionCallNode.has_mangled_name() 
+			? functionCallNode.mangled_name() 
+			: std::string_view();
+		
+		// std::move has mangled name starting with _ZSt (std namespace)
+		if (mangled.starts_with("_ZSt") || mangled.find("std") != std::string_view::npos) {
+			return true;
+		}
+		
+		// For templates without mangled name, check if return type is rvalue reference
+		if (!functionCallNode.has_mangled_name() && decl_node.type_node().as<TypeSpecifierNode>().is_rvalue_reference()) {
+			return true;
+		}
+		
+		return false;
+	}
+
 	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 
@@ -7673,42 +7697,26 @@ private:
 
 		// Special handling for std::move - detect and mark result as xvalue
 		// std::move(x) is equivalent to static_cast<T&&>(x)
-		if (func_name_view == "move") {
-			// Check if this is from std namespace by looking at the mangled name
-			std::string_view potential_mangled = functionCallNode.has_mangled_name() 
-				? functionCallNode.mangled_name() 
-				: std::string_view();
+		if (isStdMoveCall(func_name_view, functionCallNode, decl_node)) {
+			FLASH_LOG(Codegen, Debug, "Detected std::move call - marking result as xvalue");
 			
-			// std::move has mangled name starting with _ZSt (std namespace)
-			// or if no mangled name, check if return type is rvalue reference (template case)
-			bool is_std_move = potential_mangled.starts_with("_ZSt") || 
-			                   potential_mangled.find("std") != std::string_view::npos;
-			
-			if (is_std_move || (!functionCallNode.has_mangled_name() && decl_node.type_node().as<TypeSpecifierNode>().is_rvalue_reference())) {
-				FLASH_LOG(Codegen, Debug, "Detected std::move call - marking result as xvalue");
-				
-				// std::move takes exactly one argument
-				if (functionCallNode.arguments().size() != 1) {
-					FLASH_LOG(Codegen, Error, "std::move must have exactly one argument");
-					throw std::runtime_error("Invalid std::move call");
-				}
-				
-				// Evaluate the argument
-				ASTNode arg_node;
-				functionCallNode.arguments().visit([&](ASTNode node) {
-					arg_node = node;
-				});
-				auto arg_operands = visitExpressionNode(arg_node.as<ExpressionNode>());
-				
-				// Get argument type and size
-				Type arg_type = std::get<Type>(arg_operands[0]);
-				int arg_size = std::get<int>(arg_operands[1]);
-				
-				// Use the existing helper function to handle rvalue reference conversion
-				// This ensures consistency with static_cast<T&&> behavior
-				return handleRValueReferenceCast(arg_operands, arg_type, arg_size, 
-				                                 functionCallNode.called_from(), "std::move");
+			// std::move takes exactly one argument
+			if (functionCallNode.arguments().size() != 1) {
+				FLASH_LOG(Codegen, Error, "std::move must have exactly one argument");
+				throw std::runtime_error("Invalid std::move call");
 			}
+			
+			// Evaluate the argument (direct access since we validated size == 1)
+			auto arg_operands = visitExpressionNode(functionCallNode.arguments()[0].as<ExpressionNode>());
+			
+			// Get argument type and size
+			Type arg_type = std::get<Type>(arg_operands[0]);
+			int arg_size = std::get<int>(arg_operands[1]);
+			
+			// Use the existing helper function to handle rvalue reference conversion
+			// This ensures consistency with static_cast<T&&> behavior
+			return handleRValueReferenceCast(arg_operands, arg_type, arg_size, 
+			                                 functionCallNode.called_from(), "std::move");
 		}
 
 		// Check if this is a function pointer call
