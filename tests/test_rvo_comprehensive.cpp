@@ -26,6 +26,20 @@ Data test3(int flag) {
     }
 }
 
+// Test 4: RVO with function call as argument
+int helper() {
+    return 10;
+}
+
+Data test4() {
+    return Data(helper(), 40);
+}
+
+// Test 5: RVO with multiple expressions and conditionals
+Data test5(int x) {
+    return Data(x + x, (x > 0) ? x * 2 : x + 1);
+}
+
 int main() {
     // Test 1
     Data d1 = test1();
@@ -41,6 +55,17 @@ int main() {
     
     Data d4 = test3(-1);
     if (d4.a != 3 || d4.b != 4) return 4;
+    
+    // Test 4: RVO with function call
+    Data d5 = test4();
+    if (d5.a != 10 || d5.b != 40) return 5;
+    
+    // Test 5: RVO with conditional expression
+    Data d6 = test5(7);
+    if (d6.a != 14 || d6.b != 14) return 6;
+    
+    Data d7 = test5(-2);
+    if (d7.a != -4 || d7.b != -1) return 7;
     
     return 0;
 }
