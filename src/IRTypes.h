@@ -4,6 +4,7 @@
 #include <string>
 #include <variant>
 #include <vector>
+#include <unordered_map>
 #include <any>
 #include <sstream>
 #include <cassert>
@@ -325,7 +326,7 @@ constexpr auto make_temp_array() {
 	return make_temp_array(std::make_index_sequence<N>{});
 }
 
-constexpr auto raw_temp_names = make_temp_array<64>();
+constexpr auto raw_temp_names = make_temp_array<256>();
 
 // Create string_view version from raw names
 constexpr auto make_view_array() {
@@ -353,12 +354,175 @@ struct TempVar
 		if (var_number == 0) {
 			return ""; // Sentinel value - no valid name
 		}
+		// Bounds check - temp_name_array has 256 entries (0-255)
+		if (var_number - 1 >= 256) {
+			FLASH_LOG(General, Error, "TempVar::name() - var_number out of bounds: ", var_number, " (max is 256)");
+			return "temp_INVALID"; // Return a safe fallback
+		}
 		return temp_name_array[var_number - 1];
 	}
 	size_t var_number = 1;  // 1-based: first temp var is number 1
 };
 
 #include "StringTable.h"  // For StringHandle support
+
+// ============================================================================
+// Value Category Tracking (C++20 Compliance - Option 2 Implementation)
+// ============================================================================
+// C++20 defines three primary value categories:
+// - lvalue: expression that designates an object (has identity, can take address)
+// - xvalue: expiring value (rvalue reference, std::move result)
+// - prvalue: pure rvalue (temporary, literal, function return by value)
+//
+// This system enables:
+// - Copy elision (RVO/NRVO)
+// - Move semantics optimization
+// - Dead store elimination
+// - Proper reference binding
+// ============================================================================
+
+enum class ValueCategory {
+	// lvalue - has identity and cannot be moved from
+	// Examples: variables, array elements, struct members, dereferenced pointers
+	LValue,
+	
+	// xvalue - has identity and can be moved from (expiring value)
+	// Examples: std::move(x), a.m where a is rvalue, array[i] where array is rvalue
+	XValue,
+	
+	// prvalue - pure rvalue, no identity
+	// Examples: literals (42, 3.14), function returns by value, arithmetic operations
+	PRValue
+};
+
+// Type alias for operand values (used in LValueInfo and elsewhere)
+using IrValue = std::variant<unsigned long long, double, TempVar, StringHandle>;
+
+// Information about an lvalue's storage location
+struct LValueInfo {
+	enum class Kind {
+		Direct,        // Direct variable access: x
+		Indirect,      // Through pointer dereference: *ptr
+		Member,        // Struct member access: obj.member
+		ArrayElement,  // Array element access: arr[i]
+		Temporary      // Temporary materialization
+	};
+	
+	Kind kind;
+	
+	// Base object (variable name or temp var)
+	std::variant<StringHandle, TempVar> base;
+	
+	// Offset in bytes from base (for members, array elements)
+	int offset;
+	
+	// For nested access (e.g., arr[i].member), pointer to parent lvalue info
+	// Using raw pointer to avoid circular dependency and keep it lightweight
+	const LValueInfo* parent = nullptr;
+	
+	// Additional metadata for specific kinds (optional to keep structure lightweight)
+	// For Member: the member name
+	std::optional<StringHandle> member_name;
+	
+	// For ArrayElement: the computed index value
+	// Can be a constant (unsigned long long), TempVar, or StringHandle
+	std::optional<IrValue> array_index;
+	
+	// For ArrayElement: whether the array base is a pointer (int* arr) or array (int arr[])
+	bool is_pointer_to_array = false;
+	
+	// Constructor for simple cases
+	LValueInfo(Kind k, std::variant<StringHandle, TempVar> b, int off = 0)
+		: kind(k), base(b), offset(off) {}
+};
+
+// Metadata attached to TempVar for value category tracking
+struct TempVarMetadata {
+	// Value category of this temporary
+	ValueCategory category = ValueCategory::PRValue;
+	
+	// If this is an lvalue or xvalue, information about its storage location
+	std::optional<LValueInfo> lvalue_info;
+	
+	// Whether this temp represents an address (pointer) rather than a value
+	// Helps distinguish between &x (address-of) vs x (value)
+	bool is_address = false;
+	
+	// Whether this temp is the result of std::move or similar
+	bool is_move_result = false;
+	
+	// RVO/NRVO (Return Value Optimization) tracking
+	// C++17 mandates copy elision for prvalues used to initialize objects of the same type,
+	// which includes function returns, direct initialization, and other contexts
+	bool is_return_value = false;        // True if this is a return value (for RVO detection)
+	bool eligible_for_rvo = false;       // True if this prvalue can be constructed directly in destination
+	bool eligible_for_nrvo = false;      // True if this named variable can use NRVO
+	
+	// Fields previously tracked in ReferenceInfo (for reference/pointer dereferencing)
+	// These are used by IRConverter when loading values through references
+	Type value_type = Type::Invalid;
+	int value_size_bits = 0;
+	bool is_rvalue_reference = false;
+	
+	// Constructor
+	TempVarMetadata() = default;
+	
+	// Helper to create lvalue metadata
+	static TempVarMetadata makeLValue(LValueInfo lv_info, Type type = Type::Invalid, int size_bits = 0) {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::LValue;
+		meta.lvalue_info = lv_info;
+		meta.value_type = type;
+		meta.value_size_bits = size_bits;
+		return meta;
+	}
+	
+	// Helper to create xvalue metadata
+	static TempVarMetadata makeXValue(LValueInfo lv_info, Type type = Type::Invalid, int size_bits = 0) {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::XValue;
+		meta.lvalue_info = lv_info;
+		meta.is_move_result = true;
+		meta.value_type = type;
+		meta.value_size_bits = size_bits;
+		return meta;
+	}
+	
+	// Helper to create prvalue metadata
+	static TempVarMetadata makePRValue() {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::PRValue;
+		return meta;
+	}
+	
+	// Helper to create prvalue metadata eligible for RVO (C++17 mandatory copy elision)
+	static TempVarMetadata makeRVOEligiblePRValue() {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::PRValue;
+		meta.eligible_for_rvo = true;
+		return meta;
+	}
+	
+	// Helper to create metadata for named return value (NRVO candidate)
+	static TempVarMetadata makeNRVOCandidate(LValueInfo lv_info) {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::LValue;
+		meta.lvalue_info = lv_info;
+		meta.eligible_for_nrvo = true;
+		return meta;
+	}
+	
+	// Helper to create reference metadata (for compatibility with old ReferenceInfo usage)
+	static TempVarMetadata makeReference(Type type, int size_bits, bool is_rvalue_ref = false) {
+		TempVarMetadata meta;
+		meta.category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
+		meta.is_address = true;  // References hold addresses
+		meta.value_type = type;
+		meta.value_size_bits = size_bits;
+		meta.is_rvalue_reference = is_rvalue_ref;
+		return meta;
+	}
+};
 
 using IrOperand = std::variant<int, unsigned long long, double, bool, char, Type, TempVar, StringHandle>;
 
@@ -497,6 +661,202 @@ private:
 	size_t reserved_capacity_ = 0;
 };
 
+// ============================================================================
+// Global TempVar Metadata Storage (Option 2 Implementation)
+// ============================================================================
+// Stores value category and lvalue information for all TempVars
+// Uses sparse storage - only TempVars with metadata are stored
+// ============================================================================
+class GlobalTempVarMetadataStorage {
+public:
+	static GlobalTempVarMetadataStorage& instance() {
+		static GlobalTempVarMetadataStorage storage;
+		return storage;
+	}
+	
+	// Set metadata for a TempVar
+	void setMetadata(const TempVar& temp, TempVarMetadata metadata) {
+		metadata_[temp.var_number] = std::move(metadata);
+	}
+	
+	// Get metadata for a TempVar (returns default if not found)
+	TempVarMetadata getMetadata(const TempVar& temp) const {
+		auto it = metadata_.find(temp.var_number);
+		if (it != metadata_.end()) {
+			return it->second;
+		}
+		// Default: prvalue with no lvalue info
+		return TempVarMetadata::makePRValue();
+	}
+	
+	// Check if a TempVar has metadata
+	bool hasMetadata(const TempVar& temp) const {
+		return metadata_.find(temp.var_number) != metadata_.end();
+	}
+	
+	// Check if a TempVar is an lvalue
+	bool isLValue(const TempVar& temp) const {
+		auto it = metadata_.find(temp.var_number);
+		return it != metadata_.end() && it->second.category == ValueCategory::LValue;
+	}
+	
+	// Check if a TempVar is an xvalue
+	bool isXValue(const TempVar& temp) const {
+		auto it = metadata_.find(temp.var_number);
+		return it != metadata_.end() && it->second.category == ValueCategory::XValue;
+	}
+	
+	// Check if a TempVar is a prvalue
+	bool isPRValue(const TempVar& temp) const {
+		auto it = metadata_.find(temp.var_number);
+		return it == metadata_.end() || it->second.category == ValueCategory::PRValue;
+	}
+	
+	// Get lvalue info if available
+	std::optional<LValueInfo> getLValueInfo(const TempVar& temp) const {
+		auto it = metadata_.find(temp.var_number);
+		if (it != metadata_.end()) {
+			return it->second.lvalue_info;
+		}
+		return std::nullopt;
+	}
+	
+	// Clear all metadata (useful for testing and between compilation units)
+	void clear() {
+		metadata_.clear();
+	}
+	
+	// Get statistics
+	size_t size() const {
+		return metadata_.size();
+	}
+	
+	// Print statistics
+	void printStats() const {
+		FLASH_LOG_FORMAT(General, Debug,
+			"TempVar metadata entries: {}", metadata_.size());
+		
+		size_t lvalue_count = 0;
+		size_t xvalue_count = 0;
+		size_t prvalue_count = 0;
+		
+		for (const auto& [var_num, meta] : metadata_) {
+			switch (meta.category) {
+				case ValueCategory::LValue: ++lvalue_count; break;
+				case ValueCategory::XValue: ++xvalue_count; break;
+				case ValueCategory::PRValue: ++prvalue_count; break;
+			}
+		}
+		
+		FLASH_LOG_FORMAT(General, Debug,
+			"  LValues: {}, XValues: {}, PRValues: {}",
+			lvalue_count, xvalue_count, prvalue_count);
+	}
+
+private:
+	GlobalTempVarMetadataStorage() = default;
+	
+	// Map from TempVar number to metadata
+	// Using unordered_map for O(1) lookup and sparse storage
+	std::unordered_map<size_t, TempVarMetadata> metadata_;
+};
+
+// ============================================================================
+// TempVar convenience methods for metadata access
+// ============================================================================
+// These methods are defined here (after GlobalTempVarMetadataStorage)
+// to avoid forward declaration issues
+// ============================================================================
+
+inline void setTempVarMetadata(const TempVar& temp, TempVarMetadata meta) {
+	GlobalTempVarMetadataStorage::instance().setMetadata(temp, std::move(meta));
+}
+
+inline TempVarMetadata getTempVarMetadata(const TempVar& temp) {
+	return GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+}
+
+inline bool isTempVarLValue(const TempVar& temp) {
+	return GlobalTempVarMetadataStorage::instance().isLValue(temp);
+}
+
+inline bool isTempVarXValue(const TempVar& temp) {
+	return GlobalTempVarMetadataStorage::instance().isXValue(temp);
+}
+
+inline bool isTempVarPRValue(const TempVar& temp) {
+	return GlobalTempVarMetadataStorage::instance().isPRValue(temp);
+}
+
+inline std::optional<LValueInfo> getTempVarLValueInfo(const TempVar& temp) {
+	return GlobalTempVarMetadataStorage::instance().getLValueInfo(temp);
+}
+
+// Check if a TempVar is a reference (has is_address flag set)
+inline bool isTempVarReference(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.is_address && (meta.category == ValueCategory::LValue || meta.category == ValueCategory::XValue);
+}
+
+// Get the value type of a reference TempVar (returns Invalid if not a reference)
+inline Type getTempVarValueType(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.value_type;
+}
+
+// ============================================================================
+// RVO/NRVO (Return Value Optimization) helper functions
+// ============================================================================
+
+// Check if a TempVar is eligible for RVO (mandatory C++17 copy elision)
+inline bool isTempVarRVOEligible(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.eligible_for_rvo && meta.category == ValueCategory::PRValue;
+}
+
+// Check if a TempVar is eligible for NRVO (named return value optimization)
+inline bool isTempVarNRVOEligible(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.eligible_for_nrvo;
+}
+
+// Mark a TempVar as being returned from a function (for RVO/NRVO analysis)
+inline void markTempVarAsReturnValue(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	meta.is_return_value = true;
+	GlobalTempVarMetadataStorage::instance().setMetadata(temp, std::move(meta));
+}
+
+// Get the value size in bits of a reference TempVar (returns 0 if not a reference)
+inline int getTempVarValueSizeBits(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.value_size_bits;
+}
+
+// Check if a TempVar is an rvalue reference
+inline bool isTempVarRValueReference(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.is_rvalue_reference;
+}
+
+// Helper to create a TempVar with lvalue metadata
+inline TempVar makeLValueTempVar(TempVar temp, LValueInfo lv_info) {
+	setTempVarMetadata(temp, TempVarMetadata::makeLValue(std::move(lv_info)));
+	return temp;
+}
+
+// Helper to create a TempVar with xvalue metadata
+inline TempVar makeXValueTempVar(TempVar temp, LValueInfo lv_info) {
+	setTempVarMetadata(temp, TempVarMetadata::makeXValue(std::move(lv_info)));
+	return temp;
+}
+
+// Helper to create a TempVar with prvalue metadata
+inline TempVar makePRValueTempVar(TempVar temp) {
+	setTempVarMetadata(temp, TempVarMetadata::makePRValue());
+	return temp;
+}
+
 class OperandStorage {
 public:
 	OperandStorage() : start_index_(0), count_(0) {}
@@ -556,9 +916,6 @@ private:
 // Typed IR Operand Structures
 // ============================================================================
 
-// Type alias for operand values (subset of IrOperand variant)
-using IrValue = std::variant<unsigned long long, double, TempVar, StringHandle>;
-
 // Typed value - combines IrValue with its type information
 struct TypedValue {
 	Type type = Type::Void;	// 4 bytes (enum)
@@ -617,8 +974,11 @@ struct CallOp {
 	TempVar result;                       // 4 bytes
 	Type return_type;                     // 4 bytes
 	int return_size_in_bits;              // 4 bytes
+	TypeIndex return_type_index = 0;      // Type index for struct/class return types
 	bool is_member_function = false;      // 1 byte
-	bool is_variadic = false;             // 1 byte (+ 2 bytes padding)
+	bool is_variadic = false;             // 1 byte
+	bool uses_return_slot = false;        // 1 byte - True if using hidden return parameter for RVO
+	std::optional<TempVar> return_slot;   // Optional temp var representing the return slot location
 	
 	// Helper to get function_name as StringHandle
 	StringHandle getFunctionName() const {
@@ -739,6 +1099,8 @@ struct ConstructorCallOp {
 	StringHandle struct_name;                         // Pure StringHandle
 	std::variant<StringHandle, TempVar> object;  // Object instance ('this' or temp)
 	std::vector<TypedValue> arguments;               // Constructor arguments
+	bool use_return_slot = false;                    // True if constructing into caller's return slot (RVO)
+	std::optional<int> return_slot_offset;           // Stack offset of return slot (for RVO)
 };
 
 // Destructor call (invoke destructor on object)
@@ -812,10 +1174,12 @@ struct FunctionDeclOp {
 	Type return_type = Type::Void;
 	int return_size_in_bits = 0;
 	int return_pointer_depth = 0;
+	TypeIndex return_type_index = 0;  // Type index for struct/class return types
 	StringHandle function_name;  // Pure StringHandle
 	StringHandle struct_name;  // Empty for non-member functions
 	Linkage linkage = Linkage::None;
 	bool is_variadic = false;
+	bool has_hidden_return_param = false;  // True if function uses hidden return parameter (struct return)
 	StringHandle mangled_name;  // Pure StringHandle
 	std::vector<FunctionParam> parameters;
 	int temp_var_stack_bytes = 0;  // Total stack space needed for TempVars (set after function body is processed)

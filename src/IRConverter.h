@@ -4399,6 +4399,55 @@ private:
 		bool is_rvalue_reference = false;
 	};
 	
+	// Helper function to set reference information in both storage systems
+	// This ensures metadata stays synchronized between stack offset tracking and TempVar metadata
+	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var = TempVar()) {
+		// Always update the stack offset map (for named variables and legacy lookups)
+		reference_stack_info_[stack_offset] = ReferenceInfo{
+			.value_type = value_type,
+			.value_size_bits = value_size_bits,
+			.is_rvalue_reference = is_rvalue_ref
+		};
+		
+		// If we have a valid TempVar, also update its metadata
+		if (temp_var.var_number != 0) {
+			setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, value_size_bits, is_rvalue_ref));
+		}
+	}
+	
+	// Helper function to check if a TempVar or stack offset is a reference
+	// Checks TempVar metadata first (preferred), then falls back to stack offset lookup
+	bool isReference(TempVar temp_var, int32_t stack_offset) const {
+		// Check TempVar metadata first (more reliable, travels with the value)
+		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
+			return true;
+		}
+		
+		// Fall back to stack offset lookup (for named variables or legacy code)
+		return reference_stack_info_.find(stack_offset) != reference_stack_info_.end();
+	}
+	
+	// Helper function to get reference info for a TempVar or stack offset
+	// Returns the reference info from TempVar metadata if available, otherwise from stack offset map
+	std::optional<ReferenceInfo> getReferenceInfo(TempVar temp_var, int32_t stack_offset) const {
+		// Check TempVar metadata first
+		if (temp_var.var_number != 0 && isTempVarReference(temp_var)) {
+			return ReferenceInfo{
+				.value_type = getTempVarValueType(temp_var),
+				.value_size_bits = getTempVarValueSizeBits(temp_var),
+				.is_rvalue_reference = isTempVarRValueReference(temp_var)
+			};
+		}
+		
+		// Fall back to stack offset lookup
+		auto it = reference_stack_info_.find(stack_offset);
+		if (it != reference_stack_info_.end()) {
+			return it->second;
+		}
+		
+		return std::nullopt;
+	}
+	
 	StackSpaceSize calculateFunctionStackSpace(std::string_view func_name, StackVariableScope& var_scope, size_t param_count) {
 		StackSpaceSize func_stack_space{};
 
@@ -5629,6 +5678,17 @@ private:
 			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number);
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle(call_op.result.name())].offset = result_offset;
 			
+			// For functions returning struct by value, prepare hidden return parameter
+			// The return slot address will be passed as the first argument
+			int param_shift = 0;  // Tracks how many parameters to shift (for hidden return param)
+			if (call_op.uses_return_slot) {
+				param_shift = 1;  // Regular parameters shift by 1 to make room for hidden return param
+				
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Function call uses return slot - will pass address of temp_{} in first parameter register",
+					call_op.result.var_number);
+			}
+			
 			// IMPORTANT: Process stack arguments (beyond register count) FIRST, before loading register arguments.
 			// To prevent loadTypedValueIntoRegister from clobbering parameter registers,
 			// we reserve all parameter registers before processing stack arguments.
@@ -5760,7 +5820,8 @@ private:
 			// Now process register arguments (platform-specific: 4 on Windows, 6 on Linux for integers)
 			// Note: max_int_regs and max_float_regs already declared above for stack arg processing
 			// Use separate counters for integer and float registers (System V AMD64 ABI requirement)
-			size_t int_reg_index = 0;
+			// If function uses return slot, start at index param_shift to leave room for hidden parameter
+			size_t int_reg_index = param_shift;  // Start at param_shift if hidden return param present
 			size_t float_reg_index = 0;
 			
 			for (size_t i = 0; i < call_op.args.size(); ++i) {
@@ -5769,7 +5830,7 @@ private:
 				// Determine if this is a floating-point argument
 				bool is_float_arg = is_floating_point_type(arg.type);
 				
-				// Check if this argument fits in a register
+				// Check if this argument fits in a register (accounting for param_shift)
 				bool use_register = false;
 				if (is_float_arg) {
 					if (float_reg_index < max_float_regs) {
@@ -5791,6 +5852,7 @@ private:
 				X64Register target_reg = is_float_arg 
 					? getFloatParamReg<TWriterClass>(float_reg_index++)
 					: getIntParamReg<TWriterClass>(int_reg_index++);
+
 				
 				// Special handling for passing addresses (this pointer or large struct references)
 				// For member functions: first arg is always "this" pointer (pass address)
@@ -5964,6 +6026,19 @@ private:
 				}
 			}
 			
+			// If function uses return slot, pass the address of the result location as hidden first parameter
+			if (call_op.uses_return_slot) {
+				// Load address of return slot (result_offset) into first integer parameter register
+				X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
+				
+				// LEA return_slot_reg, [RBP + result_offset]
+				emitLeaFromFrame(return_slot_reg, result_offset);
+				
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Passing return slot address (offset {}) in register {} for struct return",
+					result_offset, static_cast<int>(return_slot_reg));
+			}
+			
 			// Generate call instruction
 			std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 			textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
@@ -5976,8 +6051,17 @@ private:
 			// Invalidate caller-saved registers (function calls clobber them)
 			regAlloc.invalidateCallerSavedRegisters();
 			
+			// Phase 5: Copy elision opportunity detection
+			// Check if this is a prvalue return being used to initialize a variable
+			bool is_prvalue_return = isTempVarPRValue(call_op.result);
+			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"FunctionCall result: {} is_prvalue={}", 
+				call_op.result.name(), is_prvalue_return);
+			
 			// Store return value - RAX for integers, XMM0 for floats
-			if (call_op.return_type != Type::Void) {
+			// For struct returns using return slot, the struct is already in place - no copy needed
+			if (call_op.return_type != Type::Void && !call_op.uses_return_slot) {
 				if (is_floating_point_type(call_op.return_type)) {
 					// Float return value is in XMM0
 					bool is_float = (call_op.return_type == Type::Float);
@@ -5988,6 +6072,10 @@ private:
 						SizedStackSlot{result_offset, call_op.return_size_in_bits, isSignedType(call_op.return_type)}  // dest
 					);
 				}
+			} else if (call_op.uses_return_slot) {
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Struct return using return slot - struct already constructed at offset {}",
+					result_offset);
 			}
 			
 			// No stack cleanup needed after call:
@@ -6012,9 +6100,24 @@ private:
 
 		// Get the object's stack offset
 		int object_offset = 0;
-		if (std::holds_alternative<TempVar>(ctor_op.object)) {
+		bool object_is_pointer = false;  // Declare early so RVO branch can set it
+		
+		// If using return slot (RVO), get offset from return_slot_offset instead
+		if (ctor_op.use_return_slot && ctor_op.return_slot_offset.has_value()) {
+			object_offset = ctor_op.return_slot_offset.value();
+			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Constructor using return slot (RVO) at offset {}",
+				object_offset);
+		} else if (std::holds_alternative<TempVar>(ctor_op.object)) {
 			const TempVar temp_var = std::get<TempVar>(ctor_op.object);
+			
+			// TempVars for constructor calls are stack-allocated objects
+			// We need to get the ADDRESS of the stack location (LEA), not load a pointer (MOV)
+			// Exception: TempVars from HeapAlloc hold pointers and would need MOV,
+			// but those should go through handleConstructorCall differently
 			object_offset = getStackOffsetFromTempVar(temp_var);
+			object_is_pointer = false;  // Use LEA to get address, not MOV to load pointer
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(ctor_op.object);
 			auto it = variable_scopes.back().variables.find(var_name_handle);
@@ -6022,17 +6125,7 @@ private:
 				throw std::runtime_error("Constructor call: variable not found in variables map: " + std::string(StringTable::getStringView(var_name_handle)));
 			}
 			object_offset = it->second.offset;
-		}
-
-		// Check if the object is a pointer (needs to be loaded, not addressed)
-		// This includes 'this' pointer and TempVars from heap_alloc
-		bool object_is_pointer = false;
-		if (std::holds_alternative<TempVar>(ctor_op.object)) {
-			// TempVars are always pointers in constructor calls (from heap_alloc)
-			object_is_pointer = true;
-		} else if (std::holds_alternative<StringHandle>(ctor_op.object)) {
-			StringHandle obj_handle = std::get<StringHandle>(ctor_op.object);
-			object_is_pointer = (StringTable::getStringView(obj_handle) == "this");
+			object_is_pointer = (StringTable::getStringView(var_name_handle) == "this");
 		}
 
 		// Load the address of the object into the first parameter register ('this' pointer)
@@ -6819,22 +6912,47 @@ private:
 		// Step 4: Load vtable pointer from object (first 8 bytes)
 		emitMovRegFromMemReg(X64Register::RAX, X64Register::RAX);
 
-		// Step 5: Load source RTTI pointer from vtable[-1] into RCX (first argument)
-		emitMovRegFromMemRegDisp8(X64Register::RCX, X64Register::RAX, -8);
+		// Step 5: Load source RTTI pointer from vtable[-1] into first parameter register
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// Linux: First parameter in RDI
+			emitMovRegFromMemRegDisp8(X64Register::RDI, X64Register::RAX, -8);
+		} else {
+			// Windows: First parameter in RCX
+			emitMovRegFromMemRegDisp8(X64Register::RCX, X64Register::RAX, -8);
+		}
 
-		// Step 6: Load target RTTI pointer into RDX (second argument)
-		// Use MSVC Complete Object Locator symbol: ??_R4.?AV<classname>@@6B@
+		// Step 6: Load target RTTI pointer into second parameter register
+		// Generate platform-specific RTTI symbol
 		StringBuilder sb;
-		sb.append("??_R4.?AV");
-		sb.append(op.target_type_name);
-		sb.append("@@6B@");
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// Linux/ELF: Use Itanium C++ ABI typeinfo symbol: _ZTI<length><classname>
+			// Example: class "Derived" -> "_ZTI7Derived"
+			sb.append("_ZTI");
+			sb.append(op.target_type_name.length());
+			sb.append(op.target_type_name);
+		} else {
+			// Windows/COFF: Use MSVC Complete Object Locator symbol: ??_R4.?AV<classname>@@6B@
+			sb.append("??_R4.?AV");
+			sb.append(op.target_type_name);
+			sb.append("@@6B@");
+		}
 		std::string_view target_rtti_symbol = sb.commit();
-		emitLeaRipRelativeWithRelocation(X64Register::RDX, target_rtti_symbol);
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// Linux: Second parameter in RSI
+			emitLeaRipRelativeWithRelocation(X64Register::RSI, target_rtti_symbol);
+		} else {
+			// Windows: Second parameter in RDX
+			emitLeaRipRelativeWithRelocation(X64Register::RDX, target_rtti_symbol);
+		}
 
 		// Step 7: Call __dynamic_cast_check(source_rtti, target_rtti)
-		emitSubRSP(32);  // Shadow space for Windows x64 calling convention
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			emitSubRSP(32);  // Shadow space for Windows x64 calling convention
+		}
 		emitCall("__dynamic_cast_check");
-		emitAddRSP(32);  // Restore stack
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			emitAddRSP(32);  // Restore stack
+		}
 
 		// Step 8: Check return value (RAX contains 0 or 1)
 		emitTestAL();
@@ -6863,7 +6981,9 @@ private:
 		if (op.is_reference) {
 			// For reference casts, throw std::bad_cast instead of returning nullptr
 			// Call __dynamic_cast_throw_bad_cast (no arguments, never returns)
-			emitSubRSP(32);  // Shadow space for Windows x64 calling convention
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				emitSubRSP(32);  // Shadow space for Windows x64 calling convention
+			}
 			emitCall("__dynamic_cast_throw_bad_cast");
 			// Note: We don't restore RSP or add code after this because __dynamic_cast_throw_bad_cast never returns
 		} else {
@@ -7037,11 +7157,7 @@ private:
 		//last_allocated_variable_offset_ = var_it->second.offset;
 
 		if (is_reference) {
-			reference_stack_info_[var_it->second.offset] = ReferenceInfo{
-				.value_type = var_type,
-				.value_size_bits = op.size_in_bits,
-				.is_rvalue_reference = is_rvalue_reference
-			};
+			setReferenceInfo(var_it->second.offset, var_type, op.size_in_bits, is_rvalue_reference);
 			int32_t dst_offset = var_it->second.offset;
 			X64Register pointer_reg = allocateRegisterWithSpilling();
 			bool pointer_initialized = false;
@@ -7514,6 +7630,7 @@ private:
 		current_function_mangled_name_ = mangled_handle;
 		current_function_offset_ = func_offset;
 		current_function_is_variadic_ = is_variadic;
+		current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
 
 		// Patch pending branches from previous function before clearing
 		if (!pending_branches_.empty()) {
@@ -7683,6 +7800,25 @@ private:
 
 			param_offset_adjustment = 1;  // Shift other parameters by 1
 		}
+		
+		// For functions returning struct by value, add hidden return parameter
+		// This comes BEFORE regular parameters (but after 'this' for member functions)
+		// System V AMD64: hidden param in RDI, Windows x64: hidden param in RCX
+		// For member functions: hidden param shifts to RSI (Linux) or RDX (Windows)
+		if (func_decl.has_hidden_return_param) {
+			int return_slot_offset = (param_offset_adjustment + 1) * -8;
+			variable_scopes.back().variables[StringTable::getOrInternStringHandle("__return_slot")].offset = return_slot_offset;
+			
+			X64Register return_slot_reg = getIntParamReg<TWriterClass>(param_offset_adjustment);
+			parameters.push_back({Type::Struct, 64, "__return_slot", param_offset_adjustment, return_slot_offset, return_slot_reg, 1, false});
+			regAlloc.allocateSpecific(return_slot_reg, return_slot_offset);
+			
+			param_offset_adjustment++;  // Shift regular parameters by 1 more
+			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Function {} has hidden return parameter at offset {} in register {}",
+				func_name, return_slot_offset, static_cast<int>(return_slot_reg));
+		}
 
 		// First pass: collect all parameter information
 		if (!instruction.hasTypedPayload()) {
@@ -7737,11 +7873,8 @@ private:
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
 				bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
 				if (is_reference) {
-					reference_stack_info_[offset] = ReferenceInfo{
-						.value_type = param_type,
-						.value_size_bits = param_size,
-						.is_rvalue_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE)
-					};
+					setReferenceInfo(offset, param_type, param_size, 
+						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE));
 				}
 
 				// Add parameter to debug information
@@ -7839,11 +7972,7 @@ private:
 
 				// Track reference parameters
 				if (param.is_reference) {
-					reference_stack_info_[offset] = ReferenceInfo{
-						.value_type = param.type,
-						.value_size_bits = param.size_in_bits,
-						.is_rvalue_reference = param.is_rvalue_reference
-					};
+					setReferenceInfo(offset, param.type, param.size_in_bits, param.is_rvalue_reference);
 				}
 
 				// Add parameter to debug information
@@ -8059,13 +8188,18 @@ private:
 		const auto& current_scope = variable_scopes.back();
 		auto var_it = current_scope.variables.find(var_name);
 		if (var_it != current_scope.variables.end()) {
-			return var_it->second.size_in_bits;
+			// Return the stored size if it's non-zero, otherwise use default
+			if (var_it->second.size_in_bits > 0) {
+				return var_it->second.size_in_bits;
+			}
 		}
 		
 		return default_size;
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
+		FLASH_LOG(Codegen, Debug, "handleReturn called");
+		
 		if (variable_scopes.empty()) {
 			FLASH_LOG(Codegen, Error, "FATAL [handleReturn]: variable_scopes is EMPTY!");
 			std::abort();
@@ -8088,6 +8222,19 @@ private:
 			else {
 				// Return with value
 				const auto& ret_val = ret_op.return_value.value();
+				
+				// Debug: log what type of return value we have
+				if (std::holds_alternative<unsigned long long>(ret_val)) {
+					FLASH_LOG(Codegen, Debug, "Return value type: unsigned long long");
+				} else if (std::holds_alternative<TempVar>(ret_val)) {
+					FLASH_LOG(Codegen, Debug, "Return value type: TempVar");
+				} else if (std::holds_alternative<StringHandle>(ret_val)) {
+					FLASH_LOG(Codegen, Debug, "Return value type: StringHandle");
+				} else if (std::holds_alternative<double>(ret_val)) {
+					FLASH_LOG(Codegen, Debug, "Return value type: double");
+				} else {
+					FLASH_LOG(Codegen, Debug, "Return value type: UNKNOWN");
+				}
 				
 				if (std::holds_alternative<unsigned long long>(ret_val)) {
 					unsigned long long returnValue = std::get<unsigned long long>(ret_val);
@@ -8139,7 +8286,65 @@ private:
 							// Get the actual size of the variable being returned
 							int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
 							
-							if (is_float_return) {
+							// Check if function uses hidden return parameter (RVO/NRVO)
+							// Only skip copy if this specific return value is RVO-eligible (was constructed via RVO)
+							if (current_function_has_hidden_return_param_ && isTempVarRVOEligible(return_var)) {
+								FLASH_LOG_FORMAT(Codegen, Debug,
+									"Return statement in function with hidden return parameter - RVO-eligible struct already in return slot at offset {}",
+									var_offset);
+								// Struct already constructed in return slot via RVO - just emit epilogue below
+							} else if (current_function_has_hidden_return_param_) {
+								// Function uses hidden return param but this value is NOT RVO-eligible
+								// Need to copy the struct to the return slot
+								FLASH_LOG_FORMAT(Codegen, Debug,
+									"Return statement: copying non-RVO struct from offset {} to return slot (var_size={} bits)",
+									var_offset, var_size);
+								
+								// Load return slot address from __return_slot parameter
+								auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+								if (return_slot_it != variable_scopes.back().variables.end()) {
+									int return_slot_param_offset = return_slot_it->second.offset;
+									// Load the address from __return_slot into a register
+									X64Register dest_reg = X64Register::RDI;
+									emitMovFromFrame(dest_reg, return_slot_param_offset);
+									
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Copying struct: size={} bytes, from offset {}, return_slot_param at offset {}",
+										var_size / 8, var_offset, return_slot_param_offset);
+									
+									// Copy struct from var_offset to address in dest_reg
+									// Copy in 8-byte chunks, then handle remaining bytes (4, 2, 1)
+									int struct_size_bytes = var_size / 8;
+									int bytes_copied = 0;
+									
+									// Copy 8-byte chunks
+									while (bytes_copied + 8 <= struct_size_bytes) {
+										emitMovFromFrame(X64Register::RAX, var_offset + bytes_copied);
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, 8);
+										bytes_copied += 8;
+									}
+									
+									// Handle remaining bytes (4, 2, 1)
+									if (bytes_copied + 4 <= struct_size_bytes) {
+										emitMovFromFrameBySize(X64Register::RAX, var_offset + bytes_copied, 32);
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, 4);
+										bytes_copied += 4;
+									}
+									if (bytes_copied + 2 <= struct_size_bytes) {
+										emitMovFromFrameBySize(X64Register::RAX, var_offset + bytes_copied, 16);
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, 2);
+										bytes_copied += 2;
+									}
+									if (bytes_copied + 1 <= struct_size_bytes) {
+										emitMovFromFrameBySize(X64Register::RAX, var_offset + bytes_copied, 8);
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, 1);
+										bytes_copied += 1;
+									}
+									
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Struct copy complete: copied {} bytes", bytes_copied);
+								}
+							} else if (is_float_return) {
 								// Load floating-point value into XMM0
 								bool is_float = (ret_op.return_size == 32);
 								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
@@ -8210,7 +8415,58 @@ private:
 							bool is_float_return = ret_op.return_type.has_value() && 
 							                        is_floating_point_type(ret_op.return_type.value());
 							
-							if (is_float_return) {
+							// Check if function uses hidden return parameter (for struct returns)
+							if (current_function_has_hidden_return_param_) {
+								// Function uses hidden return param - need to copy struct to return slot
+								FLASH_LOG_FORMAT(Codegen, Debug,
+									"Return statement (StringHandle): copying struct '{}' from offset {} to return slot (size={} bits)",
+									StringTable::getStringView(var_name_handle), var_offset, var_size);
+								
+								// Load return slot address from __return_slot parameter
+								auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+								if (return_slot_it != variable_scopes.back().variables.end()) {
+									int return_slot_param_offset = return_slot_it->second.offset;
+									// Load the address from __return_slot into a register
+									X64Register dest_reg = X64Register::RDI;
+									emitMovFromFrame(dest_reg, return_slot_param_offset);
+									
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Copying struct: size={} bytes, from offset {}, return_slot_param at offset {}",
+										var_size / 8, var_offset, return_slot_param_offset);
+									
+									// Copy struct from var_offset to address in dest_reg
+									// Copy in 8-byte chunks, then handle remaining bytes (4, 2, 1)
+									int struct_size_bytes = var_size / 8;
+									int bytes_copied = 0;
+									
+									// Copy 8-byte chunks
+									while (bytes_copied + 8 <= struct_size_bytes) {
+										emitMovFromFrame(X64Register::RAX, var_offset + bytes_copied);
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, 8);
+										bytes_copied += 8;
+									}
+									
+									// Handle remaining bytes (4, 2, 1)
+									if (bytes_copied + 4 <= struct_size_bytes) {
+										emitMovFromFrameBySize(X64Register::RAX, var_offset + bytes_copied, 32);
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, 4);
+										bytes_copied += 4;
+									}
+									if (bytes_copied + 2 <= struct_size_bytes) {
+										emitMovFromFrameBySize(X64Register::RAX, var_offset + bytes_copied, 16);
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, 2);
+										bytes_copied += 2;
+									}
+									if (bytes_copied + 1 <= struct_size_bytes) {
+										emitMovFromFrameBySize(X64Register::RAX, var_offset + bytes_copied, 8);
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, 1);
+										bytes_copied += 1;
+									}
+									
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Struct copy complete: copied {} bytes", bytes_copied);
+								}
+							} else if (is_float_return) {
 								// Load floating-point value into XMM0
 								bool is_float = (ret_op.return_size == 32);
 								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
@@ -10828,7 +11084,18 @@ private:
 		Type element_type = op.element_type;
 		bool is_floating_point = (element_type == Type::Float || element_type == Type::Double);
 		bool is_float = (element_type == Type::Float);
-		bool is_struct = (element_type == Type::Struct || element_type == Type::UserDefined);
+		bool is_struct = is_struct_type(element_type);
+		
+		// Phase 5 Optimization: Use value category metadata for LEA vs MOV decision
+		// For struct types, always use LEA (original behavior)
+		// For primitive lvalues, we could use LEA but need to handle dereferencing correctly
+		// For now, only optimize struct types to avoid breaking existing code
+		bool result_is_lvalue = isTempVarLValue(result_var);
+		bool optimize_lea = is_struct;  // Conservative: only struct types for now
+		
+		FLASH_LOG_FORMAT(Codegen, Debug, 
+			"ArrayAccess: is_struct={} is_lvalue={} optimize_lea={}",
+			is_struct, result_is_lvalue, optimize_lea);
 		
 		// For floating-point, we'll use XMM0 for the loaded value
 		// For integers and struct addresses, we allocate a general-purpose register
@@ -10889,9 +11156,10 @@ private:
 				int64_t offset_bytes = index_value * element_size_bytes;
 				emitAddImmToReg(textSectionData, base_reg, offset_bytes);
 
-				// For struct types, keep the address in base_reg
-				// For primitive types, load the value
-				if (!is_struct) {
+				// Phase 5: Use optimize_lea for LEA vs MOV decision
+				// For struct types or lvalues, keep the address in base_reg
+				// For primitive prvalues, load the value
+				if (!optimize_lea) {
 					// Load value from [base_reg] with appropriate instruction
 					if (is_floating_point) {
 						emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
@@ -10903,8 +11171,9 @@ private:
 				// Array is a regular variable - use direct stack offset
 				int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
 					
-				if (is_struct) {
-					// For struct types, compute the address using LEA
+				// Phase 5: Use optimize_lea for LEA vs MOV decision
+				if (optimize_lea) {
+					// For struct types or lvalues, compute the address using LEA
 					emitLEAFromFrame(textSectionData, base_reg, element_offset);
 				} else {
 					// Load from [RBP + offset] with appropriate instruction
@@ -10939,9 +11208,10 @@ private:
 				emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 				emitAddRegs(textSectionData, base_reg, index_reg);
 				
-				// For struct types, keep the address in base_reg
-				// For primitive types, load the value
-				if (!is_struct) {
+				// Phase 5: Use optimize_lea for LEA vs MOV decision
+				// For struct types or lvalues, keep the address in base_reg
+				// For primitive prvalues, load the value
+				if (!optimize_lea) {
 					if (is_floating_point) {
 						emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
 					} else {
@@ -10957,9 +11227,10 @@ private:
 				emitLEAFromFrame(textSectionData, base_reg, combined_offset);
 				emitAddRegs(textSectionData, base_reg, index_reg);
 				
-				// For struct types, keep the address in base_reg
-				// For primitive types, load the value
-				if (!is_struct) {
+				// Phase 5: Use optimize_lea for LEA vs MOV decision
+				// For struct types or lvalues, keep the address in base_reg
+				// For primitive prvalues, load the value
+				if (!optimize_lea) {
 					if (is_floating_point) {
 						emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
 					} else {
@@ -10998,9 +11269,10 @@ private:
 			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 			emitAddRegs(textSectionData, base_reg, index_reg);
 			
-			// For struct types, keep the address in base_reg
-			// For primitive types, load the value
-			if (!is_struct) {
+			// Phase 5: Use optimize_lea for LEA vs MOV decision
+			// For struct types or lvalues, keep the address in base_reg
+			// For primitive prvalues, load the value
+			if (!optimize_lea) {
 				if (is_floating_point) {
 					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
 				} else {
@@ -11022,14 +11294,10 @@ private:
 			);
 		}
 		
-		// For struct types, mark the result temp var as holding a pointer
-		// This allows MemberAccess to properly dereference it
-		if (is_struct) {
-			reference_stack_info_[result_offset] = ReferenceInfo{
-				.value_type = element_type,
-				.value_size_bits = element_size_bits,
-				.is_rvalue_reference = false
-			};
+		// Phase 5: Mark the result temp var as holding a pointer/reference when using LEA
+		// This allows subsequent operations to properly handle the address
+		if (optimize_lea) {
+			setReferenceInfo(result_offset, element_type, element_size_bits, false, result_var);
 		}
 		
 		// Release the base register
@@ -11335,12 +11603,14 @@ private:
 		// Get the result variable's stack offset (needed for both paths)
 		auto result_var = std::get<TempVar>(op.result.value);
 		int32_t result_offset;
-		auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(result_var.name()));
-		if (it != current_scope.variables.end()) {
+		StringHandle result_var_handle = StringTable::getOrInternStringHandle(result_var.name());
+		auto it = current_scope.variables.find(result_var_handle);
+		if (it != current_scope.variables.end() && it->second.offset != INT_MIN) {
 			result_offset = it->second.offset;
 		} else {
-			// Allocate stack space for the result TempVar
+			// Allocate stack space for the result TempVar (or if offset is sentinel INT_MIN)
 			result_offset = allocateStackSlotForTempVar(result_var.var_number);
+			// Note: allocateStackSlotForTempVar already updates the variables map
 		}
 
 		// For large members (> 8 bytes), we can't load the value into a register
@@ -11398,11 +11668,7 @@ private:
 			regAlloc.release(addr_reg);
 			
 			// Mark this temp var as containing a pointer/address
-			reference_stack_info_[result_offset] = ReferenceInfo{
-				.value_type = op.result.type,
-				.value_size_bits = op.result.size_in_bits,
-				.is_rvalue_reference = false
-			};
+			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits, false, result_var);
 			return;
 		}
 
@@ -11476,19 +11742,21 @@ private:
 		if (op.is_reference) {
 			emitMovToFrame(temp_reg, result_offset);
 			regAlloc.release(temp_reg);
-			reference_stack_info_[result_offset] = ReferenceInfo{
-				.value_type = op.result.type,
-				.value_size_bits = op.result.size_in_bits,
-				.is_rvalue_reference = op.is_rvalue_reference
-			};
+			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits, op.is_rvalue_reference, result_var);
 			return;
 		}
 
-		// Store the result - but keep it in the register for subsequent operations
-		regAlloc.set_stack_variable_offset(temp_reg, result_offset, op.result.size_in_bits);
-		
-		// Add the TempVar to variables so it can be found later
-		variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = result_offset;
+		// FIX: Map the TempVar to the member's actual stack location (not a copy!)
+		// This ensures that subsequent reads/writes to this TempVar access the struct member directly
+		//
+		// Two updates are necessary:
+		// 1. Update variables map: For future lookups of this TempVar by name
+		// 2. Update register allocator: For register spilling and dirty register flushing
+		//
+		// Both must point to member_stack_offset (the actual member location in the struct)
+		// NOT to result_offset (which was allocated for the TempVar but should not be used)
+		variable_scopes.back().variables[result_var_handle].offset = member_stack_offset;
+		regAlloc.set_stack_variable_offset(temp_reg, member_stack_offset, op.result.size_in_bits);
 	}
 
 	void handleMemberStore(const IrInstruction& instruction) {
@@ -11863,11 +12131,7 @@ private:
 			// Mark the result as holding a pointer (so it's treated like a reference)
 			// This ensures that when passed to reference parameters, we MOV (load the pointer)
 			// instead of LEA (taking address of the temp variable holding the pointer)
-			reference_stack_info_[result_offset] = ReferenceInfo{
-				.value_type = op.pointee_type,
-				.value_size_bits = op.pointee_size_in_bits,
-				.is_rvalue_reference = false
-			};
+			setReferenceInfo(result_offset, op.pointee_type, op.pointee_size_in_bits, false, op.result);
 			
 			return;
 		}
@@ -12863,19 +13127,89 @@ private:
 	}
 
 	// Emit __dynamic_cast_check function
-	//   bool __dynamic_cast_check(RTTICompleteObjectLocator* source_col, RTTICompleteObjectLocator* target_col)
-	// MSVC RTTI-compatible implementation with Complete Object Locator format
-	// Parameters: RCX = source_col, RDX = target_col
+	//   bool __dynamic_cast_check(type_info* source, type_info* target)
+	// Platform-specific implementation:
+	//   - Windows: MSVC RTTI with Complete Object Locator format (RCX, RDX)
+	//   - Linux: Itanium C++ ABI type_info structures (RDI, RSI)
 	// Returns: AL = 1 if cast valid, 0 otherwise
 	void emit_dynamic_cast_check_function() {
 		// Record function start
 		uint32_t function_offset = static_cast<uint32_t>(textSectionData.size());
 		
-		// Function prologue - save non-volatile registers
-		emitPushReg(X64Register::RBX);  // Save RBX
-		emitPushReg(X64Register::RSI);  // Save RSI (will use for loop counter)
-		emitPushReg(X64Register::RDI);  // Save RDI (will use for base pointer)
-		emitSubRSP(32);  // Shadow space for recursive calls
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// ========== Linux/ELF: Itanium C++ ABI type_info implementation ==========
+			// Parameters: RDI = source type_info, RSI = target type_info
+			// Returns: AL = 1 if cast valid, 0 otherwise
+			
+			// Simple implementation for Itanium ABI:
+			// - Check if source == target (pointer equality)
+			// - For SI/VMI classes, check base class (at offset 16 for SIClassTypeInfo)
+			
+			// Function prologue - save non-volatile registers (RBX for base pointer check)
+			emitPushReg(X64Register::RBX);
+			
+			// Null check: if (!source || !target) return false
+			emitTestRegReg(X64Register::RDI);  // TEST RDI, RDI
+			size_t null_source_jmp = textSectionData.size();
+			textSectionData.push_back(0x74);  // JZ rel8
+			textSectionData.push_back(0x00);  // Placeholder
+			
+			emitTestRegReg(X64Register::RSI);  // TEST RSI, RSI
+			size_t null_target_jmp = textSectionData.size();
+			textSectionData.push_back(0x74);  // JZ rel8
+			textSectionData.push_back(0x00);  // Placeholder
+			
+			// Pointer equality: if (source == target) return true
+			emitCmpRegReg(X64Register::RDI, X64Register::RSI);  // CMP RDI, RSI
+			size_t eq_check_jmp = textSectionData.size();
+			textSectionData.push_back(0x74);  // JE rel8
+			textSectionData.push_back(0x00);  // Placeholder
+			
+			// Check if source has base class (ItaniumSIClassTypeInfo has base at offset 16)
+			// Load potential base class pointer from source+16 into RBX
+			emitMovRegFromMemRegDisp8(X64Register::RBX, X64Register::RDI, 16);  // MOV RBX, [RDI+16]
+			
+			// Check if base pointer is null
+			emitTestRegReg(X64Register::RBX);  // TEST RBX, RBX
+			size_t no_base_jmp = textSectionData.size();
+			textSectionData.push_back(0x74);  // JZ rel8
+			textSectionData.push_back(0x00);  // Placeholder
+			
+			// Compare base with target: if (base == target) return true
+			emitCmpRegReg(X64Register::RBX, X64Register::RSI);  // CMP RBX, RSI
+			size_t base_eq_jmp = textSectionData.size();
+			textSectionData.push_back(0x74);  // JE rel8
+			textSectionData.push_back(0x00);  // Placeholder
+			
+			// return_false:
+			size_t return_false = textSectionData.size();
+			emitXorRegReg(X64Register::RAX);  // XOR RAX, RAX (AL = 0)
+			emitPopReg(X64Register::RBX);
+			emitRet();
+			
+			// return_true:
+			size_t return_true = textSectionData.size();
+			emitMovRegImm8(X64Register::RAX, 1);  // MOV AL, 1
+			emitPopReg(X64Register::RBX);
+			emitRet();
+			
+			// Patch jump offsets
+			textSectionData[null_source_jmp + 1] = static_cast<uint8_t>(return_false - null_source_jmp - 2);
+			textSectionData[null_target_jmp + 1] = static_cast<uint8_t>(return_false - null_target_jmp - 2);
+			textSectionData[eq_check_jmp + 1] = static_cast<uint8_t>(return_true - eq_check_jmp - 2);
+			textSectionData[no_base_jmp + 1] = static_cast<uint8_t>(return_false - no_base_jmp - 2);
+			textSectionData[base_eq_jmp + 1] = static_cast<uint8_t>(return_true - base_eq_jmp - 2);
+			
+		} else {
+			// ========== Windows/COFF: MSVC RTTI Complete Object Locator implementation ==========
+			// Parameters: RCX = source_col, RDX = target_col
+			// Returns: AL = 1 if cast valid, 0 otherwise
+			
+			// Function prologue - save non-volatile registers
+			emitPushReg(X64Register::RBX);  // Save RBX
+			emitPushReg(X64Register::RSI);  // Save RSI (will use for loop counter)
+			emitPushReg(X64Register::RDI);  // Save RDI (will use for base pointer)
+			emitSubRSP(32);  // Shadow space for recursive calls
 		
 		// Null check: if (!source_col || !target_col) return false
 		emitTestRegReg(X64Register::RCX);  // TEST RCX, RCX
@@ -13020,6 +13354,8 @@ private:
 		offset_to_true = static_cast<int8_t>(return_true - base_match_to_true - 2);
 		textSectionData[base_match_to_true + 1] = static_cast<uint8_t>(offset_to_true);
 		
+		}  // end Windows/COFF implementation
+		
 		// Calculate function length
 		uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - function_offset;
 		
@@ -13134,6 +13470,7 @@ private:
 	StringHandle current_function_mangled_name_;  // Changed from string_view to prevent dangling pointer
 	uint32_t current_function_offset_ = 0;
 	bool current_function_is_variadic_ = false;
+	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter (RVO)
 	int32_t current_function_varargs_reg_save_offset_ = 0;  // Offset of varargs register save area (Linux only)
 
 	// Pending function info for exception handling

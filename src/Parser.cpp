@@ -6094,9 +6094,14 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 				// Return success (no AST node needed for type aliases)
 				return saved_position.success();
-			} else if (parsing_template_body_) {
-				// If we're in a template body and type parsing failed, it's likely a template-dependent type
-				// Skip to semicolon and continue (template aliases with dependent types can't be fully resolved now)
+			} else if (parsing_template_body_ || gSymbolTable.get_current_scope_type() == ScopeType::Function) {
+				// If we're in a template body OR function body and type parsing failed, it's likely a template-dependent type
+				// or a complex type expression during template instantiation.
+				// Skip to semicolon and continue (template aliases with dependent types can't be fully resolved now).
+				// For function-local type aliases (like in template instantiations), they're often not needed
+				// for code generation as the actual type is already known from the return type.
+				FLASH_LOG(Parser, Debug, "Skipping unparseable using declaration in ", 
+				          parsing_template_body_ ? "template body" : "function body");
 				while (peek_token().has_value() && peek_token()->value() != ";") {
 					consume_token();
 				}
@@ -6231,6 +6236,29 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		std::string_view(identifier_token.value())
 	);
 
+	// Helper function to add standard members to C library div_t-style structs
+	auto add_div_struct_members = [](StructTypeInfo* struct_info, std::string_view type_name) {
+		if (type_name == "div_t") {
+			// div_t has two int members: quot and rem
+			StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
+			StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
+			struct_info->addMember(quot_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
+			struct_info->addMember(rem_name, Type::Int, 0, 4, 4, AccessSpecifier::Public, std::nullopt, false, false, 32);
+		} else if (type_name == "ldiv_t") {
+			// ldiv_t has two long members: quot and rem
+			StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
+			StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
+			struct_info->addMember(quot_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+			struct_info->addMember(rem_name, Type::Long, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+		} else if (type_name == "lldiv_t") {
+			// lldiv_t has two long long members: quot and rem
+			StringHandle quot_name = StringTable::getOrInternStringHandle("quot");
+			StringHandle rem_name = StringTable::getOrInternStringHandle("rem");
+			struct_info->addMember(quot_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+			struct_info->addMember(rem_name, Type::LongLong, 0, 8, 8, AccessSpecifier::Public, std::nullopt, false, false, 64);
+		}
+	};
+
 	// Check if the identifier is a known type from the global namespace or __gnu_cxx namespace (C library types)
 	// and register it in gTypesByName so it can be used as a type
 	// Common C library types that need to be registered as opaque types
@@ -6249,32 +6277,156 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		{"tm"sv, 256}         // struct with multiple fields
 	};
 	
-	auto type_it = c_library_types.find(identifier_token.value());
-	// Check if this is from global namespace or __gnu_cxx namespace
-	bool is_from_global = namespace_path.empty();
-	bool is_from_gnu_cxx = (namespace_path.size() == 1 && 
-	                         namespace_path[0] == "__gnu_cxx");
+	// Check if the identifier refers to an existing type in the source namespace
+	// Build the source type name (either global or qualified with namespace_path)
+	StringHandle source_type_name;
+	if (namespace_path.empty()) {
+		// using ::identifier; - refers to global namespace
+		source_type_name = StringTable::getOrInternStringHandle(identifier_token.value());
+	} else {
+		// using ns1::ns2::identifier; - build qualified name
+		StringBuilder sb;
+		for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+			sb.append(ns).append("::");
+#else
+			sb.append(ns.view()).append("::");
+#endif
+		}
+		sb.append(identifier_token.value());
+		source_type_name = StringTable::getOrInternStringHandle(sb.commit());
+	}
 	
-	if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
-		StringHandle type_name = StringTable::getOrInternStringHandle(identifier_token.value());
-
-		// This is a C library type being brought in via using ::type; or using ::__gnu_cxx::type;
-		// Register it as a struct type (opaque) so it can be recognized
-		if (gTypesByName.find(type_name) == gTypesByName.end()) {
-			// Add the type to gTypeInfo as a struct type
-			auto& type_info = gTypeInfo.emplace_back(type_name, Type::Struct, gTypeInfo.size());
-			type_info.type_size_ = type_it->second; // Set the size in bits
-			
-			// Create a minimal StructTypeInfo so it's recognized as a struct
-			auto struct_info = std::make_unique<StructTypeInfo>(type_name, AccessSpecifier::Public);
-			struct_info->total_size = type_it->second / 8; // Convert bits to bytes
-			type_info.setStructInfo(std::move(struct_info));
-if (type_info.getStructInfo()) {
-	type_info.type_size_ = type_info.getStructInfo()->total_size;
-}
-			
-			gTypesByName.emplace(type_name, &type_info);
-			FLASH_LOG_FORMAT(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", StringTable::getStringView(type_name), type_it->second);
+	// Look up the type in gTypesByName
+	auto existing_type_it = gTypesByName.find(source_type_name);
+	
+	// If not found with qualified name, try the unqualified name
+	// This handles cases like: using ::__gnu_cxx::lldiv_t; where __gnu_cxx::lldiv_t
+	// might itself be an alias to ::lldiv_t
+	if (existing_type_it == gTypesByName.end() && !namespace_path.empty()) {
+		StringHandle qualified_source = source_type_name;  // Save the qualified name for logging
+		StringHandle unqualified_source = StringTable::getOrInternStringHandle(identifier_token.value());
+		auto unqualified_it = gTypesByName.find(unqualified_source);
+		if (unqualified_it != gTypesByName.end()) {
+			existing_type_it = unqualified_it;
+			source_type_name = unqualified_source;  // Update to use the unqualified name that was found
+			FLASH_LOG_FORMAT(Parser, Debug, "Using declaration: qualified name {} not found, using unqualified name {}", 
+			                 StringTable::getStringView(qualified_source), StringTable::getStringView(unqualified_source));
+		}
+	}
+	
+	// If we're inside a namespace, we need to register the type with a qualified name
+	// so that "std::lldiv_t" can be recognized as a type
+	auto current_namespace_path = gSymbolTable.build_current_namespace_path();
+	if (!current_namespace_path.empty()) {
+		// Build qualified name for the target: std::identifier
+		StringBuilder target_sb;
+		for (const auto& ns : current_namespace_path) {
+#if USE_OLD_STRING_APPROACH
+			target_sb.append(ns).append("::");
+#else
+			target_sb.append(ns.view()).append("::");
+#endif
+		}
+		target_sb.append(identifier_token.value());
+		StringHandle target_type_name = StringTable::getOrInternStringHandle(target_sb.commit());
+		
+		// Check if target name is already registered (avoid duplicates)
+		if (gTypesByName.find(target_type_name) == gTypesByName.end()) {
+			if (existing_type_it != gTypesByName.end()) {
+				// Found existing type - create alias pointing to it
+				const TypeInfo* source_type = existing_type_it->second;
+				auto& alias_type_info = gTypeInfo.emplace_back(target_type_name, source_type->type_, gTypeInfo.size());
+				alias_type_info.type_index_ = source_type->type_index_;
+				alias_type_info.type_size_ = source_type->type_size_;
+				alias_type_info.pointer_depth_ = source_type->pointer_depth_;
+				
+				// If the source type has StructInfo, we don't copy it - we rely on type_index_ to point to it
+				// This is the same pattern used for typedef resolution (see lines 6557-6565, 7032-7040)
+				
+				gTypesByName.emplace(target_type_name, &alias_type_info);
+				FLASH_LOG_FORMAT(Parser, Debug, "Registered type alias from using declaration: {} -> {}", 
+				                 StringTable::getStringView(target_type_name), StringTable::getStringView(source_type_name));
+				
+				// Also register with the unqualified name within the current namespace scope
+				// This allows code inside the namespace to use the type without qualification
+				// e.g., inside namespace std, both "std::lldiv_t" and "lldiv_t" should work
+				StringHandle unqualified_name = StringTable::getOrInternStringHandle(identifier_token.value());
+				if (gTypesByName.find(unqualified_name) == gTypesByName.end()) {
+					gTypesByName.emplace(unqualified_name, &alias_type_info);
+					FLASH_LOG_FORMAT(Parser, Debug, "Also registered unqualified type name: {}", 
+					                 StringTable::getStringView(unqualified_name));
+				}
+			} else {
+				// Type not found in source namespace - check if it's a known C library type
+				auto type_it = c_library_types.find(identifier_token.value());
+				bool is_from_global = namespace_path.empty();
+				bool is_from_gnu_cxx = (namespace_path.size() == 1 && namespace_path[0] == "__gnu_cxx");
+				
+				if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
+					// Create opaque C library type
+					auto& type_info = gTypeInfo.emplace_back(target_type_name, Type::Struct, gTypeInfo.size());
+					type_info.type_size_ = type_it->second;
+					
+					auto struct_info = std::make_unique<StructTypeInfo>(target_type_name, AccessSpecifier::Public);
+					struct_info->total_size = type_it->second / 8;
+					
+					// Add members for div_t, ldiv_t, and lldiv_t
+					add_div_struct_members(struct_info.get(), identifier_token.value());
+					
+					// Finalize the struct layout
+					struct_info->finalize();
+					
+					type_info.setStructInfo(std::move(struct_info));
+					if (type_info.getStructInfo()) {
+						type_info.type_size_ = type_info.getStructInfo()->total_size;
+					}
+					
+					gTypesByName.emplace(target_type_name, &type_info);
+					FLASH_LOG_FORMAT(Parser, Debug, "Registered opaque C library type from using declaration: {} (size {} bits)", 
+					                 StringTable::getStringView(target_type_name), type_it->second);
+					
+					// Also register with the unqualified name within the current namespace scope
+					StringHandle unqualified_name = StringTable::getOrInternStringHandle(identifier_token.value());
+					if (gTypesByName.find(unqualified_name) == gTypesByName.end()) {
+						gTypesByName.emplace(unqualified_name, &type_info);
+						FLASH_LOG_FORMAT(Parser, Debug, "Also registered unqualified type name: {}", 
+						                 StringTable::getStringView(unqualified_name));
+					}
+				}
+			}
+		}
+	} else {
+		// We're in global namespace - check if we need to register a C library type
+		auto type_it = c_library_types.find(identifier_token.value());
+		bool is_from_global = namespace_path.empty();
+		bool is_from_gnu_cxx = (namespace_path.size() == 1 && namespace_path[0] == "__gnu_cxx");
+		
+		if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
+			StringHandle type_name = StringTable::getOrInternStringHandle(identifier_token.value());
+			if (gTypesByName.find(type_name) == gTypesByName.end()) {
+				// Create opaque C library type in global namespace
+				auto& type_info = gTypeInfo.emplace_back(type_name, Type::Struct, gTypeInfo.size());
+				type_info.type_size_ = type_it->second;
+				
+				auto struct_info = std::make_unique<StructTypeInfo>(type_name, AccessSpecifier::Public);
+				struct_info->total_size = type_it->second / 8;
+				
+				// Add members for div_t, ldiv_t, and lldiv_t
+				add_div_struct_members(struct_info.get(), identifier_token.value());
+				
+				// Finalize the struct layout
+				struct_info->finalize();
+				
+				type_info.setStructInfo(std::move(struct_info));
+				if (type_info.getStructInfo()) {
+					type_info.type_size_ = type_info.getStructInfo()->total_size;
+				}
+				
+				gTypesByName.emplace(type_name, &type_info);
+				FLASH_LOG_FORMAT(Parser, Debug, "Registered C library type from using declaration: {} (size {} bits)", 
+				                 StringTable::getStringView(type_name), type_it->second);
+			}
 		}
 	}
 
@@ -9265,6 +9417,19 @@ ParseResult Parser::parse_unary_expression()
 			type_spec.add_pointer_level(ptr_cv);
 		}
 
+		// Parse reference declarators: & or &&
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+			if (peek_token()->value() == "&&") {
+				// Rvalue reference
+				consume_token(); // consume '&&'
+				type_spec.set_reference(true);  // true = rvalue reference
+			} else if (peek_token()->value() == "&") {
+				// Lvalue reference
+				consume_token(); // consume '&'
+				type_spec.set_reference(false);  // false = lvalue reference
+			}
+		}
+
 		// Expect '>'
 		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
 		    peek_token()->value() != ">") {
@@ -9335,6 +9500,19 @@ ParseResult Parser::parse_unary_expression()
 			}
 
 			type_spec.add_pointer_level(ptr_cv);
+		}
+
+		// Parse reference declarators: & or &&
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+			if (peek_token()->value() == "&&") {
+				// Rvalue reference
+				consume_token(); // consume '&&'
+				type_spec.set_reference(true);  // true = rvalue reference
+			} else if (peek_token()->value() == "&") {
+				// Lvalue reference
+				consume_token(); // consume '&'
+				type_spec.set_reference(false);  // false = lvalue reference
+			}
 		}
 
 		// Expect '>'
@@ -9409,6 +9587,19 @@ ParseResult Parser::parse_unary_expression()
 			type_spec.add_pointer_level(ptr_cv);
 		}
 
+		// Parse reference declarators: & or &&
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+			if (peek_token()->value() == "&&") {
+				// Rvalue reference
+				consume_token(); // consume '&&'
+				type_spec.set_reference(true);  // true = rvalue reference
+			} else if (peek_token()->value() == "&") {
+				// Lvalue reference
+				consume_token(); // consume '&'
+				type_spec.set_reference(false);  // false = lvalue reference
+			}
+		}
+
 		// Expect '>'
 		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
 		    peek_token()->value() != ">") {
@@ -9479,6 +9670,19 @@ ParseResult Parser::parse_unary_expression()
 			}
 
 			type_spec.add_pointer_level(ptr_cv);
+		}
+
+		// Parse reference declarators: & or &&
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+			if (peek_token()->value() == "&&") {
+				// Rvalue reference
+				consume_token(); // consume '&&'
+				type_spec.set_reference(true);  // true = rvalue reference
+			} else if (peek_token()->value() == "&") {
+				// Lvalue reference
+				consume_token(); // consume '&'
+				type_spec.set_reference(false);  // false = lvalue reference
+			}
 		}
 
 		// Expect '>'
@@ -11006,14 +11210,7 @@ ParseResult Parser::parse_primary_expression()
 		if (current_token_.has_value() && current_token_->value() == "(") {
 			consume_token(); // consume '('
 
-			// If not found, create a forward declaration
-			if (!identifierType) {
-				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
-				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
-				identifierType = forward_decl;
-			}
-
-			// Parse function arguments
+			// Parse function arguments first
 			ChunkedVector<ASTNode> args;
 			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
 				while (true) {
@@ -11043,10 +11240,90 @@ ParseResult Parser::parse_primary_expression()
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 			}
 
+			// If not found and we're not in extern "C", try template instantiation
+			if (!identifierType && current_linkage_ != Linkage::C) {
+				// Build qualified template name (e.g., "::move" or "::std::move")
+				StringBuilder qualified_name_builder;
+				for (const auto& ns : namespaces) {
+#if USE_OLD_STRING_APPROACH
+					qualified_name_builder.append(ns);
+#else
+					qualified_name_builder.append(ns.view());
+#endif
+					qualified_name_builder.append("::");
+				}
+				qualified_name_builder.append(qual_id.name());
+				std::string_view qualified_name = qualified_name_builder.commit();
+				
+				// Extract argument types for template instantiation
+				std::vector<TypeSpecifierNode> arg_types;
+				arg_types.reserve(args.size());
+				for (size_t i = 0; i < args.size(); ++i) {
+					const auto& arg = args[i];
+					if (arg.is<ExpressionNode>()) {
+						const ExpressionNode& expr = arg.as<ExpressionNode>();
+						std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
+						if (arg_type_opt.has_value()) {
+							TypeSpecifierNode arg_type_node = *arg_type_opt;
+							
+							// Check if this is an lvalue (for perfect forwarding deduction)
+							// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+							// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
+							bool is_lvalue = std::visit([](const auto& inner) -> bool {
+								using T = std::decay_t<decltype(inner)>;
+								if constexpr (std::is_same_v<T, IdentifierNode>) {
+									// Named variables are lvalues
+									return true;
+								} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+									// Array subscript expressions are lvalues
+									return true;
+								} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+									// Member access expressions are lvalues
+									return true;
+								} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+									// Dereference (*ptr) is an lvalue
+									// Other unary operators like ++, --, etc. may also be lvalues
+									return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+								} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+									// String literals are lvalues in C++
+									return true;
+								} else {
+									// All other expressions (literals, temporaries, etc.) are rvalues
+									return false;
+								}
+							}, expr);
+							
+							if (is_lvalue) {
+								// For forwarding reference deduction: T&& deduces to T& for lvalues
+								arg_type_node.set_lvalue_reference(true);
+							}
+							
+							arg_types.push_back(arg_type_node);
+						}
+					}
+				}
+				
+				// Try to instantiate the qualified template function
+				if (!arg_types.empty()) {
+					std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+					if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+						identifierType = *template_inst;
+						FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
+					}
+				}
+			}
+			
+			// If still not found, create a forward declaration
+			if (!identifierType) {
+				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
+				identifierType = forward_decl;
+			}
+
 			// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
 			const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
 			if (!decl_ptr) {
-				return ParseResult::error("Invalid function declaration", qual_id.identifier_token());
+				return ParseResult::error("Invalid function declaration (global namespace path)", qual_id.identifier_token());
 			}
 
 			// Create function call node with the qualified identifier
@@ -11290,112 +11567,187 @@ ParseResult Parser::parse_primary_expression()
 		}
 
 		// Try to look up the qualified identifier
-		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.name());			// Check if followed by '(' for function call
-			if (current_token_.has_value() && current_token_->value() == "(") {
-				consume_token(); // consume '('
+		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.name());
+		
+		// Check if followed by '(' for function call
+		if (current_token_.has_value() && current_token_->value() == "(") {
+			consume_token(); // consume '('
 
-				// If not found, create a forward declaration
-				if (!identifierType) {
-					auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
-					auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
-					identifierType = forward_decl;
-				}
-
-				// Parse function arguments
-				ChunkedVector<ASTNode> args;
-				if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
-					while (true) {
-						auto arg_result = parse_expression();
-						if (arg_result.is_error()) {
-							return arg_result;
-						}
+			// Parse function arguments first
+			ChunkedVector<ASTNode> args;
+			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
+				while (true) {
+					auto arg_result = parse_expression();
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+					
+					// Check for pack expansion: expr...
+					if (peek_token().has_value() && peek_token()->value() == "...") {
+						consume_token(); // consume '...'
 						
-						// Check for pack expansion: expr...
-						if (peek_token().has_value() && peek_token()->value() == "...") {
-							consume_token(); // consume '...'
-							
-							// Pack expansion: need to expand the expression for each pack element
-							// Strategy: Try to find expanded pack elements in the symbol table
-							
-							if (auto arg_node = arg_result.node()) {
-								// Simple case: if the expression is just a single identifier that looks
-								// like a pack parameter, try to expand it
-								if (arg_node->is<IdentifierNode>()) {
-									std::string_view pack_name = arg_node->as<IdentifierNode>().name();
+						// Pack expansion: need to expand the expression for each pack element
+						// Strategy: Try to find expanded pack elements in the symbol table
+						
+						if (auto arg_node = arg_result.node()) {
+							// Simple case: if the expression is just a single identifier that looks
+							// like a pack parameter, try to expand it
+							if (arg_node->is<IdentifierNode>()) {
+								std::string_view pack_name = arg_node->as<IdentifierNode>().name();
+								
+								// Try to find pack_name_0, pack_name_1, etc. in the symbol table
+								size_t pack_size = 0;
+								
+								StringBuilder sb;
+								for (size_t i = 0; i < 100; ++i) {  // reasonable limit
+									// Use StringBuilder to create a persistent string
+									std::string_view element_name = sb
+										.append(pack_name)
+										.append("_")
+										.append(i)
+										.preview();
 									
-									// Try to find pack_name_0, pack_name_1, etc. in the symbol table
-									size_t pack_size = 0;
-									
-									StringBuilder sb;
-									for (size_t i = 0; i < 100; ++i) {  // reasonable limit
-										// Use StringBuilder to create a persistent string
-										std::string_view element_name = sb
+									if (gSymbolTable.lookup(element_name).has_value()) {
+										++pack_size;
+										sb.reset();
+									} else {
+										break;
+									}
+								}
+								sb.reset();
+								
+								if (pack_size > 0) {
+									// Add each pack element as a separate argument
+									for (size_t i = 0; i < pack_size; ++i) {
+										// Use StringBuilder to create a persistent string for the token
+										std::string_view element_name = StringBuilder()
 											.append(pack_name)
 											.append("_")
 											.append(i)
-											.preview();
+											.commit();
 										
-										if (gSymbolTable.lookup(element_name).has_value()) {
-											++pack_size;
-											sb.reset();
-										} else {
-											break;
-										}
-									}
-									sb.reset();
-									
-									if (pack_size > 0) {
-										// Add each pack element as a separate argument
-										for (size_t i = 0; i < pack_size; ++i) {
-											// Use StringBuilder to create a persistent string for the token
-											std::string_view element_name = StringBuilder()
-												.append(pack_name)
-												.append("_")
-												.append(i)
-												.commit();
-											
-											Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
-											auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
-											args.push_back(elem_node);
-										}
-									} else {
-										args.push_back(*arg_node);
+										Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
+										auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
+										args.push_back(elem_node);
 									}
 								} else {
-									// Complex expression: need full rewriting (not implemented yet)
 									args.push_back(*arg_node);
 								}
-							}
-						} else {
-							// Regular argument
-							if (auto arg = arg_result.node()) {
-								args.push_back(*arg);
+							} else {
+								// Complex expression: need full rewriting (not implemented yet)
+								args.push_back(*arg_node);
 							}
 						}
-
-						if (!peek_token().has_value()) {
-							return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
+					} else {
+						// Regular argument
+						if (auto arg = arg_result.node()) {
+							args.push_back(*arg);
 						}
+					}
 
-						if (peek_token()->value() == ")") {
-							break;
-						}
+					if (!peek_token().has_value()) {
+						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
+					}
 
-						if (!consume_punctuator(",")) {
-							return ParseResult::error("Expected ',' between function arguments", *current_token_);
+					if (peek_token()->value() == ")") {
+						break;
+					}
+
+					if (!consume_punctuator(",")) {
+						return ParseResult::error("Expected ',' between function arguments", *current_token_);
+					}
+				}
+			}
+			
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+			}
+
+			// If not found OR if it's a template (not an instantiated function), try template instantiation
+			if ((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) && 
+			    current_linkage_ != Linkage::C) {
+				// Build qualified template name
+				StringBuilder qualified_name_builder;
+				for (const auto& ns : qual_id.namespaces()) {
+#if USE_OLD_STRING_APPROACH
+					qualified_name_builder.append(ns);
+#else
+					qualified_name_builder.append(ns.view());
+#endif
+					qualified_name_builder.append("::");
+				}
+				qualified_name_builder.append(qual_id.name());
+				std::string_view qualified_name = qualified_name_builder.commit();
+				
+				// Extract argument types for template instantiation
+				std::vector<TypeSpecifierNode> arg_types;
+				arg_types.reserve(args.size());
+				for (size_t i = 0; i < args.size(); ++i) {
+					const auto& arg = args[i];
+					if (arg.is<ExpressionNode>()) {
+						const ExpressionNode& expr = arg.as<ExpressionNode>();
+						std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
+						if (arg_type_opt.has_value()) {
+							TypeSpecifierNode arg_type_node = *arg_type_opt;
+							
+							// Check if this is an lvalue (for perfect forwarding deduction)
+							// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+							// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
+							bool is_lvalue = std::visit([](const auto& inner) -> bool {
+								using T = std::decay_t<decltype(inner)>;
+								if constexpr (std::is_same_v<T, IdentifierNode>) {
+									// Named variables are lvalues
+									return true;
+								} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+									// Array subscript expressions are lvalues
+									return true;
+								} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+									// Member access expressions are lvalues
+									return true;
+								} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+									// Dereference (*ptr) is an lvalue
+									// Other unary operators like ++, --, etc. may also be lvalues
+									return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+								} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+									// String literals are lvalues in C++
+									return true;
+								} else {
+									// All other expressions (literals, temporaries, etc.) are rvalues
+									return false;
+								}
+							}, expr);
+							
+							if (is_lvalue) {
+								// For forwarding reference deduction: T&& deduces to T& for lvalues
+								arg_type_node.set_lvalue_reference(true);
+							}
+							
+							arg_types.push_back(arg_type_node);
 						}
 					}
 				}
 				
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+				// Try to instantiate the qualified template function
+				if (!arg_types.empty()) {
+					std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+					if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+						identifierType = *template_inst;
+					}
 				}
+			}
+			
+			// If still not found, create a forward declaration
+			if (!identifierType) {
+				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
+				identifierType = forward_decl;
+			}
 
-				// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
-				const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
-				if (!decl_ptr) {
-					return ParseResult::error("Invalid function declaration", qual_id.identifier_token());
-				}
+			// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
+			const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+			if (!decl_ptr) {
+				return ParseResult::error("Invalid function declaration (template args path)", qual_id.identifier_token());
+			}
 
 				// Create function call node with the qualified identifier
 				result = emplace_node<ExpressionNode>(
@@ -11520,8 +11872,8 @@ ParseResult Parser::parse_primary_expression()
 			
 			FLASH_LOG(Parser, Debug, "Qualified lookup result: {}", identifierType.has_value() ? "found" : "not found");
 			
-			// Check if this is a function call
-			if (identifierType.has_value() && peek_token().has_value() && peek_token()->value() == "(") {
+			// Check if this is a function call (even if not found - might be a template)
+			if (peek_token().has_value() && peek_token()->value() == "(") {
 				consume_token(); // consume '('
 				
 				// Parse function arguments
@@ -11555,10 +11907,85 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 				}
 				
+				// If not found and we're not in extern "C", try template instantiation
+				if (!identifierType.has_value() && current_linkage_ != Linkage::C) {
+					// Build qualified template name
+					StringBuilder qualified_name_builder;
+					for (const auto& ns : qual_id.namespaces()) {
+#if USE_OLD_STRING_APPROACH
+						qualified_name_builder.append(ns);
+#else
+						qualified_name_builder.append(ns.view());
+#endif
+						qualified_name_builder.append("::");
+					}
+					qualified_name_builder.append(qual_id.name());
+					std::string_view qualified_name = qualified_name_builder.commit();
+					
+					// Extract argument types for template instantiation
+					std::vector<TypeSpecifierNode> arg_types;
+					arg_types.reserve(args.size());
+					for (size_t i = 0; i < args.size(); ++i) {
+						const auto& arg = args[i];
+						if (arg.is<ExpressionNode>()) {
+							const ExpressionNode& expr = arg.as<ExpressionNode>();
+							std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
+							if (arg_type_opt.has_value()) {
+								TypeSpecifierNode arg_type_node = *arg_type_opt;
+								
+								// Check if this is an lvalue (for perfect forwarding deduction)
+								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
+								bool is_lvalue = std::visit([](const auto& inner) -> bool {
+									using T = std::decay_t<decltype(inner)>;
+									if constexpr (std::is_same_v<T, IdentifierNode>) {
+										// Named variables are lvalues
+										return true;
+									} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+										// Array subscript expressions are lvalues
+										return true;
+									} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+										// Member access expressions are lvalues
+										return true;
+									} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+										// Dereference (*ptr) is an lvalue
+										// Other unary operators like ++, --, etc. may also be lvalues
+										return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+										// String literals are lvalues in C++
+										return true;
+									} else {
+										// All other expressions (literals, temporaries, etc.) are rvalues
+										return false;
+									}
+								}, expr);
+								
+								if (is_lvalue) {
+									// For forwarding reference deduction: T&& deduces to T& for lvalues
+									arg_type_node.set_lvalue_reference(true);
+								}
+								
+								arg_types.push_back(arg_type_node);
+							}
+						}
+					}
+					
+					
+					// Try to instantiate the qualified template function
+					if (!arg_types.empty()) {
+						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+							identifierType = *template_inst;
+						} else {
+						}
+					} else {
+					}
+				}
+				
 				// Get the DeclarationNode
-				const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+				const DeclarationNode* decl_ptr = identifierType.has_value() ? getDeclarationNode(*identifierType) : nullptr;
 				if (!decl_ptr) {
-					return ParseResult::error("Invalid function declaration", final_identifier);
+					return ParseResult::error("Invalid function declaration (qualified id path)", final_identifier);
 				}
 				
 				// Create function call node with the qualified identifier
@@ -12656,17 +13083,39 @@ ParseResult Parser::parse_primary_expression()
 							
 								TypeSpecifierNode arg_type_node = *arg_type;
 							
-								// For perfect forwarding: check if argument is an lvalue (named variable)
-								// If so, mark it as an lvalue reference for template deduction
+								// For perfect forwarding: check if argument is an lvalue
+								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
 								if (args[i].is<ExpressionNode>()) {
 									const ExpressionNode& expr = args[i].as<ExpressionNode>();
-									if (std::holds_alternative<IdentifierNode>(expr)) {
-										// This is a named variable (lvalue) - mark as lvalue reference
+									bool is_lvalue = std::visit([](const auto& inner) -> bool {
+										using T = std::decay_t<decltype(inner)>;
+										if constexpr (std::is_same_v<T, IdentifierNode>) {
+											// Named variables are lvalues
+											return true;
+										} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+											// Array subscript expressions are lvalues
+											return true;
+										} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+											// Member access expressions are lvalues
+											return true;
+										} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+											// Dereference (*ptr) is an lvalue
+											// Other unary operators like ++, --, etc. may also be lvalues
+											return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+										} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+											// String literals are lvalues in C++
+											return true;
+										} else {
+											// All other expressions (literals, temporaries, etc.) are rvalues
+											return false;
+										}
+									}, expr);
+									
+									if (is_lvalue) {
 										// For forwarding reference deduction: Args&& deduces to T& for lvalues
 										arg_type_node.set_lvalue_reference(true);
 									}
-									// TODO: Handle other lvalue cases (array subscript, member access, dereference, etc.)
-									// Literals and temporaries remain as-is (treated as rvalues)
 								}
 							
 								arg_types.push_back(arg_type_node);
@@ -13266,6 +13715,80 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 				};
 				
 				const DeclarationNode* decl_ptr = qualified_symbol.has_value() ? getDeclarationNode(*qualified_symbol) : nullptr;
+				
+				// If symbol not found and we're not in extern "C", try template instantiation
+				if (!decl_ptr && current_linkage_ != Linkage::C) {
+					// Build qualified template name (e.g., "std::move")
+					StringBuilder qualified_name_builder;
+					for (const auto& ns : namespaces) {
+#if USE_OLD_STRING_APPROACH
+						qualified_name_builder.append(ns);
+#else
+						qualified_name_builder.append(ns.view());
+#endif
+						qualified_name_builder.append("::");
+					}
+					qualified_name_builder.append(final_identifier.value());
+					std::string_view qualified_name = qualified_name_builder.commit();
+					
+					// Extract argument types for template instantiation
+					std::vector<TypeSpecifierNode> arg_types;
+					arg_types.reserve(args.size());
+					for (size_t i = 0; i < args.size(); ++i) {
+						const auto& arg = args[i];
+						if (arg.is<ExpressionNode>()) {
+							const ExpressionNode& expr = arg.as<ExpressionNode>();
+							std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
+							if (arg_type_opt.has_value()) {
+								TypeSpecifierNode arg_type_node = *arg_type_opt;
+								
+								// Check if this is an lvalue (for perfect forwarding deduction)
+								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
+								bool is_lvalue = std::visit([](const auto& inner) -> bool {
+									using T = std::decay_t<decltype(inner)>;
+									if constexpr (std::is_same_v<T, IdentifierNode>) {
+										// Named variables are lvalues
+										return true;
+									} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+										// Array subscript expressions are lvalues
+										return true;
+									} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+										// Member access expressions are lvalues
+										return true;
+									} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+										// Dereference (*ptr) is an lvalue
+										// Other unary operators like ++, --, etc. may also be lvalues
+										return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+										// String literals are lvalues in C++
+										return true;
+									} else {
+										// All other expressions (literals, temporaries, etc.) are rvalues
+										return false;
+									}
+								}, expr);
+								
+								if (is_lvalue) {
+									// For forwarding reference deduction: T&& deduces to T& for lvalues
+									arg_type_node.set_lvalue_reference(true);
+								}
+								
+								arg_types.push_back(arg_type_node);
+							}
+						}
+					}
+					
+					// Try to instantiate the qualified template function
+					if (!arg_types.empty()) {
+						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+							decl_ptr = &template_inst->as<FunctionDeclarationNode>().decl_node();
+							FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
+						}
+					}
+				}
+				
 				if (!decl_ptr) {
 					// Create forward declaration
 					auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, final_identifier);
@@ -17991,10 +18514,27 @@ if (struct_type_info.getStructInfo()) {
 		const DeclarationNode& func_decl_node = func_decl.decl_node();
 
 		// Register the template in the template registry
-		gTemplateRegistry.registerTemplate(func_decl_node.identifier_token().value(), template_func_node);
+		// If we're in a namespace, register with both simple and qualified names
+		std::string_view simple_name = func_decl_node.identifier_token().value();
+		
+		// Register with simple name (for backward compatibility and unqualified lookups)
+		gTemplateRegistry.registerTemplate(simple_name, template_func_node);
+		
+		// If in a namespace, also register with qualified name for namespace-qualified lookups
+		auto namespace_path = gSymbolTable.build_current_namespace_path();
+		if (!namespace_path.empty()) {
+			StringBuilder qualified_name_builder;
+			for (const auto& ns : namespace_path) {
+				qualified_name_builder.append(ns).append("::");
+			}
+			qualified_name_builder.append(simple_name);
+			std::string_view qualified_name = qualified_name_builder.commit();
+			FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
+			gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
+		}
 
 		// Add the template function to the symbol table so it can be found during overload resolution
-		gSymbolTable.insert(func_decl_node.identifier_token().value(), template_func_node);
+		gSymbolTable.insert(simple_name, template_func_node);
 
 		return saved_position.success(template_func_node);
 	}
@@ -20431,6 +20971,72 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		auto orig_body = func_decl.get_definition();
 		if (orig_body.has_value()) {
 			new_func_ref.set_definition(orig_body.value());
+		}
+	}
+
+	// Analyze the function body to determine if it should be inline-always
+	// This applies to both paths: re-parsed bodies and copied bodies
+	const auto& func_definition = new_func_ref.get_definition();
+	
+	// If the function has no body, it MUST be inline-always
+	// This happens when template bodies have unparseable statements that were skipped
+	if (!func_definition.has_value()) {
+		new_func_ref.set_inline_always(true);
+		FLASH_LOG(Templates, Debug, "Marked template instantiation as inline_always (no body): ", 
+		          new_func_ref.decl_node().identifier_token().value());
+	} else if (func_definition->is<BlockNode>()) {
+		const BlockNode& block = func_definition->as<BlockNode>();
+		const auto& statements = block.get_statements();
+		
+		FLASH_LOG(Templates, Debug, "Analyzing template instantiation '", 
+		          new_func_ref.decl_node().identifier_token().value(), "' for pure expression, statements=", statements.size());
+		
+		// Check if this is a pure expression function
+		const bool is_pure_expr = std::invoke([&statements]()-> bool {
+			bool is_pure_expr = true;	// assume true
+			// Might be more than one statement: using declaration + return for example
+			// This is still a pure expression if the return is a cast
+			bool has_pure_return = false;
+			
+			statements.visit([&](const ASTNode& stmt) {
+				if (stmt.is<TypedefDeclarationNode>()) {
+					// Typedef statements are okay
+				} else if (stmt.is<ReturnStatementNode>()) {
+					const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
+					const auto& expr_opt = ret_stmt.expression();
+					
+					if (expr_opt.has_value() && expr_opt->is<ExpressionNode>()) {
+						const ExpressionNode& expr = expr_opt->as<ExpressionNode>();
+						
+						// Check if the expression is a pure cast or simple identifier
+						std::visit([&](const auto& e) {
+							using T = std::decay_t<decltype(e)>;
+							if constexpr (std::is_same_v<T, StaticCastNode> ||
+											std::is_same_v<T, ReinterpretCastNode> ||
+											std::is_same_v<T, ConstCastNode> ||
+											std::is_same_v<T, IdentifierNode>) {
+								has_pure_return = true;
+							}
+						}, expr);
+					}
+				} else {
+					is_pure_expr = false;
+				}
+			});
+			is_pure_expr &= static_cast<int>(has_pure_return);
+			return is_pure_expr;
+		});
+		
+		new_func_ref.set_inline_always(is_pure_expr);
+
+		if (is_pure_expr) {
+			FLASH_LOG(Templates, Debug, "Marked template instantiation as inline_always (pure expression): ", 
+			          new_func_ref.decl_node().identifier_token().value());
+		} else {
+			// Function has computation/side effects - should generate normal calls
+			// Explicitly set inline_always to false
+			FLASH_LOG(Templates, Debug, "Template instantiation has computation/side effects (not inlining): ", 
+			          new_func_ref.decl_node().identifier_token().value());
 		}
 	}
 

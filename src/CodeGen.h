@@ -122,6 +122,13 @@ struct LambdaInfo {
 	}
 };
 
+// Expression evaluation context
+// Determines how an expression should be evaluated
+enum class ExpressionContext {
+	Load,           // Evaluate and load the value (default, rvalue context)
+	LValueAddress   // Evaluate to get the address without loading (lvalue context for assignment)
+};
+
 class AstToIr {
 public:
 	AstToIr() = delete;  // Require valid references
@@ -926,6 +933,200 @@ private:
 		return false;
 	}
 
+	// Helper function to handle assignment using lvalue metadata
+	// Queries LValueInfo::Kind and routes to appropriate store instruction
+	// Returns true if assignment was handled via lvalue metadata, false otherwise
+	//
+	// USAGE: Call this after evaluating both LHS and RHS expressions.
+	//        If it returns true, the assignment was handled and caller should skip normal assignment logic.
+	//        If it returns false, fall back to normal assignment or special-case handling.
+	//
+	// CURRENT LIMITATIONS:
+	// - ArrayElement and Member cases need additional metadata (index, member_name) not currently in LValueInfo
+	// - Only Indirect (dereference) case is fully implemented
+	// - Future work: Extend LValueInfo or pass additional context to handle all cases
+	bool handleLValueAssignment(const std::vector<IrOperand>& lhs_operands,
+	                            const std::vector<IrOperand>& rhs_operands,
+	                            const Token& token) {
+		// Check if LHS has a TempVar with lvalue metadata
+		if (lhs_operands.size() < 3 || !std::holds_alternative<TempVar>(lhs_operands[2])) {
+			FLASH_LOG(Codegen, Info, "handleLValueAssignment: FAIL - size=", lhs_operands.size(), " has_tempvar=", (lhs_operands.size() >= 3 ? std::holds_alternative<TempVar>(lhs_operands[2]) : false));
+			return false;
+		}
+
+		TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
+		auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
+		
+		if (!lvalue_info_opt.has_value()) {
+			FLASH_LOG(Codegen, Info, "handleLValueAssignment: FAIL - no lvalue metadata for temp=", lhs_temp.var_number);
+			return false;
+		}
+
+		const LValueInfo& lv_info = lvalue_info_opt.value();
+		
+		FLASH_LOG(Codegen, Debug, "handleLValueAssignment: kind=", static_cast<int>(lv_info.kind));
+
+		// Route to appropriate store instruction based on LValueInfo::Kind
+		switch (lv_info.kind) {
+			case LValueInfo::Kind::ArrayElement: {
+				// Array element assignment: arr[i] = value
+				FLASH_LOG(Codegen, Debug, "  -> ArrayStore (handled via metadata)");
+				
+				// Check if we have the index stored in metadata
+				if (!lv_info.array_index.has_value()) {
+					FLASH_LOG(Codegen, Info, "     ArrayElement: No index in metadata, falling back");
+					return false;
+				}
+				
+				FLASH_LOG(Codegen, Info, "     ArrayElement: Has index in metadata, proceeding with unified handler");
+				
+				// Build TypedValue for index from metadata
+				IrValue index_value = lv_info.array_index.value();
+				TypedValue index_tv;
+				index_tv.value = index_value;
+				index_tv.type = Type::Int;  // Index type (typically int)
+				index_tv.size_in_bits = 32;  // Standard index size
+				
+				// Build TypedValue for value with LHS type/size but RHS value
+				// This is important: the size must match the array element type
+				TypedValue value_tv;
+				value_tv.type = std::get<Type>(lhs_operands[0]);
+				value_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+				value_tv.value = toIrValue(rhs_operands[2]);
+				
+				// Emit the store using helper
+				emitArrayStore(
+					std::get<Type>(lhs_operands[0]),  // element_type
+					std::get<int>(lhs_operands[1]),   // element_size_bits
+					lv_info.base,                      // array
+					index_tv,                          // index
+					value_tv,                          // value (with LHS type/size, RHS value)
+					lv_info.offset,                    // member_offset
+					lv_info.is_pointer_to_array,       // is_pointer_to_array
+					token
+				);
+				return true;
+			}
+
+			case LValueInfo::Kind::Member: {
+				// Member assignment: obj.member = value
+				FLASH_LOG(Codegen, Debug, "  -> MemberStore (handled via metadata)");
+				
+				// Check if we have member_name stored in metadata
+				if (!lv_info.member_name.has_value()) {
+					FLASH_LOG(Codegen, Debug, "     No member_name in metadata, falling back");
+					return false;
+				}
+				
+				// Safety check: validate size is reasonable (not 0 or negative)
+				int lhs_size = std::get<int>(lhs_operands[1]);
+				if (lhs_size <= 0 || lhs_size > 1024) {
+					FLASH_LOG(Codegen, Debug, "     Invalid size in metadata (", lhs_size, "), falling back");
+					return false;
+				}
+				
+				// Build TypedValue with LHS type/size but RHS value
+				// This is important: the size must match the member being stored to, not the RHS
+				TypedValue value_tv;
+				value_tv.type = std::get<Type>(lhs_operands[0]);
+				value_tv.size_in_bits = lhs_size;
+				value_tv.value = toIrValue(rhs_operands[2]);
+				
+				// Emit the store using helper
+				emitMemberStore(
+					value_tv,                           // value (with LHS type/size, RHS value)
+					lv_info.base,                       // object
+					lv_info.member_name.value(),        // member_name
+					lv_info.offset,                     // offset
+					false,                              // is_reference
+					false,                              // is_rvalue_reference
+					token
+				);
+				return true;
+			}
+
+			case LValueInfo::Kind::Indirect: {
+				// Dereference assignment: *ptr = value
+				// This case works because we have all needed info in LValueInfo
+				FLASH_LOG(Codegen, Debug, "  -> DereferenceStore (handled via metadata)");
+				
+				// Emit the store using helper
+				emitDereferenceStore(
+					toTypedValue(rhs_operands),     // value
+					std::get<Type>(lhs_operands[0]), // pointee_type
+					std::get<int>(lhs_operands[1]),  // pointee_size_in_bits
+					lv_info.base,                    // pointer
+					token
+				);
+				return true;
+			}
+
+			case LValueInfo::Kind::Direct:
+			case LValueInfo::Kind::Temporary:
+				// Direct variable assignment - handled by regular assignment logic
+				FLASH_LOG(Codegen, Debug, "  -> Regular assignment (Direct/Temporary)");
+				return false;
+
+			default:
+				return false;
+		}
+
+		return false;
+	}
+
+	// Helper functions to emit store instructions
+	// These can be used by both the unified handler and special-case code
+	
+	// Emit ArrayStore instruction
+	void emitArrayStore(Type element_type, int element_size_bits,
+	                    std::variant<StringHandle, TempVar> array,
+	                    const TypedValue& index, const TypedValue& value,
+	                    int64_t member_offset, bool is_pointer_to_array,
+	                    const Token& token) {
+		ArrayStoreOp payload;
+		payload.element_type = element_type;
+		payload.element_size_in_bits = element_size_bits;
+		payload.array = array;
+		payload.index = index;
+		payload.value = value;
+		payload.member_offset = member_offset;
+		payload.is_pointer_to_array = is_pointer_to_array;
+		
+		ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), token));
+	}
+	
+	// Emit MemberStore instruction
+	void emitMemberStore(const TypedValue& value,
+	                     std::variant<StringHandle, TempVar> object,
+	                     StringHandle member_name, int offset,
+	                     bool is_reference = false, bool is_rvalue_reference = false,
+	                     const Token& token = Token()) {
+		MemberStoreOp member_store;
+		member_store.value = value;
+		member_store.object = object;
+		member_store.member_name = member_name;
+		member_store.offset = offset;
+		member_store.struct_type_info = nullptr;
+		member_store.is_reference = is_reference;
+		member_store.is_rvalue_reference = is_rvalue_reference;
+		member_store.vtable_symbol = StringHandle();
+		
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+	}
+	
+	// Emit DereferenceStore instruction
+	void emitDereferenceStore(const TypedValue& value, Type pointee_type, int pointee_size_bits,
+	                          std::variant<StringHandle, TempVar> pointer,
+	                          const Token& token) {
+		DereferenceStoreOp store_op;
+		store_op.value = value;
+		store_op.pointee_type = pointee_type;
+		store_op.pointee_size_in_bits = pointee_size_bits;
+		store_op.pointer = pointer;
+		
+		ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
+	}
+
 	const DeclarationNode& requireDeclarationNode(const ASTNode& node, std::string_view context) const {
 		try {
 			return node.as<DeclarationNode>();
@@ -1217,6 +1418,22 @@ private:
 		func_decl_op.return_type = ret_type.type();
 		func_decl_op.return_size_in_bits = static_cast<int>(ret_type.size_in_bits());
 		func_decl_op.return_pointer_depth = ret_type.pointer_depth();
+		func_decl_op.return_type_index = ret_type.type_index();
+		
+		// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
+		// Only non-pointer struct returns need this (pointer returns are in RAX like regular pointers)
+		bool returns_struct_by_value = (ret_type.type() == Type::Struct && ret_type.pointer_depth() == 0);
+		func_decl_op.has_hidden_return_param = returns_struct_by_value;
+		
+		// Track return type index and hidden parameter flag for current function context
+		current_function_return_type_index_ = ret_type.type_index();
+		current_function_has_hidden_return_param_ = returns_struct_by_value;
+		
+		if (returns_struct_by_value) {
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Function {} returns struct by value - will use hidden return parameter (RVO/NRVO)",
+				func_decl.identifier_token().value());
+		}
 		
 		// Function name
 		func_decl_op.function_name = StringTable::getOrInternStringHandle(func_decl.identifier_token().value());
@@ -2324,7 +2541,21 @@ private:
 			if (std::holds_alternative<unsigned long long>(operands[2])) {
 				ret_op.return_value = std::get<unsigned long long>(operands[2]);
 			} else if (std::holds_alternative<TempVar>(operands[2])) {
-				ret_op.return_value = std::get<TempVar>(operands[2]);
+				TempVar return_temp = std::get<TempVar>(operands[2]);
+				ret_op.return_value = return_temp;
+				
+				// C++17 mandatory copy elision: Check if this is a prvalue (e.g., constructor call result)
+				// being returned - prvalues used to initialize objects of the same type must have copies elided
+				if (isTempVarRVOEligible(return_temp)) {
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"RVO opportunity detected: returning prvalue {} (constructor call result)",
+						return_temp.name());
+					// Note: Actual copy elision would require hidden return parameter support
+					// For now, we just log the opportunity
+				}
+				
+				// Mark the temp as a return value for potential NRVO analysis
+				markTempVarAsReturnValue(return_temp);
 			} else if (std::holds_alternative<StringHandle>(operands[2])) {
 				ret_op.return_value = std::get<StringHandle>(operands[2]);
 			} else if (std::holds_alternative<double>(operands[2])) {
@@ -4446,7 +4677,8 @@ private:
 		}
 	}
 
-	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode) {
+	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode, 
+	                                            ExpressionContext context = ExpressionContext::Load) {
 		if (std::holds_alternative<IdentifierNode>(exprNode)) {
 			const auto& expr = std::get<IdentifierNode>(exprNode);
 			return generateIdentifierIr(expr);
@@ -4491,11 +4723,11 @@ private:
 		}
 		else if (std::holds_alternative<ArraySubscriptNode>(exprNode)) {
 			const auto& expr = std::get<ArraySubscriptNode>(exprNode);
-			return generateArraySubscriptIr(expr);
+			return generateArraySubscriptIr(expr, context);
 		}
 		else if (std::holds_alternative<MemberAccessNode>(exprNode)) {
 			const auto& expr = std::get<MemberAccessNode>(exprNode);
-			return generateMemberAccessIr(expr);
+			return generateMemberAccessIr(expr, context);
 		}
 		else if (std::holds_alternative<SizeofExprNode>(exprNode)) {
 			const auto& sizeof_node = std::get<SizeofExprNode>(exprNode);
@@ -4640,6 +4872,15 @@ private:
 								deref_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
 								deref_op.pointer = ptr_temp;
 								ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
+								
+								// Mark as lvalue with Indirect metadata for unified assignment handler
+								// This represents dereferencing a pointer: *ptr
+								LValueInfo lvalue_info(
+									LValueInfo::Kind::Indirect,
+									ptr_temp,  // The pointer temp var
+									0  // offset is 0 for dereference
+								);
+								setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
 								TypeIndex type_index = (orig_type.type() == Type::Struct) ? orig_type.type_index() : 0;
 								return { orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, static_cast<unsigned long long>(type_index) };
@@ -4741,6 +4982,16 @@ private:
 						member_load.struct_type_info = nullptr;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+						
+						// Mark as lvalue with member metadata for unified assignment handler
+						LValueInfo lvalue_info(
+							LValueInfo::Kind::Member,
+							StringTable::getOrInternStringHandle("this"),
+							static_cast<int>(member->offset)
+						);
+						lvalue_info.member_name = member->getName();
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+						
 						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
 						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
 					}
@@ -5165,7 +5416,7 @@ private:
 		
 		// For struct types (Struct or UserDefined), use the size from operands, not get_type_size_bits
 		int toSize;
-		if (toType == Type::Struct || toType == Type::UserDefined) {
+		if (is_struct_type(toType)) {
 			// Preserve the original size for struct types
 			toSize = fromSize;
 		} else {
@@ -5573,7 +5824,7 @@ private:
 							const DeclarationNode* object_decl = get_decl_from_symbol(*symbol);
 							if (object_decl) {
 								const TypeSpecifierNode& object_type = object_decl->type_node().as<TypeSpecifierNode>();
-								if (object_type.type() == Type::Struct || object_type.type() == Type::UserDefined) {
+								if (is_struct_type(object_type.type())) {
 									TypeIndex type_index = object_type.type_index();
 									if (type_index < gTypeInfo.size()) {
 										const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
@@ -5946,6 +6197,15 @@ private:
 			}
 		
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, op, Token()));
+			
+			// Mark dereference result as lvalue (Option 2: Value Category Tracking)
+			// *ptr is an lvalue - it designates the dereferenced object
+			LValueInfo lvalue_info(
+				LValueInfo::Kind::Indirect,
+				op.pointer,
+				0  // offset is 0 for simple dereference
+			);
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 		
 			// Return the dereferenced value with the decremented pointer depth
 			unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
@@ -6048,573 +6308,52 @@ private:
 			return rhsIrOperands;
 		}
 
-		// Special handling for assignment to array subscript
+		// Special handling for assignment to array subscript or member access
+		// Use LValueAddress context to avoid redundant Load instructions
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
-			if (std::holds_alternative<ArraySubscriptNode>(lhs_expr)) {
-				// This is an array subscript assignment: arr[index] = value
-				const ArraySubscriptNode& array_subscript = std::get<ArraySubscriptNode>(lhs_expr);
-
-				// Generate IR for the RHS value
-				auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-
-				// Get array information FIRST to check if it's a member array
-				const ExpressionNode& array_expr = array_subscript.array_expr().as<ExpressionNode>();
+			
+			// Check if LHS is an array subscript or member access (lvalue expressions)
+			if (std::holds_alternative<ArraySubscriptNode>(lhs_expr) || 
+			    std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 				
-				// Check if this is a member array access: obj.array[index] = value
-				if (std::holds_alternative<MemberAccessNode>(array_expr)) {
-					const MemberAccessNode& member_access = std::get<MemberAccessNode>(array_expr);
-					const ASTNode& object_node = member_access.object();
-					std::string_view member_name = member_access.member_name();
-
-					// Handle this->member[index] or obj.member[index]
-					if (object_node.is<ExpressionNode>()) {
-						const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
-						if (std::holds_alternative<IdentifierNode>(obj_expr)) {
-							const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
-							std::string_view object_name = object_ident.name();
-
-							// Look up the object in the symbol table
-							const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-							if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-								const auto& decl_node = symbol->as<DeclarationNode>();
-								const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-
-								if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) {
-									// Get the struct type info
-									TypeIndex struct_type_index = type_node.type_index();
-									if (struct_type_index < gTypeInfo.size()) {
-										const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
-										const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
-										
-										if (struct_info) {
-											const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
-											if (member) {
-												// Get index information
-												auto indexIrOperands = visitExpressionNode(array_subscript.index_expr().as<ExpressionNode>());
-
-												// Determine element type and size
-												// For arrays, member->type is the array element type
-												// member->size is the total array size in bytes
-												// Calculate element size from member type
-												Type element_type = member->type;
-												int element_size_bytes = 0;
-												
-												// Get element size based on type
-												if (element_type == Type::Int || element_type == Type::UnsignedInt) {
-													element_size_bytes = 4;
-												} else if (element_type == Type::Long || element_type == Type::UnsignedLong) {
-													element_size_bytes = 8;
-												} else if (element_type == Type::Short || element_type == Type::UnsignedShort) {
-													element_size_bytes = 2;
-												} else if (element_type == Type::Char || element_type == Type::UnsignedChar) {
-													element_size_bytes = 1;
-												} else if (element_type == Type::Bool) {
-													element_size_bytes = 1;
-												} else if (element_type == Type::Float) {
-													element_size_bytes = 4;
-												} else if (element_type == Type::Double) {
-													element_size_bytes = 8;
-												} else if (element_type == Type::Struct || element_type == Type::UserDefined) {
-													// For struct types, get size from type info
-													if (member->type_index < gTypeInfo.size()) {
-														const TypeInfo& elem_type_info = gTypeInfo[member->type_index];
-														if (elem_type_info.getStructInfo()) {
-															element_size_bytes = static_cast<int>(elem_type_info.getStructInfo()->total_size);
-														}
-													}
-												}
-												
-												int element_size = element_size_bytes * 8;  // Convert to bits
-
-												// Create typed payload for member ArrayStore
-												ArrayStoreOp payload;
-												payload.element_type = element_type;
-												payload.element_size_in_bits = element_size;
-												payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
-												payload.member_offset = static_cast<int64_t>(member->offset);
-												payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
-												
-												// Set index as TypedValue
-												payload.index.type = std::get<Type>(indexIrOperands[0]);
-												payload.index.size_in_bits = std::get<int>(indexIrOperands[1]);
-												if (std::holds_alternative<unsigned long long>(indexIrOperands[2])) {
-													payload.index.value = std::get<unsigned long long>(indexIrOperands[2]);
-												} else if (std::holds_alternative<TempVar>(indexIrOperands[2])) {
-													payload.index.value = std::get<TempVar>(indexIrOperands[2]);
-												} else if (std::holds_alternative<StringHandle>(indexIrOperands[2])) {
-													payload.index.value = std::get<StringHandle>(indexIrOperands[2]);
-												}
-												
-												// Set value as TypedValue
-												payload.value.type = std::get<Type>(rhsIrOperands[0]);
-												payload.value.size_in_bits = std::get<int>(rhsIrOperands[1]);
-												if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
-													payload.value.value = std::get<unsigned long long>(rhsIrOperands[2]);
-												} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
-													payload.value.value = std::get<TempVar>(rhsIrOperands[2]);
-												} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
-													payload.value.value = std::get<StringHandle>(rhsIrOperands[2]);
-												}
-
-												ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), binaryOperatorNode.get_token()));
-
-												// Return the RHS value as the result
-												return rhsIrOperands;
-											}
-										}
-									}
-								}
-							}
-						}
+				// Evaluate LHS with LValueAddress context (no Load instruction)
+				auto lhsIrOperands = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
+				
+				// Safety check: if LHS evaluation failed or returned invalid size, fall through to legacy code
+				bool use_unified_handler = !lhsIrOperands.empty();
+				if (use_unified_handler && lhsIrOperands.size() >= 2) {
+					int lhs_size = std::get<int>(lhsIrOperands[1]);
+					if (lhs_size <= 0 || lhs_size > 1024) {
+						FLASH_LOG(Codegen, Info, "Unified handler skipped: invalid size (", lhs_size, ")");
+						use_unified_handler = false;  // Invalid size, use legacy code
 					}
-					// If we couldn't handle the member array access, fall through to error
-					return { Type::Int, 32, TempVar{0} };
+				} else {
+					FLASH_LOG(Codegen, Info, "Unified handler skipped: empty or insufficient operands");
+					use_unified_handler = false;
 				}
 				
-				// NOT a member array - handle as regular array subscript
-				// Generate IR for the array subscript to get the address
-				auto arrayAccessIrOperands = generateArraySubscriptIr(array_subscript);
-
-				// The arrayAccessIrOperands contains [type, size, temp_var]
-				// where temp_var holds the address of the array element
-				// We need to generate an ArrayStore instruction
-				// Format: [element_type, element_size, array_name, index_type, index_size, index_value, value]
-
-				if (!std::holds_alternative<IdentifierNode>(array_expr)) {
-					// Error: array must be an identifier for now
-					return { Type::Int, 32, TempVar{0} };
-				}
-
-				const IdentifierNode& array_ident = std::get<IdentifierNode>(array_expr);
-				std::string_view array_name = array_ident.name();
-
-				// Check if the array is a pointer type
-				bool is_pointer_to_array = false;
-				std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(array_name);
-				}
-				if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-					const auto& decl_node = symbol->as<DeclarationNode>();
-					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-					if (type_node.pointer_depth() > 0) {
-						is_pointer_to_array = true;
-					}
-				}
-
-				// Get index information
-				auto indexIrOperands = visitExpressionNode(array_subscript.index_expr().as<ExpressionNode>());
-
-				// Create typed payload for ArrayStore
-				ArrayStoreOp payload;
-				payload.element_type = std::get<Type>(arrayAccessIrOperands[0]);
-				payload.element_size_in_bits = std::get<int>(arrayAccessIrOperands[1]);
-				payload.array = StringTable::getOrInternStringHandle(array_name);
-				payload.member_offset = 0;  // Not a member array
-				payload.is_pointer_to_array = is_pointer_to_array;
-				
-				// Set index as TypedValue
-				payload.index.type = std::get<Type>(indexIrOperands[0]);
-				payload.index.size_in_bits = std::get<int>(indexIrOperands[1]);
-				if (std::holds_alternative<unsigned long long>(indexIrOperands[2])) {
-					payload.index.value = std::get<unsigned long long>(indexIrOperands[2]);
-				} else if (std::holds_alternative<TempVar>(indexIrOperands[2])) {
-					payload.index.value = std::get<TempVar>(indexIrOperands[2]);
-				} else if (std::holds_alternative<StringHandle>(indexIrOperands[2])) {
-					payload.index.value = std::get<StringHandle>(indexIrOperands[2]);
-				}
-				
-				// Set value as TypedValue
-				payload.value.type = std::get<Type>(rhsIrOperands[0]);
-				payload.value.size_in_bits = std::get<int>(rhsIrOperands[1]);
-				if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
-					payload.value.value = std::get<unsigned long long>(rhsIrOperands[2]);
-				} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
-					payload.value.value = std::get<TempVar>(rhsIrOperands[2]);
-				} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
-					payload.value.value = std::get<StringHandle>(rhsIrOperands[2]);
-				}
-
-				ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), binaryOperatorNode.get_token()));
-
-				// Return the RHS value as the result
-				return rhsIrOperands;
-			}
-			else if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
-				// This is a member access assignment: obj.member = value
-				const MemberAccessNode& member_access = std::get<MemberAccessNode>(lhs_expr);
-
-				// Generate IR for the RHS value
-				auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-
-				// Get the object and member information
-				const ASTNode& object_node = member_access.object();
-				std::string_view member_name = member_access.member_name();
-
-				// Unwrap ExpressionNode if needed
-				if (object_node.is<ExpressionNode>()) {
-					const ExpressionNode& expr = object_node.as<ExpressionNode>();
-					if (std::holds_alternative<IdentifierNode>(expr)) {
-						const IdentifierNode& object_ident = std::get<IdentifierNode>(expr);
-						std::string_view object_name = object_ident.name();
-
-						// Look up the object in the symbol table (local first, then global)
-						std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-						if (!symbol.has_value() && global_symbol_table_) {
-							// Not found locally - try global symbol table
-							symbol = global_symbol_table_->lookup(object_name);
-						}
-						
-						if (!symbol.has_value()) {
-							// Error: variable not found
-							return { Type::Int, 32, TempVar{0} };
-						}
-
-						// Get declaration from symbol (could be DeclarationNode or VariableDeclarationNode)
-						const DeclarationNode* decl_ptr = get_decl_from_symbol(*symbol);
-						if (!decl_ptr) {
-							// Error: not a declaration
-							return { Type::Int, 32, TempVar{0} };
-						}
-
-						const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
-
-						if (type_node.type() != Type::Struct && type_node.type() != Type::UserDefined) {
-							// Error: not a struct type
-							return { Type::Int, 32, TempVar{0} };
-						}
-
-						// Get the struct type info
-						TypeIndex struct_type_index = type_node.type_index();
-						if (struct_type_index >= gTypeInfo.size()) {
-							// Error: invalid type index
-							return { Type::Int, 32, TempVar{0} };
-						}
-
-						const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
-						const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
-						if (!struct_info) {
-							// Error: struct info not found
-							return { Type::Int, 32, TempVar{0} };
-						}
-
-						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
-						if (!member) {
-							// Error: member not found
-							return { Type::Int, 32, TempVar{0} };
-						}
-
-						// Build MemberStore operation
-						IrValue member_value;
-						// Add only the value from RHS (rhsIrOperands = [type, size, value])
-						// We only need the value (index 2)
-						if (rhsIrOperands.size() >= 3) {
-							// Extract value from rhsIrOperands[2]
-							if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
-								member_value = std::get<TempVar>(rhsIrOperands[2]);
-							} else if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
-								member_value = std::get<unsigned long long>(rhsIrOperands[2]);
-							} else if (std::holds_alternative<double>(rhsIrOperands[2])) {
-								member_value = std::get<double>(rhsIrOperands[2]);
-							} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
-								member_value = std::get<StringHandle>(rhsIrOperands[2]);
-							} else {
-								member_value = 0ULL;  // fallback
-							}
-						} else {
-							// Error: invalid RHS operands
-							return { Type::Int, 32, TempVar{0} };
-						}
-
-						// Check if this is an assignment to a reference member
-						// Reference members need special handling: they store a pointer, so assignment
-						// should store THROUGH the pointer, not TO the member itself
-						if (member->is_reference || member->is_rvalue_reference) {
-							// Step 1: Load the reference (pointer) from the member
-							TempVar ref_ptr_temp = var_counter.next();
-							MemberLoadOp load_ref;
-							load_ref.result.value = ref_ptr_temp;
-							load_ref.result.type = member->type;
-							load_ref.result.size_in_bits = 64;  // Pointer is always 64-bit
-							load_ref.object = StringTable::getOrInternStringHandle(object_name);
-							load_ref.member_name = StringTable::getOrInternStringHandle(member_name);
-							load_ref.offset = static_cast<int>(member->offset);
-							load_ref.is_reference = true;  // Load the pointer value
-							load_ref.is_rvalue_reference = member->is_rvalue_reference;
-							load_ref.struct_type_info = nullptr;
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_ref), binaryOperatorNode.get_token()));
-							
-							// Step 2: Store the value through the pointer (using Assignment to a dereferenced pointer)
-							// Create a synthetic dereference + assignment
-							// First, dereference the pointer to get an lvalue
-							TempVar deref_temp = var_counter.next();
-							DereferenceOp deref_op;
-							deref_op.result = deref_temp;
-							deref_op.pointer = ref_ptr_temp;
-							deref_op.pointee_type = member->type;
-							deref_op.pointee_size_in_bits = static_cast<int>(member->size * 8);
-							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), binaryOperatorNode.get_token()));
-							
-							// Now assign to the dereferenced value
-							AssignmentOp assign_op;
-							assign_op.lhs.type = member->type;
-							assign_op.lhs.size_in_bits = static_cast<int>(member->size * 8);
-							assign_op.lhs.value = ref_ptr_temp;  // Use the pointer directly for indirect store
-							assign_op.rhs.type = member->type;
-							assign_op.rhs.size_in_bits = static_cast<int>(member->size * 8);
-							assign_op.rhs.value = member_value;
-							assign_op.is_pointer_store = true;  // Flag to indicate this is a store through pointer
-							ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
-						} else {
-							// Normal member store for non-reference members
-							MemberStoreOp member_store;
-							member_store.value.type = member->type;
-							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
-							member_store.value.value = member_value;
-							member_store.object = StringTable::getOrInternStringHandle(object_name);
-							member_store.member_name = StringTable::getOrInternStringHandle(member_name);
-							member_store.offset = static_cast<int>(member->offset);
-							member_store.is_reference = member->is_reference;
-							member_store.is_rvalue_reference = member->is_rvalue_reference;
-							member_store.struct_type_info = nullptr;
-
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));
-						}
-
-						// Return the RHS value as the result
+				if (use_unified_handler) {
+					// Evaluate RHS normally (Load context)
+					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					
+					// Try to handle assignment using unified lvalue metadata handler
+					if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+						// Assignment was handled successfully via metadata
+						FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for array/member assignment");
 						return rhsIrOperands;
 					}
-					else if (std::holds_alternative<MemberAccessNode>(expr)) {
-						// Nested member access: obj.member1.member2 = value
-						// Call generateMemberAccessIr to recursively evaluate the nested object
-						const MemberAccessNode& nested_object = std::get<MemberAccessNode>(expr);
-						auto objectIrOperands = generateMemberAccessIr(nested_object);
-						
-						if (objectIrOperands.empty() || objectIrOperands.size() < 3) {
-							FLASH_LOG(Codegen, Error, "Failed to generate IR for nested member access in assignment");
-							throw std::runtime_error("Nested member access IR generation failed");
-						}
-						
-						// objectIrOperands contains [type, size, temp_var] (and possibly type_index)
-						// The temp_var holds the result of the nested member access
-						if (!std::holds_alternative<TempVar>(objectIrOperands[2])) {
-							FLASH_LOG(Codegen, Error, "Nested member access object did not evaluate to a temporary variable");
-							throw std::runtime_error("Expected TempVar for nested member access object");
-						}
-						
-						TempVar nested_object_temp = std::get<TempVar>(objectIrOperands[2]);
-						
-						// Get the type index if available (for proper member lookup)
-						unsigned long long type_index = 0;
-						if (objectIrOperands.size() >= 4) {
-							type_index = std::get<unsigned long long>(objectIrOperands[3]);
-						}
-						
-						// Now find the member info for the final member in the outer MemberAccessNode
-						std::string_view final_member_name = member_access.member_name();
-						
-						// Find the TypeInfo for the nested object's type
-						const TypeInfo* type_info = nullptr;
-						for (const auto& ti : gTypeInfo) {
-							if (ti.type_index_ == type_index) {
-								type_info = &ti;
-								break;
-							}
-						}
-						
-						if (!type_info || !type_info->getStructInfo()) {
-							FLASH_LOG(Codegen, Error, "Type info not found for nested member access object with type_index: ", type_index);
-							throw std::runtime_error("Type info not found for nested member access");
-						}
-						
-						const StructTypeInfo* struct_info = type_info->getStructInfo();
-						bool found_member = false;
-						int member_offset = 0;
-						const StructMember* member_info = nullptr;
 					
-						StringHandle final_member_name_handle = StringTable::getOrInternStringHandle(final_member_name);
-						for (const auto& member : struct_info->members) {
-							if (member.getName() == final_member_name_handle) {
-								member_offset = static_cast<int>(member.offset);  // Already in bytes
-								member_info = &member;
-								found_member = true;
-								break;
-							}
-						}
-					
-						if (!found_member) {
-							FLASH_LOG(Codegen, Error, "Member '", final_member_name, "' not found in struct type");
-							throw std::runtime_error(std::string("Member not found: ") + std::string(final_member_name));
-						}
-					
-						// Create MemberStore operation using the nested object's temp var
-						MemberStoreOp member_store;
-						member_store.object = nested_object_temp;
-						member_store.member_name = StringTable::getOrInternStringHandle(final_member_name);
-						member_store.offset = member_offset;
-						member_store.is_reference = member_info->is_reference;
-						member_store.is_rvalue_reference = member_info->is_rvalue_reference;
-						
-						// Set value as TypedValue
-						member_store.value.type = std::get<Type>(rhsIrOperands[0]);
-						member_store.value.size_in_bits = std::get<int>(rhsIrOperands[1]);
-						if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
-							member_store.value.value = std::get<unsigned long long>(rhsIrOperands[2]);
-						} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
-							member_store.value.value = std::get<TempVar>(rhsIrOperands[2]);
-						} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
-							member_store.value.value = std::get<StringHandle>(rhsIrOperands[2]);
-						}
-						
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));
-						
-						// Return the RHS value as the result
-						return rhsIrOperands;
-					}
-					else if (std::holds_alternative<ArraySubscriptNode>(expr)) {
-						// Array element member access: array[index].member = value
-						const ArraySubscriptNode& array_subscript = std::get<ArraySubscriptNode>(expr);
-						
-						// Generate IR for the array element address
-						auto arrayElemIrOperands = generateArraySubscriptIr(array_subscript);
-						
-						if (arrayElemIrOperands.empty() || arrayElemIrOperands.size() < 3) {
-							FLASH_LOG(Codegen, Error, "Failed to generate IR for array subscript in member access assignment");
-							return { Type::Int, 32, TempVar{0} };
-						}
-						
-						// arrayElemIrOperands contains [type, size, temp_var] where temp_var holds the array element
-						// For struct array elements, this temp var should hold the ADDRESS of the element (not the value)
-						if (!std::holds_alternative<TempVar>(arrayElemIrOperands[2])) {
-							FLASH_LOG(Codegen, Error, "Array subscript did not evaluate to a temporary variable");
-							return { Type::Int, 32, TempVar{0} };
-						}
-						
-						TempVar array_elem_temp = std::get<TempVar>(arrayElemIrOperands[2]);
-						
-						// Get type index to find the struct info
-						unsigned long long type_index = 0;
-						if (arrayElemIrOperands.size() >= 4) {
-							type_index = std::get<unsigned long long>(arrayElemIrOperands[3]);
-						}
-						
-						// Find the TypeInfo for the array element's type
-						const TypeInfo* type_info = nullptr;
-						Type element_type = std::get<Type>(arrayElemIrOperands[0]);
-						
-						if (element_type == Type::Struct || element_type == Type::UserDefined) {
-							for (const auto& ti : gTypeInfo) {
-								if (ti.type_index_ == type_index) {
-									type_info = &ti;
-									break;
-								}
-							}
-						}
-						
-						if (!type_info || !type_info->getStructInfo()) {
-							FLASH_LOG(Codegen, Error, "Type info not found for array element with type_index: ", type_index);
-							return { Type::Int, 32, TempVar{0} };
-						}
-						
-						const StructTypeInfo* struct_info = type_info->getStructInfo();
-						std::string_view final_member_name = member_access.member_name();
-						
-						// Find the member in the struct
-						StringHandle final_member_name_handle = StringTable::getOrInternStringHandle(final_member_name);
-						const StructMember* member_info = struct_info->findMemberRecursive(final_member_name_handle);
-						
-						if (!member_info) {
-							FLASH_LOG(Codegen, Error, "Member '", final_member_name, "' not found in struct type");
-							return { Type::Int, 32, TempVar{0} };
-						}
-						
-						// Create MemberStore operation using the array element's temp var
-						MemberStoreOp member_store;
-						member_store.object = array_elem_temp;
-						member_store.member_name = final_member_name_handle;
-						member_store.offset = static_cast<int>(member_info->offset);
-						member_store.is_reference = member_info->is_reference;
-						member_store.is_rvalue_reference = member_info->is_rvalue_reference;
-						member_store.struct_type_info = nullptr;
-						
-						// Set value as TypedValue
-						member_store.value.type = std::get<Type>(rhsIrOperands[0]);
-						member_store.value.size_in_bits = std::get<int>(rhsIrOperands[1]);
-						if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
-							member_store.value.value = std::get<unsigned long long>(rhsIrOperands[2]);
-						} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
-							member_store.value.value = std::get<TempVar>(rhsIrOperands[2]);
-						} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
-							member_store.value.value = std::get<StringHandle>(rhsIrOperands[2]);
-						} else if (std::holds_alternative<double>(rhsIrOperands[2])) {
-							member_store.value.value = std::get<double>(rhsIrOperands[2]);
-						}
-						
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));
-						
-						// Return the RHS value as the result
-						return rhsIrOperands;
-					}
+					// If metadata handler didn't work, fall through to legacy code
+					// This shouldn't happen with proper metadata, but provides a safety net
+					FLASH_LOG(Codegen, Info, "Unified handler returned false, falling through to legacy code");
 				}
-				else if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
-					// Check if this is a struct assignment that needs operator=
-					const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
-					std::string_view lhs_name = lhs_ident.name();
-
-					// Look up the LHS in the symbol table
-					const std::optional<ASTNode> lhs_symbol = symbol_table.lookup(lhs_name);
-					if (lhs_symbol.has_value() && lhs_symbol->is<DeclarationNode>()) {
-						const auto& lhs_decl = lhs_symbol->as<DeclarationNode>();
-						const auto& lhs_type = lhs_decl.type_node().as<TypeSpecifierNode>();
-
-						// Check if this is a struct type
-						if (lhs_type.type() == Type::Struct) {
-							TypeIndex struct_type_index = lhs_type.type_index();
-							if (struct_type_index < gTypeInfo.size()) {
-								const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
-								const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
-
-								// Check if the struct has an operator=
-								if (struct_info && struct_info->hasCopyAssignmentOperator()) {
-									const StructMemberFunction* copy_assign_op = struct_info->findCopyAssignmentOperator();
-									if (copy_assign_op) {
-										// Generate a member function call to operator=
-										// Format: [ret_var, function_name, this_type, this_size, this_name, param_type, param_size, param_value]
-
-										TempVar ret_var = var_counter.next();
-										std::vector<IrOperand> call_operands;
-										call_operands.emplace_back(ret_var);
-										call_operands.emplace_back(copy_assign_op->getName());  // "operator="
-
-										// Add 'this' pointer (the LHS object)
-										call_operands.emplace_back(lhs_type.type());
-										call_operands.emplace_back(static_cast<int>(lhs_type.size_in_bits()));
-										call_operands.emplace_back(StringTable::getOrInternStringHandle(lhs_name));
-
-										// Generate IR for the RHS value
-										auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-
-										// Add the RHS as the parameter
-										call_operands.emplace_back(rhsIrOperands[0]);  // type
-										call_operands.emplace_back(rhsIrOperands[1]);  // size
-										call_operands.emplace_back(rhsIrOperands[2]);  // value
-
-										// Add the function call instruction
-										ir_.addInstruction(IrOpcode::FunctionCall, std::move(call_operands), binaryOperatorNode.get_token());
-
-										// Return the LHS value as the result (operator= returns *this)
-										return { lhs_type.type(), static_cast<int>(lhs_type.size_in_bits()), ret_var, 0ULL };
-									}
-								}
-							}
-						}
-					}
-				}
+				// If use_unified_handler is false, fall through to legacy handlers below
 			}
 		}
 
 		// Special handling for assignment to member variables in member functions
+		// Now that implicit member access is marked with lvalue metadata, use unified handler
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && current_struct_name_.isValid()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
@@ -6628,46 +6367,21 @@ private:
 					if (struct_info) {
 						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(lhs_name)));
 						if (member) {
-						// This is an assignment to a member variable: member = value
-						// Generate MemberStore instead of regular Assignment
-
-						// Generate IR for the RHS value
-						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-
-						// Build MemberStore operation
-						IrValue member_value;
-						// Add only the value from RHS (rhsIrOperands = [type, size, value])
-						if (rhsIrOperands.size() >= 3) {
-							// Extract value from rhsIrOperands[2]
-							if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
-								member_value = std::get<TempVar>(rhsIrOperands[2]);
-							} else if (std::holds_alternative<unsigned long long>(rhsIrOperands[2])) {
-								member_value = std::get<unsigned long long>(rhsIrOperands[2]);
-							} else if (std::holds_alternative<double>(rhsIrOperands[2])) {
-								member_value = std::get<double>(rhsIrOperands[2]);
-							} else if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
-								member_value = std::get<StringHandle>(rhsIrOperands[2]);
-							} else {
-								member_value = 0ULL;  // fallback
+							// This is an assignment to a member variable: member = value
+							// Handle via unified handler (identifiers are now marked as lvalues)
+							auto lhsIrOperands = visitExpressionNode(lhs_expr);
+							auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+							
+							// Handle assignment using unified lvalue metadata handler
+							if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+								// Assignment was handled successfully via metadata
+								FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for implicit member assignment (", lhs_name, ")");
+								return rhsIrOperands;
 							}
-						} else {
-							// Error: invalid RHS operands
+							
+							// This shouldn't happen with proper metadata, but log for debugging
+							FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for implicit member assignment: ", lhs_name);
 							return { Type::Int, 32, TempVar{0} };
-						}
-
-						MemberStoreOp member_store;
-						member_store.value.type = member->type;
-						member_store.value.size_in_bits = static_cast<int>(member->size * 8);
-						member_store.value.value = member_value;
-						member_store.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
-						member_store.member_name = StringTable::getOrInternStringHandle(lhs_name);
-						member_store.offset = static_cast<int>(member->offset);
-						member_store.is_reference = member->is_reference;
-						member_store.is_rvalue_reference = member->is_rvalue_reference;
-						member_store.struct_type_info = nullptr;
-
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), binaryOperatorNode.get_token()));							// Return the RHS value as the result
-							return rhsIrOperands;
 						}
 					}
 				}
@@ -6675,6 +6389,7 @@ private:
 		}
 
 		// Special handling for assignment to captured-by-reference variable inside lambda
+		// Now that captured-by-reference identifiers are marked with lvalue metadata, use unified handler
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && current_lambda_closure_type_.isValid()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
@@ -6689,49 +6404,20 @@ private:
 					if (kind_it != current_lambda_capture_kinds_.end() &&
 					    kind_it->second == LambdaCaptureNode::CaptureKind::ByReference) {
 						// This is assignment to a captured-by-reference variable
-						// We need to store through the pointer in the closure
-
-						// Generate IR for the RHS value
+						// Handle via unified handler (identifiers are now marked as lvalues)
+						auto lhsIrOperands = visitExpressionNode(lhs_expr);
 						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-
-						// Get the original type from capture types
-						auto type_it = current_lambda_capture_types_.find(lhs_name_str);
-						if (type_it != current_lambda_capture_types_.end()) {
-							const TypeSpecifierNode& orig_type = type_it->second;
-
-							// Look up the closure struct to find the member
-							auto closure_type_it = gTypesByName.find(current_lambda_closure_type_);
-							if (closure_type_it != gTypesByName.end() && closure_type_it->second->isStruct()) {
-								const StructTypeInfo* struct_info = closure_type_it->second->getStructInfo();
-								const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(lhs_name_str));
-								if (member) {
-									// First, load the pointer from the closure member
-									TempVar ptr_temp = var_counter.next();
-									MemberLoadOp member_load;
-									member_load.result.value = ptr_temp;
-									member_load.result.type = member->type;
-									member_load.result.size_in_bits = 64;  // pointer size
-									member_load.object = StringTable::getOrInternStringHandle("this");
-									member_load.member_name = member->getName();
-									member_load.offset = static_cast<int>(member->offset);
-									member_load.is_reference = member->is_reference;
-									member_load.is_rvalue_reference = member->is_rvalue_reference;
-									member_load.struct_type_info = nullptr;
-									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), binaryOperatorNode.get_token()));
-
-									// Store through the pointer using DereferenceStore
-									DereferenceStoreOp store_op;
-									store_op.pointer = ptr_temp;
-									store_op.value = toTypedValue(rhsIrOperands);
-									store_op.pointee_type = orig_type.type();
-									store_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
-									ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), binaryOperatorNode.get_token()));
-
-									// Return the RHS value (assignment expression returns the assigned value)
-									return rhsIrOperands;
-								}
-							}
+						
+						// Handle assignment using unified lvalue metadata handler
+						if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+							// Assignment was handled successfully via metadata
+							FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for captured-by-reference assignment (", lhs_name, ")");
+							return rhsIrOperands;
 						}
+						
+						// This shouldn't happen with proper metadata, but log for debugging
+						FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for captured-by-reference assignment: ", lhs_name);
+						return { Type::Int, 32, TempVar{0} };
 					}
 				}
 			}
@@ -6830,6 +6516,13 @@ private:
 		// Generate IR for the left-hand side and right-hand side of the operation
 		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
 		auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+		// Try unified lvalue-based assignment handler (uses value category metadata)
+		// This handles assignments like *ptr = value using lvalue metadata
+		if (op == "=" && handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+			// Assignment was handled via lvalue metadata, return RHS as result
+			return rhsIrOperands;
+		}
 
 		// Get the types and sizes of the operands
 		Type lhsType = std::get<Type>(lhsIrOperands[0]);
@@ -7193,6 +6886,10 @@ private:
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
+		
+		// Mark arithmetic/comparison result as prvalue (Option 2: Value Category Tracking)
+		// Binary operations produce temporary values (prvalues) with no persistent identity
+		setTempVarMetadata(result_var, TempVarMetadata::makePRValue());
 
 		// Generate the IR for the operation based on the operator and operand types
 		// Use a lookup table approach for better performance and maintainability
@@ -8004,6 +7701,34 @@ private:
 			return intrinsic_result.value();
 		}
 
+		// Check if this function is marked as inline_always (pure expression template instantiations)
+		// These functions should always be inlined and never generate calls
+		// Look up the function to check its inline_always flag
+		extern SymbolTable gSymbolTable;
+		auto all_overloads = gSymbolTable.lookup_all(func_name_view);
+		
+		for (const auto& overload : all_overloads) {
+			if (overload.is<FunctionDeclarationNode>()) {
+				const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
+				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
+				
+				// Check if this is the matching overload
+				if (overload_decl == &decl_node) {
+					// Found the matching function - check if it should be inlined
+					if (overload_func_decl->is_inline_always() && functionCallNode.arguments().size() == 1) {
+						// Inline by returning the argument directly
+						auto arg_node = functionCallNode.arguments()[0];
+						if (arg_node.is<ExpressionNode>()) {
+							auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
+							FLASH_LOG(Codegen, Debug, "Inlining pure expression function (inline_always): ", func_name_view);
+							return arg_ir;
+						}
+					}
+					break;  // Found the matching function, stop searching
+				}
+			}
+		}
+
 		// Check if this is a function pointer call
 		// Look up the identifier in the symbol table to see if it's a function pointer variable
 		const std::optional<ASTNode> func_symbol = symbol_table.lookup(func_name_view);
@@ -8027,6 +7752,9 @@ private:
 				// This is an indirect call through a function pointer
 				// Generate IndirectCall IR: [result_var, func_ptr_var, arg1, arg2, ...]
 				TempVar ret_var = var_counter.next();
+				
+				// Mark function return value as prvalue (Option 2: Value Category Tracking)
+				setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
 				
 				// Generate IR for function arguments
 				std::vector<TypedValue> arguments;
@@ -8219,6 +7947,11 @@ private:
 		// Always add the return variable and function name (mangled for overload resolution)
 		FLASH_LOG_FORMAT(Codegen, Debug, "Final function_name for call: '{}'", function_name);
 		TempVar ret_var = var_counter.next();
+		
+		// Mark function return value as prvalue (Option 2: Value Category Tracking)
+		// Function returns (by value) produce temporaries with no persistent identity
+		setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
+		
 		irOperands.emplace_back(ret_var);
 		irOperands.emplace_back(StringTable::getOrInternStringHandle(function_name));
 
@@ -8405,7 +8138,19 @@ private:
 		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
 		call_op.return_type = return_type.type();
 		call_op.return_size_in_bits = (return_type.pointer_depth() > 0) ? 64 : static_cast<int>(return_type.size_in_bits());
+		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
+		
+		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
+		bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0);
+		if (returns_struct_by_value) {
+			call_op.uses_return_slot = true;
+			call_op.return_slot = ret_var;  // The result temp var serves as the return slot
+			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Function call {} returns struct by value - using return slot (temp_{})",
+				function_name, ret_var.var_number);
+		}
 		
 		// Set is_variadic based on function declaration (if available)
 		if (matched_func_decl) {
@@ -9584,7 +9329,8 @@ private:
 		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var, static_cast<unsigned long long>(return_type.type_index()) };
 	}
 
-	std::vector<IrOperand> generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode) {
+	std::vector<IrOperand> generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
+	                                                 ExpressionContext context = ExpressionContext::Load) {
 		// Generate IR for array[index] expression
 		// This computes the address: base_address + (index * element_size)
 
@@ -9608,7 +9354,7 @@ private:
 						const auto& decl_node = symbol->as<DeclarationNode>();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
-						if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined) {
+						if (is_struct_type(type_node.type())) {
 							TypeIndex struct_type_index = type_node.type_index();
 							if (struct_type_index < gTypeInfo.size()) {
 								const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
@@ -9630,20 +9376,7 @@ private:
 										int array_length = 1;  // Default if not an array
 										// TODO: Get actual array length from type info
 										// For now, use a heuristic: if size is larger than element type, it's an array
-										int base_element_size = 0;
-										if (element_type == Type::Int || element_type == Type::UnsignedInt) {
-											base_element_size = 32;
-										} else if (element_type == Type::Long || element_type == Type::UnsignedLong) {
-											base_element_size = 64;
-										} else if (element_type == Type::Short || element_type == Type::UnsignedShort) {
-											base_element_size = 16;
-										} else if (element_type == Type::Char || element_type == Type::UnsignedChar || element_type == Type::Bool) {
-											base_element_size = 8;
-										} else if (element_type == Type::Float) {
-											base_element_size = 32;
-										} else if (element_type == Type::Double) {
-											base_element_size = 64;
-										}
+										int base_element_size = get_type_size_bits(element_type);  // Use existing helper
 										
 										if (base_element_size > 0 && element_size_bits > base_element_size) {
 											// It's an array
@@ -9652,6 +9385,19 @@ private:
 
 										// Create a temporary variable for the result
 										TempVar result_var = var_counter.next();
+										
+										// Mark array element access as lvalue (Option 2: Value Category Tracking)
+										StringHandle qualified_name = StringTable::getOrInternStringHandle(
+											StringBuilder().append(object_name).append(".").append(member_name));
+										LValueInfo lvalue_info(
+											LValueInfo::Kind::ArrayElement,
+											qualified_name,
+											0  // offset computed dynamically by index
+										);
+										// Store index information for unified assignment handler
+										lvalue_info.array_index = toIrValue(index_operands[2]);
+										lvalue_info.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
+										setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 										// Create typed payload for ArrayAccess with qualified member name
 										ArrayAccessOp payload;
@@ -9673,7 +9419,14 @@ private:
 											payload.index.value = std::get<StringHandle>(index_operands[2]);
 										}
 
-										// Create instruction with typed payload
+										// When context is LValueAddress, skip the load and return address/metadata only
+										if (context == ExpressionContext::LValueAddress) {
+											// Don't emit ArrayAccess instruction (no load)
+											// Just return the metadata with the result temp var
+											return { element_type, element_size_bits, result_var, 0ULL };
+										}
+
+										// Create instruction with typed payload (Load context - default)
 										ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 										// Return the result with the element type
@@ -9743,6 +9496,22 @@ private:
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
+		
+		// Mark array element access as lvalue (Option 2: Value Category Tracking)
+		// arr[i] is an lvalue - it designates an object with a stable address
+		LValueInfo lvalue_info(
+			LValueInfo::Kind::ArrayElement,
+			std::holds_alternative<StringHandle>(array_operands[2])
+				? std::variant<StringHandle, TempVar>(std::get<StringHandle>(array_operands[2]))
+				: std::variant<StringHandle, TempVar>(std::get<TempVar>(array_operands[2])),
+			0  // offset computed dynamically by index
+		);
+		// Store index information for unified assignment handler
+		// Support both constant and variable indices
+		lvalue_info.array_index = toIrValue(index_operands[2]);
+		FLASH_LOG(Codegen, Debug, "Array index stored in metadata (supports constants and variables)");
+		lvalue_info.is_pointer_to_array = is_pointer_to_array;
+		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 		// Create typed payload for ArrayAccess
 		ArrayAccessOp payload;
@@ -9773,14 +9542,23 @@ private:
 			payload.index.value = std::get<StringHandle>(index_operands[2]);
 		}
 
-		// Create instruction with typed payload
+		// When context is LValueAddress, skip the load and return address/metadata only
+		if (context == ExpressionContext::LValueAddress) {
+			// Don't emit ArrayAccess instruction (no load)
+			// Just return the metadata with the result temp var
+			// The metadata contains all information needed for store operations
+			return { element_type, element_size_bits, result_var, element_type_index };
+		}
+
+		// Create instruction with typed payload (Load context - default)
 		ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 		// Return [element_type, element_size_bits, result_var, struct_type_index (for struct arrays, 0 otherwise)]
 		return { element_type, element_size_bits, result_var, element_type_index };
 	}
 
-	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode) {
+	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
+	                                               ExpressionContext context = ExpressionContext::Load) {
 		std::vector<IrOperand> irOperands;
 
 		// Get the object being accessed
@@ -9839,7 +9617,7 @@ private:
 					// Verify this is a struct type (or a reference to a struct type)
 					// References are automatically dereferenced for member access
 					// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
-					if (object_type.type() != Type::Struct && object_type.type() != Type::UserDefined) {
+					if (!is_struct_type(object_type.type())) {
 						FLASH_LOG(Codegen, Error, "member access '.' on non-struct type '", object_name, "'");
 						return {};
 					}
@@ -10213,6 +9991,17 @@ private:
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
+		
+		// Mark member access as lvalue (Option 2: Value Category Tracking)
+		// obj.member is an lvalue - it designates a specific object member
+		LValueInfo lvalue_info(
+			LValueInfo::Kind::Member,
+			base_object,
+			static_cast<int>(member->offset)
+		);
+		// Store member name for unified assignment handler
+		lvalue_info.member_name = StringTable::getOrInternStringHandle(member_name);
+		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 		// Build MemberLoadOp
 		MemberLoadOp member_load;
@@ -10235,7 +10024,21 @@ private:
 		member_load.is_rvalue_reference = member->is_rvalue_reference;
 		member_load.struct_type_info = nullptr;
 
-		// Add the member access instruction
+		// When context is LValueAddress, skip the load and return address/metadata only
+		if (context == ExpressionContext::LValueAddress) {
+			// Don't emit MemberAccess instruction (no load)
+			// Just return the metadata with the result temp var
+			// The metadata contains all information needed for store operations
+			if (member->type == Type::Struct) {
+				// Format: [type, size_bits, temp_var, type_index]
+				return { member->type, static_cast<int>(member->size * 8), result_var, static_cast<unsigned long long>(member->type_index) };
+			} else {
+				// Format: [type, size_bits, temp_var]
+				return { member->type, static_cast<int>(member->size * 8), result_var };
+			}
+		}
+
+		// Add the member access instruction (Load context - default)
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
 		// Return the result variable with its type, size, and optionally type_index
@@ -11669,6 +11472,114 @@ private:
 		return {};
 	}
 
+	// Helper function to extract base operand from expression operands
+	std::variant<StringHandle, TempVar> extractBaseOperand(
+		const std::vector<IrOperand>& expr_operands,
+		TempVar fallback_var,
+		const char* cast_name = "cast") {
+		
+		std::variant<StringHandle, TempVar> base;
+		if (std::holds_alternative<StringHandle>(expr_operands[2])) {
+			base = std::get<StringHandle>(expr_operands[2]);
+		} else if (std::holds_alternative<TempVar>(expr_operands[2])) {
+			base = std::get<TempVar>(expr_operands[2]);
+		} else {
+			FLASH_LOG_FORMAT(Codegen, Warning, "{}:  unexpected value type in expr_operands[2]", cast_name);
+			base = fallback_var;
+		}
+		return base;
+	}
+
+	// Helper function to mark reference with appropriate value category metadata
+	void markReferenceMetadata(
+		const std::vector<IrOperand>& expr_operands,
+		TempVar result_var,
+		Type target_type,
+		int target_size,
+		bool is_rvalue_ref,
+		const char* cast_name = "cast") {
+		
+		auto base = extractBaseOperand(expr_operands, result_var, cast_name);
+		LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
+		
+		if (is_rvalue_ref) {
+			FLASH_LOG_FORMAT(Codegen, Debug, "{} to rvalue reference: marking as xvalue", cast_name);
+			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type, target_size));
+		} else {
+			FLASH_LOG_FORMAT(Codegen, Debug, "{} to lvalue reference: marking as lvalue", cast_name);
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, target_type, target_size));
+		}
+	}
+
+	// Helper function to generate AddressOf operation for reference casts
+	void generateAddressOfForReference(
+		const std::variant<StringHandle, TempVar>& base,
+		TempVar result_var,
+		Type target_type,
+		int target_size,
+		const Token& token,
+		const char* cast_name = "cast") {
+		
+		if (std::holds_alternative<StringHandle>(base)) {
+			AddressOfOp addr_op;
+			addr_op.result = result_var;
+			addr_op.pointee_type = target_type;
+			addr_op.pointee_size_in_bits = target_size;
+			addr_op.operand = std::get<StringHandle>(base);
+			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
+		} else {
+			FLASH_LOG_FORMAT(Codegen, Debug, "{}: source is TempVar (stack location), using directly", cast_name);
+		}
+	}
+
+	// Helper function to handle rvalue reference casts (produces xvalue)
+	std::vector<IrOperand> handleRValueReferenceCast(
+		const std::vector<IrOperand>& expr_operands,
+		Type target_type,
+		int target_size,
+		const Token& token,
+		const char* cast_name = "cast") {
+		
+		// Create a new TempVar to hold the xvalue result
+		TempVar result_var = var_counter.next();
+		
+		// Extract base operand and mark as xvalue
+		auto base = extractBaseOperand(expr_operands, result_var, cast_name);
+		LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
+		FLASH_LOG_FORMAT(Codegen, Debug, "{} to rvalue reference: marking as xvalue", cast_name);
+		setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type, target_size));
+		
+		// Generate AddressOf operation if needed
+		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
+		
+		// Return the xvalue with reference semantics (64-bit pointer size)
+		return { target_type, 64, result_var, 0ULL };
+	}
+
+	// Helper function to handle lvalue reference casts (produces lvalue)
+	std::vector<IrOperand> handleLValueReferenceCast(
+		const std::vector<IrOperand>& expr_operands,
+		Type target_type,
+		int target_size,
+		const Token& token,
+		const char* cast_name = "cast") {
+		
+		// Create a new TempVar to hold the lvalue result
+		TempVar result_var = var_counter.next();
+		
+		// Extract base operand and mark as lvalue
+		auto base = extractBaseOperand(expr_operands, result_var, cast_name);
+		LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
+		FLASH_LOG_FORMAT(Codegen, Debug, "{} to lvalue reference", cast_name);
+		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, target_type, target_size));
+		
+		// Generate AddressOf operation if needed
+		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
+		
+		// Return the lvalue with reference semantics (64-bit pointer size)
+		return { target_type, 64, result_var, 0ULL };
+	}
+
 	std::vector<IrOperand> generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		// Evaluate the expression to cast
 		auto expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>());
@@ -11682,6 +11593,19 @@ private:
 		// Get the source type
 		Type source_type = std::get<Type>(expr_operands[0]);
 		int source_size = std::get<int>(expr_operands[1]);
+
+		// Special handling for rvalue reference casts: static_cast<T&&>(expr)
+		// This produces an xvalue - has identity but can be moved from
+		// Equivalent to std::move
+		if (target_type_node.is_rvalue_reference()) {
+			return handleRValueReferenceCast(expr_operands, target_type, target_size, staticCastNode.cast_token(), "static_cast");
+		}
+
+		// Special handling for lvalue reference casts: static_cast<T&>(expr)
+		// This produces an lvalue
+		if (target_type_node.is_lvalue_reference()) {
+			return handleLValueReferenceCast(expr_operands, target_type, target_size, staticCastNode.cast_token(), "static_cast");
+		}
 
 		// Special handling for pointer casts (e.g., char* to double*, int* to void*, etc.)
 		// Pointer casts should NOT generate type conversions - they're just reinterpretations
@@ -11906,9 +11830,18 @@ private:
 		};
 		ir_.addInstruction(IrOpcode::DynamicCast, std::move(op), dynamicCastNode.cast_token());
 
-		// Return the casted pointer/reference
+		// Get result type and size for metadata and return value
 		Type result_type = target_type_node.type();
 		int result_size = static_cast<int>(target_type_node.size_in_bits());
+
+		// Mark value category for reference types
+		if (target_type_node.is_rvalue_reference()) {
+			markReferenceMetadata(expr_operands, result_temp, result_type, result_size, true, "dynamic_cast");
+		} else if (target_type_node.is_lvalue_reference()) {
+			markReferenceMetadata(expr_operands, result_temp, result_type, result_size, false, "dynamic_cast");
+		}
+
+		// Return the casted pointer/reference
 		return { result_type, result_size, result_temp, 0ULL };
 	}
 
@@ -11923,6 +11856,16 @@ private:
 		const auto& target_type_node = constCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
+		
+		// Special handling for rvalue reference casts: const_cast<T&&>(expr)
+		if (target_type_node.is_rvalue_reference()) {
+			return handleRValueReferenceCast(expr_operands, target_type, target_size, constCastNode.cast_token(), "const_cast");
+		}
+		
+		// Special handling for lvalue reference casts: const_cast<T&>(expr)
+		if (target_type_node.is_lvalue_reference()) {
+			return handleLValueReferenceCast(expr_operands, target_type, target_size, constCastNode.cast_token(), "const_cast");
+		}
 		
 		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
 		// For code generation purposes, we just return the expression with the new type metadata
@@ -11941,6 +11884,16 @@ private:
 		const auto& target_type_node = reinterpretCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
+		
+		// Special handling for rvalue reference casts: reinterpret_cast<T&&>(expr)
+		if (target_type_node.is_rvalue_reference()) {
+			return handleRValueReferenceCast(expr_operands, target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
+		}
+		
+		// Special handling for lvalue reference casts: reinterpret_cast<T&>(expr)
+		if (target_type_node.is_lvalue_reference()) {
+			return handleLValueReferenceCast(expr_operands, target_type, target_size, reinterpretCastNode.cast_token(), "reinterpret_cast");
+		}
 		
 		// reinterpret_cast reinterprets the bits without conversion
 		// For code generation purposes, we just return the expression with the new type metadata
@@ -12853,6 +12806,8 @@ private:
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
 	Type current_function_return_type_;  // Current function's return type
 	int current_function_return_size_;   // Current function's return size in bits
+	TypeIndex current_function_return_type_index_ = 0;  // Type index for struct/class return types
+	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter
 	
 	// Current namespace path stack (for proper name mangling of namespace-scoped functions)
 	std::vector<std::string> current_namespace_stack_;
@@ -13143,7 +13098,7 @@ private:
 		// For constructor calls, we need to generate a constructor call instruction
 		// In C++, constructors are named after the class
 		StringHandle constructor_name;
-		if (type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) {
+		if (is_struct_type(type_spec.type())) {
 			// If type_index is set, use it
 			if (type_spec.type_index() != 0) {
 				constructor_name = gTypeInfo[type_spec.type_index()].name();
@@ -13348,6 +13303,14 @@ private:
 
 		// Add the constructor call instruction (use ConstructorCall opcode)
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), constructorCallNode.called_from()));
+
+		// Mark the result as a prvalue eligible for RVO (C++17 mandatory copy elision)
+		// Constructor calls always produce prvalues, which are eligible for copy elision
+		// when returned from a function
+		setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
+		
+		FLASH_LOG_FORMAT(Codegen, Debug,
+			"Marked constructor call result {} as RVO-eligible prvalue", ret_var.name());
 
 		// Return the result variable with the constructed type, including type_index for struct types
 		TypeIndex result_type_index = type_spec.type_index();
