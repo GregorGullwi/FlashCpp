@@ -6094,9 +6094,14 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 				// Return success (no AST node needed for type aliases)
 				return saved_position.success();
-			} else if (parsing_template_body_) {
-				// If we're in a template body and type parsing failed, it's likely a template-dependent type
-				// Skip to semicolon and continue (template aliases with dependent types can't be fully resolved now)
+			} else if (parsing_template_body_ || gSymbolTable.get_current_scope_type() == ScopeType::Function) {
+				// If we're in a template body OR function body and type parsing failed, it's likely a template-dependent type
+				// or a complex type expression during template instantiation.
+				// Skip to semicolon and continue (template aliases with dependent types can't be fully resolved now).
+				// For function-local type aliases (like in template instantiations), they're often not needed
+				// for code generation as the actual type is already known from the return type.
+				FLASH_LOG(Parser, Debug, "Skipping unparseable using declaration in ", 
+				          parsing_template_body_ ? "template body" : "function body");
 				while (peek_token().has_value() && peek_token()->value() != ";") {
 					consume_token();
 				}
