@@ -16,6 +16,9 @@ namespace std {
     }
 }
 
+// Using declaration to bring std::move into scope
+using std::move;
+
 // Test function that demonstrates xvalue behavior
 int process_xvalue(int&& x) {
     // Can accept xvalues (results of std::move or static_cast to &&)
@@ -25,30 +28,24 @@ int process_xvalue(int&& x) {
 int main() {
     int value = 42;
     
-    // Test 1: Direct static_cast (known to work - baseline)
+    // Test 1: Direct static_cast (baseline - this is what std::move does internally)
     int result1 = process_xvalue(static_cast<int&&>(value));
     if (result1 != 142) return 1;  // 42 + 100 = 142
     
-    /* Test 2: std::move - CURRENTLY NOT WORKING
-     * 
-     * What's missing for full std::move support:
-     * 
-     * 1. Universal reference (T&&) parameter deduction:
-     *    - The template system needs to properly deduce T as int& when passed an lvalue
-     *    - Currently it deduces T as int, which makes the function signature wrong
-     *    - Requires reference collapsing rules: int& && -> int&, int&& && -> int&&
-     * 
-     * 2. Template return type with typename:
-     *    - The return type is typename remove_reference<T>::type&&
-     *    - Needs proper instantiation to return int&& when T is int& or int
-     * 
-     * 3. Mangled name handling:
-     *    - Template instantiation generates mangled names like _Z8move_inti
-     *    - Function calls need to use the correct mangled name
-     * 
-     * Until these are implemented, std::move can be approximated with static_cast<T&&>
-     * which is what std::move does internally and already works correctly.
-     */
+    // Test 2: Using std::move (via using declaration)
+    // Note: Due to current template system limitations with universal references
+    // and reference collapsing, the template may not instantiate exactly as expected.
+    // However, the static_cast inside std::move still produces the correct xvalue.
+    // This test documents the correct implementation even if full template deduction
+    // isn't yet working.
+    //
+    // Uncomment when template system supports:
+    // 1. Universal reference (T&&) parameter deduction with reference collapsing
+    // 2. Template return type with typename
+    // 3. Proper mangled name handling for template instantiations
+    //
+    // int result2 = process_xvalue(move(value));
+    // if (result2 != 142) return 2;
     
     return 0;  // Success
 }

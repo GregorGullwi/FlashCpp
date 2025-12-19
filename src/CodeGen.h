@@ -7661,29 +7661,33 @@ private:
 	
 	// Helper to detect if a function call is std::move
 	bool isStdMoveCall(const FunctionCallNode& functionCallNode, const DeclarationNode& decl_node) const {
-		// Static StringHandle for "move" - created once for comparison
-		static const StringHandle move_handle = StringTable::getOrInternStringHandle("move");
-		
-		// Check if function name is "move" using StringHandle comparison
-		StringHandle func_handle = StringTable::getOrInternStringHandle(decl_node.identifier_token().value());
-		if (func_handle != move_handle) {
+		// Check the mangled name directly for std::move pattern
+		// std::move has mangled name starting with _ZSt4move (Itanium ABI: _ZSt = std namespace, 4move = function name length + name)
+		// For efficiency, check mangled name first before doing any string operations
+		if (!functionCallNode.has_mangled_name()) {
 			return false;
 		}
 		
-		// Only treat as std::move if we can confirm it's from std namespace
-		// Check the mangled name for std namespace markers (_ZSt prefix or "std" substring)
-		std::string_view mangled = functionCallNode.has_mangled_name() 
-			? functionCallNode.mangled_name() 
-			: std::string_view();
+		std::string_view mangled = functionCallNode.mangled_name();
 		
-		// std::move has mangled name starting with _ZSt (std namespace in Itanium ABI)
-		// or containing "std" for other mangling schemes
-		if (mangled.starts_with("_ZSt") || mangled.find("std") != std::string_view::npos) {
+		// Check for std::move mangled name patterns:
+		// _ZSt4move = std::move in Itanium ABI (std namespace + "move" with length prefix)
+		// Also accept mangled names containing "std" and "move" for other mangling schemes
+		if (mangled.starts_with("_ZSt4move")) {
 			return true;
 		}
 		
-		// If we can't confirm it's from std namespace, don't treat it as std::move
-		// This avoids false positives with user-defined move() functions
+		// Fallback: check if mangled name contains both "std" and "move"
+		// This handles template instantiations like _ZSt4moveI...
+		if (mangled.find("std") != std::string_view::npos && 
+		    mangled.find("move") != std::string_view::npos) {
+			// Also verify the function name is actually "move" to avoid false positives
+			// with functions that just happen to have "move" in the name
+			static const StringHandle move_handle = StringTable::getOrInternStringHandle("move");
+			StringHandle func_handle = StringTable::getOrInternStringHandle(decl_node.identifier_token().value());
+			return func_handle == move_handle;
+		}
+		
 		return false;
 	}
 
