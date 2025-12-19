@@ -2528,8 +2528,8 @@ private:
 				TempVar return_temp = std::get<TempVar>(operands[2]);
 				ret_op.return_value = return_temp;
 				
-				// C++17 mandatory RVO: Check if this is a prvalue (e.g., constructor call result)
-				// being returned directly - this is eligible for copy elision
+				// C++17 mandatory copy elision: Check if this is a prvalue (e.g., constructor call result)
+				// being returned - prvalues used to initialize objects of the same type must have copies elided
 				if (isTempVarRVOEligible(return_temp)) {
 					FLASH_LOG_FORMAT(Codegen, Debug,
 						"RVO opportunity detected: returning prvalue {} (constructor call result)",

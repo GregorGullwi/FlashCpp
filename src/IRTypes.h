@@ -447,9 +447,10 @@ struct TempVarMetadata {
 	bool is_move_result = false;
 	
 	// RVO/NRVO (Return Value Optimization) tracking
-	// C++17 mandates copy elision for prvalues returned from functions
+	// C++17 mandates copy elision for prvalues used to initialize objects of the same type,
+	// which includes function returns, direct initialization, and other contexts
 	bool is_return_value = false;        // True if this is a return value (for RVO detection)
-	bool eligible_for_rvo = false;       // True if this prvalue can be constructed directly in return slot
+	bool eligible_for_rvo = false;       // True if this prvalue can be constructed directly in destination
 	bool eligible_for_nrvo = false;      // True if this named variable can use NRVO
 	
 	// Fields previously tracked in ReferenceInfo (for reference/pointer dereferencing)
