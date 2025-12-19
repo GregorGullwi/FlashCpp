@@ -6878,22 +6878,47 @@ private:
 		// Step 4: Load vtable pointer from object (first 8 bytes)
 		emitMovRegFromMemReg(X64Register::RAX, X64Register::RAX);
 
-		// Step 5: Load source RTTI pointer from vtable[-1] into RCX (first argument)
-		emitMovRegFromMemRegDisp8(X64Register::RCX, X64Register::RAX, -8);
+		// Step 5: Load source RTTI pointer from vtable[-1] into first parameter register
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// Linux: First parameter in RDI
+			emitMovRegFromMemRegDisp8(X64Register::RDI, X64Register::RAX, -8);
+		} else {
+			// Windows: First parameter in RCX
+			emitMovRegFromMemRegDisp8(X64Register::RCX, X64Register::RAX, -8);
+		}
 
-		// Step 6: Load target RTTI pointer into RDX (second argument)
-		// Use MSVC Complete Object Locator symbol: ??_R4.?AV<classname>@@6B@
+		// Step 6: Load target RTTI pointer into second parameter register
+		// Generate platform-specific RTTI symbol
 		StringBuilder sb;
-		sb.append("??_R4.?AV");
-		sb.append(op.target_type_name);
-		sb.append("@@6B@");
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// Linux/ELF: Use Itanium C++ ABI typeinfo symbol: _ZTI<length><classname>
+			// Example: class "Derived" -> "_ZTI7Derived"
+			sb.append("_ZTI");
+			sb.append(op.target_type_name.length());
+			sb.append(op.target_type_name);
+		} else {
+			// Windows/COFF: Use MSVC Complete Object Locator symbol: ??_R4.?AV<classname>@@6B@
+			sb.append("??_R4.?AV");
+			sb.append(op.target_type_name);
+			sb.append("@@6B@");
+		}
 		std::string_view target_rtti_symbol = sb.commit();
-		emitLeaRipRelativeWithRelocation(X64Register::RDX, target_rtti_symbol);
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// Linux: Second parameter in RSI
+			emitLeaRipRelativeWithRelocation(X64Register::RSI, target_rtti_symbol);
+		} else {
+			// Windows: Second parameter in RDX
+			emitLeaRipRelativeWithRelocation(X64Register::RDX, target_rtti_symbol);
+		}
 
 		// Step 7: Call __dynamic_cast_check(source_rtti, target_rtti)
-		emitSubRSP(32);  // Shadow space for Windows x64 calling convention
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			emitSubRSP(32);  // Shadow space for Windows x64 calling convention
+		}
 		emitCall("__dynamic_cast_check");
-		emitAddRSP(32);  // Restore stack
+		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+			emitAddRSP(32);  // Restore stack
+		}
 
 		// Step 8: Check return value (RAX contains 0 or 1)
 		emitTestAL();
@@ -6922,7 +6947,9 @@ private:
 		if (op.is_reference) {
 			// For reference casts, throw std::bad_cast instead of returning nullptr
 			// Call __dynamic_cast_throw_bad_cast (no arguments, never returns)
-			emitSubRSP(32);  // Shadow space for Windows x64 calling convention
+			if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
+				emitSubRSP(32);  // Shadow space for Windows x64 calling convention
+			}
 			emitCall("__dynamic_cast_throw_bad_cast");
 			// Note: We don't restore RSP or add code after this because __dynamic_cast_throw_bad_cast never returns
 		} else {
@@ -12911,19 +12938,89 @@ private:
 	}
 
 	// Emit __dynamic_cast_check function
-	//   bool __dynamic_cast_check(RTTICompleteObjectLocator* source_col, RTTICompleteObjectLocator* target_col)
-	// MSVC RTTI-compatible implementation with Complete Object Locator format
-	// Parameters: RCX = source_col, RDX = target_col
+	//   bool __dynamic_cast_check(type_info* source, type_info* target)
+	// Platform-specific implementation:
+	//   - Windows: MSVC RTTI with Complete Object Locator format (RCX, RDX)
+	//   - Linux: Itanium C++ ABI type_info structures (RDI, RSI)
 	// Returns: AL = 1 if cast valid, 0 otherwise
 	void emit_dynamic_cast_check_function() {
 		// Record function start
 		uint32_t function_offset = static_cast<uint32_t>(textSectionData.size());
 		
-		// Function prologue - save non-volatile registers
-		emitPushReg(X64Register::RBX);  // Save RBX
-		emitPushReg(X64Register::RSI);  // Save RSI (will use for loop counter)
-		emitPushReg(X64Register::RDI);  // Save RDI (will use for base pointer)
-		emitSubRSP(32);  // Shadow space for recursive calls
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// ========== Linux/ELF: Itanium C++ ABI type_info implementation ==========
+			// Parameters: RDI = source type_info, RSI = target type_info
+			// Returns: AL = 1 if cast valid, 0 otherwise
+			
+			// Simple implementation for Itanium ABI:
+			// - Check if source == target (pointer equality)
+			// - For SI/VMI classes, check base class (at offset 16 for SIClassTypeInfo)
+			
+			// Function prologue - save non-volatile registers (RBX for base pointer check)
+			emitPushReg(X64Register::RBX);
+			
+			// Null check: if (!source || !target) return false
+			emitTestRegReg(X64Register::RDI);  // TEST RDI, RDI
+			size_t null_source_jmp = textSectionData.size();
+			textSectionData.push_back(0x74);  // JZ rel8
+			textSectionData.push_back(0x00);  // Placeholder
+			
+			emitTestRegReg(X64Register::RSI);  // TEST RSI, RSI
+			size_t null_target_jmp = textSectionData.size();
+			textSectionData.push_back(0x74);  // JZ rel8
+			textSectionData.push_back(0x00);  // Placeholder
+			
+			// Pointer equality: if (source == target) return true
+			emitCmpRegReg(X64Register::RDI, X64Register::RSI);  // CMP RDI, RSI
+			size_t eq_check_jmp = textSectionData.size();
+			textSectionData.push_back(0x74);  // JE rel8
+			textSectionData.push_back(0x00);  // Placeholder
+			
+			// Check if source has base class (ItaniumSIClassTypeInfo has base at offset 16)
+			// Load potential base class pointer from source+16 into RBX
+			emitMovRegFromMemRegDisp8(X64Register::RBX, X64Register::RDI, 16);  // MOV RBX, [RDI+16]
+			
+			// Check if base pointer is null
+			emitTestRegReg(X64Register::RBX);  // TEST RBX, RBX
+			size_t no_base_jmp = textSectionData.size();
+			textSectionData.push_back(0x74);  // JZ rel8
+			textSectionData.push_back(0x00);  // Placeholder
+			
+			// Compare base with target: if (base == target) return true
+			emitCmpRegReg(X64Register::RBX, X64Register::RSI);  // CMP RBX, RSI
+			size_t base_eq_jmp = textSectionData.size();
+			textSectionData.push_back(0x74);  // JE rel8
+			textSectionData.push_back(0x00);  // Placeholder
+			
+			// return_false:
+			size_t return_false = textSectionData.size();
+			emitXorRegReg(X64Register::RAX);  // XOR RAX, RAX (AL = 0)
+			emitPopReg(X64Register::RBX);
+			emitRet();
+			
+			// return_true:
+			size_t return_true = textSectionData.size();
+			emitMovRegImm8(X64Register::RAX, 1);  // MOV AL, 1
+			emitPopReg(X64Register::RBX);
+			emitRet();
+			
+			// Patch jump offsets
+			textSectionData[null_source_jmp + 1] = static_cast<uint8_t>(return_false - null_source_jmp - 2);
+			textSectionData[null_target_jmp + 1] = static_cast<uint8_t>(return_false - null_target_jmp - 2);
+			textSectionData[eq_check_jmp + 1] = static_cast<uint8_t>(return_true - eq_check_jmp - 2);
+			textSectionData[no_base_jmp + 1] = static_cast<uint8_t>(return_false - no_base_jmp - 2);
+			textSectionData[base_eq_jmp + 1] = static_cast<uint8_t>(return_true - base_eq_jmp - 2);
+			
+		} else {
+			// ========== Windows/COFF: MSVC RTTI Complete Object Locator implementation ==========
+			// Parameters: RCX = source_col, RDX = target_col
+			// Returns: AL = 1 if cast valid, 0 otherwise
+			
+			// Function prologue - save non-volatile registers
+			emitPushReg(X64Register::RBX);  // Save RBX
+			emitPushReg(X64Register::RSI);  // Save RSI (will use for loop counter)
+			emitPushReg(X64Register::RDI);  // Save RDI (will use for base pointer)
+			emitSubRSP(32);  // Shadow space for recursive calls
 		
 		// Null check: if (!source_col || !target_col) return false
 		emitTestRegReg(X64Register::RCX);  // TEST RCX, RCX
@@ -13067,6 +13164,8 @@ private:
 		
 		offset_to_true = static_cast<int8_t>(return_true - base_match_to_true - 2);
 		textSectionData[base_match_to_true + 1] = static_cast<uint8_t>(offset_to_true);
+		
+		}  // end Windows/COFF implementation
 		
 		// Calculate function length
 		uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - function_offset;
