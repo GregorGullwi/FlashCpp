@@ -7660,8 +7660,13 @@ private:
 	}
 	
 	// Helper to detect if a function call is std::move
-	bool isStdMoveCall(std::string_view func_name, const FunctionCallNode& functionCallNode, const DeclarationNode& decl_node) const {
-		if (func_name != "move") {
+	bool isStdMoveCall(const FunctionCallNode& functionCallNode, const DeclarationNode& decl_node) const {
+		// Static StringHandle for "move" - created once for comparison
+		static const StringHandle move_handle = StringTable::getOrInternStringHandle("move");
+		
+		// Check if function name is "move" using StringHandle comparison
+		StringHandle func_handle = StringTable::getOrInternStringHandle(decl_node.identifier_token().value());
+		if (func_handle != move_handle) {
 			return false;
 		}
 		
@@ -7697,7 +7702,7 @@ private:
 
 		// Special handling for std::move - detect and mark result as xvalue
 		// std::move(x) is equivalent to static_cast<T&&>(x)
-		if (isStdMoveCall(func_name_view, functionCallNode, decl_node)) {
+		if (isStdMoveCall(functionCallNode, decl_node)) {
 			FLASH_LOG(Codegen, Debug, "Detected std::move call - marking result as xvalue");
 			
 			// std::move takes exactly one argument
