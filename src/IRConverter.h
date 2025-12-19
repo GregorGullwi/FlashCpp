@@ -6112,28 +6112,10 @@ private:
 		} else if (std::holds_alternative<TempVar>(ctor_op.object)) {
 			const TempVar temp_var = std::get<TempVar>(ctor_op.object);
 			
-			// Check if this constructor is RVO-eligible and function has hidden return param
-			// If so, construct directly into __return_slot instead of local temporary
-			if (current_function_has_hidden_return_param_ && isTempVarRVOEligible(temp_var)) {
-				// Find __return_slot variable
-				auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
-				if (return_slot_it != variable_scopes.back().variables.end()) {
-					// Load the return slot address (which is stored in __return_slot parameter)
-					int return_slot_param_offset = return_slot_it->second.offset;
-					object_offset = return_slot_param_offset;
-					object_is_pointer = true;  // __return_slot holds an address, needs to be loaded
-					
-					FLASH_LOG_FORMAT(Codegen, Debug,
-						"RVO: Constructor for temp_{} will construct into return slot (loading address from offset {})",
-						temp_var.var_number, return_slot_param_offset);
-				} else {
-					object_offset = getStackOffsetFromTempVar(temp_var);
-					object_is_pointer = true;  // TempVars are pointers in constructor calls
-				}
-			} else {
-				object_offset = getStackOffsetFromTempVar(temp_var);
-				object_is_pointer = true;  // TempVars are pointers in constructor calls
-			}
+			// RVO disabled for now - always construct into local temporary
+			// TODO: Re-enable RVO after fixing segfault issue
+			object_offset = getStackOffsetFromTempVar(temp_var);
+			object_is_pointer = true;  // TempVars are pointers in constructor calls
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(ctor_op.object);
 			auto it = variable_scopes.back().variables.find(var_name_handle);
@@ -8211,6 +8193,8 @@ private:
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
+		FLASH_LOG(Codegen, Debug, "handleReturn called");
+		
 		if (variable_scopes.empty()) {
 			FLASH_LOG(Codegen, Error, "FATAL [handleReturn]: variable_scopes is EMPTY!");
 			std::abort();
@@ -8233,6 +8217,19 @@ private:
 			else {
 				// Return with value
 				const auto& ret_val = ret_op.return_value.value();
+				
+				// Debug: log what type of return value we have
+				if (std::holds_alternative<unsigned long long>(ret_val)) {
+					FLASH_LOG(Codegen, Debug, "Return value type: unsigned long long");
+				} else if (std::holds_alternative<TempVar>(ret_val)) {
+					FLASH_LOG(Codegen, Debug, "Return value type: TempVar");
+				} else if (std::holds_alternative<StringHandle>(ret_val)) {
+					FLASH_LOG(Codegen, Debug, "Return value type: StringHandle");
+				} else if (std::holds_alternative<double>(ret_val)) {
+					FLASH_LOG(Codegen, Debug, "Return value type: double");
+				} else {
+					FLASH_LOG(Codegen, Debug, "Return value type: UNKNOWN");
+				}
 				
 				if (std::holds_alternative<unsigned long long>(ret_val)) {
 					unsigned long long returnValue = std::get<unsigned long long>(ret_val);
@@ -8295,7 +8292,8 @@ private:
 								// Function uses hidden return param but this value is NOT RVO-eligible
 								// Need to copy the struct to the return slot
 								FLASH_LOG_FORMAT(Codegen, Debug,
-									"Return statement: copying non-RVO struct from offset {} to return slot", var_offset);
+									"Return statement: copying non-RVO struct from offset {} to return slot (var_size={} bits)",
+									var_offset, var_size);
 								
 								// Load return slot address from __return_slot parameter
 								auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
@@ -8304,6 +8302,10 @@ private:
 									// Load the address from __return_slot into a register
 									X64Register dest_reg = X64Register::RDI;
 									emitMovFromFrame(dest_reg, return_slot_param_offset);
+									
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Copying struct: size={} bytes, from offset {}, return_slot_param at offset {}",
+										var_size / 8, var_offset, return_slot_param_offset);
 									
 									// Copy struct from var_offset to address in dest_reg
 									// For now, copy in 8-byte chunks
@@ -8314,6 +8316,9 @@ private:
 										// Store to destination [dest_reg + i]
 										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, i, 8);
 									}
+									
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Struct copy complete: copied {} bytes", struct_size_bytes);
 								}
 							} else if (is_float_return) {
 								// Load floating-point value into XMM0
@@ -8386,7 +8391,39 @@ private:
 							bool is_float_return = ret_op.return_type.has_value() && 
 							                        is_floating_point_type(ret_op.return_type.value());
 							
-							if (is_float_return) {
+							// Check if function uses hidden return parameter (for struct returns)
+							if (current_function_has_hidden_return_param_) {
+								// Function uses hidden return param - need to copy struct to return slot
+								FLASH_LOG_FORMAT(Codegen, Debug,
+									"Return statement (StringHandle): copying struct '{}' from offset {} to return slot (size={} bits)",
+									StringTable::getStringView(var_name_handle), var_offset, var_size);
+								
+								// Load return slot address from __return_slot parameter
+								auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+								if (return_slot_it != variable_scopes.back().variables.end()) {
+									int return_slot_param_offset = return_slot_it->second.offset;
+									// Load the address from __return_slot into a register
+									X64Register dest_reg = X64Register::RDI;
+									emitMovFromFrame(dest_reg, return_slot_param_offset);
+									
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Copying struct: size={} bytes, from offset {}, return_slot_param at offset {}",
+										var_size / 8, var_offset, return_slot_param_offset);
+									
+									// Copy struct from var_offset to address in dest_reg
+									// Copy in 8-byte chunks
+									int struct_size_bytes = var_size / 8;
+									for (int i = 0; i < struct_size_bytes; i += 8) {
+										// Load from source
+										emitMovFromFrame(X64Register::RAX, var_offset + i);
+										// Store to destination [dest_reg + i]
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, i, 8);
+									}
+									
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Struct copy complete: copied {} bytes", struct_size_bytes);
+								}
+							} else if (is_float_return) {
 								// Load floating-point value into XMM0
 								bool is_float = (ret_op.return_size == 32);
 								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
