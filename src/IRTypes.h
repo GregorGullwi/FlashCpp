@@ -969,8 +969,11 @@ struct CallOp {
 	TempVar result;                       // 4 bytes
 	Type return_type;                     // 4 bytes
 	int return_size_in_bits;              // 4 bytes
+	TypeIndex return_type_index = 0;      // Type index for struct/class return types
 	bool is_member_function = false;      // 1 byte
-	bool is_variadic = false;             // 1 byte (+ 2 bytes padding)
+	bool is_variadic = false;             // 1 byte
+	bool uses_return_slot = false;        // 1 byte - True if using hidden return parameter for RVO
+	std::optional<TempVar> return_slot;   // Optional temp var representing the return slot location
 	
 	// Helper to get function_name as StringHandle
 	StringHandle getFunctionName() const {
@@ -1091,6 +1094,8 @@ struct ConstructorCallOp {
 	StringHandle struct_name;                         // Pure StringHandle
 	std::variant<StringHandle, TempVar> object;  // Object instance ('this' or temp)
 	std::vector<TypedValue> arguments;               // Constructor arguments
+	bool use_return_slot = false;                    // True if constructing into caller's return slot (RVO)
+	std::optional<int> return_slot_offset;           // Stack offset of return slot (for RVO)
 };
 
 // Destructor call (invoke destructor on object)
@@ -1164,10 +1169,12 @@ struct FunctionDeclOp {
 	Type return_type = Type::Void;
 	int return_size_in_bits = 0;
 	int return_pointer_depth = 0;
+	TypeIndex return_type_index = 0;  // Type index for struct/class return types
 	StringHandle function_name;  // Pure StringHandle
 	StringHandle struct_name;  // Empty for non-member functions
 	Linkage linkage = Linkage::None;
 	bool is_variadic = false;
+	bool has_hidden_return_param = false;  // True if function uses hidden return parameter (struct return)
 	StringHandle mangled_name;  // Pure StringHandle
 	std::vector<FunctionParam> parameters;
 	int temp_var_stack_bytes = 0;  // Total stack space needed for TempVars (set after function body is processed)
