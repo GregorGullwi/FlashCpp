@@ -62,13 +62,17 @@ x86-64 machine code
 
 ## What's Next
 
-### Immediate Opportunities
+### Completed Features
 
-1. **std::move Integration**
-   - Detect `std::move()` calls in CodeGen
-   - Mark results as XValues
-   - Enable full move semantics optimization
-   - **Effort**: Small (~50 lines)
+1. ✅ **std::move Integration** (Dec 2025)
+   - Detects `std::move()` calls in CodeGen
+   - Marks results as XValues using `handleRValueReferenceCast`
+   - Enables move semantics optimization
+   - Works via template instantiation (std::move uses `static_cast<T&&>`)
+   - **Implementation**: ~35 lines in `generateFunctionCallIr`
+   - **Test**: `tests/test_std_move.cpp`
+
+### Immediate Opportunities
 
 2. **Copy Elision (Mandatory C++17)**
    - Detect RVO/NRVO opportunities using prvalue metadata
