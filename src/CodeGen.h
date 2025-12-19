@@ -7671,6 +7671,34 @@ private:
 			return intrinsic_result.value();
 		}
 
+		// Check if this function is marked as inline_always (pure expression template instantiations)
+		// These functions should always be inlined and never generate calls
+		// Look up the function to check its inline_always flag
+		extern SymbolTable gSymbolTable;
+		auto all_overloads = gSymbolTable.lookup_all(func_name_view);
+		
+		for (const auto& overload : all_overloads) {
+			if (overload.is<FunctionDeclarationNode>()) {
+				const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
+				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
+				
+				// Check if this is the matching overload
+				if (overload_decl == &decl_node) {
+					// Found the matching function - check if it should be inlined
+					if (overload_func_decl->is_inline_always() && functionCallNode.arguments().size() == 1) {
+						// Inline by returning the argument directly
+						auto arg_node = functionCallNode.arguments()[0];
+						if (arg_node.is<ExpressionNode>()) {
+							auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
+							FLASH_LOG(Codegen, Debug, "Inlining pure expression function (inline_always): ", func_name_view);
+							return arg_ir;
+						}
+					}
+					break;  // Found the matching function, stop searching
+				}
+			}
+		}
+
 		// Check if this is a function pointer call
 		// Look up the identifier in the symbol table to see if it's a function pointer variable
 		const std::optional<ASTNode> func_symbol = symbol_table.lookup(func_name_view);

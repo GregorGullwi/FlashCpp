@@ -6094,9 +6094,14 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 				// Return success (no AST node needed for type aliases)
 				return saved_position.success();
-			} else if (parsing_template_body_) {
-				// If we're in a template body and type parsing failed, it's likely a template-dependent type
-				// Skip to semicolon and continue (template aliases with dependent types can't be fully resolved now)
+			} else if (parsing_template_body_ || gSymbolTable.get_current_scope_type() == ScopeType::Function) {
+				// If we're in a template body OR function body and type parsing failed, it's likely a template-dependent type
+				// or a complex type expression during template instantiation.
+				// Skip to semicolon and continue (template aliases with dependent types can't be fully resolved now).
+				// For function-local type aliases (like in template instantiations), they're often not needed
+				// for code generation as the actual type is already known from the return type.
+				FLASH_LOG(Parser, Debug, "Skipping unparseable using declaration in ", 
+				          parsing_template_body_ ? "template body" : "function body");
 				while (peek_token().has_value() && peek_token()->value() != ";") {
 					consume_token();
 				}
@@ -20966,6 +20971,72 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		auto orig_body = func_decl.get_definition();
 		if (orig_body.has_value()) {
 			new_func_ref.set_definition(orig_body.value());
+		}
+	}
+
+	// Analyze the function body to determine if it should be inline-always
+	// This applies to both paths: re-parsed bodies and copied bodies
+	const auto& func_definition = new_func_ref.get_definition();
+	
+	// If the function has no body, it MUST be inline-always
+	// This happens when template bodies have unparseable statements that were skipped
+	if (!func_definition.has_value()) {
+		new_func_ref.set_inline_always(true);
+		FLASH_LOG(Templates, Debug, "Marked template instantiation as inline_always (no body): ", 
+		          new_func_ref.decl_node().identifier_token().value());
+	} else if (func_definition->is<BlockNode>()) {
+		const BlockNode& block = func_definition->as<BlockNode>();
+		const auto& statements = block.get_statements();
+		
+		FLASH_LOG(Templates, Debug, "Analyzing template instantiation '", 
+		          new_func_ref.decl_node().identifier_token().value(), "' for pure expression, statements=", statements.size());
+		
+		// Check if this is a pure expression function
+		const bool is_pure_expr = std::invoke([&statements]()-> bool {
+			bool is_pure_expr = true;	// assume true
+			// Might be more than one statement: using declaration + return for example
+			// This is still a pure expression if the return is a cast
+			bool has_pure_return = false;
+			
+			statements.visit([&](const ASTNode& stmt) {
+				if (stmt.is<TypedefDeclarationNode>()) {
+					// Typedef statements are okay
+				} else if (stmt.is<ReturnStatementNode>()) {
+					const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
+					const auto& expr_opt = ret_stmt.expression();
+					
+					if (expr_opt.has_value() && expr_opt->is<ExpressionNode>()) {
+						const ExpressionNode& expr = expr_opt->as<ExpressionNode>();
+						
+						// Check if the expression is a pure cast or simple identifier
+						std::visit([&](const auto& e) {
+							using T = std::decay_t<decltype(e)>;
+							if constexpr (std::is_same_v<T, StaticCastNode> ||
+											std::is_same_v<T, ReinterpretCastNode> ||
+											std::is_same_v<T, ConstCastNode> ||
+											std::is_same_v<T, IdentifierNode>) {
+								has_pure_return = true;
+							}
+						}, expr);
+					}
+				} else {
+					is_pure_expr = false;
+				}
+			});
+			is_pure_expr &= static_cast<int>(has_pure_return);
+			return is_pure_expr;
+		});
+		
+		new_func_ref.set_inline_always(is_pure_expr);
+
+		if (is_pure_expr) {
+			FLASH_LOG(Templates, Debug, "Marked template instantiation as inline_always (pure expression): ", 
+			          new_func_ref.decl_node().identifier_token().value());
+		} else {
+			// Function has computation/side effects - should generate normal calls
+			// Explicitly set inline_always to false
+			FLASH_LOG(Templates, Debug, "Template instantiation has computation/side effects (not inlining): ", 
+			          new_func_ref.decl_node().identifier_token().value());
 		}
 	}
 

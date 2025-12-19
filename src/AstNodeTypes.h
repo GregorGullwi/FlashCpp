@@ -1493,6 +1493,11 @@ public:
 	const std::optional<ASTNode>& noexcept_expression() const { return noexcept_expression_; }
 	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
 
+	// Inline always support (for template instantiations that are pure expressions)
+	// When true, this function should always be inlined and never generate a call
+	void set_inline_always(bool inline_always) { inline_always_ = inline_always; }
+	bool is_inline_always() const { return inline_always_; }
+
 	// Pre-computed mangled name for consistent access across all compiler stages
 	// Generated once during parsing, reused by CodeGen and ObjFileWriter
 	void set_mangled_name(std::string_view name) { mangled_name_ = name; }
@@ -1517,6 +1522,7 @@ private:
 	bool is_constinit_;
 	bool is_consteval_;
 	bool is_noexcept_ = false;  // True if function is declared noexcept
+	bool inline_always_ = false;  // True if function should always be inlined (e.g., template pure expressions)
 	std::optional<ASTNode> noexcept_expression_;  // Optional noexcept(expr) expression
 	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 };
@@ -1524,7 +1530,7 @@ private:
 class FunctionCallNode {
 public:
 	explicit FunctionCallNode(DeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
-		: func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token), mangled_name_("") {}
+		: func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
 
 	const auto& arguments() const { return arguments_; }
 	const auto& function_declaration() const { return func_decl_; }
@@ -1534,15 +1540,16 @@ public:
 	Token called_from() const { return called_from_; }
 	
 	// Pre-computed mangled name support (for namespace-scoped functions)
-	void set_mangled_name(std::string_view name) { mangled_name_ = name; }
-	std::string_view mangled_name() const { return mangled_name_; }
-	bool has_mangled_name() const { return !mangled_name_.empty(); }
+	void set_mangled_name(std::string_view name) { mangled_name_ = StringTable::getOrInternStringHandle(name); }
+	std::string_view mangled_name() const { return mangled_name_.view(); }
+	StringHandle mangled_name_handle() const { return mangled_name_; }
+	bool has_mangled_name() const { return mangled_name_.isValid(); }
 
 private:
 	DeclarationNode& func_decl_;
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
-	std::string_view mangled_name_;  // Pre-computed mangled name
+	StringHandle mangled_name_;  // Pre-computed mangled name
 };
 
 // Constructor call node - represents constructor calls like T(args)
