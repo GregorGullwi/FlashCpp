@@ -6128,11 +6128,11 @@ private:
 						temp_var.var_number, return_slot_param_offset);
 				} else {
 					object_offset = getStackOffsetFromTempVar(temp_var);
-					object_is_pointer = true;  // TempVars are always pointers in constructor calls
+					object_is_pointer = true;  // TempVars are pointers in constructor calls
 				}
 			} else {
 				object_offset = getStackOffsetFromTempVar(temp_var);
-				object_is_pointer = true;  // TempVars are always pointers in constructor calls
+				object_is_pointer = true;  // TempVars are pointers in constructor calls
 			}
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(ctor_op.object);
@@ -8285,12 +8285,36 @@ private:
 							int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
 							
 							// Check if function uses hidden return parameter (RVO/NRVO)
-							// If so, the struct is already constructed at the return slot - no copy needed
-							if (current_function_has_hidden_return_param_) {
+							// Only skip copy if this specific return value is RVO-eligible (was constructed via RVO)
+							if (current_function_has_hidden_return_param_ && isTempVarRVOEligible(return_var)) {
 								FLASH_LOG_FORMAT(Codegen, Debug,
-									"Return statement in function with hidden return parameter - struct already in return slot at offset {}",
+									"Return statement in function with hidden return parameter - RVO-eligible struct already in return slot at offset {}",
 									var_offset);
-								// Struct already constructed in return slot - just emit epilogue below
+								// Struct already constructed in return slot via RVO - just emit epilogue below
+							} else if (current_function_has_hidden_return_param_) {
+								// Function uses hidden return param but this value is NOT RVO-eligible
+								// Need to copy the struct to the return slot
+								FLASH_LOG_FORMAT(Codegen, Debug,
+									"Return statement: copying non-RVO struct from offset {} to return slot", var_offset);
+								
+								// Load return slot address from __return_slot parameter
+								auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+								if (return_slot_it != variable_scopes.back().variables.end()) {
+									int return_slot_param_offset = return_slot_it->second.offset;
+									// Load the address from __return_slot into a register
+									X64Register dest_reg = X64Register::RDI;
+									emitMovFromFrame(dest_reg, return_slot_param_offset);
+									
+									// Copy struct from var_offset to address in dest_reg
+									// For now, copy in 8-byte chunks
+									int struct_size_bytes = var_size / 8;
+									for (int i = 0; i < struct_size_bytes; i += 8) {
+										// Load from source
+										emitMovFromFrame(X64Register::RAX, var_offset + i);
+										// Store to destination [dest_reg + i]
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, i, 8);
+									}
+								}
 							} else if (is_float_return) {
 								// Load floating-point value into XMM0
 								bool is_float = (ret_op.return_size == 32);
