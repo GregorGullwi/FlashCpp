@@ -7671,25 +7671,32 @@ private:
 			return intrinsic_result.value();
 		}
 
-		// Special handling for std::move and std::forward - inline them as simple casts
-		// These should never generate actual function calls, they're just value category casts
-		// Check both the simple name and the mangled name pattern
-		if (func_name_view.find("move") != std::string_view::npos || 
-		    (functionCallNode.has_mangled_name() && 
-		     functionCallNode.mangled_name().find("move") != std::string_view::npos)) {
+		// Special handling for std::move - inline it as a simple cast
+		// std::move should never generate actual function calls, it's just a value category cast
+		// Check if this is std::move by looking at the function name or mangled name
+		// The instantiated template name will be like "std::move_int" for std::move<int>
+		bool is_std_move = false;
+		if (func_name_view.starts_with("std::move")) {
+			// Check it's exactly std::move (followed by _ or end of string for template instantiations)
+			// This matches: std::move_int, std::move_MyClass, etc.
+			size_t move_end = 9;  // length of "std::move"
+			if (func_name_view.size() == move_end || 
+			    (func_name_view.size() > move_end && func_name_view[move_end] == '_')) {
+				is_std_move = true;
+			}
+		}
+		
+		if (is_std_move && functionCallNode.arguments().size() == 1) {
 			// std::move(arg) is essentially just static_cast<T&&>(arg)
 			// For code generation purposes, this is a no-op - we just return the argument
 			// The value category is handled by the type system (rvalue reference)
-			if (functionCallNode.arguments().size() == 1) {
-				// Get the single argument
-				auto arg_node = functionCallNode.arguments()[0];
-				if (arg_node.is<ExpressionNode>()) {
-					// Generate IR for the argument and return it directly
-					// std::move is purely a compile-time cast for value categories
-					auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
-					FLASH_LOG(Codegen, Debug, "Inlining std::move as identity (no-op cast)");
-					return arg_ir;
-				}
+			auto arg_node = functionCallNode.arguments()[0];
+			if (arg_node.is<ExpressionNode>()) {
+				// Generate IR for the argument and return it directly
+				// std::move is purely a compile-time cast for value categories
+				auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
+				FLASH_LOG(Codegen, Debug, "Inlining std::move as identity (no-op cast)");
+				return arg_ir;
 			}
 		}
 
