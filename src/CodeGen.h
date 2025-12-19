@@ -7671,6 +7671,70 @@ private:
 			return intrinsic_result.value();
 		}
 
+		// Special handling for std::move - detect and mark result as xvalue
+		// std::move(x) is equivalent to static_cast<T&&>(x)
+		if (func_name_view == "move") {
+			// Check if this is from std namespace by looking at the mangled name
+			std::string_view potential_mangled = functionCallNode.has_mangled_name() 
+				? functionCallNode.mangled_name() 
+				: std::string_view();
+			
+			// std::move has mangled name starting with _ZSt (std namespace)
+			// or if no mangled name, assume it's a template (which std::move is)
+			bool is_std_move = potential_mangled.starts_with("_ZSt") || 
+			                   potential_mangled.find("std") != std::string_view::npos;
+			
+			if (is_std_move || (!functionCallNode.has_mangled_name() && decl_node.type_node().as<TypeSpecifierNode>().is_rvalue_reference())) {
+				FLASH_LOG_FORMAT(Codegen, Debug, "Detected std::move call - marking result as xvalue");
+				
+				// std::move takes exactly one argument
+				if (functionCallNode.arguments().size() != 1) {
+					FLASH_LOG(Codegen, Error, "std::move must have exactly one argument");
+					throw std::runtime_error("Invalid std::move call");
+				}
+				
+				// Evaluate the argument
+				ASTNode arg_node;
+				functionCallNode.arguments().visit([&](ASTNode node) {
+					arg_node = node;
+				});
+				auto arg_operands = visitExpressionNode(arg_node.as<ExpressionNode>());
+				
+				// Create result variable and mark it as xvalue
+				TempVar result_var = var_counter.next();
+				Type arg_type = std::get<Type>(arg_operands[0]);
+				int arg_size = std::get<int>(arg_operands[1]);
+				
+				// Extract the base operand for lvalue info
+				std::variant<StringHandle, TempVar> base;
+				if (std::holds_alternative<StringHandle>(arg_operands[2])) {
+					base = std::get<StringHandle>(arg_operands[2]);
+				} else if (std::holds_alternative<TempVar>(arg_operands[2])) {
+					base = std::get<TempVar>(arg_operands[2]);
+				} else {
+					FLASH_LOG(Codegen, Warning, "std::move: unexpected argument type, using result var as base");
+					base = result_var;
+				}
+				
+				// Create lvalue info and mark as xvalue
+				LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
+				setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, arg_type, arg_size));
+				
+				// Generate AddressOf if needed (when base is a variable name)
+				if (std::holds_alternative<StringHandle>(base)) {
+					AddressOfOp addr_op;
+					addr_op.result = result_var;
+					addr_op.pointee_type = arg_type;
+					addr_op.pointee_size_in_bits = arg_size;
+					addr_op.operand = std::get<StringHandle>(base);
+					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
+				}
+				
+				// Return the xvalue with reference semantics (64-bit pointer)
+				return { arg_type, 64, result_var, 0ULL };
+			}
+		}
+
 		// Check if this is a function pointer call
 		// Look up the identifier in the symbol table to see if it's a function pointer variable
 		const std::optional<ASTNode> func_symbol = symbol_table.lookup(func_name_view);
