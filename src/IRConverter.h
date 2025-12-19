@@ -11724,8 +11724,14 @@ private:
 			return;
 		}
 
+		// FIX: Map the TempVar to the member's actual stack location (not a copy!)
+		// This ensures that subsequent reads/writes to this TempVar access the struct member directly
+		// Update the variables map to point the TempVar to the member's location
+		variable_scopes.back().variables[result_var_handle].offset = member_stack_offset;
+		
 		// Store the result - but keep it in the register for subsequent operations
-		regAlloc.set_stack_variable_offset(temp_reg, result_offset, op.result.size_in_bits);
+		// Now it will be written back to the member's actual location when flushed
+		regAlloc.set_stack_variable_offset(temp_reg, member_stack_offset, op.result.size_in_bits);
 	}
 
 	void handleMemberStore(const IrInstruction& instruction) {
