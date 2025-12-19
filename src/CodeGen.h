@@ -1074,7 +1074,9 @@ private:
 		return false;
 	}
 
-	// Handle compound assignment to lvalues (e.g., v.x += 5, arr[i] *= 2)
+	// Handle compound assignment to lvalues (e.g., v.x += 5)
+	// Currently only supports Member kind (struct member access)
+	// Array subscript support can be added later if needed
 	// This is similar to handleLValueAssignment but also performs the arithmetic operation
 	bool handleLValueCompoundAssignment(const std::vector<IrOperand>& lhs_operands,
 	                                     const std::vector<IrOperand>& rhs_operands,
@@ -1129,8 +1131,9 @@ private:
 		load_op.object = lv_info.base;
 		load_op.member_name = lv_info.member_name.value();
 		load_op.offset = lv_info.offset;
-		load_op.is_reference = false;
-		load_op.is_rvalue_reference = false;
+		// Use metadata for reference info if available, otherwise default to false
+		load_op.is_reference = false;  // TODO: Get from metadata if available
+		load_op.is_rvalue_reference = false;  // TODO: Get from metadata if available
 		load_op.struct_type_info = nullptr;
 		
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), token));
@@ -1176,8 +1179,8 @@ private:
 			lv_info.base,
 			lv_info.member_name.value(),
 			lv_info.offset,
-			false,
-			false,
+			false,  // TODO: Get from metadata if available
+			false,  // TODO: Get from metadata if available
 			token
 		);
 		
@@ -6663,7 +6666,9 @@ private:
 					if (handleLValueCompoundAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token(), op)) {
 						// Compound assignment was handled successfully via metadata
 						FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for array/member compound assignment");
-						return rhsIrOperands;  // TODO: Return the result value
+						// Return the LHS operands which contain the result type/size info
+						// The actual result value is stored in the lvalue, so we return lvalue info
+						return lhsIrOperands;
 					}
 					
 					// If metadata handler didn't work, fall through to legacy code
