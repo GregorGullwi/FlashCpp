@@ -11262,8 +11262,33 @@ ParseResult Parser::parse_primary_expression()
 							TypeSpecifierNode arg_type_node = *arg_type_opt;
 							
 							// Check if this is an lvalue (for perfect forwarding deduction)
-							if (std::holds_alternative<IdentifierNode>(expr)) {
-								// This is a named variable (lvalue) - mark as lvalue reference
+							// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+							// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
+							bool is_lvalue = std::visit([](const auto& inner) -> bool {
+								using T = std::decay_t<decltype(inner)>;
+								if constexpr (std::is_same_v<T, IdentifierNode>) {
+									// Named variables are lvalues
+									return true;
+								} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+									// Array subscript expressions are lvalues
+									return true;
+								} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+									// Member access expressions are lvalues
+									return true;
+								} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+									// Dereference (*ptr) is an lvalue
+									// Other unary operators like ++, --, etc. may also be lvalues
+									return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+								} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+									// String literals are lvalues in C++
+									return true;
+								} else {
+									// All other expressions (literals, temporaries, etc.) are rvalues
+									return false;
+								}
+							}, expr);
+							
+							if (is_lvalue) {
 								// For forwarding reference deduction: T&& deduces to T& for lvalues
 								arg_type_node.set_lvalue_reference(true);
 							}
@@ -11661,8 +11686,33 @@ ParseResult Parser::parse_primary_expression()
 							TypeSpecifierNode arg_type_node = *arg_type_opt;
 							
 							// Check if this is an lvalue (for perfect forwarding deduction)
-							if (std::holds_alternative<IdentifierNode>(expr)) {
-								// This is a named variable (lvalue) - mark as lvalue reference
+							// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+							// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
+							bool is_lvalue = std::visit([](const auto& inner) -> bool {
+								using T = std::decay_t<decltype(inner)>;
+								if constexpr (std::is_same_v<T, IdentifierNode>) {
+									// Named variables are lvalues
+									return true;
+								} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+									// Array subscript expressions are lvalues
+									return true;
+								} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+									// Member access expressions are lvalues
+									return true;
+								} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+									// Dereference (*ptr) is an lvalue
+									// Other unary operators like ++, --, etc. may also be lvalues
+									return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+								} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+									// String literals are lvalues in C++
+									return true;
+								} else {
+									// All other expressions (literals, temporaries, etc.) are rvalues
+									return false;
+								}
+							}, expr);
+							
+							if (is_lvalue) {
 								// For forwarding reference deduction: T&& deduces to T& for lvalues
 								arg_type_node.set_lvalue_reference(true);
 							}
@@ -11879,8 +11929,33 @@ ParseResult Parser::parse_primary_expression()
 								TypeSpecifierNode arg_type_node = *arg_type_opt;
 								
 								// Check if this is an lvalue (for perfect forwarding deduction)
-								if (std::holds_alternative<IdentifierNode>(expr)) {
-									// This is a named variable (lvalue) - mark as lvalue reference
+								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
+								bool is_lvalue = std::visit([](const auto& inner) -> bool {
+									using T = std::decay_t<decltype(inner)>;
+									if constexpr (std::is_same_v<T, IdentifierNode>) {
+										// Named variables are lvalues
+										return true;
+									} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+										// Array subscript expressions are lvalues
+										return true;
+									} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+										// Member access expressions are lvalues
+										return true;
+									} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+										// Dereference (*ptr) is an lvalue
+										// Other unary operators like ++, --, etc. may also be lvalues
+										return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+										// String literals are lvalues in C++
+										return true;
+									} else {
+										// All other expressions (literals, temporaries, etc.) are rvalues
+										return false;
+									}
+								}, expr);
+								
+								if (is_lvalue) {
 									// For forwarding reference deduction: T&& deduces to T& for lvalues
 									arg_type_node.set_lvalue_reference(true);
 								}
@@ -13003,17 +13078,39 @@ ParseResult Parser::parse_primary_expression()
 							
 								TypeSpecifierNode arg_type_node = *arg_type;
 							
-								// For perfect forwarding: check if argument is an lvalue (named variable)
-								// If so, mark it as an lvalue reference for template deduction
+								// For perfect forwarding: check if argument is an lvalue
+								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
 								if (args[i].is<ExpressionNode>()) {
 									const ExpressionNode& expr = args[i].as<ExpressionNode>();
-									if (std::holds_alternative<IdentifierNode>(expr)) {
-										// This is a named variable (lvalue) - mark as lvalue reference
+									bool is_lvalue = std::visit([](const auto& inner) -> bool {
+										using T = std::decay_t<decltype(inner)>;
+										if constexpr (std::is_same_v<T, IdentifierNode>) {
+											// Named variables are lvalues
+											return true;
+										} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+											// Array subscript expressions are lvalues
+											return true;
+										} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+											// Member access expressions are lvalues
+											return true;
+										} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+											// Dereference (*ptr) is an lvalue
+											// Other unary operators like ++, --, etc. may also be lvalues
+											return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+										} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+											// String literals are lvalues in C++
+											return true;
+										} else {
+											// All other expressions (literals, temporaries, etc.) are rvalues
+											return false;
+										}
+									}, expr);
+									
+									if (is_lvalue) {
 										// For forwarding reference deduction: Args&& deduces to T& for lvalues
 										arg_type_node.set_lvalue_reference(true);
 									}
-									// TODO: Handle other lvalue cases (array subscript, member access, dereference, etc.)
-									// Literals and temporaries remain as-is (treated as rvalues)
 								}
 							
 								arg_types.push_back(arg_type_node);
@@ -13641,13 +13738,36 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 								TypeSpecifierNode arg_type_node = *arg_type_opt;
 								
 								// Check if this is an lvalue (for perfect forwarding deduction)
-								if (std::holds_alternative<IdentifierNode>(expr)) {
-									// This is a named variable (lvalue) - mark as lvalue reference
+								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
+								bool is_lvalue = std::visit([](const auto& inner) -> bool {
+									using T = std::decay_t<decltype(inner)>;
+									if constexpr (std::is_same_v<T, IdentifierNode>) {
+										// Named variables are lvalues
+										return true;
+									} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+										// Array subscript expressions are lvalues
+										return true;
+									} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+										// Member access expressions are lvalues
+										return true;
+									} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+										// Dereference (*ptr) is an lvalue
+										// Other unary operators like ++, --, etc. may also be lvalues
+										return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+										// String literals are lvalues in C++
+										return true;
+									} else {
+										// All other expressions (literals, temporaries, etc.) are rvalues
+										return false;
+									}
+								}, expr);
+								
+								if (is_lvalue) {
 									// For forwarding reference deduction: T&& deduces to T& for lvalues
 									arg_type_node.set_lvalue_reference(true);
 								}
-								// TODO: Handle other lvalue cases (array subscript, member access, dereference, etc.)
-								// Literals and temporaries remain as-is (treated as rvalues)
 								
 								arg_types.push_back(arg_type_node);
 							}
