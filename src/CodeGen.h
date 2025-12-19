@@ -1418,6 +1418,22 @@ private:
 		func_decl_op.return_type = ret_type.type();
 		func_decl_op.return_size_in_bits = static_cast<int>(ret_type.size_in_bits());
 		func_decl_op.return_pointer_depth = ret_type.pointer_depth();
+		func_decl_op.return_type_index = ret_type.type_index();
+		
+		// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
+		// Only non-pointer struct returns need this (pointer returns are in RAX like regular pointers)
+		bool returns_struct_by_value = (ret_type.type() == Type::Struct && ret_type.pointer_depth() == 0);
+		func_decl_op.has_hidden_return_param = returns_struct_by_value;
+		
+		// Track return type index and hidden parameter flag for current function context
+		current_function_return_type_index_ = ret_type.type_index();
+		current_function_has_hidden_return_param_ = returns_struct_by_value;
+		
+		if (returns_struct_by_value) {
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Function {} returns struct by value - will use hidden return parameter (RVO/NRVO)",
+				func_decl.identifier_token().value());
+		}
 		
 		// Function name
 		func_decl_op.function_name = StringTable::getOrInternStringHandle(func_decl.identifier_token().value());
@@ -2525,7 +2541,21 @@ private:
 			if (std::holds_alternative<unsigned long long>(operands[2])) {
 				ret_op.return_value = std::get<unsigned long long>(operands[2]);
 			} else if (std::holds_alternative<TempVar>(operands[2])) {
-				ret_op.return_value = std::get<TempVar>(operands[2]);
+				TempVar return_temp = std::get<TempVar>(operands[2]);
+				ret_op.return_value = return_temp;
+				
+				// C++17 mandatory copy elision: Check if this is a prvalue (e.g., constructor call result)
+				// being returned - prvalues used to initialize objects of the same type must have copies elided
+				if (isTempVarRVOEligible(return_temp)) {
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"RVO opportunity detected: returning prvalue {} (constructor call result)",
+						return_temp.name());
+					// Note: Actual copy elision would require hidden return parameter support
+					// For now, we just log the opportunity
+				}
+				
+				// Mark the temp as a return value for potential NRVO analysis
+				markTempVarAsReturnValue(return_temp);
 			} else if (std::holds_alternative<StringHandle>(operands[2])) {
 				ret_op.return_value = std::get<StringHandle>(operands[2]);
 			} else if (std::holds_alternative<double>(operands[2])) {
@@ -8108,7 +8138,19 @@ private:
 		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
 		call_op.return_type = return_type.type();
 		call_op.return_size_in_bits = (return_type.pointer_depth() > 0) ? 64 : static_cast<int>(return_type.size_in_bits());
+		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
+		
+		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
+		bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0);
+		if (returns_struct_by_value) {
+			call_op.uses_return_slot = true;
+			call_op.return_slot = ret_var;  // The result temp var serves as the return slot
+			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Function call {} returns struct by value - using return slot (temp_{})",
+				function_name, ret_var.var_number);
+		}
 		
 		// Set is_variadic based on function declaration (if available)
 		if (matched_func_decl) {
@@ -12764,6 +12806,8 @@ private:
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
 	Type current_function_return_type_;  // Current function's return type
 	int current_function_return_size_;   // Current function's return size in bits
+	TypeIndex current_function_return_type_index_ = 0;  // Type index for struct/class return types
+	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter
 	
 	// Current namespace path stack (for proper name mangling of namespace-scoped functions)
 	std::vector<std::string> current_namespace_stack_;
@@ -13259,6 +13303,14 @@ private:
 
 		// Add the constructor call instruction (use ConstructorCall opcode)
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), constructorCallNode.called_from()));
+
+		// Mark the result as a prvalue eligible for RVO (C++17 mandatory copy elision)
+		// Constructor calls always produce prvalues, which are eligible for copy elision
+		// when returned from a function
+		setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
+		
+		FLASH_LOG_FORMAT(Codegen, Debug,
+			"Marked constructor call result {} as RVO-eligible prvalue", ret_var.name());
 
 		// Return the result variable with the constructed type, including type_index for struct types
 		TypeIndex result_type_index = type_spec.type_index();

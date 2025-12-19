@@ -446,6 +446,13 @@ struct TempVarMetadata {
 	// Whether this temp is the result of std::move or similar
 	bool is_move_result = false;
 	
+	// RVO/NRVO (Return Value Optimization) tracking
+	// C++17 mandates copy elision for prvalues used to initialize objects of the same type,
+	// which includes function returns, direct initialization, and other contexts
+	bool is_return_value = false;        // True if this is a return value (for RVO detection)
+	bool eligible_for_rvo = false;       // True if this prvalue can be constructed directly in destination
+	bool eligible_for_nrvo = false;      // True if this named variable can use NRVO
+	
 	// Fields previously tracked in ReferenceInfo (for reference/pointer dereferencing)
 	// These are used by IRConverter when loading values through references
 	Type value_type = Type::Invalid;
@@ -480,6 +487,23 @@ struct TempVarMetadata {
 	static TempVarMetadata makePRValue() {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::PRValue;
+		return meta;
+	}
+	
+	// Helper to create prvalue metadata eligible for RVO (C++17 mandatory copy elision)
+	static TempVarMetadata makeRVOEligiblePRValue() {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::PRValue;
+		meta.eligible_for_rvo = true;
+		return meta;
+	}
+	
+	// Helper to create metadata for named return value (NRVO candidate)
+	static TempVarMetadata makeNRVOCandidate(LValueInfo lv_info) {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::LValue;
+		meta.lvalue_info = lv_info;
+		meta.eligible_for_nrvo = true;
 		return meta;
 	}
 	
@@ -775,6 +799,29 @@ inline Type getTempVarValueType(const TempVar& temp) {
 	return meta.value_type;
 }
 
+// ============================================================================
+// RVO/NRVO (Return Value Optimization) helper functions
+// ============================================================================
+
+// Check if a TempVar is eligible for RVO (mandatory C++17 copy elision)
+inline bool isTempVarRVOEligible(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.eligible_for_rvo && meta.category == ValueCategory::PRValue;
+}
+
+// Check if a TempVar is eligible for NRVO (named return value optimization)
+inline bool isTempVarNRVOEligible(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.eligible_for_nrvo;
+}
+
+// Mark a TempVar as being returned from a function (for RVO/NRVO analysis)
+inline void markTempVarAsReturnValue(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	meta.is_return_value = true;
+	GlobalTempVarMetadataStorage::instance().setMetadata(temp, std::move(meta));
+}
+
 // Get the value size in bits of a reference TempVar (returns 0 if not a reference)
 inline int getTempVarValueSizeBits(const TempVar& temp) {
 	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
@@ -922,8 +969,11 @@ struct CallOp {
 	TempVar result;                       // 4 bytes
 	Type return_type;                     // 4 bytes
 	int return_size_in_bits;              // 4 bytes
+	TypeIndex return_type_index = 0;      // Type index for struct/class return types
 	bool is_member_function = false;      // 1 byte
-	bool is_variadic = false;             // 1 byte (+ 2 bytes padding)
+	bool is_variadic = false;             // 1 byte
+	bool uses_return_slot = false;        // 1 byte - True if using hidden return parameter for RVO
+	std::optional<TempVar> return_slot;   // Optional temp var representing the return slot location
 	
 	// Helper to get function_name as StringHandle
 	StringHandle getFunctionName() const {
@@ -1044,6 +1094,8 @@ struct ConstructorCallOp {
 	StringHandle struct_name;                         // Pure StringHandle
 	std::variant<StringHandle, TempVar> object;  // Object instance ('this' or temp)
 	std::vector<TypedValue> arguments;               // Constructor arguments
+	bool use_return_slot = false;                    // True if constructing into caller's return slot (RVO)
+	std::optional<int> return_slot_offset;           // Stack offset of return slot (for RVO)
 };
 
 // Destructor call (invoke destructor on object)
@@ -1117,10 +1169,12 @@ struct FunctionDeclOp {
 	Type return_type = Type::Void;
 	int return_size_in_bits = 0;
 	int return_pointer_depth = 0;
+	TypeIndex return_type_index = 0;  // Type index for struct/class return types
 	StringHandle function_name;  // Pure StringHandle
 	StringHandle struct_name;  // Empty for non-member functions
 	Linkage linkage = Linkage::None;
 	bool is_variadic = false;
+	bool has_hidden_return_param = false;  // True if function uses hidden return parameter (struct return)
 	StringHandle mangled_name;  // Pure StringHandle
 	std::vector<FunctionParam> parameters;
 	int temp_var_stack_bytes = 0;  // Total stack space needed for TempVars (set after function body is processed)

@@ -5678,6 +5678,17 @@ private:
 			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number);
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle(call_op.result.name())].offset = result_offset;
 			
+			// For functions returning struct by value, prepare hidden return parameter
+			// The return slot address will be passed as the first argument
+			int param_shift = 0;  // Tracks how many parameters to shift (for hidden return param)
+			if (call_op.uses_return_slot) {
+				param_shift = 1;  // Regular parameters shift by 1 to make room for hidden return param
+				
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Function call uses return slot - will pass address of temp_{} in first parameter register",
+					call_op.result.var_number);
+			}
+			
 			// IMPORTANT: Process stack arguments (beyond register count) FIRST, before loading register arguments.
 			// To prevent loadTypedValueIntoRegister from clobbering parameter registers,
 			// we reserve all parameter registers before processing stack arguments.
@@ -5809,7 +5820,8 @@ private:
 			// Now process register arguments (platform-specific: 4 on Windows, 6 on Linux for integers)
 			// Note: max_int_regs and max_float_regs already declared above for stack arg processing
 			// Use separate counters for integer and float registers (System V AMD64 ABI requirement)
-			size_t int_reg_index = 0;
+			// If function uses return slot, start at index param_shift to leave room for hidden parameter
+			size_t int_reg_index = param_shift;  // Start at param_shift if hidden return param present
 			size_t float_reg_index = 0;
 			
 			for (size_t i = 0; i < call_op.args.size(); ++i) {
@@ -5818,7 +5830,7 @@ private:
 				// Determine if this is a floating-point argument
 				bool is_float_arg = is_floating_point_type(arg.type);
 				
-				// Check if this argument fits in a register
+				// Check if this argument fits in a register (accounting for param_shift)
 				bool use_register = false;
 				if (is_float_arg) {
 					if (float_reg_index < max_float_regs) {
@@ -5840,6 +5852,7 @@ private:
 				X64Register target_reg = is_float_arg 
 					? getFloatParamReg<TWriterClass>(float_reg_index++)
 					: getIntParamReg<TWriterClass>(int_reg_index++);
+
 				
 				// Special handling for passing addresses (this pointer or large struct references)
 				// For member functions: first arg is always "this" pointer (pass address)
@@ -6013,6 +6026,19 @@ private:
 				}
 			}
 			
+			// If function uses return slot, pass the address of the result location as hidden first parameter
+			if (call_op.uses_return_slot) {
+				// Load address of return slot (result_offset) into first integer parameter register
+				X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
+				
+				// LEA return_slot_reg, [RBP + result_offset]
+				emitLeaFromFrame(return_slot_reg, result_offset);
+				
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Passing return slot address (offset {}) in register {} for struct return",
+					result_offset, static_cast<int>(return_slot_reg));
+			}
+			
 			// Generate call instruction
 			std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 			textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
@@ -6034,9 +6060,8 @@ private:
 				call_op.result.name(), is_prvalue_return);
 			
 			// Store return value - RAX for integers, XMM0 for floats
-			// TODO Phase 5: For prvalue returns directly initializing variables,
-			// we could optimize by constructing directly in the destination (RVO/NRVO)
-			if (call_op.return_type != Type::Void) {
+			// For struct returns using return slot, the struct is already in place - no copy needed
+			if (call_op.return_type != Type::Void && !call_op.uses_return_slot) {
 				if (is_floating_point_type(call_op.return_type)) {
 					// Float return value is in XMM0
 					bool is_float = (call_op.return_type == Type::Float);
@@ -6047,6 +6072,10 @@ private:
 						SizedStackSlot{result_offset, call_op.return_size_in_bits, isSignedType(call_op.return_type)}  // dest
 					);
 				}
+			} else if (call_op.uses_return_slot) {
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Struct return using return slot - struct already constructed at offset {}",
+					result_offset);
 			}
 			
 			// No stack cleanup needed after call:
@@ -6071,9 +6100,24 @@ private:
 
 		// Get the object's stack offset
 		int object_offset = 0;
-		if (std::holds_alternative<TempVar>(ctor_op.object)) {
+		bool object_is_pointer = false;  // Declare early so RVO branch can set it
+		
+		// If using return slot (RVO), get offset from return_slot_offset instead
+		if (ctor_op.use_return_slot && ctor_op.return_slot_offset.has_value()) {
+			object_offset = ctor_op.return_slot_offset.value();
+			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Constructor using return slot (RVO) at offset {}",
+				object_offset);
+		} else if (std::holds_alternative<TempVar>(ctor_op.object)) {
 			const TempVar temp_var = std::get<TempVar>(ctor_op.object);
+			
+			// TempVars for constructor calls are stack-allocated objects
+			// We need to get the ADDRESS of the stack location (LEA), not load a pointer (MOV)
+			// Exception: TempVars from HeapAlloc hold pointers and would need MOV,
+			// but those should go through handleConstructorCall differently
 			object_offset = getStackOffsetFromTempVar(temp_var);
+			object_is_pointer = false;  // Use LEA to get address, not MOV to load pointer
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(ctor_op.object);
 			auto it = variable_scopes.back().variables.find(var_name_handle);
@@ -6081,17 +6125,7 @@ private:
 				throw std::runtime_error("Constructor call: variable not found in variables map: " + std::string(StringTable::getStringView(var_name_handle)));
 			}
 			object_offset = it->second.offset;
-		}
-
-		// Check if the object is a pointer (needs to be loaded, not addressed)
-		// This includes 'this' pointer and TempVars from heap_alloc
-		bool object_is_pointer = false;
-		if (std::holds_alternative<TempVar>(ctor_op.object)) {
-			// TempVars are always pointers in constructor calls (from heap_alloc)
-			object_is_pointer = true;
-		} else if (std::holds_alternative<StringHandle>(ctor_op.object)) {
-			StringHandle obj_handle = std::get<StringHandle>(ctor_op.object);
-			object_is_pointer = (StringTable::getStringView(obj_handle) == "this");
+			object_is_pointer = (StringTable::getStringView(var_name_handle) == "this");
 		}
 
 		// Load the address of the object into the first parameter register ('this' pointer)
@@ -7596,6 +7630,7 @@ private:
 		current_function_mangled_name_ = mangled_handle;
 		current_function_offset_ = func_offset;
 		current_function_is_variadic_ = is_variadic;
+		current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
 
 		// Patch pending branches from previous function before clearing
 		if (!pending_branches_.empty()) {
@@ -7764,6 +7799,25 @@ private:
 			regAlloc.allocateSpecific(this_reg, this_offset);
 
 			param_offset_adjustment = 1;  // Shift other parameters by 1
+		}
+		
+		// For functions returning struct by value, add hidden return parameter
+		// This comes BEFORE regular parameters (but after 'this' for member functions)
+		// System V AMD64: hidden param in RDI, Windows x64: hidden param in RCX
+		// For member functions: hidden param shifts to RSI (Linux) or RDX (Windows)
+		if (func_decl.has_hidden_return_param) {
+			int return_slot_offset = (param_offset_adjustment + 1) * -8;
+			variable_scopes.back().variables[StringTable::getOrInternStringHandle("__return_slot")].offset = return_slot_offset;
+			
+			X64Register return_slot_reg = getIntParamReg<TWriterClass>(param_offset_adjustment);
+			parameters.push_back({Type::Struct, 64, "__return_slot", param_offset_adjustment, return_slot_offset, return_slot_reg, 1, false});
+			regAlloc.allocateSpecific(return_slot_reg, return_slot_offset);
+			
+			param_offset_adjustment++;  // Shift regular parameters by 1 more
+			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Function {} has hidden return parameter at offset {} in register {}",
+				func_name, return_slot_offset, static_cast<int>(return_slot_reg));
 		}
 
 		// First pass: collect all parameter information
@@ -8134,13 +8188,18 @@ private:
 		const auto& current_scope = variable_scopes.back();
 		auto var_it = current_scope.variables.find(var_name);
 		if (var_it != current_scope.variables.end()) {
-			return var_it->second.size_in_bits;
+			// Return the stored size if it's non-zero, otherwise use default
+			if (var_it->second.size_in_bits > 0) {
+				return var_it->second.size_in_bits;
+			}
 		}
 		
 		return default_size;
 	}
 
 	void handleReturn(const IrInstruction& instruction) {
+		FLASH_LOG(Codegen, Debug, "handleReturn called");
+		
 		if (variable_scopes.empty()) {
 			FLASH_LOG(Codegen, Error, "FATAL [handleReturn]: variable_scopes is EMPTY!");
 			std::abort();
@@ -8163,6 +8222,19 @@ private:
 			else {
 				// Return with value
 				const auto& ret_val = ret_op.return_value.value();
+				
+				// Debug: log what type of return value we have
+				if (std::holds_alternative<unsigned long long>(ret_val)) {
+					FLASH_LOG(Codegen, Debug, "Return value type: unsigned long long");
+				} else if (std::holds_alternative<TempVar>(ret_val)) {
+					FLASH_LOG(Codegen, Debug, "Return value type: TempVar");
+				} else if (std::holds_alternative<StringHandle>(ret_val)) {
+					FLASH_LOG(Codegen, Debug, "Return value type: StringHandle");
+				} else if (std::holds_alternative<double>(ret_val)) {
+					FLASH_LOG(Codegen, Debug, "Return value type: double");
+				} else {
+					FLASH_LOG(Codegen, Debug, "Return value type: UNKNOWN");
+				}
 				
 				if (std::holds_alternative<unsigned long long>(ret_val)) {
 					unsigned long long returnValue = std::get<unsigned long long>(ret_val);
@@ -8214,7 +8286,54 @@ private:
 							// Get the actual size of the variable being returned
 							int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
 							
-							if (is_float_return) {
+							// Check if function uses hidden return parameter (RVO/NRVO)
+							// Only skip copy if this specific return value is RVO-eligible (was constructed via RVO)
+							if (current_function_has_hidden_return_param_ && isTempVarRVOEligible(return_var)) {
+								FLASH_LOG_FORMAT(Codegen, Debug,
+									"Return statement in function with hidden return parameter - RVO-eligible struct already in return slot at offset {}",
+									var_offset);
+								// Struct already constructed in return slot via RVO - just emit epilogue below
+							} else if (current_function_has_hidden_return_param_) {
+								// Function uses hidden return param but this value is NOT RVO-eligible
+								// Need to copy the struct to the return slot
+								FLASH_LOG_FORMAT(Codegen, Debug,
+									"Return statement: copying non-RVO struct from offset {} to return slot (var_size={} bits)",
+									var_offset, var_size);
+								
+								// Load return slot address from __return_slot parameter
+								auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+								if (return_slot_it != variable_scopes.back().variables.end()) {
+									int return_slot_param_offset = return_slot_it->second.offset;
+									// Load the address from __return_slot into a register
+									X64Register dest_reg = X64Register::RDI;
+									emitMovFromFrame(dest_reg, return_slot_param_offset);
+									
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Copying struct: size={} bytes, from offset {}, return_slot_param at offset {}",
+										var_size / 8, var_offset, return_slot_param_offset);
+									
+									// Copy struct from var_offset to address in dest_reg
+									// Copy in 8-byte chunks (or smaller for the last chunk)
+									int struct_size_bytes = var_size / 8;
+									int bytes_copied = 0;
+									while (bytes_copied < struct_size_bytes) {
+										int chunk_size = (struct_size_bytes - bytes_copied >= 8) ? 8 : struct_size_bytes - bytes_copied;
+										// Load from source
+										if (chunk_size == 8) {
+											emitMovFromFrame(X64Register::RAX, var_offset + bytes_copied);
+										} else {
+											// For smaller chunks, use appropriately sized load
+											emitMovFromFrameBySize(X64Register::RAX, var_offset + bytes_copied, chunk_size * 8);
+										}
+										// Store to destination [dest_reg + bytes_copied]
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, chunk_size);
+										bytes_copied += chunk_size;
+									}
+									
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Struct copy complete: copied {} bytes", bytes_copied);
+								}
+							} else if (is_float_return) {
 								// Load floating-point value into XMM0
 								bool is_float = (ret_op.return_size == 32);
 								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
@@ -8285,7 +8404,47 @@ private:
 							bool is_float_return = ret_op.return_type.has_value() && 
 							                        is_floating_point_type(ret_op.return_type.value());
 							
-							if (is_float_return) {
+							// Check if function uses hidden return parameter (for struct returns)
+							if (current_function_has_hidden_return_param_) {
+								// Function uses hidden return param - need to copy struct to return slot
+								FLASH_LOG_FORMAT(Codegen, Debug,
+									"Return statement (StringHandle): copying struct '{}' from offset {} to return slot (size={} bits)",
+									StringTable::getStringView(var_name_handle), var_offset, var_size);
+								
+								// Load return slot address from __return_slot parameter
+								auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+								if (return_slot_it != variable_scopes.back().variables.end()) {
+									int return_slot_param_offset = return_slot_it->second.offset;
+									// Load the address from __return_slot into a register
+									X64Register dest_reg = X64Register::RDI;
+									emitMovFromFrame(dest_reg, return_slot_param_offset);
+									
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Copying struct: size={} bytes, from offset {}, return_slot_param at offset {}",
+										var_size / 8, var_offset, return_slot_param_offset);
+									
+									// Copy struct from var_offset to address in dest_reg
+									// Copy in 8-byte chunks (or smaller for the last chunk)
+									int struct_size_bytes = var_size / 8;
+									int bytes_copied = 0;
+									while (bytes_copied < struct_size_bytes) {
+										int chunk_size = (struct_size_bytes - bytes_copied >= 8) ? 8 : struct_size_bytes - bytes_copied;
+										// Load from source
+										if (chunk_size == 8) {
+											emitMovFromFrame(X64Register::RAX, var_offset + bytes_copied);
+										} else {
+											// For smaller chunks, use appropriately sized load
+											emitMovFromFrameBySize(X64Register::RAX, var_offset + bytes_copied, chunk_size * 8);
+										}
+										// Store to destination [dest_reg + bytes_copied]
+										emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, chunk_size);
+										bytes_copied += chunk_size;
+									}
+									
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Struct copy complete: copied {} bytes", bytes_copied);
+								}
+							} else if (is_float_return) {
 								// Load floating-point value into XMM0
 								bool is_float = (ret_op.return_size == 32);
 								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
@@ -11422,12 +11581,14 @@ private:
 		// Get the result variable's stack offset (needed for both paths)
 		auto result_var = std::get<TempVar>(op.result.value);
 		int32_t result_offset;
-		auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(result_var.name()));
-		if (it != current_scope.variables.end()) {
+		StringHandle result_var_handle = StringTable::getOrInternStringHandle(result_var.name());
+		auto it = current_scope.variables.find(result_var_handle);
+		if (it != current_scope.variables.end() && it->second.offset != INT_MIN) {
 			result_offset = it->second.offset;
 		} else {
-			// Allocate stack space for the result TempVar
+			// Allocate stack space for the result TempVar (or if offset is sentinel INT_MIN)
 			result_offset = allocateStackSlotForTempVar(result_var.var_number);
+			// Note: allocateStackSlotForTempVar already updates the variables map
 		}
 
 		// For large members (> 8 bytes), we can't load the value into a register
@@ -11563,11 +11724,17 @@ private:
 			return;
 		}
 
-		// Store the result - but keep it in the register for subsequent operations
-		regAlloc.set_stack_variable_offset(temp_reg, result_offset, op.result.size_in_bits);
-		
-		// Add the TempVar to variables so it can be found later
-		variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = result_offset;
+		// FIX: Map the TempVar to the member's actual stack location (not a copy!)
+		// This ensures that subsequent reads/writes to this TempVar access the struct member directly
+		//
+		// Two updates are necessary:
+		// 1. Update variables map: For future lookups of this TempVar by name
+		// 2. Update register allocator: For register spilling and dirty register flushing
+		//
+		// Both must point to member_stack_offset (the actual member location in the struct)
+		// NOT to result_offset (which was allocated for the TempVar but should not be used)
+		variable_scopes.back().variables[result_var_handle].offset = member_stack_offset;
+		regAlloc.set_stack_variable_offset(temp_reg, member_stack_offset, op.result.size_in_bits);
 	}
 
 	void handleMemberStore(const IrInstruction& instruction) {
@@ -13281,6 +13448,7 @@ private:
 	StringHandle current_function_mangled_name_;  // Changed from string_view to prevent dangling pointer
 	uint32_t current_function_offset_ = 0;
 	bool current_function_is_variadic_ = false;
+	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter (RVO)
 	int32_t current_function_varargs_reg_save_offset_ = 0;  // Offset of varargs register save area (Linux only)
 
 	// Pending function info for exception handling
