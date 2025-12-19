@@ -11726,11 +11726,14 @@ private:
 
 		// FIX: Map the TempVar to the member's actual stack location (not a copy!)
 		// This ensures that subsequent reads/writes to this TempVar access the struct member directly
-		// Update the variables map to point the TempVar to the member's location
+		//
+		// Two updates are necessary:
+		// 1. Update variables map: For future lookups of this TempVar by name
+		// 2. Update register allocator: For register spilling and dirty register flushing
+		//
+		// Both must point to member_stack_offset (the actual member location in the struct)
+		// NOT to result_offset (which was allocated for the TempVar but should not be used)
 		variable_scopes.back().variables[result_var_handle].offset = member_stack_offset;
-		
-		// Store the result - but keep it in the register for subsequent operations
-		// Now it will be written back to the member's actual location when flushed
 		regAlloc.set_stack_variable_offset(temp_reg, member_stack_offset, op.result.size_in_bits);
 	}
 
