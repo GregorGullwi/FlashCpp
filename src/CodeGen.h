@@ -7670,21 +7670,20 @@ private:
 			return false;
 		}
 		
-		// Check if this is from std namespace by looking at the mangled name
+		// Only treat as std::move if we can confirm it's from std namespace
+		// Check the mangled name for std namespace markers (_ZSt prefix or "std" substring)
 		std::string_view mangled = functionCallNode.has_mangled_name() 
 			? functionCallNode.mangled_name() 
 			: std::string_view();
 		
-		// std::move has mangled name starting with _ZSt (std namespace)
+		// std::move has mangled name starting with _ZSt (std namespace in Itanium ABI)
+		// or containing "std" for other mangling schemes
 		if (mangled.starts_with("_ZSt") || mangled.find("std") != std::string_view::npos) {
 			return true;
 		}
 		
-		// For templates without mangled name, check if return type is rvalue reference
-		if (!functionCallNode.has_mangled_name() && decl_node.type_node().as<TypeSpecifierNode>().is_rvalue_reference()) {
-			return true;
-		}
-		
+		// If we can't confirm it's from std namespace, don't treat it as std::move
+		// This avoids false positives with user-defined move() functions
 		return false;
 	}
 
