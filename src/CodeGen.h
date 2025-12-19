@@ -7671,6 +7671,28 @@ private:
 			return intrinsic_result.value();
 		}
 
+		// Special handling for std::move and std::forward - inline them as simple casts
+		// These should never generate actual function calls, they're just value category casts
+		// Check both the simple name and the mangled name pattern
+		if (func_name_view.find("move") != std::string_view::npos || 
+		    (functionCallNode.has_mangled_name() && 
+		     functionCallNode.mangled_name().find("move") != std::string_view::npos)) {
+			// std::move(arg) is essentially just static_cast<T&&>(arg)
+			// For code generation purposes, this is a no-op - we just return the argument
+			// The value category is handled by the type system (rvalue reference)
+			if (functionCallNode.arguments().size() == 1) {
+				// Get the single argument
+				auto arg_node = functionCallNode.arguments()[0];
+				if (arg_node.is<ExpressionNode>()) {
+					// Generate IR for the argument and return it directly
+					// std::move is purely a compile-time cast for value categories
+					auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
+					FLASH_LOG(Codegen, Debug, "Inlining std::move as identity (no-op cast)");
+					return arg_ir;
+				}
+			}
+		}
+
 		// Check if this is a function pointer call
 		// Look up the identifier in the symbol table to see if it's a function pointer variable
 		const std::optional<ASTNode> func_symbol = symbol_table.lookup(func_name_view);
