@@ -11581,12 +11581,14 @@ private:
 		// Get the result variable's stack offset (needed for both paths)
 		auto result_var = std::get<TempVar>(op.result.value);
 		int32_t result_offset;
-		auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(result_var.name()));
-		if (it != current_scope.variables.end()) {
+		StringHandle result_var_handle = StringTable::getOrInternStringHandle(result_var.name());
+		auto it = current_scope.variables.find(result_var_handle);
+		if (it != current_scope.variables.end() && it->second.offset != INT_MIN) {
 			result_offset = it->second.offset;
 		} else {
-			// Allocate stack space for the result TempVar
+			// Allocate stack space for the result TempVar (or if offset is sentinel INT_MIN)
 			result_offset = allocateStackSlotForTempVar(result_var.var_number);
+			// Note: allocateStackSlotForTempVar already updates the variables map
 		}
 
 		// For large members (> 8 bytes), we can't load the value into a register
@@ -11724,9 +11726,6 @@ private:
 
 		// Store the result - but keep it in the register for subsequent operations
 		regAlloc.set_stack_variable_offset(temp_reg, result_offset, op.result.size_in_bits);
-		
-		// Add the TempVar to variables so it can be found later
-		variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = result_offset;
 	}
 
 	void handleMemberStore(const IrInstruction& instruction) {
