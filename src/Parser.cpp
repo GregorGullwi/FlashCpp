@@ -11293,7 +11293,7 @@ ParseResult Parser::parse_primary_expression()
 			// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
 			const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
 			if (!decl_ptr) {
-				return ParseResult::error("Invalid function declaration", qual_id.identifier_token());
+				return ParseResult::error("Invalid function declaration (global namespace path)", qual_id.identifier_token());
 			}
 
 			// Create function call node with the qualified identifier
@@ -11537,112 +11537,162 @@ ParseResult Parser::parse_primary_expression()
 		}
 
 		// Try to look up the qualified identifier
-		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.name());			// Check if followed by '(' for function call
-			if (current_token_.has_value() && current_token_->value() == "(") {
-				consume_token(); // consume '('
+		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.name());
+		
+		// Check if followed by '(' for function call
+		if (current_token_.has_value() && current_token_->value() == "(") {
+			consume_token(); // consume '('
 
-				// If not found, create a forward declaration
-				if (!identifierType) {
-					auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
-					auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
-					identifierType = forward_decl;
-				}
-
-				// Parse function arguments
-				ChunkedVector<ASTNode> args;
-				if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
-					while (true) {
-						auto arg_result = parse_expression();
-						if (arg_result.is_error()) {
-							return arg_result;
-						}
+			// Parse function arguments first
+			ChunkedVector<ASTNode> args;
+			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
+				while (true) {
+					auto arg_result = parse_expression();
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+					
+					// Check for pack expansion: expr...
+					if (peek_token().has_value() && peek_token()->value() == "...") {
+						consume_token(); // consume '...'
 						
-						// Check for pack expansion: expr...
-						if (peek_token().has_value() && peek_token()->value() == "...") {
-							consume_token(); // consume '...'
-							
-							// Pack expansion: need to expand the expression for each pack element
-							// Strategy: Try to find expanded pack elements in the symbol table
-							
-							if (auto arg_node = arg_result.node()) {
-								// Simple case: if the expression is just a single identifier that looks
-								// like a pack parameter, try to expand it
-								if (arg_node->is<IdentifierNode>()) {
-									std::string_view pack_name = arg_node->as<IdentifierNode>().name();
+						// Pack expansion: need to expand the expression for each pack element
+						// Strategy: Try to find expanded pack elements in the symbol table
+						
+						if (auto arg_node = arg_result.node()) {
+							// Simple case: if the expression is just a single identifier that looks
+							// like a pack parameter, try to expand it
+							if (arg_node->is<IdentifierNode>()) {
+								std::string_view pack_name = arg_node->as<IdentifierNode>().name();
+								
+								// Try to find pack_name_0, pack_name_1, etc. in the symbol table
+								size_t pack_size = 0;
+								
+								StringBuilder sb;
+								for (size_t i = 0; i < 100; ++i) {  // reasonable limit
+									// Use StringBuilder to create a persistent string
+									std::string_view element_name = sb
+										.append(pack_name)
+										.append("_")
+										.append(i)
+										.preview();
 									
-									// Try to find pack_name_0, pack_name_1, etc. in the symbol table
-									size_t pack_size = 0;
-									
-									StringBuilder sb;
-									for (size_t i = 0; i < 100; ++i) {  // reasonable limit
-										// Use StringBuilder to create a persistent string
-										std::string_view element_name = sb
+									if (gSymbolTable.lookup(element_name).has_value()) {
+										++pack_size;
+										sb.reset();
+									} else {
+										break;
+									}
+								}
+								sb.reset();
+								
+								if (pack_size > 0) {
+									// Add each pack element as a separate argument
+									for (size_t i = 0; i < pack_size; ++i) {
+										// Use StringBuilder to create a persistent string for the token
+										std::string_view element_name = StringBuilder()
 											.append(pack_name)
 											.append("_")
 											.append(i)
-											.preview();
+											.commit();
 										
-										if (gSymbolTable.lookup(element_name).has_value()) {
-											++pack_size;
-											sb.reset();
-										} else {
-											break;
-										}
-									}
-									sb.reset();
-									
-									if (pack_size > 0) {
-										// Add each pack element as a separate argument
-										for (size_t i = 0; i < pack_size; ++i) {
-											// Use StringBuilder to create a persistent string for the token
-											std::string_view element_name = StringBuilder()
-												.append(pack_name)
-												.append("_")
-												.append(i)
-												.commit();
-											
-											Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
-											auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
-											args.push_back(elem_node);
-										}
-									} else {
-										args.push_back(*arg_node);
+										Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
+										auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
+										args.push_back(elem_node);
 									}
 								} else {
-									// Complex expression: need full rewriting (not implemented yet)
 									args.push_back(*arg_node);
 								}
-							}
-						} else {
-							// Regular argument
-							if (auto arg = arg_result.node()) {
-								args.push_back(*arg);
+							} else {
+								// Complex expression: need full rewriting (not implemented yet)
+								args.push_back(*arg_node);
 							}
 						}
-
-						if (!peek_token().has_value()) {
-							return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
+					} else {
+						// Regular argument
+						if (auto arg = arg_result.node()) {
+							args.push_back(*arg);
 						}
+					}
 
-						if (peek_token()->value() == ")") {
-							break;
-						}
+					if (!peek_token().has_value()) {
+						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
+					}
 
-						if (!consume_punctuator(",")) {
-							return ParseResult::error("Expected ',' between function arguments", *current_token_);
+					if (peek_token()->value() == ")") {
+						break;
+					}
+
+					if (!consume_punctuator(",")) {
+						return ParseResult::error("Expected ',' between function arguments", *current_token_);
+					}
+				}
+			}
+			
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+			}
+
+			// If not found OR if it's a template (not an instantiated function), try template instantiation
+			if ((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) && 
+			    current_linkage_ != Linkage::C) {
+				// Build qualified template name
+				StringBuilder qualified_name_builder;
+				for (const auto& ns : qual_id.namespaces()) {
+#if USE_OLD_STRING_APPROACH
+					qualified_name_builder.append(ns);
+#else
+					qualified_name_builder.append(ns.view());
+#endif
+					qualified_name_builder.append("::");
+				}
+				qualified_name_builder.append(qual_id.name());
+				std::string_view qualified_name = qualified_name_builder.commit();
+				
+				// Extract argument types for template instantiation
+				std::vector<TypeSpecifierNode> arg_types;
+				arg_types.reserve(args.size());
+				for (size_t i = 0; i < args.size(); ++i) {
+					const auto& arg = args[i];
+					if (arg.is<ExpressionNode>()) {
+						const ExpressionNode& expr = arg.as<ExpressionNode>();
+						std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
+						if (arg_type_opt.has_value()) {
+							TypeSpecifierNode arg_type_node = *arg_type_opt;
+							
+							// Check if this is an lvalue (for perfect forwarding deduction)
+							if (std::holds_alternative<IdentifierNode>(expr)) {
+								// This is a named variable (lvalue) - mark as lvalue reference
+								// For forwarding reference deduction: T&& deduces to T& for lvalues
+								arg_type_node.set_lvalue_reference(true);
+							}
+							
+							arg_types.push_back(arg_type_node);
 						}
 					}
 				}
 				
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+				// Try to instantiate the qualified template function
+				if (!arg_types.empty()) {
+					std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+					if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+						identifierType = *template_inst;
+					}
 				}
+			}
+			
+			// If still not found, create a forward declaration
+			if (!identifierType) {
+				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
+				identifierType = forward_decl;
+			}
 
-				// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
-				const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
-				if (!decl_ptr) {
-					return ParseResult::error("Invalid function declaration", qual_id.identifier_token());
-				}
+			// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
+			const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+			if (!decl_ptr) {
+				return ParseResult::error("Invalid function declaration (template args path)", qual_id.identifier_token());
+			}
 
 				// Create function call node with the qualified identifier
 				result = emplace_node<ExpressionNode>(
@@ -11840,20 +11890,22 @@ ParseResult Parser::parse_primary_expression()
 						}
 					}
 					
+					
 					// Try to instantiate the qualified template function
 					if (!arg_types.empty()) {
 						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
 						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
 							identifierType = *template_inst;
-							FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
+						} else {
 						}
+					} else {
 					}
 				}
 				
 				// Get the DeclarationNode
 				const DeclarationNode* decl_ptr = identifierType.has_value() ? getDeclarationNode(*identifierType) : nullptr;
 				if (!decl_ptr) {
-					return ParseResult::error("Invalid function declaration", final_identifier);
+					return ParseResult::error("Invalid function declaration (qualified id path)", final_identifier);
 				}
 				
 				// Create function call node with the qualified identifier
