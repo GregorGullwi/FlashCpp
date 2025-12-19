@@ -1524,7 +1524,7 @@ private:
 class FunctionCallNode {
 public:
 	explicit FunctionCallNode(DeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
-		: func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token), mangled_name_(StringTable::getOrInternStringHandle(func_decl.identifier_token().value())) {}
+		: func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
 
 	const auto& arguments() const { return arguments_; }
 	const auto& function_declaration() const { return func_decl_; }
