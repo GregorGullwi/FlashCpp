@@ -7685,7 +7685,7 @@ private:
 			                   potential_mangled.find("std") != std::string_view::npos;
 			
 			if (is_std_move || (!functionCallNode.has_mangled_name() && decl_node.type_node().as<TypeSpecifierNode>().is_rvalue_reference())) {
-				FLASH_LOG_FORMAT(Codegen, Debug, "Detected std::move call - marking result as xvalue");
+				FLASH_LOG(Codegen, Debug, "Detected std::move call - marking result as xvalue");
 				
 				// std::move takes exactly one argument
 				if (functionCallNode.arguments().size() != 1) {
