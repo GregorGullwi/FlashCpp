@@ -2525,7 +2525,21 @@ private:
 			if (std::holds_alternative<unsigned long long>(operands[2])) {
 				ret_op.return_value = std::get<unsigned long long>(operands[2]);
 			} else if (std::holds_alternative<TempVar>(operands[2])) {
-				ret_op.return_value = std::get<TempVar>(operands[2]);
+				TempVar return_temp = std::get<TempVar>(operands[2]);
+				ret_op.return_value = return_temp;
+				
+				// C++17 mandatory RVO: Check if this is a prvalue (e.g., constructor call result)
+				// being returned directly - this is eligible for copy elision
+				if (isTempVarRVOEligible(return_temp)) {
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"RVO opportunity detected: returning prvalue {} (constructor call result)",
+						return_temp.name());
+					// Note: Actual copy elision would require hidden return parameter support
+					// For now, we just log the opportunity
+				}
+				
+				// Mark the temp as a return value for potential NRVO analysis
+				markTempVarAsReturnValue(return_temp);
 			} else if (std::holds_alternative<StringHandle>(operands[2])) {
 				ret_op.return_value = std::get<StringHandle>(operands[2]);
 			} else if (std::holds_alternative<double>(operands[2])) {
@@ -13259,6 +13273,14 @@ private:
 
 		// Add the constructor call instruction (use ConstructorCall opcode)
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), constructorCallNode.called_from()));
+
+		// Mark the result as a prvalue eligible for RVO (C++17 mandatory copy elision)
+		// Constructor calls always produce prvalues, which are eligible for copy elision
+		// when returned from a function
+		setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
+		
+		FLASH_LOG_FORMAT(Codegen, Debug,
+			"Marked constructor call result {} as RVO-eligible prvalue", ret_var.name());
 
 		// Return the result variable with the constructed type, including type_index for struct types
 		TypeIndex result_type_index = type_spec.type_index();

@@ -446,6 +446,12 @@ struct TempVarMetadata {
 	// Whether this temp is the result of std::move or similar
 	bool is_move_result = false;
 	
+	// RVO/NRVO (Return Value Optimization) tracking
+	// C++17 mandates copy elision for prvalues returned from functions
+	bool is_return_value = false;        // True if this is a return value (for RVO detection)
+	bool eligible_for_rvo = false;       // True if this prvalue can be constructed directly in return slot
+	bool eligible_for_nrvo = false;      // True if this named variable can use NRVO
+	
 	// Fields previously tracked in ReferenceInfo (for reference/pointer dereferencing)
 	// These are used by IRConverter when loading values through references
 	Type value_type = Type::Invalid;
@@ -480,6 +486,23 @@ struct TempVarMetadata {
 	static TempVarMetadata makePRValue() {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::PRValue;
+		return meta;
+	}
+	
+	// Helper to create prvalue metadata eligible for RVO (C++17 mandatory copy elision)
+	static TempVarMetadata makeRVOEligiblePRValue() {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::PRValue;
+		meta.eligible_for_rvo = true;
+		return meta;
+	}
+	
+	// Helper to create metadata for named return value (NRVO candidate)
+	static TempVarMetadata makeNRVOCandidate(LValueInfo lv_info) {
+		TempVarMetadata meta;
+		meta.category = ValueCategory::LValue;
+		meta.lvalue_info = lv_info;
+		meta.eligible_for_nrvo = true;
 		return meta;
 	}
 	
@@ -773,6 +796,29 @@ inline bool isTempVarReference(const TempVar& temp) {
 inline Type getTempVarValueType(const TempVar& temp) {
 	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
 	return meta.value_type;
+}
+
+// ============================================================================
+// RVO/NRVO (Return Value Optimization) helper functions
+// ============================================================================
+
+// Check if a TempVar is eligible for RVO (mandatory C++17 copy elision)
+inline bool isTempVarRVOEligible(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.eligible_for_rvo && meta.category == ValueCategory::PRValue;
+}
+
+// Check if a TempVar is eligible for NRVO (named return value optimization)
+inline bool isTempVarNRVOEligible(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	return meta.eligible_for_nrvo;
+}
+
+// Mark a TempVar as being returned from a function (for RVO/NRVO analysis)
+inline void markTempVarAsReturnValue(const TempVar& temp) {
+	auto meta = GlobalTempVarMetadataStorage::instance().getMetadata(temp);
+	meta.is_return_value = true;
+	GlobalTempVarMetadataStorage::instance().setMetadata(temp, std::move(meta));
 }
 
 // Get the value size in bits of a reference TempVar (returns 0 if not a reference)
