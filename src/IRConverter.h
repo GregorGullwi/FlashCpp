@@ -5678,6 +5678,17 @@ private:
 			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number);
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle(call_op.result.name())].offset = result_offset;
 			
+			// For functions returning struct by value, prepare hidden return parameter
+			// The return slot address will be passed as the first argument
+			int param_shift = 0;  // Tracks how many parameters to shift (for hidden return param)
+			if (call_op.uses_return_slot) {
+				param_shift = 1;  // Regular parameters shift by 1 to make room for hidden return param
+				
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Function call uses return slot - will pass address of temp_{} in first parameter register",
+					call_op.result.var_number);
+			}
+			
 			// IMPORTANT: Process stack arguments (beyond register count) FIRST, before loading register arguments.
 			// To prevent loadTypedValueIntoRegister from clobbering parameter registers,
 			// we reserve all parameter registers before processing stack arguments.
@@ -5809,7 +5820,8 @@ private:
 			// Now process register arguments (platform-specific: 4 on Windows, 6 on Linux for integers)
 			// Note: max_int_regs and max_float_regs already declared above for stack arg processing
 			// Use separate counters for integer and float registers (System V AMD64 ABI requirement)
-			size_t int_reg_index = 0;
+			// If function uses return slot, start at index param_shift to leave room for hidden parameter
+			size_t int_reg_index = param_shift;  // Start at param_shift if hidden return param present
 			size_t float_reg_index = 0;
 			
 			for (size_t i = 0; i < call_op.args.size(); ++i) {
@@ -5818,7 +5830,7 @@ private:
 				// Determine if this is a floating-point argument
 				bool is_float_arg = is_floating_point_type(arg.type);
 				
-				// Check if this argument fits in a register
+				// Check if this argument fits in a register (accounting for param_shift)
 				bool use_register = false;
 				if (is_float_arg) {
 					if (float_reg_index < max_float_regs) {
@@ -5840,6 +5852,7 @@ private:
 				X64Register target_reg = is_float_arg 
 					? getFloatParamReg<TWriterClass>(float_reg_index++)
 					: getIntParamReg<TWriterClass>(int_reg_index++);
+
 				
 				// Special handling for passing addresses (this pointer or large struct references)
 				// For member functions: first arg is always "this" pointer (pass address)
@@ -6013,6 +6026,19 @@ private:
 				}
 			}
 			
+			// If function uses return slot, pass the address of the result location as hidden first parameter
+			if (call_op.uses_return_slot) {
+				// Load address of return slot (result_offset) into first integer parameter register
+				X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
+				
+				// LEA return_slot_reg, [RBP + result_offset]
+				emitLeaFromFrame(return_slot_reg, result_offset);
+				
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Passing return slot address (offset {}) in register {} for struct return",
+					result_offset, static_cast<int>(return_slot_reg));
+			}
+			
 			// Generate call instruction
 			std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
 			textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
@@ -6034,9 +6060,8 @@ private:
 				call_op.result.name(), is_prvalue_return);
 			
 			// Store return value - RAX for integers, XMM0 for floats
-			// TODO Phase 5: For prvalue returns directly initializing variables,
-			// we could optimize by constructing directly in the destination (RVO/NRVO)
-			if (call_op.return_type != Type::Void) {
+			// For struct returns using return slot, the struct is already in place - no copy needed
+			if (call_op.return_type != Type::Void && !call_op.uses_return_slot) {
 				if (is_floating_point_type(call_op.return_type)) {
 					// Float return value is in XMM0
 					bool is_float = (call_op.return_type == Type::Float);
@@ -6047,6 +6072,10 @@ private:
 						SizedStackSlot{result_offset, call_op.return_size_in_bits, isSignedType(call_op.return_type)}  // dest
 					);
 				}
+			} else if (call_op.uses_return_slot) {
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Struct return using return slot - struct already constructed at offset {}",
+					result_offset);
 			}
 			
 			// No stack cleanup needed after call:
@@ -6071,7 +6100,15 @@ private:
 
 		// Get the object's stack offset
 		int object_offset = 0;
-		if (std::holds_alternative<TempVar>(ctor_op.object)) {
+		
+		// If using return slot (RVO), get offset from return_slot_offset instead
+		if (ctor_op.use_return_slot && ctor_op.return_slot_offset.has_value()) {
+			object_offset = ctor_op.return_slot_offset.value();
+			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Constructor using return slot (RVO) at offset {}",
+				object_offset);
+		} else if (std::holds_alternative<TempVar>(ctor_op.object)) {
 			const TempVar temp_var = std::get<TempVar>(ctor_op.object);
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
@@ -7596,6 +7633,7 @@ private:
 		current_function_mangled_name_ = mangled_handle;
 		current_function_offset_ = func_offset;
 		current_function_is_variadic_ = is_variadic;
+		current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
 
 		// Patch pending branches from previous function before clearing
 		if (!pending_branches_.empty()) {
@@ -8233,7 +8271,14 @@ private:
 							// Get the actual size of the variable being returned
 							int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
 							
-							if (is_float_return) {
+							// Check if function uses hidden return parameter (RVO/NRVO)
+							// If so, the struct is already constructed at the return slot - no copy needed
+							if (current_function_has_hidden_return_param_) {
+								FLASH_LOG_FORMAT(Codegen, Debug,
+									"Return statement in function with hidden return parameter - struct already in return slot at offset {}",
+									var_offset);
+								// Struct already constructed in return slot - just emit epilogue below
+							} else if (is_float_return) {
 								// Load floating-point value into XMM0
 								bool is_float = (ret_op.return_size == 32);
 								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
@@ -13300,6 +13345,7 @@ private:
 	StringHandle current_function_mangled_name_;  // Changed from string_view to prevent dangling pointer
 	uint32_t current_function_offset_ = 0;
 	bool current_function_is_variadic_ = false;
+	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter (RVO)
 	int32_t current_function_varargs_reg_save_offset_ = 0;  // Offset of varargs register save area (Linux only)
 
 	// Pending function info for exception handling
