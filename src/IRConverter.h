@@ -7765,6 +7765,25 @@ private:
 
 			param_offset_adjustment = 1;  // Shift other parameters by 1
 		}
+		
+		// For functions returning struct by value, add hidden return parameter
+		// This comes BEFORE regular parameters (but after 'this' for member functions)
+		// System V AMD64: hidden param in RDI, Windows x64: hidden param in RCX
+		// For member functions: hidden param shifts to RSI (Linux) or RDX (Windows)
+		if (func_decl.has_hidden_return_param) {
+			int return_slot_offset = (param_offset_adjustment + 1) * -8;
+			variable_scopes.back().variables[StringTable::getOrInternStringHandle("__return_slot")].offset = return_slot_offset;
+			
+			X64Register return_slot_reg = getIntParamReg<TWriterClass>(param_offset_adjustment);
+			parameters.push_back({Type::Struct, 64, "__return_slot", param_offset_adjustment, return_slot_offset, return_slot_reg, 1, false});
+			regAlloc.allocateSpecific(return_slot_reg, return_slot_offset);
+			
+			param_offset_adjustment++;  // Shift regular parameters by 1 more
+			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Function {} has hidden return parameter at offset {} in register {}",
+				func_name, return_slot_offset, static_cast<int>(return_slot_reg));
+		}
 
 		// First pass: collect all parameter information
 		if (!instruction.hasTypedPayload()) {
