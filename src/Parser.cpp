@@ -11205,14 +11205,7 @@ ParseResult Parser::parse_primary_expression()
 		if (current_token_.has_value() && current_token_->value() == "(") {
 			consume_token(); // consume '('
 
-			// If not found, create a forward declaration
-			if (!identifierType) {
-				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
-				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
-				identifierType = forward_decl;
-			}
-
-			// Parse function arguments
+			// Parse function arguments first
 			ChunkedVector<ASTNode> args;
 			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
 				while (true) {
@@ -11240,6 +11233,61 @@ ParseResult Parser::parse_primary_expression()
 
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
+			}
+
+			// If not found and we're not in extern "C", try template instantiation
+			if (!identifierType && current_linkage_ != Linkage::C) {
+				// Build qualified template name (e.g., "::move" or "::std::move")
+				StringBuilder qualified_name_builder;
+				for (const auto& ns : namespaces) {
+#if USE_OLD_STRING_APPROACH
+					qualified_name_builder.append(ns);
+#else
+					qualified_name_builder.append(ns.view());
+#endif
+					qualified_name_builder.append("::");
+				}
+				qualified_name_builder.append(qual_id.name());
+				std::string_view qualified_name = qualified_name_builder.commit();
+				
+				// Extract argument types for template instantiation
+				std::vector<TypeSpecifierNode> arg_types;
+				arg_types.reserve(args.size());
+				for (size_t i = 0; i < args.size(); ++i) {
+					const auto& arg = args[i];
+					if (arg.is<ExpressionNode>()) {
+						const ExpressionNode& expr = arg.as<ExpressionNode>();
+						std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
+						if (arg_type_opt.has_value()) {
+							TypeSpecifierNode arg_type_node = *arg_type_opt;
+							
+							// Check if this is an lvalue (for perfect forwarding deduction)
+							if (std::holds_alternative<IdentifierNode>(expr)) {
+								// This is a named variable (lvalue) - mark as lvalue reference
+								// For forwarding reference deduction: T&& deduces to T& for lvalues
+								arg_type_node.set_lvalue_reference(true);
+							}
+							
+							arg_types.push_back(arg_type_node);
+						}
+					}
+				}
+				
+				// Try to instantiate the qualified template function
+				if (!arg_types.empty()) {
+					std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+					if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+						identifierType = *template_inst;
+						FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
+					}
+				}
+			}
+			
+			// If still not found, create a forward declaration
+			if (!identifierType) {
+				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
+				identifierType = forward_decl;
 			}
 
 			// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
@@ -11719,8 +11767,8 @@ ParseResult Parser::parse_primary_expression()
 			
 			FLASH_LOG(Parser, Debug, "Qualified lookup result: {}", identifierType.has_value() ? "found" : "not found");
 			
-			// Check if this is a function call
-			if (identifierType.has_value() && peek_token().has_value() && peek_token()->value() == "(") {
+			// Check if this is a function call (even if not found - might be a template)
+			if (peek_token().has_value() && peek_token()->value() == "(") {
 				consume_token(); // consume '('
 				
 				// Parse function arguments
@@ -11754,8 +11802,56 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 				}
 				
+				// If not found and we're not in extern "C", try template instantiation
+				if (!identifierType.has_value() && current_linkage_ != Linkage::C) {
+					// Build qualified template name
+					StringBuilder qualified_name_builder;
+					for (const auto& ns : qual_id.namespaces()) {
+#if USE_OLD_STRING_APPROACH
+						qualified_name_builder.append(ns);
+#else
+						qualified_name_builder.append(ns.view());
+#endif
+						qualified_name_builder.append("::");
+					}
+					qualified_name_builder.append(qual_id.name());
+					std::string_view qualified_name = qualified_name_builder.commit();
+					
+					// Extract argument types for template instantiation
+					std::vector<TypeSpecifierNode> arg_types;
+					arg_types.reserve(args.size());
+					for (size_t i = 0; i < args.size(); ++i) {
+						const auto& arg = args[i];
+						if (arg.is<ExpressionNode>()) {
+							const ExpressionNode& expr = arg.as<ExpressionNode>();
+							std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
+							if (arg_type_opt.has_value()) {
+								TypeSpecifierNode arg_type_node = *arg_type_opt;
+								
+								// Check if this is an lvalue (for perfect forwarding deduction)
+								if (std::holds_alternative<IdentifierNode>(expr)) {
+									// This is a named variable (lvalue) - mark as lvalue reference
+									// For forwarding reference deduction: T&& deduces to T& for lvalues
+									arg_type_node.set_lvalue_reference(true);
+								}
+								
+								arg_types.push_back(arg_type_node);
+							}
+						}
+					}
+					
+					// Try to instantiate the qualified template function
+					if (!arg_types.empty()) {
+						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+							identifierType = *template_inst;
+							FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
+						}
+					}
+				}
+				
 				// Get the DeclarationNode
-				const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+				const DeclarationNode* decl_ptr = identifierType.has_value() ? getDeclarationNode(*identifierType) : nullptr;
 				if (!decl_ptr) {
 					return ParseResult::error("Invalid function declaration", final_identifier);
 				}
@@ -13465,6 +13561,57 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 				};
 				
 				const DeclarationNode* decl_ptr = qualified_symbol.has_value() ? getDeclarationNode(*qualified_symbol) : nullptr;
+				
+				// If symbol not found and we're not in extern "C", try template instantiation
+				if (!decl_ptr && current_linkage_ != Linkage::C) {
+					// Build qualified template name (e.g., "std::move")
+					StringBuilder qualified_name_builder;
+					for (const auto& ns : namespaces) {
+#if USE_OLD_STRING_APPROACH
+						qualified_name_builder.append(ns);
+#else
+						qualified_name_builder.append(ns.view());
+#endif
+						qualified_name_builder.append("::");
+					}
+					qualified_name_builder.append(final_identifier.value());
+					std::string_view qualified_name = qualified_name_builder.commit();
+					
+					// Extract argument types for template instantiation
+					std::vector<TypeSpecifierNode> arg_types;
+					arg_types.reserve(args.size());
+					for (size_t i = 0; i < args.size(); ++i) {
+						const auto& arg = args[i];
+						if (arg.is<ExpressionNode>()) {
+							const ExpressionNode& expr = arg.as<ExpressionNode>();
+							std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
+							if (arg_type_opt.has_value()) {
+								TypeSpecifierNode arg_type_node = *arg_type_opt;
+								
+								// Check if this is an lvalue (for perfect forwarding deduction)
+								if (std::holds_alternative<IdentifierNode>(expr)) {
+									// This is a named variable (lvalue) - mark as lvalue reference
+									// For forwarding reference deduction: T&& deduces to T& for lvalues
+									arg_type_node.set_lvalue_reference(true);
+								}
+								// TODO: Handle other lvalue cases (array subscript, member access, dereference, etc.)
+								// Literals and temporaries remain as-is (treated as rvalues)
+								
+								arg_types.push_back(arg_type_node);
+							}
+						}
+					}
+					
+					// Try to instantiate the qualified template function
+					if (!arg_types.empty()) {
+						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+							decl_ptr = &template_inst->as<FunctionDeclarationNode>().decl_node();
+							FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
+						}
+					}
+				}
+				
 				if (!decl_ptr) {
 					// Create forward declaration
 					auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, final_identifier);
@@ -18190,10 +18337,27 @@ if (struct_type_info.getStructInfo()) {
 		const DeclarationNode& func_decl_node = func_decl.decl_node();
 
 		// Register the template in the template registry
-		gTemplateRegistry.registerTemplate(func_decl_node.identifier_token().value(), template_func_node);
+		// If we're in a namespace, register with both simple and qualified names
+		std::string_view simple_name = func_decl_node.identifier_token().value();
+		
+		// Register with simple name (for backward compatibility and unqualified lookups)
+		gTemplateRegistry.registerTemplate(simple_name, template_func_node);
+		
+		// If in a namespace, also register with qualified name for namespace-qualified lookups
+		auto namespace_path = gSymbolTable.build_current_namespace_path();
+		if (!namespace_path.empty()) {
+			StringBuilder qualified_name_builder;
+			for (const auto& ns : namespace_path) {
+				qualified_name_builder.append(ns).append("::");
+			}
+			qualified_name_builder.append(simple_name);
+			std::string_view qualified_name = qualified_name_builder.commit();
+			FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
+			gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
+		}
 
 		// Add the template function to the symbol table so it can be found during overload resolution
-		gSymbolTable.insert(func_decl_node.identifier_token().value(), template_func_node);
+		gSymbolTable.insert(simple_name, template_func_node);
 
 		return saved_position.success(template_func_node);
 	}
