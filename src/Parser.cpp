@@ -20992,41 +20992,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		          new_func_ref.decl_node().identifier_token().value(), "' for pure expression, statements=", statements.size());
 		
 		// Check if this is a pure expression function
-		bool is_pure_expr = false;
-		if (statements.size() == 1) {
-			// Single statement - check if it's a return with a simple cast/reference
-			bool has_pure_return = false;
-			statements.visit([&](const ASTNode& stmt) {
-				if (stmt.is<ReturnStatementNode>()) {
-					const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
-					const auto& expr_opt = ret_stmt.expression();
-					
-					if (expr_opt.has_value() && expr_opt->is<ExpressionNode>()) {
-						const ExpressionNode& expr = expr_opt->as<ExpressionNode>();
-						
-						// Check if the expression is a pure cast or simple identifier
-						std::visit([&](const auto& e) {
-							using T = std::decay_t<decltype(e)>;
-							if constexpr (std::is_same_v<T, StaticCastNode> ||
-							              std::is_same_v<T, ReinterpretCastNode> ||
-							              std::is_same_v<T, ConstCastNode> ||
-							              std::is_same_v<T, IdentifierNode>) {
-								has_pure_return = true;
-							}
-						}, expr);
-					}
-				}
-			});
-			is_pure_expr = has_pure_return;
-		} else if (statements.size() == 2) {
-			// Two statements - might be: using declaration + return
+		const bool is_pure_expr = std::invoke([&statements]()-> bool {
+			bool is_pure_expr = true;	// assume true
+			// Might be more than one statement: using declaration + return for example
 			// This is still a pure expression if the return is a cast
-			bool has_typedef = false;
 			bool has_pure_return = false;
 			
 			statements.visit([&](const ASTNode& stmt) {
 				if (stmt.is<TypedefDeclarationNode>()) {
-					has_typedef = true;
+					// Typedef statements are okay
 				} else if (stmt.is<ReturnStatementNode>()) {
 					const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
 					const auto& expr_opt = ret_stmt.expression();
@@ -21038,26 +21012,29 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						std::visit([&](const auto& e) {
 							using T = std::decay_t<decltype(e)>;
 							if constexpr (std::is_same_v<T, StaticCastNode> ||
-							              std::is_same_v<T, ReinterpretCastNode> ||
-							              std::is_same_v<T, ConstCastNode> ||
-							              std::is_same_v<T, IdentifierNode>) {
+											std::is_same_v<T, ReinterpretCastNode> ||
+											std::is_same_v<T, ConstCastNode> ||
+											std::is_same_v<T, IdentifierNode>) {
 								has_pure_return = true;
 							}
 						}, expr);
 					}
+				} else {
+					is_pure_expr = false;
 				}
 			});
-			is_pure_expr = has_typedef && has_pure_return;
-		}
+			is_pure_expr &= static_cast<int>(has_pure_return);
+			return is_pure_expr;
+		});
 		
+		new_func_ref.set_inline_always(is_pure_expr);
+
 		if (is_pure_expr) {
-			new_func_ref.set_inline_always(true);
 			FLASH_LOG(Templates, Debug, "Marked template instantiation as inline_always (pure expression): ", 
 			          new_func_ref.decl_node().identifier_token().value());
 		} else {
 			// Function has computation/side effects - should generate normal calls
 			// Explicitly set inline_always to false
-			new_func_ref.set_inline_always(false);
 			FLASH_LOG(Templates, Debug, "Template instantiation has computation/side effects (not inlining): ", 
 			          new_func_ref.decl_node().identifier_token().value());
 		}
