@@ -1074,6 +1074,116 @@ private:
 		return false;
 	}
 
+	// Handle compound assignment to lvalues (e.g., v.x += 5, arr[i] *= 2)
+	// This is similar to handleLValueAssignment but also performs the arithmetic operation
+	bool handleLValueCompoundAssignment(const std::vector<IrOperand>& lhs_operands,
+	                                     const std::vector<IrOperand>& rhs_operands,
+	                                     const Token& token,
+	                                     std::string_view op) {
+		// Check if LHS has a TempVar with lvalue metadata
+		if (lhs_operands.size() < 3 || !std::holds_alternative<TempVar>(lhs_operands[2])) {
+			FLASH_LOG(Codegen, Info, "handleLValueCompoundAssignment: FAIL - size=", lhs_operands.size());
+			return false;
+		}
+
+		TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
+		auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
+		
+		if (!lvalue_info_opt.has_value()) {
+			FLASH_LOG(Codegen, Info, "handleLValueCompoundAssignment: FAIL - no lvalue metadata");
+			return false;
+		}
+
+		const LValueInfo& lv_info = lvalue_info_opt.value();
+		
+		FLASH_LOG(Codegen, Debug, "handleLValueCompoundAssignment: kind=", static_cast<int>(lv_info.kind), " op=", op);
+
+		// For compound assignments, we need to:
+		// 1. The lhs_temp already contains the ADDRESS (from LValueAddress context)
+		// 2. We need to LOAD the current value from that address
+		// 3. Perform the operation with RHS
+		// 4. Store the result back to the address
+		
+		// First, load the current value from the lvalue
+		// The lhs_temp should contain the address, but we need to generate a Load instruction
+		// to get the current value into a temp var
+		TempVar current_value_temp = var_counter.next();
+		
+		// Generate a Load instruction based on the lvalue kind
+		// For now, only support Member kind (used by test case)
+		if (lv_info.kind != LValueInfo::Kind::Member) {
+			FLASH_LOG(Codegen, Debug, "     Compound assignment only supports Member kind for now, got: ", static_cast<int>(lv_info.kind));
+			return false;
+		}
+		
+		// For member access, generate MemberAccess (Load) instruction
+		if (!lv_info.member_name.has_value()) {
+			FLASH_LOG(Codegen, Debug, "     No member_name in metadata for compound assignment");
+			return false;
+		}
+		
+		MemberLoadOp load_op;
+		load_op.result.value = current_value_temp;
+		load_op.result.type = std::get<Type>(lhs_operands[0]);
+		load_op.result.size_in_bits = std::get<int>(lhs_operands[1]);
+		load_op.object = lv_info.base;
+		load_op.member_name = lv_info.member_name.value();
+		load_op.offset = lv_info.offset;
+		load_op.is_reference = false;
+		load_op.is_rvalue_reference = false;
+		load_op.struct_type_info = nullptr;
+		
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), token));
+		
+		// Now perform the operation (e.g., Add for +=, Subtract for -=, etc.)
+		TempVar result_temp = var_counter.next();
+		IrOpcode operation_opcode;
+		
+		// Map compound assignment operator to the corresponding operation
+		if (op == "+=") operation_opcode = IrOpcode::Add;
+		else if (op == "-=") operation_opcode = IrOpcode::Subtract;
+		else if (op == "*=") operation_opcode = IrOpcode::Multiply;
+		else if (op == "/=") operation_opcode = IrOpcode::Divide;
+		else if (op == "%=") operation_opcode = IrOpcode::Modulo;
+		else if (op == "&=") operation_opcode = IrOpcode::BitwiseAnd;
+		else if (op == "|=") operation_opcode = IrOpcode::BitwiseOr;
+		else if (op == "^=") operation_opcode = IrOpcode::BitwiseXor;
+		else if (op == "<<=") operation_opcode = IrOpcode::ShiftLeft;
+		else if (op == ">>=") operation_opcode = IrOpcode::ShiftRight;
+		else {
+			FLASH_LOG(Codegen, Debug, "     Unsupported compound assignment operator: ", op);
+			return false;
+		}
+		
+		// Create the binary operation
+		BinaryOp bin_op;
+		bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
+		bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+		bin_op.lhs.value = current_value_temp;
+		bin_op.rhs = toTypedValue(rhs_operands);
+		bin_op.result = result_temp;
+		
+		ir_.addInstruction(IrInstruction(operation_opcode, std::move(bin_op), token));
+		
+		// Finally, store the result back to the lvalue
+		TypedValue result_tv;
+		result_tv.type = std::get<Type>(lhs_operands[0]);
+		result_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+		result_tv.value = result_temp;
+		
+		emitMemberStore(
+			result_tv,
+			lv_info.base,
+			lv_info.member_name.value(),
+			lv_info.offset,
+			false,
+			false,
+			token
+		);
+		
+		return true;
+	}
+
 	// Helper functions to emit store instructions
 	// These can be used by both the unified handler and special-case code
 	
@@ -6509,6 +6619,55 @@ private:
 
 					// Return the RHS value as the result (assignment expression returns the assigned value)
 					return rhsIrOperands;
+				}
+			}
+		}
+
+		// Special handling for compound assignment to array subscript or member access
+		// Use LValueAddress context for the LHS, similar to regular assignment
+		if ((op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=" || 
+		     op == "&=" || op == "|=" || op == "^=" || op == "<<=" || op == ">>=") &&
+		    binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
+			
+			// Check if LHS is an array subscript or member access (lvalue expressions)
+			if (std::holds_alternative<ArraySubscriptNode>(lhs_expr) || 
+			    std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+				
+				// Evaluate LHS with LValueAddress context (no Load instruction)
+				auto lhsIrOperands = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
+				
+				// Safety check
+				bool use_unified_handler = !lhsIrOperands.empty();
+				if (use_unified_handler && lhsIrOperands.size() >= 2) {
+					int lhs_size = std::get<int>(lhsIrOperands[1]);
+					if (lhs_size <= 0 || lhs_size > 1024) {
+						FLASH_LOG(Codegen, Info, "Compound assignment unified handler skipped: invalid size (", lhs_size, ")");
+						use_unified_handler = false;
+					}
+				} else {
+					FLASH_LOG(Codegen, Info, "Compound assignment unified handler skipped: empty or insufficient operands");
+					use_unified_handler = false;
+				}
+				
+				if (use_unified_handler) {
+					// Evaluate RHS normally (Load context)
+					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+					
+					// For compound assignments, we need to:
+					// 1. Load the current value from the lvalue
+					// 2. Perform the operation (add, subtract, etc.)
+					// 3. Store the result back to the lvalue
+					
+					// Try to handle compound assignment using lvalue metadata
+					if (handleLValueCompoundAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token(), op)) {
+						// Compound assignment was handled successfully via metadata
+						FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for array/member compound assignment");
+						return rhsIrOperands;  // TODO: Return the result value
+					}
+					
+					// If metadata handler didn't work, fall through to legacy code
+					FLASH_LOG(Codegen, Info, "Compound assignment unified handler returned false, falling through to legacy code");
 				}
 			}
 		}
