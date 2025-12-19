@@ -1493,6 +1493,11 @@ public:
 	const std::optional<ASTNode>& noexcept_expression() const { return noexcept_expression_; }
 	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
 
+	// Inline always support (for template instantiations that are pure expressions)
+	// When true, this function should always be inlined and never generate a call
+	void set_inline_always(bool inline_always) { inline_always_ = inline_always; }
+	bool is_inline_always() const { return inline_always_; }
+
 	// Pre-computed mangled name for consistent access across all compiler stages
 	// Generated once during parsing, reused by CodeGen and ObjFileWriter
 	void set_mangled_name(std::string_view name) { mangled_name_ = name; }
@@ -1517,6 +1522,7 @@ private:
 	bool is_constinit_;
 	bool is_consteval_;
 	bool is_noexcept_ = false;  // True if function is declared noexcept
+	bool inline_always_ = false;  // True if function should always be inlined (e.g., template pure expressions)
 	std::optional<ASTNode> noexcept_expression_;  // Optional noexcept(expr) expression
 	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 };

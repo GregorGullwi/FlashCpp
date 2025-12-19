@@ -7671,32 +7671,31 @@ private:
 			return intrinsic_result.value();
 		}
 
-		// Special handling for std::move - inline it as a simple cast
-		// std::move should never generate actual function calls, it's just a value category cast
-		// Check if this is std::move by looking at the function name or mangled name
-		// The instantiated template name will be like "std::move_int" for std::move<int>
-		bool is_std_move = false;
-		if (func_name_view.starts_with("std::move")) {
-			// Check it's exactly std::move (followed by _ or end of string for template instantiations)
-			// This matches: std::move_int, std::move_MyClass, etc.
-			size_t move_end = 9;  // length of "std::move"
-			if (func_name_view.size() == move_end || 
-			    (func_name_view.size() > move_end && func_name_view[move_end] == '_')) {
-				is_std_move = true;
-			}
-		}
+		// Check if this function is marked as inline_always (pure expression template instantiations)
+		// These functions should always be inlined and never generate calls
+		// Look up the function to check its inline_always flag
+		extern SymbolTable gSymbolTable;
+		auto all_overloads = gSymbolTable.lookup_all(func_name_view);
 		
-		if (is_std_move && functionCallNode.arguments().size() == 1) {
-			// std::move(arg) is essentially just static_cast<T&&>(arg)
-			// For code generation purposes, this is a no-op - we just return the argument
-			// The value category is handled by the type system (rvalue reference)
-			auto arg_node = functionCallNode.arguments()[0];
-			if (arg_node.is<ExpressionNode>()) {
-				// Generate IR for the argument and return it directly
-				// std::move is purely a compile-time cast for value categories
-				auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
-				FLASH_LOG(Codegen, Debug, "Inlining std::move as identity (no-op cast)");
-				return arg_ir;
+		for (const auto& overload : all_overloads) {
+			if (overload.is<FunctionDeclarationNode>()) {
+				const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
+				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
+				
+				// Check if this is the matching overload
+				if (overload_decl == &decl_node) {
+					// Found the matching function - check if it should be inlined
+					if (overload_func_decl->is_inline_always() && functionCallNode.arguments().size() == 1) {
+						// Inline by returning the argument directly
+						auto arg_node = functionCallNode.arguments()[0];
+						if (arg_node.is<ExpressionNode>()) {
+							auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
+							FLASH_LOG(Codegen, Debug, "Inlining pure expression function (inline_always): ", func_name_view);
+							return arg_ir;
+						}
+					}
+					break;  // Found the matching function, stop searching
+				}
 			}
 		}
 
