@@ -6112,10 +6112,12 @@ private:
 		} else if (std::holds_alternative<TempVar>(ctor_op.object)) {
 			const TempVar temp_var = std::get<TempVar>(ctor_op.object);
 			
-			// RVO disabled for now - always construct into local temporary
-			// TODO: Re-enable RVO after fixing segfault issue
+			// TempVars for constructor calls are stack-allocated objects
+			// We need to get the ADDRESS of the stack location (LEA), not load a pointer (MOV)
+			// Exception: TempVars from HeapAlloc hold pointers and would need MOV,
+			// but those should go through handleConstructorCall differently
 			object_offset = getStackOffsetFromTempVar(temp_var);
-			object_is_pointer = true;  // TempVars are pointers in constructor calls
+			object_is_pointer = false;  // Use LEA to get address, not MOV to load pointer
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(ctor_op.object);
 			auto it = variable_scopes.back().variables.find(var_name_handle);
@@ -8186,7 +8188,10 @@ private:
 		const auto& current_scope = variable_scopes.back();
 		auto var_it = current_scope.variables.find(var_name);
 		if (var_it != current_scope.variables.end()) {
-			return var_it->second.size_in_bits;
+			// Return the stored size if it's non-zero, otherwise use default
+			if (var_it->second.size_in_bits > 0) {
+				return var_it->second.size_in_bits;
+			}
 		}
 		
 		return default_size;
