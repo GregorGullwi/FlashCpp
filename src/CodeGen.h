@@ -7153,6 +7153,28 @@ private:
 	// Helper function to handle compiler intrinsics
 	// Returns true if the function is an intrinsic and has been handled, false otherwise
 	std::optional<std::vector<IrOperand>> tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode) {
+		// Check for std::move and std::forward - these are compiler intrinsics that don't generate function calls
+		// They are cast operations that convert values to xvalues (move) or preserve value categories (forward)
+		if (func_name == "move" || func_name == "forward") {
+			// Check if this is from std namespace by examining mangled name
+			if (functionCallNode.has_mangled_name()) {
+				std::string_view mangled = functionCallNode.mangled_name();
+				
+				// std::move has mangled name starting with _ZSt4move (Itanium ABI)
+				// std::forward has mangled name starting with _ZSt7forward
+				bool is_std_move = mangled.starts_with("_ZSt4move") || 
+				                   (mangled.find("std") != std::string_view::npos && mangled.find("move") != std::string_view::npos);
+				bool is_std_forward = mangled.starts_with("_ZSt7forward") || 
+				                      (mangled.find("std") != std::string_view::npos && mangled.find("forward") != std::string_view::npos);
+				
+				if (is_std_move) {
+					return generateStdMoveIntrinsic(functionCallNode);
+				} else if (is_std_forward) {
+					return generateStdForwardIntrinsic(functionCallNode);
+				}
+			}
+		}
+		
 		// Check for va_start intrinsics (support both Clang and MSVC naming)
 		// __builtin_va_start(va_list*, last_fixed_param) - Clang-style
 		// __va_start(va_list*, last_fixed_param) - MSVC-style (legacy)
@@ -7181,6 +7203,58 @@ private:
 		// }
 		
 		return std::nullopt;  // Not an intrinsic
+	}
+	
+	// Generate IR for std::move intrinsic
+	// std::move(x) is equivalent to static_cast<T&&>(x) - converts to xvalue
+	std::vector<IrOperand> generateStdMoveIntrinsic(const FunctionCallNode& functionCallNode) {
+		FLASH_LOG(Codegen, Debug, "Generating std::move intrinsic - marking result as xvalue");
+		
+		// std::move takes exactly one argument
+		if (functionCallNode.arguments().size() != 1) {
+			FLASH_LOG(Codegen, Error, "std::move requires exactly 1 argument");
+			throw std::runtime_error("Invalid std::move call");
+		}
+		
+		// Evaluate the argument
+		auto arg_operands = visitExpressionNode(functionCallNode.arguments()[0].as<ExpressionNode>());
+		
+		// Get argument type and size
+		Type arg_type = std::get<Type>(arg_operands[0]);
+		int arg_size = std::get<int>(arg_operands[1]);
+		
+		// Use the existing helper function to handle rvalue reference conversion
+		// This ensures consistency with static_cast<T&&> behavior
+		return handleRValueReferenceCast(arg_operands, arg_type, arg_size, 
+		                                 functionCallNode.called_from(), "std::move");
+	}
+	
+	// Generate IR for std::forward intrinsic
+	// std::forward<T>(x) preserves the value category of x
+	// If x is an lvalue, returns lvalue reference; if xvalue/prvalue, returns rvalue reference
+	std::vector<IrOperand> generateStdForwardIntrinsic(const FunctionCallNode& functionCallNode) {
+		FLASH_LOG(Codegen, Debug, "Generating std::forward intrinsic - preserving value category");
+		
+		// std::forward takes exactly one argument
+		if (functionCallNode.arguments().size() != 1) {
+			FLASH_LOG(Codegen, Error, "std::forward requires exactly 1 argument");
+			throw std::runtime_error("Invalid std::forward call");
+		}
+		
+		// Evaluate the argument
+		auto arg_operands = visitExpressionNode(functionCallNode.arguments()[0].as<ExpressionNode>());
+		
+		// Get argument type and size
+		Type arg_type = std::get<Type>(arg_operands[0]);
+		int arg_size = std::get<int>(arg_operands[1]);
+		
+		// For std::forward, we need to check the value category of the argument
+		// and preserve it. For now, treat it similarly to std::move (cast to rvalue reference)
+		// A complete implementation would need to inspect template parameters to determine
+		// whether to forward as lvalue or rvalue reference.
+		// TODO: Implement proper forwarding reference handling based on template deduction
+		return handleRValueReferenceCast(arg_operands, arg_type, arg_size, 
+		                                 functionCallNode.called_from(), "std::forward");
 	}
 	
 	// Generate inline IR for __builtin_labs / __builtin_llabs
@@ -7659,38 +7733,6 @@ private:
 		return {Type::Void, 0, 0ULL, 0ULL};
 	}
 	
-	// Helper to detect if a function call is std::move
-	bool isStdMoveCall(const FunctionCallNode& functionCallNode, const DeclarationNode& decl_node) const {
-		// Check the mangled name directly for std::move pattern
-		// std::move has mangled name starting with _ZSt4move (Itanium ABI: _ZSt = std namespace, 4move = function name length + name)
-		// For efficiency, check mangled name first before doing any string operations
-		if (!functionCallNode.has_mangled_name()) {
-			return false;
-		}
-		
-		std::string_view mangled = functionCallNode.mangled_name();
-		
-		// Check for std::move mangled name patterns:
-		// _ZSt4move = std::move in Itanium ABI (std namespace + "move" with length prefix)
-		// Also accept mangled names containing "std" and "move" for other mangling schemes
-		if (mangled.starts_with("_ZSt4move")) {
-			return true;
-		}
-		
-		// Fallback: check if mangled name contains both "std" and "move"
-		// This handles template instantiations like _ZSt4moveI...
-		if (mangled.find("std") != std::string_view::npos && 
-		    mangled.find("move") != std::string_view::npos) {
-			// Also verify the function name is actually "move" to avoid false positives
-			// with functions that just happen to have "move" in the name
-			static const StringHandle move_handle = StringTable::getOrInternStringHandle("move");
-			StringHandle func_handle = StringTable::getOrInternStringHandle(decl_node.identifier_token().value());
-			return func_handle == move_handle;
-		}
-		
-		return false;
-	}
-
 	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
 		std::vector<IrOperand> irOperands;
 
@@ -7698,33 +7740,10 @@ private:
 		std::string_view func_name_view = decl_node.identifier_token().value();
 
 		// Check for compiler intrinsics and handle them specially
+		// This includes std::move, std::forward, and other builtins
 		auto intrinsic_result = tryGenerateIntrinsicIr(func_name_view, functionCallNode);
 		if (intrinsic_result.has_value()) {
 			return intrinsic_result.value();
-		}
-
-		// Special handling for std::move - detect and mark result as xvalue
-		// std::move(x) is equivalent to static_cast<T&&>(x)
-		if (isStdMoveCall(functionCallNode, decl_node)) {
-			FLASH_LOG(Codegen, Debug, "Detected std::move call - marking result as xvalue");
-			
-			// std::move takes exactly one argument
-			if (functionCallNode.arguments().size() != 1) {
-				FLASH_LOG(Codegen, Error, "std::move must have exactly one argument");
-				throw std::runtime_error("Invalid std::move call");
-			}
-			
-			// Evaluate the argument (direct access since we validated size == 1)
-			auto arg_operands = visitExpressionNode(functionCallNode.arguments()[0].as<ExpressionNode>());
-			
-			// Get argument type and size
-			Type arg_type = std::get<Type>(arg_operands[0]);
-			int arg_size = std::get<int>(arg_operands[1]);
-			
-			// Use the existing helper function to handle rvalue reference conversion
-			// This ensures consistency with static_cast<T&&> behavior
-			return handleRValueReferenceCast(arg_operands, arg_type, arg_size, 
-			                                 functionCallNode.called_from(), "std::move");
 		}
 
 		// Check if this is a function pointer call
