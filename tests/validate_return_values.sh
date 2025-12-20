@@ -36,7 +36,6 @@ EXPECTED_LINK_FAIL=(
     "test_external_abi_simple.cpp"
     "test_dynamic_cast_debug.cpp"
     "test_virtual_inheritance.cpp"
-    "test_abstract_class.cpp"
     "test_varargs.cpp"
     "test_cstddef.cpp"
     "test_cstdlib.cpp"
