@@ -225,7 +225,8 @@ int get_type_size_bits(Type type) {
             return 80;  // x87 extended precision
         case Type::FunctionPointer:
         case Type::MemberFunctionPointer:
-            return 64;  // Function pointers are 64-bit (sizeof(void*))
+        case Type::MemberObjectPointer:
+            return 64;  // Function and member pointers are 64-bit (sizeof(void*))
         default:
             return 0;
     }
