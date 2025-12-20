@@ -35,10 +35,10 @@ Total test files analyzed: **661**
 
 | Category | Count | Description |
 |----------|-------|-------------|
-| Valid Returns (0-255) | 622 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
+| Valid Returns (0-255) | 628 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
 | Compilation Failures | 0 | Tests that failed to compile (all expected failures excluded) |
 | Link Failures | 1 | Tests that compiled but failed to link (all expected failures excluded) |
-| Runtime Crashes | 32 | Tests that crashed during execution with various signals |
+| Runtime Crashes | 24 | Tests that crashed during execution with various signals |
 | Execution Timeouts | 1 | Tests that timeout (infinite loop or hang) |
 | Out-of-Range (Valid) | 0 | Tests intentionally returning >255 (noted but truncated by OS) |
 | Out-of-Range (Unknown) | 0 | Tests with unexpected >255 returns |
@@ -47,39 +47,36 @@ Total test files analyzed: **661**
 
 ### Recent Improvements
 
-**2025-12-20 Update (Function Pointer Fix):**
-- **FIXED**: Function pointer calls through global variables and pointer parameters - 2 tests fixed!
-  - **Success**: Improved from **620 passing (93.8%)** to **622 passing (94.1%)** - **2 more tests fixed!**
-  - **Root Causes** (4 separate bugs fixed):
-    1. **Global member access**: For `global_w.func`, the loaded function pointer wasn't stored to temp variable
-    2. **Pointer member access**: For `w->func` (pointer param), loaded value wasn't stored properly
-    3. **Pointer parameters**: Pointer parameters (T*) weren't tracked in reference_stack_info_
-    4. **ELF relocations**: Global variable member access used wrong addend (always -4 instead of offset-4)
-  - **Fixes Applied**:
-    1. `handleMemberAccess` for globals: Store loaded value and return early (like float handling)
-    2. `handleMemberAccess` for pointer access: Store loaded value and return early
-    3. `handleFunctionDecl`: Track pointer parameters in reference_stack_info_ (like T& references)
-    4. Added `addend` field to `PendingGlobalRelocation`, updated ELF writer to use correct addend
-  - **Tests Fixed**: 
-    - test_funcptr_global.cpp ✓
-    - test_funcptr_param.cpp ✓
-  - Current state: **94.1% of tests passing** (622/661)
+**2025-12-20 Update (Stack Alignment Fix for Floating-Point):**
+- **FIXED**: Stack alignment bug causing floating-point crashes - 6 tests fixed!
+  - **Success**: Improved from **622 passing (94.1%)** to **628 passing (95.0%)** - **6 more tests fixed!**
+  - **Crashes reduced**: From 31 to 24 (7 fewer crashes)
+  - **Root Cause**: Stack space was being aligned to (16n+8) instead of 16n, violating System V AMD64 ABI
+  - **Problem**: After `PUSH RBP`, RSP is 16-byte aligned. `SUB RSP, N` must use N as multiple of 16 to maintain alignment
+  - **Previous Code**: Aligned to (16n+8), causing functions to reserve 56 bytes instead of 64
+  - **Fix**: Changed alignment to multiples of 16: `if (total_stack % 16 != 0) total_stack = (total_stack + 15) & ~15`
+  - **Fixed in**: `handleFunctionDecl()` and `finalizeSections()` 
+  - **Tests Fixed**:
+    - test_global_float.cpp ✓
+    - test_global_double.cpp ✓
+    - test_param_passing_float.cpp ✓
+    - Plus 3 additional tests
+  - **Remaining float issues** (different root causes):
+    - test_mixed_float_double_params.cpp - >8 XMM parameters need stack passing
+    - test_float_register_spilling.cpp - XMM register spilling
+    - test_all_xmm_registers.cpp - excessive XMM register usage
+    - test_comprehensive_registers.cpp - register pressure
+    - test_register_spilling.cpp - general register spilling
+  - Current state: **95.0% of tests passing** (628/661)
 
-**2025-12-20 Update (Dereference Register Corruption Fix):**
-- **FIXED**: Register corruption when dereferencing pointers in expressions - test_same_deref.cpp fixed!
-  - **Success**: Improved from **619 passing (93.6%)** to **620 passing (93.8%)** - **1 more test fixed!**
-  - **Root Cause**: After dereference, register held dereferenced value but allocator thought it still held the pointer
-  - **Fix**: Clear stale register associations in `handleDereference` after storing result
-  - **Test Fixed**: test_same_deref.cpp ✓
-  - **Additional Progress**: test_abstract_class.cpp and test_virtual_inheritance.cpp now link (previously link failures)
-
-**Completed Fixes (Previous Updates):**
-- ✅ Function pointers (2 tests fixed, 2025-12-20) - Global and pointer parameter function pointer calls
+**Completed Fixes:**
+- ✅ Stack alignment (6 tests fixed, 2025-12-20) - Fixed floating-point crashes with printf
+- ✅ Function pointers (2 tests fixed, 2025-12-20) - Global and pointer parameter function pointer calls  
 - ✅ Dereference register corruption (1 test fixed, 2025-12-20) - Clear stale register associations
-- ✅ Pointer member size bug (7 tests fixed, 2025-12-20) - Pointers/references in structs now use correct 64-bit size
+- ✅ Pointer member size bug (7 tests fixed, 2025-12-20) - Pointers/references in structs use correct 64-bit size
 - ✅ Temp variable stack allocation (23 tests fixed, 2025-12-20) - Fixed handleMemberAccess offset handling
 - ✅ Heap allocation constructor (2025-12-20) - Fixed LEA vs MOV for heap vs stack objects
-- ✅ Multi-level pointer dereference (2025-12-17) - Fixed type_index vs pointer_depth issue
+- ✅ Multi-level pointer dereference (2025-12-17) - Fixed type_index vs pointer_depth issue  
 - ✅ Validation script (2025-12-17) - Eliminated false positives in crash detection
 
 ## Tests with Intentional Large Return Values
@@ -132,110 +129,98 @@ These tests crashed during execution with various signals. These are **actual fa
 <details>
 <summary>Click to view completed investigations and fixes</summary>
 
+**Function pointers - FIXED (2025-12-20)** - 2 tests fixed
+- **Issues**: (1) Global member access not storing loaded pointer, (2) Pointer parameter member access not storing value, (3) Pointer parameters not tracked in reference_stack_info_, (4) ELF relocations using wrong addend
+- **Fixes**: Updated handleMemberAccess for globals and pointers, track pointer params like references, added addend field to PendingGlobalRelocation
+- **Tests**: test_funcptr_global.cpp, test_funcptr_param.cpp
+
 **Pointer member dereferencing - FIXED (2025-12-20)** - 7 tests fixed
-- **Issue**: Struct members with pointer types were registered with incorrect size (base type size instead of pointer size)
-- **Root Cause**: Parser.cpp calculated member_size as `type_spec.size_in_bits() / 8` without checking for pointers
-- **Fix**: Check `is_pointer()` or `is_reference()` before calculating size; use `sizeof(void*)` for both
-- **Status**: ✅ Fixed - test_minimal_member_deref.cpp, test_two_deref.cpp, test_member_deref.cpp, test_const_member_deref.cpp, test_ctor_deref.cpp, test_one_deref_ctor.cpp + 1 more
+- **Issue**: Struct members with pointer types registered with base type size instead of pointer size
+- **Fix**: Check `is_pointer()` or `is_reference()` before size calculation; use `sizeof(void*)` for both
 
 **Temp variable stack allocation - FIXED (2025-12-20)** - 23 tests fixed
 - **Issue**: handleMemberAccess using offset 0 for pointer-based member access, corrupting saved frame pointer
-- **Root Cause**: member_stack_offset was set to 0 for pointer access, then assigned to register's stackVariableOffset
 - **Fix**: Use result_offset (allocated temp var) for pointer-based access instead of member_stack_offset
-- **Status**: ✅ Fixed - operator() functions, member functions accessing members through pointers now work
 
-**Dereference register corruption - FIXED (2025-12-20)**
-- **Issue**: Dereferenced value being written back to source pointer location, corrupting the pointer
-- **Root Cause**: Register allocator maintaining stale association after in-place dereference operation
+**Dereference register corruption - FIXED (2025-12-20)** - 1 test fixed
+- **Issue**: Register allocator maintaining stale association after in-place dereference operation
 - **Fix**: Clear stale register associations in `handleDereference` after storing result
-- **Status**: ✅ Fixed - test_same_deref.cpp now passes
-
-**Pointer member dereferencing - FIXED (2025-12-20)** - 7 tests fixed
-- **Issue**: Struct members with pointer types were registered with incorrect size (base type size instead of pointer size)
-- **Root Cause**: Parser.cpp calculated member_size as `type_spec.size_in_bits() / 8` without checking for pointers
-- **Fix**: Check `is_pointer()` or `is_reference()` before calculating size; use `sizeof(void*)` for both
-- **Status**: ✅ Fixed - test_minimal_member_deref.cpp, test_two_deref.cpp, test_member_deref.cpp, test_const_member_deref.cpp, test_ctor_deref.cpp, test_one_deref_ctor.cpp + 1 more
-
-**Temp variable stack allocation - FIXED (2025-12-20)** - 23 tests fixed
-- **Issue**: handleMemberAccess using offset 0 for pointer-based member access, corrupting saved frame pointer
-- **Root Cause**: member_stack_offset was set to 0 for pointer access, then assigned to register's stackVariableOffset
-- **Fix**: Use result_offset (allocated temp var) for pointer-based access instead of member_stack_offset
-- **Status**: ✅ Fixed - operator() functions, member functions accessing members through pointers now work
+- **Test**: test_same_deref.cpp
 
 **Heap allocation constructor - FIXED (2025-12-20)**
-- **Issue**: Constructor using LEA instead of MOV for heap-allocated objects, causing "free(): invalid pointer"
-- **Root Cause**: handleConstructorCall couldn't distinguish heap vs stack allocation
+- **Issue**: Constructor using LEA instead of MOV for heap-allocated objects
 - **Fix**: Added `is_heap_allocated` flag to ConstructorCallOp structure
-- **Status**: ✅ Fixed - test_heap.cpp now passes
 
 **Multi-level pointer dereference - FIXED (2025-12-17)**
 - **Issue**: Segmentation fault when dereferencing multi-level pointers (`***ppp`)
-- **Root Cause**: VariableDeclarationNode path returning `type_index=0` instead of `pointer_depth`
 - **Fix**: Updated `generateIdentifierIr` to return correct pointer_depth value
-- **Status**: ✅ Fixed - test_pointer_declarations.cpp now passes
 
 </details>
 
 ### Crash Categories (Summary)
 
-1. **Lambda-related** (2 files) - test_lambda_decay.cpp, test_lambda_cpp20_comprehensive.cpp
-2. **Register spilling/float operations** (7 files) - XMM register handling issues
-   - test_all_xmm_registers.cpp, test_comprehensive_registers.cpp, test_float_register_spilling.cpp
-   - test_register_spilling.cpp, test_param_passing_float.cpp, test_mixed_float_double_params.cpp
-   - test_global_float.cpp, test_global_double.cpp (2 more)
+1. **Floating-point register/stack issues** (5 files) - XMM register spilling and >8 parameter handling
+   - test_mixed_float_double_params.cpp - 12 float/double params (>8 XMM registers)
+   - test_float_register_spilling.cpp, test_all_xmm_registers.cpp, test_comprehensive_registers.cpp, test_register_spilling.cpp
+   - Note: Basic float/double with printf now FIXED (stack alignment issue resolved)
+2. **Lambda-related** (2 files) - Lambda capture and decay to function pointers
+   - test_lambda_decay.cpp, test_lambda_cpp20_comprehensive.cpp
 3. **Range-based for loops** (3 files) - Iterator implementation issues
    - test_range_for.cpp, test_range_for_begin_end.cpp, test_range_for_const_ref.cpp
 4. **Exception handling** (2 files) - Incomplete exception support on Linux
    - test_exceptions_basic.cpp, test_exceptions_nested.cpp
-5. **Spaceship operator** (1 file) - C++20 three-way comparison not fully implemented
+5. **Spaceship operator** (1 file) - C++20 three-way comparison (signal 4: illegal instruction)
    - spaceship_default.cpp
-6. **RVO/NRVO** (3 files) - Return value optimization edge cases
-   - test_rvo_large_struct.cpp, test_rvo_mixed_types.cpp, test_rvo_very_large_struct.cpp
+6. **RVO/NRVO** (2 files) - Return value optimization edge cases (1 test fixed!)
+   - test_rvo_large_struct.cpp, test_rvo_very_large_struct.cpp
 7. **Template specialization** (2 files) - Specialization instantiation issues
    - test_spec_member_only.cpp, test_specialization_member_func.cpp
-8. **Variadic arguments** (2 files) - va_list implementation issues
+8. **Variadic arguments** (2 files) - va_list/va_arg implementation issues
    - test_va_implementation.cpp, test_varargs.cpp
-9. **Virtual inheritance** (2 files) - Virtual function table and inheritance issues (now link, but crash at runtime)
-    - test_abstract_class.cpp, test_virtual_inheritance.cpp
-10. **Other** (8 files) - Various issues requiring individual investigation
-    - test_custom_container.cpp, test_pack_expansion_simple.cpp, test_pointer_loop.cpp (signal 8)
-    - test_stack_overflow.cpp, test_template_complex_substitution.cpp, test_ten_mixed.cpp, test_xvalue_all_casts.cpp (timeout)
+9. **Other** (5 files) - Various issues requiring individual investigation
+   - test_custom_container.cpp, test_pointer_loop.cpp (signal 8: FPE)
+   - test_stack_overflow.cpp, test_template_complex_substitution.cpp, test_ten_mixed.cpp
+10. **Timeout** (1 file) - Infinite loop or hang
+    - test_xvalue_all_casts.cpp
 
 <details>
-<summary>Complete list of crashed tests (click to expand - 32 crashes + 1 timeout as of 2025-12-20)</summary>
+<summary>Complete list of crashed tests (click to expand - 24 crashes + 1 timeout as of 2025-12-20)</summary>
 
-1. spaceship_default.cpp (signal 4)
+1. spaceship_default.cpp (signal 4 - illegal instruction)
 2. test_all_xmm_registers.cpp (signal 11)
 3. test_comprehensive_registers.cpp (signal 11)
 4. test_custom_container.cpp (signal 11)
 5. test_exceptions_basic.cpp (signal 11)
 6. test_exceptions_nested.cpp (signal 11)
+7. test_exceptions_nested.cpp (signal 11)
 7. test_float_register_spilling.cpp (signal 11)
-8. test_global_double.cpp (signal 11)
-9. test_global_float.cpp (signal 11)
-10. test_lambda_cpp20_comprehensive.cpp (signal 11)
-11. test_lambda_decay.cpp (signal 11)
-12. test_mixed_float_double_params.cpp (signal 11)
-13. test_pack_expansion_simple.cpp (signal 11)
-14. test_param_passing_float.cpp (signal 11)
-15. test_pointer_loop.cpp (signal 8)
-16. test_range_for.cpp (signal 11)
-17. test_range_for_begin_end.cpp (signal 11)
-18. test_range_for_const_ref.cpp (signal 11)
-19. test_register_spilling.cpp (signal 11)
-20. test_rvo_large_struct.cpp (signal 11)
-21. test_rvo_mixed_types.cpp (signal 11)
-22. test_rvo_very_large_struct.cpp (signal 11)
-23. test_spec_member_only.cpp (signal 11)
-24. test_specialization_member_func.cpp (signal 11)
-25. test_stack_overflow.cpp (signal 11)
-26. test_template_complex_substitution.cpp (signal 11)
-27. test_ten_mixed.cpp (signal 11)
-28. test_va_implementation.cpp (signal 11)
-29. test_varargs.cpp (signal 11)
-30. test_abstract_class.cpp (signal 11)
-31. test_virtual_inheritance.cpp (signal 11)
-32. test_xvalue_all_casts.cpp (timeout)
+8. test_lambda_cpp20_comprehensive.cpp (signal 11)
+9. test_lambda_decay.cpp (signal 11)
+10. test_mixed_float_double_params.cpp (signal 11)
+11. test_pointer_loop.cpp (signal 8 - floating point exception)
+12. test_range_for.cpp (signal 11)
+13. test_range_for_begin_end.cpp (signal 11)
+14. test_range_for_const_ref.cpp (signal 11)
+15. test_register_spilling.cpp (signal 11)
+16. test_rvo_large_struct.cpp (signal 11)
+17. test_rvo_very_large_struct.cpp (signal 11)
+18. test_spec_member_only.cpp (signal 11)
+19. test_specialization_member_func.cpp (signal 11)
+20. test_stack_overflow.cpp (signal 11)
+21. test_template_complex_substitution.cpp (signal 11)
+22. test_ten_mixed.cpp (signal 11)
+23. test_va_implementation.cpp (signal 11)
+24. test_varargs.cpp (signal 11)
+25. test_xvalue_all_casts.cpp (timeout - infinite loop)
+
+**Tests FIXED (no longer crashing):**
+- test_global_float.cpp ✓
+- test_global_double.cpp ✓
+- test_param_passing_float.cpp ✓
+- test_rvo_mixed_types.cpp ✓
+- test_abstract_class.cpp ✓
+- test_pack_expansion_simple.cpp ✓
+- Plus 1 more (total: 628 passing)
 
 </details>
 
@@ -249,12 +234,14 @@ These tests crashed during execution with various signals. These are **actual fa
 
 ### For Compiler Development
 Priority areas for investigation:
-1. Lambda capture and invocation (2 files crashing)
-2. Floating-point register spilling and global float/double variables (7 files)
+1. **Floating-point register issues** (5 files) - XMM register spilling and >8 parameter handling
+   - Issue: Functions with >8 float/double parameters need stack parameter passing
+   - Related: XMM register spilling under pressure
+2. Lambda capture and invocation (2 files)
 3. Range-based for loop iterators (3 files)
-4. Virtual inheritance and abstract classes (2 files - now link but crash)
 4. Exception handling on Linux (2 files)
-5. ~~Function pointers (2 files)~~ **FIXED (2025-12-20)**
+5. ~~Floating-point stack alignment (6 files)~~ **FIXED (2025-12-20)**
+6. ~~Function pointers (2 files)~~ **FIXED (2025-12-20)**
 
 ### Running the Validation Script
 ```bash
@@ -266,36 +253,50 @@ The script compiles, links, and runs all test files with a 5-second timeout, rep
 ## Conclusion
 
 **Summary (as of 2025-12-20):**
-- **622 tests (94.1%)** successfully run and return valid values
-- **32 tests (4.8%)** crash during execution
+- **628 tests (95.0%)** successfully run and return valid values
+- **24 tests (3.6%)** crash during execution
 - **1 test (0.2%)** timeout (infinite loop or hang)
 - **1 test (0.2%)** fails to link
 - **0 unexpected compilation failures**
 
 **Key Findings:**
 - Return value truncation is expected OS behavior, not a compiler bug
-- Most crashes are SIGSEGV (segmentation faults) suggesting memory management issues
+- Most crashes are segmentation faults (signal 11) suggesting memory management issues
+- Stack alignment bug was causing floating-point crashes - **NOW FIXED**
 - Function pointer calls through globals and pointer parameters now work correctly
-- ELF relocation addends are now properly calculated for member access
+
+**Recent Fix (2025-12-20):**
+- **Stack alignment for floating-point** (6 tests fixed) - Corrected stack alignment bug:
+  - **Root cause**: Stack space aligned to (16n+8) instead of 16n, violating ABI
+  - **Problem**: After PUSH RBP, RSP is 16-aligned. SUB RSP, N must use N as multiple of 16
+  - **Impact**: Functions reserved 56 bytes instead of 64, causing crashes in external function calls
+  - **Fix**: Changed alignment check from `% 16 != 8` to `% 16 != 0`
+  - **Tests fixed**: test_global_float.cpp, test_global_double.cpp, test_param_passing_float.cpp, plus 3 more
+  - **Result**: Crashes reduced from 31 to 24 (7 fewer crashes)
 
 **Recent Fixes (2025-12-20):**
 1. ✅ **Function pointer calls** (2 tests fixed) - Global and pointer parameter function pointer handling
 2. ✅ **Dereference register corruption** (1 test fixed) - Clear stale register associations after dereference
-3. ✅ **Pointer member size bug** (7 tests fixed) - Pointers/references in structs now use correct 64-bit size
-4. ✅ **Temp variable stack allocation** (23 tests fixed) - Fixed handleMemberAccess offset handling
-5. ✅ **Heap allocation constructor** - Fixed LEA vs MOV for heap vs stack objects
-6. ✅ **Multi-level pointer dereference** (2025-12-17) - Fixed type_index vs pointer_depth issue
-7. ✅ **Validation script** (2025-12-17) - Eliminated false positives in crash detection
+
+**Recent Fixes (2025-12-20):**
+1. ✅ **Stack alignment** (6 tests fixed, 2025-12-20) - Fixed floating-point crashes caused by incorrect stack alignment
+2. ✅ **Function pointer calls** (2 tests fixed) - Global and pointer parameter function pointer handling
+3. ✅ **Dereference register corruption** (1 test fixed) - Clear stale register associations after dereference
+4. ✅ **Pointer member size bug** (7 tests fixed) - Pointers/references in structs use correct 64-bit size
+5. ✅ **Temp variable stack allocation** (23 tests fixed) - Fixed handleMemberAccess offset handling
+6. ✅ **Heap allocation constructor** - Fixed LEA vs MOV for heap vs stack objects
+7. ✅ **Multi-level pointer dereference** (2025-12-17) - Fixed type_index vs pointer_depth issue
+8. ✅ **Validation script** (2025-12-17) - Eliminated false positives in crash detection
 
 **Priority Areas for Future Work:**
-1. Investigate lambda capture and invocation crashes (2 files)
-2. Fix floating-point register spilling issues (7 files)
-3. Address range-based for loop iterator issues (3 files)
-4. Debug virtual inheritance crashes (2 files - progress: now link successfully)
-5. Exception handling support on Linux (2 files)
-6. ~~Function pointers (2 files)~~ **FIXED (2025-12-20)**
+1. **HIGHEST**: Floating-point register spilling and >8 XMM parameters (5 files)
+2. Lambda capture and decay to function pointers (2 files)
+3. Range-based for loop iterator issues (3 files)
+4. Exception handling support on Linux (2 files)
+5. ~~Stack alignment for floating-point (6 files)~~ **FIXED (2025-12-20)**
 
 ---
 
 *Last Updated: 2025-12-20*
 *Analysis Tool: tests/validate_return_values.sh*
+*Current Status: 628/661 tests passing (95.0%), 24 crashes, 1 timeout, 1 link failure*
