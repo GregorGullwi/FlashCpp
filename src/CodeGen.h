@@ -10078,7 +10078,8 @@ private:
 
 				// Verify this is a struct type (or a pointer to a struct type)
 				// For pointers, the type might be Void with pointer_depth > 0 and type_index pointing to struct
-				bool is_valid_for_member_access = (object_type.type() == Type::Struct) || 
+				// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
+				bool is_valid_for_member_access = is_struct_type(object_type.type()) || 
 				                                  (object_type.pointer_depth() > 0 && object_type.type_index() > 0);
 				if (!is_valid_for_member_access) {
 					std::cerr << "error: member access '.' on non-struct type '" << object_name << "'\n";
