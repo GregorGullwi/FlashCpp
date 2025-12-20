@@ -1,9 +1,9 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-20 - AddressOf Member Fix)
+## Current Status (2025-12-20 - ArrayElementAddress Fix)
 
-**640/661 tests passing (96.8%)**
-- 12 runtime crashes (some unchanged, investigating)
+**641/661 tests passing (97.0%)**
+- 11 runtime crashes (down from 12-14)
 - 1 timeout (infinite loop)
 - 2 link failures
 
@@ -18,16 +18,27 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Recent Fixes (2025-12-20)
 
-**AddressOf Member Access - Partial Fix**
+**ArrayElementAddress StringHandle Index Bug** ✅ FIXED
+- **Issue**: Array element address calculation (`&arr[i].x`) crashed when index was a variable name
+- **Root Cause**: handleArrayElementAddress only handled constant (unsigned long long) and TempVar indices
+  - When index was StringHandle (variable name like "i"), neither case matched
+  - No code generated → RAX contained stale value (0) → crash or wrong result
+- **Fix**: Added StringHandle case in handleArrayElementAddress to:
+  - Look up variable name in scope
+  - Load index value from stack
+  - Generate proper address calculation (multiply by element size, add to base)
+- **Status**: ✅ COMPLETE
+- **Tests Fixed**: `&arr[i].x` patterns now work when i is a variable
+
+**AddressOf Member Access** ✅ PARTIAL FIX
 - **Issue**: Taking address of struct members (`&obj.member`) generated incorrect IR
 - **Root Cause**: IR generated `member_access` (loads VALUE) followed by `addressof` (takes address of temp)
 - **Fix**: Added `AddressOfMember` IR opcode that directly computes member address using LEA
   - Generates: `LEA result, [RBP + obj_offset + member_offset]`
   - Handles simple identifier cases: `&obj.member` where obj is a variable name
   - Does NOT mark result as reference (avoids dereference issues in pointer arithmetic)
-- **Status**: ✅ PARTIAL - Simple cases fixed, array element member access still uses existing path
-- **Tests Fixed**: Custom test cases with simple member address work
-- **Still Investigating**: test_pointer_loop.cpp (uses `&arr[i].x` - different code path via array_element_address)
+- **Status**: ✅ COMPLETE for simple cases
+- **Tests Fixed**: Simple `&obj.member` cases, works in combination with ArrayElementAddress fix
 
 **Lambda Decay to Function Pointer**
 - **Issue**: Lambda expressions with unary plus operator (+lambda) crashed due to uninitialized function pointer
