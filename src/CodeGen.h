@@ -9839,6 +9839,12 @@ private:
 					base_object = StringTable::getOrInternStringHandle(object_name);
 					base_type = object_type.type();
 					base_type_index = object_type.type_index();
+					
+					// Check if this is a pointer to struct (e.g., P* pp)
+					// In this case, member access like pp->member should be treated as pointer dereference
+					if (object_type.pointer_depth() > 0) {
+						is_pointer_dereference = true;
+					}
 				}
 			}
 			// Case 2: Nested member access (e.g., obj.inner.member)
@@ -10076,6 +10082,12 @@ private:
 				base_object = StringTable::getOrInternStringHandle(object_name);
 				base_type = object_type.type();
 				base_type_index = object_type.type_index();
+				
+				// Check if this is a pointer to struct (e.g., P* pp)
+				// In this case, member access like pp->member should be treated as pointer dereference
+				if (object_type.pointer_depth() > 0) {
+					is_pointer_dereference = true;
+				}
 			}
 		}
 		else {
