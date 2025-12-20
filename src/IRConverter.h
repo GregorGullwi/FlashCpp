@@ -3112,6 +3112,12 @@ public:
 			switch (instruction.getOpcode()) {
 			case IrOpcode::FunctionDecl:
 				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::FunctionDecl");
+				// Pop the previous function's scope before starting a new function
+				// Each function gets its own scope, created in handleFunctionDecl
+				if (!variable_scopes.empty()) {
+					FLASH_LOG(Codegen, Debug, "  Popping previous function scope (depth was ", variable_scopes.size(), ")");
+					variable_scopes.pop_back();
+				}
 				handleFunctionDecl(instruction);
 				break;
 			case IrOpcode::VariableDecl:
@@ -4166,7 +4172,10 @@ private:
 		if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 			const TempVar temp_var = std::get<TempVar>(ctx.result_value.value);
 			const int32_t stack_offset = getStackOffsetFromTempVar(temp_var);
-			variable_scopes.back().variables[StringTable::getOrInternStringHandle(temp_var.name())].offset = stack_offset;
+			StringHandle reassign_handle = StringTable::getOrInternStringHandle(temp_var.name());
+			FLASH_LOG(Codegen, Debug, "setupAndLoadArithmeticOperation: About to reassign offset for '", temp_var.name(), "' (handle=", reassign_handle.handle, "), current value in map=", variable_scopes.back().variables[reassign_handle].offset, ", will assign=", stack_offset);
+			variable_scopes.back().variables[reassign_handle].offset = stack_offset;
+			FLASH_LOG(Codegen, Debug, "setupAndLoadArithmeticOperation: After reassignment, value in map=", variable_scopes.back().variables[reassign_handle].offset);
 			// Only set stack variable offset for allocated registers (not XMM0/XMM1 used directly)
 			if (ctx.result_physical_reg < X64Register::XMM0 || regAlloc.is_allocated(ctx.result_physical_reg)) {
 				// IMPORTANT: Before reassigning this register to the result TempVar's offset,
@@ -4687,9 +4696,11 @@ private:
 	int32_t getStackOffsetFromTempVar(TempVar tempVar) {
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
-			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(tempVar.name()));
-			FLASH_LOG(Codegen, Debug, "getStackOffsetFromTempVar: Looking up '", tempVar.name(), "'");
-			if (it != variable_scopes.back().variables.end() && it->second.offset != INT_MIN) {
+			StringHandle lookup_handle = StringTable::getOrInternStringHandle(tempVar.name());
+			auto& current_scope = variable_scopes.back();
+			auto it = current_scope.variables.find(lookup_handle);
+			FLASH_LOG(Codegen, Debug, "getStackOffsetFromTempVar: Looking up '", tempVar.name(), "' (handle=", lookup_handle.handle, ", scope_depth=", variable_scopes.size(), ")");
+			if (it != current_scope.variables.end() && it->second.offset != INT_MIN) {
 				FLASH_LOG(Codegen, Debug, "  Found with valid offset: ", it->second.offset);
 				return it->second.offset;  // Use pre-allocated offset (if it's been properly set)
 			}
@@ -4715,8 +4726,10 @@ private:
 		// Allocate TempVars sequentially after named_vars + shadow space
 		// Use next_temp_var_offset_ to track the next available slot
 		// Each TempVar gets 8 bytes (conservative sizing for x64)
-		FLASH_LOG(Codegen, Debug, "  Allocating new offset");
+		FLASH_LOG(Codegen, Debug, "  Allocating new offset: current_function_named_vars_size_=", current_function_named_vars_size_, 
+		         ", next_temp_var_offset_=", next_temp_var_offset_);
 		int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
+		FLASH_LOG(Codegen, Debug, "  Calculated offset=", offset);
 		next_temp_var_offset_ += 8;
 		
 
@@ -4734,7 +4747,17 @@ private:
 		
 		// Register the TempVar's offset in variables map so subsequent lookups
 		// return the same offset even if scope_stack_space changes
-		variable_scopes.back().variables[StringTable::getOrInternStringHandle(tempVar.name())].offset = offset;
+		StringHandle temp_var_handle = StringTable::getOrInternStringHandle(tempVar.name());
+		variable_scopes.back().variables[temp_var_handle].offset = offset;
+		FLASH_LOG(Codegen, Debug, "  Stored offset ", offset, " for '", tempVar.name(), "' (handle=", temp_var_handle.handle, ") in map, map size=", variable_scopes.back().variables.size());
+		
+		// Verify it was stored correctly
+		auto verify_it = variable_scopes.back().variables.find(temp_var_handle);
+		if (verify_it != variable_scopes.back().variables.end()) {
+			FLASH_LOG(Codegen, Debug, "  Verification: found with offset=", verify_it->second.offset);
+		} else {
+			FLASH_LOG(Codegen, Debug, "  Verification: NOT FOUND - this is a bug!");
+		}
 		
 		return offset;
 	}
