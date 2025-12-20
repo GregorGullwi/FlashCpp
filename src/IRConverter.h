@@ -7480,18 +7480,12 @@ private:
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
 			
 			// Stack alignment depends on target platform ABI
-			// System V AMD64 (Linux): RSP must be (16n + 8) before CALL so it's 16-aligned after CALL pushes return
-			// MS x64 (Windows): RSP must be 16-aligned before CALL
-			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-				// Linux/ELF: Align to (16n + 8)
-				if (total_stack % 16 != 8) {
-					total_stack = ((total_stack + 8) & ~15) - 8 + 16;  // Round up to next (16n + 8)
-				}
-			} else {
-				// Windows/COFF: Align to 16n
-				if (total_stack % 16 != 0) {
-					total_stack = (total_stack + 15) & ~15;  // Round up to next 16n
-				}
+			// System V AMD64 (Linux): After PUSH RBP, RSP is 16-aligned. 
+			// SUB RSP, N must keep it 16-aligned so subsequent CALLs work correctly.
+			// MS x64 (Windows): Same requirement - RSP must stay 16-aligned.
+			// Both platforms: Align total_stack to 16n (multiple of 16)
+			if (total_stack % 16 != 0) {
+				total_stack = (total_stack + 15) & ~15;  // Round up to next 16n
 			}
 			
 			// Patch the SUB RSP immediate at prologue offset + 3 (skip REX.W, opcode, ModR/M)
@@ -13135,9 +13129,12 @@ private:
 			size_t temp_vars_space = (next_temp_var_offset_ > 8) ? (next_temp_var_offset_ - 8) : 0;
 			size_t named_and_shadow = current_function_named_vars_size_;
 			size_t total_stack = named_and_shadow + temp_vars_space;
-			// Align so RSP is (16n + 8) - misaligned by 8, so after CALL pushes return address, RSP becomes 16-byte aligned
-			if (total_stack % 16 != 8) {
-				total_stack = ((total_stack + 8) & ~15) - 8 + 16;  // Round up to next (16n + 8)
+			
+			// Stack alignment: After PUSH RBP, RSP is 16-aligned.
+			// SUB RSP, N must keep it 16-aligned for subsequent CALLs.
+			// Both Linux and Windows: Align total_stack to 16n (multiple of 16)
+			if (total_stack % 16 != 0) {
+				total_stack = (total_stack + 15) & ~15;  // Round up to next 16n
 			}
 			
 			// Patch the SUB RSP immediate at prologue offset + 3
