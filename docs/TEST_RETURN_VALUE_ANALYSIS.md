@@ -35,11 +35,11 @@ Total test files analyzed: **661**
 
 | Category | Count | Description |
 |----------|-------|-------------|
-| Valid Returns (0-255) | 589 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
+| Valid Returns (0-255) | 612 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
 | Compilation Failures | 0 | Tests that failed to compile (all expected failures excluded) |
 | Link Failures | 1 | Tests that compiled but failed to link (all expected failures excluded) |
-| Runtime Crashes | 64 | Tests that crashed during execution with various signals |
-| Execution Timeouts | 1 | Tests that timeout (infinite loop or hang) |
+| Runtime Crashes | 41 | Tests that crashed during execution with various signals |
+| Execution Timeouts | 0 | Tests that timeout (infinite loop or hang) |
 | Out-of-Range (Valid) | 0 | Tests intentionally returning >255 (noted but truncated by OS) |
 | Out-of-Range (Unknown) | 0 | Tests with unexpected >255 returns |
 
@@ -47,23 +47,24 @@ Total test files analyzed: **661**
 
 ### Recent Improvements
 
-**2025-12-20 Update (Latest):**
-- Investigating widespread crashes related to temp variable stack offset allocation
-  - **Issue**: Multiple tests crashing with SIGSEGV due to incorrect stack offsets
-  - **Investigation Findings**:
-    1. Temp variables were being allocated at offset 0 (the rbp location), causing stack corruption
-    2. Root cause #1: Variable scopes not being cleaned up between functions
-    3. Root cause #2: Register allocator state persisting across functions
-    4. Root cause #3: VariableInfo default offset was 0 instead of INT_MIN (sentinel value)
-  - **Fixes Applied**:
-    - Added scope cleanup before processing each FunctionDecl to ensure clean state per function
-    - Added regAlloc.reset() at start of handleFunctionDecl to clear register state
-    - Changed VariableInfo default offset from 0 to INT_MIN to avoid ambiguity
-  - **Status**: Partial fix - scope and register management improved, but offset 0 issue persists
-  - **Remaining Work**: Further investigation needed into stack space calculation and variable pre-allocation
-- Current state: **89.1% of tests passing** (589/661)
+**2025-12-20 Update (Final Fix):**
+- **FIXED**: Widespread crashes related to temp variable stack offset allocation
+  - **Success**: Improved from **589 passing (89.1%)** to **612 passing (92.6%)** - **23 more tests fixed!**
+  - **Crashes reduced**: From 64 crashes to 41 crashes
+  - **Root Cause Identified**: handleMemberAccess was using offset 0 for pointer-based member access
+    - For pointer access (e.g., `this->value`), member_stack_offset was set to 0
+    - This 0 value was then assigned to register's stackVariableOffset
+    - Caused registers to flush to offset 0 (rbp location), corrupting the saved frame pointer
+  - **Final Fix**: Use result_offset (allocated temp var) for pointer-based access instead of member_stack_offset
+  - **All Previous Fixes Also Applied**:
+    1. Scope cleanup moved to correct location (after finalization, before new scope creation)
+    2. Register allocator reset at start of each function
+    3. VariableInfo default offset changed from 0 to INT_MIN
+    4. Stack allocation timing fixed to preserve previous function's stack space for patching
+- **Impact**: operator() functions, member functions accessing members through pointers, and many other tests now work correctly
+- Current state: **92.6% of tests passing** (612/661)
 
-**2025-12-20 Update (Earlier):**
+**2025-12-20 Update (Heap Allocation Fix):**
 - Fixed heap allocation constructor bug (test_heap.cpp now passes)
   - **Issue**: Constructor was using LEA (load effective address) for heap-allocated objects instead of MOV (load value)
   - **Root Cause**: handleConstructorCall couldn't distinguish between heap-allocated pointers and stack-allocated objects
