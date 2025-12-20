@@ -4979,6 +4979,48 @@ private:
 		return {};
 	}
 
+	// Helper function to calculate size_bits for local variables with proper fallback handling
+	// Consolidates logic for handling arrays, pointers, and regular variables
+	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
+		bool is_array_type = is_array || type_node.is_array();
+		int size_bits;
+		
+		if (is_array_type || type_node.pointer_depth() > 0) {
+			// For arrays and pointers, return the element/pointee type size
+			size_bits = static_cast<int>(type_node.size_in_bits());
+			// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
+			if (size_bits == 0) {
+				FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name, 
+				         "' (type=", static_cast<int>(type_node.type()), ", is_array=", is_array_type, 
+				         ", pointer_depth=", type_node.pointer_depth(), ") - using fallback calculation");
+				if (type_node.type() == Type::Struct && type_node.type_index() > 0) {
+					// Get struct size from type info
+					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						size_bits = static_cast<int>(struct_info->total_size * 8);
+					} else {
+						FLASH_LOG(Codegen, Error, "Failed to get struct info for type_index=", type_node.type_index());
+						assert(false && "Expected struct info to exist for valid type_index");
+					}
+				} else {
+					size_bits = get_type_size_bits(type_node.type());
+				}
+			}
+		} else {
+			// For regular variables, return the variable size
+			size_bits = static_cast<int>(type_node.size_in_bits());
+			// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
+			if (size_bits == 0) {
+				FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name, 
+				         "' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
+				size_bits = get_type_size_bits(type_node.type());
+			}
+		}
+		
+		return size_bits;
+	}
+
 	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode) {
 		// Check if this is a captured variable in a lambda
 		std::string var_name_str(identifierNode.name());
@@ -5314,33 +5356,9 @@ private:
 			}
 			
 			// Regular local variable
-			// For arrays and pointers, return element/pointee size (not the array variable itself)
-			bool is_array_type = decl_node.is_array() || type_node.is_array();
-			int size_bits;
-			if (is_array_type || type_node.pointer_depth() > 0) {
-				// For arrays and pointers, return the element/pointee type size
-				size_bits = static_cast<int>(type_node.size_in_bits());
-				// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
-				if (size_bits == 0) {
-					if (type_node.type() == Type::Struct && type_node.type_index() > 0) {
-						// Get struct size from type info
-						const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-						const StructTypeInfo* struct_info = type_info.getStructInfo();
-						if (struct_info) {
-							size_bits = static_cast<int>(struct_info->total_size * 8);
-						}
-					} else {
-						size_bits = get_type_size_bits(type_node.type());
-					}
-				}
-			} else {
-				// For regular variables, return the variable size
-				size_bits = static_cast<int>(type_node.size_in_bits());
-				// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
-				if (size_bits == 0) {
-					size_bits = get_type_size_bits(type_node.type());
-				}
-			}
+			// Use helper function to calculate size_bits with proper fallback handling
+			int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
+			
 			// For the 4th element: 
 			// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 			// - For non-struct pointer types, return pointer_depth
@@ -5388,33 +5406,9 @@ private:
 				return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 			} else {
 				// This is a local variable - return variable name
-				// For arrays and pointers, return element/pointee size (not the array variable itself)
-				bool is_array_type = decl_node.is_array() || type_node.is_array();
-				int size_bits;
-				if (is_array_type || type_node.pointer_depth() > 0) {
-					// For arrays and pointers, return the element/pointee type size
-					size_bits = static_cast<int>(type_node.size_in_bits());
-					// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
-					if (size_bits == 0) {
-						if (type_node.type() == Type::Struct && type_node.type_index() > 0) {
-							// Get struct size from type info
-							const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-							const StructTypeInfo* struct_info = type_info.getStructInfo();
-							if (struct_info) {
-								size_bits = static_cast<int>(struct_info->total_size * 8);
-							}
-						} else {
-							size_bits = get_type_size_bits(type_node.type());
-						}
-					}
-				} else {
-					// For regular variables, return the variable size
-					size_bits = static_cast<int>(type_node.size_in_bits());
-					// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
-					if (size_bits == 0) {
-						size_bits = get_type_size_bits(type_node.type());
-					}
-				}
+				// Use helper function to calculate size_bits with proper fallback handling
+				int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
+				
 				// For the 4th element: 
 				// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 				// - For non-struct pointer types, return pointer_depth
@@ -9734,18 +9728,18 @@ private:
 						element_type_index = type_node.type_index();
 					}
 					
-					// If it's a pointer type, use the base type size (not 64)
-					if (type_node.pointer_depth() > 0) {
-						// Get the base type size (what the pointer points to)
-						element_size_bits = static_cast<int>(type_node.size_in_bits());
-						is_pointer_to_array = true;  // This is a pointer, not an actual array
-					}
-					// If it's an array type, use the element size from array_operands (already correct)
-					else if (decl_ptr->is_array() || type_node.is_array()) {
-						// Get the actual element type size
-						// If element_size_bits is already non-zero from array_operands, keep it
-						// Otherwise, try to get it from type_node.size_in_bits()
-						if (element_size_bits == 0) {
+					// If element_size_bits is already non-zero from array_operands, keep it
+					// Otherwise, determine the element size based on whether it's a pointer or array
+					if (element_size_bits == 0) {
+						// If it's a pointer type, use the base type size (not 64)
+						if (type_node.pointer_depth() > 0) {
+							// Get the base type size (what the pointer points to)
+							element_size_bits = static_cast<int>(type_node.size_in_bits());
+							is_pointer_to_array = true;  // This is a pointer, not an actual array
+						}
+						// If it's an array type, get the element size
+						else if (decl_ptr->is_array() || type_node.is_array()) {
+							// Try to get it from type_node.size_in_bits()
 							element_size_bits = static_cast<int>(type_node.size_in_bits());
 							// If still 0, compute from type info for struct types
 							if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index > 0) {
@@ -9756,6 +9750,9 @@ private:
 								}
 							}
 						}
+					} else if (type_node.pointer_depth() > 0) {
+						// Element size was already set, but mark this as a pointer access
+						is_pointer_to_array = true;
 					}
 				}
 			}
