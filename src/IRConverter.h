@@ -6197,8 +6197,8 @@ private:
 				int actual_size = paramSize;
 				if (arg_pointer_depth > 0) {
 					// This is a pointer - set size to pointee type size
-					// For basic types, use getBasicTypeSizeInBits
-					unsigned char basic_size = getBasicTypeSizeInBits(paramType);
+					// For basic types, use get_type_size_bits
+					int basic_size = get_type_size_bits(paramType);
 					if (basic_size > 0) {
 						actual_size = basic_size;
 					}

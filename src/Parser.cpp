@@ -71,7 +71,7 @@ static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifie
 		result.size = sizeof(void*);
 		result.alignment = sizeof(void*);
 	} else {
-		result.size = getBasicTypeSizeInBits(type_spec.type()) / 8;
+		result.size = get_type_size_bits(type_spec.type()) / 8;
 		result.alignment = get_type_alignment(type_spec.type(), result.size);
 	}
 	
@@ -84,10 +84,10 @@ static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifie
 // Helper function to safely get type size - handles both basic types and UserDefined types
 // For UserDefined types, tries to look up size from type registry via type_index
 static unsigned char getTypeSizeForTemplateParameter(Type type, size_t type_index) {
-	// Check if this is a basic type that getBasicTypeSizeInBits can handle
+	// Check if this is a basic type that get_type_size_bits can handle
 	// Basic types range from Void to LongDouble in the Type enum
 	if (type >= Type::Void && type <= Type::LongDouble) {
-		return getBasicTypeSizeInBits(type);
+		return static_cast<unsigned char>(get_type_size_bits(type));
 	}
 	// For UserDefined and other types (Template, etc), look up size from type registry
 	if (type_index > 0 && type_index < gTypeInfo.size()) {
@@ -98,10 +98,10 @@ static unsigned char getTypeSizeForTemplateParameter(Type type, size_t type_inde
 
 // Helper function to safely get type size from TemplateArgument
 static unsigned char getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
-	// Check if this is a basic type that getBasicTypeSizeInBits can handle
+	// Check if this is a basic type that get_type_size_bits can handle
 	// Basic types range from Void to LongDouble in the Type enum
 	if (arg.type_value >= Type::Void && arg.type_value <= Type::LongDouble) {
-		return getBasicTypeSizeInBits(arg.type_value);
+		return static_cast<unsigned char>(get_type_size_bits(arg.type_value));
 	}
 	// For UserDefined and other types (Template, etc), try to extract size from type_specifier
 	if (arg.type_specifier.has_value()) {
@@ -20686,9 +20686,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
 			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
 			// instead of staying as UserDefined, which would cause toString() to return "unknown"
-			// Only call getBasicTypeSizeInBits for basic types (Void through LongDouble)
+			// Only call get_type_size_bits for basic types (Void through LongDouble)
 			if (arg.base_type >= Type::Void && arg.base_type <= Type::LongDouble) {
-				type_info.type_size_ = getBasicTypeSizeInBits(arg.base_type);
+				type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
 			} else {
 				// For Struct, UserDefined, and other non-basic types, use type_index to get size
 				if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
@@ -20754,9 +20754,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			const TemplateTypeArg& arg = template_args_as_type_args[i];
 			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size());
 			// Set type_size_ so parse_type_specifier treats this as a typedef
-			// Only call getBasicTypeSizeInBits for basic types (Void through LongDouble)
+			// Only call get_type_size_bits for basic types (Void through LongDouble)
 			if (arg.base_type >= Type::Void && arg.base_type <= Type::LongDouble) {
-				type_info.type_size_ = getBasicTypeSizeInBits(arg.base_type);
+				type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
 			} else {
 				// For Struct, UserDefined, and other non-basic types, use type_index to get size
 				if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
@@ -22130,9 +22130,9 @@ if (struct_type_info.getStructInfo()) {
 									const TemplateTypeArg& concrete_arg = template_args[pattern_idx];
 									substituted_type = concrete_arg.base_type;
 									substituted_type_index = concrete_arg.type_index;
-									// Only call getBasicTypeSizeInBits for basic types
+									// Only call get_type_size_bits for basic types
 									if (substituted_type != Type::UserDefined) {
-										substituted_size = getBasicTypeSizeInBits(substituted_type);
+										substituted_size = static_cast<unsigned char>(get_type_size_bits(substituted_type));
 									} else {
 										// For UserDefined types, look up the size from the type registry
 										substituted_size = 0;
