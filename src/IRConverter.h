@@ -7828,7 +7828,9 @@ private:
 			reference_stack_info_.clear();
 			
 			// Use separate counters for integer and float parameter registers (System V AMD64 ABI)
-			size_t int_param_reg_index = 0;
+			// For member functions, 'this' was already added above and consumed index 0,
+			// so we start counting from param_offset_adjustment (which is 1 for member functions)
+			size_t int_param_reg_index = param_offset_adjustment;
 			size_t float_param_reg_index = 0;
 			
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
@@ -7859,7 +7861,9 @@ private:
 					offset = 16 + (paramNumber - param_offset_adjustment) * 8;
 				} else if (type_specific_index < reg_threshold) {
 					// Parameter comes from register - allocate home/shadow space
-					offset = (static_cast<int>(type_specific_index) + 1) * -8;
+					// Use paramNumber for sequential stack allocation (not type_specific_index)
+					// This ensures int and float parameters don't overlap on the stack
+					offset = (paramNumber + 1) * -8;
 				} else {
 					// Parameter comes from stack - calculate positive offset
 					// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
@@ -7960,7 +7964,9 @@ private:
 					offset = 16 + (paramNumber - param_offset_adjustment) * 8;
 				} else if (type_specific_index < reg_threshold) {
 					// Parameter comes from register - allocate home/shadow space
-					offset = (static_cast<int>(type_specific_index) + 1) * -8;
+					// Use paramNumber for sequential stack allocation (not type_specific_index)
+					// This ensures int and float parameters don't overlap on the stack
+					offset = (paramNumber + 1) * -8;
 				} else {
 					// Parameter comes from stack - calculate positive offset
 					// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
