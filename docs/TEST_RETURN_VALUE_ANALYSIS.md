@@ -1,9 +1,9 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-20 - Updated Again)
+## Current Status (2025-12-20 - Lambda Decay Fix)
 
-**639/661 tests passing (96.7%)**
-- 13 runtime crashes (down from 21)
+**640/661 tests passing (96.8%)**
+- 12 runtime crashes (down from 13)
 - 1 timeout (infinite loop)
 - 2 link failures
 
@@ -18,7 +18,20 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Recent Fixes (2025-12-20)
 
-**Latest Fix: Float Literal Initialization & OpCodeWithSize Buffer Overflow**
+**Latest Fix: Lambda Decay to Function Pointer**
+- **Issue**: Lambda expressions with unary plus operator (+lambda) crashed due to uninitialized function pointer
+- **Root Cause**: Unary plus on non-capturing lambdas should trigger decay to function pointer (returning address of `__invoke` static function), but was being treated as a no-op, returning the closure object instead
+- **Fix**: Modified `generateUnaryOperatorIr` in CodeGen.h to detect lambda expressions as operand of unary plus:
+  - Check if operand is `LambdaExpressionNode` before visiting
+  - For non-capturing lambdas, generate `FunctionAddress` IR for the `__invoke` function
+  - Return function pointer (Type::FunctionPointer, 64 bits) instead of closure struct
+  - Capturing lambdas fall through to normal handling (cannot decay to function pointers)
+- **Status**: ✅ COMPLETE
+- **Tests Fixed (1)**:
+  - test_lambda_decay.cpp ✓ returns 0 (lambda decay with unary +)
+- **Note**: test_lambda_cpp20_comprehensive.cpp still crashes (different lambda-related issue with captures)
+
+**Previous Fix: Float Literal Initialization & OpCodeWithSize Buffer Overflow**
 - **Issue**: Float/double variable initialization crashed with segfault when using variables with stack offsets requiring 32-bit displacements (offset < -128 or > 127)
 - **Root Cause #1**: Float literals were loaded into GPRs and stored using integer mov instructions, not properly initializing them as float values
 - **Root Cause #2**: `OpCodeWithSize` buffer was only 8 bytes, but SSE float mov instructions can be 9 bytes (Prefix + REX + 2-byte opcode + ModR/M + 4-byte displacement), causing buffer overflow that corrupted instruction encoding
@@ -81,6 +94,8 @@ Initial investigation focused on struct padding as documented in Known Issues. H
 <details>
 <summary><strong>Completed Fixes (click to expand)</strong></summary>
 
+- ✅ **Lambda decay to function pointer** (2025-12-20) - Fixed unary plus on lambdas to return __invoke address (1 test)
+- ✅ **Float literal initialization** (2025-12-20) - Fixed buffer overflow and initialization (8 tests)
 - ✅ **Range-based for loop pointer increment** (2025-12-20) - Fixed pointer increment to use correct element size (4 tests)
 - ✅ **Array element size in AddressOf** (2025-12-20) - Fixed &arr[i] offset calculations (1 test)
 - ✅ **Arrays of pointers flagged as pointer-to-array** (2025-12-20) - Correct array access (1 test)
@@ -113,14 +128,14 @@ Tests like test_pointer_arithmetic.cpp now pass after fixing the actual root cau
 **Impact**: Tests that return converted float values may return incorrect results (but don't crash).
 **Status**: Pre-existing issue, not introduced by recent fixes. Identified during float register spilling investigation.
 
-## Remaining Crashes (13 files + 1 timeout)
+## Remaining Crashes (12 files + 1 timeout)
 
-**Current: 13 crashes, 1 timeout** (down from 21 - floating-point tests now fixed!)
+**Current: 12 crashes, 1 timeout** (down from 13 - lambda decay now fixed!)
 
 ### Crash Categories
 
-1. **Lambda** (2 files) - Capture and decay to function pointers  
-   test_lambda_decay.cpp, test_lambda_cpp20_comprehensive.cpp
+1. **Lambda** (1 file) - Capture-related issues  
+   test_lambda_cpp20_comprehensive.cpp (test_lambda_decay.cpp ✓ FIXED)
 
 2. **Exceptions** (2 files) - Incomplete Linux exception support  
    test_exceptions_basic.cpp, test_exceptions_nested.cpp
@@ -143,11 +158,11 @@ Tests like test_pointer_arithmetic.cpp now pass after fixing the actual root cau
 
 7. **Timeout** (1 file) - test_xvalue_all_casts.cpp
 
-**Fixed**: All 5 floating-point register spilling tests (test_float_register_spilling.cpp, test_mixed_float_double_params.cpp, test_all_xmm_registers.cpp, test_comprehensive_registers.cpp, test_register_spilling.cpp) plus 3 additional floating-point tests now pass without crashing!
+**Fixed**: Lambda decay (test_lambda_decay.cpp), plus all floating-point register spilling tests now pass!
 
 ## Priority Investigation Areas
 
-1. **Lambda capture** - 2 tests with lambda capture and decay (top priority - manageable scope)
+1. **Lambda capture** - 1 test with complex lambda captures (test_lambda_cpp20_comprehensive.cpp)
 2. **Template specialization** - 2 tests with member function specialization
 3. **Exception handling** - 2 tests requiring complete Linux exception support
 4. **Variadic arguments** - 2 tests with va_list implementation issues
@@ -155,6 +170,6 @@ Tests like test_pointer_arithmetic.cpp now pass after fixing the actual root cau
 
 ---
 
-*Last Updated: 2025-12-20 (after floating-point initialization fix)*
-*Status: 639/661 tests passing (96.7%), 13 crashes, 1 timeout, 2 link failures*
+*Last Updated: 2025-12-20 (after lambda decay fix)*
+*Status: 640/661 tests passing (96.8%), 12 crashes, 1 timeout, 2 link failures*
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
