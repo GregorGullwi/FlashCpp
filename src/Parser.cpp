@@ -71,7 +71,7 @@ static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifie
 		result.size = sizeof(void*);
 		result.alignment = sizeof(void*);
 	} else {
-		result.size = get_type_size_bits(type_spec.type()) / 8;
+		result.size = getBasicTypeSizeInBits(type_spec.type()) / 8;
 		result.alignment = get_type_alignment(type_spec.type(), result.size);
 	}
 	
