@@ -431,6 +431,10 @@ struct LValueInfo {
 	// For ArrayElement: whether the array base is a pointer (int* arr) or array (int arr[])
 	bool is_pointer_to_array = false;
 	
+	// For Member: whether the base object is a pointer (ptr->member) or direct object (obj.member)
+	// When true, handleMemberStore should dereference the pointer before accessing the member
+	bool is_pointer_to_member = false;
+	
 	// Constructor for simple cases
 	LValueInfo(Kind k, std::variant<StringHandle, TempVar> b, int off = 0)
 		: kind(k), base(b), offset(off) {}
@@ -995,6 +999,7 @@ struct MemberLoadOp {
 	const TypeInfo* struct_type_info;               // Parent struct type (nullptr if not available)
 	bool is_reference;                              // True if member is declared as T& (describes member declaration, not access)
 	bool is_rvalue_reference;                       // True if member is declared as T&& (describes member declaration, not access)
+	bool is_pointer_to_member = false;              // True if accessing through pointer (ptr->member), false for direct (obj.member)
 };
 
 // Member store (store value to struct/class member)
@@ -1007,6 +1012,7 @@ struct MemberStoreOp {
 	bool is_reference;                              // True if member is declared as T& (describes member declaration, not access)
 	bool is_rvalue_reference;                       // True if member is declared as T&& (describes member declaration, not access)
 	StringHandle vtable_symbol;						// For vptr initialization - stores vtable symbol name
+	bool is_pointer_to_member = false;              // True if accessing through pointer (ptr->member), false for direct (obj.member)
 };
 
 // Label definition

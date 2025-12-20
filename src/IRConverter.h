@@ -11589,7 +11589,7 @@ private:
 				object_base_offset = it->second.offset;
 
 				// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
-				if (StringTable::getStringView(object_name_handle) == "this"sv || reference_stack_info_.count(object_base_offset) > 0) {
+				if (StringTable::getStringView(object_name_handle) == "this"sv || reference_stack_info_.count(object_base_offset) > 0 || op.is_pointer_to_member) {
 					is_pointer_access = true;
 				}
 			}
@@ -11598,8 +11598,8 @@ private:
 			auto object_temp = std::get<TempVar>(op.object);
 			object_base_offset = getStackOffsetFromTempVar(object_temp);
 			
-			// Check if this temp var holds a pointer/address (from large member access)
-			if (reference_stack_info_.count(object_base_offset) > 0) {
+			// Check if this temp var holds a pointer/address (from large member access) or is pointer-to-member
+			if (reference_stack_info_.count(object_base_offset) > 0 || op.is_pointer_to_member) {
 				is_pointer_access = true;
 			}
 		}
@@ -11995,8 +11995,10 @@ private:
 			}
 			object_base_offset = it->second.offset;
 
-			// Check if this is the 'this' pointer or a reference parameter
-			if (StringTable::getStringView(object_name_handle) == "this"sv || reference_stack_info_.count(object_base_offset) > 0) {
+			// Check if this is the 'this' pointer or a reference parameter or pointer-to-member access
+			if (StringTable::getStringView(object_name_handle) == "this"sv || 
+			    reference_stack_info_.count(object_base_offset) > 0 ||
+			    op.is_pointer_to_member) {
 				is_pointer_access = true;
 			}
 		} else {
@@ -12004,8 +12006,8 @@ private:
 			auto object_temp = std::get<TempVar>(op.object);
 			object_base_offset = getStackOffsetFromTempVar(object_temp);
 			
-			// Check if this temp var holds a pointer/address (from large member access)
-			if (reference_stack_info_.count(object_base_offset) > 0) {
+			// Check if this temp var holds a pointer/address (from large member access) or is pointer-to-member
+			if (reference_stack_info_.count(object_base_offset) > 0 || op.is_pointer_to_member) {
 				is_pointer_access = true;
 			}
 		}

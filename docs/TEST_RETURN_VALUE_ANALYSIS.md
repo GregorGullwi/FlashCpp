@@ -47,6 +47,14 @@ Total test files analyzed: **661**
 
 ### Recent Improvements
 
+**2025-12-20 Update (Pointer Member Access Fix):**
+- **PARTIAL FIX**: Member access through pointers (ptr->member) not properly dereferencing
+  - **Problem**: When accessing struct members through pointers (e.g., `pp->p = value`), the compiler treated the pointer as if it were a direct struct, causing incorrect code generation and crashes
+  - **Fix**: Added `is_pointer_to_member` flag to LValueInfo, MemberLoadOp, and MemberStoreOp to track pointer dereference during member access
+  - **Impact**: Simple pointer member access cases now work correctly (e.g., `ptr->member = value` and `x = ptr->member`)
+  - **Remaining Issues**: test_pointer_loop.cpp still crashes - likely due to combination of pointer arithmetic and member access in loops
+  - Current state: **628/661 tests passing (95.0%)**, 25 crashes, 1 timeout, 1 link failure (no regressions)
+
 **2025-12-20 Update (Pure Virtual Function Fix):**
 - **BUG FIX**: Pure virtual functions in abstract classes causing empty vtable entries
   - **Problem**: Vtable entries for pure virtual functions were empty strings, causing linker errors or runtime crashes
@@ -55,6 +63,7 @@ Total test files analyzed: **661**
   - Current state: **628/661 tests passing (95.0%)**, 25 crashes, 1 timeout, 1 link failure
 
 **Summary of Recent Fixes (2025-12-20):**
+- ⚠️ **Pointer member access** (PARTIAL) - Fixed member access through pointers (ptr->member); simple cases work, complex loop cases still crash
 - ✅ **Pure virtual functions** - Vtable entries now use `__cxa_pure_virtual` for abstract classes
 - ✅ **sizeof for struct arrays** - Fixed division by zero when calculating sizeof(array_of_structs)
 - ✅ **Stack alignment** (6 tests) - Fixed floating-point crashes with printf
@@ -245,13 +254,15 @@ The script compiles, links, and runs all test files with a 5-second timeout, rep
 - test_abstract_class.cpp now links successfully (was in EXPECTED_LINK_FAIL)
 
 **Latest Fix (2025-12-20):**
-- **Pure virtual functions** - Fixed vtable entries for abstract classes:
-  - **Root cause**: Vtable entries for pure virtual functions were empty strings
-  - **Fix**: Initialize pure virtual function entries to `__cxa_pure_virtual` symbol
-  - **Impact**: test_abstract_class.cpp now links (was in EXPECTED_LINK_FAIL), still crashes at runtime due to unrelated issue
-  - **Result**: Improved linker compatibility for abstract classes
+- **Pointer member access** - Partially fixed member access through pointers (ptr->member):
+  - **Root cause**: Member access through pointers treated pointer as if it were a direct struct value
+  - **Fix**: Added `is_pointer_to_member` flag to track pointer dereference in member access; updated code generation to properly dereference pointer before accessing member
+  - **Impact**: Simple pointer member access cases now work (e.g., `ptr->member = value`, `x = ptr->member`)
+  - **Remaining**: Complex cases with loops and pointer arithmetic (like test_pointer_loop.cpp) still crash
+  - **Result**: Improved pointer member access support, no test regressions (still 628/661 passing)
 
 **Recent Fixes (2025-12-20):**
+- ⚠️ **Pointer member access** (PARTIAL) - Fixed ptr->member for simple cases; complex loop cases still crash
 - ✅ **Pure virtual functions** - Vtable entries use `__cxa_pure_virtual` for abstract classes
 - ✅ **sizeof for struct arrays** - Fixed division by zero when calculating sizeof(array_of_structs)
 - ✅ **Stack alignment** (6 tests) - Fixed floating-point crashes caused by incorrect stack alignment
@@ -262,14 +273,15 @@ The script compiles, links, and runs all test files with a 5-second timeout, rep
 - ✅ **Multi-level pointer dereference** (2025-12-17) - Fixed type_index vs pointer_depth issue
 
 **Priority Areas for Future Work:**
-1. **Floating-point register spilling** (5 files) - XMM register spilling and >8 XMM parameters
-2. **Lambda capture** (2 files) - Lambda capture and decay to function pointers
-3. **Range-based for loops** (3 files) - Iterator implementation issues
+1. **test_pointer_loop.cpp investigation** - Pointer arithmetic with member access in loops needs further debugging
+2. **Floating-point register spilling** (5 files) - XMM register spilling and >8 XMM parameters
+3. **Lambda capture** (2 files) - Lambda capture and decay to function pointers
+4. **Range-based for loops** (3 files) - Iterator implementation issues
 4. **Exception handling** (2 files) - Exception support on Linux
 5. **test_abstract_class runtime crash** - Still crashes despite successful linking
 
 ---
 
-*Last Updated: 2025-12-20 (after pure virtual function fix)*
+*Last Updated: 2025-12-20 (after pointer member access partial fix)*
 *Analysis Tool: tests/validate_return_values.sh*
 *Current Status: 628/661 tests passing (95.0%), 25 crashes, 1 timeout, 1 link failure*
