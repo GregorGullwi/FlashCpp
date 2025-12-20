@@ -56,6 +56,28 @@ static constexpr CallingConventionMapping calling_convention_map[] = {
 	{"__clrcall"sv, CallingConvention::Clrcall}
 };
 
+// Helper function to calculate member size and alignment
+// Handles pointers, references, and basic types correctly
+struct MemberSizeAndAlignment {
+	size_t size;
+	size_t alignment;
+};
+
+static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifierNode& type_spec) {
+	MemberSizeAndAlignment result;
+	
+	// For pointers and references, size and alignment are always sizeof(void*)
+	if (type_spec.is_pointer() || type_spec.is_reference()) {
+		result.size = sizeof(void*);
+		result.alignment = sizeof(void*);
+	} else {
+		result.size = get_type_size_bits(type_spec.type()) / 8;
+		result.alignment = get_type_alignment(type_spec.type(), result.size);
+	}
+	
+	return result;
+}
+
 // Helper function to get type size in bits for basic types
 // Helper function to get the size in bits for a type (including struct types)
 // Used for runtime type size queries when TypeInfo is already populated
@@ -2641,8 +2663,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 				const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
 				
-				size_t member_size_in_bits = get_type_size_bits(member_type_spec.type()) / 8;
-				size_t member_alignment = get_type_alignment(member_type_spec.type(), member_size_in_bits);
+				// Calculate member size and alignment
+				auto [member_size_in_bits, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
 				size_t referenced_size_bits = 0;
 				
 				// For struct types, get the actual size from TypeInfo
@@ -4291,15 +4313,9 @@ ParseResult Parser::parse_struct_declaration()
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
 		// Get member size and alignment
-		// For pointers and references, size is always sizeof(void*) regardless of pointed-to type
-		size_t member_size;
+		// Calculate member size and alignment
+		auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 		size_t referenced_size_bits = type_spec.size_in_bits();
-		if (type_spec.is_pointer() || type_spec.is_reference()) {
-			member_size = sizeof(void*);  // Pointers and references are always pointer-sized
-		} else {
-			member_size = type_spec.size_in_bits() / 8;
-		}
-		size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
 		// For struct types, get size and alignment from the struct type info
 		if (type_spec.type() == Type::Struct && !type_spec.is_pointer() && !type_spec.is_reference()) {
@@ -5601,9 +5617,9 @@ ParseResult Parser::parse_typedef_declaration()
 			const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 			const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
 
-			size_t member_size = get_type_size_bits(member_type_spec.type()) / 8;
+			// Calculate member size and alignment
+			auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
 			size_t referenced_size_bits = member_type_spec.size_in_bits();
-			size_t member_alignment = get_type_alignment(member_type_spec.type(), member_size);
 
 			if (member_type_spec.type() == Type::Struct) {
 				const TypeInfo* member_type_info = nullptr;
@@ -5624,9 +5640,8 @@ ParseResult Parser::parse_typedef_declaration()
 			bool is_ref_member = member_type_spec.is_reference();
 			bool is_rvalue_ref_member = member_type_spec.is_rvalue_reference();
 			if (is_ref_member) {
-				member_size = sizeof(void*);
+				// Size and alignment were already set correctly above for references
 				referenced_size_bits = referenced_size_bits ? referenced_size_bits : member_type_spec.size_in_bits();
-				member_alignment = sizeof(void*);
 			}
 			// Phase 7B: Intern member name and use StringHandle overload
 			StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
@@ -17269,9 +17284,8 @@ if (struct_type_info.getStructInfo()) {
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
 				// Calculate member size and alignment
-				size_t member_size = get_type_size_bits(type_spec.type()) / 8;
+				auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 				size_t referenced_size_bits = type_spec.size_in_bits();
-				size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
 
 				if (type_spec.type() == Type::Struct) {
 					const TypeInfo* member_type_info = nullptr;
@@ -17291,9 +17305,8 @@ if (struct_type_info.getStructInfo()) {
 				bool is_ref_member = type_spec.is_reference();
 				bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
 				if (is_ref_member) {
-					member_size = sizeof(void*);
+					// Size and alignment were already set correctly above for references
 					referenced_size_bits = referenced_size_bits ? referenced_size_bits : type_spec.size_in_bits();
-					member_alignment = sizeof(void*);
 				}
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
@@ -18080,8 +18093,8 @@ if (struct_type_info.getStructInfo()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 				
-				size_t member_size = get_type_size_bits(type_spec.type()) / 8;
-				size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+				// Calculate member size and alignment
+				auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 				
 				bool is_ref_member = type_spec.is_reference();
 				bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
