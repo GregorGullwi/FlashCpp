@@ -4985,9 +4985,37 @@ private:
 		bool is_array_type = is_array || type_node.is_array();
 		int size_bits;
 		
-		if (is_array_type || type_node.pointer_depth() > 0) {
-			// For arrays and pointers, the identifier itself is a pointer (64 bits on x64)
-			// The element/pointee size is stored separately and used for pointer arithmetic
+		if (is_array_type) {
+			// For arrays, return the element size (not the pointer size)
+			// This is needed for array subscript operations like &arr[i]
+			// Arrays do decay to pointers in most contexts, but the element size is what's needed
+			// for offset calculations in array element address computations
+			
+			// For array of pointers (e.g., int* arr[3]), the element is a pointer (64 bits)
+			if (type_node.pointer_depth() > 0) {
+				size_bits = 64;  // Element is a pointer
+			} else {
+				size_bits = static_cast<int>(type_node.size_in_bits());
+				// For struct arrays, size_bits might be 0, so look it up from type info
+				if (size_bits == 0 && type_node.type() == Type::Struct) {
+					TypeIndex type_index = type_node.type_index();
+					if (type_index > 0 && type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_index];
+						const StructTypeInfo* struct_info = type_info.getStructInfo();
+						if (struct_info) {
+							size_bits = static_cast<int>(struct_info->total_size * 8);
+						}
+					}
+				}
+				// Fallback: if size_bits is still 0, calculate from type (parser bug workaround)
+				if (size_bits == 0) {
+					FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for array '", identifier_name, 
+					         "' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
+					size_bits = get_type_size_bits(type_node.type());
+				}
+			}
+		} else if (type_node.pointer_depth() > 0) {
+			// For pointers, the identifier itself is a pointer (64 bits on x64)
 			size_bits = 64;  // Pointer size on x64 architecture
 		} else {
 			// For regular variables, return the variable size
@@ -9732,8 +9760,9 @@ private:
 								}
 							}
 						}
-					} else if (type_node.pointer_depth() > 0) {
+					} else if (type_node.pointer_depth() > 0 && !(decl_ptr->is_array() || type_node.is_array())) {
 						// Element size was already set, but mark this as a pointer access
+						// Only if it's not an array (arrays of pointers are still arrays, not pointer-to-array)
 						is_pointer_to_array = true;
 					}
 				}
