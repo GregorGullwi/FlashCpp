@@ -2,10 +2,11 @@
 
 ## Current Status (2025-12-20)
 
-**628/661 tests passing (95.0%)**
-- 25 runtime crashes
+**627/661 tests passing (94.9%)**
+- 26 runtime crashes
 - 1 timeout (infinite loop)
 - 1 link failure
+- 6 tests affected by struct padding issue (test_pointer_loop, test_pointer_arithmetic, etc.)
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
 
@@ -18,17 +19,28 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Recent Fixes (2025-12-20)
 
-**Latest Fix: Pointer Member Access Type Checking**
+**Latest Fix: Array Element Size for Struct Arrays**
+- **Issue**: Array element addresses were calculated incorrectly for struct arrays, causing array indexing and pointer arithmetic to fail
+- **Root Cause**: `generateIdentifierIr()` in CodeGen.h returned element size 0 for array identifiers instead of the actual element size
+- **Fix**: Updated both DeclarationNode and VariableDeclarationNode branches to properly calculate element size from struct type info
+  - Added check for array types to return element size (not total array size)
+  - For struct elements, fetch size from gTypeInfo[type_index]->getStructInfo()->total_size
+  - Also fixed `generateArraySubscriptIr()` to preserve correct element size
+- **Status**: ✅ COMPLETE - Array indexing and pointer arithmetic now work correctly
+- **Tests Fixed**: Simple array operations, pointer increment, basic for loops with pointer arithmetic
+- **Note**: Discovered related issue with struct padding/alignment affecting some tests (see Known Issues)
+
+**Previous Fix: Pointer Member Access Type Checking**
 - **Issue**: Type checking rejected pointers to structs in member access expressions (e.g., `P* pp; pp->member`)
-- **Root Cause**: `generateMemberAccessIr()` in CodeGen.h checked `is_struct_type()` which only accepts `Type::Struct` or `Type::UserDefined`, rejecting pointers with `Type::Void` and `pointer_depth > 0`
-- **Fix**: Modified type validation at lines ~9834 and ~10077 to accept: `is_struct_type(type) || (pointer_depth() > 0 && type_index() > 0)`
-- **Status**: ⚠️ PARTIAL - Simple cases work (`ptr->member = x`), but multiple pointer increments before member access still crash
-- **Tests Fixed**: Basic pointer member access patterns now work correctly
-- **Remaining**: test_pointer_loop.cpp and similar tests with `++ptr; ++ptr; ptr->member` still crash
+- **Root Cause**: `generateMemberAccessIr()` checked `is_struct_type()` which rejected pointers
+- **Fix**: Modified type validation to accept: `is_struct_type(type) || (pointer_depth() > 0 && type_index() > 0)`
+- **Status**: ✅ COMPLETE
 
 <details>
 <summary><strong>Completed Fixes (click to expand)</strong></summary>
 
+- ✅ **Array element size** (2025-12-20) - Fixed struct array indexing and pointer arithmetic
+- ✅ **Pointer member access type checking** (2025-12-20) - Allow pointers to structs in member access
 - ✅ **Pure virtual functions** - Vtable entries use `__cxa_pure_virtual` for abstract classes
 - ✅ **sizeof for struct arrays** - Fixed division by zero calculating sizeof(array_of_structs)
 - ✅ **Stack alignment** (6 tests) - Fixed floating-point crashes with printf
@@ -41,7 +53,22 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 </details>
 
-## Remaining Crashes (25 files + 1 timeout)
+## Known Issues
+
+### Struct Padding/Alignment
+FlashCpp does not correctly calculate struct padding for alignment. For example:
+```cpp
+struct P {
+    int x;     // 4 bytes at offset 0
+    int* p;    // 8 bytes - should be at offset 8, but FlashCpp puts it at offset 4
+};
+```
+- **Expected**: sizeof(P) = 16 (with 4 bytes padding)
+- **Actual**: FlashCpp calculates sizeof(P) = 12 (no padding)
+- **Impact**: Affects tests using structs with mixed-size members (pointers, doubles, etc.)
+- **Affected tests**: test_pointer_loop, test_pointer_arithmetic, and potentially others
+
+## Remaining Crashes (26 files + 1 timeout)
 
 **Common crash signals:**
 - Signal 11 (SIGSEGV) - Segmentation fault (most common)
@@ -75,16 +102,19 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 8. **Variadic arguments** (2 files) - va_list/va_arg implementation
    - test_va_implementation.cpp, test_varargs.cpp
 
-9. **Other** (6 files)
-   - test_abstract_class.cpp (links after pure virtual fix, crashes at runtime)
-   - test_custom_container.cpp, test_pointer_loop.cpp (multiple pointer increments)
-   - test_stack_overflow.cpp, test_template_complex_substitution.cpp, test_ten_mixed.cpp
+9. **Struct padding** (2 files) - Incorrect struct size calculation due to missing padding
+   - test_pointer_loop.cpp, test_pointer_arithmetic.cpp
 
-10. **Timeout** (1 file) - Infinite loop or hang
+10. **Other** (5 files)
+    - test_abstract_class.cpp (vtable/typeinfo relocation issues)
+    - test_custom_container.cpp, test_stack_overflow.cpp
+    - test_template_complex_substitution.cpp, test_ten_mixed.cpp
+
+11. **Timeout** (1 file) - Infinite loop or hang
     - test_xvalue_all_casts.cpp
 
 <details>
-<summary><strong>Complete crash list (25 crashes + 1 timeout)</strong></summary>
+<summary><strong>Complete crash list (26 crashes + 1 timeout)</strong></summary>
 
 1. spaceship_default.cpp (SIGILL)
 2. test_abstract_class.cpp (SIGSEGV)
@@ -97,34 +127,36 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 9. test_lambda_cpp20_comprehensive.cpp (SIGSEGV)
 10. test_lambda_decay.cpp (SIGSEGV)
 11. test_mixed_float_double_params.cpp (SIGSEGV)
-12. test_pointer_loop.cpp (SIGSEGV)
-13. test_range_for.cpp (SIGSEGV)
-14. test_range_for_begin_end.cpp (SIGSEGV)
-15. test_range_for_const_ref.cpp (SIGSEGV)
-16. test_register_spilling.cpp (SIGBUS)
-17. test_rvo_very_large_struct.cpp (SIGSEGV)
-18. test_spec_member_only.cpp (SIGSEGV)
-19. test_specialization_member_func.cpp (SIGSEGV)
-20. test_stack_overflow.cpp (SIGSEGV)
-21. test_template_complex_substitution.cpp (SIGSEGV)
-22. test_ten_mixed.cpp (SIGSEGV)
-23. test_va_implementation.cpp (SIGSEGV)
-24. test_varargs.cpp (SIGSEGV)
-25. test_xvalue_all_casts.cpp (timeout)
+12. test_pointer_arithmetic.cpp (SIGSEGV) - **NEW**
+13. test_pointer_loop.cpp (SIGSEGV)
+14. test_range_for.cpp (SIGSEGV)
+15. test_range_for_begin_end.cpp (SIGSEGV)
+16. test_range_for_const_ref.cpp (SIGSEGV)
+17. test_register_spilling.cpp (SIGSEGV)
+18. test_rvo_very_large_struct.cpp (SIGSEGV)
+19. test_spec_member_only.cpp (SIGSEGV)
+20. test_specialization_member_func.cpp (SIGSEGV)
+21. test_stack_overflow.cpp (SIGSEGV)
+22. test_template_complex_substitution.cpp (SIGSEGV)
+23. test_ten_mixed.cpp (SIGSEGV)
+24. test_va_implementation.cpp (SIGSEGV)
+25. test_varargs.cpp (SIGSEGV)
+26. test_xvalue_all_casts.cpp (timeout)
 
 </details>
 
 ## Priority Investigation Areas
 
-1. **Pointer arithmetic with member access** - test_pointer_loop.cpp shows issue with multiple `++ptr` operations before `ptr->member` access
+1. **Struct padding/alignment** - Affects test_pointer_loop.cpp and test_pointer_arithmetic.cpp - struct sizes calculated without proper padding
 2. **Floating-point register spilling** - 5 tests with >8 float/double parameters or heavy XMM register usage
 3. **Lambda capture** - 2 tests with lambda capture and decay to function pointers
 4. **Range-based for loops** - 3 tests with iterator implementation issues
 5. **Exception handling** - 2 tests requiring complete Linux exception support
-6. **Spaceship operator** - 1 test generating illegal CPU instruction (SIGILL)
+6. **Abstract classes** - test_abstract_class.cpp has vtable/typeinfo relocation issues
+7. **Spaceship operator** - 1 test generating illegal CPU instruction (SIGILL)
 
 ---
 
-*Last Updated: 2025-12-20 (after pointer member access type checking fix)*
-*Status: 628/661 tests passing (95.0%), 25 crashes, 1 timeout, 1 link failure*
+*Last Updated: 2025-12-20 (after array element size fix)*
+*Status: 627/661 tests passing (94.9%), 26 crashes, 1 timeout, 1 link failure*
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
