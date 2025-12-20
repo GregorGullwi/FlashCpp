@@ -5831,6 +5831,49 @@ private:
 				Type element_type = std::get<Type>(array_operands[0]);
 				int element_size_bits = std::get<int>(array_operands[1]);
 				
+				// For arrays, array_operands[1] is the pointer size (64), not element size
+				// We need to calculate the actual element size from the array declaration
+				if (std::holds_alternative<StringHandle>(array_operands[2])) {
+					StringHandle array_name = std::get<StringHandle>(array_operands[2]);
+					std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
+					if (!symbol.has_value() && global_symbol_table_) {
+						symbol = global_symbol_table_->lookup(array_name);
+					}
+					if (symbol.has_value()) {
+						const DeclarationNode* decl_ptr = nullptr;
+						if (symbol->is<DeclarationNode>()) {
+							decl_ptr = &symbol->as<DeclarationNode>();
+						} else if (symbol->is<VariableDeclarationNode>()) {
+							decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
+						}
+						
+						if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
+							// This is an array - calculate element size
+							const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+							if (type_node.pointer_depth() > 0) {
+								// Array of pointers
+								element_size_bits = 64;
+							} else if (type_node.type() == Type::Struct) {
+								// Array of structs
+								TypeIndex type_index = type_node.type_index();
+								if (type_index > 0 && type_index < gTypeInfo.size()) {
+									const TypeInfo& type_info = gTypeInfo[type_index];
+									const StructTypeInfo* struct_info = type_info.getStructInfo();
+									if (struct_info) {
+										element_size_bits = static_cast<int>(struct_info->total_size * 8);
+									}
+								}
+							} else {
+								// Regular array - use type size
+								element_size_bits = static_cast<int>(type_node.size_in_bits());
+								if (element_size_bits == 0) {
+									element_size_bits = get_type_size_bits(type_node.type());
+								}
+							}
+						}
+					}
+				}
+				
 				// Create temporary for the address
 				TempVar addr_var = var_counter.next();
 				
@@ -9732,8 +9775,9 @@ private:
 								}
 							}
 						}
-					} else if (type_node.pointer_depth() > 0) {
+					} else if (type_node.pointer_depth() > 0 && !(decl_ptr->is_array() || type_node.is_array())) {
 						// Element size was already set, but mark this as a pointer access
+						// Only if it's not an array (arrays of pointers are still arrays, not pointer-to-array)
 						is_pointer_to_array = true;
 					}
 				}
