@@ -7674,15 +7674,16 @@ private:
 						// Reserve space for vtable entries
 						vtable_info.function_symbols.resize(struct_info->vtable.size());
 						
-						// Initialize pure virtual function entries to __cxa_pure_virtual
+						// Initialize pure virtual function entries to __cxa_pure_virtual / _pure_virtual
 						// Note: This only affects pure virtual functions in THIS class's vtable.
 						// Derived classes that override these functions will have their own vtables
 						// with the actual implementation function pointers.
-						const char* pure_virtual_symbol = []()
+						const std::string_view pure_virtual_symbol = []()
 						{
-							if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) 
-								return "__cxa_pure_virtual";
-							return "_pure_virtual";
+							if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+								return "__cxa_pure_virtual"sv;
+							}
+							return "_pure_virtual"sv;
 						}();
 						for (size_t i = 0; const auto* vfunc : struct_info->vtable) {
 							if (vfunc && vfunc->is_pure_virtual) {
