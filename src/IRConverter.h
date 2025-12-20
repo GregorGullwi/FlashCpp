@@ -1106,17 +1106,11 @@ OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister, int32_
 		uint8_t modrm = 0x85 | ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
 		*current_byte_ptr++ = modrm;
 		result.size_in_bytes++;
-
-		// Debug: Check the bytes being written
-		uint8_t byte0 = static_cast<uint8_t>(offset & 0xFF);
-		uint8_t byte1 = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		uint8_t byte2 = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		uint8_t byte3 = static_cast<uint8_t>((offset >> 24) & 0xFF);
 		
-		*current_byte_ptr++ = byte0;
-		*current_byte_ptr++ = byte1;
-		*current_byte_ptr++ = byte2;
-		*current_byte_ptr++ = byte3;
+		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
 		result.size_in_bytes += 4;
 	}
 
