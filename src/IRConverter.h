@@ -6112,12 +6112,10 @@ private:
 		} else if (std::holds_alternative<TempVar>(ctor_op.object)) {
 			const TempVar temp_var = std::get<TempVar>(ctor_op.object);
 			
-			// TempVars for constructor calls are stack-allocated objects
-			// We need to get the ADDRESS of the stack location (LEA), not load a pointer (MOV)
-			// Exception: TempVars from HeapAlloc hold pointers and would need MOV,
-			// but those should go through handleConstructorCall differently
+			// TempVars from heap_alloc hold pointers that need to be loaded (MOV)
+			// This matches the destructor logic for consistency
 			object_offset = getStackOffsetFromTempVar(temp_var);
-			object_is_pointer = false;  // Use LEA to get address, not MOV to load pointer
+			object_is_pointer = true;  // TempVars are pointers (from heap_alloc)
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(ctor_op.object);
 			auto it = variable_scopes.back().variables.find(var_name_handle);
