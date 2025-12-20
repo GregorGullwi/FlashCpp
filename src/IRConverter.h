@@ -7678,10 +7678,15 @@ private:
 						// Note: This only affects pure virtual functions in THIS class's vtable.
 						// Derived classes that override these functions will have their own vtables
 						// with the actual implementation function pointers.
-						size_t i = 0;
-						for (const auto* vfunc : struct_info->vtable) {
+						const char* pure_virtual_symbol = []()
+						{
+							if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) 
+								return "__cxa_pure_virtual";
+							return "_pure_virtual";
+						}();
+						for (size_t i = 0; const auto* vfunc : struct_info->vtable) {
 							if (vfunc && vfunc->is_pure_virtual) {
-								vtable_info.function_symbols[i] = "__cxa_pure_virtual";
+								vtable_info.function_symbols[i] = pure_virtual_symbol;
 							}
 							++i;
 						}
