@@ -7678,11 +7678,12 @@ private:
 						// Note: This only affects pure virtual functions in THIS class's vtable.
 						// Derived classes that override these functions will have their own vtables
 						// with the actual implementation function pointers.
-						for (size_t i = 0; i < struct_info->vtable.size(); ++i) {
-							const StructMemberFunction* vfunc = struct_info->vtable[i];
+						size_t i = 0;
+						for (const auto* vfunc : struct_info->vtable) {
 							if (vfunc && vfunc->is_pure_virtual) {
 								vtable_info.function_symbols[i] = "__cxa_pure_virtual";
 							}
+							++i;
 						}
 						
 						// Populate base class names for RTTI
