@@ -11545,7 +11545,7 @@ private:
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info.name();
 							ctor_op.object = result_var;
-							ctor_op.is_heap_allocated = true;  // Placement new constructs into provided address
+							ctor_op.is_heap_allocated = true;  // Object is at pointer location (placement new provides address)
 							
 							// Add constructor arguments
 							const auto& ctor_args = newExpr.constructor_args();
@@ -11613,7 +11613,7 @@ private:
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info.name();
 							ctor_op.object = result_var;
-							ctor_op.is_heap_allocated = true;  // Mark as heap-allocated (from new)
+							ctor_op.is_heap_allocated = true;  // Object is at pointer location (new allocates and returns pointer)
 
 							// Add constructor arguments
 							const auto& ctor_args = newExpr.constructor_args();
