@@ -1,9 +1,9 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-20 - Lambda Decay Fix)
+## Current Status (2025-12-20 - Investigation Update)
 
 **640/661 tests passing (96.8%)**
-- 12 runtime crashes (down from 13)
+- 12 runtime crashes
 - 1 timeout (infinite loop)
 - 2 link failures
 
@@ -15,6 +15,29 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 - Returning 300 → exit code 44
 - Returning 3000 → exit code 184
 - **This is expected OS behavior, not a compiler bug**
+
+## Investigation Notes (2025-12-20)
+
+**AddressOf Member Access Bug Identified**
+- **Issue**: Taking address of struct members (`&obj.member`) generates incorrect IR
+- **Root Cause**: IR generates `member_access` (loads VALUE) followed by `addressof` (takes address of temp), instead of directly computing member address
+- **Impact**: Affects tests that store member addresses (test_pointer_loop.cpp, etc.)
+- **Status**: 🔍 IDENTIFIED - Needs fix in CodeGen.h addressof generation for member access expressions
+- **Example**:
+  ```cpp
+  pp->p = &p[i].x;  // Wants address of p[i].x
+  ```
+  Currently generates:
+  ```
+  %4 = member_access %p[i].x  // Loads value
+  %5 = addressof %4            // Takes address of temp
+  ```
+  Should generate address of member directly without intermediate load.
+
+**Member Store Through Pointers - Working Correctly**
+- Verified that `is_pointer_to_member` flag is set correctly in IR
+- Verified that `handleMemberStore` correctly detects pointer access and loads pointer before storing
+- The infrastructure for pointer member access is correct
 
 ## Recent Fixes (2025-12-20)
 
@@ -31,68 +54,15 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
   - test_lambda_decay.cpp ✓ returns 0 (lambda decay with unary +)
 - **Note**: test_lambda_cpp20_comprehensive.cpp still crashes (different lambda-related issue with captures)
 
-**Previous Fix: Float Literal Initialization & OpCodeWithSize Buffer Overflow**
-- **Issue**: Float/double variable initialization crashed with segfault when using variables with stack offsets requiring 32-bit displacements (offset < -128 or > 127)
-- **Root Cause #1**: Float literals were loaded into GPRs and stored using integer mov instructions, not properly initializing them as float values
-- **Root Cause #2**: `OpCodeWithSize` buffer was only 8 bytes, but SSE float mov instructions can be 9 bytes (Prefix + REX + 2-byte opcode + ModR/M + 4-byte displacement), causing buffer overflow that corrupted instruction encoding
-- **Fix**: 
-  - Modified `handleVariableDecl` in IRConverter.h to store float literals directly to memory using `emitMovDwordPtrImmToRegOffset` for 32-bit floats (more efficient)
-  - For doubles, load into GPR and store with correct size
-  - Increased `MAX_MOV_INSTRUCTION_SIZE` from 8 to 9 bytes to accommodate SSE instructions
-- **Status**: ✅ COMPLETE
-- **Tests Fixed (8)**: All floating-point register spilling tests now pass without crashing
-  - test_float_register_spilling.cpp ✓ (no crash)
-  - test_mixed_float_double_params.cpp ✓ (no crash)
-  - test_all_xmm_registers.cpp ✓ (no crash)
-  - test_comprehensive_registers.cpp ✓ (no crash)
-  - test_register_spilling.cpp ✓ (no crash)
-  - Plus 3 other floating-point tests
-- **Known Issue**: Float-to-int conversions in assignments don't generate FloatToInt IR, causing incorrect return values (pre-existing bug, not introduced by this fix)
+## Past Fixes Summary
 
-**Previous Fix: Range-Based For Loop Pointer Increment**
-- **Issue**: Range-based for loops crashed due to incorrect pointer increment size
-- **Root Cause**: When creating begin/end pointers in `visitRangedForArray`, the code passed pointer size (64 bits) as `size_in_bits` to TypeSpecifierNode. When incrementing, `getSizeInBytes()` used this to calculate increment (64/8 = 8 bytes), ignoring actual element size
-- **Fix**: Modified `visitRangedForArray` in CodeGen.h to calculate actual element size:
-  - Regular arrays (e.g., `int arr[3]`): use base type size (32 bits for int → 4 byte increment)
-  - Arrays of pointers (e.g., `int* arr[3]`): use pointer size (64 bits → 8 byte increment)
-  - Arrays of structs: lookup size from gTypeInfo
-- **Status**: ✅ COMPLETE
-- **Tests Fixed (4)**:
-  - test_range_for.cpp ✓ returns 15
-  - test_range_for_simple.cpp ✓ returns 10
-  - test_custom_container.cpp ✓ returns 15
-  - test_range_for_begin_end.cpp, test_range_for_const_ref.cpp ✓ no longer crash (note: have pre-existing array store issues unrelated to range-for)
-
-**Previous Fix: Array Element Size in AddressOf Operations**
-- **Issue**: Taking address of array elements (`&arr[i]`) calculated wrong offsets for arrays of pointers and struct arrays
-- **Root Cause**: AddressOf handler used identifier size (64 bits for arrays) as element size instead of actual element size
-- **Fix**: Modified UnaryOperator AddressOf handler in CodeGen.h to properly calculate element size:
-  - Regular arrays (e.g., `int arr[3]`): use base type size (32 bits for int)
-  - Arrays of pointers (e.g., `int* arr[3]`): use pointer size (64 bits)
-  - Arrays of structs: lookup size from gTypeInfo
-- **Status**: ✅ COMPLETE
-- **Tests Fixed (1)**:
-  - test_pointer_arithmetic.cpp - Pointer arithmetic with arrays of pointers ✓ returns 20
-  
-**Previous Fix: Arrays of Pointers Incorrectly Flagged as Pointer-to-Array**
-- **Issue**: Arrays of pointers (`int* arr[3]`) were treated as pointer variables instead of actual arrays
-- **Root Cause**: Type checking at CodeGen.h:9735 set `is_pointer_to_array=true` when `pointer_depth() > 0`, even for arrays
-- **Fix**: Added check `&& !(decl_ptr->is_array() || type_node.is_array())` to exclude arrays from pointer-to-array treatment
-- **Status**: ✅ COMPLETE - ArrayStore operations now use correct direct stack access for arrays of pointers
+**Float Literal Init & Buffer Overflow** (8 tests) - Fixed OpCodeWithSize buffer (8→9 bytes), direct memory stores for floats  
+**Range-For Loop Increment** (4 tests) - Fixed pointer increment to use element size not pointer size  
+**AddressOf Array Elements** (1 test) - Fixed `&arr[i]` offsets for pointer/struct arrays  
+**Arrays of Pointers Type** - Fixed type checking to distinguish arrays of pointers from pointer-to-array  
 
 <details>
-<summary><strong>Investigation: Struct Padding (NOT the root cause)</strong></summary>
-
-Initial investigation focused on struct padding as documented in Known Issues. However, testing revealed:
-- FlashCpp correctly calculates struct padding and alignment
-- `sizeof(P)` with mixed-size members returns correct value (e.g., 32 bytes for struct with int, char, float, double, int*)  
-- Member offsets are correctly calculated with proper alignment
-- The crashes were actually caused by array element size bugs (now fixed)
-
-</details>
-
-<details>
-<summary><strong>Completed Fixes (click to expand)</strong></summary>
+<summary><strong>All Completed Fixes (click to expand)</strong></summary>
 
 - ✅ **Lambda decay to function pointer** (2025-12-20) - Fixed unary plus on lambdas to return __invoke address (1 test)
 - ✅ **Float literal initialization** (2025-12-20) - Fixed buffer overflow and initialization (8 tests)
