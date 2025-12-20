@@ -11728,9 +11728,7 @@ private:
 				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				
 				// Store loaded value to result_offset for later use (e.g., indirect_call)
-				auto store_opcodes = generatePtrMovToFrame(temp_reg, result_offset);
-				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+				emitMovToFrame(temp_reg, result_offset);
 				regAlloc.release(temp_reg);
 				variable_scopes.back().variables[result_var_handle].offset = result_offset;
 				return;
@@ -11757,9 +11755,7 @@ private:
 			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 			
 			// Store loaded value to result_offset for later use (e.g., indirect_call)
-			auto store_opcodes = generatePtrMovToFrame(temp_reg, result_offset);
-			textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-			                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+			emitMovToFrame(temp_reg, result_offset);
 			regAlloc.release(temp_reg);
 			variable_scopes.back().variables[result_var_handle].offset = result_offset;
 			return;
