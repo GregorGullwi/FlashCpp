@@ -66,8 +66,8 @@ struct MemberSizeAndAlignment {
 static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifierNode& type_spec) {
 	MemberSizeAndAlignment result;
 	
-	// For pointers and references, size and alignment are always sizeof(void*)
-	if (type_spec.is_pointer() || type_spec.is_reference()) {
+	// For pointers, references, and function pointers, size and alignment are always sizeof(void*)
+	if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_function_pointer()) {
 		result.size = sizeof(void*);
 		result.alignment = sizeof(void*);
 	} else {

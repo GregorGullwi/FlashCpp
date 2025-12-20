@@ -223,6 +223,9 @@ int get_type_size_bits(Type type) {
             return 64;
         case Type::LongDouble:
             return 80;  // x87 extended precision
+        case Type::FunctionPointer:
+        case Type::MemberFunctionPointer:
+            return 64;  // Function pointers are 64-bit (sizeof(void*))
         default:
             return 0;
     }

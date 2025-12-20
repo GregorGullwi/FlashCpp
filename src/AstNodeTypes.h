@@ -188,6 +188,8 @@ inline unsigned char getBasicTypeSizeInBits(Type type) {
 		case Type::Float: return 32;
 		case Type::Double: return 64;
 		case Type::LongDouble: return 128;  // x86-64 long double is 80-bit but padded to 128-bit
+		case Type::FunctionPointer: return 64;  // Function pointers are 64-bit (sizeof(void*))
+		case Type::MemberFunctionPointer: return 64;  // Member function pointers are 64-bit
 		case Type::Void: return 0;
 		default:
 			// For non-basic types (struct, enum, etc.), return 0
