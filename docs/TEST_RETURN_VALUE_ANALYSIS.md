@@ -2,11 +2,12 @@
 
 ## Current Status (2025-12-20 - Updated)
 
-**635/661 tests passing (96.1%)**
-- 18 runtime crashes (down from 21)
+**639/661 tests passing (96.7%)**
+- 14 runtime crashes (down from 21)
 - 1 timeout (infinite loop)
-- 2 link failures
-- 7 compiler crashes (function pointer members - pre-existing issue)
+- 1 link failure (test_covariant_return.cpp)
+- 1 expected link failure (test_virtual_inheritance.cpp)
+- 7 compiler crashes not included above (function pointer members - pre-existing issue)
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
 
@@ -115,54 +116,60 @@ Function pointer member tests cause compiler hangs/crashes:
 - **Issue**: Compiler enters infinite loop when processing structs with function pointer members
 - **Status**: Under investigation - not caused by recent changes
 
-## Remaining Crashes (18 files + 1 timeout)
+## Remaining Crashes (14 files + 1 timeout)
 
-**Current: 18 crashes, 1 timeout** (down from 21 - XMM register handling now fixed)
+**Current: 14 crashes, 1 timeout** (down from 21 - XMM register handling now fixed)
 
 ### Crash Categories (Compacted)
 
-1. **Floating-point** (2 files) - XMM register spilling, >8 float/double params  
-   test_comprehensive_registers.cpp, test_register_spilling.cpp
-   - **Fixed**: test_all_xmm_registers.cpp, test_float_register_spilling.cpp, test_mixed_float_double_params.cpp ✅
-
-2. **Lambda** (2 files) - Capture and decay to function pointers  
+1. **Lambda** (2 files) - Capture and decay to function pointers  
    test_lambda_decay.cpp, test_lambda_cpp20_comprehensive.cpp
 
-3. **Exceptions** (2 files) - Incomplete Linux exception support  
+2. **Exceptions** (2 files) - Incomplete Linux exception support  
    test_exceptions_basic.cpp, test_exceptions_nested.cpp
 
-4. **Template specialization** (2 files)  
+3. **Template specialization** (2 files)  
    test_spec_member_only.cpp, test_specialization_member_func.cpp
 
-5. **Variadic arguments** (2 files)  
+4. **Variadic arguments** (2 files)  
    test_va_implementation.cpp, test_varargs.cpp
 
-6. **Other issues** (8 files)  
+5. **Other issues** (6 files)  
    - spaceship_default.cpp (SIGILL - C++20 three-way comparison)
-   - test_abstract_class.cpp (link failure - vtable/typeinfo relocation)
-   - test_covariant_return.cpp (link failure)
+   - test_abstract_class.cpp (crash - vtable/typeinfo issues)
    - test_pointer_loop.cpp (member access through pointer in loop)
-   - test_rvo_very_large_struct.cpp, test_stack_overflow.cpp
-   - test_template_complex_substitution.cpp, test_ten_mixed.cpp
-   - test_virtual_inheritance.cpp
+   - test_rvo_very_large_struct.cpp (very large struct return value optimization)
+   - test_template_complex_substitution.cpp (complex template substitution)
+
+6. **Link failures** (1 file)  
+   - test_covariant_return.cpp (link failure)
 
 7. **Timeout** (1 file) - test_xvalue_all_casts.cpp
 
 **Recently Fixed**:
 - XMM register handling (3 tests): test_all_xmm_registers.cpp, test_float_register_spilling.cpp, test_mixed_float_double_params.cpp ✅
+- Floating-point tests (2 tests): test_comprehensive_registers.cpp, test_register_spilling.cpp ✅
+- Other fixes (2 tests): test_ten_mixed.cpp, test_stack_overflow.cpp ✅
 - Range-based for loops (4 tests): test_range_for.cpp, test_range_for_simple.cpp, test_custom_container.cpp, test_range_for_begin_end.cpp ✅
 
 ## Priority Investigation Areas
 
 1. **Lambda capture** - 2 tests with lambda capture and decay (top priority)
-2. **Floating-point register spilling** - 2 remaining tests (test_comprehensive_registers.cpp, test_register_spilling.cpp)
-3. **Exception handling** - 2 tests requiring complete Linux exception support
-4. **Template specialization** - 2 tests with member function specialization
-5. **Variadic arguments** - 2 tests with va_list implementation issues
+2. **Exception handling** - 2 tests requiring complete Linux exception support
+3. **Template specialization** - 2 tests with member function specialization
+4. **Variadic arguments** - 2 tests with va_list implementation issues
+5. **C++20 three-way comparison** - spaceship operator causes SIGILL
 6. **Function pointer members** - 7 compiler crashes (pre-existing issue)
+
+## Known Feature Gaps
+
+1. **Float-to-int conversion** - Tests using float arithmetic return 0 instead of expected values
+   - Affects: test_all_xmm_registers.cpp, test_float_register_spilling.cpp, test_mixed_float_double_params.cpp, and others
+   - Tests don't crash but return incorrect values (0 instead of computed result)
+   - This is a separate issue from XMM register handling
 
 ---
 
 *Last Updated: 2025-12-20 (after XMM register handling fix)*
-*Status: 635/661 tests passing (96.1%), 18 crashes, 1 timeout, 2 link failures, 7 compiler crashes*
+*Status: 639/661 tests passing (96.7%), 14 crashes, 1 timeout, 1 link failure*
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
