@@ -85,8 +85,8 @@ static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifie
 // For UserDefined types, tries to look up size from type registry via type_index
 static unsigned char getTypeSizeForTemplateParameter(Type type, size_t type_index) {
 	// Check if this is a basic type that get_type_size_bits can handle
-	// Basic types range from Void to LongDouble in the Type enum
-	if (type >= Type::Void && type <= Type::LongDouble) {
+	// Basic types range from Void to MemberObjectPointer in the Type enum
+	if (type >= Type::Void && type <= Type::MemberObjectPointer) {
 		return static_cast<unsigned char>(get_type_size_bits(type));
 	}
 	// For UserDefined and other types (Template, etc), look up size from type registry
@@ -99,8 +99,8 @@ static unsigned char getTypeSizeForTemplateParameter(Type type, size_t type_inde
 // Helper function to safely get type size from TemplateArgument
 static unsigned char getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
 	// Check if this is a basic type that get_type_size_bits can handle
-	// Basic types range from Void to LongDouble in the Type enum
-	if (arg.type_value >= Type::Void && arg.type_value <= Type::LongDouble) {
+	// Basic types range from Void to MemberObjectPointer in the Type enum
+	if (arg.type_value >= Type::Void && arg.type_value <= Type::MemberObjectPointer) {
 		return static_cast<unsigned char>(get_type_size_bits(arg.type_value));
 	}
 	// For UserDefined and other types (Template, etc), try to extract size from type_specifier
@@ -20686,8 +20686,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// Set type_size_ so parse_type_specifier treats this as a typedef and uses the base_type
 			// This ensures that when "T" is parsed, it resolves to the concrete type (e.g., int)
 			// instead of staying as UserDefined, which would cause toString() to return "unknown"
-			// Only call get_type_size_bits for basic types (Void through LongDouble)
-			if (arg.base_type >= Type::Void && arg.base_type <= Type::LongDouble) {
+			// Only call get_type_size_bits for basic types (Void through MemberObjectPointer)
+			if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
 				type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
 			} else {
 				// For Struct, UserDefined, and other non-basic types, use type_index to get size
@@ -20754,8 +20754,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			const TemplateTypeArg& arg = template_args_as_type_args[i];
 			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), arg.base_type, gTypeInfo.size());
 			// Set type_size_ so parse_type_specifier treats this as a typedef
-			// Only call get_type_size_bits for basic types (Void through LongDouble)
-			if (arg.base_type >= Type::Void && arg.base_type <= Type::LongDouble) {
+			// Only call get_type_size_bits for basic types (Void through MemberObjectPointer)
+			if (arg.base_type >= Type::Void && arg.base_type <= Type::MemberObjectPointer) {
 				type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.base_type));
 			} else {
 				// For Struct, UserDefined, and other non-basic types, use type_index to get size
