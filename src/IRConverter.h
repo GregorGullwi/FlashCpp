@@ -12323,6 +12323,19 @@ private:
 			auto result_store = generateMovToFrameBySize(value_reg, result_offset, value_size);
 			textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
 			                       result_store.op_codes.begin() + result_store.size_in_bytes);
+			
+			// CRITICAL FIX: Clear the register association with the old pointer offset
+			// After dereferencing, value_reg no longer holds the pointer - it holds the dereferenced value
+			// However, we need to be careful: if value_reg was reused from ptr_reg and ptr_reg had
+			// an old association with a different offset, we must clear that to prevent corruption.
+			// But we don't want to release the register completely, as it might be needed.
+			// So we only clear the stack variable offset if it doesn't match the result offset.
+			for (auto& reg_info : regAlloc.registers) {
+				if (reg_info.reg == value_reg && reg_info.stackVariableOffset != result_offset) {
+					reg_info.stackVariableOffset = INT_MIN;
+					reg_info.isDirty = false;
+				}
+			}
 			return;
 		}
 		
@@ -12398,6 +12411,19 @@ private:
 		auto result_store = generateMovToFrameBySize(value_reg, result_offset, value_size);
 		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
 		                       result_store.op_codes.begin() + result_store.size_in_bytes);
+		
+		// CRITICAL FIX: Clear the register association with the old pointer offset
+		// After dereferencing, value_reg no longer holds the pointer - it holds the dereferenced value
+		// However, we need to be careful: if value_reg was reused from ptr_reg and ptr_reg had
+		// an old association with a different offset, we must clear that to prevent corruption.
+		// But we don't want to release the register completely, as it might be needed.
+		// So we only clear the stack variable offset if it doesn't match the result offset.
+		for (auto& reg_info : regAlloc.registers) {
+			if (reg_info.reg == value_reg && reg_info.stackVariableOffset != result_offset) {
+				reg_info.stackVariableOffset = INT_MIN;
+				reg_info.isDirty = false;
+			}
+		}
 	}
 
 	void handleDereferenceStore(const IrInstruction& instruction) {
