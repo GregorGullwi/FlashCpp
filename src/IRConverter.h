@@ -3112,12 +3112,6 @@ public:
 			switch (instruction.getOpcode()) {
 			case IrOpcode::FunctionDecl:
 				FLASH_LOG(Codegen, Debug, "Processing IrOpcode::FunctionDecl");
-				// Pop the previous function's scope before starting a new function
-				// Each function gets its own scope, created in handleFunctionDecl
-				if (!variable_scopes.empty()) {
-					FLASH_LOG(Codegen, Debug, "  Popping previous function scope (depth was ", variable_scopes.size(), ")");
-					variable_scopes.pop_back();
-				}
 				handleFunctionDecl(instruction);
 				break;
 			case IrOpcode::VariableDecl:
@@ -7593,6 +7587,13 @@ private:
 		// Function debug info is now added in add_function_symbol() with length 0
 		// Create std::string where needed for function calls that require it
 		std::string func_name_str(func_name);
+		
+		// Pop the previous function's scope before creating the new one
+		// The finalization code above has already used the previous scope, so it's safe to pop now
+		if (!variable_scopes.empty()) {
+			variable_scopes.pop_back();
+		}
+		
 		StackVariableScope& var_scope = variable_scopes.emplace_back();
 		const auto func_stack_space = calculateFunctionStackSpace(func_name_str, var_scope, param_count);
 		
