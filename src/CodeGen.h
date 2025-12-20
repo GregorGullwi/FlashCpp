@@ -1040,6 +1040,7 @@ private:
 					lv_info.offset,                     // offset
 					false,                              // is_reference
 					false,                              // is_rvalue_reference
+					lv_info.is_pointer_to_member,       // is_pointer_to_member
 					token
 				);
 				return true;
@@ -1222,6 +1223,7 @@ private:
 			lv_info.offset,
 			member_is_reference,
 			member_is_rvalue_reference,
+			lv_info.is_pointer_to_member,  // is_pointer_to_member
 			token
 		);
 		
@@ -1254,6 +1256,7 @@ private:
 	                     std::variant<StringHandle, TempVar> object,
 	                     StringHandle member_name, int offset,
 	                     bool is_reference = false, bool is_rvalue_reference = false,
+	                     bool is_pointer_to_member = false,
 	                     const Token& token = Token()) {
 		MemberStoreOp member_store;
 		member_store.value = value;
@@ -1264,6 +1267,7 @@ private:
 		member_store.is_reference = is_reference;
 		member_store.is_rvalue_reference = is_rvalue_reference;
 		member_store.vtable_symbol = StringHandle();
+		member_store.is_pointer_to_member = is_pointer_to_member;
 		
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 	}
@@ -9778,6 +9782,7 @@ private:
 		std::variant<StringHandle, TempVar> base_object;
 		Type base_type = Type::Void;
 		size_t base_type_index = 0;
+		bool is_pointer_dereference = false;  // Track if we're accessing through pointer (ptr->member)
 
 		// Unwrap ExpressionNode if needed
 		if (object_node.is<ExpressionNode>()) {
@@ -9981,6 +9986,7 @@ private:
 					
 					base_type = pointer_type;
 					base_type_index = pointer_type_index;
+					is_pointer_dereference = true;  // Mark that we're accessing through a pointer
 				}
 			}
 			// Case 4: Array subscript (e.g., arr[i].member)
@@ -10210,6 +10216,7 @@ private:
 		);
 		// Store member name for unified assignment handler
 		lvalue_info.member_name = StringTable::getOrInternStringHandle(member_name);
+		lvalue_info.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 		// Build MemberLoadOp
@@ -10232,6 +10239,7 @@ private:
 		member_load.is_reference = member->is_reference;
 		member_load.is_rvalue_reference = member->is_rvalue_reference;
 		member_load.struct_type_info = nullptr;
+		member_load.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
 
 		// When context is LValueAddress, skip the load and return address/metadata only
 		if (context == ExpressionContext::LValueAddress) {
