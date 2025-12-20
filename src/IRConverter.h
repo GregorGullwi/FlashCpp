@@ -38,9 +38,10 @@ extern bool g_enable_exceptions;
 	+ ---------------- +
 */
 
-// Maximum possible size for 'mov destination_register, [rbp + offset]' instruction:
-// REX (1 byte) + Opcode (1 byte) + ModR/M (1 byte) + SIB (1 byte) + Disp32 (4 bytes) = 8 bytes
-static constexpr size_t MAX_MOV_INSTRUCTION_SIZE = 8;
+// Maximum possible size for mov instructions:
+// - Regular integer mov: REX (1) + Opcode (1) + ModR/M (1) + SIB (1) + Disp32 (4) = 8 bytes
+// - SSE float mov: Prefix (1) + REX (1) + Opcode (2) + ModR/M (1) + Disp32 (4) = 9 bytes
+static constexpr size_t MAX_MOV_INSTRUCTION_SIZE = 9;
 
 struct OpCodeWithSize {
 	std::array<uint8_t, MAX_MOV_INSTRUCTION_SIZE> op_codes;
@@ -1106,10 +1107,16 @@ OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister, int32_
 		*current_byte_ptr++ = modrm;
 		result.size_in_bytes++;
 
-		*current_byte_ptr++ = static_cast<uint8_t>(offset & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 8) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 16) & 0xFF);
-		*current_byte_ptr++ = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		// Debug: Check the bytes being written
+		uint8_t byte0 = static_cast<uint8_t>(offset & 0xFF);
+		uint8_t byte1 = static_cast<uint8_t>((offset >> 8) & 0xFF);
+		uint8_t byte2 = static_cast<uint8_t>((offset >> 16) & 0xFF);
+		uint8_t byte3 = static_cast<uint8_t>((offset >> 24) & 0xFF);
+		
+		*current_byte_ptr++ = byte0;
+		*current_byte_ptr++ = byte1;
+		*current_byte_ptr++ = byte2;
+		*current_byte_ptr++ = byte3;
 		result.size_in_bytes += 4;
 	}
 
@@ -7140,7 +7147,7 @@ private:
 		bool is_array = op.is_array;
 		bool is_initialized = op.initializer.has_value();
 
-		FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", var_name_str, "', is_reference=", is_reference, ", offset=", var_it->second.offset);
+		FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", var_name_str, "', is_reference=", is_reference, ", offset=", var_it->second.offset, ", is_initialized=", is_initialized, ", type=", static_cast<int>(var_type));
 
 		// Store mapping from variable name to offset for reference lookups
 		variable_name_to_offset_[var_name_str] = var_it->second.offset;
@@ -7234,12 +7241,11 @@ private:
 			                  std::holds_alternative<double>(init.value);
 
 			if (is_literal) {
-				// For literal initialization, allocate a register temporarily
-				allocated_reg_val = allocateRegisterWithSpilling();
-				// Load immediate value into register
 				if (std::holds_alternative<double>(init.value)) {
 					// Handle double/float literals
 					double value = std::get<double>(init.value);
+
+					FLASH_LOG(Codegen, Debug, "Initializing ", (var_type == Type::Float ? "float" : "double"), " literal: ", value);
 
 					// Convert double to bit pattern
 					uint64_t bits;
@@ -7249,40 +7255,59 @@ private:
 						float float_value = static_cast<float>(value);
 						uint32_t float_bits;
 						std::memcpy(&float_bits, &float_value, sizeof(float_bits));
-						bits = float_bits; // Zero-extend to 64-bit
+						
+						FLASH_LOG(Codegen, Debug, "Storing float immediate to [RBP+", dst_offset, "], bits=0x", std::hex, float_bits, std::dec);
+						
+						// For 32-bit floats, store immediate directly to memory
+						// This is more efficient and avoids register allocation
+						emitMovDwordPtrImmToRegOffset(X64Register::RBP, dst_offset, float_bits);
 					} else {
+						// For 64-bit doubles, load into GPR then store to memory
 						std::memcpy(&bits, &value, sizeof(bits));
+						
+						FLASH_LOG(Codegen, Debug, "Storing double via GPR to [RBP+", dst_offset, "], bits=0x", std::hex, bits, std::dec);
+						
+						// Allocate a GPR temporarily
+						allocated_reg_val = allocateRegisterWithSpilling();
+						
+						// MOV reg, imm64 (load bit pattern)
+						std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
+						movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg_val) >> 3);
+						movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
+						std::memcpy(&movInst[2], &bits, sizeof(bits));
+						textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+						
+						// Store the 64-bit value to stack
+						emitMovToFrameSized(
+							SizedRegister{allocated_reg_val, 64, false},
+							SizedStackSlot{dst_offset, 64, false}
+						);
+						
+						// Release the register
+						regAlloc.release(allocated_reg_val);
 					}
-
-					// For floating-point types, we need to use XMM registers
-					// But for now, we'll store the bit pattern in a GPR and let the register allocator handle it
-					// This matches the pattern used for function arguments
-
-					// MOV reg, imm64 (load bit pattern)
-					std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
-					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg_val) >> 3);
-					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
-					std::memcpy(&movInst[2], &bits, sizeof(bits));
-					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 				} else if (std::holds_alternative<unsigned long long>(init.value)) {
 					uint64_t value = std::get<unsigned long long>(init.value);
 
+					// For integer literals, allocate a register temporarily
+					allocated_reg_val = allocateRegisterWithSpilling();
+					
 					// MOV reg, imm64
 					std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
 					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg_val) >> 3);
 					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
 					std::memcpy(&movInst[2], &value, sizeof(value));
 					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+
+					// Store the value from register to stack (size-aware)
+					emitMovToFrameSized(
+						SizedRegister{allocated_reg_val, 64, false},  // source: 64-bit register
+						SizedStackSlot{dst_offset, op.size_in_bits, isSignedType(op.type)}  // dest
+					);
+
+					// Release the register since the value is now in the stack
+					regAlloc.release(allocated_reg_val);
 				}
-
-				// Store the value from register to stack (size-aware)
-				emitMovToFrameSized(
-					SizedRegister{allocated_reg_val, 64, false},  // source: 64-bit register
-					SizedStackSlot{dst_offset, op.size_in_bits, isSignedType(op.type)}  // dest
-				);
-
-				// Release the register since the value is now in the stack
-				regAlloc.release(allocated_reg_val);
 			} else {
 				// Load from memory (TempVar or variable)
 				// For non-literal initialization, we don't allocate a register
