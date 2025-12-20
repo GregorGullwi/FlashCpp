@@ -1174,6 +1174,52 @@ OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_t offse
 }
 
 /**
+ * @brief Generates x86-64 binary opcodes for 'movss/movsd [ptr_reg], xmm'.
+ *
+ * This function creates the byte sequence for storing a float/double value from
+ * an XMM register to memory pointed to by a general-purpose register (indirect addressing).
+ *
+ * @param sourceRegister The source XMM register (XMM0-XMM15).
+ * @param ptr_reg The pointer register containing the memory address.
+ * @param is_float True for movss (float), false for movsd (double).
+ * @return OpCodeWithSize containing the generated opcodes and their size.
+ */
+OpCodeWithSize generateFloatMovToMemory(X64Register sourceRegister, X64Register ptr_reg, bool is_float) {
+	OpCodeWithSize result;
+	result.size_in_bytes = 0;
+	uint8_t* current_byte_ptr = result.op_codes.data();
+
+	// Prefix: F3 for movss (float), F2 for movsd (double)
+	*current_byte_ptr++ = is_float ? 0xF3 : 0xF2;
+	result.size_in_bytes++;
+
+	// Check if we need REX prefix
+	uint8_t xmm_reg = xmm_modrm_bits(sourceRegister);
+	uint8_t ptr_reg_bits = static_cast<uint8_t>(ptr_reg) & 0x07;
+	bool need_rex = (xmm_reg >= 8) || (static_cast<uint8_t>(ptr_reg) >= 8);
+	
+	if (need_rex) {
+		uint8_t rex = 0x40;
+		if (xmm_reg >= 8) rex |= 0x04;  // REX.R for XMM8-15
+		if (static_cast<uint8_t>(ptr_reg) >= 8) rex |= 0x01;  // REX.B for R8-R15
+		*current_byte_ptr++ = rex;
+		result.size_in_bytes++;
+	}
+
+	// Opcode: 0F 11 for movss/movsd [mem], xmm
+	*current_byte_ptr++ = 0x0F;
+	*current_byte_ptr++ = 0x11;
+	result.size_in_bytes += 2;
+
+	// ModR/M byte: 00 xmm ptr_reg (indirect addressing, no displacement)
+	uint8_t modrm = 0x00 | ((xmm_reg & 0x07) << 3) | ptr_reg_bits;
+	*current_byte_ptr++ = modrm;
+	result.size_in_bytes++;
+
+	return result;
+}
+
+/**
  * @brief Generates x86-64 binary opcodes for 'mov [rbp + offset], source_register'.
  *
  * This function creates the byte sequence for moving a 64-bit pointer value from a
@@ -7264,12 +7310,8 @@ private:
 						// Allocate a GPR temporarily
 						allocated_reg_val = allocateRegisterWithSpilling();
 						
-						// MOV reg, imm64 (load bit pattern)
-						std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
-						movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg_val) >> 3);
-						movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
-						std::memcpy(&movInst[2], &bits, sizeof(bits));
-						textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+						// MOV reg, imm64 (load bit pattern) - use emit function
+						emitMovImm64(allocated_reg_val, bits);
 						
 						// Store the 64-bit value to stack
 						emitMovToFrameSized(
@@ -7286,12 +7328,8 @@ private:
 					// For integer literals, allocate a register temporarily
 					allocated_reg_val = allocateRegisterWithSpilling();
 					
-					// MOV reg, imm64
-					std::array<uint8_t, 10> movInst = { 0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0 };
-					movInst[0] = 0x48 | (static_cast<uint8_t>(allocated_reg_val) >> 3);
-					movInst[1] = 0xB8 + (static_cast<uint8_t>(allocated_reg_val) & 0x7);
-					std::memcpy(&movInst[2], &value, sizeof(value));
-					textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+					// MOV reg, imm64 - use emit function
+					emitMovImm64(allocated_reg_val, value);
 
 					// Store the value from register to stack (size-aware)
 					emitMovToFrameSized(
@@ -8084,34 +8122,8 @@ private:
 
 				if (is_float_param) {
 					// For floating-point parameters, use movss/movsd to store from XMM register
-					uint8_t prefix = (param.param_type == Type::Float) ? 0xF3 : 0xF2;
-				
-					// Check if we need REX prefix for XMM8-XMM15
-					uint8_t xmm_reg = xmm_modrm_bits(param.src_reg);
-					bool needs_rex = (xmm_reg >= 8);
-				
-					textSectionData.push_back(prefix);
-					if (needs_rex) {
-						textSectionData.push_back(0x44);  // REX.R - extends ModR/M reg field
-					}
-					textSectionData.push_back(0x0F);
-					textSectionData.push_back(0x11); // Store variant (movss/movsd [mem], xmm)
-
-					// ModR/M byte for [RBP + offset] - use only low 3 bits of xmm register
-					int32_t stack_offset = param.offset;
-
-					if (stack_offset >= -128 && stack_offset <= 127) {
-						uint8_t modrm = 0x45 | ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
-						textSectionData.push_back(modrm);
-						textSectionData.push_back(static_cast<uint8_t>(stack_offset));
-					} else {
-						uint8_t modrm = 0x85 | ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
-						textSectionData.push_back(modrm);
-						for (int j = 0; j < 4; ++j) {
-							textSectionData.push_back(static_cast<uint8_t>(stack_offset & 0xFF));
-							stack_offset >>= 8;
-						}
-					}
+					bool is_float = (param.param_type == Type::Float);
+					emitFloatMovToFrame(param.src_reg, param.offset, is_float);
 				} else {
 					// For integer parameters, use size-appropriate MOV
 					// References are always passed as 64-bit pointers regardless of the type they refer to
@@ -10932,32 +10944,11 @@ private:
 			int size_bytes = value_size_bits / 8;
 			
 			if (is_floating_point_type(rhs_type)) {
-				// For floating-point, manually generate SSE store instruction
-				// Format: F3/F2 [REX] 0F 11 /r - movss/movsd [reg], xmm
+				// For floating-point, use SSE store instruction helper
 				bool is_float = (rhs_type == Type::Float);
-				uint8_t xmm_reg = xmm_modrm_bits(source_reg);
-				uint8_t ptr_reg_bits = static_cast<uint8_t>(ptr_reg) & 0x07;
-				bool ptr_needs_rex = static_cast<uint8_t>(ptr_reg) >= 8;
-				bool xmm_needs_rex = xmm_reg >= 8;
-				
-				// Prefix: F3 for movss, F2 for movsd
-				textSectionData.push_back(is_float ? 0xF3 : 0xF2);
-				
-				// REX prefix if needed
-				if (xmm_needs_rex || ptr_needs_rex) {
-					uint8_t rex = 0x40;
-					if (xmm_needs_rex) rex |= 0x04;  // REX.R
-					if (ptr_needs_rex) rex |= 0x01;  // REX.B
-					textSectionData.push_back(rex);
-				}
-				
-				// Opcode: 0F 11
-				textSectionData.push_back(0x0F);
-				textSectionData.push_back(0x11);
-				
-				// ModR/M: 00 xmm ptr_reg (indirect addressing, no displacement)
-				uint8_t modrm = 0x00 | ((xmm_reg & 0x07) << 3) | ptr_reg_bits;
-				textSectionData.push_back(modrm);
+				auto store_inst = generateFloatMovToMemory(source_reg, ptr_reg, is_float);
+				textSectionData.insert(textSectionData.end(), store_inst.op_codes.begin(), 
+				                       store_inst.op_codes.begin() + store_inst.size_in_bytes);
 			} else {
 				// For integer types, use the existing emitStoreToMemory helper
 				emitStoreToMemory(textSectionData, source_reg, ptr_reg, 0, size_bytes);
