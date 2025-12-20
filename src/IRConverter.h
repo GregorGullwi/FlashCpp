@@ -7674,6 +7674,14 @@ private:
 						// Reserve space for vtable entries
 						vtable_info.function_symbols.resize(struct_info->vtable.size());
 						
+						// Initialize pure virtual function entries to __cxa_pure_virtual
+						for (size_t i = 0; i < struct_info->vtable.size(); ++i) {
+							const StructMemberFunction* vfunc = struct_info->vtable[i];
+							if (vfunc && vfunc->is_pure_virtual) {
+								vtable_info.function_symbols[i] = "__cxa_pure_virtual";
+							}
+						}
+						
 						// Populate base class names for RTTI
 						for (const auto& base : struct_info->base_classes) {
 							if (base.type_index < gTypeInfo.size()) {
