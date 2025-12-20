@@ -35,10 +35,10 @@ Total test files analyzed: **661**
 
 | Category | Count | Description |
 |----------|-------|-------------|
-| Valid Returns (0-255) | 622 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
+| Valid Returns (0-255) | 628 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
 | Compilation Failures | 0 | Tests that failed to compile (all expected failures excluded) |
 | Link Failures | 1 | Tests that compiled but failed to link (all expected failures excluded) |
-| Runtime Crashes | 32 | Tests that crashed during execution with various signals |
+| Runtime Crashes | 24 | Tests that crashed during execution with various signals |
 | Execution Timeouts | 1 | Tests that timeout (infinite loop or hang) |
 | Out-of-Range (Valid) | 0 | Tests intentionally returning >255 (noted but truncated by OS) |
 | Out-of-Range (Unknown) | 0 | Tests with unexpected >255 returns |
@@ -47,22 +47,30 @@ Total test files analyzed: **661**
 
 ### Recent Improvements
 
-**2025-12-20 Update (Floating-Point Investigation):**
-- **INVESTIGATING**: Floating-point crashes with variadic functions (printf) - 8 tests affected
-  - **Status**: Root cause identified but not yet fixed
-  - **Affected Tests**: test_global_float.cpp, test_global_double.cpp, test_param_passing_float.cpp, test_mixed_float_double_params.cpp, test_float_register_spilling.cpp, test_all_xmm_registers.cpp, test_comprehensive_registers.cpp, test_register_spilling.cpp
-  - **Key Findings**:
-    1. Float/double arithmetic operations work correctly (verified with test_float_return.cpp)
-    2. Global float/double variables are correctly initialized in .data section
-    3. RIP-relative addressing and relocations work correctly
-    4. Printf with string literals works
-    5. Printf with float literals passed directly works
-    6. **Crash occurs**: When float/double parameters are passed through function calls to variadic functions (printf)
-  - **Root Cause Hypothesis**: Memory corruption during parameter passing or stack frame management for floating-point values in variadic function contexts. The crash happens AFTER successful printf calls, suggesting stack corruption rather than parameter passing issues.
-  - **Evidence**: test_param_passing_float.cpp prints 2 messages successfully ("main: calling level1" and "level1: a=3.14, b=2.72") before crashing, indicating the issue is not with the printf call itself but with stack/register state corruption.
-  - **Next Steps**: Examine stack frame layout for float parameter storage, verify MOVSS/MOVSD don't corrupt adjacent slots, check stack alignment for XMM operations.
+**2025-12-20 Update (Stack Alignment Fix for Floating-Point):**
+- **FIXED**: Stack alignment bug causing floating-point crashes - 6 tests fixed!
+  - **Success**: Improved from **622 passing (94.1%)** to **628 passing (95.0%)** - **6 more tests fixed!**
+  - **Crashes reduced**: From 31 to 24 (7 fewer crashes)
+  - **Root Cause**: Stack space was being aligned to (16n+8) instead of 16n, violating System V AMD64 ABI
+  - **Problem**: After `PUSH RBP`, RSP is 16-byte aligned. `SUB RSP, N` must use N as multiple of 16 to maintain alignment
+  - **Previous Code**: Aligned to (16n+8), causing functions to reserve 56 bytes instead of 64
+  - **Fix**: Changed alignment to multiples of 16: `if (total_stack % 16 != 0) total_stack = (total_stack + 15) & ~15`
+  - **Fixed in**: `handleFunctionDecl()` and `finalizeSections()` 
+  - **Tests Fixed**:
+    - test_global_float.cpp ✓
+    - test_global_double.cpp ✓
+    - test_param_passing_float.cpp ✓
+    - Plus 3 additional tests
+  - **Remaining float issues** (different root causes):
+    - test_mixed_float_double_params.cpp - >8 XMM parameters need stack passing
+    - test_float_register_spilling.cpp - XMM register spilling
+    - test_all_xmm_registers.cpp - excessive XMM register usage
+    - test_comprehensive_registers.cpp - register pressure
+    - test_register_spilling.cpp - general register spilling
+  - Current state: **95.0% of tests passing** (628/661)
 
 **Completed Fixes:**
+- ✅ Stack alignment (6 tests fixed, 2025-12-20) - Fixed floating-point crashes with printf
 - ✅ Function pointers (2 tests fixed, 2025-12-20) - Global and pointer parameter function pointer calls  
 - ✅ Dereference register corruption (1 test fixed, 2025-12-20) - Clear stale register associations
 - ✅ Pointer member size bug (7 tests fixed, 2025-12-20) - Pointers/references in structs use correct 64-bit size
@@ -151,9 +159,10 @@ These tests crashed during execution with various signals. These are **actual fa
 
 ### Crash Categories (Summary)
 
-1. **Floating-point with variadic functions** (8 files) - Stack corruption with float/double params to printf (UNDER INVESTIGATION)
-   - test_global_float.cpp, test_global_double.cpp, test_param_passing_float.cpp, test_mixed_float_double_params.cpp
+1. **Floating-point register/stack issues** (5 files) - XMM register spilling and >8 parameter handling
+   - test_mixed_float_double_params.cpp - 12 float/double params (>8 XMM registers)
    - test_float_register_spilling.cpp, test_all_xmm_registers.cpp, test_comprehensive_registers.cpp, test_register_spilling.cpp
+   - Note: Basic float/double with printf now FIXED (stack alignment issue resolved)
 2. **Lambda-related** (2 files) - Lambda capture and decay to function pointers
    - test_lambda_decay.cpp, test_lambda_cpp20_comprehensive.cpp
 3. **Range-based for loops** (3 files) - Iterator implementation issues
@@ -162,55 +171,56 @@ These tests crashed during execution with various signals. These are **actual fa
    - test_exceptions_basic.cpp, test_exceptions_nested.cpp
 5. **Spaceship operator** (1 file) - C++20 three-way comparison (signal 4: illegal instruction)
    - spaceship_default.cpp
-6. **RVO/NRVO** (3 files) - Return value optimization edge cases
-   - test_rvo_large_struct.cpp, test_rvo_mixed_types.cpp, test_rvo_very_large_struct.cpp
+6. **RVO/NRVO** (2 files) - Return value optimization edge cases (1 test fixed!)
+   - test_rvo_large_struct.cpp, test_rvo_very_large_struct.cpp
 7. **Template specialization** (2 files) - Specialization instantiation issues
    - test_spec_member_only.cpp, test_specialization_member_func.cpp
 8. **Variadic arguments** (2 files) - va_list/va_arg implementation issues
    - test_va_implementation.cpp, test_varargs.cpp
-9. **Virtual inheritance** (2 files) - Virtual function table issues (link successfully, crash at runtime)
-   - test_abstract_class.cpp, test_virtual_inheritance.cpp
-10. **Other** (6 files) - Various issues requiring individual investigation
-    - test_custom_container.cpp, test_pack_expansion_simple.cpp, test_pointer_loop.cpp (signal 8: FPE)
-    - test_stack_overflow.cpp, test_template_complex_substitution.cpp, test_ten_mixed.cpp
-11. **Timeout** (1 file) - Infinite loop or hang
+9. **Other** (5 files) - Various issues requiring individual investigation
+   - test_custom_container.cpp, test_pointer_loop.cpp (signal 8: FPE)
+   - test_stack_overflow.cpp, test_template_complex_substitution.cpp, test_ten_mixed.cpp
+10. **Timeout** (1 file) - Infinite loop or hang
     - test_xvalue_all_casts.cpp
 
 <details>
-<summary>Complete list of crashed tests (click to expand - 31 crashes + 1 timeout as of 2025-12-20)</summary>
+<summary>Complete list of crashed tests (click to expand - 24 crashes + 1 timeout as of 2025-12-20)</summary>
 
 1. spaceship_default.cpp (signal 4 - illegal instruction)
-2. test_abstract_class.cpp (signal 11)
-3. test_all_xmm_registers.cpp (signal 11)
-4. test_comprehensive_registers.cpp (signal 11)
-5. test_custom_container.cpp (signal 11)
-6. test_exceptions_basic.cpp (signal 11)
+2. test_all_xmm_registers.cpp (signal 11)
+3. test_comprehensive_registers.cpp (signal 11)
+4. test_custom_container.cpp (signal 11)
+5. test_exceptions_basic.cpp (signal 11)
+6. test_exceptions_nested.cpp (signal 11)
 7. test_exceptions_nested.cpp (signal 11)
-8. test_float_register_spilling.cpp (signal 11)
-9. test_global_double.cpp (signal 11)
-10. test_global_float.cpp (signal 11)
-11. test_lambda_cpp20_comprehensive.cpp (signal 11)
-12. test_lambda_decay.cpp (signal 11)
-13. test_mixed_float_double_params.cpp (signal 11)
-14. test_pack_expansion_simple.cpp (signal 11)
-15. test_param_passing_float.cpp (signal 11)
-16. test_pointer_loop.cpp (signal 8 - floating point exception)
-17. test_range_for.cpp (signal 11)
-18. test_range_for_begin_end.cpp (signal 11)
-19. test_range_for_const_ref.cpp (signal 11)
-20. test_register_spilling.cpp (signal 11)
-21. test_rvo_large_struct.cpp (signal 11)
-22. test_rvo_mixed_types.cpp (signal 11)
-23. test_rvo_very_large_struct.cpp (signal 11)
-24. test_spec_member_only.cpp (signal 11)
-25. test_specialization_member_func.cpp (signal 11)
-26. test_stack_overflow.cpp (signal 11)
-27. test_template_complex_substitution.cpp (signal 11)
-28. test_ten_mixed.cpp (signal 11)
-29. test_va_implementation.cpp (signal 11)
-30. test_varargs.cpp (signal 11)
-31. test_virtual_inheritance.cpp (signal 11)
-32. test_xvalue_all_casts.cpp (timeout - infinite loop)
+7. test_float_register_spilling.cpp (signal 11)
+8. test_lambda_cpp20_comprehensive.cpp (signal 11)
+9. test_lambda_decay.cpp (signal 11)
+10. test_mixed_float_double_params.cpp (signal 11)
+11. test_pointer_loop.cpp (signal 8 - floating point exception)
+12. test_range_for.cpp (signal 11)
+13. test_range_for_begin_end.cpp (signal 11)
+14. test_range_for_const_ref.cpp (signal 11)
+15. test_register_spilling.cpp (signal 11)
+16. test_rvo_large_struct.cpp (signal 11)
+17. test_rvo_very_large_struct.cpp (signal 11)
+18. test_spec_member_only.cpp (signal 11)
+19. test_specialization_member_func.cpp (signal 11)
+20. test_stack_overflow.cpp (signal 11)
+21. test_template_complex_substitution.cpp (signal 11)
+22. test_ten_mixed.cpp (signal 11)
+23. test_va_implementation.cpp (signal 11)
+24. test_varargs.cpp (signal 11)
+25. test_xvalue_all_casts.cpp (timeout - infinite loop)
+
+**Tests FIXED (no longer crashing):**
+- test_global_float.cpp ✓
+- test_global_double.cpp ✓
+- test_param_passing_float.cpp ✓
+- test_rvo_mixed_types.cpp ✓
+- test_abstract_class.cpp ✓
+- test_pack_expansion_simple.cpp ✓
+- Plus 1 more (total: 628 passing)
 
 </details>
 
@@ -224,19 +234,14 @@ These tests crashed during execution with various signals. These are **actual fa
 
 ### For Compiler Development
 Priority areas for investigation:
-1. **Floating-point with variadic functions** (8 files) - HIGHEST PRIORITY - Under active investigation
-   - Issue: Stack corruption when passing float/double through function calls to variadic functions
-   - Evidence: Successful printf calls followed by crashes suggest memory corruption
-   - Next: Examine stack frame layout, verify XMM register save/restore, check alignment
+1. **Floating-point register issues** (5 files) - XMM register spilling and >8 parameter handling
+   - Issue: Functions with >8 float/double parameters need stack parameter passing
+   - Related: XMM register spilling under pressure
 2. Lambda capture and invocation (2 files)
 3. Range-based for loop iterators (3 files)
-4. Virtual inheritance and abstract classes (2 files - now link successfully)
-5. Exception handling on Linux (2 files)
-6. ~~Function pointers (2 files)~~ **FIXED (2025-12-20)**
-3. Range-based for loop iterators (3 files)
-4. Virtual inheritance and abstract classes (2 files - now link but crash)
 4. Exception handling on Linux (2 files)
-5. ~~Function pointers (2 files)~~ **FIXED (2025-12-20)**
+5. ~~Floating-point stack alignment (6 files)~~ **FIXED (2025-12-20)**
+6. ~~Function pointers (2 files)~~ **FIXED (2025-12-20)**
 
 ### Running the Validation Script
 ```bash
@@ -248,44 +253,50 @@ The script compiles, links, and runs all test files with a 5-second timeout, rep
 ## Conclusion
 
 **Summary (as of 2025-12-20):**
-- **622 tests (94.1%)** successfully run and return valid values
-- **31 tests (4.7%)** crash during execution
+- **628 tests (95.0%)** successfully run and return valid values
+- **24 tests (3.6%)** crash during execution
 - **1 test (0.2%)** timeout (infinite loop or hang)
 - **1 test (0.2%)** fails to link
 - **0 unexpected compilation failures**
 
 **Key Findings:**
 - Return value truncation is expected OS behavior, not a compiler bug
-- Most crashes (26%) are segmentation faults (signal 11) suggesting memory management issues
-- **NEW**: Floating-point operations work correctly in isolation
-- **NEW**: Crashes occur specifically when float/double values are passed through function calls to variadic functions
+- Most crashes are segmentation faults (signal 11) suggesting memory management issues
+- Stack alignment bug was causing floating-point crashes - **NOW FIXED**
 - Function pointer calls through globals and pointer parameters now work correctly
 
-**Recent Investigation (2025-12-20):**
-- **Floating-point with variadic functions** (8 tests) - Root cause identified:
-  - Float/double arithmetic works correctly
-  - Global variables correctly initialized
-  - Issue is stack corruption when passing float/double parameters through function calls to variadic functions (printf)
-  - Evidence: test_param_passing_float.cpp prints 2 messages successfully before crashing
-  - Hypothesis: Memory corruption in stack frame management for XMM register values
+**Recent Fix (2025-12-20):**
+- **Stack alignment for floating-point** (6 tests fixed) - Corrected stack alignment bug:
+  - **Root cause**: Stack space aligned to (16n+8) instead of 16n, violating ABI
+  - **Problem**: After PUSH RBP, RSP is 16-aligned. SUB RSP, N must use N as multiple of 16
+  - **Impact**: Functions reserved 56 bytes instead of 64, causing crashes in external function calls
+  - **Fix**: Changed alignment check from `% 16 != 8` to `% 16 != 0`
+  - **Tests fixed**: test_global_float.cpp, test_global_double.cpp, test_param_passing_float.cpp, plus 3 more
+  - **Result**: Crashes reduced from 31 to 24 (7 fewer crashes)
 
 **Recent Fixes (2025-12-20):**
 1. ✅ **Function pointer calls** (2 tests fixed) - Global and pointer parameter function pointer handling
 2. ✅ **Dereference register corruption** (1 test fixed) - Clear stale register associations after dereference
-3. ✅ **Pointer member size bug** (7 tests fixed) - Pointers/references in structs use correct 64-bit size
-4. ✅ **Temp variable stack allocation** (23 tests fixed) - Fixed handleMemberAccess offset handling
-5. ✅ **Heap allocation constructor** - Fixed LEA vs MOV for heap vs stack objects
-6. ✅ **Multi-level pointer dereference** (2025-12-17) - Fixed type_index vs pointer_depth issue
-7. ✅ **Validation script** (2025-12-17) - Eliminated false positives in crash detection
+
+**Recent Fixes (2025-12-20):**
+1. ✅ **Stack alignment** (6 tests fixed, 2025-12-20) - Fixed floating-point crashes caused by incorrect stack alignment
+2. ✅ **Function pointer calls** (2 tests fixed) - Global and pointer parameter function pointer handling
+3. ✅ **Dereference register corruption** (1 test fixed) - Clear stale register associations after dereference
+4. ✅ **Pointer member size bug** (7 tests fixed) - Pointers/references in structs use correct 64-bit size
+5. ✅ **Temp variable stack allocation** (23 tests fixed) - Fixed handleMemberAccess offset handling
+6. ✅ **Heap allocation constructor** - Fixed LEA vs MOV for heap vs stack objects
+7. ✅ **Multi-level pointer dereference** (2025-12-17) - Fixed type_index vs pointer_depth issue
+8. ✅ **Validation script** (2025-12-17) - Eliminated false positives in crash detection
 
 **Priority Areas for Future Work:**
-1. **HIGHEST**: Fix floating-point stack corruption with variadic functions (8 files)
-2. Investigate lambda capture and decay to function pointers (2 files)
-3. Fix range-based for loop iterator issues (3 files)
-4. Debug virtual inheritance crashes (2 files - progress: now link successfully)
-5. Exception handling support on Linux (2 files)
+1. **HIGHEST**: Floating-point register spilling and >8 XMM parameters (5 files)
+2. Lambda capture and decay to function pointers (2 files)
+3. Range-based for loop iterator issues (3 files)
+4. Exception handling support on Linux (2 files)
+5. ~~Stack alignment for floating-point (6 files)~~ **FIXED (2025-12-20)**
 
 ---
 
 *Last Updated: 2025-12-20*
 *Analysis Tool: tests/validate_return_values.sh*
+*Current Status: 628/661 tests passing (95.0%), 24 crashes, 1 timeout, 1 link failure*
