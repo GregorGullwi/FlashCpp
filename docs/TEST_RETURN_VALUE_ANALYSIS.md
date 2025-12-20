@@ -35,11 +35,11 @@ Total test files analyzed: **661**
 
 | Category | Count | Description |
 |----------|-------|-------------|
-| Valid Returns (0-255) | 589 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
+| Valid Returns (0-255) | 612 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
 | Compilation Failures | 0 | Tests that failed to compile (all expected failures excluded) |
 | Link Failures | 1 | Tests that compiled but failed to link (all expected failures excluded) |
-| Runtime Crashes | 64 | Tests that crashed during execution with various signals |
-| Execution Timeouts | 1 | Tests that timeout (infinite loop or hang) |
+| Runtime Crashes | 41 | Tests that crashed during execution with various signals |
+| Execution Timeouts | 0 | Tests that timeout (infinite loop or hang) |
 | Out-of-Range (Valid) | 0 | Tests intentionally returning >255 (noted but truncated by OS) |
 | Out-of-Range (Unknown) | 0 | Tests with unexpected >255 returns |
 
@@ -47,7 +47,24 @@ Total test files analyzed: **661**
 
 ### Recent Improvements
 
-**2025-12-20 Update:**
+**2025-12-20 Update (Final Fix):**
+- **FIXED**: Widespread crashes related to temp variable stack offset allocation
+  - **Success**: Improved from **589 passing (89.1%)** to **612 passing (92.6%)** - **23 more tests fixed!**
+  - **Crashes reduced**: From 64 crashes to 41 crashes
+  - **Root Cause Identified**: handleMemberAccess was using offset 0 for pointer-based member access
+    - For pointer access (e.g., `this->value`), member_stack_offset was set to 0
+    - This 0 value was then assigned to register's stackVariableOffset
+    - Caused registers to flush to offset 0 (rbp location), corrupting the saved frame pointer
+  - **Final Fix**: Use result_offset (allocated temp var) for pointer-based access instead of member_stack_offset
+  - **All Previous Fixes Also Applied**:
+    1. Scope cleanup moved to correct location (after finalization, before new scope creation)
+    2. Register allocator reset at start of each function
+    3. VariableInfo default offset changed from 0 to INT_MIN
+    4. Stack allocation timing fixed to preserve previous function's stack space for patching
+- **Impact**: operator() functions, member functions accessing members through pointers, and many other tests now work correctly
+- Current state: **92.6% of tests passing** (612/661)
+
+**2025-12-20 Update (Heap Allocation Fix):**
 - Fixed heap allocation constructor bug (test_heap.cpp now passes)
   - **Issue**: Constructor was using LEA (load effective address) for heap-allocated objects instead of MOV (load value)
   - **Root Cause**: handleConstructorCall couldn't distinguish between heap-allocated pointers and stack-allocated objects
@@ -55,7 +72,6 @@ Total test files analyzed: **661**
     - Set to true for `new` and placement new operations
     - handleConstructorCall now uses MOV for heap objects, LEA for stack objects
   - **Impact**: Fixed test_heap.cpp without breaking RVO tests
-- Current state: **89.1% of tests passing** (589/661)
 
 **2025-12-17 Update:**
 - Fixed validation script crash detection logic (reduced false positives from 89 to 57 actual crashes)

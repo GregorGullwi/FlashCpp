@@ -4166,7 +4166,8 @@ private:
 		if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 			const TempVar temp_var = std::get<TempVar>(ctx.result_value.value);
 			const int32_t stack_offset = getStackOffsetFromTempVar(temp_var);
-			variable_scopes.back().variables[StringTable::getOrInternStringHandle(temp_var.name())].offset = stack_offset;
+			StringHandle reassign_handle = StringTable::getOrInternStringHandle(temp_var.name());
+			variable_scopes.back().variables[reassign_handle].offset = stack_offset;
 			// Only set stack variable offset for allocated registers (not XMM0/XMM1 used directly)
 			if (ctx.result_physical_reg < X64Register::XMM0 || regAlloc.is_allocated(ctx.result_physical_reg)) {
 				// IMPORTANT: Before reassigning this register to the result TempVar's offset,
@@ -4383,7 +4384,7 @@ private:
 		uint16_t outgoing_args_space = 0;  // Space for largest outgoing function call
 	};
 	struct VariableInfo {
-		int offset = 0;        // Stack offset from RBP
+		int offset = INT_MIN;  // Stack offset from RBP (INT_MIN = unallocated)
 		int size_in_bits = 0;  // Size in bits
 	};
 
@@ -4687,10 +4688,10 @@ private:
 	int32_t getStackOffsetFromTempVar(TempVar tempVar) {
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
-			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(tempVar.name()));
-			FLASH_LOG(Codegen, Debug, "getStackOffsetFromTempVar: Looking up '", tempVar.name(), "'");
-			if (it != variable_scopes.back().variables.end() && it->second.offset != INT_MIN) {
-				FLASH_LOG(Codegen, Debug, "  Found with valid offset: ", it->second.offset);
+			StringHandle lookup_handle = StringTable::getOrInternStringHandle(tempVar.name());
+			auto& current_scope = variable_scopes.back();
+			auto it = current_scope.variables.find(lookup_handle);
+			if (it != current_scope.variables.end() && it->second.offset != INT_MIN) {
 				return it->second.offset;  // Use pre-allocated offset (if it's been properly set)
 			}
 			
@@ -4699,27 +4700,19 @@ private:
 			// This handles the duplicate entry problem where named variables get both a name entry
 			// and a TempVar entry
 			if (it != variable_scopes.back().variables.end() && it->second.offset == INT_MIN) {
-				FLASH_LOG(Codegen, Debug, "  Found with INT_MIN, last_allocated_variable: '", last_allocated_variable_name_, "', offset: ", last_allocated_variable_offset_);
 				if (last_allocated_variable_name_.isValid() && last_allocated_variable_offset_ != 0) {
 					// Use the last allocated variable's offset for this TempVar
 					// Update the TempVar entry so future lookups are O(1)
 					it->second.offset = last_allocated_variable_offset_;
-					FLASH_LOG(Codegen, Debug, "  Linked '", tempVar.name(), 
-					         "' to named variable '", last_allocated_variable_name_, "' at offset ", last_allocated_variable_offset_);
 					return last_allocated_variable_offset_;
 				}
-			} else {
-				FLASH_LOG(Codegen, Debug, "  Not found in variables map");
 			}
 		}
 		// Allocate TempVars sequentially after named_vars + shadow space
 		// Use next_temp_var_offset_ to track the next available slot
 		// Each TempVar gets 8 bytes (conservative sizing for x64)
-		FLASH_LOG(Codegen, Debug, "  Allocating new offset");
 		int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
 		next_temp_var_offset_ += 8;
-		
-
 		
 		// Track the maximum TempVar index for stack size calculation
 		if (tempVar.var_number > max_temp_var_index_) {
@@ -4734,7 +4727,8 @@ private:
 		
 		// Register the TempVar's offset in variables map so subsequent lookups
 		// return the same offset even if scope_stack_space changes
-		variable_scopes.back().variables[StringTable::getOrInternStringHandle(tempVar.name())].offset = offset;
+		StringHandle temp_var_handle = StringTable::getOrInternStringHandle(tempVar.name());
+		variable_scopes.back().variables[temp_var_handle].offset = offset;
 		
 		return offset;
 	}
@@ -7431,6 +7425,10 @@ private:
 	void handleFunctionDecl(const IrInstruction& instruction) {
 		assert(instruction.hasTypedPayload() && "FunctionDecl instruction must use typed payload");
 		
+		// Reset register allocator state for the new function
+		// This ensures registers from previous functions don't interfere
+		regAlloc.reset();
+		
 		// Use typed payload path
 		const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
 		
@@ -7589,6 +7587,13 @@ private:
 		// Function debug info is now added in add_function_symbol() with length 0
 		// Create std::string where needed for function calls that require it
 		std::string func_name_str(func_name);
+		
+		// Pop the previous function's scope before creating the new one
+		// The finalization code above has already used the previous scope, so it's safe to pop now
+		if (!variable_scopes.empty()) {
+			variable_scopes.pop_back();
+		}
+		
 		StackVariableScope& var_scope = variable_scopes.emplace_back();
 		const auto func_stack_space = calculateFunctionStackSpace(func_name_str, var_scope, param_count);
 		
@@ -11759,10 +11764,19 @@ private:
 		// 1. Update variables map: For future lookups of this TempVar by name
 		// 2. Update register allocator: For register spilling and dirty register flushing
 		//
-		// Both must point to member_stack_offset (the actual member location in the struct)
-		// NOT to result_offset (which was allocated for the TempVar but should not be used)
-		variable_scopes.back().variables[result_var_handle].offset = member_stack_offset;
-		regAlloc.set_stack_variable_offset(temp_reg, member_stack_offset, op.result.size_in_bits);
+		// For stack-based structs: Both must point to member_stack_offset (the actual member location in the struct)
+		// For pointer-based access (this, references): member_stack_offset is 0 and meaningless,
+		// so we use result_offset (the allocated temp var) instead
+		if (is_pointer_access) {
+			// For pointer-based member access, the value is loaded into a register
+			// and should be backed by the result_offset temp var location, not member_stack_offset (which is 0)
+			variable_scopes.back().variables[result_var_handle].offset = result_offset;
+			regAlloc.set_stack_variable_offset(temp_reg, result_offset, op.result.size_in_bits);
+		} else {
+			// For stack-based struct member access, alias the temp var to the member's actual location
+			variable_scopes.back().variables[result_var_handle].offset = member_stack_offset;
+			regAlloc.set_stack_variable_offset(temp_reg, member_stack_offset, op.result.size_in_bits);
+		}
 	}
 
 	void handleMemberStore(const IrInstruction& instruction) {
