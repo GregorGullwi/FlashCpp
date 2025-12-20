@@ -7675,6 +7675,9 @@ private:
 						vtable_info.function_symbols.resize(struct_info->vtable.size());
 						
 						// Initialize pure virtual function entries to __cxa_pure_virtual
+						// Note: This only affects pure virtual functions in THIS class's vtable.
+						// Derived classes that override these functions will have their own vtables
+						// with the actual implementation function pointers.
 						for (size_t i = 0; i < struct_info->vtable.size(); ++i) {
 							const StructMemberFunction* vfunc = struct_info->vtable[i];
 							if (vfunc && vfunc->is_pure_virtual) {
