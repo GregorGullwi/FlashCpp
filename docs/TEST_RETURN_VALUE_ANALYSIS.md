@@ -35,10 +35,10 @@ Total test files analyzed: **661**
 
 | Category | Count | Description |
 |----------|-------|-------------|
-| Valid Returns (0-255) | 619 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
+| Valid Returns (0-255) | 620 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
 | Compilation Failures | 0 | Tests that failed to compile (all expected failures excluded) |
 | Link Failures | 1 | Tests that compiled but failed to link (all expected failures excluded) |
-| Runtime Crashes | 33 | Tests that crashed during execution with various signals |
+| Runtime Crashes | 34 | Tests that crashed during execution with various signals |
 | Execution Timeouts | 1 | Tests that timeout (infinite loop or hang) |
 | Out-of-Range (Valid) | 0 | Tests intentionally returning >255 (noted but truncated by OS) |
 | Out-of-Range (Unknown) | 0 | Tests with unexpected >255 returns |
@@ -47,53 +47,26 @@ Total test files analyzed: **661**
 
 ### Recent Improvements
 
-**2025-12-20 Update (Pointer Member Size Fix):**
-- **FIXED**: Pointer member dereferencing crashes - 7 tests fixed!
-  - **Success**: Improved from **612 passing (92.6%)** to **619 passing (93.6%)** - **7 more tests fixed!**
-  - **Crashes reduced**: From 40 crashes to 33 crashes
-  - **Root Cause Identified**: Struct members with pointer types were registered with incorrect size
-    - In Parser.cpp, `member_size` was calculated as `type_spec.size_in_bits() / 8`
-    - For pointer types (e.g., `int* p`), this returned base type size (4 bytes for int) instead of pointer size (8 bytes)
-    - Member access IR then used wrong size (32 bits instead of 64 bits) for pointer members
-    - Code generation loaded/stored wrong number of bytes, causing data corruption and crashes
-  - **Fix Applied**: Check for pointer/reference types before calculating member size
-    - `if (type_spec.is_pointer() || type_spec.is_reference()) member_size = sizeof(void*);`
-    - Pointers and references now correctly use 64-bit size on x64 platforms
-  - **Tests Fixed**:
-    1. test_minimal_member_deref.cpp ✓
-    2. test_two_deref.cpp ✓
-    3. test_member_deref.cpp ✓
-    4. test_const_member_deref.cpp ✓
-    5. test_ctor_deref.cpp ✓
-    6. test_one_deref_ctor.cpp ✓
-    7. (one more test from the 7 total)
-  - **Impact**: Any struct with pointer members can now be dereferenced correctly
-  - Current state: **93.6% of tests passing** (619/661)
+**2025-12-20 Update (Dereference Register Corruption Fix):**
+- **FIXED**: Register corruption when dereferencing pointers in expressions - test_same_deref.cpp fixed!
+  - **Success**: Improved from **619 passing (93.6%)** to **620 passing (93.8%)** - **1 more test fixed!**
+  - **Root Cause**: After dereference, register held dereferenced value but allocator thought it still held the pointer
+    - Member access: loads pointer into register RAX, associates RAX with pointer's stack offset
+    - Dereference: modifies RAX in-place to hold dereferenced value (e.g., 42)
+    - Register allocator: still thinks RAX holds pointer at original offset
+    - Later operations: dereferenced value written back to pointer offset, corrupting the pointer!
+  - **Fix**: Clear stale register associations in `handleDereference` after storing result
+    - Prevents dereferenced value from being written back to source pointer location
+  - **Test Fixed**: test_same_deref.cpp ✓
+  - **Additional Progress**: test_abstract_class.cpp and test_virtual_inheritance.cpp now link (previously link failures)
+  - Current state: **93.8% of tests passing** (620/661)
 
-**2025-12-20 Update (Final Fix - Temp Variable Allocation):**
-- **FIXED**: Widespread crashes related to temp variable stack offset allocation
-  - **Success**: Improved from **589 passing (89.1%)** to **612 passing (92.6%)** - **23 more tests fixed!**
-  - **Crashes reduced**: From 64 crashes to 41 crashes
-  - **Root Cause**: handleMemberAccess was using offset 0 for pointer-based member access, corrupting the saved frame pointer
-  - **Fix**: Use result_offset (allocated temp var) for pointer-based access instead of member_stack_offset
-  - Previous state: **92.6% of tests passing** (612/661)
-
-**2025-12-20 Update (Heap Allocation Fix):**
-- Fixed heap allocation constructor bug (test_heap.cpp now passes)
-  - **Issue**: Constructor was using LEA (load effective address) for heap-allocated objects instead of MOV (load value)
-  - **Root Cause**: handleConstructorCall couldn't distinguish between heap-allocated pointers and stack-allocated objects
-  - **Fix**: Added `is_heap_allocated` flag to ConstructorCallOp structure
-    - Set to true for `new` and placement new operations
-    - handleConstructorCall now uses MOV for heap objects, LEA for stack objects
-  - **Impact**: Fixed test_heap.cpp without breaking RVO tests
-
-**2025-12-17 Update:**
-- Fixed validation script crash detection logic (reduced false positives from 89 to 57 actual crashes)
-  - Previous script incorrectly treated return values >= 128 as crashes
-  - Now properly detects actual crashes by checking stderr for crash messages
-- Fixed multi-level pointer dereference crash (test_pointer_declarations.cpp)
-  - Identified root cause: VariableDeclarationNode path returning wrong value in 4th operand position
-  - Applied fix: Return pointer_depth for pointer types instead of type_index
+**Completed Fixes (Previous Updates):**
+- ✅ Pointer member size bug (7 tests fixed, 2025-12-20) - Pointers/references in structs now use correct 64-bit size
+- ✅ Temp variable stack allocation (23 tests fixed, 2025-12-20) - Fixed handleMemberAccess offset handling
+- ✅ Heap allocation constructor (2025-12-20) - Fixed LEA vs MOV for heap vs stack objects
+- ✅ Multi-level pointer dereference (2025-12-17) - Fixed type_index vs pointer_depth issue
+- ✅ Validation script (2025-12-17) - Eliminated false positives in crash detection
 
 ## Tests with Intentional Large Return Values
 
@@ -157,6 +130,24 @@ These tests crashed during execution with various signals. These are **actual fa
 - **Fix**: Use result_offset (allocated temp var) for pointer-based access instead of member_stack_offset
 - **Status**: ✅ Fixed - operator() functions, member functions accessing members through pointers now work
 
+**Dereference register corruption - FIXED (2025-12-20)**
+- **Issue**: Dereferenced value being written back to source pointer location, corrupting the pointer
+- **Root Cause**: Register allocator maintaining stale association after in-place dereference operation
+- **Fix**: Clear stale register associations in `handleDereference` after storing result
+- **Status**: ✅ Fixed - test_same_deref.cpp now passes
+
+**Pointer member dereferencing - FIXED (2025-12-20)** - 7 tests fixed
+- **Issue**: Struct members with pointer types were registered with incorrect size (base type size instead of pointer size)
+- **Root Cause**: Parser.cpp calculated member_size as `type_spec.size_in_bits() / 8` without checking for pointers
+- **Fix**: Check `is_pointer()` or `is_reference()` before calculating size; use `sizeof(void*)` for both
+- **Status**: ✅ Fixed - test_minimal_member_deref.cpp, test_two_deref.cpp, test_member_deref.cpp, test_const_member_deref.cpp, test_ctor_deref.cpp, test_one_deref_ctor.cpp + 1 more
+
+**Temp variable stack allocation - FIXED (2025-12-20)** - 23 tests fixed
+- **Issue**: handleMemberAccess using offset 0 for pointer-based member access, corrupting saved frame pointer
+- **Root Cause**: member_stack_offset was set to 0 for pointer access, then assigned to register's stackVariableOffset
+- **Fix**: Use result_offset (allocated temp var) for pointer-based access instead of member_stack_offset
+- **Status**: ✅ Fixed - operator() functions, member functions accessing members through pointers now work
+
 **Heap allocation constructor - FIXED (2025-12-20)**
 - **Issue**: Constructor using LEA instead of MOV for heap-allocated objects, causing "free(): invalid pointer"
 - **Root Cause**: handleConstructorCall couldn't distinguish heap vs stack allocation
@@ -192,13 +183,14 @@ These tests crashed during execution with various signals. These are **actual fa
    - test_spec_member_only.cpp, test_specialization_member_func.cpp
 9. **Variadic arguments** (2 files) - va_list implementation issues
    - test_va_implementation.cpp, test_varargs.cpp
-10. **Other** (9 files) - Various issues requiring individual investigation
+10. **Virtual inheritance** (2 files) - Virtual function table and inheritance issues (now link, but crash at runtime)
+    - test_abstract_class.cpp, test_virtual_inheritance.cpp
+11. **Other** (8 files) - Various issues requiring individual investigation
     - test_custom_container.cpp, test_pack_expansion_simple.cpp, test_pointer_loop.cpp (signal 8)
-    - test_same_deref.cpp (constructor initializer list issue), test_stack_overflow.cpp
-    - test_template_complex_substitution.cpp, test_ten_mixed.cpp, test_xvalue_all_casts.cpp (timeout)
+    - test_stack_overflow.cpp, test_template_complex_substitution.cpp, test_ten_mixed.cpp, test_xvalue_all_casts.cpp (timeout)
 
 <details>
-<summary>Complete list of crashed tests (click to expand - 33 crashes + 1 timeout as of 2025-12-20)</summary>
+<summary>Complete list of crashed tests (click to expand - 34 crashes + 1 timeout as of 2025-12-20)</summary>
 
 1. spaceship_default.cpp (signal 4)
 2. test_all_xmm_registers.cpp (signal 11)
@@ -224,15 +216,16 @@ These tests crashed during execution with various signals. These are **actual fa
 22. test_rvo_large_struct.cpp (signal 11)
 23. test_rvo_mixed_types.cpp (signal 11)
 24. test_rvo_very_large_struct.cpp (signal 11)
-25. test_same_deref.cpp (signal 11)
-26. test_spec_member_only.cpp (signal 11)
-27. test_specialization_member_func.cpp (signal 11)
-28. test_stack_overflow.cpp (signal 11)
-29. test_template_complex_substitution.cpp (signal 11)
-30. test_ten_mixed.cpp (signal 11)
-31. test_va_implementation.cpp (signal 11)
-32. test_varargs.cpp (signal 11)
-33. test_xvalue_all_casts.cpp (timeout)
+25. test_spec_member_only.cpp (signal 11)
+26. test_specialization_member_func.cpp (signal 11)
+27. test_stack_overflow.cpp (signal 11)
+28. test_template_complex_substitution.cpp (signal 11)
+29. test_ten_mixed.cpp (signal 11)
+30. test_va_implementation.cpp (signal 11)
+31. test_varargs.cpp (signal 11)
+32. test_abstract_class.cpp (signal 11)
+33. test_virtual_inheritance.cpp (signal 11)
+34. test_xvalue_all_casts.cpp (timeout)
 
 </details>
 
@@ -246,11 +239,12 @@ These tests crashed during execution with various signals. These are **actual fa
 
 ### For Compiler Development
 Priority areas for investigation:
-1. Member function template instantiation (parameter stack allocation)
-2. Lambda capture and invocation
-3. Virtual function tables and inheritance
-4. Range-based for loop iterators
-5. Exception handling on Linux
+1. Lambda capture and invocation (2 files crashing)
+2. Floating-point register spilling and global float/double variables (7 files)
+3. Range-based for loop iterators (3 files)
+4. Virtual inheritance and abstract classes (2 files - now link but crash)
+5. Exception handling on Linux (2 files)
+6. Function pointers (2 files)
 
 ### Running the Validation Script
 ```bash
@@ -262,8 +256,8 @@ The script compiles, links, and runs all test files with a 5-second timeout, rep
 ## Conclusion
 
 **Summary (as of 2025-12-20):**
-- **619 tests (93.6%)** successfully run and return valid values
-- **33 tests (5.0%)** crash during execution
+- **620 tests (93.8%)** successfully run and return valid values
+- **34 tests (5.1%)** crash during execution
 - **1 test (0.2%)** timeout (infinite loop or hang)
 - **1 test (0.2%)** fails to link
 - **0 unexpected compilation failures**
@@ -271,24 +265,23 @@ The script compiles, links, and runs all test files with a 5-second timeout, rep
 **Key Findings:**
 - Return value truncation is expected OS behavior, not a compiler bug
 - Most crashes are SIGSEGV (segmentation faults) suggesting memory management issues
-- Pointer member dereferencing has been fixed - struct members with pointer types now correctly use 64-bit size
+- Register allocation tracking has been improved to prevent corruption after dereference operations
 
-**Recent Fixes:**
-1. ✅ **Pointer member size bug** (7 tests fixed) - Pointers/references in structs now use correct 64-bit size
-2. ✅ **Temp variable stack allocation** (23 tests fixed) - Fixed handleMemberAccess offset handling
-3. ✅ **Heap allocation constructor** - Fixed LEA vs MOV for heap vs stack objects
-4. ✅ **Multi-level pointer dereference** - Fixed type_index vs pointer_depth issue
-5. ✅ **Validation script** - Eliminated false positives in crash detection
+**Recent Fixes (2025-12-20):**
+1. ✅ **Dereference register corruption** (1 test fixed) - Clear stale register associations after dereference
+2. ✅ **Pointer member size bug** (7 tests fixed) - Pointers/references in structs now use correct 64-bit size
+3. ✅ **Temp variable stack allocation** (23 tests fixed) - Fixed handleMemberAccess offset handling
+4. ✅ **Heap allocation constructor** - Fixed LEA vs MOV for heap vs stack objects
+5. ✅ **Multi-level pointer dereference** (2025-12-17) - Fixed type_index vs pointer_depth issue
+6. ✅ **Validation script** (2025-12-17) - Eliminated false positives in crash detection
 
 **Priority Areas for Future Work:**
-1. ~~Fix pointer member dereferencing~~ ✅ DONE
-2. Investigate remaining lambda capture and invocation crashes
-3. Fix range-based for loop iterator issues
-4. Address floating-point register spilling issues
-5. Implement exception handling support on Linux
-6. Complete spaceship operator implementation
-4. Fix exception handling on Linux platform
-5. Improve virtual function table handling
+1. Investigate lambda capture and invocation crashes (2 files)
+2. Fix floating-point register spilling issues (7 files)
+3. Address range-based for loop iterator issues (3 files)
+4. Debug virtual inheritance crashes (2 files - progress: now link successfully)
+5. Implement exception handling support on Linux (2 files)
+6. Fix function pointer handling bugs (2 files)
 
 ---
 
