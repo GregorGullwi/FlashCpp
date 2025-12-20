@@ -9770,6 +9770,61 @@ private:
 		return { element_type, element_size_bits, result_var, element_type_index };
 	}
 
+	// Helper function to validate and setup identifier-based member access
+	// Returns true on success, false on error
+	bool validateAndSetupIdentifierMemberAccess(
+		std::string_view object_name,
+		std::variant<StringHandle, TempVar>& base_object,
+		Type& base_type,
+		size_t& base_type_index,
+		bool& is_pointer_dereference) {
+		
+		// Look up the object in the symbol table (local first, then global)
+		std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+		
+		// If not found locally, try global symbol table (for global struct variables)
+		if (!symbol.has_value() && global_symbol_table_) {
+			symbol = global_symbol_table_->lookup(object_name);
+		}
+		
+		if (!symbol.has_value()) {
+			FLASH_LOG(Codegen, Error, "object '", object_name, "' not found in symbol table");
+			return false;
+		}
+
+		// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
+		const DeclarationNode* object_decl_ptr = get_decl_from_symbol(*symbol);
+		if (!object_decl_ptr) {
+			FLASH_LOG(Codegen, Error, "object '", object_name, "' is not a declaration");
+			return false;
+		}
+		const DeclarationNode& object_decl = *object_decl_ptr;
+		const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
+
+		// Verify this is a struct type (or a pointer/reference to a struct type)
+		// References and pointers are automatically dereferenced for member access
+		// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
+		// For pointers, the type might be Void with pointer_depth > 0 and type_index pointing to struct
+		bool is_valid_for_member_access = is_struct_type(object_type.type()) || 
+		                                  (object_type.pointer_depth() > 0 && object_type.type_index() > 0);
+		if (!is_valid_for_member_access) {
+			FLASH_LOG(Codegen, Error, "member access '.' on non-struct type '", object_name, "'");
+			return false;
+		}
+
+		base_object = StringTable::getOrInternStringHandle(object_name);
+		base_type = object_type.type();
+		base_type_index = object_type.type_index();
+		
+		// Check if this is a pointer to struct (e.g., P* pp)
+		// In this case, member access like pp->member should be treated as pointer dereference
+		if (object_type.pointer_depth() > 0) {
+			is_pointer_dereference = true;
+		}
+		
+		return true;
+	}
+
 	std::vector<IrOperand> generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
 	                                               ExpressionContext context = ExpressionContext::Load) {
 		std::vector<IrOperand> irOperands;
@@ -9806,44 +9861,8 @@ private:
 				}
 				
 				if (!handled) {
-					// Look up the object in the symbol table (local first, then global)
-					std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-					
-					// If not found locally, try global symbol table (for global struct variables)
-					if (!symbol.has_value() && global_symbol_table_) {
-						symbol = global_symbol_table_->lookup(object_name);
-					}
-					
-					if (!symbol.has_value()) {
-						FLASH_LOG(Codegen, Error, "object '", object_name, "' not found in symbol table");
+					if (!validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference)) {
 						return {};
-					}
-
-					// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
-					const DeclarationNode* object_decl_ptr = get_decl_from_symbol(*symbol);
-					if (!object_decl_ptr) {
-						FLASH_LOG(Codegen, Error, "object '", object_name, "' is not a declaration");
-						return {};
-					}
-					const DeclarationNode& object_decl = *object_decl_ptr;
-					const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
-
-					// Verify this is a struct type (or a reference to a struct type)
-					// References are automatically dereferenced for member access
-					// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
-					if (!is_struct_type(object_type.type())) {
-						FLASH_LOG(Codegen, Error, "member access '.' on non-struct type '", object_name, "'");
-						return {};
-					}
-
-					base_object = StringTable::getOrInternStringHandle(object_name);
-					base_type = object_type.type();
-					base_type_index = object_type.type_index();
-					
-					// Check if this is a pointer to struct (e.g., P* pp)
-					// In this case, member access like pp->member should be treated as pointer dereference
-					if (object_type.pointer_depth() > 0) {
-						is_pointer_dereference = true;
 					}
 				}
 			}
@@ -10051,42 +10070,8 @@ private:
 			}
 			
 			if (!handled) {
-				// Look up the object in the symbol table (local first, then global)
-				std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
-				
-				// If not found locally, try global symbol table (for global struct variables)
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(object_name);
-				}
-				
-				if (!symbol.has_value()) {
-					std::cerr << "error: object '" << object_name << "' not found in symbol table\n";
+				if (!validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference)) {
 					return {};
-				}
-
-				// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
-				const DeclarationNode* object_decl_ptr = get_decl_from_symbol(*symbol);
-				if (!object_decl_ptr) {
-					std::cerr << "error: object '" << object_name << "' is not a declaration\n";
-					return {};
-				}
-				const DeclarationNode& object_decl = *object_decl_ptr;
-				const TypeSpecifierNode& object_type = object_decl.type_node().as<TypeSpecifierNode>();
-
-				// Verify this is a struct type
-				if (object_type.type() != Type::Struct) {
-					std::cerr << "error: member access '.' on non-struct type '" << object_name << "'\n";
-					return {};
-				}
-
-				base_object = StringTable::getOrInternStringHandle(object_name);
-				base_type = object_type.type();
-				base_type_index = object_type.type_index();
-				
-				// Check if this is a pointer to struct (e.g., P* pp)
-				// In this case, member access like pp->member should be treated as pointer dereference
-				if (object_type.pointer_depth() > 0) {
-					is_pointer_dereference = true;
 				}
 			}
 		}
