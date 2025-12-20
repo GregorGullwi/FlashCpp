@@ -2664,9 +2664,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
 				
 				// Calculate member size and alignment
-				auto size_align = calculateMemberSizeAndAlignment(member_type_spec);
-				size_t member_size_in_bits = size_align.size;
-				size_t member_alignment = size_align.alignment;
+				auto [member_size_in_bits, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
 				size_t referenced_size_bits = 0;
 				
 				// For struct types, get the actual size from TypeInfo
@@ -4316,9 +4314,7 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Get member size and alignment
 		// Calculate member size and alignment
-		auto size_align = calculateMemberSizeAndAlignment(type_spec);
-		size_t member_size = size_align.size;
-		size_t member_alignment = size_align.alignment;
+		auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 		size_t referenced_size_bits = type_spec.size_in_bits();
 
 		// For struct types, get size and alignment from the struct type info
@@ -5622,9 +5618,7 @@ ParseResult Parser::parse_typedef_declaration()
 			const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
 
 			// Calculate member size and alignment
-			auto size_align = calculateMemberSizeAndAlignment(member_type_spec);
-			size_t member_size = size_align.size;
-			size_t member_alignment = size_align.alignment;
+			auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
 			size_t referenced_size_bits = member_type_spec.size_in_bits();
 
 			if (member_type_spec.type() == Type::Struct) {
@@ -17290,9 +17284,7 @@ if (struct_type_info.getStructInfo()) {
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
 				// Calculate member size and alignment
-				auto size_align = calculateMemberSizeAndAlignment(type_spec);
-				size_t member_size = size_align.size;
-				size_t member_alignment = size_align.alignment;
+				auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 				size_t referenced_size_bits = type_spec.size_in_bits();
 
 				if (type_spec.type() == Type::Struct) {
@@ -18102,9 +18094,7 @@ if (struct_type_info.getStructInfo()) {
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 				
 				// Calculate member size and alignment
-				auto size_align = calculateMemberSizeAndAlignment(type_spec);
-				size_t member_size = size_align.size;
-				size_t member_alignment = size_align.alignment;
+				auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 				
 				bool is_ref_member = type_spec.is_reference();
 				bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
