@@ -4985,37 +4985,9 @@ private:
 		bool is_array_type = is_array || type_node.is_array();
 		int size_bits;
 		
-		if (is_array_type) {
-			// For arrays, return the element size (not the pointer size)
-			// This is needed for array subscript operations like &arr[i]
-			// Arrays do decay to pointers in most contexts, but the element size is what's needed
-			// for offset calculations in array element address computations
-			
-			// For array of pointers (e.g., int* arr[3]), the element is a pointer (64 bits)
-			if (type_node.pointer_depth() > 0) {
-				size_bits = 64;  // Element is a pointer
-			} else {
-				size_bits = static_cast<int>(type_node.size_in_bits());
-				// For struct arrays, size_bits might be 0, so look it up from type info
-				if (size_bits == 0 && type_node.type() == Type::Struct) {
-					TypeIndex type_index = type_node.type_index();
-					if (type_index > 0 && type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_index];
-						const StructTypeInfo* struct_info = type_info.getStructInfo();
-						if (struct_info) {
-							size_bits = static_cast<int>(struct_info->total_size * 8);
-						}
-					}
-				}
-				// Fallback: if size_bits is still 0, calculate from type (parser bug workaround)
-				if (size_bits == 0) {
-					FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for array '", identifier_name, 
-					         "' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation");
-					size_bits = get_type_size_bits(type_node.type());
-				}
-			}
-		} else if (type_node.pointer_depth() > 0) {
-			// For pointers, the identifier itself is a pointer (64 bits on x64)
+		if (is_array_type || type_node.pointer_depth() > 0) {
+			// For arrays and pointers, the identifier itself is a pointer (64 bits on x64)
+			// The element/pointee size is stored separately and used for pointer arithmetic
 			size_bits = 64;  // Pointer size on x64 architecture
 		} else {
 			// For regular variables, return the variable size
@@ -5858,6 +5830,49 @@ private:
 				
 				Type element_type = std::get<Type>(array_operands[0]);
 				int element_size_bits = std::get<int>(array_operands[1]);
+				
+				// For arrays, array_operands[1] is the pointer size (64), not element size
+				// We need to calculate the actual element size from the array declaration
+				if (std::holds_alternative<StringHandle>(array_operands[2])) {
+					StringHandle array_name = std::get<StringHandle>(array_operands[2]);
+					std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
+					if (!symbol.has_value() && global_symbol_table_) {
+						symbol = global_symbol_table_->lookup(array_name);
+					}
+					if (symbol.has_value()) {
+						const DeclarationNode* decl_ptr = nullptr;
+						if (symbol->is<DeclarationNode>()) {
+							decl_ptr = &symbol->as<DeclarationNode>();
+						} else if (symbol->is<VariableDeclarationNode>()) {
+							decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
+						}
+						
+						if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
+							// This is an array - calculate element size
+							const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+							if (type_node.pointer_depth() > 0) {
+								// Array of pointers
+								element_size_bits = 64;
+							} else if (type_node.type() == Type::Struct) {
+								// Array of structs
+								TypeIndex type_index = type_node.type_index();
+								if (type_index > 0 && type_index < gTypeInfo.size()) {
+									const TypeInfo& type_info = gTypeInfo[type_index];
+									const StructTypeInfo* struct_info = type_info.getStructInfo();
+									if (struct_info) {
+										element_size_bits = static_cast<int>(struct_info->total_size * 8);
+									}
+								}
+							} else {
+								// Regular array - use type size
+								element_size_bits = static_cast<int>(type_node.size_in_bits());
+								if (element_size_bits == 0) {
+									element_size_bits = get_type_size_bits(type_node.type());
+								}
+							}
+						}
+					}
+				}
 				
 				// Create temporary for the address
 				TempVar addr_var = var_counter.next();
