@@ -7683,7 +7683,7 @@ private:
 							if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 								return "__cxa_pure_virtual"sv;
 							}
-							return "_pure_virtual"sv;
+							return "_purecall"sv;
 						}();
 						for (size_t i = 0; const auto* vfunc : struct_info->vtable) {
 							if (vfunc && vfunc->is_pure_virtual) {
