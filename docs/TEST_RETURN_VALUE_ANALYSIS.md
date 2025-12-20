@@ -1,9 +1,9 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-20 - Investigation Update)
+## Current Status (2025-12-20 - AddressOf Member Fix)
 
 **640/661 tests passing (96.8%)**
-- 12 runtime crashes
+- 12 runtime crashes (some unchanged, investigating)
 - 1 timeout (infinite loop)
 - 2 link failures
 
@@ -16,32 +16,20 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 - Returning 3000 → exit code 184
 - **This is expected OS behavior, not a compiler bug**
 
-## Investigation Notes (2025-12-20)
-
-**AddressOf Member Access Bug Identified**
-- **Issue**: Taking address of struct members (`&obj.member`) generates incorrect IR
-- **Root Cause**: IR generates `member_access` (loads VALUE) followed by `addressof` (takes address of temp), instead of directly computing member address
-- **Impact**: Affects tests that store member addresses (test_pointer_loop.cpp, etc.)
-- **Status**: 🔍 IDENTIFIED - Needs fix in CodeGen.h addressof generation for member access expressions
-- **Example**:
-  ```cpp
-  pp->p = &p[i].x;  // Wants address of p[i].x
-  ```
-  Currently generates:
-  ```
-  %4 = member_access %p[i].x  // Loads value
-  %5 = addressof %4            // Takes address of temp
-  ```
-  Should generate address of member directly without intermediate load.
-
-**Member Store Through Pointers - Working Correctly**
-- Verified that `is_pointer_to_member` flag is set correctly in IR
-- Verified that `handleMemberStore` correctly detects pointer access and loads pointer before storing
-- The infrastructure for pointer member access is correct
-
 ## Recent Fixes (2025-12-20)
 
-**Latest Fix: Lambda Decay to Function Pointer**
+**AddressOf Member Access - Partial Fix**
+- **Issue**: Taking address of struct members (`&obj.member`) generated incorrect IR
+- **Root Cause**: IR generated `member_access` (loads VALUE) followed by `addressof` (takes address of temp)
+- **Fix**: Added `AddressOfMember` IR opcode that directly computes member address using LEA
+  - Generates: `LEA result, [RBP + obj_offset + member_offset]`
+  - Handles simple identifier cases: `&obj.member` where obj is a variable name
+  - Does NOT mark result as reference (avoids dereference issues in pointer arithmetic)
+- **Status**: ✅ PARTIAL - Simple cases fixed, array element member access still uses existing path
+- **Tests Fixed**: Custom test cases with simple member address work
+- **Still Investigating**: test_pointer_loop.cpp (uses `&arr[i].x` - different code path via array_element_address)
+
+**Lambda Decay to Function Pointer**
 - **Issue**: Lambda expressions with unary plus operator (+lambda) crashed due to uninitialized function pointer
 - **Root Cause**: Unary plus on non-capturing lambdas should trigger decay to function pointer (returning address of `__invoke` static function), but was being treated as a no-op, returning the closure object instead
 - **Fix**: Modified `generateUnaryOperatorIr` in CodeGen.h to detect lambda expressions as operand of unary plus:
