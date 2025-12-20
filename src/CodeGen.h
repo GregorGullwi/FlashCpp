@@ -3316,16 +3316,43 @@ private:
 		// Get the array element type to create pointer type
 		const TypeSpecifierNode& array_type = array_decl.type_node().as<TypeSpecifierNode>();
 		
+		// Calculate the actual element size for pointer arithmetic
+		int element_size_bits;
+		if (array_type.pointer_depth() > 0) {
+			// Array of pointers - element size is pointer size (64 bits)
+			element_size_bits = 64;
+		} else if (array_type.type() == Type::Struct) {
+			// Array of structs - lookup size from type info
+			TypeIndex type_index = array_type.type_index();
+			if (type_index > 0 && type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_index];
+				const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (struct_info) {
+					element_size_bits = static_cast<int>(struct_info->total_size * 8);
+				} else {
+					element_size_bits = static_cast<int>(array_type.size_in_bits());
+				}
+			} else {
+				element_size_bits = static_cast<int>(array_type.size_in_bits());
+			}
+		} else {
+			// Regular array of primitives - use type size
+			element_size_bits = static_cast<int>(array_type.size_in_bits());
+			if (element_size_bits == 0) {
+				element_size_bits = get_type_size_bits(array_type.type());
+			}
+		}
+		
 		// Create pointer type for begin/end (element_type*)
-		// Pointers are always 64-bit, regardless of element type size
+		// The size_in_bits should be the element size for correct pointer arithmetic
 		auto begin_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			array_type.type(), array_type.type_index(), 64, Token()  // 64-bit for pointer
+			array_type.type(), array_type.type_index(), element_size_bits, Token()
 		);
 		begin_type_node.as<TypeSpecifierNode>().add_pointer_level();
 		auto begin_decl_node = ASTNode::emplace_node<DeclarationNode>(begin_type_node, begin_token);
 
 		auto end_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			array_type.type(), array_type.type_index(), 64, Token()  // 64-bit for pointer
+			array_type.type(), array_type.type_index(), element_size_bits, Token()
 		);
 		end_type_node.as<TypeSpecifierNode>().add_pointer_level();
 		auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);

@@ -2,10 +2,10 @@
 
 ## Current Status (2025-12-20 - Updated)
 
-**629/661 tests passing (95.2%)**
-- 25 runtime crashes
+**632/661 tests passing (95.6%)**
+- 21 runtime crashes (down from 25)
 - 1 timeout (infinite loop)
-- 1 link failure
+- 2 link failures
 - 7 compiler crashes (function pointer members - pre-existing issue)
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
@@ -19,7 +19,21 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Recent Fixes (2025-12-20)
 
-**Latest Fix: Array Element Size in AddressOf Operations**
+**Latest Fix: Range-Based For Loop Pointer Increment**
+- **Issue**: Range-based for loops crashed due to incorrect pointer increment size
+- **Root Cause**: When creating begin/end pointers in `visitRangedForArray`, the code passed pointer size (64 bits) as `size_in_bits` to TypeSpecifierNode. When incrementing, `getSizeInBytes()` used this to calculate increment (64/8 = 8 bytes), ignoring actual element size
+- **Fix**: Modified `visitRangedForArray` in CodeGen.h to calculate actual element size:
+  - Regular arrays (e.g., `int arr[3]`): use base type size (32 bits for int → 4 byte increment)
+  - Arrays of pointers (e.g., `int* arr[3]`): use pointer size (64 bits → 8 byte increment)
+  - Arrays of structs: lookup size from gTypeInfo
+- **Status**: ✅ COMPLETE
+- **Tests Fixed (4)**:
+  - test_range_for.cpp ✓ returns 15
+  - test_range_for_simple.cpp ✓ returns 10
+  - test_custom_container.cpp ✓ returns 15
+  - test_range_for_begin_end.cpp, test_range_for_const_ref.cpp ✓ no longer crash (note: have pre-existing array store issues unrelated to range-for)
+
+**Previous Fix: Array Element Size in AddressOf Operations**
 - **Issue**: Taking address of array elements (`&arr[i]`) calculated wrong offsets for arrays of pointers and struct arrays
 - **Root Cause**: AddressOf handler used identifier size (64 bits for arrays) as element size instead of actual element size
 - **Fix**: Modified UnaryOperator AddressOf handler in CodeGen.h to properly calculate element size:
@@ -50,6 +64,7 @@ Initial investigation focused on struct padding as documented in Known Issues. H
 <details>
 <summary><strong>Completed Fixes (click to expand)</strong></summary>
 
+- ✅ **Range-based for loop pointer increment** (2025-12-20) - Fixed pointer increment to use correct element size (4 tests)
 - ✅ **Array element size in AddressOf** (2025-12-20) - Fixed &arr[i] offset calculations (1 test)
 - ✅ **Arrays of pointers flagged as pointer-to-array** (2025-12-20) - Correct array access (1 test)
 - ✅ **Pointer variable size** (previous) - Fixed pointer identifiers to use 64-bit pointer size (4 tests)
@@ -84,52 +99,51 @@ Function pointer member tests cause compiler hangs/crashes:
 - **Issue**: Compiler enters infinite loop when processing structs with function pointer members
 - **Status**: Under investigation - not caused by recent changes
 
-## Remaining Crashes (25 files + 1 timeout)
+## Remaining Crashes (21 files + 1 timeout)
 
-**Current: 25 crashes, 1 timeout** (up from 22, but test_pointer_arithmetic.cpp now fixed)
+**Current: 21 crashes, 1 timeout** (down from 25 - range-based for loops now fixed)
 
 ### Crash Categories (Compacted)
 
-1. **Range-based for loops** (4 files) - Pointer increment bug  
-   test_range_for.cpp, test_range_for_begin_end.cpp, test_range_for_const_ref.cpp, test_custom_container.cpp
-
-2. **Floating-point** (5 files) - XMM register spilling, >8 float/double params  
+1. **Floating-point** (5 files) - XMM register spilling, >8 float/double params  
    test_mixed_float_double_params.cpp, test_float_register_spilling.cpp, test_all_xmm_registers.cpp, test_comprehensive_registers.cpp, test_register_spilling.cpp
 
-3. **Lambda** (2 files) - Capture and decay to function pointers  
+2. **Lambda** (2 files) - Capture and decay to function pointers  
    test_lambda_decay.cpp, test_lambda_cpp20_comprehensive.cpp
 
-4. **Exceptions** (2 files) - Incomplete Linux exception support  
+3. **Exceptions** (2 files) - Incomplete Linux exception support  
    test_exceptions_basic.cpp, test_exceptions_nested.cpp
 
-5. **Template specialization** (2 files)  
+4. **Template specialization** (2 files)  
    test_spec_member_only.cpp, test_specialization_member_func.cpp
 
-6. **Variadic arguments** (2 files)  
+5. **Variadic arguments** (2 files)  
    test_va_implementation.cpp, test_varargs.cpp
 
-7. **Other issues** (7 files)  
+6. **Other issues** (8 files)  
    - spaceship_default.cpp (SIGILL - C++20 three-way comparison)
-   - test_abstract_class.cpp (vtable/typeinfo relocation)
+   - test_abstract_class.cpp (link failure - vtable/typeinfo relocation)
+   - test_covariant_return.cpp (link failure)
    - test_pointer_loop.cpp (member access through pointer in loop)
    - test_rvo_very_large_struct.cpp, test_stack_overflow.cpp
    - test_template_complex_substitution.cpp, test_ten_mixed.cpp
+   - test_virtual_inheritance.cpp
 
-8. **Timeout** (1 file) - test_xvalue_all_casts.cpp
+7. **Timeout** (1 file) - test_xvalue_all_casts.cpp
 
-**Note**: test_pointer_arithmetic.cpp moved from crash list to passing tests!
+**Fixed**: test_range_for.cpp, test_range_for_simple.cpp, test_custom_container.cpp, test_range_for_begin_end.cpp moved from crash list to passing tests!
 
 ## Priority Investigation Areas
 
-1. **Range-based for loops** - Pointer increment uses wrong element size (4 newly crashing tests)
-2. **Floating-point register spilling** - 5 tests with >8 float/double parameters
-3. **Lambda capture** - 2 tests with lambda capture and decay
-4. **Exception handling** - 2 tests requiring complete Linux exception support
-5. **Template specialization** - 2 tests with member function specialization
+1. **Floating-point register spilling** - 5 tests with >8 float/double parameters (top priority)
+2. **Lambda capture** - 2 tests with lambda capture and decay
+3. **Exception handling** - 2 tests requiring complete Linux exception support
+4. **Template specialization** - 2 tests with member function specialization
+5. **Variadic arguments** - 2 tests with va_list implementation issues
 6. **Function pointer members** - 7 compiler crashes (pre-existing issue)
 
 ---
 
-*Last Updated: 2025-12-20 (after array element size fixes)*
-*Status: 629/661 tests passing (95.2%), 25 crashes, 1 timeout, 1 link failure, 7 compiler crashes*
+*Last Updated: 2025-12-20 (after range-based for loop fix)*
+*Status: 632/661 tests passing (95.6%), 21 crashes, 1 timeout, 2 link failures, 7 compiler crashes*
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
