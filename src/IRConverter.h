@@ -1047,18 +1047,18 @@ OpCodeWithSize generateFloatMovFromMemory(X64Register destinationRegister, X64Re
 	// ModR/M byte - encode [base_reg + offset]
 	if (offset == 0 && base_reg != X64Register::RBP && base_reg != X64Register::R13) {
 		// Mod=00, no displacement (except for RBP/R13 which need at least disp8)
-		uint8_t modrm = 0x00 + ((xmm_reg & 0x07) << 3) + base_bits;
+		uint8_t modrm = 0x00 | ((xmm_reg & 0x07) << 3) | base_bits;
 		*current_byte_ptr++ = modrm;
 		result.size_in_bytes++;
 	} else if (offset >= -128 && offset <= 127) {
 		// 8-bit displacement
-		uint8_t modrm = 0x40 + ((xmm_reg & 0x07) << 3) + base_bits;  // Mod=01
+		uint8_t modrm = 0x40 | ((xmm_reg & 0x07) << 3) | base_bits;  // Mod=01
 		*current_byte_ptr++ = modrm;
 		*current_byte_ptr++ = static_cast<uint8_t>(offset);
 		result.size_in_bytes += 2;
 	} else {
 		// 32-bit displacement
-		uint8_t modrm = 0x80 + ((xmm_reg & 0x07) << 3) + base_bits;  // Mod=10
+		uint8_t modrm = 0x80 | ((xmm_reg & 0x07) << 3) | base_bits;  // Mod=10
 		*current_byte_ptr++ = modrm;
 		result.size_in_bytes++;
 
@@ -1097,13 +1097,13 @@ OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister, int32_
 	// ModR/M byte - use only low 3 bits of xmm register
 	if (offset >= -128 && offset <= 127) {
 		// 8-bit displacement
-		uint8_t modrm = 0x45 + ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
+		uint8_t modrm = 0x45 | ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
 		*current_byte_ptr++ = modrm;
 		*current_byte_ptr++ = static_cast<uint8_t>(offset);
 		result.size_in_bytes += 2;
 	} else {
 		// 32-bit displacement
-		uint8_t modrm = 0x85 + ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
+		uint8_t modrm = 0x85 | ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
 		*current_byte_ptr++ = modrm;
 		result.size_in_bytes++;
 
@@ -1159,13 +1159,13 @@ OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_t offse
 	// ModR/M byte - use only low 3 bits of xmm register
 	if (offset >= -128 && offset <= 127) {
 		// 8-bit displacement
-		uint8_t modrm = 0x45 + ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
+		uint8_t modrm = 0x45 | ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
 		*current_byte_ptr++ = modrm;
 		*current_byte_ptr++ = static_cast<uint8_t>(offset);
 		result.size_in_bytes += 2;
 	} else {
 		// 32-bit displacement
-		uint8_t modrm = 0x85 + ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
+		uint8_t modrm = 0x85 | ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
 		*current_byte_ptr++ = modrm;
 		result.size_in_bytes++;
 
@@ -2822,16 +2822,16 @@ inline void emitStoreToMemory(std::vector<char>& textSectionData, X64Register va
 	// Emit ModR/M byte and displacement
 	if (offset == 0) {
 		// [base_reg] with no displacement
-		textSectionData.push_back(0x00 + (value_reg_bits << 3) + base_reg_bits);
+		textSectionData.push_back(0x00 | (value_reg_bits << 3) | base_reg_bits);
 	} else if (offset >= -128 && offset <= 127) {
 		// [base_reg + disp8]
-		uint8_t modrm = 0x40 + (value_reg_bits << 3) + base_reg_bits;
+		uint8_t modrm = 0x40 | (value_reg_bits << 3) | base_reg_bits;
 		uint8_t disp = static_cast<uint8_t>(offset);
 		textSectionData.push_back(modrm);
 		textSectionData.push_back(disp);
 	} else {
 		// [base_reg + disp32]
-		textSectionData.push_back(0x80 + (value_reg_bits << 3) + base_reg_bits);
+		textSectionData.push_back(0x80 | (value_reg_bits << 3) | base_reg_bits);
 		uint32_t offset_u32 = static_cast<uint32_t>(offset);
 		textSectionData.push_back(offset_u32 & 0xFF);
 		textSectionData.push_back((offset_u32 >> 8) & 0xFF);
@@ -4988,11 +4988,11 @@ private:
 		
 		// Encode [RBP + offset]
 		if (offset >= -128 && offset <= 127) {
-			uint8_t modrm = 0x45 + ((xmm_idx & 0x07) << 3);  // Mod=01, Reg=XMM, R/M=101 (RBP)
+			uint8_t modrm = 0x45 | ((xmm_idx & 0x07) << 3);  // Mod=01, Reg=XMM, R/M=101 (RBP)
 			textSectionData.push_back(modrm);
 			textSectionData.push_back(static_cast<uint8_t>(offset));
 		} else {
-			uint8_t modrm = 0x85 + ((xmm_idx & 0x07) << 3);  // Mod=10, Reg=XMM, R/M=101 (RBP)
+			uint8_t modrm = 0x85 | ((xmm_idx & 0x07) << 3);  // Mod=10, Reg=XMM, R/M=101 (RBP)
 			textSectionData.push_back(modrm);
 			textSectionData.push_back((offset >> 0) & 0xFF);
 			textSectionData.push_back((offset >> 8) & 0xFF);
@@ -8107,11 +8107,11 @@ private:
 					int32_t stack_offset = param.offset;
 
 					if (stack_offset >= -128 && stack_offset <= 127) {
-						uint8_t modrm = 0x45 + ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
+						uint8_t modrm = 0x45 | ((xmm_reg & 0x07) << 3); // Mod=01, Reg=XMM, R/M=101 (RBP)
 						textSectionData.push_back(modrm);
 						textSectionData.push_back(static_cast<uint8_t>(stack_offset));
 					} else {
-						uint8_t modrm = 0x85 + ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
+						uint8_t modrm = 0x85 | ((xmm_reg & 0x07) << 3); // Mod=10, Reg=XMM, R/M=101 (RBP)
 						textSectionData.push_back(modrm);
 						for (int j = 0; j < 4; ++j) {
 							textSectionData.push_back(static_cast<uint8_t>(stack_offset & 0xFF));
@@ -10962,7 +10962,7 @@ private:
 				textSectionData.push_back(0x11);
 				
 				// ModR/M: 00 xmm ptr_reg (indirect addressing, no displacement)
-				uint8_t modrm = 0x00 + ((xmm_reg & 0x07) << 3) + ptr_reg_bits;
+				uint8_t modrm = 0x00 | ((xmm_reg & 0x07) << 3) | ptr_reg_bits;
 				textSectionData.push_back(modrm);
 			} else {
 				// For integer types, use the existing emitStoreToMemory helper
