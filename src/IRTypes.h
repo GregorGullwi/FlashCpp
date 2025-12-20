@@ -105,6 +105,7 @@ enum class IrOpcode : int_fast16_t {
 	ArrayElementAddress,  // Calculate address of array element without loading value
 	// Pointer operations
 	AddressOf,
+	AddressOfMember,     // Calculate address of struct member: &obj.member
 	Dereference,
 	DereferenceStore,    // Store through a pointer: *ptr = value
 	// Struct operations
@@ -1083,6 +1084,15 @@ struct AddressOfOp {
 	int operand_pointer_depth = 0;                   // NEW: Pointer depth of operand
 };
 
+// AddressOf for struct member (&obj.member)
+struct AddressOfMemberOp {
+	TempVar result;                                  // Result temp var (pointer to member)
+	StringHandle base_object;                        // Base object (variable name)
+	int member_offset;                               // Byte offset of member in struct
+	Type member_type;                                // Type of the member
+	int member_size_in_bits;                         // Size of member
+};
+
 // Dereference operator (*ptr)
 struct DereferenceOp {
 	TempVar result;                                  // Result temp var
@@ -1995,6 +2005,17 @@ public:
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.operand));
 			else if (std::holds_alternative<TempVar>(op.operand))
 				oss << '%' << std::get<TempVar>(op.operand).var_number;
+		}
+		break;
+		
+		case IrOpcode::AddressOfMember:
+		{
+			assert(hasTypedPayload() && "AddressOfMember instruction must use typed payload");
+			const auto& op = getTypedPayload<AddressOfMemberOp>();
+			oss << '%' << op.result.var_number << " = addressof_member ";
+			oss << "[" << static_cast<int>(op.member_type) << "]" << op.member_size_in_bits << " ";
+			oss << '%' << StringTable::getStringView(op.base_object);
+			oss << " (offset: " << op.member_offset << ")";
 		}
 		break;
 	

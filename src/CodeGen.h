@@ -5845,6 +5845,69 @@ private:
 						}
 					}
 				}
+				
+				// Handle general case: &obj.member (where obj is NOT an array subscript)
+				// This generates the member address directly without loading the value
+				if (!object_node.is<ExpressionNode>() || 
+				    (object_node.is<ExpressionNode>() && !std::holds_alternative<ArraySubscriptNode>(object_node.as<ExpressionNode>()))) {
+					
+					// Get the object expression (identifier, pointer dereference, etc.)
+					auto object_operands = visitExpressionNode(object_node.as<ExpressionNode>(), ExpressionContext::LValueAddress);
+					
+					if (object_operands.size() >= 3) {
+						Type object_type = std::get<Type>(object_operands[0]);
+						
+						// Get the struct type index
+						TypeIndex type_index = 0;
+						if (object_operands.size() >= 4 && std::holds_alternative<unsigned long long>(object_operands[3])) {
+							type_index = static_cast<TypeIndex>(std::get<unsigned long long>(object_operands[3]));
+						}
+						
+						// Look up member information
+						if (type_index > 0 && type_index < gTypeInfo.size() && object_type == Type::Struct) {
+							const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
+							if (struct_info) {
+								std::string_view member_name = memberAccess.member_name();
+								StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
+								const StructMember* member = struct_info->findMemberRecursive(member_handle);
+								
+								if (member) {
+									TempVar result_var = var_counter.next();
+									constexpr int POINTER_SIZE_BITS = 64;
+									
+									// For simple identifiers, generate a MemberAddressOp or use AddressOf with member context
+									// For now, use a simpler approach: emit AddressOf, then Add offset in generated code
+									// But mark the intermediate as NOT a reference to avoid dereferencing
+									
+									if (std::holds_alternative<StringHandle>(object_operands[2])) {
+										StringHandle obj_name = std::get<StringHandle>(object_operands[2]);
+										
+										// Create a custom AddressOf-like operation that computes obj_addr + member_offset directly
+										// We'll use ArrayElementAddress with index 0 and treat it as a base address calc
+										// Actually, let's just emit the calculation inline without using intermediate temps
+										
+										// Generate IR to compute the member address
+										// We need a MemberAddressOp or similar
+										// For now, let's use the existing approach but avoid marking as reference
+										
+										// Option: Generate AddressOfMemberOp
+										AddressOfMemberOp addr_member_op;
+										addr_member_op.result = result_var;
+										addr_member_op.base_object = obj_name;
+										addr_member_op.member_offset = static_cast<int>(member->offset);
+										addr_member_op.member_type = member->type;
+										addr_member_op.member_size_in_bits = static_cast<int>(member->size * 8);
+										
+										ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));
+										
+										// Return pointer to member
+										return { member->type, POINTER_SIZE_BITS, result_var, 0ULL };
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 			
 			// Handle &arr[index] (without member access)

@@ -3394,6 +3394,9 @@ public:
 			case IrOpcode::AddressOf:
 				handleAddressOf(instruction);
 				break;
+			case IrOpcode::AddressOfMember:
+				handleAddressOfMember(instruction);
+				break;
 			case IrOpcode::Dereference:
 				handleDereference(instruction);
 				break;
@@ -12228,6 +12231,37 @@ private:
 			SizedRegister{target_reg, 64, false},  // source: 64-bit register
 			SizedStackSlot{result_offset, 64, false}  // dest: 64-bit for pointer
 		);
+	}
+	
+	void handleAddressOfMember(const IrInstruction& instruction) {
+		// AddressOfMember: &obj.member
+		// Calculate address of struct member directly: LEA result, [RBP + obj_offset + member_offset]
+		
+		const AddressOfMemberOp& op = std::any_cast<const AddressOfMemberOp&>(instruction.getTypedPayload());
+		
+		// Look up the base object's stack offset
+		const StackVariableScope& current_scope = variable_scopes.back();
+		auto it = current_scope.variables.find(op.base_object);
+		if (it == current_scope.variables.end()) {
+			assert(false && "Base object not found in scope for AddressOfMember");
+			return;
+		}
+		
+		int32_t obj_offset = it->second.offset;
+		int32_t combined_offset = obj_offset + op.member_offset;
+		
+		// Calculate the address: LEA target_reg, [RBP + combined_offset]
+		X64Register target_reg = X64Register::RAX;
+		emitLeaFromFrame(target_reg, combined_offset);
+		
+		// Store the address to result_var (pointer is always 64-bit)
+		int32_t result_offset = getStackOffsetFromTempVar(op.result);
+		emitMovToFrameSized(
+			SizedRegister{target_reg, 64, false},  // source: 64-bit register
+			SizedStackSlot{result_offset, 64, false}  // dest: 64-bit for pointer
+		);
+		
+		// DO NOT mark as reference - this is a plain pointer value for use in arithmetic
 	}
 
 	void handleDereference(const IrInstruction& instruction) {
