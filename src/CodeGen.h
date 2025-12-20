@@ -6100,6 +6100,28 @@ private:
 			}
 		}
 
+		// Special case: unary plus on lambda triggers decay to function pointer
+		// Check if operand is a lambda expression before visiting it
+		if (unaryOperatorNode.op() == "+" && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			if (std::holds_alternative<LambdaExpressionNode>(operandExpr)) {
+				const LambdaExpressionNode& lambda = std::get<LambdaExpressionNode>(operandExpr);
+				
+				// For non-capturing lambdas, unary plus triggers conversion to function pointer
+				// This returns the address of the lambda's __invoke static function
+				if (lambda.captures().empty()) {
+					// Generate the lambda functions (operator(), __invoke, etc.)
+					generateLambdaExpressionIr(lambda);
+					
+					// Return the address of the __invoke function
+					TempVar func_addr_var = generateLambdaInvokeFunctionAddress(lambda);
+					return { Type::FunctionPointer, 64, func_addr_var, 0ULL };
+				}
+				// For capturing lambdas, fall through to normal handling
+				// (they cannot decay to function pointers)
+			}
+		}
+
 		if (!operandHandledAsIdentifier) {
 			operandIrOperands = visitExpressionNode(unaryOperatorNode.get_operand().as<ExpressionNode>());
 		}
