@@ -11421,9 +11421,7 @@ private:
 					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
 				}
 				
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x01); // ADD r/m64, r64
-				textSectionData.push_back(0xC8); // ModR/M: RAX, RCX
+				emitAddRAXRCX(textSectionData);
 			} else if (std::holds_alternative<StringHandle>(op.index.value)) {
 				// Handle variable name (StringHandle) as index
 				StringHandle index_var_name = std::get<StringHandle>(op.index.value);
@@ -11465,9 +11463,7 @@ private:
 					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
 				}
 				
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x01); // ADD r/m64, r64
-				textSectionData.push_back(0xC8); // ModR/M: RAX, RCX
+				emitAddRAXRCX(textSectionData);
 			}
 			
 			// Store the computed address to result_var
