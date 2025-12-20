@@ -619,7 +619,9 @@ public:
 	}
 
 	// Add a relocation to the .text section with a custom relocation type
-	void add_text_relocation(uint64_t offset, const std::string& symbol_name, uint32_t relocation_type) {
+	void add_text_relocation(uint64_t offset, const std::string& symbol_name, uint32_t relocation_type, int64_t addend = -4) {
+		// For COFF format, addend is not used (it's a REL format, not RELA)
+		// The addend is encoded in the instruction itself
 		// Look up the symbol (could be a global variable, function, etc.)
 		auto* symbol = coffi_.get_symbol(symbol_name);
 		if (!symbol) {

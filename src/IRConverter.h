@@ -7880,8 +7880,9 @@ private:
 				variable_scopes.back().variables[param_name_handle].offset = offset;
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
+				// Also track pointer parameters (T*) since they also contain addresses that need dereferencing
 				bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
-				if (is_reference) {
+				if (is_reference || param_pointer_depth > 0) {
 					setReferenceInfo(offset, param_type, param_size, 
 						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE));
 				}
@@ -7981,8 +7982,9 @@ private:
 				// Phase 4: Use helper to get param name for map key
 				variable_scopes.back().variables[param.getName()].offset = offset;
 
-				// Track reference parameters
-				if (param.is_reference) {
+				// Track reference parameters and pointer parameters
+				// Both need pointer dereferencing when accessing their members
+				if (param.is_reference || param.pointer_depth > 0) {
 					setReferenceInfo(offset, param.type, param.size_in_bits, param.is_rvalue_reference);
 				}
 
@@ -11724,6 +11726,12 @@ private:
 				}
 				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+				
+				// Store loaded value to result_offset for later use (e.g., indirect_call)
+				emitMovToFrame(temp_reg, result_offset);
+				regAlloc.release(temp_reg);
+				variable_scopes.back().variables[result_var_handle].offset = result_offset;
+				return;
 			}
 		} else if (is_pointer_access) {
 			// Load 'this' pointer into RCX, then load from [RCX + offset]
@@ -11745,6 +11753,12 @@ private:
 			}
 			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+			
+			// Store loaded value to result_offset for later use (e.g., indirect_call)
+			emitMovToFrame(temp_reg, result_offset);
+			regAlloc.release(temp_reg);
+			variable_scopes.back().variables[result_var_handle].offset = result_offset;
+			return;
 		} else {
 			// For regular struct variables on the stack, load from computed offset
 			emitLoadFromFrame(textSectionData, temp_reg, member_stack_offset, member_size_bytes);
@@ -11928,7 +11942,7 @@ private:
 					textSectionData.push_back((disp_with_offset >> 24) & 0xFF);
 					
 					// Add relocation for the global variable (with offset already included in displacement)
-					pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32});
+					pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32, op.offset - 4});
 				} else {
 					// Integer store: MOV [RIP + disp32], reg
 					int size_in_bits = op.value.size_in_bits;
@@ -11960,7 +11974,7 @@ private:
 					textSectionData.push_back((disp_with_offset >> 24) & 0xFF);
 					
 					// Add relocation
-					pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32});
+					pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32, op.offset - 4});
 				}
 				
 				regAlloc.release(value_reg);
@@ -13109,7 +13123,7 @@ private:
 
 		// Now add pending global variable relocations (after symbols are created)
 		for (const auto& reloc : pending_global_relocations_) {
-			writer.add_text_relocation(reloc.offset, std::string(StringTable::getStringView(reloc.symbol_name)), reloc.type);
+			writer.add_text_relocation(reloc.offset, std::string(StringTable::getStringView(reloc.symbol_name)), reloc.type, reloc.addend);
 		}
 
 		// Patch all pending branches before finalizing
@@ -13569,6 +13583,7 @@ private:
 		uint64_t offset;
 		StringHandle symbol_name;
 		uint32_t type;
+		int64_t addend = -4;  // Default addend for PC-relative relocations
 	};
 	std::vector<PendingGlobalRelocation> pending_global_relocations_;
 

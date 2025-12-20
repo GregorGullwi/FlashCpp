@@ -164,7 +164,7 @@ public:
 	/**
 	 * @brief Add a relocation entry with specified type
 	 */
-	void add_relocation(uint64_t offset, std::string_view symbol_name, uint32_t relocation_type) {
+	void add_relocation(uint64_t offset, std::string_view symbol_name, uint32_t relocation_type, int64_t addend = -4) {
 		if (g_enable_debug_output) {
 			std::cerr << "Adding relocation at offset " << offset 
 			          << " for symbol " << symbol_name 
@@ -196,7 +196,6 @@ public:
 		// Lower 32 bits: relocation type (e.g., R_X86_64_PLT32 = 4, R_X86_64_PC32 = 2)
 		ELFIO::Elf_Xword rel_info = (static_cast<ELFIO::Elf_Xword>(symbol_index) << 32) | 
 		                             (static_cast<ELFIO::Elf_Xword>(relocation_type) & 0xffffffffUL);
-		ELFIO::Elf_Sxword addend = -4;  // Standard addend for PC-relative and PLT relocations (compensate for instruction size)
 
 		rela_accessor->add_entry(rel_offset, rel_info, addend);
 	}
@@ -800,8 +799,8 @@ public:
 	}
 
 	// Additional compatibility methods
-	void add_text_relocation(uint64_t offset, const std::string& symbol_name, uint32_t relocation_type) {
-		add_relocation(offset, symbol_name, relocation_type);
+	void add_text_relocation(uint64_t offset, const std::string& symbol_name, uint32_t relocation_type, int64_t addend = -4) {
+		add_relocation(offset, symbol_name, relocation_type, addend);
 	}
 
 	void add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, uint32_t xdata_offset) {
