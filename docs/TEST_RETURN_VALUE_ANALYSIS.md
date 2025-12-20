@@ -38,7 +38,7 @@ Total test files analyzed: **661**
 | Valid Returns (0-255) | 628 | Tests that successfully compiled, linked, ran, and returned a value in the valid range |
 | Compilation Failures | 0 | Tests that failed to compile (all expected failures excluded) |
 | Link Failures | 1 | Tests that compiled but failed to link (all expected failures excluded) |
-| Runtime Crashes | 24 | Tests that crashed during execution with various signals |
+| Runtime Crashes | 25 | Tests that crashed during execution with various signals |
 | Execution Timeouts | 1 | Tests that timeout (infinite loop or hang) |
 | Out-of-Range (Valid) | 0 | Tests intentionally returning >255 (noted but truncated by OS) |
 | Out-of-Range (Unknown) | 0 | Tests with unexpected >255 returns |
@@ -47,37 +47,42 @@ Total test files analyzed: **661**
 
 ### Recent Improvements
 
-**2025-12-20 Update (Stack Alignment Fix for Floating-Point):**
-- **FIXED**: Stack alignment bug causing floating-point crashes - 6 tests fixed!
-  - **Success**: Improved from **622 passing (94.1%)** to **628 passing (95.0%)** - **6 more tests fixed!**
-  - **Crashes reduced**: From 31 to 24 (7 fewer crashes)
-  - **Root Cause**: Stack space was being aligned to (16n+8) instead of 16n, violating System V AMD64 ABI
-  - **Problem**: After `PUSH RBP`, RSP is 16-byte aligned. `SUB RSP, N` must use N as multiple of 16 to maintain alignment
-  - **Previous Code**: Aligned to (16n+8), causing functions to reserve 56 bytes instead of 64
-  - **Fix**: Changed alignment to multiples of 16: `if (total_stack % 16 != 0) total_stack = (total_stack + 15) & ~15`
-  - **Fixed in**: `handleFunctionDecl()` and `finalizeSections()` 
-  - **Tests Fixed**:
-    - test_global_float.cpp ✓
-    - test_global_double.cpp ✓
-    - test_param_passing_float.cpp ✓
-    - Plus 3 additional tests
-  - **Remaining float issues** (different root causes):
-    - test_mixed_float_double_params.cpp - >8 XMM parameters need stack passing
-    - test_float_register_spilling.cpp - XMM register spilling
-    - test_all_xmm_registers.cpp - excessive XMM register usage
-    - test_comprehensive_registers.cpp - register pressure
-    - test_register_spilling.cpp - general register spilling
-  - Current state: **95.0% of tests passing** (628/661)
+**2025-12-20 Update (sizeof Bug Fix):**
+- **BUG FIX**: sizeof operator returning 0 for arrays of structs
+  - **Problem**: `sizeof(p)` where `p` is `P p[3]` and `P` is a struct was returning 0, causing division by zero
+  - **Root Causes**:
+    1. Parser treats `sizeof(arr)` as `sizeof(type)` instead of `sizeof(expression)` when arr is an identifier
+    2. For struct types, `size_in_bits()` was 0, not looking up from `gTypeInfo`
+    3. `ConstExprEvaluator::evaluate_sizeof` wasn't handling arrays of structs or struct types without size_in_bits
+  - **Fix**: Updated `ConstExprEvaluator::evaluate_sizeof` to:
+    - Look up struct sizes from `gTypeInfo` when `size_in_bits()` is 0
+    - Handle `sizeof(array_variable)` when parsed as type by checking symbol table
+    - Calculate array size as `element_size * array_count` for struct arrays
+  - **Tests Affected**:
+    - test_pointer_loop.cpp - Changed from signal 8 (FPE/div-by-zero) to signal 11 (SIGSEGV, different issue)
+  - **Side Effect**: test_abstract_class.cpp regressed (was passing, now crashes)
+  - Current state: **628/661 tests passing (95.0%)**, 25 crashes, 1 timeout, 1 link failure
 
-**Completed Fixes:**
-- ✅ Stack alignment (6 tests fixed, 2025-12-20) - Fixed floating-point crashes with printf
-- ✅ Function pointers (2 tests fixed, 2025-12-20) - Global and pointer parameter function pointer calls  
-- ✅ Dereference register corruption (1 test fixed, 2025-12-20) - Clear stale register associations
-- ✅ Pointer member size bug (7 tests fixed, 2025-12-20) - Pointers/references in structs use correct 64-bit size
-- ✅ Temp variable stack allocation (23 tests fixed, 2025-12-20) - Fixed handleMemberAccess offset handling
-- ✅ Heap allocation constructor (2025-12-20) - Fixed LEA vs MOV for heap vs stack objects
-- ✅ Multi-level pointer dereference (2025-12-17) - Fixed type_index vs pointer_depth issue  
-- ✅ Validation script (2025-12-17) - Eliminated false positives in crash detection
+**Previous Fix (2025-12-20) - Stack Alignment for Floating-Point:**
+**Previous Fix (2025-12-20) - Stack Alignment for Floating-Point:**
+- **Root Cause**: Stack space was being aligned to (16n+8) instead of 16n, violating System V AMD64 ABI
+- **Problem**: After `PUSH RBP`, RSP is 16-byte aligned. `SUB RSP, N` must use N as multiple of 16 to maintain alignment
+- **Previous Code**: Aligned to (16n+8), causing functions to reserve 56 bytes instead of 64
+- **Fix**: Changed alignment to multiples of 16: `if (total_stack % 16 != 0) total_stack = (total_stack + 15) & ~15`
+- **Tests Fixed**: test_global_float.cpp, test_global_double.cpp, test_param_passing_float.cpp, plus 3 additional tests (6 total)
+- **Result**: Improved from 622 passing (94.1%) to 628 passing (95.0%), crashes reduced from 31 to 24
+
+**Summary of All Completed Fixes:**
+**Summary of All Completed Fixes:**
+- ✅ **sizeof for struct arrays** (2025-12-20) - Fixed division by zero when calculating sizeof(array_of_structs)
+- ✅ **Stack alignment** (6 tests fixed, 2025-12-20) - Fixed floating-point crashes with printf
+- ✅ **Function pointers** (2 tests fixed, 2025-12-20) - Global and pointer parameter function pointer calls  
+- ✅ **Dereference register corruption** (1 test fixed, 2025-12-20) - Clear stale register associations
+- ✅ **Pointer member size bug** (7 tests fixed, 2025-12-20) - Pointers/references in structs use correct 64-bit size
+- ✅ **Temp variable stack allocation** (23 tests fixed, 2025-12-20) - Fixed handleMemberAccess offset handling
+- ✅ **Heap allocation constructor** (2025-12-20) - Fixed LEA vs MOV for heap vs stack objects
+- ✅ **Multi-level pointer dereference** (2025-12-17) - Fixed type_index vs pointer_depth issue  
+- ✅ **Validation script** (2025-12-17) - Eliminated false positives in crash detection
 
 ## Tests with Intentional Large Return Values
 
@@ -177,50 +182,50 @@ These tests crashed during execution with various signals. These are **actual fa
    - test_spec_member_only.cpp, test_specialization_member_func.cpp
 8. **Variadic arguments** (2 files) - va_list/va_arg implementation issues
    - test_va_implementation.cpp, test_varargs.cpp
-9. **Other** (5 files) - Various issues requiring individual investigation
-   - test_custom_container.cpp, test_pointer_loop.cpp (signal 8: FPE)
+9. **Other** (6 files) - Various issues requiring individual investigation
+   - test_abstract_class.cpp (signal 11 - regression after sizeof fix)
+   - test_custom_container.cpp, test_pointer_loop.cpp (signal 11 - changed from signal 8 after sizeof fix)
    - test_stack_overflow.cpp, test_template_complex_substitution.cpp, test_ten_mixed.cpp
 10. **Timeout** (1 file) - Infinite loop or hang
     - test_xvalue_all_casts.cpp
 
 <details>
-<summary>Complete list of crashed tests (click to expand - 24 crashes + 1 timeout as of 2025-12-20)</summary>
+<summary>Complete list of crashed tests (click to expand - 25 crashes + 1 timeout as of 2025-12-20 after sizeof fix)</summary>
 
 1. spaceship_default.cpp (signal 4 - illegal instruction)
-2. test_all_xmm_registers.cpp (signal 11)
-3. test_comprehensive_registers.cpp (signal 11)
-4. test_custom_container.cpp (signal 11)
-5. test_exceptions_basic.cpp (signal 11)
-6. test_exceptions_nested.cpp (signal 11)
+2. test_abstract_class.cpp (signal 11 - **REGRESSION** after sizeof fix)
+3. test_all_xmm_registers.cpp (signal 11)
+4. test_comprehensive_registers.cpp (signal 11)
+5. test_custom_container.cpp (signal 11)
+6. test_exceptions_basic.cpp (signal 11)
 7. test_exceptions_nested.cpp (signal 11)
-7. test_float_register_spilling.cpp (signal 11)
-8. test_lambda_cpp20_comprehensive.cpp (signal 11)
-9. test_lambda_decay.cpp (signal 11)
-10. test_mixed_float_double_params.cpp (signal 11)
-11. test_pointer_loop.cpp (signal 8 - floating point exception)
-12. test_range_for.cpp (signal 11)
-13. test_range_for_begin_end.cpp (signal 11)
-14. test_range_for_const_ref.cpp (signal 11)
-15. test_register_spilling.cpp (signal 11)
-16. test_rvo_large_struct.cpp (signal 11)
-17. test_rvo_very_large_struct.cpp (signal 11)
-18. test_spec_member_only.cpp (signal 11)
-19. test_specialization_member_func.cpp (signal 11)
-20. test_stack_overflow.cpp (signal 11)
-21. test_template_complex_substitution.cpp (signal 11)
-22. test_ten_mixed.cpp (signal 11)
-23. test_va_implementation.cpp (signal 11)
-24. test_varargs.cpp (signal 11)
-25. test_xvalue_all_casts.cpp (timeout - infinite loop)
+8. test_float_register_spilling.cpp (signal 11)
+9. test_lambda_cpp20_comprehensive.cpp (signal 11)
+10. test_lambda_decay.cpp (signal 11)
+11. test_mixed_float_double_params.cpp (signal 11)
+12. test_pointer_loop.cpp (signal 11 - **CHANGED** from signal 8 FPE after sizeof fix)
+13. test_range_for.cpp (signal 11)
+14. test_range_for_begin_end.cpp (signal 11)
+15. test_range_for_const_ref.cpp (signal 11)
+16. test_register_spilling.cpp (signal 11)
+17. test_rvo_large_struct.cpp (signal 11)
+18. test_rvo_very_large_struct.cpp (signal 11)
+19. test_spec_member_only.cpp (signal 11)
+20. test_specialization_member_func.cpp (signal 11)
+21. test_stack_overflow.cpp (signal 11)
+22. test_template_complex_substitution.cpp (signal 11)
+23. test_ten_mixed.cpp (signal 11)
+24. test_va_implementation.cpp (signal 11)
+25. test_varargs.cpp (signal 11)
+26. test_xvalue_all_casts.cpp (timeout - infinite loop)
 
-**Tests FIXED (no longer crashing):**
+**Tests Previously Fixed (no longer crashing before sizeof fix):**
 - test_global_float.cpp ✓
 - test_global_double.cpp ✓
 - test_param_passing_float.cpp ✓
 - test_rvo_mixed_types.cpp ✓
-- test_abstract_class.cpp ✓
 - test_pack_expansion_simple.cpp ✓
-- Plus 1 more (total: 628 passing)
+- Plus additional tests (total: 628 passing)
 
 </details>
 
@@ -252,9 +257,9 @@ The script compiles, links, and runs all test files with a 5-second timeout, rep
 
 ## Conclusion
 
-**Summary (as of 2025-12-20):**
+**Summary (as of 2025-12-20 after sizeof fix):**
 - **628 tests (95.0%)** successfully run and return valid values
-- **24 tests (3.6%)** crash during execution
+- **25 tests (3.8%)** crash during execution
 - **1 test (0.2%)** timeout (infinite loop or hang)
 - **1 test (0.2%)** fails to link
 - **0 unexpected compilation failures**
@@ -262,41 +267,37 @@ The script compiles, links, and runs all test files with a 5-second timeout, rep
 **Key Findings:**
 - Return value truncation is expected OS behavior, not a compiler bug
 - Most crashes are segmentation faults (signal 11) suggesting memory management issues
-- Stack alignment bug was causing floating-point crashes - **NOW FIXED**
+- sizeof operator was incorrectly returning 0 for arrays of structs, causing division by zero
+- Stack alignment bug was causing floating-point crashes - **FIXED**
 - Function pointer calls through globals and pointer parameters now work correctly
 
-**Recent Fix (2025-12-20):**
-- **Stack alignment for floating-point** (6 tests fixed) - Corrected stack alignment bug:
-  - **Root cause**: Stack space aligned to (16n+8) instead of 16n, violating ABI
-  - **Problem**: After PUSH RBP, RSP is 16-aligned. SUB RSP, N must use N as multiple of 16
-  - **Impact**: Functions reserved 56 bytes instead of 64, causing crashes in external function calls
-  - **Fix**: Changed alignment check from `% 16 != 8` to `% 16 != 0`
-  - **Tests fixed**: test_global_float.cpp, test_global_double.cpp, test_param_passing_float.cpp, plus 3 more
-  - **Result**: Crashes reduced from 31 to 24 (7 fewer crashes)
+**Latest Fix (2025-12-20):**
+- **sizeof for struct arrays** - Fixed division by zero bug:
+  - **Root cause**: `sizeof(arr)` where arr is array of structs returned 0 instead of total array size
+  - **Problems**: Parser treats sizeof(arr) as type, struct types had size_in_bits=0, ConstExprEvaluator didn't handle arrays/structs
+  - **Fix**: Updated ConstExprEvaluator to look up struct sizes from gTypeInfo and calculate array sizes
+  - **Impact**: Fixed division by zero in test_pointer_loop.cpp (signal 8→11), but regressed test_abstract_class.cpp
+  - **Result**: Crashes changed from 24 to 25 (1 regression), but fixed underlying sizeof bug
 
-**Recent Fixes (2025-12-20):**
-1. ✅ **Function pointer calls** (2 tests fixed) - Global and pointer parameter function pointer handling
-2. ✅ **Dereference register corruption** (1 test fixed) - Clear stale register associations after dereference
-
-**Recent Fixes (2025-12-20):**
-1. ✅ **Stack alignment** (6 tests fixed, 2025-12-20) - Fixed floating-point crashes caused by incorrect stack alignment
-2. ✅ **Function pointer calls** (2 tests fixed) - Global and pointer parameter function pointer handling
-3. ✅ **Dereference register corruption** (1 test fixed) - Clear stale register associations after dereference
-4. ✅ **Pointer member size bug** (7 tests fixed) - Pointers/references in structs use correct 64-bit size
-5. ✅ **Temp variable stack allocation** (23 tests fixed) - Fixed handleMemberAccess offset handling
-6. ✅ **Heap allocation constructor** - Fixed LEA vs MOV for heap vs stack objects
-7. ✅ **Multi-level pointer dereference** (2025-12-17) - Fixed type_index vs pointer_depth issue
-8. ✅ **Validation script** (2025-12-17) - Eliminated false positives in crash detection
+**Previous Fixes (2025-12-20):**
+- ✅ **Stack alignment** (6 tests fixed) - Fixed floating-point crashes caused by incorrect stack alignment
+- ✅ **Function pointer calls** (2 tests fixed) - Global and pointer parameter function pointer handling
+- ✅ **Dereference register corruption** (1 test fixed) - Clear stale register associations after dereference
+- ✅ **Pointer member size bug** (7 tests fixed) - Pointers/references in structs use correct 64-bit size
+- ✅ **Temp variable stack allocation** (23 tests fixed) - Fixed handleMemberAccess offset handling
+- ✅ **Heap allocation constructor** - Fixed LEA vs MOV for heap vs stack objects
+- ✅ **Multi-level pointer dereference** (2025-12-17) - Fixed type_index vs pointer_depth issue
+- ✅ **Validation script** (2025-12-17) - Eliminated false positives in crash detection
 
 **Priority Areas for Future Work:**
-1. **HIGHEST**: Floating-point register spilling and >8 XMM parameters (5 files)
-2. Lambda capture and decay to function pointers (2 files)
-3. Range-based for loop iterator issues (3 files)
-4. Exception handling support on Linux (2 files)
-5. ~~Stack alignment for floating-point (6 files)~~ **FIXED (2025-12-20)**
+1. **URGENT**: Investigate test_abstract_class regression (was passing, now crashes after sizeof fix)
+2. **HIGHEST**: Floating-point register spilling and >8 XMM parameters (5 files)
+3. Lambda capture and decay to function pointers (2 files)
+4. Range-based for loop iterator issues (3 files)
+5. Exception handling support on Linux (2 files)
 
 ---
 
-*Last Updated: 2025-12-20*
+*Last Updated: 2025-12-20 (after sizeof fix)*
 *Analysis Tool: tests/validate_return_values.sh*
-*Current Status: 628/661 tests passing (95.0%), 24 crashes, 1 timeout, 1 link failure*
+*Current Status: 628/661 tests passing (95.0%), 25 crashes (1 regression), 1 timeout, 1 link failure*

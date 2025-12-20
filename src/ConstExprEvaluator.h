@@ -283,6 +283,43 @@ private:
 		return apply_unary_op(operand_result, op);
 	}
 
+	// Helper function to get struct size from gTypeInfo
+	static size_t get_struct_size_from_typeinfo(const TypeSpecifierNode& type_spec) {
+		if (type_spec.type() != Type::Struct) {
+			return 0;
+		}
+		
+		size_t type_index = type_spec.type_index();
+		if (type_index >= gTypeInfo.size()) {
+			return 0;
+		}
+		
+		const TypeInfo& type_info = gTypeInfo[type_index];
+		const StructTypeInfo* struct_info = type_info.getStructInfo();
+		if (!struct_info) {
+			return 0;
+		}
+		
+		return struct_info->total_size;
+	}
+	
+	// Helper function to get the size in bytes for a type specifier
+	// Handles both primitive types and struct types
+	static size_t get_typespec_size_bytes(const TypeSpecifierNode& type_spec) {
+		size_t size_in_bytes = type_spec.size_in_bits() / 8;
+		
+		// If size_in_bits is 0, look it up
+		if (size_in_bytes == 0) {
+			if (type_spec.type() == Type::Struct) {
+				size_in_bytes = get_struct_size_from_typeinfo(type_spec);
+			} else {
+				size_in_bytes = get_type_size_bits(type_spec.type()) / 8;
+			}
+		}
+		
+		return size_in_bytes;
+	}
+
 	static EvalResult evaluate_sizeof(const SizeofExprNode& sizeof_expr, EvaluationContext& context) {
 		// sizeof is always a constant expression
 		// Get the actual size from the type
@@ -291,12 +328,48 @@ private:
 			const auto& type_node = sizeof_expr.type_or_expr();
 			if (type_node.is<TypeSpecifierNode>()) {
 				const auto& type_spec = type_node.as<TypeSpecifierNode>();
-				// size_in_bits() returns bits, convert to bytes
-				unsigned long long size_in_bytes = type_spec.size_in_bits() / 8;
-				// Fallback if size not set: calculate from type
-				if (size_in_bytes == 0) {
-					size_in_bytes = get_type_size_bits(type_spec.type()) / 8;
+				
+				// Workaround for parser limitation: when sizeof(arr) is parsed where arr is an
+				// array variable, the parser may incorrectly parse it as a type.
+				// If size_in_bits is 0, try looking up the identifier in the symbol table.
+				if (type_spec.size_in_bits() == 0 && type_spec.token().type() == Token::Type::Identifier && context.symbols) {
+					std::string_view identifier = type_spec.token().value();
+					
+					// Look up the identifier in the symbol table
+					std::optional<ASTNode> symbol = context.symbols->lookup(identifier);
+					if (symbol.has_value()) {
+						const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+						if (decl) {
+							// Check if it's an array
+							if (decl->is_array()) {
+								const auto& array_type_spec = decl->type_node().as<TypeSpecifierNode>();
+								size_t element_size = get_typespec_size_bytes(array_type_spec);
+								
+								// Get array size from declaration
+								if (decl->array_size().has_value()) {
+									const ASTNode& size_expr = *decl->array_size();
+									auto eval_result = evaluate(size_expr, context);
+									if (eval_result.success) {
+										long long array_count = eval_result.as_int();
+										if (array_count > 0 && element_size > 0) {
+											return EvalResult::from_int(static_cast<long long>(element_size * array_count));
+										}
+									}
+								}
+							}
+							
+							// Not an array, just return the variable's type size
+							const auto& var_type = decl->type_node().as<TypeSpecifierNode>();
+							size_t var_size = get_typespec_size_bytes(var_type);
+							if (var_size > 0) {
+								return EvalResult::from_int(static_cast<long long>(var_size));
+							}
+						}
+					}
 				}
+				
+				// size_in_bits() returns bits, convert to bytes
+				unsigned long long size_in_bytes = get_typespec_size_bytes(type_spec);
 				return EvalResult::from_int(static_cast<long long>(size_in_bytes));
 			}
 		}
@@ -318,28 +391,28 @@ private:
 							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 							
 							if (decl) {
-								const auto& type_node = decl->type_node();
-								if (type_node.is<TypeSpecifierNode>()) {
-									const auto& type_spec = type_node.as<TypeSpecifierNode>();
+								// Check if it's an array - if so, calculate total size
+								if (decl->is_array()) {
+									const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
+									size_t element_size = get_typespec_size_bytes(type_spec);
 									
-									// Handle struct types
-									if (type_spec.type() == Type::Struct) {
-										size_t type_index = type_spec.type_index();
-										if (type_index < gTypeInfo.size()) {
-											const TypeInfo& type_info = gTypeInfo[type_index];
-											const StructTypeInfo* struct_info = type_info.getStructInfo();
-											if (struct_info) {
-												return EvalResult::from_int(static_cast<long long>(struct_info->total_size));
+									// Get array size from declaration
+									if (decl->array_size().has_value()) {
+										const ASTNode& size_expr = *decl->array_size();
+										auto eval_result = evaluate(size_expr, context);
+										if (eval_result.success) {
+											long long array_count = eval_result.as_int();
+											if (array_count > 0 && element_size > 0) {
+												return EvalResult::from_int(static_cast<long long>(element_size * array_count));
 											}
 										}
 									}
-									
-									// For primitive types
-									unsigned long long size_in_bytes = type_spec.size_in_bits() / 8;
-									// Fallback if size not set
-									if (size_in_bytes == 0) {
-										size_in_bytes = get_type_size_bits(type_spec.type()) / 8;
-									}
+								}
+								
+								const auto& type_node = decl->type_node();
+								if (type_node.is<TypeSpecifierNode>()) {
+									const auto& type_spec = type_node.as<TypeSpecifierNode>();
+									unsigned long long size_in_bytes = get_typespec_size_bytes(type_spec);
 									return EvalResult::from_int(static_cast<long long>(size_in_bytes));
 								}
 							}

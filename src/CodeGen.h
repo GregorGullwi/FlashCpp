@@ -10272,6 +10272,22 @@ private:
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 		size_t element_size = type_spec.size_in_bits() / 8;
 		
+		// For struct types, get size from gTypeInfo instead of size_in_bits()
+		if (element_size == 0 && type_spec.type() == Type::Struct) {
+			size_t type_index = type_spec.type_index();
+			if (type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_index];
+				const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (struct_info) {
+					element_size = struct_info->total_size;
+				}
+			}
+		}
+		
+		if (element_size == 0) {
+			return std::nullopt;
+		}
+		
 		// Get array size
 		if (!decl.array_size().has_value()) {
 			return std::nullopt;
