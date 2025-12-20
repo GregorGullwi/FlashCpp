@@ -11764,10 +11764,19 @@ private:
 		// 1. Update variables map: For future lookups of this TempVar by name
 		// 2. Update register allocator: For register spilling and dirty register flushing
 		//
-		// Both must point to member_stack_offset (the actual member location in the struct)
-		// NOT to result_offset (which was allocated for the TempVar but should not be used)
-		variable_scopes.back().variables[result_var_handle].offset = member_stack_offset;
-		regAlloc.set_stack_variable_offset(temp_reg, member_stack_offset, op.result.size_in_bits);
+		// For stack-based structs: Both must point to member_stack_offset (the actual member location in the struct)
+		// For pointer-based access (this, references): member_stack_offset is 0 and meaningless,
+		// so we use result_offset (the allocated temp var) instead
+		if (is_pointer_access) {
+			// For pointer-based member access, the value is loaded into a register
+			// and should be backed by the result_offset temp var location, not member_stack_offset (which is 0)
+			variable_scopes.back().variables[result_var_handle].offset = result_offset;
+			regAlloc.set_stack_variable_offset(temp_reg, result_offset, op.result.size_in_bits);
+		} else {
+			// For stack-based struct member access, alias the temp var to the member's actual location
+			variable_scopes.back().variables[result_var_handle].offset = member_stack_offset;
+			regAlloc.set_stack_variable_offset(temp_reg, member_stack_offset, op.result.size_in_bits);
+		}
 	}
 
 	void handleMemberStore(const IrInstruction& instruction) {
