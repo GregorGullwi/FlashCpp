@@ -6112,10 +6112,12 @@ private:
 		} else if (std::holds_alternative<TempVar>(ctor_op.object)) {
 			const TempVar temp_var = std::get<TempVar>(ctor_op.object);
 			
-			// TempVars from heap_alloc hold pointers that need to be loaded (MOV)
-			// This matches the destructor logic for consistency
+			// TempVars can be either stack-allocated or heap-allocated
+			// Use is_heap_allocated flag to distinguish:
+			// - Heap-allocated (from new): TempVar holds a pointer, use MOV to load it
+			// - Stack-allocated (RVO/NRVO): TempVar is the object location, use LEA to get address
 			object_offset = getStackOffsetFromTempVar(temp_var);
-			object_is_pointer = true;  // TempVars are pointers (from heap_alloc)
+			object_is_pointer = ctor_op.is_heap_allocated;
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(ctor_op.object);
 			auto it = variable_scopes.back().variables.find(var_name_handle);

@@ -1101,6 +1101,7 @@ struct ConstructorCallOp {
 	std::vector<TypedValue> arguments;               // Constructor arguments
 	bool use_return_slot = false;                    // True if constructing into caller's return slot (RVO)
 	std::optional<int> return_slot_offset;           // Stack offset of return slot (for RVO)
+	bool is_heap_allocated = false;                  // True if constructing heap-allocated object (from new)
 };
 
 // Destructor call (invoke destructor on object)
