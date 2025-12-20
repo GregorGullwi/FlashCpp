@@ -39,7 +39,7 @@ Total test files analyzed: **661**
 | Compilation Failures | 0 | Tests that failed to compile (all expected failures excluded) |
 | Link Failures | 1 | Tests that compiled but failed to link (all expected failures excluded) |
 | Runtime Crashes | 64 | Tests that crashed during execution with various signals |
-| Execution Timeouts | 2 | Tests that timeout (infinite loop or hang) |
+| Execution Timeouts | 1 | Tests that timeout (infinite loop or hang) |
 | Out-of-Range (Valid) | 0 | Tests intentionally returning >255 (noted but truncated by OS) |
 | Out-of-Range (Unknown) | 0 | Tests with unexpected >255 returns |
 
@@ -151,7 +151,76 @@ These tests crashed during execution with various signals. These are **actual fa
 9. **RVO/NRVO** (3+ files) - Return value optimization edge cases
 10. **Template specialization** (3+ files) - Specialization instantiation issues
 
-See validation script output for complete list of 64 crashed tests.
+<details>
+<summary>Complete list of crashed tests (click to expand - 64 crashes + 1 timeout as of 2025-12-20)</summary>
+
+1. spaceship_basic.cpp (signal 11)
+2. spaceship_default.cpp (signal 4)
+3. test_abstract_class.cpp (signal 11)
+4. test_all_xmm_registers.cpp (signal 11)
+5. test_comprehensive_registers.cpp (signal 11)
+6. test_const_member_deref.cpp (signal 11)
+7. test_const_member_with_param.cpp (signal 11)
+8. test_const_ptr_regular.cpp (signal 11)
+9. test_ctor_deref.cpp (signal 11)
+10. test_custom_container.cpp (signal 11)
+11. test_delayed_parsing_multiple.cpp (signal 11)
+12. test_exceptions_basic.cpp (signal 11)
+13. test_exceptions_nested.cpp (signal 11)
+14. test_float_register_spilling.cpp (signal 11)
+15. test_funcptr_global.cpp (signal 11)
+16. test_funcptr_param.cpp (signal 11)
+17. test_global_double.cpp (signal 11)
+18. test_global_float.cpp (signal 11)
+19. test_inheritance_basic.cpp (signal 11)
+20. test_lambda_capture_simple.cpp (signal 11)
+21. test_lambda_captures_comprehensive.cpp (signal 11)
+22. test_lambda_copy_this.cpp (signal 11)
+23. test_lambda_copy_this_implicit.cpp (signal 11)
+24. test_lambda_copy_this_mutation.cpp (signal 11)
+25. test_lambda_cpp20_comprehensive.cpp (signal 11)
+26. test_lambda_decay.cpp (signal 11)
+27. test_lambda_init_capture_demo.cpp (signal 11)
+28. test_member_deref.cpp (signal 11)
+29. test_minimal_member_deref.cpp (signal 11)
+30. test_mismatch_const.cpp (signal 11)
+31. test_mixed_float_double_params.cpp (signal 11)
+32. test_no_virtual.cpp (signal 11)
+33. test_one_deref_ctor.cpp (signal 11)
+34. test_operator_call_simple.cpp (signal 11)
+35. test_out_of_line_simple.cpp (signal 11)
+36. test_pack_expansion_simple.cpp (signal 11)
+37. test_param_passing_float.cpp (signal 11)
+38. test_pointer_loop.cpp (signal 8)
+39. test_range_for.cpp (signal 11)
+40. test_range_for_begin_end.cpp (signal 11)
+41. test_range_for_const_ref.cpp (signal 11)
+42. test_register_spilling.cpp (signal 11)
+43. test_rvo_large_struct.cpp (signal 11)
+44. test_rvo_mixed_types.cpp (signal 11)
+45. test_rvo_very_large_struct.cpp (signal 11)
+46. test_same_deref.cpp (signal 11)
+47. test_spec_func_ptr.cpp (signal 11)
+48. test_spec_member_only.cpp (signal 11)
+49. test_spec_member_value.cpp (signal 11)
+50. test_spec_nullptr_check.cpp (signal 11)
+51. test_spec_nullptr_regular_ptr.cpp (signal 11)
+52. test_spec_nullptr_reset.cpp (signal 11)
+53. test_specialization_member_func.cpp (signal 11)
+54. test_stack_overflow.cpp (signal 11)
+55. test_struct_ref_passing.cpp (signal 11)
+56. test_struct_ref_simple.cpp (signal 11)
+57. test_template_complex_substitution.cpp (signal 11)
+58. test_ten_mixed.cpp (signal 11)
+59. test_toplevel_const_ok.cpp (signal 11)
+60. test_two_deref.cpp (signal 11)
+61. test_va_implementation.cpp (signal 11)
+62. test_varargs.cpp (signal 11)
+63. test_virtual_basic.cpp (signal 11)
+64. test_xvalue_all_casts.cpp (timeout)
+
+</details>
+
 
 ## Recommendations
 
@@ -180,7 +249,7 @@ The script compiles, links, and runs all test files with a 5-second timeout, rep
 **Summary (as of 2025-12-20):**
 - 589 tests (89.1%) successfully run and return valid values
 - 64 tests (9.7%) crash during execution
-- 2 tests (0.3%) timeout (infinite loop or hang)
+- 1 test (0.2%) timeout (infinite loop or hang)
 - 1 test (0.2%) fails to link
 - 0 unexpected compilation failures
 
