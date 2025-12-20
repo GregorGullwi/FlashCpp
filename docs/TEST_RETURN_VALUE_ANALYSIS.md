@@ -47,7 +47,23 @@ Total test files analyzed: **661**
 
 ### Recent Improvements
 
-**2025-12-20 Update:**
+**2025-12-20 Update (Latest):**
+- Investigating widespread crashes related to temp variable stack offset allocation
+  - **Issue**: Multiple tests crashing with SIGSEGV due to incorrect stack offsets
+  - **Investigation Findings**:
+    1. Temp variables were being allocated at offset 0 (the rbp location), causing stack corruption
+    2. Root cause #1: Variable scopes not being cleaned up between functions
+    3. Root cause #2: Register allocator state persisting across functions
+    4. Root cause #3: VariableInfo default offset was 0 instead of INT_MIN (sentinel value)
+  - **Fixes Applied**:
+    - Added scope cleanup before processing each FunctionDecl to ensure clean state per function
+    - Added regAlloc.reset() at start of handleFunctionDecl to clear register state
+    - Changed VariableInfo default offset from 0 to INT_MIN to avoid ambiguity
+  - **Status**: Partial fix - scope and register management improved, but offset 0 issue persists
+  - **Remaining Work**: Further investigation needed into stack space calculation and variable pre-allocation
+- Current state: **89.1% of tests passing** (589/661)
+
+**2025-12-20 Update (Earlier):**
 - Fixed heap allocation constructor bug (test_heap.cpp now passes)
   - **Issue**: Constructor was using LEA (load effective address) for heap-allocated objects instead of MOV (load value)
   - **Root Cause**: handleConstructorCall couldn't distinguish between heap-allocated pointers and stack-allocated objects
@@ -55,7 +71,6 @@ Total test files analyzed: **661**
     - Set to true for `new` and placement new operations
     - handleConstructorCall now uses MOV for heap objects, LEA for stack objects
   - **Impact**: Fixed test_heap.cpp without breaking RVO tests
-- Current state: **89.1% of tests passing** (589/661)
 
 **2025-12-17 Update:**
 - Fixed validation script crash detection logic (reduced false positives from 89 to 57 actual crashes)
