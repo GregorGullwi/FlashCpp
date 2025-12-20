@@ -4986,27 +4986,9 @@ private:
 		int size_bits;
 		
 		if (is_array_type || type_node.pointer_depth() > 0) {
-			// For arrays and pointers, return the element/pointee type size
-			size_bits = static_cast<int>(type_node.size_in_bits());
-			// Fallback: if size_bits is 0, calculate from type (parser bug workaround)
-			if (size_bits == 0) {
-				FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name, 
-				         "' (type=", static_cast<int>(type_node.type()), ", is_array=", is_array_type, 
-				         ", pointer_depth=", type_node.pointer_depth(), ") - using fallback calculation");
-				if (type_node.type() == Type::Struct && type_node.type_index() > 0) {
-					// Get struct size from type info
-					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
-					if (struct_info) {
-						size_bits = static_cast<int>(struct_info->total_size * 8);
-					} else {
-						FLASH_LOG(Codegen, Error, "Failed to get struct info for type_index=", type_node.type_index());
-						assert(false && "Expected struct info to exist for valid type_index");
-					}
-				} else {
-					size_bits = get_type_size_bits(type_node.type());
-				}
-			}
+			// For arrays and pointers, the identifier itself is a pointer (64 bits on x64)
+			// The element/pointee size is stored separately and used for pointer arithmetic
+			size_bits = 64;  // Pointer size on x64 architecture
 		} else {
 			// For regular variables, return the variable size
 			size_bits = static_cast<int>(type_node.size_in_bits());
