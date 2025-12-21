@@ -6539,15 +6539,33 @@ private:
 		}
 
 		// Virtual call sequence:
-		// 1. Load vptr from object: vptr = [object + 0]  (vptr is at offset 0)
-		// 2. Load function pointer from vtable: func_ptr = [vptr + vtable_index * 8]
-		// 3. Call through function pointer: call func_ptr(this, args...)
+		// 1. Load object pointer/address into first param register (for 'this' pointer)
+		// 2. Load vptr from object: vptr = [object + 0]  (vptr is at offset 0)
+		// 3. Load function pointer from vtable: func_ptr = [vptr + vtable_index * 8]
+		// 4. Call through function pointer: call func_ptr(this, args...)
 
-		// Step 1: Load vptr from object into RAX
-		// MOV RAX, [RBP + object_offset]  ; Load vptr (first 8 bytes of object)
-		emitMovFromFrame(X64Register::RAX, object_offset);
+		// Step 1: Load object pointer/address into first parameter register (will be 'this' pointer)
+		// For pointer variables: Load the pointer value from stack
+		// For direct objects: Load the object's address
+		// Platform-specific: RDI on Linux (System V), RCX on Windows (Win64)
+		const X64Register this_reg = getIntParamReg<TWriterClass>(0); // First parameter register
+		emitMovFromFrame(this_reg, object_offset);
 
-		// Step 2: Load function pointer from vtable into RAX
+		// Step 2: Load vptr from object into RAX
+		// The object pointer is in this_reg, so we dereference it
+		// MOV RAX, [this_reg + 0]  ; Load vptr (first 8 bytes at object address)
+		textSectionData.push_back(0x48); // REX.W prefix
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+		// ModR/M byte depends on the source register
+		if (this_reg == X64Register::RDI) {
+			textSectionData.push_back(0x07); // ModR/M: [RDI], RAX
+		} else if (this_reg == X64Register::RCX) {
+			textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
+		} else {
+			assert(false && "Unexpected register for 'this' pointer");
+		}
+
+		// Step 3: Load function pointer from vtable into RAX
 		// MOV RAX, [RAX + vtable_index * 8]
 		int vtable_offset = op.vtable_index * 8;
 		textSectionData.push_back(0x48); // REX.W prefix
@@ -6563,20 +6581,8 @@ private:
 			}
 		}
 
-		// Step 3: Set up 'this' pointer in RCX (first parameter in Windows x64 calling convention)
-		// LEA RCX, [RBP + object_offset]
-		// Need to recalculate object_offset since we used it in step 1
-		object_offset = 0;
-		if (std::holds_alternative<TempVar>(op.object)) {
-			const TempVar& temp_var = std::get<TempVar>(op.object);
-			object_offset = getStackOffsetFromTempVar(temp_var);
-		} else {
-			StringHandle var_name_handle = std::get<StringHandle>(op.object);
-			std::string_view var_name = StringTable::getStringView(var_name_handle);
-			object_offset = variable_scopes.back().variables[var_name_handle].offset;
-		}
-
-		emitLeaFromFrame(X64Register::RCX, object_offset);
+		// Step 4: 'this' pointer is already in the correct register from Step 1
+		// No need to recalculate or reload - it's preserved throughout
 
 		// TODO: Handle additional function arguments (op.arguments)
 		// For now, we only support virtual calls with no additional arguments beyond 'this'
