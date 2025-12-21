@@ -6538,31 +6538,51 @@ private:
 			object_offset = variable_scopes.back().variables[var_name_handle].offset;
 		}
 
-		// Virtual call sequence:
-		// 1. Load object pointer/address into first param register (for 'this' pointer)
-		// 2. Load vptr from object: vptr = [object + 0]  (vptr is at offset 0)
-		// 3. Load function pointer from vtable: func_ptr = [vptr + vtable_index * 8]
-		// 4. Call through function pointer: call func_ptr(this, args...)
+		// Virtual call sequence varies based on whether object is a pointer or direct:
+		// For pointers (object_size == 64):
+		//   1. Load object pointer value → 2. Load vptr from [pointer] → 3. Load func from [vptr + index*8] → 4. Call
+		// For direct objects (object_size > 64):
+		//   1. Get object address → 2. Load vptr from [address] → 3. Load func from [vptr + index*8] → 4. Call
 
-		// Step 1: Load object pointer/address into first parameter register (will be 'this' pointer)
-		// For pointer variables: Load the pointer value from stack
-		// For direct objects: Load the object's address
-		// Platform-specific: RDI on Linux (System V), RCX on Windows (Win64)
 		const X64Register this_reg = getIntParamReg<TWriterClass>(0); // First parameter register
-		emitMovFromFrame(this_reg, object_offset);
 
-		// Step 2: Load vptr from object into RAX
-		// The object pointer is in this_reg, so we dereference it
-		// MOV RAX, [this_reg + 0]  ; Load vptr (first 8 bytes at object address)
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x8B); // MOV r64, r/m64
-		// ModR/M byte depends on the source register
-		if (this_reg == X64Register::RDI) {
-			textSectionData.push_back(0x07); // ModR/M: [RDI], RAX
-		} else if (this_reg == X64Register::RCX) {
-			textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
+		// Determine if object is a pointer or direct object
+		bool is_pointer_object = (op.object_size == 64);
+
+		if (is_pointer_object) {
+			// Step 1a: Load pointer value from stack into this_reg
+			// MOV this_reg, [RBP + object_offset]
+			emitMovFromFrame(this_reg, object_offset);
+
+			// Step 2a: Load vptr from object (dereference the pointer)
+			// MOV RAX, [this_reg + 0]
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			// ModR/M byte depends on the source register
+			if (this_reg == X64Register::RDI) {
+				textSectionData.push_back(0x07); // ModR/M: [RDI], RAX
+			} else if (this_reg == X64Register::RCX) {
+				textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
+			} else {
+				assert(false && "Unexpected register for 'this' pointer");
+			}
 		} else {
-			assert(false && "Unexpected register for 'this' pointer");
+			// Step 1b: Load object address into this_reg
+			// LEA this_reg, [RBP + object_offset]
+			emitLeaFromFrame(this_reg, object_offset);
+
+			// Step 2b: Load vptr from object (object address is in this_reg)
+			// MOV RAX, [this_reg + 0]
+			textSectionData.push_back(0x48); // REX.W prefix
+			textSectionData.push_back(0x8B); // MOV r64, r/m64
+			// ModR/M byte depends on the source register
+			if (this_reg == X64Register::RDI) {
+				textSectionData.push_back(0x07); // ModR/M: [RDI], RAX
+			} else if (this_reg == X64Register::RCX) {
+				textSectionData.push_back(0x01); // ModR/M: [RCX], RAX
+			} else {
+				assert(false && "Unexpected register for 'this' pointer");
+			}
 		}
 
 		// Step 3: Load function pointer from vtable into RAX
