@@ -11958,14 +11958,18 @@ private:
 					if (is_double_literal) {
 						uint64_t bits;
 						std::memcpy(&bits, &literal_double_value, sizeof(bits));
-						textSectionData.push_back(0x48);
-						textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg));
+						// MOV reg, imm64: REX.W prefix (+ REX.B for R8-R15), then 0xB8+reg_bits opcode
+						uint8_t rex = 0x48 | (static_cast<uint8_t>(value_reg) >= 8 ? 0x01 : 0x00);
+						textSectionData.push_back(rex);
+						textSectionData.push_back(0xB8 + (static_cast<uint8_t>(value_reg) & 0x07));
 						for (int i = 0; i < 8; i++) {
 							textSectionData.push_back((bits >> (i * 8)) & 0xFF);
 						}
 					} else {
-						textSectionData.push_back(0x48);
-						textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg));
+						// MOV reg, imm64: REX.W prefix (+ REX.B for R8-R15), then 0xB8+reg_bits opcode
+						uint8_t rex = 0x48 | (static_cast<uint8_t>(value_reg) >= 8 ? 0x01 : 0x00);
+						textSectionData.push_back(rex);
+						textSectionData.push_back(0xB8 + (static_cast<uint8_t>(value_reg) & 0x07));
 						uint64_t imm64 = static_cast<uint64_t>(literal_value);
 						for (int i = 0; i < 8; i++) {
 							textSectionData.push_back((imm64 >> (i * 8)) & 0xFF);
@@ -12136,14 +12140,18 @@ private:
 			if (is_double_literal) {
 				uint64_t bits;
 				std::memcpy(&bits, &literal_double_value, sizeof(bits));
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg));
+				// MOV reg, imm64: REX.W prefix (+ REX.B for R8-R15), then 0xB8+reg_bits opcode
+				uint8_t rex = 0x48 | (static_cast<uint8_t>(value_reg) >= 8 ? 0x01 : 0x00);
+				textSectionData.push_back(rex);
+				textSectionData.push_back(0xB8 + (static_cast<uint8_t>(value_reg) & 0x07));
 				for (int i = 0; i < 8; i++) {
 					textSectionData.push_back((bits >> (i * 8)) & 0xFF);
 				}
 			} else {
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg));
+				// MOV reg, imm64: REX.W prefix (+ REX.B for R8-R15), then 0xB8+reg_bits opcode
+				uint8_t rex = 0x48 | (static_cast<uint8_t>(value_reg) >= 8 ? 0x01 : 0x00);
+				textSectionData.push_back(rex);
+				textSectionData.push_back(0xB8 + (static_cast<uint8_t>(value_reg) & 0x07));
 				uint64_t imm64 = static_cast<uint64_t>(literal_value);
 				for (int i = 0; i < 8; i++) {
 					textSectionData.push_back((imm64 >> (i * 8)) & 0xFF);
