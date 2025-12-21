@@ -5881,6 +5881,17 @@ private:
 						}
 					}
 				}
+			} else if (std::holds_alternative<TempVar>(array_operands[2])) {
+				// Array from expression (e.g., member access: obj.arr_member[idx])
+				// array_operands[1] contains total array size, we need element size
+				// For primitive types, use the type's size directly
+				if (element_type == Type::Struct) {
+					// For struct arrays, element_size_bits is already correct from member info
+					// (it contains the struct size, not the total array size)
+				} else {
+					// For primitive type arrays, get the element size from the type
+					element_size_bits = get_type_size_bits(element_type);
+				}
 			}
 			
 			// Recurse on the array expression (could be nested: arr[i][j])

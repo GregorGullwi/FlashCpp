@@ -11245,7 +11245,12 @@ private:
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 					                    load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
-				emitLoadFromFrame(textSectionData, index_reg, index_var_offset, index_size_bytes);
+				// Load index with proper sign extension based on index type
+				bool is_signed = isSignedType(op.index.type);
+				emitMovFromFrameSized(
+					SizedRegister{index_reg, 64, false},
+					SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits, is_signed}
+				);
 				emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 				emitAddRegs(textSectionData, base_reg, index_reg);
 				
@@ -11261,7 +11266,12 @@ private:
 				}
 			} else {
 				// Array is a regular variable
-				emitLoadFromFrame(textSectionData, index_reg, index_var_offset, index_size_bytes);
+				// Load index with proper sign extension based on index type
+				bool is_signed = isSignedType(op.index.type);
+				emitMovFromFrameSized(
+					SizedRegister{index_reg, 64, false},
+					SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits, is_signed}
+				);
 				emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 					
 				int64_t combined_offset = array_base_offset + member_offset;
@@ -11303,10 +11313,14 @@ private:
 				int64_t combined_offset = array_base_offset + member_offset;
 				emitLEAFromFrame(textSectionData, base_reg, combined_offset);
 			}
-				
-			// Load index into index_reg
-			emitLoadFromFrame(textSectionData, index_reg, index_var_offset, index_size_bytes);
-				
+			
+			// Load index into index_reg with proper sign extension based on index type
+			bool is_signed = isSignedType(op.index.type);
+			emitMovFromFrameSized(
+				SizedRegister{index_reg, 64, false},
+				SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits, is_signed}
+			);
+			
 			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 			emitAddRegs(textSectionData, base_reg, index_reg);
 			
