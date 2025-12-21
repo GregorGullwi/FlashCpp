@@ -3105,24 +3105,9 @@ class IrToObjConverter {
 public:
 	IrToObjConverter() = default;
 	
-	~IrToObjConverter() {
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Destructor started");
-		// Explicitly clear maps to see which one hangs
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing functionSymbols");
-		functionSymbols.clear();
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing function_spans");
-		function_spans.clear();
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing label_positions_");
-		label_positions_.clear();
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing pending_branches_");
-		pending_branches_.clear();
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Destructor body completed - about to destroy members");
-		// After this point, members will be destroyed in reverse order: writer is first member, so it's destroyed last
-	}
+	~IrToObjConverter() = default;
 
 	void convert(const Ir& ir, const std::string_view filename, const std::string_view source_filename = "", bool show_timing = false) {
-		FLASH_LOG_FORMAT(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] convert() started, textSectionData.size()={}, textSectionData.capacity()={}", 
-			textSectionData.size(), textSectionData.capacity());
 		
 		// High-level timing (always enabled when show_timing=true)
 		auto convert_start = std::chrono::high_resolution_clock::now();
@@ -4825,14 +4810,6 @@ private:
 		// Check if source is an XMM register (enum values >= 16)
 		bool is_xmm_source = static_cast<uint8_t>(source.reg) >= 16;
 		
-		// Validate destination size - size of 0 indicates a bug
-		if (dest.size_in_bits == 0) {
-			FLASH_LOG_FORMAT(Codegen, Error, "emitMovToFrameSized called with size=0! reg={} offset={}", 
-				static_cast<int>(source.reg), dest.offset);
-			// Default to 8-bit to avoid crash, but this indicates a bug
-			dest.size_in_bits = 8;
-		}
-		
 		// Use the destination size to determine the store instruction
 		if (dest.size_in_bits == 64) {
 			if (is_xmm_source) {
@@ -4854,26 +4831,9 @@ private:
 			opcodes = generateMovToFrame8(source.reg, dest.offset);
 		}
 		
-		std::string bytes_str;
-		for (int i = 0; i < opcodes.size_in_bytes; i++) {
-			bytes_str += std::format("{:02x} ", static_cast<uint8_t>(opcodes.op_codes[i]));
-		}
-		FLASH_LOG_FORMAT(Codegen, Debug, "emitMovToFrameSized: reg={} offset={} size={} is_xmm={} bytes={}", 
-			static_cast<int>(source.reg), dest.offset, dest.size_in_bits, is_xmm_source, bytes_str);
-		
-		// Validate opcodes before inserting - detect spaceship operator register corruption bug
+		// Insert opcodes into text section
 		if (opcodes.size_in_bytes > 0 && opcodes.size_in_bytes <= MAX_MOV_INSTRUCTION_SIZE) {
-			// Check for the specific bad instruction pattern: REX.W (0x48) followed by invalid 0xc5
-			if (opcodes.size_in_bytes >= 2 && opcodes.op_codes[0] == 0x48 && opcodes.op_codes[1] == 0xc5) {
-				FLASH_LOG(Codegen, Error, "DETECTED BAD INSTRUCTION PATTERN: 48 c5 - Likely register corruption bug!");
-				FLASH_LOG_FORMAT(Codegen, Error, "  Register: {}, Offset: {}, Size: {}", 
-					static_cast<int>(source.reg), dest.offset, dest.size_in_bits);
-				// Don't insert the bad instruction - this will cause a different failure but help us debug
-				return;
-			}
 			textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
-		} else {
-			FLASH_LOG_FORMAT(Codegen, Error, "Invalid opcodes.size_in_bytes: {}", opcodes.size_in_bytes);
 		}
 	}
 
@@ -7576,11 +7536,6 @@ private:
 			// Patch the SUB RSP immediate at prologue offset + 3 (skip REX.W, opcode, ModR/M)
 			if (current_function_prologue_offset_ > 0) {
 				uint32_t patch_offset = current_function_prologue_offset_ + 3;
-				// Check if we're patching near the bad instruction offset
-				if (patch_offset >= 2190 && patch_offset <= 2210) {
-					FLASH_LOG_FORMAT(Codegen, Error, "PATCHING near bad instruction area! patch_offset={}, patching offsets {}-{}", 
-						patch_offset, patch_offset, patch_offset + 3);
-				}
 				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
 				for (int i = 0; i < 4; i++) {
 					textSectionData[patch_offset + i] = bytes[i];
@@ -13358,11 +13313,6 @@ private:
 			// Patch the SUB RSP immediate at prologue offset + 3
 			if (current_function_prologue_offset_ > 0) {
 				uint32_t patch_offset = current_function_prologue_offset_ + 3;
-				// Check if we're patching near the bad instruction offset
-				if (patch_offset >= 2190 && patch_offset <= 2210) {
-					FLASH_LOG_FORMAT(Codegen, Error, "PATCHING near bad instruction area (second location)! patch_offset={}, patching offsets {}-{}", 
-						patch_offset, patch_offset, patch_offset + 3);
-				}
 				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
 				for (int i = 0; i < 4; i++) {
 					textSectionData[patch_offset + i] = bytes[i];
@@ -13387,51 +13337,10 @@ private:
 			current_function_offset_ = 0;
 		}
 
-		FLASH_LOG_FORMAT(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Before writer.add_data(), textSectionData.size()={}", 
-			textSectionData.size());
-		
-		// Scan for bad instruction pattern (48 c5) before writing to file
-		bool found_bad = false;
-		for (size_t i = 0; i + 3 < textSectionData.size(); ++i) {
-			// Cast to uint8_t for proper comparison (textSectionData is vector<char> which is signed)
-			uint8_t byte1 = static_cast<uint8_t>(textSectionData[i]);
-			uint8_t byte2 = static_cast<uint8_t>(textSectionData[i + 1]);
-			
-			// Explicit check at known bad offset
-			if (i == 2196) {
-				FLASH_LOG_FORMAT(Codegen, Debug, "Checking offset 2196: {:02x} {:02x}", byte1, byte2);
-			}
-			if (byte1 == 0x48 && byte2 == 0xC5) {
-				FLASH_LOG_FORMAT(Codegen, Error, "FOUND BAD INSTRUCTION PATTERN at byte offset {}: 48 c5 {:02x} {:02x}", 
-					i, static_cast<uint8_t>(textSectionData[i + 2]), static_cast<uint8_t>(textSectionData[i + 3]));
-				found_bad = true;
-			}
-		}
-		if (!found_bad) {
-			FLASH_LOG(Codegen, Error, "ERROR: Expected bad instruction pattern (48 c5) NOT found in scan!");
-			// Manually check offset 2196 where we know it is
-			if (textSectionData.size() > 2197) {
-				uint8_t byte1 = textSectionData[2196];
-				uint8_t byte2 = textSectionData[2197];
-				FLASH_LOG_FORMAT(Codegen, Error, "Manual check at 2196: {:02x} {:02x} (values: {} {})", 
-					byte1, byte2, (int)byte1, (int)byte2);
-				FLASH_LOG_FORMAT(Codegen, Error, "Comparing: byte1==0x48? {} byte2==0xC5? {}", 
-					byte1 == 0x48, byte2 == 0xC5);
-				if (byte1 == 0x48 && byte2 == 0xC5) {
-					FLASH_LOG(Codegen, Error, "Manual check CONFIRMS bad pattern exists!");
-				} else {
-					FLASH_LOG(Codegen, Error, "Manual check says pattern does NOT match!");
-				}
-			}
-		}
-		
 		writer.add_data(textSectionData, SectionType::TEXT);
 
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Before writer.finalize_debug_info()");
 		// Finalize debug information
 		writer.finalize_debug_info();
-		
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] convert() completed successfully, exiting function");
 	}
 
 	// Emit runtime helper functions for dynamic_cast as native x64 code
