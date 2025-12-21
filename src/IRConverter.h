@@ -4711,9 +4711,9 @@ private:
 	// Helper function to get or reserve a stack slot for a temporary variable.
 	// This is now just a thin wrapper around getStackOffsetFromTempVar which 
 	// handles stack space tracking and offset registration.
-	int allocateStackSlotForTempVar(int32_t index) {
+	int allocateStackSlotForTempVar(int32_t index, int size_in_bits = 64) {
 		TempVar tempVar(index);
-		return getStackOffsetFromTempVar(tempVar);
+		return getStackOffsetFromTempVar(tempVar, size_in_bits);
 	}
 
 	// Get stack offset for a TempVar using formula-based allocation.
@@ -4723,7 +4723,7 @@ private:
 	// This function also:
 	// - Extends scope_stack_space if the offset exceeds current tracked allocation
 	// - Registers the TempVar in variables for consistent subsequent lookups
-	int32_t getStackOffsetFromTempVar(TempVar tempVar) {
+	int32_t getStackOffsetFromTempVar(TempVar tempVar, int size_in_bits = 64) {
 		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 		if (!variable_scopes.empty()) {
 			StringHandle lookup_handle = StringTable::getOrInternStringHandle(tempVar.name());
@@ -4748,9 +4748,12 @@ private:
 		}
 		// Allocate TempVars sequentially after named_vars + shadow space
 		// Use next_temp_var_offset_ to track the next available slot
-		// Each TempVar gets 8 bytes (conservative sizing for x64)
+		// Each TempVar gets size_in_bits bytes (rounded up to 8-byte alignment)
+		int size_in_bytes = (size_in_bits + 7) / 8;  // Round up to nearest byte
+		size_in_bytes = (size_in_bytes + 7) & ~7;    // Round up to 8-byte alignment
+		
 		int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
-		next_temp_var_offset_ += 8;
+		next_temp_var_offset_ += size_in_bytes;
 		
 		// Track the maximum TempVar index for stack size calculation
 		if (tempVar.var_number > max_temp_var_index_) {
@@ -4759,8 +4762,11 @@ private:
 
 		// Extend scope_stack_space if the computed offset exceeds current allocation
 		// This ensures assertions checking scope_stack_space <= offset remain valid
-		if (offset < variable_scopes.back().scope_stack_space) {
-			variable_scopes.back().scope_stack_space = offset;
+		// NOTE: offset is the START of the allocation, but large structs extend downward
+		// So we need to account for the full size when updating scope_stack_space
+		int32_t end_offset = offset - size_in_bytes + 8;  // Struct extends from offset down size_in_bytes
+		if (end_offset < variable_scopes.back().scope_stack_space) {
+			variable_scopes.back().scope_stack_space = end_offset;
 		}
 		
 		// Register the TempVar's offset in variables map so subsequent lookups
@@ -5703,8 +5709,8 @@ private:
 			
 			flushAllDirtyRegisters();
 			
-			// Get result offset
-			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number);
+			// Get result offset - use actual return size for proper stack allocation
+			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number, call_op.return_size_in_bits);
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle(call_op.result.name())].offset = result_offset;
 			
 			// For functions returning struct by value, prepare hidden return parameter
@@ -6141,11 +6147,21 @@ private:
 		} else if (std::holds_alternative<TempVar>(ctor_op.object)) {
 			const TempVar temp_var = std::get<TempVar>(ctor_op.object);
 			
+			// Get struct size for proper stack allocation
+			int struct_size_bits = 64;  // Default to 8 bytes
+			auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+			if (struct_type_it != gTypesByName.end()) {
+				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+				if (struct_info) {
+					struct_size_bits = static_cast<int>(struct_info->total_size * 8);  // Convert bytes to bits
+				}
+			}
+			
 			// TempVars can be either stack-allocated or heap-allocated
 			// Use is_heap_allocated flag to distinguish:
 			// - Heap-allocated (from new): TempVar holds a pointer, use MOV to load it
 			// - Stack-allocated (RVO/NRVO): TempVar is the object location, use LEA to get address
-			object_offset = getStackOffsetFromTempVar(temp_var);
+			object_offset = getStackOffsetFromTempVar(temp_var, struct_size_bits);
 			object_is_pointer = ctor_op.is_heap_allocated;
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(ctor_op.object);

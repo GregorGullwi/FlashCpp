@@ -1,20 +1,24 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-21 - After Template Specialization Fix)
+# Test Return Value Analysis
+
+## Current Status (2025-12-21 - After Stack Allocation Investigation)
 
 **655/669 tests passing (97.9%)**
-- 9 runtime crashes (down from 12)
+- 9 runtime crashes (unchanged)
 - 0 link failures ✅
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
 
 **Latest Progress:**
-- ✅ Fixed template partial specialization member function return type substitution
-- ✅ Fixed test_spec_member_only.cpp (partial specialization member functions)
-- ✅ Fixed test_specialization_member_func.cpp (full+partial specialization member functions)
-- ✅ Fixed test_template_complex_substitution.cpp (complex template member types)
-- 📊 Current: 655/669 passing (97.9%), up from 652/669
-- 🎯 All link failures eliminated, crashes reduced to 9
+- 🔧 Investigated large struct return value issues (test_rvo_very_large_struct.cpp)
+- ✅ Fixed temp variable stack allocation for large structs
+  - Modified getStackOffsetFromTempVar to accept size_in_bits parameter
+  - Updated scope_stack_space calculation to account for full struct size
+  - Function call results now allocated with correct size (not just 8 bytes)
+  - Constructor temp vars now allocated with struct size
+- 🐛 Identified separate bug: constructor array writes not generated (affects test_rvo_very_large_struct.cpp)
+- 📊 Current: 655/669 passing (97.9%), same as before (constructor bug blocks improvement)
 
 ## Key Note on Return Values
 
@@ -25,7 +29,36 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Completed Fixes Summary
 
-### Latest Fix (2025-12-21 Session 7)
+### Latest Investigation (2025-12-21 Session 8)
+**Large Struct Stack Allocation** - Fixed temp variable allocation for large structs
+- **Issue**: Large structs (>8 bytes) returned from functions were only allocated 8 bytes of stack space
+  - TempVars were always allocated with fixed 8-byte size regardless of actual type size
+  - Caused stack corruption when copying large struct returns
+  - Example: 80-byte struct only got 48 bytes allocated, reading/writing beyond allocated space
+- **Root Cause**: `getStackOffsetFromTempVar` always incremented by 8 bytes per temp var
+  - Function call results: `allocateStackSlotForTempVar` didn't pass size information
+  - Constructor calls: Size wasn't looked up from struct type information
+  - Stack prologue size computed correctly, but individual allocations were wrong
+- **Solution**:
+  1. Added `size_in_bits` parameter to `getStackOffsetFromTempVar` (default 64 for compatibility)
+  2. Calculate `size_in_bytes` with proper rounding and 8-byte alignment
+  3. Update `next_temp_var_offset_` by `size_in_bytes` instead of fixed 8
+  4. Fix `scope_stack_space` calculation to account for full struct size (end_offset = offset - size + 8)
+  5. Pass `return_size_in_bits` from `CallOp` to allocation in `handleFunctionCall`
+  6. Look up struct size from type system in `handleConstructorCall` and pass to allocation
+- **Files Modified**: `src/IRConverter.h` (lines 4714-4775, 5707, 6144-6163)
+- **Impact**:
+  - ✅ Stack allocation now correct: test case went from 0x30 (48) to 0x70 (112) bytes
+  - ✅ Prevents stack corruption for large struct returns
+  - ⚠️ test_rvo_very_large_struct.cpp still crashes due to separate constructor array write bug
+  - ⚠️ No test count improvement yet (655/669) - blocked by constructor bug
+
+**Known Issue**: Constructor array element assignment not generating store instructions. In `LargeStruct(int start)` constructor with `for(int i=0; i<20; i++) values[i] = start+i;`, the loop computes values but never writes them to memory. This affects all tests with struct constructors that initialize arrays.
+
+<details>
+<summary><strong>Previous Fixes (Click to expand)</strong></summary>
+
+### Session 7 Fix (2025-12-21)
 **Template Specialization Member Function Return Types** - Fixed incorrect return type substitution
 - **Issue**: Member functions in template partial specializations didn't substitute template parameters
   - For `Container<T*>::get()` returning `T*`, the return type wasn't being substituted when instantiated
@@ -63,9 +96,6 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
   - ✅ Fixed test_virtual_basic.cpp: returns 125 (expected) - direct object virtual calls work
   - ✅ Test count improved: 651/669 → 652/669 (97.5%)
   - ✅ Crashes reduced: 13 → 12
-
-<details>
-<summary><strong>Previous Fixes (Click to expand)</strong></summary>
 
 ### Session 5 Fix (2025-12-21)
 **Array Constructor Calls for Structs** - Fixed incomplete struct array initialization
