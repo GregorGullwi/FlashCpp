@@ -83,6 +83,7 @@ struct LambdaInfo {
 	Type return_type;
 	int return_size;
 	TypeIndex return_type_index = 0;    // Type index for struct/enum return types
+	bool returns_reference = false;     // True if lambda returns a reference type (T& or T&&)
 	std::vector<std::tuple<Type, int, int, std::string>> parameters;  // type, size, pointer_depth, name
 	std::vector<ASTNode> parameter_nodes;  // Actual parameter AST nodes for symbol table
 	ASTNode lambda_body;                // Copy of the lambda body
@@ -1525,8 +1526,11 @@ private:
 		// Set current function return type and size for type checking in return statements
 		const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
 		current_function_return_type_ = ret_type_spec.type();
-		// For pointer return types, use 64-bit size (pointer size on x64)
-		current_function_return_size_ = (ret_type_spec.pointer_depth() > 0) 
+		current_function_returns_reference_ = ret_type_spec.is_reference();
+		
+		// For pointer return types or reference return types, use 64-bit size (pointer size on x64)
+		// References are represented as pointers at the IR level
+		current_function_return_size_ = (ret_type_spec.pointer_depth() > 0 || ret_type_spec.is_reference()) 
 			? 64 
 			: static_cast<int>(ret_type_spec.size_in_bits());
 
@@ -1577,10 +1581,11 @@ private:
 		func_decl_op.return_size_in_bits = static_cast<int>(ret_type.size_in_bits());
 		func_decl_op.return_pointer_depth = ret_type.pointer_depth();
 		func_decl_op.return_type_index = ret_type.type_index();
+		func_decl_op.returns_reference = ret_type.is_reference();
 		
 		// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
-		// Only non-pointer struct returns need this (pointer returns are in RAX like regular pointers)
-		bool returns_struct_by_value = (ret_type.type() == Type::Struct && ret_type.pointer_depth() == 0);
+		// Only non-pointer, non-reference struct returns need this (pointer/reference returns are in RAX like regular pointers)
+		bool returns_struct_by_value = (ret_type.type() == Type::Struct && ret_type.pointer_depth() == 0 && !ret_type.is_reference());
 		func_decl_op.has_hidden_return_param = returns_struct_by_value;
 		
 		// Track return type index and hidden parameter flag for current function context
@@ -2671,7 +2676,8 @@ private:
 			}
 			
 			// Convert to the function's return type if necessary
-			if (!operands.empty() && operands.size() >= 2) {
+			// Skip type conversion for reference returns - the expression already has the correct representation
+			if (!current_function_returns_reference_ && !operands.empty() && operands.size() >= 2) {
 				Type expr_type = std::get<Type>(operands[0]);
 				int expr_size = std::get<int>(operands[1]);
 		
@@ -4566,7 +4572,8 @@ private:
 
 		VariableDeclOp decl_op;
 		decl_op.type = type_node.type();
-		decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+		// References and pointers are both 64-bit (pointer size on x64)
+		decl_op.size_in_bits = (type_node.pointer_depth() > 0 || type_node.is_reference()) ? 64 : static_cast<int>(type_node.size_in_bits());
 		decl_op.var_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 		decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 		decl_op.is_reference = type_node.is_reference();
@@ -12719,11 +12726,17 @@ private:
 		info.return_type = Type::Int;  // Default to int
 		info.return_size = 32;
 		info.return_type_index = 0;
+		info.returns_reference = false;
 		if (lambda.return_type().has_value()) {
 			const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
 			info.return_type = ret_type_node.type();
 			info.return_size = ret_type_node.size_in_bits();
 			info.return_type_index = ret_type_node.type_index();
+			info.returns_reference = ret_type_node.is_reference();
+			// If returning a reference, the size should be 64 bits (pointer size)
+			if (info.returns_reference) {
+				info.return_size = 64;
+			}
 		}
 
 		// Collect parameters and detect generic lambda (auto parameters)
@@ -13233,6 +13246,7 @@ private:
 		// This is critical for lambdas returning other lambdas or structs
 		current_function_return_type_ = lambda_info.return_type;
 		current_function_return_size_ = lambda_info.return_size;
+		current_function_returns_reference_ = lambda_info.returns_reference;
 
 		// Set lambda context for captured variable access
 		current_lambda_closure_type_ = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);
@@ -13416,6 +13430,7 @@ private:
 		// This is critical for lambdas returning other lambdas or structs
 		current_function_return_type_ = lambda_info.return_type;
 		current_function_return_size_ = lambda_info.return_size;
+		current_function_returns_reference_ = lambda_info.returns_reference;
 
 		// Add lambda parameters to symbol table as function parameters (__invoke context)
 		// This ensures they're recognized as local parameters, not external symbols
@@ -13508,6 +13523,7 @@ private:
 	int current_function_return_size_;   // Current function's return size in bits
 	TypeIndex current_function_return_type_index_ = 0;  // Type index for struct/class return types
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter
+	bool current_function_returns_reference_ = false;  // True if function returns a reference type (T& or T&&)
 	
 	// Current namespace path stack (for proper name mangling of namespace-scoped functions)
 	std::vector<std::string> current_namespace_stack_;
