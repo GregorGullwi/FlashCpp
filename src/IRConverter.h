@@ -12319,9 +12319,11 @@ private:
 				int64_t index_offset = getStackOffsetFromTempVar(index_var);
 				
 				// Load index into RCX (sign-extended to 64-bit)
+				// TODO: Store index type info in ArrayIndex to support different sizes
+				// Currently assumes 32-bit signed (int) which covers most common cases
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},
-					SizedStackSlot{static_cast<int32_t>(index_offset), 32, true}  // Assume 32-bit signed index
+					SizedStackSlot{static_cast<int32_t>(index_offset), 32, true}
 				);
 				
 				// Multiply RCX by element size
@@ -12341,9 +12343,11 @@ private:
 				int64_t index_offset = it->second.offset;
 				
 				// Load index into RCX (sign-extended to 64-bit)
+				// TODO: Store index type info in ArrayIndex to support different sizes
+				// Currently assumes 32-bit signed (int) which covers most common cases
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},
-					SizedStackSlot{static_cast<int32_t>(index_offset), 32, true}  // Assume 32-bit signed index
+					SizedStackSlot{static_cast<int32_t>(index_offset), 32, true}
 				);
 				
 				// Multiply RCX by element size
