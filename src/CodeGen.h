@@ -5726,8 +5726,8 @@ private:
 		std::variant<StringHandle, TempVar> base;           // Base variable or temp
 		std::vector<ComputeAddressOp::ArrayIndex> array_indices;  // Array indices
 		int total_member_offset = 0;                        // Accumulated member offsets
-		Type final_type;                                    // Type of final result
-		int final_size_bits;                                // Size in bits
+		Type final_type = Type::Void;                       // Type of final result
+		int final_size_bits = 0;                            // Size in bits
 	};
 
 	// Analyze an expression for address calculation components
