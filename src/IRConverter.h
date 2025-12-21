@@ -6538,55 +6538,169 @@ private:
 			object_offset = variable_scopes.back().variables[var_name_handle].offset;
 		}
 
-		// Virtual call sequence:
-		// 1. Load vptr from object: vptr = [object + 0]  (vptr is at offset 0)
-		// 2. Load function pointer from vtable: func_ptr = [vptr + vtable_index * 8]
-		// 3. Call through function pointer: call func_ptr(this, args...)
+		// Virtual call sequence varies based on whether object is a pointer or direct:
+		// For pointers (object_size == 64):
+		//   1. Load object pointer value → 2. Load vptr from [pointer] → 3. Load func from [vptr + index*8] → 4. Call
+		// For direct objects (object_size > 64):
+		//   1. Get object address → 2. Load vptr from [address] → 3. Load func from [vptr + index*8] → 4. Call
 
-		// Step 1: Load vptr from object into RAX
-		// MOV RAX, [RBP + object_offset]  ; Load vptr (first 8 bytes of object)
-		emitMovFromFrame(X64Register::RAX, object_offset);
+		const X64Register this_reg = getIntParamReg<TWriterClass>(0); // First parameter register
 
-		// Step 2: Load function pointer from vtable into RAX
+		// Determine if object is a pointer or direct object
+		bool is_pointer_object = (op.object_size == 64);
+
+		if (is_pointer_object) {
+			// Step 1a: Load pointer value from stack into this_reg
+			// MOV this_reg, [RBP + object_offset]
+			emitMovFromFrame(this_reg, object_offset);
+
+			// Step 2a: Load vptr from object (dereference the pointer)
+			// MOV RAX, [this_reg + 0]
+			emitMovRegFromMemReg(X64Register::RAX, this_reg);
+		} else {
+			// Step 1b: Load object address into this_reg
+			// LEA this_reg, [RBP + object_offset]
+			emitLeaFromFrame(this_reg, object_offset);
+
+			// Step 2b: Load vptr from object (object address is in this_reg)
+			// MOV RAX, [this_reg + 0]
+			emitMovRegFromMemReg(X64Register::RAX, this_reg);
+		}
+
+		// Step 3: Load function pointer from vtable into RAX
 		// MOV RAX, [RAX + vtable_index * 8]
 		int vtable_offset = op.vtable_index * 8;
-		textSectionData.push_back(0x48); // REX.W prefix
-		textSectionData.push_back(0x8B); // MOV r64, r/m64
-		if (vtable_offset >= -128 && vtable_offset <= 127) {
-			textSectionData.push_back(0x40); // ModR/M: [RAX + disp8], RAX
-			textSectionData.push_back(static_cast<uint8_t>(vtable_offset));
+		if (vtable_offset == 0) {
+			// No offset, use simple dereference
+			emitMovRegFromMemReg(X64Register::RAX, X64Register::RAX);
+		} else if (vtable_offset >= -128 && vtable_offset <= 127) {
+			// Use 8-bit displacement
+			emitMovRegFromMemRegDisp8(X64Register::RAX, X64Register::RAX, static_cast<int8_t>(vtable_offset));
 		} else {
-			textSectionData.push_back(0x80); // ModR/M: [RAX + disp32], RAX
-			for (int j = 0; j < 4; ++j) {
-				textSectionData.push_back(static_cast<uint8_t>(vtable_offset & 0xFF));
-				vtable_offset >>= 8;
+			// Use 32-bit displacement with emitMovFromMemory
+			emitMovFromMemory(X64Register::RAX, X64Register::RAX, vtable_offset, 8);
+		}
+
+		// Step 4: 'this' pointer is already in the correct register from Step 1
+		// No need to recalculate or reload - it's preserved throughout
+
+		// Step 5: Handle additional function arguments (beyond 'this')
+		// Virtual member functions have 'this' as first parameter (already in this_reg)
+		// Additional arguments start at parameter index 1
+		if (!op.arguments.empty()) {
+			// Get platform-specific parameter counts
+			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
+			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
+			size_t shadow_space = getShadowSpaceSize<TWriterClass>();
+			
+			// Start at index 1 because 'this' is already in parameter register 0
+			size_t int_reg_index = 1;
+			size_t float_reg_index = 0;
+			size_t stack_arg_count = 0;
+			
+			// First pass: handle stack arguments
+			for (size_t i = 0; i < op.arguments.size(); ++i) {
+				const auto& arg = op.arguments[i];
+				bool is_float_arg = is_floating_point_type(arg.type);
+				
+				bool use_register = false;
+				if (is_float_arg) {
+					use_register = (float_reg_index < max_float_regs);
+					float_reg_index++;
+				} else {
+					use_register = (int_reg_index < max_int_regs);
+					int_reg_index++;
+				}
+				
+				if (!use_register) {
+					// Argument goes on stack
+					int stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
+					X64Register temp_reg = loadTypedValueIntoRegister(arg);
+					emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+					regAlloc.release(temp_reg);
+					stack_arg_count++;
+				}
+			}
+			
+			// Second pass: handle register arguments
+			int_reg_index = 1;  // Reset, 'this' is in register 0
+			float_reg_index = 0;
+			
+			for (size_t i = 0; i < op.arguments.size(); ++i) {
+				const auto& arg = op.arguments[i];
+				bool is_float_arg = is_floating_point_type(arg.type);
+				
+				bool use_register = false;
+				X64Register target_reg;
+				if (is_float_arg) {
+					if (float_reg_index < max_float_regs) {
+						use_register = true;
+						target_reg = getFloatParamReg<TWriterClass>(float_reg_index);
+					}
+					float_reg_index++;
+				} else {
+					if (int_reg_index < max_int_regs) {
+						use_register = true;
+						target_reg = getIntParamReg<TWriterClass>(int_reg_index);
+					}
+					int_reg_index++;
+				}
+				
+				if (use_register) {
+					// Load argument into parameter register
+					if (is_float_arg) {
+						// Handle float arguments
+						if (std::holds_alternative<double>(arg.value)) {
+							double float_value = std::get<double>(arg.value);
+							uint64_t bits;
+							if (arg.type == Type::Float) {
+								float float_val = static_cast<float>(float_value);
+								uint32_t float_bits;
+								std::memcpy(&float_bits, &float_val, sizeof(float_bits));
+								bits = float_bits;
+							} else {
+								std::memcpy(&bits, &float_value, sizeof(bits));
+							}
+							X64Register temp_gpr = allocateRegisterWithSpilling();
+							emitMovImm64(temp_gpr, bits);
+							emitMovqGprToXmm(temp_gpr, target_reg);
+							regAlloc.release(temp_gpr);
+						} else if (std::holds_alternative<TempVar>(arg.value)) {
+							const auto& temp_var = std::get<TempVar>(arg.value);
+							int var_offset = getStackOffsetFromTempVar(temp_var);
+							bool is_float = (arg.type == Type::Float);
+							emitFloatMovFromFrame(target_reg, var_offset, is_float);
+						} else if (std::holds_alternative<StringHandle>(arg.value)) {
+							StringHandle var_name_handle = std::get<StringHandle>(arg.value);
+							int var_offset = variable_scopes.back().variables[var_name_handle].offset;
+							bool is_float = (arg.type == Type::Float);
+							emitFloatMovFromFrame(target_reg, var_offset, is_float);
+						}
+					} else {
+						// Handle integer/pointer arguments
+						if (std::holds_alternative<unsigned long long>(arg.value)) {
+							uint64_t imm_value = std::get<unsigned long long>(arg.value);
+							emitMovImm64(target_reg, imm_value);
+						} else if (std::holds_alternative<TempVar>(arg.value)) {
+							const auto& temp_var = std::get<TempVar>(arg.value);
+							int var_offset = getStackOffsetFromTempVar(temp_var);
+							emitMovFromFrame(target_reg, var_offset);
+						} else if (std::holds_alternative<StringHandle>(arg.value)) {
+							StringHandle var_name_handle = std::get<StringHandle>(arg.value);
+							int var_offset = variable_scopes.back().variables[var_name_handle].offset;
+							emitMovFromFrame(target_reg, var_offset);
+						}
+					}
+				}
 			}
 		}
 
-		// Step 3: Set up 'this' pointer in RCX (first parameter in Windows x64 calling convention)
-		// LEA RCX, [RBP + object_offset]
-		// Need to recalculate object_offset since we used it in step 1
-		object_offset = 0;
-		if (std::holds_alternative<TempVar>(op.object)) {
-			const TempVar& temp_var = std::get<TempVar>(op.object);
-			object_offset = getStackOffsetFromTempVar(temp_var);
-		} else {
-			StringHandle var_name_handle = std::get<StringHandle>(op.object);
-			std::string_view var_name = StringTable::getStringView(var_name_handle);
-			object_offset = variable_scopes.back().variables[var_name_handle].offset;
-		}
-
-		emitLeaFromFrame(X64Register::RCX, object_offset);
-
-		// TODO: Handle additional function arguments (op.arguments)
-		// For now, we only support virtual calls with no additional arguments beyond 'this'
-
-		// Step 4: Call through function pointer in RAX
+		// Step 6: Call through function pointer in RAX
 		// CALL RAX
 		textSectionData.push_back(0xFF); // CALL r/m64
 		textSectionData.push_back(0xD0); // ModR/M: RAX
 
-		// Step 5: Store return value from RAX to result variable using the correct size
+		// Step 7: Store return value from RAX to result variable using the correct size
 		if (op.result.type != Type::Void) {
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
