@@ -10474,7 +10474,8 @@ private:
 				const MemberAccessNode& nested_access = std::get<MemberAccessNode>(expr);
 
 				// Recursively generate IR for the nested member access
-				std::vector<IrOperand> nested_result = generateMemberAccessIr(nested_access);
+				// Pass context to avoid loading intermediate struct values when they're part of lvalue expressions
+				std::vector<IrOperand> nested_result = generateMemberAccessIr(nested_access, context);
 				if (nested_result.empty()) {
 					return {};
 				}
@@ -10804,6 +10805,25 @@ private:
 			return {};
 		}
 
+		// Check if base_object is a TempVar with lvalue metadata
+		// If so, we can unwrap it to get the ultimate base and combine offsets
+		// This handles nested member access like arr[1].inner.y
+		int accumulated_offset = static_cast<int>(member->offset);
+		std::variant<StringHandle, TempVar> ultimate_base = base_object;
+		
+		if (std::holds_alternative<TempVar>(base_object)) {
+			TempVar base_temp = std::get<TempVar>(base_object);
+			auto base_lvalue_info = getTempVarLValueInfo(base_temp);
+			
+			if (base_lvalue_info.has_value() && base_lvalue_info->kind == LValueInfo::Kind::Member) {
+				// The base is itself a member access
+				// Combine the offsets and use the ultimate base
+				accumulated_offset += base_lvalue_info->offset;
+				ultimate_base = base_lvalue_info->base;
+				is_pointer_dereference = base_lvalue_info->is_pointer_to_member;
+			}
+		}
+
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 		
@@ -10811,8 +10831,8 @@ private:
 		// obj.member is an lvalue - it designates a specific object member
 		LValueInfo lvalue_info(
 			LValueInfo::Kind::Member,
-			base_object,
-			static_cast<int>(member->offset)
+			ultimate_base,
+			accumulated_offset
 		);
 		// Store member name for unified assignment handler
 		lvalue_info.member_name = StringTable::getOrInternStringHandle(member_name);
@@ -10825,15 +10845,15 @@ private:
 		member_load.result.type = member->type;
 		member_load.result.size_in_bits = static_cast<int>(member->size * 8);  // Convert bytes to bits
 
-		// Add the base object (either string_view or TempVar)
-		if (std::holds_alternative<StringHandle>(base_object)) {
-			member_load.object = std::get<StringHandle>(base_object);
+		// Add the base object (use ultimate_base for nested member access)
+		if (std::holds_alternative<StringHandle>(ultimate_base)) {
+			member_load.object = std::get<StringHandle>(ultimate_base);
 		} else {
-			member_load.object = std::get<TempVar>(base_object);
+			member_load.object = std::get<TempVar>(ultimate_base);
 		}
 
 		member_load.member_name = StringTable::getOrInternStringHandle(member_name);
-		member_load.offset = static_cast<int>(member->offset);
+		member_load.offset = accumulated_offset;  // Use combined offset for nested access
 	
 		// Add reference metadata (required for proper handling of reference members)
 		member_load.is_reference = member->is_reference;
