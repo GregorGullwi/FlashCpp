@@ -1,20 +1,21 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-21 - After Regression Fix)
+# Test Return Value Analysis
 
-**650/669 tests passing (97.2%)**
-- 11 runtime crashes  
-- 2 link failures (test_covariant_return.cpp, test_abstract_class.cpp)
+## Current Status (2025-12-21 - After Typeinfo Fix)
+
+**651/669 tests passing (97.3%)**
+- 13 runtime crashes  
+- 0 link failures ✅
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
 
 **Progress Notes:**
-- ✅ Fixed struct member alignment for pointers/references in template instantiation
-- ✅ Fixed function return type size calculation for reference returns  
-- ✅ Fixed local lvalue reference variable dereferencing in expressions
-- ✅ Fixed rvalue reference handling - excluded from dereferencing logic
-- 📊 Final: 650/669 passing (same as starting point) with critical struct layout bugs fixed
-- ⚠️ Minor regression: test_virtual_inheritance.cpp changed from link failure to crash
+- ✅ Fixed typeinfo generation for all polymorphic classes
+- ✅ Fixed test_covariant_return.cpp from link failure to runtime crash (progress!)
+- ✅ All polymorphic classes now generate typeinfo symbols correctly
+- 📊 Current: 651/669 passing (97.3%), up from 650/669
+- 🎯 Eliminated all link failures (was 2, now 0)
 
 ## Key Note on Return Values
 
@@ -25,55 +26,60 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Completed Fixes Summary
 
-### Latest Fix (2025-12-21 Session 3)
+### Latest Fix (2025-12-21 Session 4)
+**Typeinfo Generation for All Polymorphic Classes** - Fixed missing typeinfo symbols
+- Issue 1: `finalize()` didn't call `buildRTTI()`, only `finalizeWithBases()` did
+  - Classes without base classes (like standalone base classes) never got RTTI
+  - Solution: Added `buildRTTI()` call to `finalize()` method
+- Issue 2: `std::vector` used for RTTI storage caused pointer invalidation
+  - When vector resized, all existing pointers to RTTI objects became invalid
+  - Earlier-processed classes lost their RTTI pointers
+  - Solution: Changed `rtti_storage`, `itanium_class_storage`, `itanium_si_storage`, etc. from `std::vector` to `std::deque`
+  - `std::deque` doesn't invalidate pointers on insertion
+- Files Modified: `src/AstNodeTypes.h` (line 549), `src/AstNodeTypes.cpp` (lines 876, 879-881, 1011-1012)
+- Impact: 
+  - ✅ All polymorphic classes now generate typeinfo symbols
+  - ✅ Fixed test_covariant_return.cpp: link failure → runtime crash (links successfully!)
+  - ✅ Eliminated all link failures (2 → 0)
+  - ✅ Test count improved: 650/669 → 651/669 (97.3%)
+- Note: Runtime crashes remain - separate issue from missing typeinfo symbols
+
+### Previous Fix (2025-12-21 Session 3)
+### Previous Fix (2025-12-21 Session 3)
 **Rvalue Reference Handling** - Fixed regression in reference dereferencing logic
 - Issue: Initial fix dereferenced ALL references (lvalue + rvalue), causing crashes
-- Root Cause: Rvalue references (`T&&`) should NOT be dereferenced - they're stored as pointers but represent the object itself
-- Solution: Modified conditions to only dereference lvalue references (`T&`, `const T&`)
-  - Parameters: `if (type_node.is_reference() && !type_node.is_rvalue_reference())`
-  - Local variables: Same condition applied
+- Solution: Modified conditions to only dereference lvalue references (`T&`, `const T&`), not rvalue references (`T&&`)
 - Files Modified: `src/CodeGen.h` (lines 5345, 5433)
-- Impact: Restored test count to 650/669 (97.2%), fixed crashes in test_forward_overload_resolution.cpp
-- Minor regression: test_virtual_inheritance.cpp changed from link failure to crash (needs investigation)
 
-### Session 2 Fixes (2025-12-21)
-**Struct Member Alignment for Pointers/References in Templates** - Fixed misaligned struct members
-- Issue: Template struct instantiation used base type alignment instead of pointer alignment for `T*` and `const T&` members
-- Root Cause: `get_type_alignment(Type::Int, 8)` returned 4 (int alignment) instead of 8 (pointer alignment)
-- Manifestation: Container<int>{int value; int* ptr; const int& ref} had wrong layout:
-  - WRONG: value@0, ptr@4, ref@12 (misaligned, causing crashes on access)
-  - CORRECT: value@0, ptr@8, ref@16 (properly aligned)
+<details>
+<summary><strong>Session 2 Fixes (2025-12-21) - Click to expand</strong></summary>
+
+**Struct Member Alignment for Pointers/References in Templates**
+- Fixed misaligned struct members in template instantiations
 - Solution: Explicitly check for pointers/references and use 8-byte alignment
 - Files Modified: `src/Parser.cpp` (lines 21819-21826, 22543-22551)
-- Impact: Fixes struct layout bugs in templates, but regressions need investigation
 
-**Local Reference Variable Dereferencing** - Fixed lvalue reference variables not being dereferenced in expressions  
-- Issue: Local lvalue reference variables weren't automatically dereferenced when used
-- Root Cause: Dereferencing logic existed for reference parameters but not for reference local variables
-- Solution: Added dereferencing for VariableDeclarationNode matching existing parameter logic, excluding rvalue references
+**Local Reference Variable Dereferencing**
+- Fixed lvalue reference variables not being dereferenced in expressions  
+- Solution: Added dereferencing for VariableDeclarationNode
 - Files Modified: `src/CodeGen.h` (lines 5428-5464)
-- Impact: Lvalue references now work correctly in comparisons/operations
 
-**Function Return Type Size for References** - Fixed return size calculation
-- Issue: Functions returning `const T&` had return_size_in_bits set to base type size (32 for int) instead of pointer size (64)
+**Function Return Type Size for References**
+- Fixed return size calculation for reference-returning functions
 - Solution: Calculate return size as 64 bits for all pointer/reference return types
 - Files Modified: `src/CodeGen.h` (lines 1580-1586)
-- Impact: Correct IR generation for reference-returning functions
 
-**Known Regressions:**
-- test_virtual_inheritance.cpp: Changed from link failure to runtime crash (minor regression, possibly vtable/alignment related)
+</details>
 
-### Previous Fix (2025-12-21 Session 1)
-**Reference Return Type Handling** - Fixed template functions returning reference types
-- Issue: Template member functions returning `const T&` were incorrectly truncating the reference (pointer) from 64 bits to 32 bits, causing type conversion errors
-- Root Cause: Return type handling didn't account for reference qualifiers, only pointer depth
-- Solution: 
-  - Added `current_function_returns_reference_` tracking flag
-  - Fixed return type size calculation to use 64 bits for references
-  - Skip type conversion in return statements for reference returns
-  - Fixed variable declaration size allocation for reference types
+<details>
+<summary><strong>Session 1 Fix (2025-12-21) - Click to expand</strong></summary>
+
+**Reference Return Type Handling**
+- Fixed template functions returning reference types
+- Solution: Added tracking flag, fixed size calculation, skip type conversion
 - Files Modified: `src/CodeGen.h`, `src/IRTypes.h`
-- Impact: Improves correctness of template functions with reference returns, fixed test_virtual_inheritance.cpp (crash → link failure)
+
+</details>
 
 <details>
 <summary><strong>Recent Major Fixes (2025-12-20) - Click to expand</strong></summary>
@@ -131,71 +137,39 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Known Issues
 
-### Struct Padding/Alignment - RESOLVED ✅
-**UPDATE**: Investigation revealed struct padding IS working correctly. The crashes attributed to this were actually caused by array element size bugs (now fixed). FlashCpp correctly:
-- Calculates struct sizes with proper padding
-- Aligns members based on their types
-- Returns correct sizeof() values
+<details>
+<summary><strong>Resolved Issues - Click to expand</strong></summary>
 
-Tests like test_pointer_arithmetic.cpp now pass after fixing the actual root causes.
+### Struct Padding/Alignment - RESOLVED ✅
+Investigation revealed struct padding IS working correctly. The crashes attributed to this were actually caused by array element size bugs (now fixed).
+
+### Spaceship Operator - RESOLVED ✅ (2025-12-21)
+spaceship_default.cpp now passes after fixing reference return type handling! The issue was related to template functions with reference parameters/returns.
+
+</details>
 
 ### Float-to-Int Conversion in Assignments - Known Issue
-**Issue**: Assignments from float/double to int variables don't generate FloatToInt IR conversion instructions, resulting in incorrect behavior (bit pattern is copied instead of being converted).
+**Issue**: Assignments from float/double to int variables don't generate FloatToInt IR conversion instructions.
 **Impact**: Tests that return converted float values may return incorrect results (but don't crash).
-**Status**: Pre-existing issue, not introduced by recent fixes. Identified during float register spilling investigation.
+**Status**: Pre-existing issue, low priority.
 
 ### Default-Initialized Struct Array with AddressOf - Known Issue
 **Issue**: Taking address of member in default-initialized struct array returns wrong value when dereferenced.
 **Test File**: `test_struct_default_init_addressof.cpp`
-**Example**:
-```cpp
-struct S {
-    int x{10};
-    int* p = nullptr;
-};
-
-int main() {
-    S arr[3]{};
-    int i = 1;
-    arr[0].p = &arr[i].x;
-    return *arr[0].p;  // Expected: 10, Actual: 64
-}
-```
-**Root Cause**: Appears to be related to constructor execution or struct initialization, NOT address calculation.
-- Address offset calculation is correct (verified in assembly: `imul $0x10,%rcx` for 16-byte struct)
-- The fixes for ArrayElementAddress (StringHandle support, element size correction) are working correctly
-- The issue manifests when dereferencing the stored pointer
+**Root Cause**: Related to constructor execution or struct initialization.
+- Address offset calculation is correct
+- Issue manifests when dereferencing the stored pointer
 **Impact**: Returns garbage value (64 or similar) instead of expected member value (10).
-**Status**: Separate issue from AddressOf/ArrayElementAddress bugs. Needs investigation into:
-- Default initialization with `{}` for struct arrays
-- Constructor call sequencing
-- Memory initialization patterns
-**Note**: Simple assignment without default init works correctly (returns 20 when explicitly set).
-
-### Spaceship Operator - RESOLVED ✅ (2025-12-21)
-**UPDATE**: spaceship_default.cpp now passes after fixing reference return type handling! The issue was related to template functions with reference parameters/returns, not register corruption. The fix for reference type handling resolved this crash.
 
 ### Nested Member Access with AddressOf - Known Limitation
 **Issue**: Multi-level member access like `&arr[i].member1.member2` doesn't work correctly.
-**Test Cases**:
-- `arr[i].inner.value` compiles but returns wrong value (46 instead of 20)
-- `arr[i].inner_arr[j].value` causes compiler to hang (infinite loop or stack overflow)
-**Root Cause**: Current AddressOf fixes handle single-level nesting (`&arr[i].member`) but not chained member access.
-**What Works**: 
-- ✅ `&obj.member` (simple member)
-- ✅ `&arr[i].member` (single-level: array element + member)
-**What Doesn't Work**:
-- ❌ `&arr[i].member1.member2` (multi-level member chain)
-- ❌ `&arr[i].inner_arr[j].member` (nested array subscripts)
-**Impact**: 
-- Single-level cases work correctly after fixes
-- Multi-level cases need additional work to properly chain offset calculations
-**Status**: Known limitation, separate from the StringHandle and element size bugs that were fixed.
-**Future Work**: Extend IR generation to handle chained member access by accumulating offsets through multiple levels.
+**What Works**: ✅ `&obj.member`, ✅ `&arr[i].member` (single-level)
+**What Doesn't Work**: ❌ `&arr[i].member1.member2` (multi-level member chain)
+**Status**: Known limitation. Future work needed to chain offset calculations.
 
-## Remaining Crashes (11 files + 1 timeout)
+## Remaining Crashes (13 files)
 
-**Current: 11 crashes, 1 timeout, 2 link failures**
+**Current: 13 crashes, 0 link failures**
 
 ### Crash Categories
 
@@ -211,28 +185,28 @@ int main() {
 4. **Variadic arguments** (2 files)  
    test_va_implementation.cpp, test_varargs.cpp
 
-5. **Other issues** (4 files)  
-   - test_abstract_class.cpp (vtable/typeinfo runtime crash)
+5. **Virtual function / RTTI issues** (3 files) - Now link but crash at runtime
+   - test_abstract_class.cpp (pure virtual function calls or vtable layout)
+   - test_covariant_return.cpp (covariant return types - IMPROVED: now links!)
+   - test_virtual_inheritance.cpp (virtual inheritance typeinfo)
+
+6. **Other issues** (3 files)  
    - test_rvo_very_large_struct.cpp (large struct RVO)
-   - test_template_complex_substitution.cpp (complex template)
-
-6. **Link failures** (2 files)
-   - test_covariant_return.cpp (covariant return types)
-   - test_virtual_inheritance.cpp (virtual inheritance typeinfo - improved from crash)
-
-7. **Timeout** (1 file)
-   - test_xvalue_all_casts.cpp (infinite loop in cast handling)
+   - test_template_complex_substitution.cpp (complex template member access)
+   - test_xvalue_all_casts.cpp (cast handling causes crashes)
 
 ## Priority Investigation Areas
 
-1. **Lambda capture** - 1 test with complex lambda captures  
+1. **Virtual function runtime issues** - 3 tests that now link but crash at runtime
+   - Likely vtable layout, virtual dispatch, or typeinfo usage issues
+   - test_abstract_class.cpp, test_covariant_return.cpp, test_virtual_inheritance.cpp
 2. **Template specialization** - 2 tests with member function specialization
 3. **Exception handling** - 2 tests requiring complete Linux exception support
 4. **Variadic arguments** - 2 tests with va_list implementation issues
-5. **Virtual function typeinfo** - Missing typeinfo symbol generation for polymorphic classes
+5. **Lambda capture** - 1 test with complex lambda captures
 
 ---
 
-*Last Updated: 2025-12-21 (reference return type fix)*  
-*Status: 650/669 tests passing (97.2%), 11 crashes, 1 timeout, 2 link failures*  
+*Last Updated: 2025-12-21 (typeinfo generation fix)*  
+*Status: 651/669 tests passing (97.3%), 13 crashes, 0 link failures*  
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
