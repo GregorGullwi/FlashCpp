@@ -21816,7 +21816,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} else {
 				member_size = get_type_size_bits(member_type) / 8;
 			}
-			size_t member_alignment = get_type_alignment(member_type, member_size);
+			// Calculate member alignment
+			// For pointers and references, use 8-byte alignment (pointer alignment on x64)
+			size_t member_alignment;
+			if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+				member_alignment = 8;  // Pointer/reference alignment on x64
+			} else {
+				member_alignment = get_type_alignment(member_type, member_size);
+			}
 			
 			bool is_ref_member = type_spec.is_reference();
 			bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
@@ -22534,7 +22541,14 @@ if (struct_type_info.getStructInfo()) {
 			}
 		}
 
-		size_t member_alignment = get_type_alignment(member_type, member_size);
+		// Calculate member alignment
+		// For pointers and references, use 8-byte alignment (pointer alignment on x64)
+		size_t member_alignment;
+		if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+			member_alignment = 8;  // Pointer/reference alignment on x64
+		} else {
+			member_alignment = get_type_alignment(member_type, member_size);
+		}
 		bool is_ref_member = type_spec.is_reference();
 		bool is_rvalue_ref_member = type_spec.is_rvalue_reference();
 	
