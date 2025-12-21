@@ -106,6 +106,7 @@ enum class IrOpcode : int_fast16_t {
 	// Pointer operations
 	AddressOf,
 	AddressOfMember,     // Calculate address of struct member: &obj.member
+	ComputeAddress,      // One-pass address computation for complex expressions: &arr[i].member1.member2
 	Dereference,
 	DereferenceStore,    // Store through a pointer: *ptr = value
 	// Struct operations
@@ -1093,6 +1094,27 @@ struct AddressOfMemberOp {
 	int member_size_in_bits;                         // Size of member
 };
 
+// One-pass address computation for complex expressions (&arr[i].member1.member2)
+struct ComputeAddressOp {
+	TempVar result;                                  // Result temporary variable
+	
+	// Base address (one of these)
+	std::variant<StringHandle, TempVar> base;       // Variable name or temp
+	
+	// Array indexing (optional, can have multiple for nested arrays)
+	struct ArrayIndex {
+		std::variant<unsigned long long, TempVar, StringHandle> index;
+		int element_size_bits;                       // Size of array element
+	};
+	std::vector<ArrayIndex> array_indices;
+	
+	// Member offset accumulation (for chained member access)
+	int total_member_offset = 0;                     // Sum of all member offsets
+	
+	Type result_type;                                // Type of final address
+	int result_size_bits;                            // Size in bits
+};
+
 // Dereference operator (*ptr)
 struct DereferenceOp {
 	TempVar result;                                  // Result temp var
@@ -2016,6 +2038,41 @@ public:
 			oss << "[" << static_cast<int>(op.member_type) << "]" << op.member_size_in_bits << " ";
 			oss << '%' << StringTable::getStringView(op.base_object);
 			oss << " (offset: " << op.member_offset << ")";
+		}
+		break;
+
+		case IrOpcode::ComputeAddress:
+		{
+			assert(hasTypedPayload() && "ComputeAddress instruction must use typed payload");
+			const auto& op = getTypedPayload<ComputeAddressOp>();
+			oss << '%' << op.result.var_number << " = compute_address ";
+			oss << "[" << static_cast<int>(op.result_type) << "]" << op.result_size_bits << " ";
+			
+			// Print base
+			if (std::holds_alternative<StringHandle>(op.base)) {
+				oss << "base: %" << StringTable::getStringView(std::get<StringHandle>(op.base));
+			} else {
+				oss << "base: %" << std::get<TempVar>(op.base).var_number;
+			}
+			
+			// Print array indices if any
+			for (size_t i = 0; i < op.array_indices.size(); ++i) {
+				const auto& arr_idx = op.array_indices[i];
+				oss << ", idx" << i << ": ";
+				if (std::holds_alternative<unsigned long long>(arr_idx.index)) {
+					oss << std::get<unsigned long long>(arr_idx.index);
+				} else if (std::holds_alternative<TempVar>(arr_idx.index)) {
+					oss << "%" << std::get<TempVar>(arr_idx.index).var_number;
+				} else {
+					oss << "%" << StringTable::getStringView(std::get<StringHandle>(arr_idx.index));
+				}
+				oss << " (elem_size: " << arr_idx.element_size_bits << " bits)";
+			}
+			
+			// Print total member offset if any
+			if (op.total_member_offset > 0) {
+				oss << ", member_offset: " << op.total_member_offset;
+			}
 		}
 		break;
 	
