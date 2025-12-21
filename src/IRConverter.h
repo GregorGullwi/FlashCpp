@@ -7576,6 +7576,11 @@ private:
 			// Patch the SUB RSP immediate at prologue offset + 3 (skip REX.W, opcode, ModR/M)
 			if (current_function_prologue_offset_ > 0) {
 				uint32_t patch_offset = current_function_prologue_offset_ + 3;
+				// Check if we're patching near the bad instruction offset
+				if (patch_offset >= 2190 && patch_offset <= 2210) {
+					FLASH_LOG_FORMAT(Codegen, Error, "PATCHING near bad instruction area! patch_offset={}, patching offsets {}-{}", 
+						patch_offset, patch_offset, patch_offset + 3);
+				}
 				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
 				for (int i = 0; i < 4; i++) {
 					textSectionData[patch_offset + i] = bytes[i];
@@ -13345,6 +13350,11 @@ private:
 			// Patch the SUB RSP immediate at prologue offset + 3
 			if (current_function_prologue_offset_ > 0) {
 				uint32_t patch_offset = current_function_prologue_offset_ + 3;
+				// Check if we're patching near the bad instruction offset
+				if (patch_offset >= 2190 && patch_offset <= 2210) {
+					FLASH_LOG_FORMAT(Codegen, Error, "PATCHING near bad instruction area (second location)! patch_offset={}, patching offsets {}-{}", 
+						patch_offset, patch_offset, patch_offset + 3);
+				}
 				const auto bytes = std::bit_cast<std::array<char, 4>>(static_cast<uint32_t>(total_stack));
 				for (int i = 0; i < 4; i++) {
 					textSectionData[patch_offset + i] = bytes[i];
