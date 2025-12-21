@@ -873,12 +873,13 @@ void StructTypeInfo::buildRTTI() {
     }
 
     // Create RTTI info with MSVC multi-structure format
-    static std::vector<RTTITypeInfo> rtti_storage;
+    // Use std::deque instead of std::vector to avoid pointer invalidation on resize
+    static std::deque<RTTITypeInfo> rtti_storage;
     static std::vector<MSVCTypeDescriptor*> type_descriptor_storage;
-    static std::vector<MSVCCompleteObjectLocator> col_storage;
-    static std::vector<MSVCClassHierarchyDescriptor> chd_storage;
+    static std::deque<MSVCCompleteObjectLocator> col_storage;
+    static std::deque<MSVCClassHierarchyDescriptor> chd_storage;
     static std::vector<MSVCBaseClassArray*> bca_storage;
-    static std::vector<MSVCBaseClassDescriptor> bcd_storage;
+    static std::deque<MSVCBaseClassDescriptor> bcd_storage;
 
     // Create mangled and demangled names
     std::string name_str(StringTable::getStringView(getName()));
@@ -1007,8 +1008,9 @@ void StructTypeInfo::buildRTTI() {
     // Storage for Itanium structures (static lifetime - RTTI data persists for program lifetime)
     // Note: Memory allocated here is intentionally never freed as RTTI must remain valid
     // throughout the program execution. This is the same pattern as MSVC RTTI above.
-    static std::vector<ItaniumClassTypeInfo> itanium_class_storage;
-    static std::vector<ItaniumSIClassTypeInfo> itanium_si_storage;
+    // Use std::deque instead of std::vector to avoid pointer invalidation on resize
+    static std::deque<ItaniumClassTypeInfo> itanium_class_storage;
+    static std::deque<ItaniumSIClassTypeInfo> itanium_si_storage;
     static std::vector<char*> itanium_vmi_storage;  // Variable-sized, use malloc
     static std::vector<char*> itanium_name_storage;
     

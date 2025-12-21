@@ -6155,6 +6155,21 @@ private:
 			}
 			object_offset = it->second.offset;
 			object_is_pointer = (StringTable::getStringView(var_name_handle) == "this");
+			
+			// If this is an array element constructor call, adjust offset for the specific element
+			if (ctor_op.array_index.has_value()) {
+				// Look up struct size to calculate element offset
+				auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+				if (struct_type_it != gTypesByName.end()) {
+					const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+					if (struct_info) {
+						size_t element_size = struct_info->total_size;
+						size_t index = ctor_op.array_index.value();
+						// Adjust offset: base_offset + (index * element_size)
+						object_offset += static_cast<int>(index * element_size);
+					}
+				}
+			}
 		}
 
 		// Load the address of the object into the first parameter register ('this' pointer)
