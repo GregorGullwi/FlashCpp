@@ -1,18 +1,20 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-21 - Latest Run)
+## Current Status (2025-12-21 - After Fixes)
 
-**650/669 tests passing (97.2%)**
-- 11 runtime crashes  
-- 1 timeout (test_xvalue_all_casts.cpp)
-- 2 link failures (test_covariant_return.cpp, test_virtual_inheritance.cpp)
+**648/669 tests passing (96.9%)**
+- 13 runtime crashes  
+- 1 timeout (test_comma_init.cpp, changed from test_xvalue_all_casts.cpp)
+- 1 link failure (test_covariant_return.cpp)
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
 
 **Progress Notes:**
-- ✅ test_pointer_loop.cpp: No longer crashes! Returns 20 (expected 40, but runs successfully)
-- ✅ test_virtual_inheritance.cpp: Changed from runtime crash to link failure (progress)
-- Improved from 649/669 to 650/669 passing tests (+1)
+- ✅ Fixed struct member alignment for pointers/references in template instantiation
+- ✅ Fixed function return type size calculation for reference returns  
+- ✅ Fixed local reference variable dereferencing in expressions
+- ⚠️ Introduced regressions: test_forward_overload_resolution.cpp, test_comma_init.cpp, test_abstract_class.cpp now crash
+- 📊 Net change: -3 passing tests (651→648) but fixed critical struct layout bugs
 
 ## Key Note on Return Values
 
@@ -23,7 +25,37 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Completed Fixes Summary
 
-### Latest Fix (2025-12-21)
+### Latest Fixes (2025-12-21 Session 2)
+**Struct Member Alignment for Pointers/References in Templates** - Fixed misaligned struct members
+- Issue: Template struct instantiation used base type alignment instead of pointer alignment for `T*` and `const T&` members
+- Root Cause: `get_type_alignment(Type::Int, 8)` returned 4 (int alignment) instead of 8 (pointer alignment)
+- Manifestation: Container<int>{int value; int* ptr; const int& ref} had wrong layout:
+  - WRONG: value@0, ptr@4, ref@12 (misaligned, causing crashes on access)
+  - CORRECT: value@0, ptr@8, ref@16 (properly aligned)
+- Solution: Explicitly check for pointers/references and use 8-byte alignment
+- Files Modified: `src/Parser.cpp` (lines 21819-21826, 22543-22551)
+- Impact: Fixes struct layout bugs in templates, but regressions need investigation
+
+**Local Reference Variable Dereferencing** - Fixed reference variables not being dereferenced in expressions  
+- Issue: Local reference variables weren't automatically dereferenced when used
+- Root Cause: Dereferencing logic existed for reference parameters but not for reference local variables
+- Solution: Added dereferencing for VariableDeclarationNode matching existing parameter logic
+- Files Modified: `src/CodeGen.h` (lines 5428-5464)
+- Impact: References now work correctly in comparisons/operations, but may have edge cases with rvalue references
+
+**Function Return Type Size for References** - Fixed return size calculation
+- Issue: Functions returning `const T&` had return_size_in_bits set to base type size (32 for int) instead of pointer size (64)
+- Solution: Calculate return size as 64 bits for all pointer/reference return types
+- Files Modified: `src/CodeGen.h` (lines 1580-1586)
+- Impact: Correct IR generation for reference-returning functions
+
+**Known Regressions from These Fixes:**
+- test_forward_overload_resolution.cpp: Crashes when initializing rvalue reference variable (int&& rref)
+- test_comma_init.cpp: Now times out (infinite loop)
+- test_abstract_class.cpp: Changed from link failure to runtime crash
+- Root cause likely: Reference dereferencing logic doesn't properly distinguish rvalue references or has issues with initialization
+
+### Previous Fix (2025-12-21 Session 1)
 **Reference Return Type Handling** - Fixed template functions returning reference types
 - Issue: Template member functions returning `const T&` were incorrectly truncating the reference (pointer) from 64 bits to 32 bits, causing type conversion errors
 - Root Cause: Return type handling didn't account for reference qualifiers, only pointer depth
