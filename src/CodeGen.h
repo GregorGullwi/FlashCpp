@@ -4828,35 +4828,85 @@ private:
 							                               type_info.struct_info_->has_vtable;
 
 							if (needs_default_ctor_call) {
-								// Generate default constructor call
-								ConstructorCallOp ctor_op;
-								ctor_op.struct_name = type_info.name();
-								ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
-								
-								// If the constructor has parameters with default values, generate the default arguments
-								if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-									const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
-									const auto& params = ctor_node.parameter_nodes();
+								// Check if this is an array - need to call constructor for each element
+								if (decl.is_array()) {
+									// For arrays, we need to call the constructor once for each element
+									// Get array size
+									size_t array_count = 1;
+									auto size_expr = decl.array_size();
+									if (size_expr.has_value()) {
+										// Evaluate the array size expression using ConstExprEvaluator
+										ConstExpr::EvaluationContext ctx(symbol_table);
+										auto eval_result = ConstExpr::Evaluator::evaluate(*size_expr, ctx);
+										if (eval_result.success) {
+											array_count = static_cast<size_t>(eval_result.as_int());
+										}
+									}
 									
-									for (const auto& param : params) {
-										if (param.is<DeclarationNode>()) {
-											const auto& param_decl = param.as<DeclarationNode>();
-											if (param_decl.has_default_value()) {
-												// Generate IR for the default value expression
-												const ASTNode& default_node = param_decl.default_value();
-												if (default_node.is<ExpressionNode>()) {
-													auto default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
-													if (default_operands.size() >= 3) {
-														TypedValue default_arg = toTypedValue(default_operands);
-														ctor_op.arguments.push_back(std::move(default_arg));
+									// Generate constructor call for each array element
+									for (size_t i = 0; i < array_count; i++) {
+										ConstructorCallOp ctor_op;
+										ctor_op.struct_name = type_info.name();
+										// For arrays, we need to specify the element to construct
+										ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+										ctor_op.array_index = i;  // Mark this as an array element constructor call
+										
+										// If the constructor has parameters with default values, generate the default arguments
+										if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+											const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
+											const auto& params = ctor_node.parameter_nodes();
+											
+											for (const auto& param : params) {
+												if (param.is<DeclarationNode>()) {
+													const auto& param_decl = param.as<DeclarationNode>();
+													if (param_decl.has_default_value()) {
+														// Generate IR for the default value expression
+														const ASTNode& default_node = param_decl.default_value();
+														if (default_node.is<ExpressionNode>()) {
+															auto default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
+															if (default_operands.size() >= 3) {
+																TypedValue default_arg = toTypedValue(default_operands);
+																ctor_op.arguments.push_back(std::move(default_arg));
+															}
+														}
+													}
+												}
+											}
+										}
+										
+										ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
+									}
+								} else {
+									// Single object (non-array) - generate single constructor call
+									ConstructorCallOp ctor_op;
+									ctor_op.struct_name = type_info.name();
+									ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+									
+									// If the constructor has parameters with default values, generate the default arguments
+									if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+										const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
+										const auto& params = ctor_node.parameter_nodes();
+										
+										for (const auto& param : params) {
+											if (param.is<DeclarationNode>()) {
+												const auto& param_decl = param.as<DeclarationNode>();
+												if (param_decl.has_default_value()) {
+													// Generate IR for the default value expression
+													const ASTNode& default_node = param_decl.default_value();
+													if (default_node.is<ExpressionNode>()) {
+														auto default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
+														if (default_operands.size() >= 3) {
+															TypedValue default_arg = toTypedValue(default_operands);
+															ctor_op.arguments.push_back(std::move(default_arg));
+														}
 													}
 												}
 											}
 										}
 									}
+									
+									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 								}
-								
-								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 							}
 						}
 					}
