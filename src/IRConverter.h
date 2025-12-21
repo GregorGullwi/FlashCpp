@@ -13371,6 +13371,42 @@ private:
 
 		FLASH_LOG_FORMAT(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Before writer.add_data(), textSectionData.size()={}", 
 			textSectionData.size());
+		
+		// Scan for bad instruction pattern (48 c5) before writing to file
+		bool found_bad = false;
+		for (size_t i = 0; i + 3 < textSectionData.size(); ++i) {
+			// Cast to uint8_t for proper comparison (textSectionData is vector<char> which is signed)
+			uint8_t byte1 = static_cast<uint8_t>(textSectionData[i]);
+			uint8_t byte2 = static_cast<uint8_t>(textSectionData[i + 1]);
+			
+			// Explicit check at known bad offset
+			if (i == 2196) {
+				FLASH_LOG_FORMAT(Codegen, Debug, "Checking offset 2196: {:02x} {:02x}", byte1, byte2);
+			}
+			if (byte1 == 0x48 && byte2 == 0xC5) {
+				FLASH_LOG_FORMAT(Codegen, Error, "FOUND BAD INSTRUCTION PATTERN at byte offset {}: 48 c5 {:02x} {:02x}", 
+					i, static_cast<uint8_t>(textSectionData[i + 2]), static_cast<uint8_t>(textSectionData[i + 3]));
+				found_bad = true;
+			}
+		}
+		if (!found_bad) {
+			FLASH_LOG(Codegen, Error, "ERROR: Expected bad instruction pattern (48 c5) NOT found in scan!");
+			// Manually check offset 2196 where we know it is
+			if (textSectionData.size() > 2197) {
+				uint8_t byte1 = textSectionData[2196];
+				uint8_t byte2 = textSectionData[2197];
+				FLASH_LOG_FORMAT(Codegen, Error, "Manual check at 2196: {:02x} {:02x} (values: {} {})", 
+					byte1, byte2, (int)byte1, (int)byte2);
+				FLASH_LOG_FORMAT(Codegen, Error, "Comparing: byte1==0x48? {} byte2==0xC5? {}", 
+					byte1 == 0x48, byte2 == 0xC5);
+				if (byte1 == 0x48 && byte2 == 0xC5) {
+					FLASH_LOG(Codegen, Error, "Manual check CONFIRMS bad pattern exists!");
+				} else {
+					FLASH_LOG(Codegen, Error, "Manual check says pattern does NOT match!");
+				}
+			}
+		}
+		
 		writer.add_data(textSectionData, SectionType::TEXT);
 
 		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Before writer.finalize_debug_info()");
