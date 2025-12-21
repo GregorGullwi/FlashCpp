@@ -11638,6 +11638,15 @@ private:
 			StringHandle lookup_name_handle = is_member_array ? StringTable::getOrInternStringHandle(object_name) : array_name_handle;
 			array_base_offset = variable_scopes.back().variables[lookup_name_handle].offset;
 			
+			// Check if the object (not the array) is a pointer (like 'this' or a reference)
+			bool is_object_pointer = false;
+			if (is_member_array) {
+				// Check if object is 'this' or a reference parameter
+				if (object_name == std::string_view("this") || reference_stack_info_.count(array_base_offset) > 0) {
+					is_object_pointer = true;
+				}
+			}
+			
 			// Handle constant vs variable index
 			if (std::holds_alternative<unsigned long long>(op.index.value)) {
 				// Constant index
@@ -11655,6 +11664,19 @@ private:
 					
 					// Store RCX to [RAX] with appropriate size
 					emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::RAX, 0, element_size_bytes);
+				} else if (is_object_pointer) {
+					// Member array of a pointer object (like this.values[i])
+					// Load the object pointer first
+					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
+					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+					                        load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+					
+					// Add member offset + index offset: ADD RAX, (member_offset + index * element_size)
+					int64_t total_offset = member_offset + (index_value * element_size_bytes);
+					emitAddImmToReg(textSectionData, X64Register::RAX, total_offset);
+					
+					// Store RCX to [RAX] with appropriate size
+					emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::RAX, 0, element_size_bytes);
 				} else {
 					// Regular array - direct stack access
 					int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
@@ -11665,7 +11687,7 @@ private:
 			} else if (std::holds_alternative<TempVar>(op.index.value)) {
 				// Variable index - compute address at runtime
 				TempVar index_var = std::get<TempVar>(op.index.value);
-				int64_t index_var_offset = getStackOffsetFromTempVar(index_var);
+				int64_t index_var_offset = getStackOffsetFromTempVar(index_var, op.index.size_in_bits);
 				
 				// Save value to store on stack temporarily (we need RCX for index)
 				emitPush(textSectionData, X64Register::RCX);
@@ -11681,6 +11703,18 @@ private:
 					                        load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 					// RAX += RCX (add index offset to pointer)
 					emitAddRAXRCX(textSectionData);
+				} else if (is_object_pointer) {
+					// Member array of a pointer object (like this.values[i])
+					// Load the object pointer first
+					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
+					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+					                        load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+					// Add member offset: ADD RAX, member_offset
+					if (member_offset != 0) {
+						emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
+					}
+					// RAX += RCX (add index offset)
+					emitAddRAXRCX(textSectionData);
 				} else {
 					// LEA RAX, [RBP + array_base_offset]
 					int64_t combined_offset = array_base_offset + member_offset;
@@ -11694,6 +11728,57 @@ private:
 				
 				// Store RCX to [RAX]
 				emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::RAX, 0, element_size_bytes);
+			} else if (std::holds_alternative<StringHandle>(op.index.value)) {
+				// Index is a named variable - get its stack offset
+				StringHandle index_handle = std::get<StringHandle>(op.index.value);
+				auto it = variable_scopes.back().variables.find(index_handle);
+				if (it == variable_scopes.back().variables.end()) {
+					assert(false && "Index variable not found in scope");
+					return;
+				}
+				int64_t index_var_offset = it->second.offset;
+				
+				// Save value to store on stack temporarily (we need RCX for index)
+				emitPush(textSectionData, X64Register::RCX);
+				
+				// Load index into RCX
+				emitLoadIndexIntoRCX(textSectionData, index_var_offset);
+				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
+				
+				if (is_pointer_to_array) {
+					// Load pointer into RAX
+					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
+					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+					                        load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+					// RAX += RCX (add index offset to pointer)
+					emitAddRAXRCX(textSectionData);
+				} else if (is_object_pointer) {
+					// Member array of a pointer object (like this.values[i])
+					// Load the object pointer first
+					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
+					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+					                        load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+					// Add member offset: ADD RAX, member_offset
+					if (member_offset != 0) {
+						emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
+					}
+					// RAX += RCX (add index offset)
+					emitAddRAXRCX(textSectionData);
+				} else {
+					// LEA RAX, [RBP + array_base_offset]
+					int64_t combined_offset = array_base_offset + member_offset;
+					emitLEAFromFrame(textSectionData, X64Register::RAX, combined_offset);
+					// RAX += RCX
+					emitAddRAXRCX(textSectionData);
+				}
+				
+				// POP RCX to get value back
+				emitPop(textSectionData, X64Register::RCX);
+				
+				// Store RCX to [RAX]
+				emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::RAX, 0, element_size_bytes);
+			} else {
+				assert(false && "ArrayStore index must be constant, TempVar, or StringHandle");
 			}
 			return;
 		}
