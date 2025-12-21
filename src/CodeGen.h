@@ -5339,10 +5339,11 @@ private:
 				return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 			}
 
-			// Check if this is a reference parameter - if so, we need to dereference it
-			// Reference parameters hold an address, and we need to load the value from that address
+			// Check if this is a lvalue reference parameter - if so, we need to dereference it
+			// Lvalue reference parameters hold an address, and we need to load the value from that address
 			// EXCEPT for array references, where the reference IS the array pointer
-			if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+			// NOTE: Rvalue references (&&) are NOT dereferenced - they're passed/stored as pointers but used as-is
+			if (type_node.is_reference() && !type_node.is_rvalue_reference()) {
 				// For references to arrays (e.g., int (&arr)[3]), the reference parameter
 				// already holds the array address directly. We don't dereference it.
 				// Just return it as a pointer (64 bits on x64 architecture).
@@ -5427,10 +5428,11 @@ private:
 			} else {
 				// This is a local variable
 				
-				// Check if this is a reference variable - if so, we need to dereference it
-				// Reference variables hold an address, and we need to load the value from that address
+				// Check if this is a lvalue reference variable - if so, we need to dereference it
+				// Lvalue reference variables hold an address, and we need to load the value from that address
 				// EXCEPT for array references, where the reference IS the array pointer
-				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+				// NOTE: Rvalue references (&&) are NOT dereferenced - they're stored as pointers but used as-is
+				if (type_node.is_reference() && !type_node.is_rvalue_reference()) {
 					// For references to arrays (e.g., int (&arr)[3]), the reference variable
 					// already holds the array address directly. We don't dereference it.
 					// Just return it as a pointer (64 bits on x64 architecture).
