@@ -1,14 +1,17 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-20 - ArrayElementAddress Fix)
+## Current Status (2025-12-21 - Latest Run)
 
-**641/661 tests passing (97.0%)**
-- 11 runtime crashes (down from 12-14)
-- 1 timeout (infinite loop)
-- 2 link failures
-- 2 known issues with workarounds documented below
+**649/669 tests passing (97.0%)**
+- 12 runtime crashes  
+- 1 timeout (test_xvalue_all_casts.cpp)
+- 1 link failure (test_covariant_return.cpp)
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
+
+**Progress Notes:**
+- test_pointer_loop.cpp: ✓ No longer crashes! Returns 20 (expected 40, but runs successfully)
+- Improved from 641/661 to 649/669 passing tests
 
 ## Key Note on Return Values
 
@@ -17,69 +20,56 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 - Returning 3000 → exit code 184
 - **This is expected OS behavior, not a compiler bug**
 
-## Recent Fixes (2025-12-20)
-
-**ArrayElementAddress StringHandle Index Bug** ✅ FIXED
-- **Issue**: Array element address calculation (`&arr[i].x`) crashed when index was a variable name
-- **Root Cause**: handleArrayElementAddress only handled constant (unsigned long long) and TempVar indices
-  - When index was StringHandle (variable name like "i"), neither case matched
-  - No code generated → RAX contained stale value (0) → crash or wrong result
-- **Fix**: Added StringHandle case in handleArrayElementAddress to:
-  - Look up variable name in scope
-  - Load index value from stack
-  - Generate proper address calculation (multiply by element size, add to base)
-- **Status**: ✅ COMPLETE
-- **Tests Fixed**: `&arr[i].x` patterns now work when i is a variable
-
-**AddressOf Member Access** ✅ PARTIAL FIX
-- **Issue**: Taking address of struct members (`&obj.member`) generated incorrect IR
-- **Root Cause**: IR generated `member_access` (loads VALUE) followed by `addressof` (takes address of temp)
-- **Fix**: Added `AddressOfMember` IR opcode that directly computes member address using LEA
-  - Generates: `LEA result, [RBP + obj_offset + member_offset]`
-  - Handles simple identifier cases: `&obj.member` where obj is a variable name
-  - Does NOT mark result as reference (avoids dereference issues in pointer arithmetic)
-- **Status**: ✅ COMPLETE for simple cases
-- **Tests Fixed**: Simple `&obj.member` cases, works in combination with ArrayElementAddress fix
-
-**Lambda Decay to Function Pointer**
-- **Issue**: Lambda expressions with unary plus operator (+lambda) crashed due to uninitialized function pointer
-- **Root Cause**: Unary plus on non-capturing lambdas should trigger decay to function pointer (returning address of `__invoke` static function), but was being treated as a no-op, returning the closure object instead
-- **Fix**: Modified `generateUnaryOperatorIr` in CodeGen.h to detect lambda expressions as operand of unary plus:
-  - Check if operand is `LambdaExpressionNode` before visiting
-  - For non-capturing lambdas, generate `FunctionAddress` IR for the `__invoke` function
-  - Return function pointer (Type::FunctionPointer, 64 bits) instead of closure struct
-  - Capturing lambdas fall through to normal handling (cannot decay to function pointers)
-- **Status**: ✅ COMPLETE
-- **Tests Fixed (1)**:
-  - test_lambda_decay.cpp ✓ returns 0 (lambda decay with unary +)
-- **Note**: test_lambda_cpp20_comprehensive.cpp still crashes (different lambda-related issue with captures)
-
-## Past Fixes Summary
-
-**Float Literal Init & Buffer Overflow** (8 tests) - Fixed OpCodeWithSize buffer (8→9 bytes), direct memory stores for floats  
-**Range-For Loop Increment** (4 tests) - Fixed pointer increment to use element size not pointer size  
-**AddressOf Array Elements** (1 test) - Fixed `&arr[i]` offsets for pointer/struct arrays  
-**Arrays of Pointers Type** - Fixed type checking to distinguish arrays of pointers from pointer-to-array  
+## Completed Fixes Summary
 
 <details>
-<summary><strong>All Completed Fixes (click to expand)</strong></summary>
+<summary><strong>Recent Major Fixes (2025-12-20) - Click to expand</strong></summary>
 
-- ✅ **Lambda decay to function pointer** (2025-12-20) - Fixed unary plus on lambdas to return __invoke address (1 test)
-- ✅ **Float literal initialization** (2025-12-20) - Fixed buffer overflow and initialization (8 tests)
-- ✅ **Range-based for loop pointer increment** (2025-12-20) - Fixed pointer increment to use correct element size (4 tests)
-- ✅ **Array element size in AddressOf** (2025-12-20) - Fixed &arr[i] offset calculations (1 test)
-- ✅ **Arrays of pointers flagged as pointer-to-array** (2025-12-20) - Correct array access (1 test)
-- ✅ **Pointer variable size** (previous) - Fixed pointer identifiers to use 64-bit pointer size (4 tests)
-- ✅ **Pointer member access type checking** (previous) - Allow pointers to structs in member access
-- ✅ **Pure virtual functions** - Vtable entries use `__cxa_pure_virtual` for abstract classes
-- ✅ **sizeof for struct arrays** - Fixed division by zero calculating sizeof(array_of_structs)
-- ✅ **Stack alignment** (6 tests) - Fixed floating-point crashes with printf
-- ✅ **Function pointers** (2 tests) - Global and pointer parameter function pointer calls  
-- ✅ **Dereference register corruption** (1 test) - Clear stale register associations
-- ✅ **Pointer member size** (7 tests) - Pointers/references in structs use correct 64-bit size
-- ✅ **Temp variable stack allocation** (23 tests) - Fixed handleMemberAccess offset handling
-- ✅ **Heap allocation constructor** - Fixed LEA vs MOV for heap vs stack objects
-- ✅ **Multi-level pointer dereference** - Fixed type_index vs pointer_depth issue
+### ArrayElementAddress StringHandle Index Bug (Multiple tests fixed)
+- Fixed `&arr[i].x` when index is variable name
+- Added StringHandle case in handleArrayElementAddress for proper variable lookup
+
+### AddressOf Member Access (Multiple tests fixed)
+- Added `AddressOfMember` IR opcode for direct member address calculation using LEA
+- Handles `&obj.member` patterns correctly
+
+### Lambda Decay to Function Pointer (1 test: test_lambda_decay.cpp)
+- Fixed unary plus operator (+lambda) to return `__invoke` function address
+- Modified `generateUnaryOperatorIr` to detect lambda expressions
+
+### Float Literal Initialization (8 tests)
+- Fixed OpCodeWithSize buffer overflow (8→9 bytes)
+- Direct memory stores for float values
+
+### Range-For Loop Pointer Increment (4 tests)
+- Fixed pointer increment to use element size, not pointer size
+
+</details>
+
+<details>
+<summary><strong>All Completed Fixes - Click to expand</strong></summary>
+
+**2025-12-20 Fixes:**
+- ✅ Lambda decay to function pointer (1 test)
+- ✅ Float literal initialization (8 tests)  
+- ✅ Range-based for loop pointer increment (4 tests)
+- ✅ Array element size in AddressOf (1 test)
+- ✅ Arrays of pointers type checking (1 test)
+- ✅ AddressOf member access (multiple tests)
+- ✅ ArrayElementAddress StringHandle support (multiple tests)
+
+**Previous Fixes:**
+- ✅ Pointer variable size (4 tests)
+- ✅ Pointer member access type checking
+- ✅ Pure virtual functions vtable
+- ✅ sizeof for struct arrays
+- ✅ Stack alignment for floating-point (6 tests)
+- ✅ Function pointers (2 tests)
+- ✅ Dereference register corruption (1 test)
+- ✅ Pointer member size (7 tests)
+- ✅ Temp variable stack allocation (23 tests)
+- ✅ Heap allocation constructor
+- ✅ Multi-level pointer dereference
 
 </details>
 
@@ -126,6 +116,51 @@ int main() {
 - Memory initialization patterns
 **Note**: Simple assignment without default init works correctly (returns 20 when explicitly set).
 
+### Spaceship Operator with Multiple Comparisons - Active Investigation 🔍
+**Issue**: Using `operator<=>` with multiple synthesized comparison operators causes SIGILL or segfault when combined with nested struct member access.
+**Test File**: `spaceship_default.cpp`
+**Trigger Conditions**:
+1. Struct with `auto operator<=>(const T&) const = default`
+2. Using 3+ synthesized comparison operators (==, !=, <, >, <=, >=)
+3. Another struct containing a member of type with operator<=>
+4. Accessing nested member (e.g., `obj.member.value`)
+
+**Minimal Reproduction**:
+```cpp
+struct Point {
+    int x, y;
+    auto operator<=>(const Point&) const = default;
+};
+struct Inner {
+    int value;
+    auto operator<=>(const Inner&) const = default;
+};
+struct Outer { Inner member; };
+
+int main() {
+    Point p1{1, 2}, p2{1, 3};
+    bool eq = p1 == p2;
+    bool ne = p1 != p2;
+    bool lt = p1 < p2;  // 3rd comparison triggers it
+    
+    Outer o1;
+    o1.member.value = 10;  // <-- SIGILL or segfault here
+    return 0;
+}
+```
+
+**Observed Behavior**:
+- 1-2 comparisons: Works fine
+- 3-4 comparisons + member access: Segmentation fault (signal 11)
+- 5-6 comparisons + member access: Illegal instruction (signal 4 - SIGILL)
+- Bad instruction at offset 0x8ab: `48 c7 0a 00 ...` (malformed MOV instruction)
+
+**Root Cause**: Likely register exhaustion or corruption in code generation after synthesizing multiple comparison operators. The comparison operators use registers R8-R15, and after ~3 comparisons, register state tracking appears corrupted, generating invalid x86-64 instructions.
+
+**Impact**: Prevents use of C++20 three-way comparison with comprehensive operator usage
+**Status**: Requires fix in register allocation/tracking in IRConverter.h code generation
+**Workaround**: Limit to 2 or fewer comparison operators, or avoid nested member access after comparisons
+
 ### Nested Member Access with AddressOf - Known Limitation
 **Issue**: Multi-level member access like `&arr[i].member1.member2` doesn't work correctly.
 **Test Cases**:
@@ -146,12 +181,12 @@ int main() {
 
 ## Remaining Crashes (12 files + 1 timeout)
 
-**Current: 12 crashes, 1 timeout** (down from 13 - lambda decay now fixed!)
+**Current: 12 crashes, 1 timeout, 1 link failure**
 
 ### Crash Categories
 
 1. **Lambda** (1 file) - Capture-related issues  
-   test_lambda_cpp20_comprehensive.cpp (test_lambda_decay.cpp ✓ FIXED)
+   test_lambda_cpp20_comprehensive.cpp
 
 2. **Exceptions** (2 files) - Incomplete Linux exception support  
    test_exceptions_basic.cpp, test_exceptions_nested.cpp
@@ -162,30 +197,32 @@ int main() {
 4. **Variadic arguments** (2 files)  
    test_va_implementation.cpp, test_varargs.cpp
 
-5. **Other issues** (5 files)  
-   - spaceship_default.cpp (SIGILL - C++20 three-way comparison)
-   - test_pointer_loop.cpp (member access through pointer in loop)
+5. **Spaceship operator** (1 file) - Register corruption with multiple comparisons  
+   spaceship_default.cpp (SIGILL - see detailed analysis in Known Issues section)
+
+6. **Other issues** (4 files)  
+   - test_abstract_class.cpp (vtable/typeinfo runtime crash)
    - test_rvo_very_large_struct.cpp (large struct RVO)
    - test_template_complex_substitution.cpp (complex template)
 
-6. **Link failures** (2 files)
-   - test_abstract_class.cpp (vtable/typeinfo relocation)
+7. **Link failures** (1 file)
    - test_covariant_return.cpp (covariant return types)
 
-7. **Timeout** (1 file) - test_xvalue_all_casts.cpp
+8. **Timeout** (1 file)
+   - test_xvalue_all_casts.cpp (infinite loop in cast handling)
 
-**Fixed**: Lambda decay (test_lambda_decay.cpp), plus all floating-point register spilling tests now pass!
+**Progress**: test_pointer_loop.cpp ✓ NO LONGER CRASHES (returns wrong value but runs)
 
 ## Priority Investigation Areas
 
-1. **Lambda capture** - 1 test with complex lambda captures (test_lambda_cpp20_comprehensive.cpp)
-2. **Template specialization** - 2 tests with member function specialization
-3. **Exception handling** - 2 tests requiring complete Linux exception support
-4. **Variadic arguments** - 2 tests with va_list implementation issues
-5. **Three-way comparison** - 1 test with C++20 spaceship operator
+1. **Spaceship operator register corruption** - 1 test (spaceship_default.cpp) - detailed analysis complete
+2. **Lambda capture** - 1 test with complex lambda captures  
+3. **Template specialization** - 2 tests with member function specialization
+4. **Exception handling** - 2 tests requiring complete Linux exception support
+5. **Variadic arguments** - 2 tests with va_list implementation issues
 
 ---
 
-*Last Updated: 2025-12-20 (after lambda decay fix)*
-*Status: 640/661 tests passing (96.8%), 12 crashes, 1 timeout, 2 link failures*
+*Last Updated: 2025-12-21 (spaceship operator investigation)*  
+*Status: 649/669 tests passing (97.0%), 12 crashes, 1 timeout, 1 link failure*  
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*

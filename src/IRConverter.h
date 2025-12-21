@@ -44,7 +44,7 @@ extern bool g_enable_exceptions;
 static constexpr size_t MAX_MOV_INSTRUCTION_SIZE = 9;
 
 struct OpCodeWithSize {
-	std::array<uint8_t, MAX_MOV_INSTRUCTION_SIZE> op_codes;
+	std::array<uint8_t, MAX_MOV_INSTRUCTION_SIZE> op_codes{};  // Zero-initialize
 	size_t size_in_bytes = 0;
 };
 
@@ -3105,24 +3105,9 @@ class IrToObjConverter {
 public:
 	IrToObjConverter() = default;
 	
-	~IrToObjConverter() {
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Destructor started");
-		// Explicitly clear maps to see which one hangs
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing functionSymbols");
-		functionSymbols.clear();
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing function_spans");
-		function_spans.clear();
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing label_positions_");
-		label_positions_.clear();
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Clearing pending_branches_");
-		pending_branches_.clear();
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Destructor body completed - about to destroy members");
-		// After this point, members will be destroyed in reverse order: writer is first member, so it's destroyed last
-	}
+	~IrToObjConverter() = default;
 
 	void convert(const Ir& ir, const std::string_view filename, const std::string_view source_filename = "", bool show_timing = false) {
-		FLASH_LOG_FORMAT(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] convert() started, textSectionData.size()={}, textSectionData.capacity()={}", 
-			textSectionData.size(), textSectionData.capacity());
 		
 		// High-level timing (always enabled when show_timing=true)
 		auto convert_start = std::chrono::high_resolution_clock::now();
@@ -4846,13 +4831,10 @@ private:
 			opcodes = generateMovToFrame8(source.reg, dest.offset);
 		}
 		
-		std::string bytes_str;
-		for (int i = 0; i < opcodes.size_in_bytes; i++) {
-			bytes_str += std::format("{:02x} ", static_cast<uint8_t>(opcodes.op_codes[i]));
+		// Insert opcodes into text section
+		if (opcodes.size_in_bytes > 0 && opcodes.size_in_bytes <= MAX_MOV_INSTRUCTION_SIZE) {
+			textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 		}
-		FLASH_LOG_FORMAT(Codegen, Debug, "emitMovToFrameSized: reg={} offset={} size={} is_xmm={} bytes={}", 
-			static_cast<int>(source.reg), dest.offset, dest.size_in_bits, is_xmm_source, bytes_str);
-		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
 	// Helper to generate and emit size-appropriate MOV from frame
@@ -11931,18 +11913,10 @@ private:
 					if (is_double_literal) {
 						uint64_t bits;
 						std::memcpy(&bits, &literal_double_value, sizeof(bits));
-						textSectionData.push_back(0x48);
-						textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg));
-						for (int i = 0; i < 8; i++) {
-							textSectionData.push_back((bits >> (i * 8)) & 0xFF);
-						}
+						emitMovImm64(value_reg, bits);
 					} else {
-						textSectionData.push_back(0x48);
-						textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg));
 						uint64_t imm64 = static_cast<uint64_t>(literal_value);
-						for (int i = 0; i < 8; i++) {
-							textSectionData.push_back((imm64 >> (i * 8)) & 0xFF);
-						}
+						emitMovImm64(value_reg, imm64);
 					}
 				} else if (is_variable) {
 					const StackVariableScope& current_scope = variable_scopes.back();
@@ -12109,18 +12083,10 @@ private:
 			if (is_double_literal) {
 				uint64_t bits;
 				std::memcpy(&bits, &literal_double_value, sizeof(bits));
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg));
-				for (int i = 0; i < 8; i++) {
-					textSectionData.push_back((bits >> (i * 8)) & 0xFF);
-				}
+				emitMovImm64(value_reg, bits);
 			} else {
-				textSectionData.push_back(0x48);
-				textSectionData.push_back(0xB8 + static_cast<uint8_t>(value_reg));
 				uint64_t imm64 = static_cast<uint64_t>(literal_value);
-				for (int i = 0; i < 8; i++) {
-					textSectionData.push_back((imm64 >> (i * 8)) & 0xFF);
-				}
+				emitMovImm64(value_reg, imm64);
 			}
 		} else if (is_variable) {
 			// Check if this is a vtable symbol (check vtable_symbol field in MemberStoreOp)
@@ -13347,15 +13313,10 @@ private:
 			current_function_offset_ = 0;
 		}
 
-		FLASH_LOG_FORMAT(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Before writer.add_data(), textSectionData.size()={}", 
-			textSectionData.size());
 		writer.add_data(textSectionData, SectionType::TEXT);
 
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] Before writer.finalize_debug_info()");
 		// Finalize debug information
 		writer.finalize_debug_info();
-		
-		FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] convert() completed successfully, exiting function");
 	}
 
 	// Emit runtime helper functions for dynamic_cast as native x64 code
