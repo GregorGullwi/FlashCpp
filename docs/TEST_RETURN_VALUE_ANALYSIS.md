@@ -1,8 +1,6 @@
 # Test Return Value Analysis
 
-# Test Return Value Analysis
-
-## Current Status (2025-12-21 - After Typeinfo Fix)
+## Current Status (2025-12-21 - After Array Constructor Fix)
 
 **651/669 tests passing (97.3%)**
 - 13 runtime crashes  
@@ -26,7 +24,24 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Completed Fixes Summary
 
-### Latest Fix (2025-12-21 Session 4)
+### Latest Fix (2025-12-21 Session 5)
+**Array Constructor Calls for Structs** - Fixed incomplete initialization of struct arrays
+- Issue: `S arr[3]{}` called constructor only once instead of 3 times (once per element)
+  - Arrays of structs with default member initializers or vtables were not fully initialized
+  - Only the first element was constructed, leaving other elements with garbage values
+- Root Cause: CodeGen generated single constructor call for the entire array instead of looping through elements
+- Solution:
+  - Added array size evaluation in `visitVariableDeclarationNode` to detect array declarations
+  - Generate loop that creates one `ConstructorCall` IR instruction per array element
+  - Added `array_index` field to `ConstructorCallOp` to track which element is being constructed
+  - Updated `IRConverter::handleConstructorCall` to calculate correct stack offset for each array element
+- Files Modified: `src/CodeGen.h` (lines 4830-4910), `src/IRConverter.h` (lines 6158-6172), `src/IRTypes.h` (line 1145)
+- Impact:
+  - ✅ Fixed test_struct_default_init_addressof.cpp: now returns 10 (expected) instead of 64 (garbage)
+  - ✅ Arrays of structs now properly call constructors for all elements
+  - ✅ Test count maintained: 651/669 (97.3%)
+
+### Previous Fix (2025-12-21 Session 4)
 **Typeinfo Generation for All Polymorphic Classes** - Fixed missing typeinfo symbols
 - Issue 1: `finalize()` didn't call `buildRTTI()`, only `finalizeWithBases()` did
   - Classes without base classes (like standalone base classes) never got RTTI
@@ -44,7 +59,6 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
   - ✅ Test count improved: 650/669 → 651/669 (97.3%)
 - Note: Runtime crashes remain - separate issue from missing typeinfo symbols
 
-### Previous Fix (2025-12-21 Session 3)
 ### Previous Fix (2025-12-21 Session 3)
 **Rvalue Reference Handling** - Fixed regression in reference dereferencing logic
 - Issue: Initial fix dereferenced ALL references (lvalue + rvalue), causing crashes
@@ -146,20 +160,15 @@ Investigation revealed struct padding IS working correctly. The crashes attribut
 ### Spaceship Operator - RESOLVED ✅ (2025-12-21)
 spaceship_default.cpp now passes after fixing reference return type handling! The issue was related to template functions with reference parameters/returns.
 
+### Default-Initialized Struct Array with AddressOf - RESOLVED ✅ (2025-12-21 Session 5)
+**Fixed!** `test_struct_default_init_addressof.cpp` now returns 10 (expected) instead of 64. The issue was that struct array initialization with `S arr[3]{}` only called the constructor once instead of once per element. Arrays now properly initialize all elements.
+
 </details>
 
 ### Float-to-Int Conversion in Assignments - Known Issue
 **Issue**: Assignments from float/double to int variables don't generate FloatToInt IR conversion instructions.
 **Impact**: Tests that return converted float values may return incorrect results (but don't crash).
 **Status**: Pre-existing issue, low priority.
-
-### Default-Initialized Struct Array with AddressOf - Known Issue
-**Issue**: Taking address of member in default-initialized struct array returns wrong value when dereferenced.
-**Test File**: `test_struct_default_init_addressof.cpp`
-**Root Cause**: Related to constructor execution or struct initialization.
-- Address offset calculation is correct
-- Issue manifests when dereferencing the stored pointer
-**Impact**: Returns garbage value (64 or similar) instead of expected member value (10).
 
 ### Nested Member Access with AddressOf - Known Limitation
 **Issue**: Multi-level member access like `&arr[i].member1.member2` doesn't work correctly.
