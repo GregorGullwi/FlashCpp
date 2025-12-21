@@ -1216,6 +1216,7 @@ struct FunctionDeclOp {
 	int return_size_in_bits = 0;
 	int return_pointer_depth = 0;
 	TypeIndex return_type_index = 0;  // Type index for struct/class return types
+	bool returns_reference = false;   // True if function returns a reference (T& or T&&)
 	StringHandle function_name;  // Pure StringHandle
 	StringHandle struct_name;  // Empty for non-member functions
 	Linkage linkage = Linkage::None;
