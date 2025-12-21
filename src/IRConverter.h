@@ -3839,7 +3839,7 @@ private:
 		}
 		else if (std::holds_alternative<TempVar>(bin_op.lhs.value)) {
 			auto lhs_var_op = std::get<TempVar>(bin_op.lhs.value);
-			auto lhs_stack_var_addr = getStackOffsetFromTempVar(lhs_var_op);
+			auto lhs_stack_var_addr = getStackOffsetFromTempVar(lhs_var_op, bin_op.lhs.size_in_bits);
 			if (auto lhs_reg = regAlloc.tryGetStackVariableRegister(lhs_stack_var_addr); lhs_reg.has_value()) {
 				ctx.result_physical_reg = lhs_reg.value();
 			}
@@ -4023,7 +4023,7 @@ private:
 		}
 		else if (std::holds_alternative<TempVar>(bin_op.rhs.value)) {
 			auto rhs_var_op = std::get<TempVar>(bin_op.rhs.value);
-			auto rhs_stack_var_addr = getStackOffsetFromTempVar(rhs_var_op);
+			auto rhs_stack_var_addr = getStackOffsetFromTempVar(rhs_var_op, bin_op.rhs.size_in_bits);
 			if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_stack_var_addr); rhs_reg.has_value()) {
 				ctx.rhs_physical_reg = rhs_reg.value();
 			}
@@ -4302,7 +4302,7 @@ private:
 		}
 		else if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 			auto res_var_op = std::get<TempVar>(ctx.result_value.value);
-			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op);
+			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op, ctx.result_value.size_in_bits);
 			
 			// Check if this is a reference - if so, we need to store through the pointer
 			auto ref_it = reference_stack_info_.find(res_stack_var_addr);
@@ -11631,13 +11631,25 @@ private:
 				uint64_t value = std::get<unsigned long long>(op.value.value);
 				emitMovImm64(X64Register::RDX, value);
 			} else if (std::holds_alternative<TempVar>(op.value.value)) {
-				// Value from temp var: source (sized stack slot) -> dest (64-bit RDX register)
+				// Value from temp var: check if already in register, otherwise load from stack
 				TempVar value_var = std::get<TempVar>(op.value.value);
-				int64_t value_offset = getStackOffsetFromTempVar(value_var);
-				emitMovFromFrameSized(
-					SizedRegister{X64Register::RDX, 64, false},  // dest: 64-bit register
-					SizedStackSlot{static_cast<int32_t>(value_offset), op.value.size_in_bits, isSignedType(op.value.type)}  // source: value from stack
-				);
+				int64_t value_offset = getStackOffsetFromTempVar(value_var, op.value.size_in_bits);
+				
+				// Check if value is already in a register
+				if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
+					// Value is already in a register - move it to RDX if not already there
+					if (value_reg.value() != X64Register::RDX) {
+						auto move_op = regAlloc.get_reg_reg_move_op_code(X64Register::RDX, value_reg.value(), op.value.size_in_bits / 8);
+						textSectionData.insert(textSectionData.end(), move_op.op_codes.begin(), move_op.op_codes.begin() + move_op.size_in_bytes);
+					}
+					// If already in RDX, no move needed
+				} else {
+					// Not in register - load from stack
+					emitMovFromFrameSized(
+						SizedRegister{X64Register::RDX, 64, false},  // dest: 64-bit register
+						SizedStackSlot{static_cast<int32_t>(value_offset), op.value.size_in_bits, isSignedType(op.value.type)}  // source: value from stack
+					);
+				}
 			}
 			
 			// Get array base offset
