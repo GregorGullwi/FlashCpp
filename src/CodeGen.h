@@ -9832,8 +9832,16 @@ private:
 			call_op.result = ret_var;
 			call_op.function_name = function_name;
 			
-			// Get return type information
-			const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();
+			// Get return type information from the actual member function declaration
+			// Use called_member_func if available (has the substituted template types)
+			// Otherwise fall back to func_decl or func_decl_node
+			const TypeSpecifierNode* return_type_ptr = nullptr;
+			if (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+				return_type_ptr = &called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>();
+			} else {
+				return_type_ptr = &func_decl_node.type_node().as<TypeSpecifierNode>();
+			}
+			const auto& return_type = *return_type_ptr;
 			call_op.return_type = return_type.type();
 			call_op.return_size_in_bits = (return_type.pointer_depth() > 0) ? 64 : static_cast<int>(return_type.size_in_bits());
 			call_op.is_member_function = true;
