@@ -21865,28 +21865,51 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				);
 			} else {
 				const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
-				const DeclarationNode& orig_decl = orig_func.decl_node();
-				
-				// Clone the function and substitute template parameters in return type and parameters
-				// Similar to what we do for the primary template instantiation
-				
-				// Create a new function declaration with substituted types
-				const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
+				DeclarationNode& orig_decl = const_cast<DeclarationNode&>(orig_func.decl_node());
 				
 				// Substitute return type if it uses a template parameter
+				// For partial specializations like Container<T*>, the return type T* needs substitution
+				// The pattern has Type::UserDefined for T, which needs to be replaced with the concrete type
+				const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
+				
 				Type substituted_return_type = orig_return_type.type();
-				size_t substituted_ptr_depth = orig_return_type.pointer_depth();
-				bool substituted_is_ref = orig_return_type.is_reference();
-				bool substituted_is_rvalue_ref = orig_return_type.is_rvalue_reference();
+				TypeIndex substituted_return_type_index = orig_return_type.type_index();
 				
-				// Check if return type needs substitution (it's probably fine as-is for patterns)
-				// For partial specializations, the pattern already has the right structure
-				// For example, Container<T*>::type() has return type int, not T
+				// Check if return type needs substitution (same logic as struct members)
+				bool needs_substitution = (substituted_return_type == Type::UserDefined);
+				if (needs_substitution && !template_args.empty()) {
+					// Substitute with concrete type from template_args
+					// For now, assume single template parameter (T)
+					substituted_return_type = template_args[0].base_type;
+					substituted_return_type_index = template_args[0].type_index;
+					
+					// Calculate return type size for the substituted type
+					// Pointers and references are always 64 bits
+					int substituted_return_size_bits;
+					if (orig_return_type.pointer_depth() > 0 || orig_return_type.is_reference() || orig_return_type.is_rvalue_reference()) {
+						substituted_return_size_bits = 64;
+					} else {
+						substituted_return_size_bits = static_cast<int>(get_type_size_bits(substituted_return_type));
+					}
+					
+					// Create a new TypeSpecifierNode with the substituted return type
+					// Use the struct type constructor since we have a type_index
+					TypeSpecifierNode new_return_type(
+						substituted_return_type,
+						substituted_return_type_index,
+						substituted_return_size_bits,
+						orig_return_type.token(),
+						orig_return_type.cv_qualifier()
+					);
+					
+					// Copy pointer levels and reference qualifier from the original
+					new_return_type.copy_indirection_from(orig_return_type);
+					
+					// Update the declaration node with the new type
+					orig_decl.set_type_node(emplace_node<TypeSpecifierNode>(new_return_type));
+				}
 				
-				// Create the function declaration (for now, keep original types)
-				// The key issue is that member functions need parent_struct_name set correctly
-				
-				// Just add the function as-is to the struct info and AST
+				// Add the function to the struct info (with substituted return type if needed)
 				// Phase 7B: Intern function name and use StringHandle overload
 				StringHandle func_name_handle = StringTable::getOrInternStringHandle(orig_decl.identifier_token().value());
 				struct_info->addMemberFunction(
