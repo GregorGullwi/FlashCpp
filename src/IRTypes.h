@@ -1105,6 +1105,8 @@ struct ComputeAddressOp {
 	struct ArrayIndex {
 		std::variant<unsigned long long, TempVar, StringHandle> index;
 		int element_size_bits;                       // Size of array element
+		Type index_type;                             // Type of the index (for proper sign extension)
+		int index_size_bits;                         // Size of the index in bits
 	};
 	std::vector<ArrayIndex> array_indices;
 	
@@ -2066,6 +2068,7 @@ public:
 				} else {
 					oss << "%" << StringTable::getStringView(std::get<StringHandle>(arr_idx.index));
 				}
+				oss << " [" << static_cast<int>(arr_idx.index_type) << "]" << arr_idx.index_size_bits;
 				oss << " (elem_size: " << arr_idx.element_size_bits << " bits)";
 			}
 			

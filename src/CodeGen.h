@@ -5894,6 +5894,10 @@ private:
 			ComputeAddressOp::ArrayIndex arr_idx;
 			arr_idx.element_size_bits = element_size_bits;
 			
+			// Capture index type information for proper sign extension
+			arr_idx.index_type = std::get<Type>(index_operands[0]);
+			arr_idx.index_size_bits = std::get<int>(index_operands[1]);
+			
 			// Set index value
 			if (std::holds_alternative<unsigned long long>(index_operands[2])) {
 				arr_idx.index = std::get<unsigned long long>(index_operands[2]);

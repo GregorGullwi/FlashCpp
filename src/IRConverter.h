@@ -12318,11 +12318,11 @@ private:
 				TempVar index_var = std::get<TempVar>(arr_idx.index);
 				int64_t index_offset = getStackOffsetFromTempVar(index_var);
 				
-				// Load index into RCX (sign-extended to 64-bit)
-				// Assumes 32-bit signed int index (standard for C++ array subscripts)
+				// Load index into RCX with proper size and sign extension
+				bool is_signed = isSignedType(arr_idx.index_type);
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},
-					SizedStackSlot{static_cast<int32_t>(index_offset), 32, true}
+					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits, is_signed}
 				);
 				
 				// Multiply RCX by element size
@@ -12341,11 +12341,11 @@ private:
 				}
 				int64_t index_offset = it->second.offset;
 				
-				// Load index into RCX (sign-extended to 64-bit)
-				// Assumes 32-bit signed int index (standard for C++ array subscripts)
+				// Load index into RCX with proper size and sign extension
+				bool is_signed = isSignedType(arr_idx.index_type);
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},
-					SizedStackSlot{static_cast<int32_t>(index_offset), 32, true}
+					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits, is_signed}
 				);
 				
 				// Multiply RCX by element size
