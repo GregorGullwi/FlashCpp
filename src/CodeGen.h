@@ -5314,6 +5314,7 @@ private:
 					}
 				}
 			
+			}
 				if (enclosing_type_info && enclosing_type_info->getStructInfo()) {
 					const StructTypeInfo* enclosing_struct = enclosing_type_info->getStructInfo();
 					// Check if this identifier is a member of the enclosing struct
@@ -14234,5 +14235,3 @@ private:
 };
 
 
-}
-};
