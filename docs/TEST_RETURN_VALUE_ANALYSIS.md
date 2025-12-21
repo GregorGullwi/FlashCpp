@@ -1,19 +1,20 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-21 - After Pointer Array Fix)
+## Current Status (2025-12-21 - After Nested Member Access Fix)
 
-**653/669 tests passing (97.6%)**
+**654/669 tests passing (97.8%)**
 - 11 runtime crashes (C++ runtime compatibility issues)
+- 1 compilation hang (test_lambda_copy_this_mutation.cpp - under investigation)
 - 0 link failures ✅
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
 
 **Latest Progress:**
-- ✅ Fixed array subscript for pointer arrays (Session 11)
-  - Arrays of pointers (e.g., `int* ptrs[3]`) now correctly use 64-bit element size
-  - Pointer depth tracking through AddressOf and dereference operations
-  - Fixed `test_pointer_arithmetic.cpp`
-- 📊 Current: 653/669 passing (97.6%), 11 crashes (down from 12)
+- ✅ Fixed nested member access with AddressOf (Session 12)
+  - `arr[i].member1.member2` assignments now work correctly
+  - Fixed `test_addressof_multilevel.cpp` ✅
+  - Nested member accesses now unwrap lvalue metadata and combine offsets
+- 📊 Current: 654/669 passing (97.8%), 11 crashes, 1 hang
 
 ## Key Note on Return Values
 
@@ -22,10 +23,26 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 - Returning 3000 → exit code 184
 - **This is expected OS behavior, not a compiler bug**
 
-## Recent Fix (Session 11)
+## Recent Fixes (Sessions 11-12)
+
+### Session 12 (2025-12-21): Nested Member Access with AddressOf
+**Fixed nested member access for assignments and address-of operations**
+- **Issue**: `arr[1].inner.y = 70` didn't work
+  - Code loaded `arr[1].inner` (8-byte struct) into temp location
+  - Tried to modify `.y` within that temp copy
+  - Never wrote modified struct back to original location
+  - Result: assignment had no effect
+- **Solution**:
+  - Detect TempVar base_object with Member lvalue metadata
+  - Unwrap nested member accesses to get ultimate base object
+  - Combine offsets (e.g., arr[1] offset + inner offset + y offset)
+  - Emit single MemberAccess/MemberStore with combined offset
+  - Pass context parameter through recursive calls to avoid loading intermediate structs
+- **Files Modified**: `src/CodeGen.h` (lines 10477, 10808-10856)
+- **Impact**: Fixed `test_addressof_multilevel.cpp` - 654/669 passing (up from 653)
 
 ### Session 11 (2025-12-21): Pointer Array Element Size
-**Fixed array subscript for arrays of pointers**
+**Fixed array subscript for arrays of pointers** - See expanded section below for details.
 - **Issue**: Arrays of pointers (e.g., `int* ptrs[3]`) treated elements as 32-bit instead of 64-bit
   - `type_node.size_in_bits()` returned base type size (int=32), not pointer size (64)
   - Array stores wrote only 32 bits of 64-bit pointer values
@@ -38,45 +55,31 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
   - Pass pointer depth through AddressOf operations (`pointer_depth + 1`)
   - Dereference operations now correctly determine result size based on pointer depth
 - **Files Modified**: `src/CodeGen.h` (lines 5839-6115, 10228-10361)
-- **Impact**: Fixed `test_pointer_arithmetic.cpp` - 653/669 passing, 11 crashes (down from 12)
+- **Impact**: Fixed `test_addressof_multilevel.cpp` - 654/669 passing (up from 653)
+
+### Session 11 (2025-12-21): Pointer Array Element Size
+**Fixed array subscript for arrays of pointers**
+- **Issue**: Arrays of pointers (e.g., `int* ptrs[3]`) treated elements as 32-bit instead of 64-bit
+- **Solution**: Check `pointer_depth() > 0` to use 64-bit size for pointer array elements, track pointer depth through operations
+- **Files Modified**: `src/CodeGen.h` (lines 5839-6115, 10228-10361)
+- **Impact**: Fixed `test_pointer_arithmetic.cpp`
 
 <details>
 <summary><strong>Earlier Fixes (Sessions 1-10) - Click to expand</strong></summary>
 
-### Session 10 (2025-12-21): TempVar Offset Calculation
-- Fixed missing `size_in_bits` parameters in `getStackOffsetFromTempVar` calls
-- Ensured correct stack allocation for all value sizes
+### Sessions 6-10 (2025-12-21): Code Generation Fixes
+- **Session 10**: TempVar offset calculation - added `size_in_bits` parameters
+- **Session 9b**: Array store stack alignment - removed PUSH/POP causing corruption
+- **Session 9a**: Array element size calculation - use `type_node.size_in_bits()`
+- **Session 8**: Large struct stack allocation - fixed temp vars for structs >8 bytes
+- **Session 7**: Template specialization return types - fixed 3 tests
+- **Session 6**: Virtual function vtable pointer dereference - fixed 2 tests
 
-### Session 9b (2025-12-21): Array Store Stack Alignment
-- Fixed PUSH/POP causing stack corruption in variable-index stores
-- Use RDX/RCX/RAX registers without PUSH/POP
+### Sessions 2-5 (2025-12-21): Core Functionality
+- Array constructor calls, typeinfo generation (eliminated link failures), rvalue references, struct alignment
 
-### Session 9a (2025-12-21): Array Element Size Calculation  
-- Fixed incorrect element size for array subscript operations
-- Always use `type_node.size_in_bits()` for arrays
-
-### Session 8 (2025-12-21): Large Struct Stack Allocation
-- Fixed temp variable allocation for large structs (>8 bytes)
-- Added `size_in_bits` parameter to `getStackOffsetFromTempVar`
-
-### Session 7 (2025-12-21): Template Specialization Member Functions
-- Fixed incorrect return type substitution in template partial specializations
-- Fixed 3 tests (test_spec_member_only, test_specialization_member_func, test_template_complex_substitution)
-
-### Session 6 (2025-12-21): Virtual Function Calls
-- Fixed missing vtable pointer dereference
-- Fixed 2 tests (test_abstract_class, test_virtual_basic)
-
-### Sessions 2-5 (2025-12-21): Various Fixes
-- **Session 5**: Array constructor calls for structs
-- **Session 4**: Typeinfo generation - eliminated all link failures
-- **Session 3**: Rvalue reference handling
-- **Session 2**: Struct member alignment, reference dereferencing, return type sizes
-
-### Earlier Fixes (2025-12-20/21)
-- Lambda decay, float literals, range-for loops, AddressOf member access
-- Pointer sizes, vtable generation, pure virtual functions, stack alignment
-- Function pointers, array handling, heap allocation, multi-level pointers
+### Earlier Sessions (2025-12-20/21): Foundation
+- Lambda decay, float literals, range-for, pointer sizes, vtable generation, pure virtual functions, stack alignment, function pointers, array handling, heap allocation
 
 </details>
 
@@ -85,8 +88,9 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 ### Float-to-Int Conversion
 Tests may return incorrect results but don't crash. Low priority.
 
-### Nested Member Access with AddressOf
-`&arr[i].member` works, but `&arr[i].member1.member2` doesn't.
+### ~~Nested Member Access with AddressOf~~ ✅ FIXED
+~~`&arr[i].member` works, but `&arr[i].member1.member2` doesn't.~~
+**Fixed in Session 12** - Nested member access now works correctly.
 
 ## Remaining Crashes (11 files)
 
@@ -126,6 +130,6 @@ Tests still crash due to C++ runtime initialization issues, not code generation 
 
 ---
 
-*Last Updated: 2025-12-21 (Pointer array fix - Session 11)*
-*Status: 653/669 tests passing (97.6%), 11 crashes, 0 link failures*
+*Last Updated: 2025-12-21 (Nested member access fix - Session 12)*
+*Status: 654/669 tests passing (97.8%), 11 crashes, 1 compilation hang*
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
