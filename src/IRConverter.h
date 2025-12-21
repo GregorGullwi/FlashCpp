@@ -3397,6 +3397,9 @@ public:
 			case IrOpcode::AddressOfMember:
 				handleAddressOfMember(instruction);
 				break;
+			case IrOpcode::ComputeAddress:
+				handleComputeAddress(instruction);
+				break;
 			case IrOpcode::Dereference:
 				handleDereference(instruction);
 				break;
@@ -12266,6 +12269,104 @@ private:
 		);
 		
 		// DO NOT mark as reference - this is a plain pointer value for use in arithmetic
+	}
+
+	void handleComputeAddress(const IrInstruction& instruction) {
+		// ComputeAddress: One-pass address calculation for complex expressions
+		// Handles: &arr[i].member1.member2, &arr[i][j], &arr[i].inner_arr[j].member
+		// Algorithm: address = base + (index1 * elem_size1) + (index2 * elem_size2) + ... + member_offset
+		
+		const ComputeAddressOp& op = std::any_cast<const ComputeAddressOp&>(instruction.getTypedPayload());
+		
+		// Step 1: Load base address into RAX
+		int64_t base_offset = 0;
+		if (std::holds_alternative<StringHandle>(op.base)) {
+			// Variable name - look up its stack offset
+			StringHandle base_name = std::get<StringHandle>(op.base);
+			const StackVariableScope& current_scope = variable_scopes.back();
+			auto it = current_scope.variables.find(base_name);
+			if (it == current_scope.variables.end()) {
+				assert(false && "Base variable not found in scope for ComputeAddress");
+				return;
+			}
+			base_offset = it->second.offset;
+		} else {
+			// TempVar - get its stack offset
+			TempVar base_temp = std::get<TempVar>(op.base);
+			base_offset = getStackOffsetFromTempVar(base_temp);
+		}
+		
+		// LEA RAX, [RBP + base_offset]
+		emitLeaFromFrame(X64Register::RAX, base_offset);
+		
+		// Step 2: Process each array index
+		for (const auto& arr_idx : op.array_indices) {
+			int element_size_bytes = arr_idx.element_size_bits / 8;
+			
+			// Load index into RCX
+			if (std::holds_alternative<unsigned long long>(arr_idx.index)) {
+				// Constant index
+				uint64_t index_value = std::get<unsigned long long>(arr_idx.index);
+				int64_t offset = index_value * element_size_bytes;
+				
+				// Add constant offset to RAX
+				if (offset != 0) {
+					emitAddImmToReg(textSectionData, X64Register::RAX, offset);
+				}
+			} else if (std::holds_alternative<TempVar>(arr_idx.index)) {
+				// Variable index from temp
+				TempVar index_var = std::get<TempVar>(arr_idx.index);
+				int64_t index_offset = getStackOffsetFromTempVar(index_var);
+				
+				// Load index into RCX with proper size and sign extension
+				bool is_signed = isSignedType(arr_idx.index_type);
+				emitMovFromFrameSized(
+					SizedRegister{X64Register::RCX, 64, false},
+					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits, is_signed}
+				);
+				
+				// Multiply RCX by element size
+				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
+				
+				// Add RCX to RAX
+				emitAddRAXRCX(textSectionData);
+			} else if (std::holds_alternative<StringHandle>(arr_idx.index)) {
+				// Variable index from variable name
+				StringHandle index_var_name = std::get<StringHandle>(arr_idx.index);
+				const StackVariableScope& current_scope = variable_scopes.back();
+				auto it = current_scope.variables.find(index_var_name);
+				if (it == current_scope.variables.end()) {
+					assert(false && "Index variable not found in scope");
+					return;
+				}
+				int64_t index_offset = it->second.offset;
+				
+				// Load index into RCX with proper size and sign extension
+				bool is_signed = isSignedType(arr_idx.index_type);
+				emitMovFromFrameSized(
+					SizedRegister{X64Register::RCX, 64, false},
+					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits, is_signed}
+				);
+				
+				// Multiply RCX by element size
+				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
+				
+				// Add RCX to RAX
+				emitAddRAXRCX(textSectionData);
+			}
+		}
+		
+		// Step 3: Add accumulated member offset (if any)
+		if (op.total_member_offset > 0) {
+			emitAddImmToReg(textSectionData, X64Register::RAX, op.total_member_offset);
+		}
+		
+		// Step 4: Store result
+		int32_t result_offset = getStackOffsetFromTempVar(op.result);
+		emitMovToFrameSized(
+			SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
+			SizedStackSlot{result_offset, 64, false}     // dest: 64-bit for pointer
+		);
 	}
 
 	void handleDereference(const IrInstruction& instruction) {

@@ -5717,6 +5717,209 @@ private:
 		return { Type::Char, 64, result_var, 0ULL };
 	}
 
+	// ============================================================================
+	// Address Expression Analysis for One-Pass Address Calculation
+	// ============================================================================
+	
+	// Helper function to extract DeclarationNode from a symbol (handles both DeclarationNode and VariableDeclarationNode)
+	static const DeclarationNode* getDeclarationFromSymbol(const std::optional<ASTNode>& symbol) {
+		if (!symbol.has_value()) {
+			return nullptr;
+		}
+		if (symbol->is<DeclarationNode>()) {
+			return &symbol->as<DeclarationNode>();
+		} else if (symbol->is<VariableDeclarationNode>()) {
+			return &symbol->as<VariableDeclarationNode>().declaration();
+		}
+		return nullptr;
+	}
+	
+	// Structure to hold the components of an address expression
+	struct AddressComponents {
+		std::variant<StringHandle, TempVar> base;           // Base variable or temp
+		std::vector<ComputeAddressOp::ArrayIndex> array_indices;  // Array indices
+		int total_member_offset = 0;                        // Accumulated member offsets
+		Type final_type = Type::Void;                       // Type of final result
+		int final_size_bits = 0;                            // Size in bits
+	};
+
+	// Analyze an expression for address calculation components
+	// Returns std::nullopt if the expression is not suitable for one-pass address calculation
+	std::optional<AddressComponents> analyzeAddressExpression(
+		const ExpressionNode& expr, 
+		int accumulated_offset = 0) 
+	{
+		// Handle Identifier (base case)
+		if (std::holds_alternative<IdentifierNode>(expr)) {
+			const IdentifierNode& identifier = std::get<IdentifierNode>(expr);
+			StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier.name());
+			
+			// Look up the identifier
+			std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
+			if (!symbol.has_value() && global_symbol_table_) {
+				symbol = global_symbol_table_->lookup(identifier_handle);
+			}
+			if (!symbol.has_value()) {
+				return std::nullopt;  // Can't find identifier
+			}
+			
+			// Get type info
+			const TypeSpecifierNode* type_node = nullptr;
+			if (symbol->is<DeclarationNode>()) {
+				type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			} else if (symbol->is<VariableDeclarationNode>()) {
+				type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+			} else {
+				return std::nullopt;
+			}
+			
+			AddressComponents result;
+			result.base = identifier_handle;
+			result.total_member_offset = accumulated_offset;
+			result.final_type = type_node->type();
+			result.final_size_bits = static_cast<int>(type_node->size_in_bits());
+			return result;
+		}
+		
+		// Handle MemberAccess (obj.member)
+		if (std::holds_alternative<MemberAccessNode>(expr)) {
+			const MemberAccessNode& memberAccess = std::get<MemberAccessNode>(expr);
+			const ASTNode& object_node = memberAccess.object();
+			
+			if (!object_node.is<ExpressionNode>()) {
+				return std::nullopt;
+			}
+			
+			const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
+			
+			// Get object type to lookup member
+			auto object_operands = visitExpressionNode(obj_expr, ExpressionContext::LValueAddress);
+			if (object_operands.size() < 4) {
+				return std::nullopt;
+			}
+			
+			Type object_type = std::get<Type>(object_operands[0]);
+			TypeIndex type_index = 0;
+			if (std::holds_alternative<unsigned long long>(object_operands[3])) {
+				type_index = static_cast<TypeIndex>(std::get<unsigned long long>(object_operands[3]));
+			}
+			
+			// Look up member information
+			if (type_index == 0 || type_index >= gTypeInfo.size() || object_type != Type::Struct) {
+				return std::nullopt;
+			}
+			
+			const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
+			if (!struct_info) {
+				return std::nullopt;
+			}
+			
+			std::string_view member_name = memberAccess.member_name();
+			StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
+			const StructMember* member = struct_info->findMemberRecursive(member_handle);
+			
+			if (!member) {
+				return std::nullopt;
+			}
+			
+			// Recurse with accumulated offset
+			int new_offset = accumulated_offset + static_cast<int>(member->offset);
+			auto base_components = analyzeAddressExpression(obj_expr, new_offset);
+			
+			if (!base_components.has_value()) {
+				return std::nullopt;
+			}
+			
+			// Update type to member type
+			base_components->final_type = member->type;
+			base_components->final_size_bits = static_cast<int>(member->size * 8);
+			
+			return base_components;
+		}
+		
+		// Handle ArraySubscript (arr[index])
+		if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+			const ArraySubscriptNode& arraySubscript = std::get<ArraySubscriptNode>(expr);
+			
+			// Get the array and index operands
+			auto array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
+			auto index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
+			
+			if (array_operands.size() < 3 || index_operands.size() < 3) {
+				return std::nullopt;
+			}
+			
+			Type element_type = std::get<Type>(array_operands[0]);
+			int element_size_bits = std::get<int>(array_operands[1]);
+			
+			// Calculate actual element size from array declaration
+			if (std::holds_alternative<StringHandle>(array_operands[2])) {
+				StringHandle array_name = std::get<StringHandle>(array_operands[2]);
+				std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(array_name);
+				}
+				
+				const DeclarationNode* decl_ptr = getDeclarationFromSymbol(symbol);
+				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
+					const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+					if (type_node.pointer_depth() > 0) {
+						element_size_bits = 64;
+					} else if (type_node.type() == Type::Struct) {
+						TypeIndex type_index_from_decl = type_node.type_index();
+						if (type_index_from_decl > 0 && type_index_from_decl < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index_from_decl];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (struct_info) {
+								element_size_bits = static_cast<int>(struct_info->total_size * 8);
+							}
+						}
+					} else {
+						element_size_bits = static_cast<int>(type_node.size_in_bits());
+						if (element_size_bits == 0) {
+							element_size_bits = get_type_size_bits(type_node.type());
+						}
+					}
+				}
+			}
+			
+			// Recurse on the array expression (could be nested: arr[i][j])
+			auto base_components = analyzeAddressExpression(arraySubscript.array_expr().as<ExpressionNode>(), accumulated_offset);
+			
+			if (!base_components.has_value()) {
+				return std::nullopt;
+			}
+			
+			// Add this array index
+			ComputeAddressOp::ArrayIndex arr_idx;
+			arr_idx.element_size_bits = element_size_bits;
+			
+			// Capture index type information for proper sign extension
+			arr_idx.index_type = std::get<Type>(index_operands[0]);
+			arr_idx.index_size_bits = std::get<int>(index_operands[1]);
+			
+			// Set index value
+			if (std::holds_alternative<unsigned long long>(index_operands[2])) {
+				arr_idx.index = std::get<unsigned long long>(index_operands[2]);
+			} else if (std::holds_alternative<TempVar>(index_operands[2])) {
+				arr_idx.index = std::get<TempVar>(index_operands[2]);
+			} else if (std::holds_alternative<StringHandle>(index_operands[2])) {
+				arr_idx.index = std::get<StringHandle>(index_operands[2]);
+			} else {
+				return std::nullopt;
+			}
+			
+			base_components->array_indices.push_back(arr_idx);
+			base_components->final_type = element_type;
+			base_components->final_size_bits = element_size_bits;
+			
+			return base_components;
+		}
+		
+		// Unsupported expression type
+		return std::nullopt;
+	}
+
 	std::vector<IrOperand> generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode) {
 		std::vector<IrOperand> irOperands;
 
@@ -5770,6 +5973,28 @@ private:
 		// Special handling for &arr[index] - generate address directly without loading value
 		if (unaryOperatorNode.op() == "&" && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			
+			// Try new one-pass address analysis first
+			auto addr_components = analyzeAddressExpression(operandExpr);
+			if (addr_components.has_value()) {
+				// Successfully analyzed - generate ComputeAddress IR
+				TempVar result_var = var_counter.next();
+				
+				ComputeAddressOp compute_addr_op;
+				compute_addr_op.result = result_var;
+				compute_addr_op.base = addr_components->base;
+				compute_addr_op.array_indices = std::move(addr_components->array_indices);
+				compute_addr_op.total_member_offset = addr_components->total_member_offset;
+				compute_addr_op.result_type = addr_components->final_type;
+				compute_addr_op.result_size_bits = addr_components->final_size_bits;
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
+				
+				// Return pointer to result (64-bit pointer)
+				return { addr_components->final_type, 64, result_var, 0ULL };
+			}
+			
+			// Fall back to legacy implementation if analysis failed
 			
 			// Handle &arr[index].member (member access on array element)
 			if (std::holds_alternative<MemberAccessNode>(operandExpr)) {
