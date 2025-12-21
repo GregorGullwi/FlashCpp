@@ -547,6 +547,9 @@ struct StructTypeInfo {
 		// Build vtable first (if struct has virtual functions)
 		buildVTable();
 
+		// Build RTTI information (after vtable, before layout)
+		buildRTTI();
+
 		// If custom alignment is specified, use it instead of natural alignment
 		if (custom_alignment > 0) {
 			alignment = custom_alignment;
