@@ -6,6 +6,7 @@
 - 11 runtime crashes (down from 12-14)
 - 1 timeout (infinite loop)
 - 2 link failures
+- 2 known issues with workarounds documented below
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
 
@@ -96,6 +97,52 @@ Tests like test_pointer_arithmetic.cpp now pass after fixing the actual root cau
 **Issue**: Assignments from float/double to int variables don't generate FloatToInt IR conversion instructions, resulting in incorrect behavior (bit pattern is copied instead of being converted).
 **Impact**: Tests that return converted float values may return incorrect results (but don't crash).
 **Status**: Pre-existing issue, not introduced by recent fixes. Identified during float register spilling investigation.
+
+### Default-Initialized Struct Array with AddressOf - Known Issue
+**Issue**: Taking address of member in default-initialized struct array returns wrong value when dereferenced.
+**Test File**: `test_struct_default_init_addressof.cpp`
+**Example**:
+```cpp
+struct S {
+    int x{10};
+    int* p = nullptr;
+};
+
+int main() {
+    S arr[3]{};
+    int i = 1;
+    arr[0].p = &arr[i].x;
+    return *arr[0].p;  // Expected: 10, Actual: 64
+}
+```
+**Root Cause**: Appears to be related to constructor execution or struct initialization, NOT address calculation.
+- Address offset calculation is correct (verified in assembly: `imul $0x10,%rcx` for 16-byte struct)
+- The fixes for ArrayElementAddress (StringHandle support, element size correction) are working correctly
+- The issue manifests when dereferencing the stored pointer
+**Impact**: Returns garbage value (64 or similar) instead of expected member value (10).
+**Status**: Separate issue from AddressOf/ArrayElementAddress bugs. Needs investigation into:
+- Default initialization with `{}` for struct arrays
+- Constructor call sequencing
+- Memory initialization patterns
+**Note**: Simple assignment without default init works correctly (returns 20 when explicitly set).
+
+### Nested Member Access with AddressOf - Known Limitation
+**Issue**: Multi-level member access like `&arr[i].member1.member2` doesn't work correctly.
+**Test Cases**:
+- `arr[i].inner.value` compiles but returns wrong value (46 instead of 20)
+- `arr[i].inner_arr[j].value` causes compiler to hang (infinite loop or stack overflow)
+**Root Cause**: Current AddressOf fixes handle single-level nesting (`&arr[i].member`) but not chained member access.
+**What Works**: 
+- ✅ `&obj.member` (simple member)
+- ✅ `&arr[i].member` (single-level: array element + member)
+**What Doesn't Work**:
+- ❌ `&arr[i].member1.member2` (multi-level member chain)
+- ❌ `&arr[i].inner_arr[j].member` (nested array subscripts)
+**Impact**: 
+- Single-level cases work correctly after fixes
+- Multi-level cases need additional work to properly chain offset calculations
+**Status**: Known limitation, separate from the StringHandle and element size bugs that were fixed.
+**Future Work**: Extend IR generation to handle chained member access by accumulating offsets through multiple levels.
 
 ## Remaining Crashes (12 files + 1 timeout)
 
