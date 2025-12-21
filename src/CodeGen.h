@@ -5188,6 +5188,7 @@ private:
 				}
 			}
 		}
+		}
 
 		// Check if this is a static local variable FIRST (before any other lookups)
 		// Phase 4: Using StringHandle for lookup
@@ -14231,7 +14232,6 @@ private:
 	}
 
 };
-
 
 
 
