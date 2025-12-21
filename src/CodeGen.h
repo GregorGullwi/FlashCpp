@@ -1578,7 +1578,11 @@ private:
 		
 		// Return type information
 		func_decl_op.return_type = ret_type.type();
-		func_decl_op.return_size_in_bits = static_cast<int>(ret_type.size_in_bits());
+		// For pointer return types or reference return types, use 64-bit size (pointer size on x64)
+		// References are represented as pointers at the IR level
+		func_decl_op.return_size_in_bits = (ret_type.pointer_depth() > 0 || ret_type.is_reference()) 
+			? 64 
+			: static_cast<int>(ret_type.size_in_bits());
 		func_decl_op.return_pointer_depth = ret_type.pointer_depth();
 		func_decl_op.return_type_index = ret_type.type_index();
 		func_decl_op.returns_reference = ret_type.is_reference();
@@ -5335,10 +5339,11 @@ private:
 				return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 			}
 
-			// Check if this is a reference parameter - if so, we need to dereference it
-			// Reference parameters hold an address, and we need to load the value from that address
+			// Check if this is a lvalue reference parameter - if so, we need to dereference it
+			// Lvalue reference parameters hold an address, and we need to load the value from that address
 			// EXCEPT for array references, where the reference IS the array pointer
-			if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+			// NOTE: Rvalue references (&&) are NOT dereferenced - they're passed/stored as pointers but used as-is
+			if (type_node.is_reference() && !type_node.is_rvalue_reference()) {
 				// For references to arrays (e.g., int (&arr)[3]), the reference parameter
 				// already holds the array address directly. We don't dereference it.
 				// Just return it as a pointer (64 bits on x64 architecture).
@@ -5421,7 +5426,46 @@ private:
 				TypeIndex type_index = (type_node.type() == Type::Struct) ? type_node.type_index() : 0;
 				return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 			} else {
-				// This is a local variable - return variable name
+				// This is a local variable
+				
+				// Check if this is a lvalue reference variable - if so, we need to dereference it
+				// Lvalue reference variables hold an address, and we need to load the value from that address
+				// EXCEPT for array references, where the reference IS the array pointer
+				// NOTE: Rvalue references (&&) are NOT dereferenced - they're stored as pointers but used as-is
+				if (type_node.is_reference() && !type_node.is_rvalue_reference()) {
+					// For references to arrays (e.g., int (&arr)[3]), the reference variable
+					// already holds the array address directly. We don't dereference it.
+					// Just return it as a pointer (64 bits on x64 architecture).
+					if (type_node.is_array()) {
+						// Return the array reference as a 64-bit pointer
+						constexpr int POINTER_SIZE_BITS = 64;  // x64 pointer size
+						return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
+					}
+					
+					// For non-array references, we need to dereference to get the value
+					TempVar result_temp = var_counter.next();
+					DereferenceOp deref_op;
+					deref_op.result = result_temp;
+					
+					// For auto types, default to int (32 bits) since the mangling also defaults to int
+					// This matches the behavior in NameMangling.h which falls through to 'H' (int)
+					Type pointee_type = type_node.type();
+					int pointee_size = static_cast<int>(type_node.size_in_bits());
+					if (pointee_type == Type::Auto || pointee_size == 0) {
+						pointee_type = Type::Int;
+						pointee_size = 32;
+					}
+					
+					deref_op.pointee_type = pointee_type;
+					deref_op.pointee_size_in_bits = pointee_size;
+					deref_op.pointer = StringTable::getOrInternStringHandle(identifierNode.name());  // The reference variable holds the address
+					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
+					
+					TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
+					return { pointee_type, pointee_size, result_temp, static_cast<unsigned long long>(type_index) };
+				}
+				
+				// Regular local variable (not a reference) - return variable name
 				// Use helper function to calculate size_bits with proper fallback handling
 				int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
 				

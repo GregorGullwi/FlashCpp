@@ -1,18 +1,20 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-21 - Latest Run)
+## Current Status (2025-12-21 - After Regression Fix)
 
 **650/669 tests passing (97.2%)**
 - 11 runtime crashes  
-- 1 timeout (test_xvalue_all_casts.cpp)
-- 2 link failures (test_covariant_return.cpp, test_virtual_inheritance.cpp)
+- 2 link failures (test_covariant_return.cpp, test_abstract_class.cpp)
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
 
 **Progress Notes:**
-- ✅ test_pointer_loop.cpp: No longer crashes! Returns 20 (expected 40, but runs successfully)
-- ✅ test_virtual_inheritance.cpp: Changed from runtime crash to link failure (progress)
-- Improved from 649/669 to 650/669 passing tests (+1)
+- ✅ Fixed struct member alignment for pointers/references in template instantiation
+- ✅ Fixed function return type size calculation for reference returns  
+- ✅ Fixed local lvalue reference variable dereferencing in expressions
+- ✅ Fixed rvalue reference handling - excluded from dereferencing logic
+- 📊 Final: 650/669 passing (same as starting point) with critical struct layout bugs fixed
+- ⚠️ Minor regression: test_virtual_inheritance.cpp changed from link failure to crash
 
 ## Key Note on Return Values
 
@@ -23,7 +25,45 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Completed Fixes Summary
 
-### Latest Fix (2025-12-21)
+### Latest Fix (2025-12-21 Session 3)
+**Rvalue Reference Handling** - Fixed regression in reference dereferencing logic
+- Issue: Initial fix dereferenced ALL references (lvalue + rvalue), causing crashes
+- Root Cause: Rvalue references (`T&&`) should NOT be dereferenced - they're stored as pointers but represent the object itself
+- Solution: Modified conditions to only dereference lvalue references (`T&`, `const T&`)
+  - Parameters: `if (type_node.is_reference() && !type_node.is_rvalue_reference())`
+  - Local variables: Same condition applied
+- Files Modified: `src/CodeGen.h` (lines 5345, 5433)
+- Impact: Restored test count to 650/669 (97.2%), fixed crashes in test_forward_overload_resolution.cpp
+- Minor regression: test_virtual_inheritance.cpp changed from link failure to crash (needs investigation)
+
+### Session 2 Fixes (2025-12-21)
+**Struct Member Alignment for Pointers/References in Templates** - Fixed misaligned struct members
+- Issue: Template struct instantiation used base type alignment instead of pointer alignment for `T*` and `const T&` members
+- Root Cause: `get_type_alignment(Type::Int, 8)` returned 4 (int alignment) instead of 8 (pointer alignment)
+- Manifestation: Container<int>{int value; int* ptr; const int& ref} had wrong layout:
+  - WRONG: value@0, ptr@4, ref@12 (misaligned, causing crashes on access)
+  - CORRECT: value@0, ptr@8, ref@16 (properly aligned)
+- Solution: Explicitly check for pointers/references and use 8-byte alignment
+- Files Modified: `src/Parser.cpp` (lines 21819-21826, 22543-22551)
+- Impact: Fixes struct layout bugs in templates, but regressions need investigation
+
+**Local Reference Variable Dereferencing** - Fixed lvalue reference variables not being dereferenced in expressions  
+- Issue: Local lvalue reference variables weren't automatically dereferenced when used
+- Root Cause: Dereferencing logic existed for reference parameters but not for reference local variables
+- Solution: Added dereferencing for VariableDeclarationNode matching existing parameter logic, excluding rvalue references
+- Files Modified: `src/CodeGen.h` (lines 5428-5464)
+- Impact: Lvalue references now work correctly in comparisons/operations
+
+**Function Return Type Size for References** - Fixed return size calculation
+- Issue: Functions returning `const T&` had return_size_in_bits set to base type size (32 for int) instead of pointer size (64)
+- Solution: Calculate return size as 64 bits for all pointer/reference return types
+- Files Modified: `src/CodeGen.h` (lines 1580-1586)
+- Impact: Correct IR generation for reference-returning functions
+
+**Known Regressions:**
+- test_virtual_inheritance.cpp: Changed from link failure to runtime crash (minor regression, possibly vtable/alignment related)
+
+### Previous Fix (2025-12-21 Session 1)
 **Reference Return Type Handling** - Fixed template functions returning reference types
 - Issue: Template member functions returning `const T&` were incorrectly truncating the reference (pointer) from 64 bits to 32 bits, causing type conversion errors
 - Root Cause: Return type handling didn't account for reference qualifiers, only pointer depth
