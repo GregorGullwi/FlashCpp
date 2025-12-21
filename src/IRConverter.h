@@ -4855,6 +4855,12 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
+	// Helper to generate and emit pointer MOV from frame
+	void emitPtrMovFromFrame(X64Register destinationRegister, int32_t offset) {
+		auto opcodes = generatePtrMovFromFrame(destinationRegister, offset);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	}
+
 	// Helper to generate and emit size-aware MOV from frame
 	// Takes SizedRegister for destination (register + size) and SizedStackSlot for source (offset + size)
 	// This makes both source and destination sizes explicit for clarity
@@ -11642,7 +11648,7 @@ private:
 			bool is_object_pointer = false;
 			if (is_member_array) {
 				// Check if object is 'this' or a reference parameter
-				if (object_name == std::string_view("this") || reference_stack_info_.count(array_base_offset) > 0) {
+				if (object_name == "this"sv || reference_stack_info_.count(array_base_offset) > 0) {
 					is_object_pointer = true;
 				}
 			}
@@ -11654,9 +11660,7 @@ private:
 				
 				if (is_pointer_to_array) {
 					// Load the pointer value first
-					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
-					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-					                        load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+					emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 					
 					// Add offset to pointer: ADD RAX, (index * element_size)
 					int64_t offset_bytes = index_value * element_size_bytes;
@@ -11667,9 +11671,7 @@ private:
 				} else if (is_object_pointer) {
 					// Member array of a pointer object (like this.values[i])
 					// Load the object pointer first
-					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
-					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-					                        load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+					emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 					
 					// Add member offset + index offset: ADD RAX, (member_offset + index * element_size)
 					int64_t total_offset = member_offset + (index_value * element_size_bytes);
@@ -11698,17 +11700,13 @@ private:
 				
 				if (is_pointer_to_array) {
 					// Load pointer into RAX
-					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
-					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-					                        load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+					emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 					// RAX += RCX (add index offset to pointer)
 					emitAddRAXRCX(textSectionData);
 				} else if (is_object_pointer) {
 					// Member array of a pointer object (like this.values[i])
 					// Load the object pointer first
-					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
-					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-					                        load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+					emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 					// Add member offset: ADD RAX, member_offset
 					if (member_offset != 0) {
 						emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
@@ -11747,17 +11745,13 @@ private:
 				
 				if (is_pointer_to_array) {
 					// Load pointer into RAX
-					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
-					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-					                        load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+					emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 					// RAX += RCX (add index offset to pointer)
 					emitAddRAXRCX(textSectionData);
 				} else if (is_object_pointer) {
 					// Member array of a pointer object (like this.values[i])
 					// Load the object pointer first
-					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
-					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
-					                        load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+					emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 					// Add member offset: ADD RAX, member_offset
 					if (member_offset != 0) {
 						emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
