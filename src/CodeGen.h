@@ -5842,6 +5842,7 @@ private:
 		int total_member_offset = 0;                        // Accumulated member offsets
 		Type final_type = Type::Void;                       // Type of final result
 		int final_size_bits = 0;                            // Size in bits
+		int pointer_depth = 0;                              // Pointer depth of final result
 	};
 
 	// Analyze an expression for address calculation components
@@ -5952,6 +5953,7 @@ private:
 			
 			Type element_type = std::get<Type>(array_operands[0]);
 			int element_size_bits = std::get<int>(array_operands[1]);
+			int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 			
 			// Calculate actual element size from array declaration
 			if (std::holds_alternative<StringHandle>(array_operands[2])) {
@@ -5966,6 +5968,7 @@ private:
 					const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
 					if (type_node.pointer_depth() > 0) {
 						element_size_bits = 64;
+						element_pointer_depth = type_node.pointer_depth();  // Track pointer depth
 					} else if (type_node.type() == Type::Struct) {
 						TypeIndex type_index_from_decl = type_node.type_index();
 						if (type_index_from_decl > 0 && type_index_from_decl < gTypeInfo.size()) {
@@ -5992,6 +5995,10 @@ private:
 				} else {
 					// For primitive type arrays, get the element size from the type
 					element_size_bits = get_type_size_bits(element_type);
+				}
+				// Try to get pointer depth from array_operands[3] if available
+				if (array_operands.size() >= 4 && std::holds_alternative<unsigned long long>(array_operands[3])) {
+					element_pointer_depth = static_cast<int>(std::get<unsigned long long>(array_operands[3]));
 				}
 			}
 			
@@ -6024,6 +6031,7 @@ private:
 			base_components->array_indices.push_back(arr_idx);
 			base_components->final_type = element_type;
 			base_components->final_size_bits = element_size_bits;
+			base_components->pointer_depth = element_pointer_depth;  // Set pointer depth for the element
 			
 			return base_components;
 		}
@@ -6103,7 +6111,8 @@ private:
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
 				
 				// Return pointer to result (64-bit pointer)
-				return { addr_components->final_type, 64, result_var, 0ULL };
+				// The 4th element is pointer_depth + 1 (we're taking address, so depth increases)
+				return { addr_components->final_type, 64, result_var, static_cast<unsigned long long>(addr_components->pointer_depth + 1) };
 			}
 			
 			// Fall back to legacy implementation if analysis failed
@@ -10230,6 +10239,7 @@ private:
 		// Look up the identifier to get the actual type info
 		bool is_pointer_to_array = false;
 		size_t element_type_index = 0;  // Track type_index for struct elements
+		int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 		const ExpressionNode& arr_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(arr_expr)) {
 			const IdentifierNode& arr_ident = std::get<IdentifierNode>(arr_expr);
@@ -10256,14 +10266,23 @@ private:
 					// For array types, ALWAYS get the element size from type_node, not from array_operands
 					// array_operands[1] contains 64 (pointer size) for arrays, not the element size
 					if (decl_ptr->is_array() || type_node.is_array()) {
-						// Get the element size from type_node
-						element_size_bits = static_cast<int>(type_node.size_in_bits());
-						// If still 0, compute from type info for struct types
-						if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index > 0) {
-							const TypeInfo& type_info = gTypeInfo[element_type_index];
-							const StructTypeInfo* struct_info = type_info.getStructInfo();
-							if (struct_info) {
-								element_size_bits = static_cast<int>(struct_info->total_size * 8);
+						// Check if this is an array of pointers (e.g., int* ptrs[3])
+						// In this case, the element size should be the pointer size (64 bits), not the base type size
+						if (type_node.pointer_depth() > 0) {
+							// Array of pointers: element size is always 64 bits (pointer size)
+							element_size_bits = 64;
+							// Track pointer depth for the array element (e.g., for int* arr[3], element has pointer_depth=1)
+							element_pointer_depth = type_node.pointer_depth();
+						} else {
+							// Get the element size from type_node
+							element_size_bits = static_cast<int>(type_node.size_in_bits());
+							// If still 0, compute from type info for struct types
+							if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index > 0) {
+								const TypeInfo& type_info = gTypeInfo[element_type_index];
+								const StructTypeInfo* struct_info = type_info.getStructInfo();
+								if (struct_info) {
+									element_size_bits = static_cast<int>(struct_info->total_size * 8);
+								}
 							}
 						}
 					}
@@ -10330,14 +10349,28 @@ private:
 			// Don't emit ArrayAccess instruction (no load)
 			// Just return the metadata with the result temp var
 			// The metadata contains all information needed for store operations
-			return { element_type, element_size_bits, result_var, element_type_index };
+			// For the 4th element: 
+			// - For struct types, return type_index
+			// - For pointer array elements, return pointer_depth
+			// - Otherwise return 0
+			unsigned long long fourth_element = (element_type == Type::Struct)
+				? static_cast<unsigned long long>(element_type_index)
+				: ((element_pointer_depth > 0) ? static_cast<unsigned long long>(element_pointer_depth) : 0ULL);
+			return { element_type, element_size_bits, result_var, fourth_element };
 		}
 
 		// Create instruction with typed payload (Load context - default)
 		ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
-		// Return [element_type, element_size_bits, result_var, struct_type_index (for struct arrays, 0 otherwise)]
-		return { element_type, element_size_bits, result_var, element_type_index };
+		// Return [element_type, element_size_bits, result_var, struct_type_index or pointer_depth]
+		// For the 4th element: 
+		// - For struct types, return type_index
+		// - For pointer array elements, return pointer_depth
+		// - Otherwise return 0
+		unsigned long long fourth_element = (element_type == Type::Struct)
+			? static_cast<unsigned long long>(element_type_index)
+			: ((element_pointer_depth > 0) ? static_cast<unsigned long long>(element_pointer_depth) : 0ULL);
+		return { element_type, element_size_bits, result_var, fourth_element };
 	}
 
 	// Helper function to validate and setup identifier-based member access
