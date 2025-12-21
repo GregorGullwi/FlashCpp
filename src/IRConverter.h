@@ -44,7 +44,7 @@ extern bool g_enable_exceptions;
 static constexpr size_t MAX_MOV_INSTRUCTION_SIZE = 9;
 
 struct OpCodeWithSize {
-	std::array<uint8_t, MAX_MOV_INSTRUCTION_SIZE> op_codes;
+	std::array<uint8_t, MAX_MOV_INSTRUCTION_SIZE> op_codes{};  // Zero-initialize
 	size_t size_in_bytes = 0;
 };
 
@@ -4825,6 +4825,14 @@ private:
 		// Check if source is an XMM register (enum values >= 16)
 		bool is_xmm_source = static_cast<uint8_t>(source.reg) >= 16;
 		
+		// Validate destination size - size of 0 indicates a bug
+		if (dest.size_in_bits == 0) {
+			FLASH_LOG_FORMAT(Codegen, Error, "emitMovToFrameSized called with size=0! reg={} offset={}", 
+				static_cast<int>(source.reg), dest.offset);
+			// Default to 8-bit to avoid crash, but this indicates a bug
+			dest.size_in_bits = 8;
+		}
+		
 		// Use the destination size to determine the store instruction
 		if (dest.size_in_bits == 64) {
 			if (is_xmm_source) {
@@ -4852,7 +4860,21 @@ private:
 		}
 		FLASH_LOG_FORMAT(Codegen, Debug, "emitMovToFrameSized: reg={} offset={} size={} is_xmm={} bytes={}", 
 			static_cast<int>(source.reg), dest.offset, dest.size_in_bits, is_xmm_source, bytes_str);
-		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		
+		// Validate opcodes before inserting - detect spaceship operator register corruption bug
+		if (opcodes.size_in_bytes > 0 && opcodes.size_in_bytes <= MAX_MOV_INSTRUCTION_SIZE) {
+			// Check for the specific bad instruction pattern: REX.W (0x48) followed by invalid 0xc5
+			if (opcodes.size_in_bytes >= 2 && opcodes.op_codes[0] == 0x48 && opcodes.op_codes[1] == 0xc5) {
+				FLASH_LOG(Codegen, Error, "DETECTED BAD INSTRUCTION PATTERN: 48 c5 - Likely register corruption bug!");
+				FLASH_LOG_FORMAT(Codegen, Error, "  Register: {}, Offset: {}, Size: {}", 
+					static_cast<int>(source.reg), dest.offset, dest.size_in_bits);
+				// Don't insert the bad instruction - this will cause a different failure but help us debug
+				return;
+			}
+			textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+		} else {
+			FLASH_LOG_FORMAT(Codegen, Error, "Invalid opcodes.size_in_bytes: {}", opcodes.size_in_bytes);
+		}
 	}
 
 	// Helper to generate and emit size-appropriate MOV from frame
