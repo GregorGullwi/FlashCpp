@@ -5721,6 +5721,19 @@ private:
 	// Address Expression Analysis for One-Pass Address Calculation
 	// ============================================================================
 	
+	// Helper function to extract DeclarationNode from a symbol (handles both DeclarationNode and VariableDeclarationNode)
+	static const DeclarationNode* getDeclarationFromSymbol(const std::optional<ASTNode>& symbol) {
+		if (!symbol.has_value()) {
+			return nullptr;
+		}
+		if (symbol->is<DeclarationNode>()) {
+			return &symbol->as<DeclarationNode>();
+		} else if (symbol->is<VariableDeclarationNode>()) {
+			return &symbol->as<VariableDeclarationNode>().declaration();
+		}
+		return nullptr;
+	}
+	
 	// Structure to hold the components of an address expression
 	struct AddressComponents {
 		std::variant<StringHandle, TempVar> base;           // Base variable or temp
@@ -5846,32 +5859,25 @@ private:
 				if (!symbol.has_value() && global_symbol_table_) {
 					symbol = global_symbol_table_->lookup(array_name);
 				}
-				if (symbol.has_value()) {
-					const DeclarationNode* decl_ptr = nullptr;
-					if (symbol->is<DeclarationNode>()) {
-						decl_ptr = &symbol->as<DeclarationNode>();
-					} else if (symbol->is<VariableDeclarationNode>()) {
-						decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
-					}
-					
-					if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
-						const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
-						if (type_node.pointer_depth() > 0) {
-							element_size_bits = 64;
-						} else if (type_node.type() == Type::Struct) {
-							TypeIndex type_index_from_decl = type_node.type_index();
-							if (type_index_from_decl > 0 && type_index_from_decl < gTypeInfo.size()) {
-								const TypeInfo& type_info = gTypeInfo[type_index_from_decl];
-								const StructTypeInfo* struct_info = type_info.getStructInfo();
-								if (struct_info) {
-									element_size_bits = static_cast<int>(struct_info->total_size * 8);
-								}
+				
+				const DeclarationNode* decl_ptr = getDeclarationFromSymbol(symbol);
+				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
+					const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+					if (type_node.pointer_depth() > 0) {
+						element_size_bits = 64;
+					} else if (type_node.type() == Type::Struct) {
+						TypeIndex type_index_from_decl = type_node.type_index();
+						if (type_index_from_decl > 0 && type_index_from_decl < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index_from_decl];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (struct_info) {
+								element_size_bits = static_cast<int>(struct_info->total_size * 8);
 							}
-						} else {
-							element_size_bits = static_cast<int>(type_node.size_in_bits());
-							if (element_size_bits == 0) {
-								element_size_bits = get_type_size_bits(type_node.type());
-							}
+						}
+					} else {
+						element_size_bits = static_cast<int>(type_node.size_in_bits());
+						if (element_size_bits == 0) {
+							element_size_bits = get_type_size_bits(type_node.type());
 						}
 					}
 				}
