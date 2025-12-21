@@ -5229,7 +5229,10 @@ private:
 
 		// Only check if it's a member variable if NOT found in symbol tables
 		// This gives priority to parameters and local variables over member variables
-		if (!symbol.has_value() && current_struct_name_.isValid()) {
+		// Skip this for [*this] lambdas - they need to access through __copy_this instead
+		// Also check that we're not in a lambda context where this would be an enclosing struct member
+		if (!symbol.has_value() && current_struct_name_.isValid() && 
+		    !isInCopyThisLambda() && !current_lambda_closure_type_.isValid()) {
 			// Look up the struct type
 			auto type_it = gTypesByName.find(current_struct_name_);
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
@@ -5321,6 +5324,16 @@ private:
 						member_load.is_rvalue_reference = member->is_rvalue_reference;
 						member_load.struct_type_info = nullptr;
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+						
+						// Mark as lvalue with member metadata for compound assignments
+						// This is crucial for multiple compound assignments to work correctly
+						LValueInfo lvalue_info(
+							LValueInfo::Kind::Member,
+							*copy_this_temp,  // Use the TempVar holding __copy_this
+							static_cast<int>(member->offset)
+						);
+						lvalue_info.member_name = member->getName();
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 						
 						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
 						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };

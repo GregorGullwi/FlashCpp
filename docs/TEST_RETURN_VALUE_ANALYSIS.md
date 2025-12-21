@@ -10,13 +10,13 @@
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
 
 **Recent Investigation (Session 13):**
-- 🔍 Investigated test_lambda_copy_this_mutation.cpp compilation failure
-  - Issue: Compiler asserts "Struct object not found in scope or globals" during codegen
-  - Root cause: Compound assignments (`value *= 2`) in `[*this]` mutable lambdas generate incorrect IR
-  - First compound assignment works correctly, second fails
-  - IR shows incorrect object reference (`%c.value` instead of `%<tempvar>.value`)
-  - Affects `[*this]` lambda capture with multiple compound assignments
-  - Cannot be fixed without deeper refactoring of identifier resolution in lambda contexts
+- 🔍 Investigated and partially fixed test_lambda_copy_this_mutation.cpp
+  - Added LValue metadata for `[*this]` lambda member access
+  - Added check to prevent wrong code path in identifier resolution
+  - ✅ Fixed: Single lambda with multiple compound assignments now compiles
+  - ❌ Still broken: Multiple lambdas in same struct
+  - Root cause: Lambda state management needs architectural refactoring
+  - Created detailed fix plan in `docs/LAMBDA_COMPOUND_ASSIGNMENT_FIX_PLAN.md`
 
 ## Key Note on Return Values
 
@@ -65,32 +65,37 @@ Array constructor calls, typeinfo generation, rvalue references, struct alignmen
 ### Float-to-Int Conversion
 Tests may return incorrect results but don't crash. Low priority.
 
-### Lambda Compound Assignment Bug ⚠️ UNFIXED
+### Lambda Compound Assignment Bug ⚠️ PARTIALLY FIXED
 **File**: `test_lambda_copy_this_mutation.cpp`
-**Status**: Compilation failure (signal 134 - SIGABRT)
+**Status**: Compilation failure - Partial fix implemented, architectural changes needed
 
-**Problem**: Compound assignments in `[*this]` mutable lambdas fail when there are multiple assignments:
+**Problem**: Compound assignments in `[*this]` mutable lambdas fail with multiple lambdas or assignments:
 ```cpp
 auto lambda = [*this]() mutable {
     value += 5;   // Works correctly
-    value *= 2;   // FAILS - generates incorrect IR
+    value *= 2;   // FAILS - generates %c.value instead of %<tempvar>.value
     return value;
 };
 ```
 
+**Partial Fix Applied** (Session 13):
+1. Added LValue metadata for `[*this]` lambda member access (CodeGen.h:5324-5333)
+2. Added check to skip regular member access path for lambdas (CodeGen.h:5233)
+3. ✅ Works for single lambda with multiple compound assignments
+4. ❌ Still fails for multiple lambdas in same struct
+
 **Root Cause**: 
-- First compound assignment generates correct IR: loads `__copy_this` into temp, accesses member
-- Second compound assignment generates incorrect IR: references non-existent variable
-- IR shows: `%9 = member_access int32 %c.value` where `c` doesn't exist in lambda scope
-- Should be: `%9 = member_access int32 %7.value` (using `__copy_this` temp)
+- State management issue between lambda generations
+- `current_struct_name_` persists across lambdas, causes confusion
+- Lambda context cleared too early for complex scenarios
+- Requires architectural refactoring of lambda state handling
 
-**Technical Details**:
-- Error occurs in `IrToObjConverter::handleMemberAccess` (IRConverter.h:11831)
-- During object file generation phase, compiler cannot find variable in scope
-- Issue is in IR generation, not object file conversion
-- LValue metadata for second assignment has incorrect base object
+**Detailed Fix Plan**: See `docs/LAMBDA_COMPOUND_ASSIGNMENT_FIX_PLAN.md`
 
-**Impact**: Prevents compilation of `[*this]` lambdas with multiple compound assignments to captured members
+**Impact**: Prevents compilation of `[*this]` lambdas with:
+- Multiple lambda functions in same struct
+- Complex capture scenarios
+- Some multiple compound assignment patterns
 
 ## Remaining Crashes (11 files)
 
