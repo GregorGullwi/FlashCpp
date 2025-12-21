@@ -2,23 +2,22 @@
 
 # Test Return Value Analysis
 
-## Current Status (2025-12-21 - After Stack Allocation Investigation)
+## Current Status (2025-12-21 - After Array Element Size Fix)
 
-**655/669 tests passing (97.9%)**
-- 9 runtime crashes (unchanged)
+**653/669 tests passing (97.6%)**
+- 11 runtime crashes (+2 from new tests exposing pre-existing bugs)
 - 0 link failures ✅
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
 
 **Latest Progress:**
-- 🔧 Investigated large struct return value issues (test_rvo_very_large_struct.cpp)
-- ✅ Fixed temp variable stack allocation for large structs
-  - Modified getStackOffsetFromTempVar to accept size_in_bits parameter
-  - Updated scope_stack_space calculation to account for full struct size
-  - Function call results now allocated with correct size (not just 8 bytes)
-  - Constructor temp vars now allocated with struct size
-- 🐛 Identified separate bug: constructor array writes not generated (affects test_rvo_very_large_struct.cpp)
-- 📊 Current: 655/669 passing (97.9%), same as before (constructor bug blocks improvement)
+- ✅ Fixed array element size calculation (Session 9)
+  - Arrays were using pointer size (64-bit) instead of element size
+  - For int arrays: was 64-bit, now 32-bit (correct)
+  - Generated wrong shift amounts: `shl $0x3` (×8) → now `shl $0x2` (×4)
+  - Modified `generateArraySubscriptIr` to always use `type_node.size_in_bits()` for arrays
+- ⚠️ New tests (test_addressof_int_index, test_arrays_comprehensive) exposed pre-existing variable-index bug
+- 📊 Current: 653/669 passing (97.6%)
 
 ## Key Note on Return Values
 
@@ -29,7 +28,27 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Completed Fixes Summary
 
-### Latest Investigation (2025-12-21 Session 8)
+### Latest Fix (2025-12-21 Session 9)
+**Array Element Size Calculation** - Fixed incorrect element size for array subscript operations
+- **Issue**: Array subscript operations (e.g., `arr[i]`) were using pointer size (64-bit) instead of element size
+  - For `int arr[10]`, accessing `arr[i]` used 64-bit element size instead of 32-bit
+  - Caused incorrect index multiplication: shift by 3 (×8) instead of shift by 2 (×4)
+  - Assembly showed `shl $0x3,%rcx` (wrong) instead of `shl $0x2,%rcx` (correct)
+- **Root Cause**: `generateArraySubscriptIr` in `src/CodeGen.h` was using `array_operands[1]`
+  - For arrays, identifier resolution returns 64-bit (pointer size) in size field
+  - Code to correct this only ran if `element_size_bits == 0`, but it was 64, so correction never happened
+- **Solution**: Always get element size from `type_node.size_in_bits()` for array types
+  - Modified logic at lines 10248-10283 in src/CodeGen.h
+  - For arrays: immediately set `element_size_bits = type_node.size_in_bits()`
+  - For pointers: set `element_size_bits` and mark as `is_pointer_to_array`
+- **Files Modified**: `src/CodeGen.h` (lines 10248-10283)
+- **Impact**:
+  - ✅ Correct IR generation: `array_store [6][32]` instead of `[6][64]` for int arrays
+  - ✅ Correct assembly: `shl $0x2` (×4) instead of `shl $0x3` (×8) for int arrays
+  - ✅ Most array tests continue to pass
+  - ⚠️ Two new tests (test_addressof_int_index, test_arrays_comprehensive) expose separate pre-existing bug with variable indices
+
+### Previous Investigation (2025-12-21 Session 8)
 **Large Struct Stack Allocation** - Fixed temp variable allocation for large structs
 - **Issue**: Large structs (>8 bytes) returned from functions were only allocated 8 bytes of stack space
   - TempVars were always allocated with fixed 8-byte size regardless of actual type size
@@ -157,9 +176,9 @@ Fixed vtable dereferencing for basic virtual calls. test_abstract_class.cpp and 
 ### Nested Member Access with AddressOf
 **Status**: Known limitation. `&arr[i].member` works, but `&arr[i].member1.member2` doesn't.
 
-## Remaining Crashes (9 files)
+## Remaining Crashes (11 files)
 
-**Current: 9 crashes (down from 12), 0 link failures**
+**Current: 11 crashes (+2 from new tests), 0 link failures**
 
 ### Crash Categories
 
@@ -173,22 +192,30 @@ Fixed vtable dereferencing for basic virtual calls. test_abstract_class.cpp and 
    - test_covariant_return.cpp (covariant return types)
    - test_virtual_inheritance.cpp (virtual inheritance)
 
-4. **Other issues** (3 files)
+4. **Array variable indices** (2 files) - NEW: Pre-existing bug exposed by new tests
+   - test_addressof_int_index.cpp (basic variable-index array operations)
+   - test_arrays_comprehensive.cpp (comprehensive array operations with variables)
+   - These tests use variable indices like `arr[index]` where `index` is a variable
+   - Constant indices like `arr[0]` work fine
+   - Added in commit 8626558, expose pre-existing bug in variable-index handling
+
+5. **Other issues** (3 files)
    - test_rvo_very_large_struct.cpp (large struct RVO)
    - test_lambda_cpp20_comprehensive.cpp (complex C++20 lambda features)
    - test_xvalue_all_casts.cpp (cast handling)
 
 ## Priority Investigation Areas
 
-1. **Covariant returns & virtual inheritance** - 2 tests with complex vtable layouts
-2. **Exception handling** - 2 tests requiring complete Linux exception support
-3. **Variadic arguments** - 2 tests with va_list implementation gaps
-4. **Lambda capture** - 1 test with complex C++20 lambda features
-5. **Large struct RVO** - 1 test with very large struct return value optimization
-6. **Cast handling** - 1 test with xvalue and all cast types
+1. **Array variable indices** - 2 NEW tests exposing pre-existing bug
+2. **Covariant returns & virtual inheritance** - 2 tests with complex vtable layouts
+3. **Exception handling** - 2 tests requiring complete Linux exception support
+4. **Variadic arguments** - 2 tests with va_list implementation gaps
+5. **Lambda capture** - 1 test with complex C++20 lambda features
+6. **Large struct RVO** - 1 test with very large struct return value optimization
+7. **Cast handling** - 1 test with xvalue and all cast types
 
 ---
 
-*Last Updated: 2025-12-21 (template specialization member function fix)*
-*Status: 655/669 tests passing (97.9%), 9 crashes, 0 link failures*
+*Last Updated: 2025-12-21 (array element size fix)*
+*Status: 653/669 tests passing (97.6%), 11 crashes, 0 link failures*
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
