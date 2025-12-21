@@ -3394,6 +3394,9 @@ public:
 			case IrOpcode::AddressOf:
 				handleAddressOf(instruction);
 				break;
+			case IrOpcode::AddressOfMember:
+				handleAddressOfMember(instruction);
+				break;
 			case IrOpcode::Dereference:
 				handleDereference(instruction);
 				break;
@@ -11393,34 +11396,38 @@ private:
 					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits, isSignedType(op.index.type)}  // source: index from stack
 				);
 				
-				if (element_size_bytes > 1) {
-					textSectionData.push_back(0x48); // REX.W
-					textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
-					textSectionData.push_back(0xC9); // ModR/M: RCX, RCX
-					uint32_t size_u32 = static_cast<uint32_t>(element_size_bytes);
-					textSectionData.push_back(size_u32 & 0xFF);
-					textSectionData.push_back((size_u32 >> 8) & 0xFF);
-					textSectionData.push_back((size_u32 >> 16) & 0xFF);
-					textSectionData.push_back((size_u32 >> 24) & 0xFF);
-				}
+				// Multiply index by element size
+				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 				
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x8D); // LEA r64, m
-				if (array_base_offset >= -128 && array_base_offset <= 127) {
-					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
-					textSectionData.push_back(static_cast<uint8_t>(array_base_offset));
-				} else {
-					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
-					uint32_t offset_u32 = static_cast<uint32_t>(static_cast<int32_t>(array_base_offset));
-					textSectionData.push_back(offset_u32 & 0xFF);
-					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
-				}
+				// Load address of array base into RAX
+				emitLeaFromFrame(X64Register::RAX, array_base_offset);
 				
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x01); // ADD r/m64, r64
-				textSectionData.push_back(0xC8); // ModR/M: RAX, RCX
+				// Add offset to get final address
+				emitAddRAXRCX(textSectionData);
+			} else if (std::holds_alternative<StringHandle>(op.index.value)) {
+				// Handle variable name (StringHandle) as index
+				StringHandle index_var_name = std::get<StringHandle>(op.index.value);
+				auto it = variable_scopes.back().variables.find(index_var_name);
+				if (it == variable_scopes.back().variables.end()) {
+					assert(false && "Index variable not found in scope");
+					return;
+				}
+				int64_t index_offset = it->second.offset;
+				
+				// Load index: source (sized stack slot) -> dest (64-bit RCX)
+				emitMovFromFrameSized(
+					SizedRegister{X64Register::RCX, 64, false},  // dest: 64-bit register
+					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits, isSignedType(op.index.type)}  // source: index from stack
+				);
+				
+				// Multiply index by element size
+				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
+				
+				// Load address of array base into RAX
+				emitLeaFromFrame(X64Register::RAX, array_base_offset);
+				
+				// Add offset to get final address
+				emitAddRAXRCX(textSectionData);
 			}
 			
 			// Store the computed address to result_var
@@ -12228,6 +12235,37 @@ private:
 			SizedRegister{target_reg, 64, false},  // source: 64-bit register
 			SizedStackSlot{result_offset, 64, false}  // dest: 64-bit for pointer
 		);
+	}
+	
+	void handleAddressOfMember(const IrInstruction& instruction) {
+		// AddressOfMember: &obj.member
+		// Calculate address of struct member directly: LEA result, [RBP + obj_offset + member_offset]
+		
+		const AddressOfMemberOp& op = std::any_cast<const AddressOfMemberOp&>(instruction.getTypedPayload());
+		
+		// Look up the base object's stack offset
+		const StackVariableScope& current_scope = variable_scopes.back();
+		auto it = current_scope.variables.find(op.base_object);
+		if (it == current_scope.variables.end()) {
+			assert(false && "Base object not found in scope for AddressOfMember");
+			return;
+		}
+		
+		int32_t obj_offset = it->second.offset;
+		int32_t combined_offset = obj_offset + op.member_offset;
+		
+		// Calculate the address: LEA target_reg, [RBP + combined_offset]
+		X64Register target_reg = X64Register::RAX;
+		emitLeaFromFrame(target_reg, combined_offset);
+		
+		// Store the address to result_var (pointer is always 64-bit)
+		int32_t result_offset = getStackOffsetFromTempVar(op.result);
+		emitMovToFrameSized(
+			SizedRegister{target_reg, 64, false},  // source: 64-bit register
+			SizedStackSlot{result_offset, 64, false}  // dest: 64-bit for pointer
+		);
+		
+		// DO NOT mark as reference - this is a plain pointer value for use in arithmetic
 	}
 
 	void handleDereference(const IrInstruction& instruction) {

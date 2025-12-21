@@ -5791,6 +5791,49 @@ private:
 							Type element_type = std::get<Type>(array_operands[0]);
 							int element_size_bits = std::get<int>(array_operands[1]);
 							
+							// For arrays, array_operands[1] is the pointer size (64), not element size
+							// We need to calculate the actual element size from the array declaration
+							if (std::holds_alternative<StringHandle>(array_operands[2])) {
+								StringHandle array_name = std::get<StringHandle>(array_operands[2]);
+								std::optional<ASTNode> symbol = symbol_table.lookup(array_name);
+								if (!symbol.has_value() && global_symbol_table_) {
+									symbol = global_symbol_table_->lookup(array_name);
+								}
+								if (symbol.has_value()) {
+									const DeclarationNode* decl_ptr = nullptr;
+									if (symbol->is<DeclarationNode>()) {
+										decl_ptr = &symbol->as<DeclarationNode>();
+									} else if (symbol->is<VariableDeclarationNode>()) {
+										decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
+									}
+									
+									if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
+										// This is an array - calculate element size
+										const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+										if (type_node.pointer_depth() > 0) {
+											// Array of pointers
+											element_size_bits = 64;
+										} else if (type_node.type() == Type::Struct) {
+											// Array of structs
+											TypeIndex type_index_from_decl = type_node.type_index();
+											if (type_index_from_decl > 0 && type_index_from_decl < gTypeInfo.size()) {
+												const TypeInfo& type_info = gTypeInfo[type_index_from_decl];
+												const StructTypeInfo* struct_info = type_info.getStructInfo();
+												if (struct_info) {
+													element_size_bits = static_cast<int>(struct_info->total_size * 8);
+												}
+											}
+										} else {
+											// Regular array - use type size
+											element_size_bits = static_cast<int>(type_node.size_in_bits());
+											if (element_size_bits == 0) {
+												element_size_bits = get_type_size_bits(type_node.type());
+											}
+										}
+									}
+								}
+							}
+							
 							// Get the struct type index (4th element of array_operands contains type_index for struct types)
 							TypeIndex type_index = 0;
 							if (array_operands.size() >= 4 && std::holds_alternative<unsigned long long>(array_operands[3])) {
@@ -5839,6 +5882,69 @@ private:
 										
 										// Return pointer to member (64-bit pointer, 0 for no additional type info)
 										return { member->type, POINTER_SIZE_BITS, member_addr_var, 0ULL };
+									}
+								}
+							}
+						}
+					}
+				}
+				
+				// Handle general case: &obj.member (where obj is NOT an array subscript)
+				// This generates the member address directly without loading the value
+				if (!object_node.is<ExpressionNode>() || 
+				    (object_node.is<ExpressionNode>() && !std::holds_alternative<ArraySubscriptNode>(object_node.as<ExpressionNode>()))) {
+					
+					// Get the object expression (identifier, pointer dereference, etc.)
+					auto object_operands = visitExpressionNode(object_node.as<ExpressionNode>(), ExpressionContext::LValueAddress);
+					
+					if (object_operands.size() >= 3) {
+						Type object_type = std::get<Type>(object_operands[0]);
+						
+						// Get the struct type index
+						TypeIndex type_index = 0;
+						if (object_operands.size() >= 4 && std::holds_alternative<unsigned long long>(object_operands[3])) {
+							type_index = static_cast<TypeIndex>(std::get<unsigned long long>(object_operands[3]));
+						}
+						
+						// Look up member information
+						if (type_index > 0 && type_index < gTypeInfo.size() && object_type == Type::Struct) {
+							const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
+							if (struct_info) {
+								std::string_view member_name = memberAccess.member_name();
+								StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
+								const StructMember* member = struct_info->findMemberRecursive(member_handle);
+								
+								if (member) {
+									TempVar result_var = var_counter.next();
+									constexpr int POINTER_SIZE_BITS = 64;
+									
+									// For simple identifiers, generate a MemberAddressOp or use AddressOf with member context
+									// For now, use a simpler approach: emit AddressOf, then Add offset in generated code
+									// But mark the intermediate as NOT a reference to avoid dereferencing
+									
+									if (std::holds_alternative<StringHandle>(object_operands[2])) {
+										StringHandle obj_name = std::get<StringHandle>(object_operands[2]);
+										
+										// Create a custom AddressOf-like operation that computes obj_addr + member_offset directly
+										// We'll use ArrayElementAddress with index 0 and treat it as a base address calc
+										// Actually, let's just emit the calculation inline without using intermediate temps
+										
+										// Generate IR to compute the member address
+										// We need a MemberAddressOp or similar
+										// For now, let's use the existing approach but avoid marking as reference
+										
+										// Option: Generate AddressOfMemberOp
+										AddressOfMemberOp addr_member_op;
+										addr_member_op.result = result_var;
+										addr_member_op.base_object = obj_name;
+										addr_member_op.member_offset = static_cast<int>(member->offset);
+										addr_member_op.member_type = member->type;
+										addr_member_op.member_size_in_bits = static_cast<int>(member->size * 8);
+										
+										ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));
+										
+										// Return pointer to member
+										return { member->type, POINTER_SIZE_BITS, result_var, 0ULL };
 									}
 								}
 							}
