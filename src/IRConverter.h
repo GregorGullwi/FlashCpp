@@ -11625,17 +11625,17 @@ private:
 				member_name = array_name_view.substr(dot_pos + 1);
 			}
 			
-			// Get the value to store into RCX (we need RAX for pointer loading)
+			// Get the value to store into RDX (we use RCX for index, RAX for address)
 			if (std::holds_alternative<unsigned long long>(op.value.value)) {
-				// Constant value into RCX
+				// Constant value into RDX
 				uint64_t value = std::get<unsigned long long>(op.value.value);
-				emitMovImm64(X64Register::RCX, value);
+				emitMovImm64(X64Register::RDX, value);
 			} else if (std::holds_alternative<TempVar>(op.value.value)) {
-				// Value from temp var: source (sized stack slot) -> dest (64-bit RCX register)
+				// Value from temp var: source (sized stack slot) -> dest (64-bit RDX register)
 				TempVar value_var = std::get<TempVar>(op.value.value);
 				int64_t value_offset = getStackOffsetFromTempVar(value_var);
 				emitMovFromFrameSized(
-					SizedRegister{X64Register::RCX, 64, false},  // dest: 64-bit register
+					SizedRegister{X64Register::RDX, 64, false},  // dest: 64-bit register
 					SizedStackSlot{static_cast<int32_t>(value_offset), op.value.size_in_bits, isSignedType(op.value.type)}  // source: value from stack
 				);
 			}
@@ -11666,8 +11666,8 @@ private:
 					int64_t offset_bytes = index_value * element_size_bytes;
 					emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
 					
-					// Store RCX to [RAX] with appropriate size
-					emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::RAX, 0, element_size_bytes);
+					// Store RDX to [RAX] with appropriate size
+					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
 				} else if (is_object_pointer) {
 					// Member array of a pointer object (like this.values[i])
 					// Load the object pointer first
@@ -11677,24 +11677,21 @@ private:
 					int64_t total_offset = member_offset + (index_value * element_size_bytes);
 					emitAddImmToReg(textSectionData, X64Register::RAX, total_offset);
 					
-					// Store RCX to [RAX] with appropriate size
-					emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::RAX, 0, element_size_bytes);
+					// Store RDX to [RAX] with appropriate size
+					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
 				} else {
 					// Regular array - direct stack access
 					int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
 					
-					// Store RCX to [RBP + offset] with appropriate size
-					emitStoreToFrame(textSectionData, X64Register::RCX, element_offset, element_size_bytes);
+					// Store RDX to [RBP + offset] with appropriate size
+					emitStoreToFrame(textSectionData, X64Register::RDX, element_offset, element_size_bytes);
 				}
 			} else if (std::holds_alternative<TempVar>(op.index.value)) {
 				// Variable index - compute address at runtime
 				TempVar index_var = std::get<TempVar>(op.index.value);
 				int64_t index_var_offset = getStackOffsetFromTempVar(index_var, op.index.size_in_bits);
 				
-				// Save value to store on stack temporarily (we need RCX for index)
-				emitPush(textSectionData, X64Register::RCX);
-				
-				// Load index into RCX
+				// Load index into RCX (value is already in RDX)
 				emitLoadIndexIntoRCX(textSectionData, index_var_offset);
 				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 				
@@ -11721,11 +11718,8 @@ private:
 					emitAddRAXRCX(textSectionData);
 				}
 				
-				// POP RCX to get value back
-				emitPop(textSectionData, X64Register::RCX);
-				
-				// Store RCX to [RAX]
-				emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::RAX, 0, element_size_bytes);
+				// Store RDX to [RAX]
+				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
 			} else if (std::holds_alternative<StringHandle>(op.index.value)) {
 				// Index is a named variable - get its stack offset
 				StringHandle index_handle = std::get<StringHandle>(op.index.value);
@@ -11736,10 +11730,7 @@ private:
 				}
 				int64_t index_var_offset = it->second.offset;
 				
-				// Save value to store on stack temporarily (we need RCX for index)
-				emitPush(textSectionData, X64Register::RCX);
-				
-				// Load index into RCX
+				// Load index into RCX (value is already in RDX)
 				emitLoadIndexIntoRCX(textSectionData, index_var_offset);
 				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 				
@@ -11766,11 +11757,8 @@ private:
 					emitAddRAXRCX(textSectionData);
 				}
 				
-				// POP RCX to get value back
-				emitPop(textSectionData, X64Register::RCX);
-				
-				// Store RCX to [RAX]
-				emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::RAX, 0, element_size_bytes);
+				// Store RDX to [RAX]
+				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
 			} else {
 				assert(false && "ArrayStore index must be constant, TempVar, or StringHandle");
 			}

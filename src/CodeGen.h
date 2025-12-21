@@ -10253,32 +10253,25 @@ private:
 						element_type_index = type_node.type_index();
 					}
 					
-					// If element_size_bits is already non-zero from array_operands, keep it
-					// Otherwise, determine the element size based on whether it's a pointer or array
-					if (element_size_bits == 0) {
-						// If it's a pointer type, use the base type size (not 64)
-						if (type_node.pointer_depth() > 0) {
-							// Get the base type size (what the pointer points to)
-							element_size_bits = static_cast<int>(type_node.size_in_bits());
-							is_pointer_to_array = true;  // This is a pointer, not an actual array
-						}
-						// If it's an array type, get the element size
-						else if (decl_ptr->is_array() || type_node.is_array()) {
-							// Try to get it from type_node.size_in_bits()
-							element_size_bits = static_cast<int>(type_node.size_in_bits());
-							// If still 0, compute from type info for struct types
-							if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index > 0) {
-								const TypeInfo& type_info = gTypeInfo[element_type_index];
-								const StructTypeInfo* struct_info = type_info.getStructInfo();
-								if (struct_info) {
-									element_size_bits = static_cast<int>(struct_info->total_size * 8);
-								}
+					// For array types, ALWAYS get the element size from type_node, not from array_operands
+					// array_operands[1] contains 64 (pointer size) for arrays, not the element size
+					if (decl_ptr->is_array() || type_node.is_array()) {
+						// Get the element size from type_node
+						element_size_bits = static_cast<int>(type_node.size_in_bits());
+						// If still 0, compute from type info for struct types
+						if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index > 0) {
+							const TypeInfo& type_info = gTypeInfo[element_type_index];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (struct_info) {
+								element_size_bits = static_cast<int>(struct_info->total_size * 8);
 							}
 						}
-					} else if (type_node.pointer_depth() > 0 && !(decl_ptr->is_array() || type_node.is_array())) {
-						// Element size was already set, but mark this as a pointer access
-						// Only if it's not an array (arrays of pointers are still arrays, not pointer-to-array)
-						is_pointer_to_array = true;
+					}
+					// For pointer types (not arrays), get the pointee size
+					else if (type_node.pointer_depth() > 0) {
+						// Get the base type size (what the pointer points to)
+						element_size_bits = static_cast<int>(type_node.size_in_bits());
+						is_pointer_to_array = true;  // This is a pointer, not an actual array
 					}
 				}
 			}
