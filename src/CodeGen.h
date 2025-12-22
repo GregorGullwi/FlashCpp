@@ -1374,7 +1374,7 @@ private:
 
 	// Check if we're in a lambda with [*this] capture
 	bool isInCopyThisLambda() const {
-		if (!current_lambda_closure_type_.isValid()) {
+		if (lambda_nesting_level_ == 0 || !current_lambda_closure_type_.isValid()) {
 			return false;
 		}
 		auto capture_it = current_lambda_captures_.find("this");
@@ -5308,36 +5308,35 @@ private:
 				// Check if this identifier is a member of the enclosing struct
 				const StructMember* member = enclosing_struct->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
 				if (member) {
-					// This is an implicit member access through [*this] capture
-					// Use helper to load __copy_this, then access the member from it
-					if (auto copy_this_temp = emitLoadCopyThis(Token())) {
-						// Step 2: Access the member from __copy_this
-						TempVar result_temp = var_counter.next();
-						MemberLoadOp member_load;
-						member_load.result.value = result_temp;
-						member_load.result.type = member->type;
-						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
-						member_load.object = *copy_this_temp;  // The __copy_this object
-						member_load.member_name = member->getName();
-						member_load.offset = static_cast<int>(member->offset);
-						member_load.is_reference = member->is_reference;
-						member_load.is_rvalue_reference = member->is_rvalue_reference;
-						member_load.struct_type_info = nullptr;
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
-						
-						// Mark as lvalue with member metadata for compound assignments
-						// This is crucial for multiple compound assignments to work correctly
-						LValueInfo lvalue_info(
-							LValueInfo::Kind::Member,
-							*copy_this_temp,  // Use the TempVar holding __copy_this
-							static_cast<int>(member->offset)
-						);
-						lvalue_info.member_name = member->getName();
-						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
-						
-						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
-						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+					int copy_this_offset = 0;
+					if (const StructMember* copy_member = enclosing_struct->findMember("__copy_this")) {
+						copy_this_offset = static_cast<int>(copy_member->offset);
 					}
+					// This is an implicit member access through [*this] capture
+					TempVar result_temp = var_counter.next();
+					MemberLoadOp member_load;
+					member_load.result.value = result_temp;
+					member_load.result.type = member->type;
+					member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+					member_load.object = StringTable::getOrInternStringHandle("this");  // closure pointer
+					member_load.member_name = member->getName();
+					member_load.offset = copy_this_offset + static_cast<int>(member->offset);
+					member_load.is_reference = member->is_reference;
+					member_load.is_rvalue_reference = member->is_rvalue_reference;
+					member_load.struct_type_info = nullptr;
+					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+					
+					// Mark as lvalue with member metadata for compound assignments
+					LValueInfo lvalue_info(
+						LValueInfo::Kind::Member,
+						StringTable::getOrInternStringHandle("this"),
+						copy_this_offset + static_cast<int>(member->offset)
+					);
+					lvalue_info.member_name = member->getName();
+					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+					
+					TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+					return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
 				}
 			}
 		}
@@ -7027,6 +7026,9 @@ private:
 		std::vector<IrOperand> irOperands;
 
 		const auto& op = binaryOperatorNode.op();
+		static const std::unordered_set<std::string_view> compound_assignment_ops = {
+			"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="
+		};
 
 		// Special handling for comma operator
 		// The comma operator evaluates both operands left-to-right and returns the right operand
@@ -7249,10 +7251,6 @@ private:
 		// Special handling for compound assignment to array subscript or member access
 		// Use LValueAddress context for the LHS, similar to regular assignment
 		// Helper lambda to check if operator is a compound assignment
-		static const std::unordered_set<std::string_view> compound_assignment_ops = {
-			"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="
-		};
-		
 		if (compound_assignment_ops.count(op) > 0 &&
 		    binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
@@ -7304,6 +7302,14 @@ private:
 		// Generate IR for the left-hand side and right-hand side of the operation
 		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
 		auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+		// Try unified metadata-based handler for compound assignments on identifiers
+		// This ensures implicit member accesses (including [*this] lambdas) use the correct base object
+		if (compound_assignment_ops.count(op) > 0 &&
+		    handleLValueCompoundAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token(), op)) {
+			FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for compound assignment");
+			return lhsIrOperands;
+		}
 
 		// Try unified lvalue-based assignment handler (uses value category metadata)
 		// This handles assignments like *ptr = value using lvalue metadata
@@ -13014,19 +13020,47 @@ private:
 						// The closure should have a member named "__copy_this" of the enclosing struct type
 						const StructMember* member = struct_info->findMember("__copy_this");
 						if (member && lambda_info.enclosing_struct_type_index > 0) {
-							// For now, store 'this' pointer similar to [this] capture
-							// TODO: Implement proper struct copy
-							MemberStoreOp store_copy_this;
-							store_copy_this.value.type = Type::Void;
-							store_copy_this.value.size_in_bits = 64;
-							store_copy_this.value.value = TempVar(1);  // 'this' pointer
-							store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
-							store_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
-							store_copy_this.offset = static_cast<int>(member->offset);
-							store_copy_this.is_reference = false;
-							store_copy_this.is_rvalue_reference = false;
-							store_copy_this.struct_type_info = nullptr;
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_copy_this), lambda.lambda_token()));
+							// Copy each member of the enclosing struct into __copy_this
+							const TypeInfo* enclosing_type = nullptr;
+							for (const auto& ti : gTypeInfo) {
+								if (ti.type_index_ == lambda_info.enclosing_struct_type_index) {
+									enclosing_type = &ti;
+									break;
+								}
+							}
+							if (enclosing_type && enclosing_type->getStructInfo()) {
+								const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
+								int copy_base_offset = static_cast<int>(member->offset);
+
+								for (const auto& enclosing_member : enclosing_struct->members) {
+									// Load from original 'this'
+									TempVar loaded_value = var_counter.next();
+									MemberLoadOp load_op;
+									load_op.result.value = loaded_value;
+									load_op.result.type = enclosing_member.type;
+									load_op.result.size_in_bits = static_cast<int>(enclosing_member.size * 8);
+									load_op.object = StringTable::getOrInternStringHandle("this");
+									load_op.member_name = enclosing_member.getName();
+									load_op.offset = static_cast<int>(enclosing_member.offset);
+									load_op.is_reference = enclosing_member.is_reference;
+									load_op.is_rvalue_reference = enclosing_member.is_rvalue_reference;
+									load_op.struct_type_info = nullptr;
+									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), lambda.lambda_token()));
+
+									// Store into closure->__copy_this at the appropriate offset
+									MemberStoreOp store_copy_this;
+									store_copy_this.value.type = enclosing_member.type;
+									store_copy_this.value.size_in_bits = static_cast<int>(enclosing_member.size * 8);
+									store_copy_this.value.value = loaded_value;
+									store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
+									store_copy_this.member_name = enclosing_member.getName();
+									store_copy_this.offset = copy_base_offset + static_cast<int>(enclosing_member.offset);
+									store_copy_this.is_reference = enclosing_member.is_reference;
+									store_copy_this.is_rvalue_reference = enclosing_member.is_rvalue_reference;
+									store_copy_this.struct_type_info = nullptr;
+									ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_copy_this), lambda.lambda_token()));
+								}
+							}
 						}
 						continue;
 					}
@@ -13397,6 +13431,7 @@ private:
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
 		symbol_table.enter_scope(ScopeType::Function);
+		lambda_nesting_level_++;
 
 		// Reset the temporary variable counter for each new function
 		// TempVar is 1-based (TempVar() starts at 1). For member functions (operator()),
@@ -13478,11 +13513,16 @@ private:
 		}
 
 		// Clear lambda context
-		current_lambda_closure_type_ = StringHandle();
-		current_lambda_captures_.clear();
-		current_lambda_capture_kinds_.clear();
-		current_lambda_capture_types_.clear();
-		current_lambda_enclosing_struct_type_index_ = 0;
+		if (lambda_nesting_level_ > 0) {
+			lambda_nesting_level_--;
+		}
+		if (lambda_nesting_level_ == 0) {
+			current_lambda_closure_type_ = StringHandle();
+			current_lambda_captures_.clear();
+			current_lambda_capture_kinds_.clear();
+			current_lambda_capture_types_.clear();
+			current_lambda_enclosing_struct_type_index_ = 0;
+		}
 
 		symbol_table.exit_scope();
 		
@@ -13759,6 +13799,7 @@ private:
 
 	// Current lambda context (for tracking captured variables)
 	// When generating lambda body, this contains the closure type name
+	size_t lambda_nesting_level_ = 0;
 	StringHandle current_lambda_closure_type_;
 	std::unordered_set<std::string> current_lambda_captures_;
 	std::unordered_map<std::string, LambdaCaptureNode::CaptureKind> current_lambda_capture_kinds_;
@@ -14195,7 +14236,3 @@ private:
 	}
 
 };
-
-
-
-
