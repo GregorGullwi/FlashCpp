@@ -13338,6 +13338,65 @@ ParseResult Parser::parse_primary_expression()
 		// Create an identifier node for 'this'
 		result = emplace_node<ExpressionNode>(IdentifierNode(this_token));
 	}
+	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "{") {
+		// Handle braced initializer in expression context
+		// This is used for return statements like: return { .a = 5 };
+		// We need to infer the type from context (e.g., function return type)
+		
+		if (!current_function_) {
+			return ParseResult::error("Braced initializer in expression requires type context", *current_token_);
+		}
+		
+		// Get the return type from the current function
+		const DeclarationNode& func_decl = current_function_->decl_node();
+		const ASTNode& return_type_node = func_decl.type_node();
+		
+		if (!return_type_node.is<TypeSpecifierNode>()) {
+			return ParseResult::error("Cannot determine return type for braced initializer", *current_token_);
+		}
+		
+		const TypeSpecifierNode& return_type = return_type_node.as<TypeSpecifierNode>();
+		Token init_token = *current_token_;  // Save the opening brace token
+		
+		// Parse the braced initializer with the return type
+		ParseResult init_result = parse_brace_initializer(return_type);
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		
+		if (!init_result.node().has_value()) {
+			return ParseResult::error("Expected initializer expression", *current_token_);
+		}
+		
+		// Check if the result is an InitializerListNode
+		if (init_result.node()->is<InitializerListNode>()) {
+			// Extract the initializer expressions from the InitializerListNode
+			// and create a ConstructorCallNode with them as arguments
+			const InitializerListNode& init_list = init_result.node()->as<InitializerListNode>();
+			
+			ASTNode type_node_copy = return_type_node;
+			ChunkedVector<ASTNode> args;
+			
+			// Add each initializer expression as an argument
+			for (const auto& init_expr : init_list.initializers()) {
+				args.push_back(init_expr);
+			}
+			
+			auto ctor_call = emplace_node<ExpressionNode>(
+				ConstructorCallNode(type_node_copy, std::move(args), init_token));
+			
+			return ParseResult::success(ctor_call);
+		} else {
+			// For scalar types, parse_brace_initializer already returns an expression
+			// Return it directly if it's already an ExpressionNode
+			if (init_result.node()->is<ExpressionNode>()) {
+				return init_result;
+			} else {
+				// This shouldn't happen, but wrap it just in case
+				return ParseResult::error("Unexpected initializer type", *current_token_);
+			}
+		}
+	}
 	else if (consume_punctuator("(")) {
 		// Could be either:
 		// 1. C-style cast: (Type)expression
