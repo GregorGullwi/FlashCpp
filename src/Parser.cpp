@@ -9059,7 +9059,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			// Add the designated initializer to the list
 			if (init_expr_result.node().has_value()) {
-				init_list_ref.add_designated_initializer(std::string(member_name), *init_expr_result.node());
+				init_list_ref.add_designated_initializer(StringTable::getOrInternStringHandle(member_name), *init_expr_result.node());
 			} else {
 				return ParseResult::error("Expected initializer expression", *current_token_);
 			}
@@ -13337,6 +13337,39 @@ ParseResult Parser::parse_primary_expression()
 
 		// Create an identifier node for 'this'
 		result = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+	}
+	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "{") {
+		// Handle braced initializer in expression context
+		// This is used for return statements like: return { .a = 5 };
+		// We need to infer the type from context (e.g., function return type)
+		
+		if (!current_function_) {
+			return ParseResult::error("Braced initializer in expression requires type context", *current_token_);
+		}
+		
+		// Get the return type from the current function
+		const DeclarationNode& func_decl = current_function_->decl_node();
+		const ASTNode& return_type_node = func_decl.type_node();
+		
+		if (!return_type_node.is<TypeSpecifierNode>()) {
+			return ParseResult::error("Cannot determine return type for braced initializer", *current_token_);
+		}
+		
+		const TypeSpecifierNode& return_type = return_type_node.as<TypeSpecifierNode>();
+		
+		// Parse the braced initializer with the return type
+		ParseResult init_result = parse_brace_initializer(return_type);
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		
+		if (!init_result.node().has_value()) {
+			return ParseResult::error("Expected initializer expression", *current_token_);
+		}
+		
+		// For scalar types, parse_brace_initializer already returns an expression
+		// Just return it directly
+		return init_result;
 	}
 	else if (consume_punctuator("(")) {
 		// Could be either:
