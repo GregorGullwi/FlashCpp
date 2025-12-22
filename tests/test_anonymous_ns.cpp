@@ -8,3 +8,7 @@ int test_anonymous() {
     return value;
 }
 
+
+int main() {
+    return test_anonymous();
+}

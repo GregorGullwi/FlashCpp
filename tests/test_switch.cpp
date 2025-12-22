@@ -168,3 +168,7 @@ int test_static_cast_enum() {
     return x;
 }
 
+
+int main() {
+    return test_basic_switch();
+}

@@ -55,3 +55,7 @@ int test_designated_init_swap() {
     return p.x - p.y;  // Should return -50
 }
 
+
+int main() {
+    return test_designated_init_full();
+}

@@ -11,3 +11,7 @@ int test_capture_lambda() {
     return lambda(5);
 }
 
+
+int main() {
+    return test_simple_lambda();
+}

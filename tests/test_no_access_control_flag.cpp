@@ -13,3 +13,7 @@ int test_access_private_with_flag() {
     return obj.private_val;  // Expected: 100
 }
 
+
+int main() {
+    return test_access_private_with_flag();
+}

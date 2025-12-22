@@ -99,3 +99,7 @@ int test_protected_in_class() {
     return obj.accessProtected();  // Expected: 33
 }
 
+
+int main() {
+    return test_class_private_default();
+}

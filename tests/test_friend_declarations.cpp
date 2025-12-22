@@ -261,3 +261,7 @@ int test_friend_in_struct() {
     return ps.value;  // Expected: 123
 }
 
+
+int main() {
+    return test_friend_function();
+}

@@ -100,3 +100,7 @@ end:
     return result;
 }
 
+
+int main() {
+    return test_simple_goto_forward();
+}

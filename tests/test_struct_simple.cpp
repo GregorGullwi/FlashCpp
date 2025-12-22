@@ -80,3 +80,7 @@ int test() {
     // Total: 15 + 20 + 7 + 15 = 57
     return p1.x + p1.y + p2.x + addPoint(p3) + p4.x + p4.y;
 }
+
+int main() {
+    return test_member_access();
+}

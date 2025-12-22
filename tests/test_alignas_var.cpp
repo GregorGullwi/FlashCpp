@@ -16,3 +16,7 @@ int test() {
     return x + y + z + w;  // Should return 10 + 20 + 7 + 3 = 40
 }
 
+
+int main() {
+    return test();
+}

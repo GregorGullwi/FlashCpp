@@ -25,3 +25,7 @@ int test() {
     return o.i;  // Should be 30
 }
 
+
+int main() {
+    return test();
+}

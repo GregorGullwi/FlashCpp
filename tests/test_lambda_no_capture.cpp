@@ -15,3 +15,7 @@ int test_lambda_return_type() {
     return lambda();
 }
 
+
+int main() {
+    return test_lambda_simple();
+}

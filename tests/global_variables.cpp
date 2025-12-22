@@ -17,3 +17,7 @@ int set_and_get_global() {
     return global_uninitialized;
 }
 
+
+int main() {
+    return get_global_initialized();
+}

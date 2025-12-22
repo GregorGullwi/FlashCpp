@@ -16,3 +16,7 @@ int uninitialized_static() {
     return x;
 }
 
+
+int main() {
+    return counter();
+}

@@ -155,3 +155,7 @@ int test_dynamic_cast_cross() {
     return 1;  // Success - correctly returned null
 }
 
+
+int main() {
+    return test_typeid_type();
+}
