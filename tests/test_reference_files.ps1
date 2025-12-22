@@ -153,7 +153,16 @@ Write-Host ""
 # Expected compile failures - files that are intentionally designed to fail compilation
 # or use features not yet implemented in FlashCpp
 # NOTE: Files with _fail.cpp suffix are automatically tested separately
+#
+# Intentionally invalid code (tests error detection):
+#   - concept_error_test_fail.cpp - Tests constraint error messages
+#
+# Unimplemented features:
 $expectedCompileFailures = @(
+  "test_cstddef.cpp"
+  "test_cstdio_puts.cpp"
+  "test_cstdlib.cpp"
+  # test_lambda_cpp20_comprehensive.cpp - Now compiles with unsupported features commented out
 )
 
 # Expected link failures - files that compile but have known link issues
@@ -165,7 +174,6 @@ $expectedLinkFailures = @(
     # Self-contained ABI tests (link on Linux but fail on Windows)
     "test_mixed_abi.cpp"
     "test_linux_abi.cpp"  # Tests 6 integer params (Linux ABI specific)
-    "test_cstdlib.cpp"    # Needs builtin functions (__builtin_labs, __builtin_llabs, __builtin_fabs, __builtin_fabsf)
     "test_full_spec_inherit.cpp"          # Demonstrates full specialization inheritance parsing (Priority 8b: implicit constructor issue)
     "test_full_spec_inherit_simple.cpp"   # Demonstrates full specialization inheritance parsing (Priority 8b: implicit constructor issue)
 )
