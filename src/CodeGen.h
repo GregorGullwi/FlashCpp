@@ -3284,26 +3284,33 @@ private:
 
 			// Compare condition with case value using Equal opcode
 			TempVar cmp_result = var_counter.next();
-			std::vector<IrOperand> cmp_operands;
-			cmp_operands.push_back(cmp_result);
-			cmp_operands.push_back(condition_type);
-			cmp_operands.push_back(condition_size);
-			cmp_operands.push_back(condition_operands[2]);  // condition value
-			cmp_operands.push_back(condition_type);
-			cmp_operands.push_back(condition_size);
-			cmp_operands.push_back(case_value_operands[2]);  // case value
-			ir_.addInstruction(IrOpcode::Equal, std::move(cmp_operands), Token());
+			
+			// Create typed BinaryOp for the Equal comparison
+			BinaryOp bin_op{
+				.lhs = TypedValue{.type = condition_type, .size_in_bits = condition_size, .value = toIrValue(condition_operands[2])},
+				.rhs = TypedValue{.type = std::get<Type>(case_value_operands[0]), .size_in_bits = std::get<int>(case_value_operands[1]), .value = toIrValue(case_value_operands[2])},
+				.result = cmp_result,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(bin_op), Token()));
 
 			// Branch to case label if equal, otherwise check next case
 			StringBuilder next_check_sb;
 			next_check_sb.append("switch_check_").append(switch_counter - 1).append("_").append(check_index + 1);
 			std::string_view next_check_label = next_check_sb.commit();
 
+			// For switch statements, we need to jump to case label when condition is true
+			// and fall through to next check when false. Since both labels are forward references,
+			// we emit: test condition; jz next_check; jmp case_label
 			CondBranchOp cond_branch;
-			cond_branch.label_true = StringTable::getOrInternStringHandle(case_label);
-			cond_branch.label_false = StringTable::getOrInternStringHandle(next_check_label);
+			cond_branch.label_true = StringTable::getOrInternStringHandle(next_check_label); // Swap: jump to next if FALSE
+			cond_branch.label_false = StringTable::getOrInternStringHandle(case_label);      // This won't be used
 			cond_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 1, .value = cmp_result};
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
+
+			// Unconditional branch to case label (when condition is true)
+			BranchOp branch_to_case;
+			branch_to_case.target_label = StringTable::getOrInternStringHandle(case_label);
+			ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_case), Token()));
 
 			// Next check label
 			LabelOp next_lbl;

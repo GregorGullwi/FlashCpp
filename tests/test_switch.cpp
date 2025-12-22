@@ -170,5 +170,5 @@ int test_static_cast_enum() {
 
 
 int main() {
-    return test_basic_switch();
+    return test_basic_switch(1);
 }
