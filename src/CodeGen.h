@@ -1564,8 +1564,7 @@ private:
 		// For member functions, reserve TempVar(1) for the implicit 'this' parameter
 		var_counter = node.is_member_function() ? TempVar(2) : TempVar();
 
-		// Clear TempVar metadata from previous function to prevent stale metadata from bleeding through
-		// Since TempVar numbers are reused across functions, we need to clear the global metadata storage
+		// Clear global TempVar metadata to prevent stale data from bleeding into this function
 		GlobalTempVarMetadataStorage::instance().clear();
 
 		// Set current function name for static local variable mangling
@@ -2027,7 +2026,7 @@ private:
 		// Constructors are always member functions, so reserve TempVar(1) for 'this'
 		var_counter = TempVar(2);
 
-		// Clear TempVar metadata from previous function to prevent stale metadata from bleeding through
+		// Clear global TempVar metadata to prevent stale data from bleeding into this function
 		GlobalTempVarMetadataStorage::instance().clear();
 
 		// Set current function name for static local variable mangling
@@ -2548,11 +2547,11 @@ private:
 		// Destructors are always member functions, so reserve TempVar(1) for 'this'
 		var_counter = TempVar(2);
 
-		// Clear TempVar metadata from previous function to prevent stale metadata from bleeding through
+		// Clear global TempVar metadata to prevent stale data from bleeding into this function
 		GlobalTempVarMetadataStorage::instance().clear();
 
-	// Set current function name for static local variable mangling
-	current_function_name_ = node.name();
+		// Set current function name for static local variable mangling
+		current_function_name_ = node.name();
 	static_local_names_.clear();
 
 	// Create destructor declaration with typed payload
@@ -13485,7 +13484,7 @@ private:
 		// TempVar(1) is reserved for 'this', so we start at TempVar(2).
 		var_counter = TempVar(2);
 
-		// Clear TempVar metadata from previous function to prevent stale metadata from bleeding through
+		// Clear global TempVar metadata to prevent stale data from bleeding into this function
 		GlobalTempVarMetadataStorage::instance().clear();
 
 		// Set current function return type and size for type checking in return statements
