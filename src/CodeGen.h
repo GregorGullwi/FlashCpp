@@ -9930,10 +9930,24 @@ private:
 			}
 			call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
 			
+			// Detect if calling a member function that returns struct by value (needs hidden return parameter for RVO)
+			bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
+			if (returns_struct_by_value) {
+				call_op.uses_return_slot = true;
+				call_op.return_slot = ret_var;  // The result temp var serves as the return slot
+				call_op.return_type_index = return_type.type_index();
+				
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Member function call {} returns struct by value - using return slot (temp_{})",
+					StringTable::getStringView(function_name), ret_var.var_number);
+			}
+			
 			// Add the object as the first argument (this pointer)
+			// The 'this' pointer is always 64 bits (pointer size on x64), regardless of struct size
+			// This is critical for empty structs (size 0) which still need a valid address
 			call_op.args.push_back(TypedValue{
 				.type = object_type.type(),
-				.size_in_bits = static_cast<int>(object_type.size_in_bits()),
+				.size_in_bits = 64,  // Pointer size - always 64 bits on x64 architecture
 				.value = IrValue(StringTable::getOrInternStringHandle(object_name))
 			});
 
