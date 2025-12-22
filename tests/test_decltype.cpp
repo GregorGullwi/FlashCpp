@@ -46,7 +46,7 @@ int test_decltype_multiple() {
     int c = 3;
     decltype(a + b) sum1 = a + b;
     decltype(b + c) sum2 = b + c;
-    return sum1 + sum2;  // Should return 6
+    return sum1 + sum2;  // Should return 8
 }
 
 float test_decltype_float() {
@@ -69,3 +69,16 @@ int test_decltype_with_literal() {
     return value;  // Should return 100
 }
 
+int main() {
+    int result = 0;
+    result += test_decltype_basic();           // 10
+    result += test_decltype_expression();      // 15
+    result += test_decltype_variable();        // 100
+    result += test_decltype_arithmetic();      // 60
+    result += test_decltype_comparison();      // 1
+    result += test_decltype_multiple();        // 8
+    result += test_decltype_nested();          // 60
+    result += test_decltype_with_literal();    // 100
+    // Total: 354, return 354 % 256 = 98
+    return result;
+}
