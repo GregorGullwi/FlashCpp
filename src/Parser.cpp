@@ -3060,7 +3060,8 @@ ParseResult Parser::parse_struct_declaration()
 	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name), &struct_ref});
 
 	// Create StructTypeInfo early so we can add base classes to it
-	auto struct_info = std::make_unique<StructTypeInfo>(struct_name, struct_ref.default_access());
+	// For nested classes, use the qualified name so getName() returns the full name for mangling
+	auto struct_info = std::make_unique<StructTypeInfo>(qualified_struct_name, struct_ref.default_access());
 	struct_info->is_union = is_union;
 
 	// Apply pack alignment from #pragma pack BEFORE adding members
