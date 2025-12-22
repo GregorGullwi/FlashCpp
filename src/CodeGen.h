@@ -2059,14 +2059,14 @@ private:
 		ctor_decl_op.is_variadic = false;  // Constructors are never variadic
 
 		// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
-		// For nested classes, use just the last component as the constructor name
+		// For nested classes, use the full struct name for mangling
 		TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
 		ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(generateMangledNameForCall(
 			ctor_function_name,
 			void_type,
 			node.parameter_nodes(),  // Use parameter nodes directly
 			false,  // not variadic
-			parent_class_name  // parent class name for mangling (e.g., "Outer" for "Outer::Inner::Inner")
+			struct_name_for_ctor  // Use full struct name for mangling (e.g., "Outer::Inner")
 		));
 		
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
