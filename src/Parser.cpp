@@ -13071,6 +13071,14 @@ ParseResult Parser::parse_primary_expression()
 						return ParseResult::error("Invalid function pointer declaration", idenfifier_token);
 					}
 					result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+					
+					// Copy mangled name if available
+					if (identifierType->is<FunctionDeclarationNode>()) {
+						const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
+						if (func_decl.has_mangled_name()) {
+							std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+						}
+					}
 				}
 				else {
 					// Check if this is a constructor call on a template parameter
@@ -13099,6 +13107,14 @@ ParseResult Parser::parse_primary_expression()
 										return ParseResult::error("Invalid function declaration", idenfifier_token);
 									}
 									result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+									
+									// Copy mangled name if available
+									if (identifierType->is<FunctionDeclarationNode>()) {
+										const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
+										if (func_decl.has_mangled_name()) {
+											std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+										}
+									}
 									break;
 								}
 							
@@ -13158,6 +13174,14 @@ ParseResult Parser::parse_primary_expression()
 											return ParseResult::error("Invalid template instantiation", idenfifier_token);
 										}
 										result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+										
+										// Copy mangled name if available
+										if (instantiated_func->is<FunctionDeclarationNode>()) {
+											const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
+											if (func_decl.has_mangled_name()) {
+												std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+											}
+										}
 									} else {
 										return ParseResult::error("No matching template for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 									}
@@ -13176,6 +13200,14 @@ ParseResult Parser::parse_primary_expression()
 												return ParseResult::error("Invalid template instantiation", idenfifier_token);
 											}
 											result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+											
+											// Copy mangled name if available
+											if (instantiated_func->is<FunctionDeclarationNode>()) {
+												const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
+												if (func_decl.has_mangled_name()) {
+													std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+												}
+											}
 										} else {
 											return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 										}
@@ -13198,6 +13230,14 @@ ParseResult Parser::parse_primary_expression()
 													return ParseResult::error("Invalid template instantiation", idenfifier_token);
 												}
 												result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+												
+												// Copy mangled name if available
+												if (instantiated_func->is<FunctionDeclarationNode>()) {
+													const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
+													if (func_decl.has_mangled_name()) {
+														std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+													}
+												}
 											} else {
 												return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 											}
@@ -13209,6 +13249,15 @@ ParseResult Parser::parse_primary_expression()
 											}
 
 											result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+											
+											// If the function has a pre-computed mangled name, set it on the FunctionCallNode
+											// This is important for functions in namespaces accessed via using directives
+											if (resolution_result.selected_overload->is<FunctionDeclarationNode>()) {
+												const FunctionDeclarationNode& func_decl = resolution_result.selected_overload->as<FunctionDeclarationNode>();
+												if (func_decl.has_mangled_name()) {
+													std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+												}
+											}
 										}
 									}
 								}
