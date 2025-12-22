@@ -1898,18 +1898,30 @@ private:
 		// NOTE: We don't clear this until the next struct - the string must persist
 		// because IrOperands store string_view references to it
 		// For nested classes, we need to use the fully qualified name from TypeInfo
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+		// If current_struct_name_ is valid, this is a nested class, so construct fully qualified name
+		StringHandle lookup_name;
+		if (current_struct_name_.isValid()) {
+			// This is a nested class - construct fully qualified name like "Outer::Inner"
+			StringBuilder qualified_name_builder;
+			qualified_name_builder.append(StringTable::getStringView(current_struct_name_))
+			                     .append("::")
+			                     .append(struct_name);
+			lookup_name = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+		} else {
+			// Top-level class - use simple name
+			lookup_name = StringTable::getOrInternStringHandle(struct_name);
+		}
+		
+		auto type_it = gTypesByName.find(lookup_name);
 		if (type_it != gTypesByName.end()) {
 			current_struct_name_ = type_it->second->name();
 		} else {
-			current_struct_name_ = StringTable::getOrInternStringHandle(struct_name);
+			current_struct_name_ = lookup_name;
 		}
 		
 		// For local structs, collect member functions for deferred generation
 		// For global structs, visit them immediately
-		FLASH_LOG(Codegen, Debug, "[STRUCT] Visiting ", struct_name, " is_local=", is_local_struct, " current_function_name_ valid=", current_function_name_.isValid());
 		if (is_local_struct) {
-			FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - collecting members for deferred generation");
 			for (const auto& member_func : node.member_functions()) {
 				LocalStructMemberInfo info;
 				info.struct_name = current_struct_name_;
@@ -1944,18 +1956,22 @@ private:
 			}
 		}  // End of if-else for local vs global struct
 		
-		FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - finished member functions, now visiting nested classes");
-		
 		// Clear current_function_name_ before visiting nested classes
 		// Nested classes should not be treated as local structs even if we're inside
 		// a member function context (e.g., after visiting constructors which set current_function_name_)
 		// Nested classes are always at class scope, not function scope
 		current_function_name_ = StringHandle();
+		
+		// Save current_struct_name_ before visiting nested classes so each nested class
+		// gets the correct parent context (important when there are multiple nested classes)
+		StringHandle parent_struct_name = current_struct_name_;
 			
 			// Visit nested classes recursively
 			for (const auto& nested_class_node : node.nested_classes()) {
 				if (nested_class_node.is<StructDeclarationNode>()) {
 					FLASH_LOG(Codegen, Debug, "  Visiting nested class");
+					// Restore parent context before each nested class visit
+					current_struct_name_ = parent_struct_name;
 					visitStructDeclarationNode(nested_class_node.as<StructDeclarationNode>());
 				}
 			}
@@ -2026,7 +2042,6 @@ private:
 		
 		// Restore the enclosing function context
 		current_function_name_ = saved_enclosing_function;
-		FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - done, restored current_function_name_");
 	}
 
 	void visitEnumDeclarationNode(const EnumDeclarationNode& node) {
