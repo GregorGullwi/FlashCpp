@@ -300,8 +300,24 @@ inline void generateItaniumMangledName(
 		
 		// Add struct/class name if present
 		if (!struct_name.empty()) {
-			output += std::to_string(struct_name.size());
-			output += struct_name;
+			// For nested classes, struct_name may contain "::" separators
+			// We need to encode each component separately
+			// e.g., "Outer::Inner" -> "5Outer5Inner"
+			size_t start = 0;
+			while (start < struct_name.size()) {
+				size_t end = struct_name.find("::", start);
+				if (end == std::string_view::npos) {
+					end = struct_name.size();
+				}
+				
+				std::string_view component = struct_name.substr(start, end - start);
+				if (!component.empty()) {
+					output += std::to_string(component.size());
+					output += component;
+				}
+				
+				start = (end == struct_name.size()) ? end : end + 2;  // Skip "::"
+			}
 		}
 		
 		// Add function name
@@ -310,10 +326,24 @@ inline void generateItaniumMangledName(
 			// Destructor: use D1 for complete destructor per Itanium C++ ABI
 			// D0 = deleting, D1 = complete, D2 = base
 			output += "D1";
-		} else if (!struct_name.empty() && func_name == struct_name) {
-			// Constructor: use C1 for complete constructor per Itanium C++ ABI
-			// C1 = complete, C2 = base, C3 = allocating
-			output += "C1";
+		} else if (!struct_name.empty()) {
+			// For nested classes, struct_name might be "Outer::Inner"
+			// Extract the last component to compare with func_name
+			std::string_view class_name = struct_name;
+			auto last_colon = struct_name.rfind("::");
+			if (last_colon != std::string_view::npos) {
+				class_name = struct_name.substr(last_colon + 2);
+			}
+			
+			if (func_name == class_name) {
+				// Constructor: use C1 for complete constructor per Itanium C++ ABI
+				// C1 = complete, C2 = base, C3 = allocating
+				output += "C1";
+			} else {
+				// Regular function: <length><name>
+				output += std::to_string(func_name.size());
+				output += func_name;
+			}
 		} else {
 			// Regular function: <length><name>
 			output += std::to_string(func_name.size());
