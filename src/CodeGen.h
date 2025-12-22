@@ -1898,11 +1898,25 @@ private:
 		// NOTE: We don't clear this until the next struct - the string must persist
 		// because IrOperands store string_view references to it
 		// For nested classes, we need to use the fully qualified name from TypeInfo
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+		// If current_struct_name_ is valid, this is a nested class, so construct fully qualified name
+		StringHandle lookup_name;
+		if (current_struct_name_.isValid()) {
+			// This is a nested class - construct fully qualified name like "Outer::Inner"
+			StringBuilder qualified_name_builder;
+			qualified_name_builder.append(StringTable::getStringView(current_struct_name_))
+			                     .append("::")
+			                     .append(struct_name);
+			lookup_name = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+		} else {
+			// Top-level class - use simple name
+			lookup_name = StringTable::getOrInternStringHandle(struct_name);
+		}
+		
+		auto type_it = gTypesByName.find(lookup_name);
 		if (type_it != gTypesByName.end()) {
 			current_struct_name_ = type_it->second->name();
 		} else {
-			current_struct_name_ = StringTable::getOrInternStringHandle(struct_name);
+			current_struct_name_ = lookup_name;
 		}
 		
 		// For local structs, collect member functions for deferred generation
@@ -1916,8 +1930,10 @@ private:
 				collected_local_struct_members_.push_back(std::move(info));
 			}
 		} else {
+			FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - visiting members immediately, count=", node.member_functions().size());
 			for (const auto& member_func : node.member_functions()) {
 				// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
+				FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - processing member function, is_constructor=", member_func.is_constructor);
 				try {
 					// Call the specific visitor directly instead of visit() to avoid clearing current_function_name_
 					const ASTNode& func_decl = member_func.function_declaration;
@@ -1939,11 +1955,23 @@ private:
 				}
 			}
 		}  // End of if-else for local vs global struct
+		
+		// Clear current_function_name_ before visiting nested classes
+		// Nested classes should not be treated as local structs even if we're inside
+		// a member function context (e.g., after visiting constructors which set current_function_name_)
+		// Nested classes are always at class scope, not function scope
+		current_function_name_ = StringHandle();
+		
+		// Save current_struct_name_ before visiting nested classes so each nested class
+		// gets the correct parent context (important when there are multiple nested classes)
+		StringHandle parent_struct_name = current_struct_name_;
 			
 			// Visit nested classes recursively
 			for (const auto& nested_class_node : node.nested_classes()) {
 				if (nested_class_node.is<StructDeclarationNode>()) {
 					FLASH_LOG(Codegen, Debug, "  Visiting nested class");
+					// Restore parent context before each nested class visit
+					current_struct_name_ = parent_struct_name;
 					visitStructDeclarationNode(nested_class_node.as<StructDeclarationNode>());
 				}
 			}
@@ -2102,7 +2130,9 @@ private:
 
 		// Add 'this' pointer to symbol table for member access
 		// Look up the struct type to get its type index and size
-		auto type_it = gTypesByName.find(node.struct_name());
+		// Use struct_name_for_ctor (which is fully qualified) instead of node.struct_name()
+		// to handle nested classes correctly (node.struct_name() might be just "Inner" instead of "Outer::Inner")
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
 		if (type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -2132,7 +2162,7 @@ private:
 			
 			// Build constructor call: StructName::StructName(this, args...)
 			ConstructorCallOp ctor_op;
-			ctor_op.struct_name = node.struct_name();
+			ctor_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);
 			ctor_op.object = StringTable::getOrInternStringHandle("this");
 
 			// Add constructor arguments from delegating initializer
@@ -2160,7 +2190,8 @@ private:
 		// 3. Constructor body
 
 		// Look up the struct type to get base class and member information
-		auto struct_type_it = gTypesByName.find(node.struct_name());
+		// Use struct_name_for_ctor (fully qualified) instead of node.struct_name()
+		auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
 		if (struct_type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -2248,7 +2279,8 @@ private:
 
 		// Step 2: Generate IR for member initializers (executed before constructor body)
 		// Look up the struct type to get member information
-		struct_type_it = gTypesByName.find(node.struct_name());
+		// Use struct_name_for_ctor (fully qualified) instead of node.struct_name()
+		struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
 		if (struct_type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
