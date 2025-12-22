@@ -1432,22 +1432,18 @@ private:
 		current_lambda_context_.has_copy_this = lambda_info.enclosing_struct_type_index > 0;
 		current_lambda_context_.has_this_pointer = false;
 
-		current_lambda_context_.captures.clear();
-		current_lambda_context_.capture_kinds.clear();
-		current_lambda_context_.capture_types.clear();
-
 		size_t capture_index = 0;
 		for (const auto& capture : lambda_info.captures) {
 			if (capture.is_capture_all()) {
 				continue;
 			}
-			std::string var_name(capture.identifier_name());
+			StringHandle var_name = StringTable::getOrInternStringHandle(capture.identifier_name());
 			current_lambda_context_.captures.insert(var_name);
 			current_lambda_context_.capture_kinds[var_name] = capture.kind();
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
 			    capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
-				current_lambda_context_.captures.insert("this");
-				current_lambda_context_.capture_kinds["this"] = capture.kind();
+				current_lambda_context_.captures.insert(StringTable::getOrInternStringHandle("this"sv));
+				current_lambda_context_.capture_kinds[StringTable::getOrInternStringHandle("this"sv)] = capture.kind();
 				if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
 					current_lambda_context_.has_copy_this = true;
 				} else if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
@@ -5142,7 +5138,7 @@ private:
 
 	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode) {
 		// Check if this is a captured variable in a lambda
-		std::string var_name_str(identifierNode.name());
+		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 		if (current_lambda_context_.isActive() &&
 		    current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end()) {
 			// This is a captured variable - generate member access (this->x)
@@ -5152,7 +5148,7 @@ private:
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
 					// Find the member
-					const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
+					const StructMember* member = struct_info->findMemberRecursive(var_name_str);
 					if (member) {
 						// Check if this is a by-reference capture
 						auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
@@ -5241,7 +5237,7 @@ private:
 			}
 			if (enclosing_type_info && enclosing_type_info->getStructInfo()) {
 				const StructTypeInfo* enclosing_struct = enclosing_type_info->getStructInfo();
-				const StructMember* member = enclosing_struct->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
+				const StructMember* member = enclosing_struct->findMemberRecursive(var_name_str);
 				if (member) {
 					if (auto copy_this_temp = emitLoadCopyThis(Token())) {
 						TempVar result_temp = var_counter.next();
@@ -5330,7 +5326,7 @@ private:
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
 					// Check if this identifier is a member of the struct
-					const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
+					const StructMember* member = struct_info->findMemberRecursive(var_name_str);
 					if (member) {
 						// This is a member variable access - generate MemberAccess IR with implicit 'this'
 						TempVar result_temp = var_counter.next();
@@ -5361,7 +5357,7 @@ private:
 					}
 					
 					// Check if this identifier is a static member
-					const StructStaticMember* static_member = struct_info->findStaticMember(StringTable::getOrInternStringHandle(var_name_str));
+					const StructStaticMember* static_member = struct_info->findStaticMember(var_name_str);
 					if (static_member) {
 						// This is a static member access - generate GlobalLoad IR
 						// Static members are stored as globals with qualified names
@@ -6244,7 +6240,7 @@ private:
 								const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
 								if (struct_info) {
 									std::string_view member_name = memberAccess.member_name();
-									StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
+									StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 									const StructMember* member = struct_info->findMemberRecursive(member_handle);
 									
 									if (member) {
@@ -6434,11 +6430,12 @@ private:
 		
 		// Helper lambda to generate member increment/decrement IR
 		// Returns the result operands, or empty if not applicable
-		auto generateMemberIncDec = [&](std::string_view object_name, std::string_view member_name, 
+		auto generateMemberIncDec = [&](StringHandle object_name, 
 		                                 const StructMember* member, bool is_reference_capture,
 		                                 const Token& token) -> std::vector<IrOperand> {
 			int member_size_bits = static_cast<int>(member->size * 8);
 			TempVar result_var = var_counter.next();
+			StringHandle member_name = member->getName();
 			
 			if (is_reference_capture) {
 				// By-reference: load pointer, dereference, inc/dec, store back through pointer
@@ -6447,8 +6444,8 @@ private:
 				member_load.result.value = ptr_temp;
 				member_load.result.type = member->type;
 				member_load.result.size_in_bits = 64;  // pointer
-				member_load.object = StringTable::getOrInternStringHandle(object_name);
-				member_load.member_name = StringTable::getOrInternStringHandle(member_name);
+				member_load.object = object_name;
+				member_load.member_name = member_name;
 				member_load.offset = static_cast<int>(member->offset);
 				member_load.is_reference = true;
 				member_load.is_rvalue_reference = false;
@@ -6491,8 +6488,8 @@ private:
 				member_load.result.value = current_val;
 				member_load.result.type = member->type;
 				member_load.result.size_in_bits = member_size_bits;
-				member_load.object = StringTable::getOrInternStringHandle(object_name);
-				member_load.member_name = StringTable::getOrInternStringHandle(member_name);
+				member_load.object = object_name;
+				member_load.member_name = member_name;
 				member_load.offset = static_cast<int>(member->offset);
 				member_load.is_reference = false;
 				member_load.is_rvalue_reference = false;
@@ -6511,8 +6508,8 @@ private:
 				
 				// Store back to member
 				MemberStoreOp store_op;
-				store_op.object = StringTable::getOrInternStringHandle(object_name);
-				store_op.member_name = StringTable::getOrInternStringHandle(member_name);
+				store_op.object = object_name;
+				store_op.member_name = member_name;
 				store_op.offset = static_cast<int>(member->offset);
 				store_op.value = { member->type, member_size_bits, result_var };
 				store_op.is_reference = false;
@@ -6529,7 +6526,7 @@ private:
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
-				std::string var_name_str(identifier.name());
+				StringHandle var_name_str = StringTable::getOrInternStringHandle(identifier.name());
 				
 				// Check if this is a captured variable
 				if (current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end()) {
@@ -6537,12 +6534,12 @@ private:
 					auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
 					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
+						const StructMember* member = struct_info->findMemberRecursive(var_name_str);
 						if (member) {
 							auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
 							bool is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
 							                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
-							return generateMemberIncDec("this", StringTable::getStringView(member->getName()), member, is_reference, 
+							return generateMemberIncDec(StringTable::getOrInternStringHandle("this"sv), member, is_reference, 
 							                            unaryOperatorNode.get_token());
 						}
 					}
@@ -6555,7 +6552,7 @@ private:
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<MemberAccessNode>(operandExpr)) {
 				const MemberAccessNode& member_access = std::get<MemberAccessNode>(operandExpr);
-				std::string_view member_name = member_access.member_name();
+				auto member_name = StringTable::getOrInternStringHandle(member_access.member_name());
 				
 				// Get the object being accessed
 				ASTNode object_node = member_access.object();
@@ -6563,7 +6560,7 @@ private:
 					const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
 					if (std::holds_alternative<IdentifierNode>(obj_expr)) {
 						const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
-						std::string_view object_name = object_ident.name();
+						auto object_name = StringTable::getOrInternStringHandle(object_ident.name());
 						
 						// Look up the struct in symbol table
 						std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
@@ -6580,9 +6577,9 @@ private:
 									if (type_index < gTypeInfo.size()) {
 										const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
 										if (struct_info) {
-											const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
+											const StructMember* member = struct_info->findMemberRecursive(member_name);
 											if (member) {
-												return generateMemberIncDec(object_name, member_name, member, false,
+												return generateMemberIncDec(object_name, member, false,
 												                            member_access.member_token());
 											}
 										}
@@ -7171,7 +7168,7 @@ private:
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 				std::string_view lhs_name = lhs_ident.name();
-				std::string lhs_name_str(lhs_name);
+				StringHandle lhs_name_str = StringTable::getOrInternStringHandle(lhs_name);
 
 				// Check if this is a captured-by-reference variable
 				auto capture_it = current_lambda_context_.captures.find(lhs_name_str);
@@ -10593,11 +10590,11 @@ private:
 					std::string_view ptr_name = ptr_ident.name();
 					
 					if (ptr_name == "this" && current_lambda_context_.isActive() && 
-					    current_lambda_context_.captures.find("this") != current_lambda_context_.captures.end()) {
+					    current_lambda_context_.captures.find(StringTable::getOrInternStringHandle("this"sv)) != current_lambda_context_.captures.end()) {
 						is_lambda_this = true;
 						// We're in a lambda that captured [this] or [*this]
 						// Check which kind of capture it is
-						auto capture_kind_it = current_lambda_context_.capture_kinds.find("this");
+						auto capture_kind_it = current_lambda_context_.capture_kinds.find(StringTable::getOrInternStringHandle("this"sv));
 						if (capture_kind_it != current_lambda_context_.capture_kinds.end() && 
 						    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
 							// [*this] capture: load from the copied object in __copy_this
@@ -13107,7 +13104,7 @@ private:
 					}
 
 					std::string_view var_name = capture.identifier_name();  // Already a persistent string_view from AST
-					std::string var_name_str(var_name);  // Single conversion for both uses below
+					StringHandle var_name_str = StringTable::getOrInternStringHandle(var_name);  // Single conversion for both uses below
 					const StructMember* member = struct_info->findMember(var_name);
 
 					if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
@@ -13179,7 +13176,7 @@ private:
 								// For by-reference capture of an already captured variable, we need to:
 								// 1. Load the enclosing lambda's captured value (or pointer if it was by-ref)
 								// 2. Take the address of that
-								auto enclosing_kind_it = current_lambda_context_.capture_kinds.find(std::string(var_name));
+								auto enclosing_kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
 								bool enclosing_is_ref = (enclosing_kind_it != current_lambda_context_.capture_kinds.end() &&
 								                         enclosing_kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 								
@@ -13798,9 +13795,9 @@ private:
 	// When generating lambda body, this contains the closure type name and capture metadata
 	struct LambdaContext {
 		StringHandle closure_type;
-		std::unordered_set<std::string> captures;
-		std::unordered_map<std::string, LambdaCaptureNode::CaptureKind> capture_kinds;
-		std::unordered_map<std::string, TypeSpecifierNode> capture_types;
+		std::unordered_set<StringHandle> captures;
+		std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind> capture_kinds;
+		std::unordered_map<StringHandle, TypeSpecifierNode> capture_types;
 		TypeIndex enclosing_struct_type_index = 0;  // For [this] capture type resolution
 		bool has_copy_this = false;
 		bool has_this_pointer = false;

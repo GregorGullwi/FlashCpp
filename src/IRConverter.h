@@ -11828,7 +11828,7 @@ private:
 					}
 				}
 				if (!found_global) {
-					std::cerr << "MemberAccess missing object: " << StringTable::getStringView(object_name_handle) << "\n";
+					FLASH_LOG(Codegen, Error, "MemberAccess missing object: ", StringTable::getStringView(object_name_handle), "\n");
 					assert(false && "Struct object not found in scope or globals");
 					return;
 				}
