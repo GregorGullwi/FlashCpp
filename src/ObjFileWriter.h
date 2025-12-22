@@ -497,10 +497,11 @@ public:
 	}
 	
 	// Overload that accepts pre-computed mangled name (for function definitions from IR)
-	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage, bool is_variadic, std::string_view mangled_name) {
+	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.linkage = linkage;
 		sig.is_variadic = is_variadic;
+		sig.is_inline = is_inline;
 		function_signatures_[std::string(mangled_name)] = sig;
 	}
 
@@ -518,11 +519,12 @@ public:
 	}
 	
 	// Overload that accepts pre-computed mangled name (for member function definitions from IR)
-	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name) {
+	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.class_name = class_name;
 		sig.linkage = linkage;
 		sig.is_variadic = is_variadic;
+		sig.is_inline = is_inline;
 		function_signatures_[std::string(mangled_name)] = sig;
 	}
 

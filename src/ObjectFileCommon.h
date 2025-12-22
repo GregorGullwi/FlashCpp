@@ -17,6 +17,7 @@ namespace ObjectFileCommon {
 		bool is_const = false;
 		bool is_static = false;
 		bool is_variadic = false;  // True if function has ... ellipsis parameter
+		bool is_inline = false;    // True if function is inline (for weak symbol binding)
 		CallingConvention calling_convention = CallingConvention::Default;
 		std::string namespace_name;
 		std::string class_name;

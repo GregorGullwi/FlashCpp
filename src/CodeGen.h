@@ -1670,6 +1670,11 @@ private:
 		// Linkage and variadic flag
 		func_decl_op.linkage = node.linkage();
 		func_decl_op.is_variadic = node.is_variadic();
+		
+		// Member functions defined inside the class body are implicitly inline (C++ standard)
+		// Mark them as inline so they get weak linkage in the object file to allow duplicate definitions
+		// This includes constructors, destructors, and regular member functions defined inline
+		func_decl_op.is_inline = node.is_member_function();
 
 		// Use pre-computed mangled name from AST node if available (Phase 6 migration)
 		// Fall back to generating it here if not (for backward compatibility during migration)
@@ -2057,6 +2062,9 @@ private:
 		ctor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
 		ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
 		ctor_decl_op.is_variadic = false;  // Constructors are never variadic
+		// Constructors defined inside class body are implicitly inline (C++ standard)
+		// Mark them as inline so they get weak linkage in the object file
+		ctor_decl_op.is_inline = true;
 
 		// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
 		// For nested classes, use the full struct name for mangling

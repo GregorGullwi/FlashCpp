@@ -7696,12 +7696,13 @@ private:
 
 		// Add function signature to the object file writer (still needed for debug info)
 		// but use the pre-computed mangled name instead of regenerating it
+		bool is_inline = func_decl.is_inline;
 		if (!struct_name.empty()) {
 			// Member function - include struct name
-			writer.addFunctionSignature(func_name, return_type, parameter_types, struct_name, linkage, is_variadic, mangled_name);
+			writer.addFunctionSignature(func_name, return_type, parameter_types, struct_name, linkage, is_variadic, mangled_name, is_inline);
 		} else {
 			// Regular function
-			writer.addFunctionSignature(func_name, return_type, parameter_types, linkage, is_variadic, mangled_name);
+			writer.addFunctionSignature(func_name, return_type, parameter_types, linkage, is_variadic, mangled_name, is_inline);
 		}
 		
 		// Finalize previous function before starting new one
