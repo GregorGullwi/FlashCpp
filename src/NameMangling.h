@@ -389,11 +389,8 @@ inline void generateItaniumMangledName(
 				class_name = struct_name.substr(last_colon + 2);
 			}
 			
-			// DEBUG: Force C1 for any function that might be a constructor
-			bool is_likely_constructor = (func_name == class_name) || 
-			                             (struct_name.find("::") != std::string_view::npos && func_name.size() > 0);
-			
-			if (is_likely_constructor) {
+			// Check if this is a constructor (function name matches class name)
+			if (func_name == class_name) {
 				// Constructor: use C1 for complete constructor per Itanium C++ ABI
 				// C1 = complete, C2 = base, C3 = allocating
 				output += "C1";
