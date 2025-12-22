@@ -5812,6 +5812,28 @@ ParseResult Parser::parse_typedef_declaration()
 
 	std::string_view alias_name = alias_token->value();
 
+	// Check for function type typedef: typedef return_type name(params);
+	// This is different from function pointer typedef: typedef return_type (*name)(params);
+	if (peek_token().has_value() && peek_token()->value() == "(") {
+		// This is a function type typedef
+		// Parse the parameter list by skipping to the closing ')'
+		consume_token(); // consume '('
+		
+		int paren_depth = 1;
+		while (paren_depth > 0 && peek_token().has_value()) {
+			auto token = peek_token();
+			if (token->value() == "(") {
+				paren_depth++;
+			} else if (token->value() == ")") {
+				paren_depth--;
+			}
+			consume_token();
+		}
+		
+		// After consuming the closing ')', we should be at the semicolon
+		// (or potentially attribute specifiers, which we'll skip in the semicolon check)
+	}
+
 	// Expect semicolon
 	if (!consume_punctuator(";")) {
 		return ParseResult::error("Expected ';' after typedef declaration", *current_token_);
