@@ -5830,7 +5830,8 @@ ParseResult Parser::parse_typedef_declaration()
 			consume_token();
 		}
 		
-		// Now we should be at the semicolon
+		// After consuming the closing ')', we should be at the semicolon
+		// (or potentially attribute specifiers, which we'll skip in the semicolon check)
 	}
 
 	// Expect semicolon
