@@ -269,12 +269,35 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		case Type::Struct:
 		case Type::UserDefined: {
 			// For structs/classes, use the struct name
-			// Format: <length><name>
+			// For nested classes, we need to split the name into components
+			// e.g., "Outer::Inner" should be encoded as "6Outer5Inner", not "12Outer::Inner"
 			if (type_node.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
 				auto struct_name = StringTable::getStringView(type_info.name());
-				output += std::to_string(struct_name.size());
-				output += struct_name;
+				
+				// Check if this is a nested class (contains "::")
+				if (struct_name.find("::") != std::string_view::npos) {
+					// Split and encode each component separately
+					size_t start = 0;
+					while (start < struct_name.size()) {
+						size_t end = struct_name.find("::", start);
+						if (end == std::string_view::npos) {
+							end = struct_name.size();
+						}
+						
+						std::string_view component = struct_name.substr(start, end - start);
+						if (!component.empty()) {
+							output += std::to_string(component.size());
+							output += component;
+						}
+						
+						start = (end == struct_name.size()) ? end : end + 2;  // Skip "::"
+					}
+				} else {
+					// Simple class name, encode as-is
+					output += std::to_string(struct_name.size());
+					output += struct_name;
+				}
 			} else {
 				// Unknown struct type, use 'v' for void as fallback
 				output += 'v';
