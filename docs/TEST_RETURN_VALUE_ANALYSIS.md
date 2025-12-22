@@ -1,24 +1,13 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-22 - Session 15)
+## Current Status (2025-12-22 - Session 16)
 
-**656/672 tests passing (97.6%)**
+**658/674 tests passing (97.6%)**
 - 11 runtime crashes (C++ runtime compatibility - cannot be fixed at compiler level)
 - 0 compilation failures ✅
 - 0 link failures ✅
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
-
-**Recent Fixes (Session 15):**
-- ✅ Fixed critical GlobalLoad register allocation bug in chained operations
-  - Global variable loads now flush dirty registers (RAX/XMM0) before overwriting
-  - Prevents incorrect results in expressions like `a + b + c + d` with global variables
-  - Modified: `src/IRConverter.h` (handleGlobalLoad function)
-  - Result: 656/672 passing (up from 654/670)
-- ✅ Added main() functions to previously untested files
-  - test_decltype.cpp - now validates decltype keyword support
-  - test_constexpr_var.cpp - now validates constexpr variable support
-  - Both tests now pass with correct return values
 
 ## Key Note on Return Values
 
@@ -29,51 +18,31 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Recent Progress Summary
 
-<details>
-<summary><strong>Session 15: GlobalLoad Register Allocation Fix & Test Additions</strong></summary>
+**Session 16 (2025-12-22):** Test count verification and documentation update
+- Verified 658/674 tests passing (97.6%) - up from 656/672 documented
+- All 11 runtime crashes remain C++ runtime compatibility issues
+- Updated documentation to reflect current test suite size and pass rate
 
-- Fixed critical bug in chained global variable operations (e.g., `a + b + c`)
-- GlobalLoad operations now properly flush RAX/XMM0 before reuse
+**Session 15:** GlobalLoad register allocation fix & test additions (656/672 passing)
+- Fixed critical bug in chained global variable operations; GlobalLoad properly flushes RAX/XMM0
 - Added main() to test_decltype.cpp and test_constexpr_var.cpp
-- Modified: `src/IRConverter.h`
-- Result: 656/672 passing (97.6%), +2 tests from Session 14
-</details>
 
-<details>
-<summary><strong>Session 14: Member Function RVO & Lambda Fix</strong></summary>
+**Session 14:** Member function RVO & lambda fix (654/670 passing)
+- Fixed member function struct returns with empty structs; corrected 'this' pointer size
+- Fixed parameter order for System V AMD64 ABI
 
-- Fixed member function calls returning struct by value with empty structs
-- Corrected 'this' pointer size (64 bits) for empty structs  
-- Fixed parameter order: hidden return param before 'this' in System V AMD64 ABI
-- Lambda compound assignment bug fully resolved (test_lambda_copy_this_mutation.cpp)
-- Result: 654/670 passing (97.6%)
-</details>
+**Sessions 11-13:** Member access & lambda fixes
+- Nested member access with AddressOf, pointer array element size, lambda compound assignment
 
-<details>
-<summary><strong>Sessions 11-13: Member Access & Lambda Fixes</strong></summary>
+**Sessions 6-10:** Core compiler features
+- TempVar offset calculation, array store alignment, large struct stack allocation, template specialization, vtable pointer dereference
 
-- Fixed nested member access with AddressOf, pointer array element size, lambda compound assignment
-</details>
-
-<details>
-<summary><strong>Sessions 6-10: Core Compiler Features</strong></summary>
-
-- TempVar offset calculation, array store alignment, large struct stack allocation, template specialization return types, virtual function vtable pointer dereference
-</details>
-
-<details>
-<summary><strong>Sessions 1-5: Foundation</strong></summary>
-
-- Array constructor calls, typeinfo generation, rvalue references, struct alignment, lambda decay, float literals, range-for, pointer sizes, vtable generation, pure virtual functions, stack alignment, function pointers, heap allocation
-</details>
+**Sessions 1-5:** Foundation
+- Array constructors, typeinfo, rvalue references, struct alignment, lambda decay, float literals, range-for, pointer sizes, vtable generation, pure virtual functions, stack alignment, function pointers, heap allocation
 
 ## Known Issues & Limitations
 
-### ~~Lambda Compound Assignment Bug~~ ✅ FIXED (Session 14)
-### ~~GlobalLoad Register Allocation Bug~~ ✅ FIXED (Session 15)
-
-### Float-to-Int Conversion
-Tests may return incorrect results but don't crash. Low priority.
+**Float-to-Int Conversion:** Tests may return incorrect results but don't crash. Low priority.
 
 ## Remaining Crashes (11 files)
 
@@ -107,7 +76,7 @@ Tests may return incorrect results but don't crash. Low priority.
 
 ---
 
-*Last Updated: 2025-12-22 (Session 15 - GlobalLoad register allocation fix & test additions)*  
-*Status: 656/672 tests passing (97.6%), 11 runtime crashes, 0 compilation failures*  
+*Last Updated: 2025-12-22 (Session 16 - Test count verification and documentation update)*  
+*Status: 658/674 tests passing (97.6%), 11 runtime crashes, 0 compilation failures*  
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
 
