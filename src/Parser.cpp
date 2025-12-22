@@ -6666,6 +6666,15 @@ ParseResult Parser::parse_type_specifier()
 
 		consume_token();
 
+		// Handle optional 'int' keyword after 'short', 'long', 'signed', or 'unsigned'
+		// e.g., "short int", "long int", "unsigned int"
+		if (peek_token().has_value() && peek_token()->value() == "int" &&
+		    (type == Type::Short || type == Type::UnsignedShort ||
+		     type == Type::Long || type == Type::UnsignedLong ||
+		     type == Type::LongLong || type == Type::UnsignedLongLong)) {
+			consume_token(); // consume optional 'int'
+		}
+
 		// Check for trailing CV-qualifiers (e.g., "int const", "float volatile")
 		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 			std::string_view next_token = peek_token()->value();
