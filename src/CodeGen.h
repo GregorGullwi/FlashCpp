@@ -1907,7 +1907,9 @@ private:
 		
 		// For local structs, collect member functions for deferred generation
 		// For global structs, visit them immediately
+		FLASH_LOG(Codegen, Debug, "[STRUCT] Visiting ", struct_name, " is_local=", is_local_struct, " current_function_name_ valid=", current_function_name_.isValid());
 		if (is_local_struct) {
+			FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - collecting members for deferred generation");
 			for (const auto& member_func : node.member_functions()) {
 				LocalStructMemberInfo info;
 				info.struct_name = current_struct_name_;
@@ -1916,8 +1918,10 @@ private:
 				collected_local_struct_members_.push_back(std::move(info));
 			}
 		} else {
+			FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - visiting members immediately, count=", node.member_functions().size());
 			for (const auto& member_func : node.member_functions()) {
 				// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
+				FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - processing member function, is_constructor=", member_func.is_constructor);
 				try {
 					// Call the specific visitor directly instead of visit() to avoid clearing current_function_name_
 					const ASTNode& func_decl = member_func.function_declaration;
@@ -1939,6 +1943,14 @@ private:
 				}
 			}
 		}  // End of if-else for local vs global struct
+		
+		FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - finished member functions, now visiting nested classes");
+		
+		// Clear current_function_name_ before visiting nested classes
+		// Nested classes should not be treated as local structs even if we're inside
+		// a member function context (e.g., after visiting constructors which set current_function_name_)
+		// Nested classes are always at class scope, not function scope
+		current_function_name_ = StringHandle();
 			
 			// Visit nested classes recursively
 			for (const auto& nested_class_node : node.nested_classes()) {
@@ -2014,6 +2026,7 @@ private:
 		
 		// Restore the enclosing function context
 		current_function_name_ = saved_enclosing_function;
+		FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - done, restored current_function_name_");
 	}
 
 	void visitEnumDeclarationNode(const EnumDeclarationNode& node) {
@@ -2102,7 +2115,9 @@ private:
 
 		// Add 'this' pointer to symbol table for member access
 		// Look up the struct type to get its type index and size
-		auto type_it = gTypesByName.find(node.struct_name());
+		// Use struct_name_for_ctor (which is fully qualified) instead of node.struct_name()
+		// to handle nested classes correctly (node.struct_name() might be just "Inner" instead of "Outer::Inner")
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
 		if (type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -2132,7 +2147,7 @@ private:
 			
 			// Build constructor call: StructName::StructName(this, args...)
 			ConstructorCallOp ctor_op;
-			ctor_op.struct_name = node.struct_name();
+			ctor_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);
 			ctor_op.object = StringTable::getOrInternStringHandle("this");
 
 			// Add constructor arguments from delegating initializer
@@ -2160,7 +2175,8 @@ private:
 		// 3. Constructor body
 
 		// Look up the struct type to get base class and member information
-		auto struct_type_it = gTypesByName.find(node.struct_name());
+		// Use struct_name_for_ctor (fully qualified) instead of node.struct_name()
+		auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
 		if (struct_type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -2248,7 +2264,8 @@ private:
 
 		// Step 2: Generate IR for member initializers (executed before constructor body)
 		// Look up the struct type to get member information
-		struct_type_it = gTypesByName.find(node.struct_name());
+		// Use struct_name_for_ctor (fully qualified) instead of node.struct_name()
+		struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
 		if (struct_type_it != gTypesByName.end()) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
