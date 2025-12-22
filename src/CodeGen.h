@@ -1362,10 +1362,10 @@ private:
 
 	// Get the current lambda's closure StructTypeInfo, or nullptr if not in a lambda
 	const StructTypeInfo* getCurrentClosureStruct() const {
-		if (!current_lambda_closure_type_.isValid()) {
+		if (!current_lambda_context_.isActive()) {
 			return nullptr;
 		}
-		auto it = gTypesByName.find(current_lambda_closure_type_);
+		auto it = gTypesByName.find(current_lambda_context_.closure_type);
 		if (it == gTypesByName.end() || !it->second->isStruct()) {
 			return nullptr;
 		}
@@ -1374,30 +1374,21 @@ private:
 
 	// Check if we're in a lambda with [*this] capture
 	bool isInCopyThisLambda() const {
-		if (!current_lambda_closure_type_.isValid()) {
+		if (!current_lambda_context_.isActive()) {
 			return false;
 		}
-		auto capture_it = current_lambda_captures_.find("this");
-		if (capture_it == current_lambda_captures_.end()) {
-			return false;
+		if (current_lambda_context_.has_copy_this) {
+			return true;
 		}
-		auto kind_it = current_lambda_capture_kinds_.find("this");
-		return kind_it != current_lambda_capture_kinds_.end() &&
-		       kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis;
+		if (const StructTypeInfo* closure = getCurrentClosureStruct()) {
+			return closure->findMember("__copy_this") != nullptr;
+		}
+		return false;
 	}
 
 	// Check if we're in a lambda with [this] pointer capture
 	bool isInThisPointerLambda() const {
-		if (!current_lambda_closure_type_.isValid()) {
-			return false;
-		}
-		auto capture_it = current_lambda_captures_.find("this");
-		if (capture_it == current_lambda_captures_.end()) {
-			return false;
-		}
-		auto kind_it = current_lambda_capture_kinds_.find("this");
-		return kind_it != current_lambda_capture_kinds_.end() &&
-		       kind_it->second == LambdaCaptureNode::CaptureKind::This;
+		return current_lambda_context_.isActive() && current_lambda_context_.has_this_pointer;
 	}
 
 	// Emit IR to load __copy_this from current lambda closure into a TempVar.
@@ -1412,7 +1403,7 @@ private:
 			return std::nullopt;
 		}
 		const StructMember* copy_this_member = closure_struct->findMember("__copy_this");
-		if (!copy_this_member || current_lambda_enclosing_struct_type_index_ == 0) {
+		if (!copy_this_member || current_lambda_context_.enclosing_struct_type_index == 0) {
 			return std::nullopt;
 		}
 
@@ -1430,6 +1421,60 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), token));
 
 		return copy_this_temp;
+	}
+
+	// Manage lambda context push/pop for nested lambdas
+	void pushLambdaContext(const LambdaInfo& lambda_info) {
+		lambda_context_stack_.push_back(current_lambda_context_);
+		current_lambda_context_ = {};
+		current_lambda_context_.closure_type = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);
+		current_lambda_context_.enclosing_struct_type_index = lambda_info.enclosing_struct_type_index;
+		current_lambda_context_.has_copy_this = lambda_info.enclosing_struct_type_index > 0;
+		current_lambda_context_.has_this_pointer = false;
+
+		size_t capture_index = 0;
+		for (const auto& capture : lambda_info.captures) {
+			if (capture.is_capture_all()) {
+				continue;
+			}
+			StringHandle var_name = StringTable::getOrInternStringHandle(capture.identifier_name());
+			current_lambda_context_.captures.insert(var_name);
+			current_lambda_context_.capture_kinds[var_name] = capture.kind();
+			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
+			    capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+				current_lambda_context_.captures.insert(StringTable::getOrInternStringHandle("this"sv));
+				current_lambda_context_.capture_kinds[StringTable::getOrInternStringHandle("this"sv)] = capture.kind();
+				if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+					current_lambda_context_.has_copy_this = true;
+				} else if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
+					current_lambda_context_.has_this_pointer = true;
+				}
+			} else {
+				if (capture_index < lambda_info.captured_var_decls.size()) {
+					const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
+					if (const DeclarationNode* decl = get_decl_from_symbol(var_decl)) {
+						current_lambda_context_.capture_types[var_name] = decl->type_node().as<TypeSpecifierNode>();
+					}
+				}
+				capture_index++;
+			}
+		}
+		if (!current_lambda_context_.has_copy_this) {
+			if (const StructTypeInfo* closure = getCurrentClosureStruct()) {
+				if (closure->findMember("__copy_this")) {
+					current_lambda_context_.has_copy_this = true;
+				}
+			}
+		}
+	}
+
+	void popLambdaContext() {
+		if (lambda_context_stack_.empty()) {
+			current_lambda_context_ = {};
+			return;
+		}
+		current_lambda_context_ = lambda_context_stack_.back();
+		lambda_context_stack_.pop_back();
 	}
 
 	// Emit IR to load __this pointer from current lambda closure into a TempVar.
@@ -1518,6 +1563,9 @@ private:
 		// Reset the temporary variable counter for each new function
 		// For member functions, reserve TempVar(1) for the implicit 'this' parameter
 		var_counter = node.is_member_function() ? TempVar(2) : TempVar();
+
+		// Clear global TempVar metadata to prevent stale data from bleeding into this function
+		GlobalTempVarMetadataStorage::instance().clear();
 
 		// Set current function name for static local variable mangling
 		const DeclarationNode& func_decl = node.decl_node();
@@ -1977,6 +2025,9 @@ private:
 		// Reset the temporary variable counter for each new constructor
 		// Constructors are always member functions, so reserve TempVar(1) for 'this'
 		var_counter = TempVar(2);
+
+		// Clear global TempVar metadata to prevent stale data from bleeding into this function
+		GlobalTempVarMetadataStorage::instance().clear();
 
 		// Set current function name for static local variable mangling
 		current_function_name_ = node.name();
@@ -2496,8 +2547,11 @@ private:
 		// Destructors are always member functions, so reserve TempVar(1) for 'this'
 		var_counter = TempVar(2);
 
-	// Set current function name for static local variable mangling
-	current_function_name_ = node.name();
+		// Clear global TempVar metadata to prevent stale data from bleeding into this function
+		GlobalTempVarMetadataStorage::instance().clear();
+
+		// Set current function name for static local variable mangling
+		current_function_name_ = node.name();
 	static_local_names_.clear();
 
 	// Create destructor declaration with typed payload
@@ -5093,21 +5147,21 @@ private:
 
 	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode) {
 		// Check if this is a captured variable in a lambda
-		std::string var_name_str(identifierNode.name());
-		if (current_lambda_closure_type_.isValid() &&
-		    current_lambda_captures_.find(var_name_str) != current_lambda_captures_.end()) {
+		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
+		if (current_lambda_context_.isActive() &&
+		    current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end()) {
 			// This is a captured variable - generate member access (this->x)
 			// Look up the closure struct type
-			auto type_it = gTypesByName.find(current_lambda_closure_type_);
+			auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
 					// Find the member
-					const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
+					const StructMember* member = struct_info->findMemberRecursive(var_name_str);
 					if (member) {
 						// Check if this is a by-reference capture
-						auto kind_it = current_lambda_capture_kinds_.find(var_name_str);
-						bool is_reference = (kind_it != current_lambda_capture_kinds_.end() &&
+						auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
+						bool is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
 						                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 
 						if (is_reference) {
@@ -5129,8 +5183,8 @@ private:
 
 							// The ptr_temp now contains the address of the captured variable
 							// We need to dereference it using PointerDereference
-							auto type_it = current_lambda_capture_types_.find(var_name_str);
-							if (type_it != current_lambda_capture_types_.end()) {
+							auto type_it = current_lambda_context_.capture_types.find(var_name_str);
+							if (type_it != current_lambda_context_.capture_types.end()) {
 								const TypeSpecifierNode& orig_type = type_it->second;
 
 								// Generate Dereference to load the value
@@ -5176,6 +5230,48 @@ private:
 							TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
 							return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
 						}
+					}
+				}
+			}
+		}
+
+		// If we're inside a [*this] lambda, prefer resolving to members of the copied object
+		if (isInCopyThisLambda() && current_lambda_context_.enclosing_struct_type_index > 0) {
+			const TypeInfo* enclosing_type_info = nullptr;
+			for (const auto& ti : gTypeInfo) {
+				if (ti.type_index_ == current_lambda_context_.enclosing_struct_type_index) {
+					enclosing_type_info = &ti;
+					break;
+				}
+			}
+			if (enclosing_type_info && enclosing_type_info->getStructInfo()) {
+				const StructTypeInfo* enclosing_struct = enclosing_type_info->getStructInfo();
+				const StructMember* member = enclosing_struct->findMemberRecursive(var_name_str);
+				if (member) {
+					if (auto copy_this_temp = emitLoadCopyThis(Token())) {
+						TempVar result_temp = var_counter.next();
+						MemberLoadOp member_load;
+						member_load.result.value = result_temp;
+						member_load.result.type = member->type;
+						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.object = *copy_this_temp;
+						member_load.member_name = member->getName();
+						member_load.offset = static_cast<int>(member->offset);
+						member_load.is_reference = member->is_reference;
+						member_load.is_rvalue_reference = member->is_rvalue_reference;
+						member_load.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+						
+						LValueInfo lvalue_info(
+							LValueInfo::Kind::Member,
+							*copy_this_temp,
+							static_cast<int>(member->offset)
+						);
+						lvalue_info.member_name = member->getName();
+						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+						
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
 					}
 				}
 			}
@@ -5232,14 +5328,14 @@ private:
 		// Skip this for [*this] lambdas - they need to access through __copy_this instead
 		// Also check that we're not in a lambda context where this would be an enclosing struct member
 		if (!symbol.has_value() && current_struct_name_.isValid() && 
-		    !isInCopyThisLambda() && !current_lambda_closure_type_.isValid()) {
+		    !isInCopyThisLambda() && !current_lambda_context_.isActive()) {
 			// Look up the struct type
 			auto type_it = gTypesByName.find(current_struct_name_);
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
 					// Check if this identifier is a member of the struct
-					const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
+					const StructMember* member = struct_info->findMemberRecursive(var_name_str);
 					if (member) {
 						// This is a member variable access - generate MemberAccess IR with implicit 'this'
 						TempVar result_temp = var_counter.next();
@@ -5270,7 +5366,7 @@ private:
 					}
 					
 					// Check if this identifier is a static member
-					const StructStaticMember* static_member = struct_info->findStaticMember(StringTable::getOrInternStringHandle(var_name_str));
+					const StructStaticMember* static_member = struct_info->findStaticMember(var_name_str);
 					if (static_member) {
 						// This is a static member access - generate GlobalLoad IR
 						// Static members are stored as globals with qualified names
@@ -5291,57 +5387,6 @@ private:
 				}
 			}
 		}
-		
-		// Check if we're in a lambda with [*this] capture and identifier is a member of the copied object
-		if (!symbol.has_value() && isInCopyThisLambda() && current_lambda_enclosing_struct_type_index_ > 0) {
-			// Get the enclosing struct type
-			const TypeInfo* enclosing_type_info = nullptr;
-			for (const auto& ti : gTypeInfo) {
-				if (ti.type_index_ == current_lambda_enclosing_struct_type_index_) {
-					enclosing_type_info = &ti;
-					break;
-				}
-			}
-			
-			if (enclosing_type_info && enclosing_type_info->getStructInfo()) {
-				const StructTypeInfo* enclosing_struct = enclosing_type_info->getStructInfo();
-				// Check if this identifier is a member of the enclosing struct
-				const StructMember* member = enclosing_struct->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
-				if (member) {
-					// This is an implicit member access through [*this] capture
-					// Use helper to load __copy_this, then access the member from it
-					if (auto copy_this_temp = emitLoadCopyThis(Token())) {
-						// Step 2: Access the member from __copy_this
-						TempVar result_temp = var_counter.next();
-						MemberLoadOp member_load;
-						member_load.result.value = result_temp;
-						member_load.result.type = member->type;
-						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
-						member_load.object = *copy_this_temp;  // The __copy_this object
-						member_load.member_name = member->getName();
-						member_load.offset = static_cast<int>(member->offset);
-						member_load.is_reference = member->is_reference;
-						member_load.is_rvalue_reference = member->is_rvalue_reference;
-						member_load.struct_type_info = nullptr;
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
-						
-						// Mark as lvalue with member metadata for compound assignments
-						// This is crucial for multiple compound assignments to work correctly
-						LValueInfo lvalue_info(
-							LValueInfo::Kind::Member,
-							*copy_this_temp,  // Use the TempVar holding __copy_this
-							static_cast<int>(member->offset)
-						);
-						lvalue_info.member_name = member->getName();
-						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
-						
-						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
-						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
-					}
-				}
-			}
-		}
-
 		if (!symbol.has_value()) {
 			FLASH_LOG(Codegen, Error, "Symbol '", identifierNode.name(), "' not found in symbol table during code generation");
 			FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
@@ -6204,7 +6249,7 @@ private:
 								const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
 								if (struct_info) {
 									std::string_view member_name = memberAccess.member_name();
-									StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
+									StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 									const StructMember* member = struct_info->findMemberRecursive(member_handle);
 									
 									if (member) {
@@ -6394,11 +6439,12 @@ private:
 		
 		// Helper lambda to generate member increment/decrement IR
 		// Returns the result operands, or empty if not applicable
-		auto generateMemberIncDec = [&](std::string_view object_name, std::string_view member_name, 
+		auto generateMemberIncDec = [&](StringHandle object_name, 
 		                                 const StructMember* member, bool is_reference_capture,
 		                                 const Token& token) -> std::vector<IrOperand> {
 			int member_size_bits = static_cast<int>(member->size * 8);
 			TempVar result_var = var_counter.next();
+			StringHandle member_name = member->getName();
 			
 			if (is_reference_capture) {
 				// By-reference: load pointer, dereference, inc/dec, store back through pointer
@@ -6407,8 +6453,8 @@ private:
 				member_load.result.value = ptr_temp;
 				member_load.result.type = member->type;
 				member_load.result.size_in_bits = 64;  // pointer
-				member_load.object = StringTable::getOrInternStringHandle(object_name);
-				member_load.member_name = StringTable::getOrInternStringHandle(member_name);
+				member_load.object = object_name;
+				member_load.member_name = member_name;
 				member_load.offset = static_cast<int>(member->offset);
 				member_load.is_reference = true;
 				member_load.is_rvalue_reference = false;
@@ -6451,8 +6497,8 @@ private:
 				member_load.result.value = current_val;
 				member_load.result.type = member->type;
 				member_load.result.size_in_bits = member_size_bits;
-				member_load.object = StringTable::getOrInternStringHandle(object_name);
-				member_load.member_name = StringTable::getOrInternStringHandle(member_name);
+				member_load.object = object_name;
+				member_load.member_name = member_name;
 				member_load.offset = static_cast<int>(member->offset);
 				member_load.is_reference = false;
 				member_load.is_rvalue_reference = false;
@@ -6471,8 +6517,8 @@ private:
 				
 				// Store back to member
 				MemberStoreOp store_op;
-				store_op.object = StringTable::getOrInternStringHandle(object_name);
-				store_op.member_name = StringTable::getOrInternStringHandle(member_name);
+				store_op.object = object_name;
+				store_op.member_name = member_name;
 				store_op.offset = static_cast<int>(member->offset);
 				store_op.value = { member->type, member_size_bits, result_var };
 				store_op.is_reference = false;
@@ -6485,24 +6531,24 @@ private:
 		
 		// Check if this is an increment/decrement on a captured variable in a lambda
 		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && 
-		    current_lambda_closure_type_.isValid() && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+		    current_lambda_context_.isActive() && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
-				std::string var_name_str(identifier.name());
+				StringHandle var_name_str = StringTable::getOrInternStringHandle(identifier.name());
 				
 				// Check if this is a captured variable
-				if (current_lambda_captures_.find(var_name_str) != current_lambda_captures_.end()) {
+				if (current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end()) {
 					// Look up the closure struct type
-					auto type_it = gTypesByName.find(current_lambda_closure_type_);
+					auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
 					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(var_name_str));
+						const StructMember* member = struct_info->findMemberRecursive(var_name_str);
 						if (member) {
-							auto kind_it = current_lambda_capture_kinds_.find(var_name_str);
-							bool is_reference = (kind_it != current_lambda_capture_kinds_.end() &&
+							auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
+							bool is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
 							                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
-							return generateMemberIncDec("this", StringTable::getStringView(member->getName()), member, is_reference, 
+							return generateMemberIncDec(StringTable::getOrInternStringHandle("this"sv), member, is_reference, 
 							                            unaryOperatorNode.get_token());
 						}
 					}
@@ -6515,7 +6561,7 @@ private:
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<MemberAccessNode>(operandExpr)) {
 				const MemberAccessNode& member_access = std::get<MemberAccessNode>(operandExpr);
-				std::string_view member_name = member_access.member_name();
+				auto member_name = StringTable::getOrInternStringHandle(member_access.member_name());
 				
 				// Get the object being accessed
 				ASTNode object_node = member_access.object();
@@ -6523,7 +6569,7 @@ private:
 					const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
 					if (std::holds_alternative<IdentifierNode>(obj_expr)) {
 						const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
-						std::string_view object_name = object_ident.name();
+						auto object_name = StringTable::getOrInternStringHandle(object_ident.name());
 						
 						// Look up the struct in symbol table
 						std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
@@ -6540,9 +6586,9 @@ private:
 									if (type_index < gTypeInfo.size()) {
 										const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
 										if (struct_info) {
-											const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
+											const StructMember* member = struct_info->findMemberRecursive(member_name);
 											if (member) {
-												return generateMemberIncDec(object_name, member_name, member, false,
+												return generateMemberIncDec(object_name, member, false,
 												                            member_access.member_token());
 											}
 										}
@@ -7027,6 +7073,9 @@ private:
 		std::vector<IrOperand> irOperands;
 
 		const auto& op = binaryOperatorNode.op();
+		static const std::unordered_set<std::string_view> compound_assignment_ops = {
+			"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="
+		};
 
 		// Special handling for comma operator
 		// The comma operator evaluates both operands left-to-right and returns the right operand
@@ -7123,18 +7172,18 @@ private:
 
 		// Special handling for assignment to captured-by-reference variable inside lambda
 		// Now that captured-by-reference identifiers are marked with lvalue metadata, use unified handler
-		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && current_lambda_closure_type_.isValid()) {
+		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>() && current_lambda_context_.isActive()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 				std::string_view lhs_name = lhs_ident.name();
-				std::string lhs_name_str(lhs_name);
+				StringHandle lhs_name_str = StringTable::getOrInternStringHandle(lhs_name);
 
 				// Check if this is a captured-by-reference variable
-				auto capture_it = current_lambda_captures_.find(lhs_name_str);
-				if (capture_it != current_lambda_captures_.end()) {
-					auto kind_it = current_lambda_capture_kinds_.find(lhs_name_str);
-					if (kind_it != current_lambda_capture_kinds_.end() &&
+				auto capture_it = current_lambda_context_.captures.find(lhs_name_str);
+				if (capture_it != current_lambda_context_.captures.end()) {
+					auto kind_it = current_lambda_context_.capture_kinds.find(lhs_name_str);
+					if (kind_it != current_lambda_context_.capture_kinds.end() &&
 					    kind_it->second == LambdaCaptureNode::CaptureKind::ByReference) {
 						// This is assignment to a captured-by-reference variable
 						// Handle via unified handler (identifiers are now marked as lvalues)
@@ -7249,10 +7298,6 @@ private:
 		// Special handling for compound assignment to array subscript or member access
 		// Use LValueAddress context for the LHS, similar to regular assignment
 		// Helper lambda to check if operator is a compound assignment
-		static const std::unordered_set<std::string_view> compound_assignment_ops = {
-			"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="
-		};
-		
 		if (compound_assignment_ops.count(op) > 0 &&
 		    binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
@@ -7304,6 +7349,14 @@ private:
 		// Generate IR for the left-hand side and right-hand side of the operation
 		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
 		auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+
+		// Try unified metadata-based handler for compound assignments on identifiers
+		// This ensures implicit member accesses (including [*this] lambdas) use the correct base object
+		if (compound_assignment_ops.count(op) > 0 &&
+		    handleLValueCompoundAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token(), op)) {
+			FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for compound assignment");
+			return lhsIrOperands;
+		}
 
 		// Try unified lvalue-based assignment handler (uses value category metadata)
 		// This handles assignments like *ptr = value using lvalue metadata
@@ -10471,7 +10524,7 @@ private:
 					if (auto copy_this_temp = emitLoadCopyThis(memberAccessNode.member_token())) {
 						base_object = *copy_this_temp;
 						base_type = Type::Struct;
-						base_type_index = current_lambda_enclosing_struct_type_index_;
+						base_type_index = current_lambda_context_.enclosing_struct_type_index;
 						handled = true;
 					}
 				}
@@ -10545,13 +10598,13 @@ private:
 					const IdentifierNode& ptr_ident = std::get<IdentifierNode>(operand_expr);
 					std::string_view ptr_name = ptr_ident.name();
 					
-					if (ptr_name == "this" && current_lambda_closure_type_.isValid() && 
-					    current_lambda_captures_.find("this") != current_lambda_captures_.end()) {
+					if (ptr_name == "this" && current_lambda_context_.isActive() && 
+					    current_lambda_context_.captures.find(StringTable::getOrInternStringHandle("this"sv)) != current_lambda_context_.captures.end()) {
 						is_lambda_this = true;
 						// We're in a lambda that captured [this] or [*this]
 						// Check which kind of capture it is
-						auto capture_kind_it = current_lambda_capture_kinds_.find("this");
-						if (capture_kind_it != current_lambda_capture_kinds_.end() && 
+						auto capture_kind_it = current_lambda_context_.capture_kinds.find(StringTable::getOrInternStringHandle("this"sv));
+						if (capture_kind_it != current_lambda_context_.capture_kinds.end() && 
 						    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
 							// [*this] capture: load from the copied object in __copy_this
 							TempVar copy_this_ref = var_counter.next();
@@ -10570,7 +10623,7 @@ private:
 							// Use this as the base (it's a struct value, not a pointer)
 							base_object = copy_this_ref;
 							base_type = Type::Struct;
-							base_type_index = current_lambda_enclosing_struct_type_index_;
+							base_type_index = current_lambda_context_.enclosing_struct_type_index;
 						} else {
 							// [this] capture: load the pointer from __this
 							TempVar this_ptr = var_counter.next();
@@ -10589,7 +10642,7 @@ private:
 							// Use this loaded pointer as the base
 							base_object = this_ptr;
 							base_type = Type::Struct;
-							base_type_index = current_lambda_enclosing_struct_type_index_;
+							base_type_index = current_lambda_context_.enclosing_struct_type_index;
 						}
 					}
 				}
@@ -10681,7 +10734,7 @@ private:
 				if (auto copy_this_temp = emitLoadCopyThis(memberAccessNode.member_token())) {
 					base_object = *copy_this_temp;
 					base_type = Type::Struct;
-					base_type_index = current_lambda_enclosing_struct_type_index_;
+					base_type_index = current_lambda_context_.enclosing_struct_type_index;
 					handled = true;
 				}
 			}
@@ -13014,31 +13067,59 @@ private:
 						// The closure should have a member named "__copy_this" of the enclosing struct type
 						const StructMember* member = struct_info->findMember("__copy_this");
 						if (member && lambda_info.enclosing_struct_type_index > 0) {
-							// For now, store 'this' pointer similar to [this] capture
-							// TODO: Implement proper struct copy
-							MemberStoreOp store_copy_this;
-							store_copy_this.value.type = Type::Void;
-							store_copy_this.value.size_in_bits = 64;
-							store_copy_this.value.value = TempVar(1);  // 'this' pointer
-							store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
-							store_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
-							store_copy_this.offset = static_cast<int>(member->offset);
-							store_copy_this.is_reference = false;
-							store_copy_this.is_rvalue_reference = false;
-							store_copy_this.struct_type_info = nullptr;
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_copy_this), lambda.lambda_token()));
+							// Copy each member of the enclosing struct into __copy_this
+							const TypeInfo* enclosing_type = nullptr;
+							for (const auto& ti : gTypeInfo) {
+								if (ti.type_index_ == lambda_info.enclosing_struct_type_index) {
+									enclosing_type = &ti;
+									break;
+								}
+							}
+							if (enclosing_type && enclosing_type->getStructInfo()) {
+								const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
+								int copy_base_offset = static_cast<int>(member->offset);
+
+								for (const auto& enclosing_member : enclosing_struct->members) {
+									// Load from original 'this'
+									TempVar loaded_value = var_counter.next();
+									MemberLoadOp load_op;
+									load_op.result.value = loaded_value;
+									load_op.result.type = enclosing_member.type;
+									load_op.result.size_in_bits = static_cast<int>(enclosing_member.size * 8);
+									load_op.object = StringTable::getOrInternStringHandle("this");
+									load_op.member_name = enclosing_member.getName();
+									load_op.offset = static_cast<int>(enclosing_member.offset);
+									load_op.is_reference = enclosing_member.is_reference;
+									load_op.is_rvalue_reference = enclosing_member.is_rvalue_reference;
+									load_op.struct_type_info = nullptr;
+									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), lambda.lambda_token()));
+
+									// Store into closure->__copy_this at the appropriate offset
+									MemberStoreOp store_copy_this;
+									store_copy_this.value.type = enclosing_member.type;
+									store_copy_this.value.size_in_bits = static_cast<int>(enclosing_member.size * 8);
+									store_copy_this.value.value = loaded_value;
+									store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
+									store_copy_this.member_name = enclosing_member.getName();
+									store_copy_this.offset = copy_base_offset + static_cast<int>(enclosing_member.offset);
+									store_copy_this.is_reference = enclosing_member.is_reference;
+									store_copy_this.is_rvalue_reference = enclosing_member.is_rvalue_reference;
+									store_copy_this.struct_type_info = nullptr;
+									ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_copy_this), lambda.lambda_token()));
+								}
+							}
 						}
 						continue;
 					}
 
 					std::string_view var_name = capture.identifier_name();  // Already a persistent string_view from AST
-					std::string var_name_str(var_name);  // Single conversion for both uses below
+					StringHandle var_name_str = StringTable::getOrInternStringHandle(var_name);  // Single conversion for both uses below
 					const StructMember* member = struct_info->findMember(var_name);
 
 					if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
 						// Check if this variable is a captured variable from an enclosing lambda
-						bool is_captured_from_enclosing = current_lambda_closure_type_.isValid() &&
-						                                   current_lambda_captures_.count(var_name_str) > 0;
+						bool is_captured_from_enclosing = current_lambda_context_.isActive() &&
+						                                   current_lambda_context_.captures.count(var_name_str) > 0;
 
 						// Handle init-captures
 						if (capture.has_initializer()) {
@@ -13104,8 +13185,8 @@ private:
 								// For by-reference capture of an already captured variable, we need to:
 								// 1. Load the enclosing lambda's captured value (or pointer if it was by-ref)
 								// 2. Take the address of that
-								auto enclosing_kind_it = current_lambda_capture_kinds_.find(std::string(var_name));
-								bool enclosing_is_ref = (enclosing_kind_it != current_lambda_capture_kinds_.end() &&
+								auto enclosing_kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
+								bool enclosing_is_ref = (enclosing_kind_it != current_lambda_context_.capture_kinds.end() &&
 								                         enclosing_kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 								
 								if (enclosing_is_ref) {
@@ -13119,7 +13200,7 @@ private:
 									
 									// Look up the offset from the enclosing lambda's struct
 									int enclosing_offset = -1;
-									auto enclosing_type_it = gTypesByName.find(current_lambda_closure_type_);
+									auto enclosing_type_it = gTypesByName.find(current_lambda_context_.closure_type);
 									if (enclosing_type_it != gTypesByName.end()) {
 										const TypeInfo* enclosing_type = enclosing_type_it->second;
 										if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
@@ -13185,7 +13266,7 @@ private:
 							
 							// Look up the offset from the enclosing lambda's struct
 							int enclosing_offset = -1;
-							auto enclosing_type_it = gTypesByName.find(current_lambda_closure_type_);
+							auto enclosing_type_it = gTypesByName.find(current_lambda_context_.closure_type);
 							if (enclosing_type_it != gTypesByName.end()) {
 								const TypeInfo* enclosing_type = enclosing_type_it->second;
 								if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
@@ -13394,7 +13475,7 @@ private:
 			}
 			param_idx++;
 		}
-
+		
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
 		symbol_table.enter_scope(ScopeType::Function);
 
@@ -13403,6 +13484,9 @@ private:
 		// TempVar(1) is reserved for 'this', so we start at TempVar(2).
 		var_counter = TempVar(2);
 
+		// Clear global TempVar metadata to prevent stale data from bleeding into this function
+		GlobalTempVarMetadataStorage::instance().clear();
+
 		// Set current function return type and size for type checking in return statements
 		// This is critical for lambdas returning other lambdas or structs
 		current_function_return_type_ = lambda_info.return_type;
@@ -13410,41 +13494,7 @@ private:
 		current_function_returns_reference_ = lambda_info.returns_reference;
 
 		// Set lambda context for captured variable access
-		current_lambda_closure_type_ = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);
-		current_lambda_enclosing_struct_type_index_ = lambda_info.enclosing_struct_type_index;
-		current_lambda_captures_.clear();
-		current_lambda_capture_kinds_.clear();
-		current_lambda_capture_types_.clear();
-
-		size_t capture_index = 0;
-		for (const auto& capture : lambda_info.captures) {
-			if (!capture.is_capture_all()) {
-				if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
-					// Mark that 'this' is captured
-					current_lambda_captures_.insert("this");
-					current_lambda_capture_kinds_["this"] = capture.kind();
-				} else if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
-					// Mark that '*this' is captured (copy of the object)
-					// We still register it as "this" for member access to work
-					current_lambda_captures_.insert("this");
-					current_lambda_capture_kinds_["this"] = capture.kind();
-				} else {
-					std::string var_name(capture.identifier_name());
-					current_lambda_captures_.insert(var_name);
-					current_lambda_capture_kinds_[var_name] = capture.kind();
-
-					// Store the original type of the captured variable
-					if (capture_index < lambda_info.captured_var_decls.size()) {
-						const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
-						const DeclarationNode* decl = get_decl_from_symbol(var_decl);
-						if (decl) {
-							current_lambda_capture_types_[var_name] = decl->type_node().as<TypeSpecifierNode>();
-						}
-					}
-					capture_index++;
-				}
-			}
-		}
+		pushLambdaContext(lambda_info);
 
 		// Add lambda parameters to symbol table as function parameters (operator() context)
 		// This ensures they're recognized as local parameters, not external symbols
@@ -13477,12 +13527,8 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
 		}
 
-		// Clear lambda context
-		current_lambda_closure_type_ = StringHandle();
-		current_lambda_captures_.clear();
-		current_lambda_capture_kinds_.clear();
-		current_lambda_capture_types_.clear();
-		current_lambda_enclosing_struct_type_index_ = 0;
+		// Restore outer lambda context (if any)
+		popLambdaContext();
 
 		symbol_table.exit_scope();
 		
@@ -13758,12 +13804,19 @@ private:
 	std::unordered_set<const TypeInfo*> processed_type_infos_;
 
 	// Current lambda context (for tracking captured variables)
-	// When generating lambda body, this contains the closure type name
-	StringHandle current_lambda_closure_type_;
-	std::unordered_set<std::string> current_lambda_captures_;
-	std::unordered_map<std::string, LambdaCaptureNode::CaptureKind> current_lambda_capture_kinds_;
-	std::unordered_map<std::string, TypeSpecifierNode> current_lambda_capture_types_;
-	TypeIndex current_lambda_enclosing_struct_type_index_ = 0;  // For [this] capture type resolution
+	// When generating lambda body, this contains the closure type name and capture metadata
+	struct LambdaContext {
+		StringHandle closure_type;
+		std::unordered_set<StringHandle> captures;
+		std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind> capture_kinds;
+		std::unordered_map<StringHandle, TypeSpecifierNode> capture_types;
+		TypeIndex enclosing_struct_type_index = 0;  // For [this] capture type resolution
+		bool has_copy_this = false;
+		bool has_this_pointer = false;
+		bool isActive() const { return closure_type.isValid(); }
+	};
+	LambdaContext current_lambda_context_;
+	std::vector<LambdaContext> lambda_context_stack_;
 
 	// Generate just the function declaration for a template instantiation (without body)
 	// This is called immediately when a template call is detected, so the IR converter
@@ -14195,7 +14248,3 @@ private:
 	}
 
 };
-
-
-
-
