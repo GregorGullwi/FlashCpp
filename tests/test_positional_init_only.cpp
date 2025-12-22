@@ -8,3 +8,7 @@ int test_positional_init_only() {
     return 0;
 }
 
+
+int main() {
+    return test_positional_init_only();
+}

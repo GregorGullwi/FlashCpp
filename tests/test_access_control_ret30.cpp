@@ -223,3 +223,7 @@ int test_pointer_access() {
     return ptr->accessViaThis();  // Expected: 25 (12 + 13)
 }
 
+
+int main() {
+    return test_public_inheritance();
+}

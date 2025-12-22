@@ -5,3 +5,7 @@ int test_int_var() {
     return y;
 }
 
+
+int main() {
+    return test_int_var();
+}

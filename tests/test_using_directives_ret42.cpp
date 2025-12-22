@@ -35,3 +35,7 @@ int test_namespace_function() {
     return TestNamespace::add(10, 20);
 }
 
+
+int main() {
+    return test_basic_namespace();
+}

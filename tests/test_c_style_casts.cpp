@@ -84,3 +84,7 @@ int test_multiple_casts() {
     return x + y;
 }
 
+
+int main() {
+    return test_int_to_int();
+}

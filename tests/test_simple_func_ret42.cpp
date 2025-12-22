@@ -4,3 +4,7 @@ int test_simple() {
     return x;
 }
 
+
+int main() {
+    return test_simple();
+}

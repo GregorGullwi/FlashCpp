@@ -16,3 +16,7 @@ int test_auto_from_variable() {
     return x;
 }
 
+
+int main() {
+    return test_auto_int();
+}

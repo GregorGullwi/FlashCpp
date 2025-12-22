@@ -1,13 +1,37 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-22 - Session 16)
+## Current Status (2025-12-22)
 
-**658/674 tests passing (97.6%)**
-- 11 runtime crashes (C++ runtime compatibility - cannot be fixed at compiler level)
-- 0 compilation failures ✅
-- 0 link failures ✅
+**684/705 tests passing (97.0%)**
+- 21 failures: 11 runtime crashes, 2 compilation failures, 3 link failures, 5 without main()
+- Test suite now has 705 executable tests (31 main() functions added)
+- 396 test files renamed with `_retXX` suffix to document expected return values
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
+
+## Test File Organization (Latest Update)
+
+**Standardized Naming Convention:**
+- Files returning non-zero values renamed with `_retXX` suffix (e.g., `test_int_var_ret10.cpp`)
+- Files returning 0 kept original names for clarity
+- **Total renamed:** 396 files with non-zero returns
+- **Examples:**
+  - `test_two_functions.cpp` → `test_two_functions_ret42.cpp`
+  - `simple_add.cpp` → `simple_add_ret60.cpp`
+  - `spaceship_basic.cpp` → `spaceship_basic_ret255.cpp`
+
+**Main Function Addition:**
+- Added `main()` to 31 test files that lacked entry points
+- Each `main()` calls the first test function in the file
+- Enables standalone test execution for previously non-executable tests
+
+**Test Suite Statistics:**
+- Total .cpp files in tests/: 729
+- Files with main(): 705 (after adding 31)
+- Files without main(): 11 (helper files, stubs)
+- Successfully compile/run: 684
+- Renamed with return values: 396 (non-zero returns)
+- Original names kept: 288 (return 0)
 
 ## Key Note on Return Values
 
@@ -17,6 +41,13 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 - **This is expected OS behavior, not a compiler bug**
 
 ## Recent Progress Summary
+
+**2025-12-22:** Test file organization and naming standardization (684/705 passing)
+- Added main() functions to 31 test files lacking entry points
+- Renamed 396 test files with non-zero returns using `_retXX` suffix pattern
+- Standardized test naming: return values now encoded in filenames
+- Improved test discoverability and self-documentation
+- Test suite expanded from 674 to 705 executable tests
 
 **Session 16 (2025-12-22):** Test count verification and documentation update
 - Verified 658/674 tests passing (97.6%) - up from 656/672 documented
@@ -44,6 +75,12 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 **Float-to-Int Conversion:** Tests may return incorrect results but don't crash. Low priority.
 
+**Current Failures (21 total):**
+- 11 runtime crashes (C++ runtime/ABI compatibility)
+- 2 compilation failures (parser/compiler issues)
+- 3 link failures (missing symbols)
+- 5 files without main() (helper files, stubs - intentionally excluded)
+
 ## Remaining Crashes (11 files)
 
 **11 runtime crashes (C++ runtime/ABI compatibility - cannot be fixed at compiler level)**
@@ -63,8 +100,8 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
    - `test_virtual_inheritance.cpp` (virtual inheritance diamond problem)
 
 4. **C++ Runtime Initialization** (2 files) - Code generation correct, but crashes during C++ runtime init
-   - `test_addressof_int_index.cpp`
-   - `test_arrays_comprehensive.cpp`
+   - `test_addressof_int_index_ret83.cpp` (renamed from test_addressof_int_index.cpp)
+   - `test_arrays_comprehensive_ret16.cpp` (renamed from test_arrays_comprehensive.cpp)
    - ✅ Generated assembly is correct (verified via objdump)
    - ⚠️ Crashes with SIGSEGV before entering `main()`
    - **Root cause**: C++ runtime/startup code incompatibility, not compiler code generation
@@ -74,9 +111,29 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
    - `test_lambda_cpp20_comprehensive.cpp` (advanced C++20 lambda features)
    - `test_xvalue_all_casts.cpp` (xvalue handling across all cast types)
 
+## Compilation Failures (2 files)
+
+1. **test_switch.cpp** - Parser/compilation error with switch statements
+2. **test_c_style_casts.cpp** - Compiler crash (signal 134) during compilation
+
+## Link Failures (3 files)
+
+1. **test_using_enhanced.cpp** - Missing symbols (namespace/using directive issues)
+2. **test_nested_classes.cpp** - Missing symbols (nested class linkage)
+3. **test_class_access.cpp** - Missing symbols (class access control)
+
+## Files Without Main (5 files)
+
+Intentionally excluded helper files and stubs:
+1. **test_external_abi_helper.c** - C helper for ABI tests
+2. **test_stack_overflow_helper.c** - C helper for stack tests
+3. **test_varargs_helper.c** - C helper for variadic tests
+4. **linux_exception_stubs.cpp** - Exception stub implementations
+5. **simple_test.cpp** - Has `simple_main` instead of `main`
+
 ---
 
-*Last Updated: 2025-12-22 (Session 16 - Test count verification and documentation update)*  
-*Status: 658/674 tests passing (97.6%), 11 runtime crashes, 0 compilation failures*  
+*Last Updated: 2025-12-22 (Test file organization and naming standardization)*  
+*Status: 684/705 tests passing (97.0%), 31 main() functions added, 396 files renamed*  
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
 

@@ -56,3 +56,7 @@ int test_using_with_qualified() {
     return x + y;  // Should return 21
 }
 
+
+int main() {
+    return test_using_directive();
+}

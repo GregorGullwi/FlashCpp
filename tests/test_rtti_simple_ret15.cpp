@@ -32,3 +32,7 @@ int test_basic() {
     return d.value + d.extra;  // Expected: 15
 }
 
+
+int main() {
+    return test_basic();
+}

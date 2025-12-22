@@ -18,3 +18,7 @@ int test_functor() {
     return add10(5) + add10(5.5);  // Should return 30
 }
 
+
+int main() {
+    return test_functor();
+}

@@ -10,3 +10,7 @@ int test_regular_init() {
     return p.x + p.y;
 }
 
+
+int main() {
+    return test_regular_init();
+}

@@ -302,3 +302,7 @@ int test_nested_private_section() {
     return o.usePrivateInner();  // Expected: 99
 }
 
+
+int main() {
+    return test_basic_nested_class();
+}
