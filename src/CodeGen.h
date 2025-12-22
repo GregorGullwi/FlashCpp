@@ -5352,8 +5352,7 @@ private:
 					}
 				}
 			}
-			}
-		}
+	\t}
 
 		if (!symbol.has_value()) {
 			FLASH_LOG(Codegen, Error, "Symbol '", identifierNode.name(), "' not found in symbol table during code generation");
