@@ -9059,7 +9059,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			// Add the designated initializer to the list
 			if (init_expr_result.node().has_value()) {
-				init_list_ref.add_designated_initializer(std::string(member_name), *init_expr_result.node());
+				init_list_ref.add_designated_initializer(StringTable::getOrInternStringHandle(member_name), *init_expr_result.node());
 			} else {
 				return ParseResult::error("Expected initializer expression", *current_token_);
 			}

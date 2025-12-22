@@ -2729,18 +2729,18 @@ private:
 				
 				// Process initializer list to generate member stores
 				const auto& initializers = init_list.initializers();
-				std::unordered_map<std::string, const ASTNode*> member_values;
+				std::unordered_map<StringHandle, const ASTNode*> member_values;
 				size_t positional_index = 0;
 				
 				for (size_t i = 0; i < initializers.size(); ++i) {
 					if (init_list.is_designated(i)) {
 						// Designated initializer - use member name
-						const std::string& member_name = init_list.member_name(i);
+						StringHandle member_name = init_list.member_name(i);
 						member_values[member_name] = &initializers[i];
 					} else {
 						// Positional initializer - map to member by index
 						if (positional_index < struct_info->members.size()) {
-							const std::string member_name = std::string(StringTable::getStringView(struct_info->members[positional_index].getName()));
+							StringHandle member_name = struct_info->members[positional_index].getName();
 							member_values[member_name] = &initializers[i];
 							positional_index++;
 						}
@@ -2749,8 +2749,8 @@ private:
 				
 				// Generate member stores for each initialized member
 				for (const StructMember& member : struct_info->members) {
-					const std::string member_name_str = std::string(StringTable::getStringView(member.getName()));
-					auto it = member_values.find(member_name_str);
+					StringHandle member_name_handle = member.getName();
+					auto it = member_values.find(member_name_handle);
 					
 					if (it != member_values.end()) {
 						// Evaluate the initializer expression
@@ -4575,19 +4575,18 @@ private:
 							} else {
 								// No constructor - use direct member initialization
 								// Build a map of member names to initializer expressions
-								// TODO Phase 9: Convert member_values to use StringHandle key after init_list.member_name() is updated
-								std::unordered_map<std::string, const ASTNode*> member_values;
+								std::unordered_map<StringHandle, const ASTNode*> member_values;
 								size_t positional_index = 0;
 
 								for (size_t i = 0; i < initializers.size(); ++i) {
 									if (init_list.is_designated(i)) {
 										// Designated initializer - use member name
-										const std::string& member_name = init_list.member_name(i);
+										StringHandle member_name = init_list.member_name(i);
 										member_values[member_name] = &initializers[i];
 									} else {
 										// Positional initializer - map to member by index
 										if (positional_index < struct_info.members.size()) {
-											const std::string member_name = std::string(StringTable::getStringView(struct_info.members[positional_index].getName()));
+											StringHandle member_name = struct_info.members[positional_index].getName();
 											member_values[member_name] = &initializers[i];
 											positional_index++;
 										}
@@ -4599,9 +4598,9 @@ private:
 									// Determine the initial value
 									IrValue member_value;
 									// Check if this member has an initializer
-									std::string member_name_str(StringTable::getStringView(member.getName()));
-									if (member_values.count(member_name_str)) {
-										const ASTNode& init_expr = *member_values[member_name_str];
+									StringHandle member_name_handle = member.getName();
+									if (member_values.count(member_name_handle)) {
+										const ASTNode& init_expr = *member_values[member_name_handle];
 										std::vector<IrOperand> init_operands;
 										if (init_expr.is<ExpressionNode>()) {
 											init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());

@@ -2839,13 +2839,13 @@ public:
 	void add_initializer(ASTNode init_expr) {
 		initializers_.push_back(init_expr);
 		is_designated_.push_back(false);
-		member_names_.push_back("");  // Empty for positional initializers
+		member_names_.push_back(StringHandle());  // Invalid StringHandle for positional initializers
 	}
 
-	void add_designated_initializer(std::string member_name, ASTNode init_expr) {
+	void add_designated_initializer(StringHandle member_name, ASTNode init_expr) {
 		initializers_.push_back(init_expr);
 		is_designated_.push_back(true);
-		member_names_.push_back(std::move(member_name));
+		member_names_.push_back(member_name);
 	}
 
 	const std::vector<ASTNode>& initializers() const {
@@ -2860,12 +2860,11 @@ public:
 		return index < is_designated_.size() && is_designated_[index];
 	}
 
-	const std::string& member_name(size_t index) const {
+	StringHandle member_name(size_t index) const {
 		if (index < member_names_.size()) {
 			return member_names_[index];
 		}
-		static const std::string empty;
-		return empty;
+		return StringHandle();  // Return invalid handle for out of bounds
 	}
 
 	bool has_any_designated() const {
@@ -2878,7 +2877,7 @@ public:
 private:
 	std::vector<ASTNode> initializers_;
 	std::vector<bool> is_designated_;
-	std::vector<std::string> member_names_;
+	std::vector<StringHandle> member_names_;
 };
 
 class IfStatementNode {
