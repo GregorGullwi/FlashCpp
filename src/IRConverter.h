@@ -10876,10 +10876,16 @@ private:
 				FLASH_LOG(Codegen, Error, "TempVar LHS with var_number=", lhs_var.var_number, " (name='", lhs_var.name(), "') not found");
 			}
 		} else if (std::holds_alternative<unsigned long long>(op.lhs.value)) {
-			FLASH_LOG(Codegen, Error, "LHS is an immediate value (unsigned long long) - invalid for assignment");
+			unsigned long long lhs_value = std::get<unsigned long long>(op.lhs.value);
+			std::ostringstream rhs_str;
+			printTypedValue(rhs_str, op.rhs);
+			FLASH_LOG(Codegen, Error, "[Line ", instruction.getLineNumber(), "] LHS is an immediate value (", lhs_value, ") - invalid for assignment. RHS: ", rhs_str.str());
 			return;
 		} else if (std::holds_alternative<double>(op.lhs.value)) {
-			FLASH_LOG(Codegen, Error, "LHS is an immediate value (double) - invalid for assignment");
+			double lhs_value = std::get<double>(op.lhs.value);
+			std::ostringstream rhs_str;
+			printTypedValue(rhs_str, op.rhs);
+			FLASH_LOG(Codegen, Error, "[Line ", instruction.getLineNumber(), "] LHS is an immediate value (", lhs_value, ") - invalid for assignment. RHS: ", rhs_str.str());
 			return;
 		} else {
 			FLASH_LOG(Codegen, Error, "LHS value has completely unexpected type in variant");
