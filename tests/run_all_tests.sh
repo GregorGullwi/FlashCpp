@@ -23,8 +23,8 @@ fi
 
 # Expected failures
 EXPECTED_FAIL=(
-    "test_cstdio_puts.cpp"  # Requires union support (anonymous unions in structs) for system headers
-                             # Note: extern "C" parsing has been fixed, test_extern_c_blocks.cpp now works
+    # Note: extern "C" parsing has been fixed, test_extern_c_blocks.cpp now works
+    # Note: Function type typedef parsing has been fixed, test_cstdio_puts.cpp now works
 )
 
 # Expected link failures - files that compile but require external C helper files or RTTI support
