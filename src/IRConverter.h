@@ -2652,7 +2652,7 @@ inline void emitAddImmToReg(std::vector<char>& textSectionData, X64Register reg,
  * @param textSectionData The vector to append opcodes to
  * @param offset The stack offset from RBP (negative for locals)
  */
-inline void emitLoadIndexIntoRCX(std::vector<char>& textSectionData, int64_t offset, int size_in_bits = 32) {
+inline void emitLoadIndexIntoRCX(std::vector<char>& textSectionData, int64_t offset, int size_in_bits) {
 	// For 32-bit values, use MOV r32, r/m32 which zero-extends to 64 bits
 	// For 64-bit values, use REX.W + MOV r64, r/m64
 	if (size_in_bits == 32) {
