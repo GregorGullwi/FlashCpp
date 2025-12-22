@@ -1564,6 +1564,9 @@ private:
 		// For member functions, reserve TempVar(1) for the implicit 'this' parameter
 		var_counter = node.is_member_function() ? TempVar(2) : TempVar();
 
+		// Clear global TempVar metadata to prevent stale data from bleeding into this function
+		GlobalTempVarMetadataStorage::instance().clear();
+
 		// Set current function name for static local variable mangling
 		const DeclarationNode& func_decl = node.decl_node();
 		current_function_name_ = StringTable::getOrInternStringHandle(func_decl.identifier_token().value());
@@ -2022,6 +2025,9 @@ private:
 		// Reset the temporary variable counter for each new constructor
 		// Constructors are always member functions, so reserve TempVar(1) for 'this'
 		var_counter = TempVar(2);
+
+		// Clear global TempVar metadata to prevent stale data from bleeding into this function
+		GlobalTempVarMetadataStorage::instance().clear();
 
 		// Set current function name for static local variable mangling
 		current_function_name_ = node.name();
@@ -2541,8 +2547,11 @@ private:
 		// Destructors are always member functions, so reserve TempVar(1) for 'this'
 		var_counter = TempVar(2);
 
-	// Set current function name for static local variable mangling
-	current_function_name_ = node.name();
+		// Clear global TempVar metadata to prevent stale data from bleeding into this function
+		GlobalTempVarMetadataStorage::instance().clear();
+
+		// Set current function name for static local variable mangling
+		current_function_name_ = node.name();
 	static_local_names_.clear();
 
 	// Create destructor declaration with typed payload
@@ -13474,6 +13483,9 @@ private:
 		// TempVar is 1-based (TempVar() starts at 1). For member functions (operator()),
 		// TempVar(1) is reserved for 'this', so we start at TempVar(2).
 		var_counter = TempVar(2);
+
+		// Clear global TempVar metadata to prevent stale data from bleeding into this function
+		GlobalTempVarMetadataStorage::instance().clear();
 
 		// Set current function return type and size for type checking in return statements
 		// This is critical for lambdas returning other lambdas or structs
