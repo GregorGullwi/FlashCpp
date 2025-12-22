@@ -9546,7 +9546,7 @@ private:
 				// If not found in the current class, search base classes
 				const StructTypeInfo* declaring_struct = struct_info;
 				if (!called_member_func && !struct_info->base_classes.empty()) {
-					std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
+					auto searchBaseClasses = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
 						for (const auto& base_spec : current_struct->base_classes) {
 							if (base_spec.type_index < gTypeInfo.size()) {
 								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
@@ -9567,14 +9567,14 @@ private:
 										}
 										// Recursively search base classes of this base class
 										if (!called_member_func) {
-											searchBaseClasses(base_struct_info);
+											self(self, base_struct_info);
 										}
 									}
 								}
 							}
 						}
 					};
-					searchBaseClasses(struct_info);
+					searchBaseClasses(searchBaseClasses, struct_info);
 				}
 				
 				// Use declaring_struct instead of struct_info for mangled name generation
