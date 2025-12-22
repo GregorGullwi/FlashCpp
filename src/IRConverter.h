@@ -7233,6 +7233,33 @@ private:
 		bool is_floating_point = (result_type == Type::Float || result_type == Type::Double);
 		bool is_float = (result_type == Type::Float);
 
+		// BUGFIX: Before using RAX or XMM0, flush them if they hold dirty data
+		// This prevents overwriting intermediate results in chained operations
+		X64Register target_reg = is_floating_point ? X64Register::XMM0 : X64Register::RAX;
+		auto& reg_info = regAlloc.registers[static_cast<size_t>(target_reg)];
+		if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
+			// Flush the register to memory before overwriting it
+			auto tempVarIndex = getTempVarFromOffset(reg_info.stackVariableOffset);
+			if (tempVarIndex.has_value()) {
+				int32_t stackVariableOffset = reg_info.stackVariableOffset;
+				int flush_size_in_bits = reg_info.size_in_bits;
+				
+				// Extend scope_stack_space if needed
+				if (stackVariableOffset < variable_scopes.back().scope_stack_space) {
+					variable_scopes.back().scope_stack_space = stackVariableOffset;
+				}
+				
+				// Store the register value to stack
+				emitMovToFrameSized(
+					SizedRegister{target_reg, 64, false},
+					SizedStackSlot{stackVariableOffset, flush_size_in_bits, false}
+				);
+			}
+			reg_info.isDirty = false;
+			// Clear the register allocation so it won't be reused without reloading
+			reg_info.stackVariableOffset = INT_MIN;
+		}
+
 		// Load the global value/address using RIP-relative addressing
 		uint32_t reloc_offset;
 		if (op.is_array) {

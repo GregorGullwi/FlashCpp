@@ -27,3 +27,8 @@ void test() {
     constexpr int local_a = 100;
     static_assert(local_a == 100, "local_a should be 100");
 }
+
+int main() {
+    // If all static_asserts pass, return sum of values
+    return a + b + e + f; // 10 + 15 + 3 + 25 = 53
+}
