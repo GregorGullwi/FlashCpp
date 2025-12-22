@@ -9543,6 +9543,44 @@ private:
 					}
 				}
 				
+				// If not found in the current class, search base classes
+				const StructTypeInfo* declaring_struct = struct_info;
+				if (!called_member_func && !struct_info->base_classes.empty()) {
+					std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
+						for (const auto& base_spec : current_struct->base_classes) {
+							if (base_spec.type_index < gTypeInfo.size()) {
+								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+								if (base_type_info.isStruct()) {
+									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+									if (base_struct_info) {
+										// Check member functions in base class
+										for (const auto& member_func : base_struct_info->member_functions) {
+											if (member_func.getName() == func_name_handle) {
+												called_member_func = &member_func;
+												declaring_struct = base_struct_info;  // Update to use base class name
+												if (member_func.is_virtual) {
+													is_virtual_call = true;
+													vtable_index = member_func.vtable_index;
+												}
+												return; // Stop searching once found
+											}
+										}
+										// Recursively search base classes of this base class
+										if (!called_member_func) {
+											searchBaseClasses(base_struct_info);
+										}
+									}
+								}
+							}
+						}
+					};
+					searchBaseClasses(struct_info);
+				}
+				
+				// Use declaring_struct instead of struct_info for mangled name generation
+				// This ensures we use the correct class name where the function is declared
+				struct_info = declaring_struct;
+				
 				// If not found as member function, check if it's a function pointer data member
 				if (!called_member_func) {
 					for (const auto& member : struct_info->members) {
