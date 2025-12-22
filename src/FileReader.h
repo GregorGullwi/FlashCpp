@@ -1798,7 +1798,7 @@ private:
 
 		// Check for the presence of a macro argument list
 		std::string rest_of_line;
-		std::getline(iss.ignore(100, ' '), rest_of_line);
+		std::getline(iss >> std::ws, rest_of_line);
 		size_t open_paren = name.find("(");
 
 		if (open_paren != std::string::npos) {
