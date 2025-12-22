@@ -3058,10 +3058,21 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Push struct parsing context for nested class support
 	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name), &struct_ref});
+	
+	// RAII guard to ensure stack is always popped, even on early returns
+	auto pop_stack_guard = [this](void*) { 
+		if (!struct_parsing_context_stack_.empty()) {
+			struct_parsing_context_stack_.pop_back(); 
+		}
+	};
+	std::unique_ptr<void, decltype(pop_stack_guard)> stack_guard(reinterpret_cast<void*>(1), pop_stack_guard);
 
 	// Create StructTypeInfo early so we can add base classes to it
 	// For nested classes, use the qualified name so getName() returns the full name for mangling
-	auto struct_info = std::make_unique<StructTypeInfo>(qualified_struct_name, struct_ref.default_access());
+	// For top-level classes, use the simple name to avoid incorrectly treating them as nested
+	// (the stack might not be empty due to early returns in previous struct parsing)
+	StringHandle struct_info_name = is_nested_class ? qualified_struct_name : struct_name;
+	auto struct_info = std::make_unique<StructTypeInfo>(struct_info_name, struct_ref.default_access());
 	struct_info->is_union = is_union;
 
 	// Apply pack alignment from #pragma pack BEFORE adding members
@@ -4969,7 +4980,7 @@ ParseResult Parser::parse_struct_declaration()
 		std::optional<ASTNode> body;
 		auto result = parse_delayed_function_body(delayed, body);
 		if (result.is_error()) {
-			struct_parsing_context_stack_.pop_back();
+			// Stack will be popped by the RAII guard
 			return result;
 		}
 	}
@@ -4981,8 +4992,7 @@ ParseResult Parser::parse_struct_declaration()
 	// This ensures the parser continues from the correct position
 	restore_token_position(position_after_struct);
 
-	// Pop struct parsing context
-	struct_parsing_context_stack_.pop_back();
+	// Stack will be popped by the RAII guard
 
 	// Store variable declarations for later processing
 	// They will be added to the AST by the caller

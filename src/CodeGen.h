@@ -2038,8 +2038,14 @@ private:
 					}
 				}
 			}
-			// Don't clear current_struct_name_ - it will be overwritten by the next struct
+			// Clear current_struct_name_ for top-level structs
 		
+			if (current_struct_name_.isValid()) {
+				std::string_view current_name = StringTable::getStringView(current_struct_name_);
+				if (current_name.find("::") == std::string_view::npos) {
+					current_struct_name_ = StringHandle();
+				}
+			}
 		// Restore the enclosing function context
 		current_function_name_ = saved_enclosing_function;
 	}
