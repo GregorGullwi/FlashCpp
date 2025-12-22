@@ -2652,9 +2652,17 @@ inline void emitAddImmToReg(std::vector<char>& textSectionData, X64Register reg,
  * @param textSectionData The vector to append opcodes to
  * @param offset The stack offset from RBP (negative for locals)
  */
-inline void emitLoadIndexIntoRCX(std::vector<char>& textSectionData, int64_t offset) {
-	textSectionData.push_back(0x48); // REX.W prefix for 64-bit operation
-	textSectionData.push_back(0x8B); // MOV r64, r/m64
+inline void emitLoadIndexIntoRCX(std::vector<char>& textSectionData, int64_t offset, int size_in_bits = 32) {
+	// For 32-bit values, use MOV r32, r/m32 which zero-extends to 64 bits
+	// For 64-bit values, use REX.W + MOV r64, r/m64
+	if (size_in_bits == 32) {
+		// 32-bit MOV (no REX.W needed, zero-extends automatically)
+		textSectionData.push_back(0x8B); // MOV r32, r/m32
+	} else {
+		// 64-bit MOV (needs REX.W)
+		textSectionData.push_back(0x48); // REX.W prefix for 64-bit operation
+		textSectionData.push_back(0x8B); // MOV r64, r/m64
+	}
 	
 	if (offset >= -128 && offset <= 127) {
 		// 8-bit displacement
@@ -11734,7 +11742,7 @@ private:
 				int64_t index_var_offset = getStackOffsetFromTempVar(index_var, op.index.size_in_bits);
 				
 				// Load index into RCX (value is already in RDX)
-				emitLoadIndexIntoRCX(textSectionData, index_var_offset);
+				emitLoadIndexIntoRCX(textSectionData, index_var_offset, op.index.size_in_bits);
 				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 				
 				if (is_pointer_to_array) {
@@ -11771,9 +11779,10 @@ private:
 					return;
 				}
 				int64_t index_var_offset = it->second.offset;
+				int index_size_in_bits = it->second.size_in_bits;
 				
 				// Load index into RCX (value is already in RDX)
-				emitLoadIndexIntoRCX(textSectionData, index_var_offset);
+				emitLoadIndexIntoRCX(textSectionData, index_var_offset, index_size_in_bits);
 				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 				
 				if (is_pointer_to_array) {
