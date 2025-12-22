@@ -1,24 +1,24 @@
 # Test Return Value Analysis
 
-# Test Return Value Analysis
+## Current Status (2025-12-22 - Session 15)
 
-## Current Status (2025-12-22 - Session 14)
-
-**654/670 tests passing (97.6%)**
+**656/672 tests passing (97.6%)**
 - 11 runtime crashes (C++ runtime compatibility - cannot be fixed at compiler level)
 - 0 compilation failures ✅
 - 0 link failures ✅
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
 
-**Recent Fixes (Session 14):**
-- ✅ Fixed test_lambda_copy_this_mutation.cpp - now compiles successfully
-- ✅ Fixed member function calls with empty structs and RVO
-  - Fixed 'this' pointer size to always be 64 bits (pointer size) regardless of struct size
-  - Fixed RVO parameter ordering: hidden return param comes BEFORE 'this' pointer
-  - Added uses_return_slot handling for member function calls that return struct by value
-  - Modified: `src/CodeGen.h` (line 9951-9963), `src/IRConverter.h` (lines 8000-8036)
-  - Result: 654/670 passing (up from 652/669)
+**Recent Fixes (Session 15):**
+- ✅ Fixed critical GlobalLoad register allocation bug in chained operations
+  - Global variable loads now flush dirty registers (RAX/XMM0) before overwriting
+  - Prevents incorrect results in expressions like `a + b + c + d` with global variables
+  - Modified: `src/IRConverter.h` (handleGlobalLoad function)
+  - Result: 656/672 passing (up from 654/670)
+- ✅ Added main() functions to previously untested files
+  - test_decltype.cpp - now validates decltype keyword support
+  - test_constexpr_var.cpp - now validates constexpr variable support
+  - Both tests now pass with correct return values
 
 ## Key Note on Return Values
 
@@ -30,40 +30,47 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 ## Recent Progress Summary
 
 <details>
+<summary><strong>Session 15: GlobalLoad Register Allocation Fix & Test Additions</strong></summary>
+
+- Fixed critical bug in chained global variable operations (e.g., `a + b + c`)
+- GlobalLoad operations now properly flush RAX/XMM0 before reuse
+- Added main() to test_decltype.cpp and test_constexpr_var.cpp
+- Modified: `src/IRConverter.h`
+- Result: 656/672 passing (97.6%), +2 tests from Session 14
+</details>
+
+<details>
 <summary><strong>Session 14: Member Function RVO & Lambda Fix</strong></summary>
 
 - Fixed member function calls returning struct by value with empty structs
 - Corrected 'this' pointer size (64 bits) for empty structs  
 - Fixed parameter order: hidden return param before 'this' in System V AMD64 ABI
-- Lambda compound assignment bug fully resolved (test_lambda_copy_this_mutation.cpp now compiles and runs)
-- Modified: `src/CodeGen.h`, `src/IRConverter.h`
+- Lambda compound assignment bug fully resolved (test_lambda_copy_this_mutation.cpp)
 - Result: 654/670 passing (97.6%)
 </details>
 
 <details>
 <summary><strong>Sessions 11-13: Member Access & Lambda Fixes</strong></summary>
 
-- **Session 13**: Investigated lambda compound assignment (partial fix, completed in Session 14)
-- **Session 12**: Fixed nested member access with AddressOf (`arr[i].member1.member2`)
-- **Session 11**: Fixed pointer array element size (64-bit pointers)
+- Fixed nested member access with AddressOf, pointer array element size, lambda compound assignment
 </details>
 
 <details>
 <summary><strong>Sessions 6-10: Core Compiler Features</strong></summary>
 
-TempVar offset calculation, array store alignment, large struct stack allocation, template specialization return types, virtual function vtable pointer dereference.
+- TempVar offset calculation, array store alignment, large struct stack allocation, template specialization return types, virtual function vtable pointer dereference
 </details>
 
 <details>
 <summary><strong>Sessions 1-5: Foundation</strong></summary>
 
-Array constructor calls, typeinfo generation, rvalue references, struct alignment, lambda decay, float literals, range-for, pointer sizes, vtable generation, pure virtual functions, stack alignment, function pointers, heap allocation.
+- Array constructor calls, typeinfo generation, rvalue references, struct alignment, lambda decay, float literals, range-for, pointer sizes, vtable generation, pure virtual functions, stack alignment, function pointers, heap allocation
 </details>
 
 ## Known Issues & Limitations
 
 ### ~~Lambda Compound Assignment Bug~~ ✅ FIXED (Session 14)
-Previously failed: `test_lambda_copy_this_mutation.cpp` - now compiles and runs successfully.
+### ~~GlobalLoad Register Allocation Bug~~ ✅ FIXED (Session 15)
 
 ### Float-to-Int Conversion
 Tests may return incorrect results but don't crash. Low priority.
@@ -100,6 +107,7 @@ Tests may return incorrect results but don't crash. Low priority.
 
 ---
 
-*Last Updated: 2025-12-22 (Session 14 - Member function RVO fix & Lambda compilation fix)*  
-*Status: 654/670 tests passing (97.6%), 11 runtime crashes, 0 compilation failures*  
+*Last Updated: 2025-12-22 (Session 15 - GlobalLoad register allocation fix & test additions)*  
+*Status: 656/672 tests passing (97.6%), 11 runtime crashes, 0 compilation failures*  
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
+
