@@ -115,11 +115,18 @@ public:
 			throw std::runtime_error("Failed to get symbol accessor");
 		}
 
+		// Determine symbol binding based on whether the function is inline
+		// Inline functions need STB_WEAK so the linker can discard duplicates
+		bool is_inline = false;
+		auto it = function_signatures_.find(std::string(mangled_name));
+		if (it != function_signatures_.end()) {
+			is_inline = it->second.is_inline;
+		}
+
 		// Add function symbol
 		ELFIO::Elf64_Addr value = section_offset;
 		ELFIO::Elf_Xword size = 0;  // Size will be updated later
-		unsigned char bind = (linkage == Linkage::C || linkage == Linkage::None) ? 
-		                     ELFIO::STB_GLOBAL : ELFIO::STB_GLOBAL;  // Global symbols
+		unsigned char bind = is_inline ? ELFIO::STB_WEAK : ELFIO::STB_GLOBAL;
 		unsigned char type = ELFIO::STT_FUNC;  // Function type
 		unsigned char other = ELFIO::STV_DEFAULT;  // Default visibility
 		ELFIO::Elf_Half section_index = text_section_->get_index();
@@ -627,10 +634,11 @@ public:
 	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
 	                          const std::vector<TypeSpecifierNode>& parameter_types,
 	                          Linkage linkage, bool is_variadic,
-	                          std::string_view mangled_name) {
+	                          std::string_view mangled_name, bool is_inline = false) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.linkage = linkage;
 		sig.is_variadic = is_variadic;
+		sig.is_inline = is_inline;
 		function_signatures_[std::string(mangled_name)] = sig;
 	}
 
@@ -650,11 +658,12 @@ public:
 	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
 	                          const std::vector<TypeSpecifierNode>& parameter_types,
 	                          std::string_view class_name, Linkage linkage, bool is_variadic,
-	                          std::string_view mangled_name) {
+	                          std::string_view mangled_name, bool is_inline = false) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.class_name = class_name;
 		sig.linkage = linkage;
 		sig.is_variadic = is_variadic;
+		sig.is_inline = is_inline;
 		function_signatures_[std::string(mangled_name)] = sig;
 	}
 

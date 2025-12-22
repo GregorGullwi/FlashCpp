@@ -6433,14 +6433,15 @@ private:
 		}
 
 		// Generate the call instruction
-		// For nested classes, split "Outer::Inner" into class="Outer" and function="Inner"
+		// For constructors, the function name is the last component of the class name
+		// For nested classes like "Outer::Inner", function_name="Inner" and class_name="Outer::Inner"
 		std::string function_name;
 		std::string class_name;
 		size_t last_colon_pos = struct_name.rfind("::");
 		if (last_colon_pos != std::string::npos) {
-			// Nested class: "Outer::Inner" -> class="Outer", function="Inner"
-			class_name = struct_name.substr(0, last_colon_pos);
+			// Nested class: "Outer::Inner" -> function="Inner", class="Outer::Inner" (full name)
 			function_name = struct_name.substr(last_colon_pos + 2);
+			class_name = struct_name;  // Keep full name for proper constructor detection
 		} else {
 			// Regular class: function_name = class_name = struct_name
 			function_name = struct_name;
@@ -7696,12 +7697,13 @@ private:
 
 		// Add function signature to the object file writer (still needed for debug info)
 		// but use the pre-computed mangled name instead of regenerating it
+		bool is_inline = func_decl.is_inline;
 		if (!struct_name.empty()) {
 			// Member function - include struct name
-			writer.addFunctionSignature(func_name, return_type, parameter_types, struct_name, linkage, is_variadic, mangled_name);
+			writer.addFunctionSignature(func_name, return_type, parameter_types, struct_name, linkage, is_variadic, mangled_name, is_inline);
 		} else {
 			// Regular function
-			writer.addFunctionSignature(func_name, return_type, parameter_types, linkage, is_variadic, mangled_name);
+			writer.addFunctionSignature(func_name, return_type, parameter_types, linkage, is_variadic, mangled_name, is_inline);
 		}
 		
 		// Finalize previous function before starting new one

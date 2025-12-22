@@ -4,7 +4,38 @@
 #include "IRTypes.h"
 #include "ChunkedString.h"
 
-// Shared name mangling utilities used by both CodeGen and ObjectFileWriter
+// =============================================================================
+// Name Mangling Utilities - Unified Architecture
+// =============================================================================
+//
+// This module provides cross-platform C++ name mangling support for both
+// MSVC and Itanium (Linux/Unix) mangling styles.
+//
+// ARCHITECTURE:
+// 
+// 1. **Entry Points** (use these):
+//    - generateMangledNameFromNode(FunctionDeclarationNode, ...)
+//    - generateMangledNameFromNode(ConstructorDeclarationNode, ...)
+//    - generateMangledNameFromNode(DestructorDeclarationNode, ...)
+//    - generateMangledName(func_name, return_type, params, ...)
+//
+// 2. **Style Selection**:
+//    All entry points automatically check g_mangling_style and dispatch to
+//    the appropriate implementation (Itanium or MSVC).
+//
+// 3. **Implementation Functions**:
+//    - generateItaniumMangledName(...) - Itanium C++ ABI (used on Linux/Unix)
+//    - generateMangledNameForConstructor(...) - MSVC constructor mangling
+//    - generateMangledNameForDestructor(...) - MSVC destructor mangling
+//    - MSVC regular function mangling (inline in generateMangledName)
+//
+// 4. **Special Handling**:
+//    - Constructors and destructors in Itanium ABI are treated as regular
+//      functions with special markers (C1/C2 for constructors, D1/D2 for destructors)
+//    - MSVC has dedicated mangling schemes for constructors (??0) and destructors (??1)
+//    - Nested classes require proper component splitting (e.g., "Outer::Inner" → "5Outer5Inner")
+//
+// =============================================================================
 
 namespace NameMangling {
 
@@ -238,12 +269,35 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		case Type::Struct:
 		case Type::UserDefined: {
 			// For structs/classes, use the struct name
-			// Format: <length><name>
+			// For nested classes, we need to split the name into components
+			// e.g., "Outer::Inner" should be encoded as "6Outer5Inner", not "12Outer::Inner"
 			if (type_node.type_index() < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
 				auto struct_name = StringTable::getStringView(type_info.name());
-				output += std::to_string(struct_name.size());
-				output += struct_name;
+				
+				// Check if this is a nested class (contains "::")
+				if (struct_name.find("::") != std::string_view::npos) {
+					// Split and encode each component separately
+					size_t start = 0;
+					while (start < struct_name.size()) {
+						size_t end = struct_name.find("::", start);
+						if (end == std::string_view::npos) {
+							end = struct_name.size();
+						}
+						
+						std::string_view component = struct_name.substr(start, end - start);
+						if (!component.empty()) {
+							output += std::to_string(component.size());
+							output += component;
+						}
+						
+						start = (end == struct_name.size()) ? end : end + 2;  // Skip "::"
+					}
+				} else {
+					// Simple class name, encode as-is
+					output += std::to_string(struct_name.size());
+					output += struct_name;
+				}
 			} else {
 				// Unknown struct type, use 'v' for void as fallback
 				output += 'v';
@@ -300,8 +354,24 @@ inline void generateItaniumMangledName(
 		
 		// Add struct/class name if present
 		if (!struct_name.empty()) {
-			output += std::to_string(struct_name.size());
-			output += struct_name;
+			// For nested classes, struct_name may contain "::" separators
+			// We need to encode each component separately
+			// e.g., "Outer::Inner" -> "5Outer5Inner"
+			size_t start = 0;
+			while (start < struct_name.size()) {
+				size_t end = struct_name.find("::", start);
+				if (end == std::string_view::npos) {
+					end = struct_name.size();
+				}
+				
+				std::string_view component = struct_name.substr(start, end - start);
+				if (!component.empty()) {
+					output += std::to_string(component.size());
+					output += component;
+				}
+				
+				start = (end == struct_name.size()) ? end : end + 2;  // Skip "::"
+			}
 		}
 		
 		// Add function name
@@ -310,10 +380,25 @@ inline void generateItaniumMangledName(
 			// Destructor: use D1 for complete destructor per Itanium C++ ABI
 			// D0 = deleting, D1 = complete, D2 = base
 			output += "D1";
-		} else if (!struct_name.empty() && func_name == struct_name) {
-			// Constructor: use C1 for complete constructor per Itanium C++ ABI
-			// C1 = complete, C2 = base, C3 = allocating
-			output += "C1";
+		} else if (!struct_name.empty()) {
+			// For nested classes, struct_name might be "Outer::Inner"
+			// Extract the last component to compare with func_name
+			std::string_view class_name = struct_name;
+			auto last_colon = struct_name.rfind("::");
+			if (last_colon != std::string_view::npos) {
+				class_name = struct_name.substr(last_colon + 2);
+			}
+			
+			// Check if this is a constructor (function name matches class name)
+			if (func_name == class_name) {
+				// Constructor: use C1 for complete constructor per Itanium C++ ABI
+				// C1 = complete, C2 = base, C3 = allocating
+				output += "C1";
+			} else {
+				// Regular function: <length><name>
+				output += std::to_string(func_name.size());
+				output += func_name;
+			}
 		} else {
 			// Regular function: <length><name>
 			output += std::to_string(func_name.size());
@@ -638,8 +723,16 @@ inline MangledName generateMangledNameFromNode(
 	return generateMangledNameFromNode(func_node, ns_views);
 }
 
-// Generate mangled name for a constructor
+// =============================================================================
+// MSVC-Specific Mangling Functions
+// NOTE: These should generally not be called directly. Use generateMangledNameFromNode()
+// or generateMangledName() which automatically select the correct mangling style.
+// =============================================================================
+
+// Generate MSVC mangled name for a constructor
 // MSVC mangles constructors as ??0ClassName@Namespace@@... where 0 is the constructor marker
+// This is called internally by generateMangledNameFromNode(ConstructorDeclarationNode) when
+// g_mangling_style == ManglingStyle::MSVC
 inline MangledName generateMangledNameForConstructor(
 	std::string_view struct_name,
 	const std::vector<TypeSpecifierNode>& param_types,
@@ -698,8 +791,10 @@ inline MangledName generateMangledNameForConstructor(
 	return MangledName(builder.commit());
 }
 
-// Generate mangled name for a destructor
+// Generate MSVC mangled name for a destructor
 // MSVC mangles destructors as ??1ClassName@Namespace@@... where 1 is the destructor marker
+// This is called internally by generateMangledNameFromNode(DestructorDeclarationNode) when
+// g_mangling_style == ManglingStyle::MSVC
 inline MangledName generateMangledNameForDestructor(
 	StringHandle struct_name,
 	const std::vector<std::string_view>& namespace_path = {}
@@ -727,8 +822,30 @@ inline MangledName generateMangledNameFromNode(
 	const ConstructorDeclarationNode& ctor_node,
 	const std::vector<std::string_view>& namespace_path = {}
 ) {
-	// Use the overload that accepts parameter nodes directly
-	return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path);
+	// Check mangling style and use appropriate mangler
+	if (g_mangling_style == ManglingStyle::Itanium) {
+		// For Itanium mangling, constructors are regular functions with C1/C2 markers
+		// We need to call the regular mangling function
+		// The constructor name is the same as the class name
+		std::string_view struct_name_sv = StringTable::getStringView(ctor_node.struct_name());
+		
+		// Extract the class name (last component after ::)
+		std::string_view class_name = struct_name_sv;
+		auto last_colon = struct_name_sv.rfind("::");
+		if (last_colon != std::string_view::npos) {
+			class_name = struct_name_sv.substr(last_colon + 2);
+		}
+		
+		// Create a dummy TypeSpecifierNode for the return type (constructors return void)
+		TypeSpecifierNode return_type(Type::Void, TypeQualifier::None, 0);
+		
+		// Call the regular mangling function with the class name as the function name
+		return generateMangledName(class_name, return_type, ctor_node.parameter_nodes(),
+		                           false, struct_name_sv, namespace_path, Linkage::CPlusPlus);
+	} else {
+		// Use MSVC-style constructor mangling
+		return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path);
+	}
 }
 
 // Generate mangled name from a DestructorDeclarationNode
@@ -736,7 +853,33 @@ inline MangledName generateMangledNameFromNode(
 	const DestructorDeclarationNode& dtor_node,
 	const std::vector<std::string_view>& namespace_path = {}
 ) {
-	return generateMangledNameForDestructor(dtor_node.struct_name(), namespace_path);
+	// Check mangling style and use appropriate mangler
+	if (g_mangling_style == ManglingStyle::Itanium) {
+		// For Itanium mangling, destructors are regular functions with D1/D2 markers
+		// The destructor name is "~ClassName"
+		std::string_view struct_name_sv = StringTable::getStringView(dtor_node.struct_name());
+		
+		// Extract the class name (last component after ::)
+		std::string_view class_name = struct_name_sv;
+		auto last_colon = struct_name_sv.rfind("::");
+		if (last_colon != std::string_view::npos) {
+			class_name = struct_name_sv.substr(last_colon + 2);
+		}
+		
+		// Build destructor name: "~ClassName"
+		std::string dtor_name = "~";
+		dtor_name += class_name;
+		
+		// Create a dummy TypeSpecifierNode for the return type (destructors return void)
+		TypeSpecifierNode return_type(Type::Void, TypeQualifier::None, 0);
+		
+		// Call the regular mangling function with "~ClassName" as the function name
+		return generateMangledName(dtor_name, return_type, std::vector<ASTNode>{},
+		                           false, struct_name_sv, namespace_path, Linkage::CPlusPlus);
+	} else {
+		// Use MSVC-style destructor mangling
+		return generateMangledNameForDestructor(dtor_node.struct_name(), namespace_path);
+	}
 }
 
 } // namespace NameMangling

@@ -1670,6 +1670,11 @@ private:
 		// Linkage and variadic flag
 		func_decl_op.linkage = node.linkage();
 		func_decl_op.is_variadic = node.is_variadic();
+		
+		// Member functions defined inside the class body are implicitly inline (C++ standard)
+		// Mark them as inline so they get weak linkage in the object file to allow duplicate definitions
+		// This includes constructors, destructors, and regular member functions defined inline
+		func_decl_op.is_inline = node.is_member_function();
 
 		// Use pre-computed mangled name from AST node if available (Phase 6 migration)
 		// Fall back to generating it here if not (for backward compatibility during migration)
@@ -2057,16 +2062,19 @@ private:
 		ctor_decl_op.return_pointer_depth = 0;  // Pointer depth is 0 for void
 		ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
 		ctor_decl_op.is_variadic = false;  // Constructors are never variadic
+		// Constructors defined inside class body are implicitly inline (C++ standard)
+		// Mark them as inline so they get weak linkage in the object file
+		ctor_decl_op.is_inline = true;
 
 		// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
-		// For nested classes, use just the last component as the constructor name
+		// For nested classes, use the full struct name for mangling
 		TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
 		ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(generateMangledNameForCall(
 			ctor_function_name,
 			void_type,
 			node.parameter_nodes(),  // Use parameter nodes directly
 			false,  // not variadic
-			parent_class_name  // parent class name for mangling (e.g., "Outer" for "Outer::Inner::Inner")
+			struct_name_for_ctor  // Use full struct name for mangling (e.g., "Outer::Inner")
 		));
 		
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
@@ -3284,26 +3292,33 @@ private:
 
 			// Compare condition with case value using Equal opcode
 			TempVar cmp_result = var_counter.next();
-			std::vector<IrOperand> cmp_operands;
-			cmp_operands.push_back(cmp_result);
-			cmp_operands.push_back(condition_type);
-			cmp_operands.push_back(condition_size);
-			cmp_operands.push_back(condition_operands[2]);  // condition value
-			cmp_operands.push_back(condition_type);
-			cmp_operands.push_back(condition_size);
-			cmp_operands.push_back(case_value_operands[2]);  // case value
-			ir_.addInstruction(IrOpcode::Equal, std::move(cmp_operands), Token());
+			
+			// Create typed BinaryOp for the Equal comparison
+			BinaryOp bin_op{
+				.lhs = TypedValue{.type = condition_type, .size_in_bits = condition_size, .value = toIrValue(condition_operands[2])},
+				.rhs = TypedValue{.type = std::get<Type>(case_value_operands[0]), .size_in_bits = std::get<int>(case_value_operands[1]), .value = toIrValue(case_value_operands[2])},
+				.result = cmp_result,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(bin_op), Token()));
 
 			// Branch to case label if equal, otherwise check next case
 			StringBuilder next_check_sb;
 			next_check_sb.append("switch_check_").append(switch_counter - 1).append("_").append(check_index + 1);
 			std::string_view next_check_label = next_check_sb.commit();
 
+			// For switch statements, we need to jump to case label when condition is true
+			// and fall through to next check when false. Since both labels are forward references,
+			// we emit: test condition; jz next_check; jmp case_label
 			CondBranchOp cond_branch;
-			cond_branch.label_true = StringTable::getOrInternStringHandle(case_label);
-			cond_branch.label_false = StringTable::getOrInternStringHandle(next_check_label);
+			cond_branch.label_true = StringTable::getOrInternStringHandle(next_check_label); // Swap: jump to next if FALSE
+			cond_branch.label_false = StringTable::getOrInternStringHandle(case_label);      // This won't be used
 			cond_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 1, .value = cmp_result};
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
+
+			// Unconditional branch to case label (when condition is true)
+			BranchOp branch_to_case;
+			branch_to_case.target_label = StringTable::getOrInternStringHandle(case_label);
+			ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_case), Token()));
 
 			// Next check label
 			LabelOp next_lbl;
@@ -9535,6 +9550,44 @@ private:
 						break;
 					}
 				}
+				
+				// If not found in the current class, search base classes
+				const StructTypeInfo* declaring_struct = struct_info;
+				if (!called_member_func && !struct_info->base_classes.empty()) {
+					auto searchBaseClasses = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
+						for (const auto& base_spec : current_struct->base_classes) {
+							if (base_spec.type_index < gTypeInfo.size()) {
+								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+								if (base_type_info.isStruct()) {
+									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+									if (base_struct_info) {
+										// Check member functions in base class
+										for (const auto& member_func : base_struct_info->member_functions) {
+											if (member_func.getName() == func_name_handle) {
+												called_member_func = &member_func;
+												declaring_struct = base_struct_info;  // Update to use base class name
+												if (member_func.is_virtual) {
+													is_virtual_call = true;
+													vtable_index = member_func.vtable_index;
+												}
+												return; // Stop searching once found
+											}
+										}
+										// Recursively search base classes of this base class
+										if (!called_member_func) {
+											self(self, base_struct_info);
+										}
+									}
+								}
+							}
+						}
+					};
+					searchBaseClasses(searchBaseClasses, struct_info);
+				}
+				
+				// Use declaring_struct instead of struct_info for mangled name generation
+				// This ensures we use the correct class name where the function is declared
+				struct_info = declaring_struct;
 				
 				// If not found as member function, check if it's a function pointer data member
 				if (!called_member_func) {
