@@ -2690,6 +2690,116 @@ private:
 	void visitReturnStatementNode(const ReturnStatementNode& node) {
 		if (node.expression()) {
 			const auto& expr_opt = node.expression();
+			
+			// Handle InitializerListNode for braced initializers in return statements
+			if (expr_opt->is<InitializerListNode>()) {
+				// Create a temporary variable to hold the initialized struct
+				TempVar temp_var = var_counter.next();
+				
+				// Generate initialization code similar to variable declarations
+				const InitializerListNode& init_list = expr_opt->as<InitializerListNode>();
+				
+				// Get struct type information
+				Type return_type = current_function_return_type_;
+				int return_size = current_function_return_size_;
+				
+				if (return_type != Type::Struct) {
+					FLASH_LOG(Codegen, Error, "InitializerListNode in return statement for non-struct type");
+					return;
+				}
+				
+				// Find the struct info
+				TypeIndex type_index = 0;
+				const StructTypeInfo* struct_info = nullptr;
+				
+				// Look up the struct by return type index or name
+				for (size_t i = 0; i < gTypeInfo.size(); ++i) {
+					if (gTypeInfo[i].struct_info_ &&
+					    static_cast<int>(gTypeInfo[i].struct_info_->total_size * 8) == return_size) {
+						type_index = static_cast<TypeIndex>(i);
+						struct_info = gTypeInfo[i].struct_info_.get();
+						break;
+					}
+				}
+				
+				if (!struct_info) {
+					FLASH_LOG(Codegen, Error, "Could not find struct type info for return type");
+					return;
+				}
+				
+				// Process initializer list to generate member stores
+				const auto& initializers = init_list.initializers();
+				std::unordered_map<std::string, const ASTNode*> member_values;
+				size_t positional_index = 0;
+				
+				for (size_t i = 0; i < initializers.size(); ++i) {
+					if (init_list.is_designated(i)) {
+						// Designated initializer - use member name
+						const std::string& member_name = init_list.member_name(i);
+						member_values[member_name] = &initializers[i];
+					} else {
+						// Positional initializer - map to member by index
+						if (positional_index < struct_info->members.size()) {
+							const std::string member_name = std::string(StringTable::getStringView(struct_info->members[positional_index].getName()));
+							member_values[member_name] = &initializers[i];
+							positional_index++;
+						}
+					}
+				}
+				
+				// Generate member stores for each initialized member
+				for (const StructMember& member : struct_info->members) {
+					const std::string member_name_str = std::string(StringTable::getStringView(member.getName()));
+					auto it = member_values.find(member_name_str);
+					
+					if (it != member_values.end()) {
+						// Evaluate the initializer expression
+						const ASTNode* init_expr = it->second;
+						if (init_expr->is<ExpressionNode>()) {
+							auto init_operands = visitExpressionNode(init_expr->as<ExpressionNode>());
+							
+							if (init_operands.size() >= 3) {
+								// Generate member store
+								MemberStoreOp store_op;
+								store_op.object = temp_var;
+								store_op.member_name = member.getName();
+								store_op.offset = static_cast<int>(member.offset);
+								
+								// Create TypedValue from operands
+								Type value_type = std::get<Type>(init_operands[0]);
+								int value_size = std::get<int>(init_operands[1]);
+								IrValue ir_value;
+								
+								// Extract value from operands
+								if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+									ir_value = std::get<unsigned long long>(init_operands[2]);
+								} else if (std::holds_alternative<TempVar>(init_operands[2])) {
+									ir_value = std::get<TempVar>(init_operands[2]);
+								} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
+									ir_value = std::get<StringHandle>(init_operands[2]);
+								} else if (std::holds_alternative<double>(init_operands[2])) {
+									ir_value = std::get<double>(init_operands[2]);
+								}
+								
+								store_op.value = { value_type, value_size, ir_value };
+								store_op.is_reference = false;
+								
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), node.return_token()));
+							}
+						}
+					}
+				}
+				
+				// Now return the temporary variable
+				ReturnOp ret_op;
+				ret_op.return_value = temp_var;
+				ret_op.return_type = return_type;
+				ret_op.return_size = return_size;
+				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
+				return;
+			}
+			
+			// Original handling for ExpressionNode
 			assert(expr_opt->is<ExpressionNode>());
 			auto operands = visitExpressionNode(expr_opt->as<ExpressionNode>());
 			

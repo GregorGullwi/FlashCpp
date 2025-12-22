@@ -13356,7 +13356,6 @@ ParseResult Parser::parse_primary_expression()
 		}
 		
 		const TypeSpecifierNode& return_type = return_type_node.as<TypeSpecifierNode>();
-		Token init_token = *current_token_;  // Save the opening brace token
 		
 		// Parse the braced initializer with the return type
 		ParseResult init_result = parse_brace_initializer(return_type);
@@ -13368,34 +13367,9 @@ ParseResult Parser::parse_primary_expression()
 			return ParseResult::error("Expected initializer expression", *current_token_);
 		}
 		
-		// Check if the result is an InitializerListNode
-		if (init_result.node()->is<InitializerListNode>()) {
-			// Extract the initializer expressions from the InitializerListNode
-			// and create a ConstructorCallNode with them as arguments
-			const InitializerListNode& init_list = init_result.node()->as<InitializerListNode>();
-			
-			ASTNode type_node_copy = return_type_node;
-			ChunkedVector<ASTNode> args;
-			
-			// Add each initializer expression as an argument
-			for (const auto& init_expr : init_list.initializers()) {
-				args.push_back(init_expr);
-			}
-			
-			auto ctor_call = emplace_node<ExpressionNode>(
-				ConstructorCallNode(type_node_copy, std::move(args), init_token));
-			
-			return ParseResult::success(ctor_call);
-		} else {
-			// For scalar types, parse_brace_initializer already returns an expression
-			// Return it directly if it's already an ExpressionNode
-			if (init_result.node()->is<ExpressionNode>()) {
-				return init_result;
-			} else {
-				// This shouldn't happen, but wrap it just in case
-				return ParseResult::error("Unexpected initializer type", *current_token_);
-			}
-		}
+		// For scalar types, parse_brace_initializer already returns an expression
+		// Just return it directly
+		return init_result;
 	}
 	else if (consume_punctuator("(")) {
 		// Could be either:
