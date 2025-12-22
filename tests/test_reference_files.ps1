@@ -153,16 +153,7 @@ Write-Host ""
 # Expected compile failures - files that are intentionally designed to fail compilation
 # or use features not yet implemented in FlashCpp
 # NOTE: Files with _fail.cpp suffix are automatically tested separately
-#
-# Intentionally invalid code (tests error detection):
-#   - concept_error_test_fail.cpp - Tests constraint error messages
-#
-# Unimplemented features:
 $expectedCompileFailures = @(
-  # test_cstddef.cpp - Now compiles successfully
-  # test_cstdio_puts.cpp - Now compiles successfully
-  # test_cstdlib.cpp - Compiles but has link issues (moved to expectedLinkFailures)
-  # test_lambda_cpp20_comprehensive.cpp - Now compiles with unsupported features commented out
 )
 
 # Expected link failures - files that compile but have known link issues
