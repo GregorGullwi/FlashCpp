@@ -5143,7 +5143,7 @@ private:
 	                                            ExpressionContext context = ExpressionContext::Load) {
 		if (std::holds_alternative<IdentifierNode>(exprNode)) {
 			const auto& expr = std::get<IdentifierNode>(exprNode);
-			return generateIdentifierIr(expr);
+			return generateIdentifierIr(expr, context);
 		}
 		else if (std::holds_alternative<QualifiedIdentifierNode>(exprNode)) {
 			const auto& expr = std::get<QualifiedIdentifierNode>(exprNode);
@@ -5307,7 +5307,8 @@ private:
 		return size_bits;
 	}
 
-	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode) {
+	std::vector<IrOperand> generateIdentifierIr(const IdentifierNode& identifierNode, 
+	                                             ExpressionContext context = ExpressionContext::Load) {
 		// Check if this is a captured variable in a lambda
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 		if (current_lambda_context_.isActive() &&
@@ -5613,6 +5614,7 @@ private:
 			// Lvalue reference parameters hold an address, and we need to load the value from that address
 			// EXCEPT for array references, where the reference IS the array pointer
 			// NOTE: Rvalue references (&&) are NOT dereferenced - they're passed/stored as pointers but used as-is
+			// IMPORTANT: When context is LValueAddress (e.g., LHS of assignment), DON'T dereference - return the parameter name directly
 			if (type_node.is_reference() && !type_node.is_rvalue_reference()) {
 				// For references to arrays (e.g., int (&arr)[3]), the reference parameter
 				// already holds the array address directly. We don't dereference it.
@@ -5623,7 +5625,21 @@ private:
 					return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
 				}
 				
-				// For non-array references, we need to dereference to get the value
+				// For LValueAddress context (e.g., LHS of assignment), return the parameter name directly
+				// The parameter holds an address, and we want to assign to that address, not to a dereferenced temp
+				if (context == ExpressionContext::LValueAddress) {
+					// Return the parameter name as the lvalue (it's a reference, so it's already an address)
+					// Use helper function to calculate size_bits with proper fallback handling
+					int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
+					
+					// For the 4th element (same logic as regular variables)
+					unsigned long long fourth_element = (type_node.type() == Type::Struct)
+						? static_cast<unsigned long long>(type_node.type_index())
+						: ((type_node.pointer_depth() > 0) ? static_cast<unsigned long long>(type_node.pointer_depth()) : 0ULL);
+					return { type_node.type(), size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
+				}
+				
+				// For non-array references in Load context, we need to dereference to get the value
 				TempVar result_temp = var_counter.next();
 				DereferenceOp deref_op;
 				deref_op.result = result_temp;
@@ -7509,7 +7525,9 @@ private:
 		}
 
 		// Generate IR for the left-hand side and right-hand side of the operation
-		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>());
+		// For assignment (=), use LValueAddress context for LHS to avoid dereferencing reference parameters
+		ExpressionContext lhs_context = (op == "=") ? ExpressionContext::LValueAddress : ExpressionContext::Load;
+		auto lhsIrOperands = visitExpressionNode(binaryOperatorNode.get_lhs().as<ExpressionNode>(), lhs_context);
 		auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 		// Try unified metadata-based handler for compound assignments on identifiers
