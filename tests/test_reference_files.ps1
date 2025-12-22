@@ -159,9 +159,9 @@ Write-Host ""
 #
 # Unimplemented features:
 $expectedCompileFailures = @(
-  "test_cstddef.cpp"
-  "test_cstdio_puts.cpp"
-  "test_cstdlib.cpp"
+  # test_cstddef.cpp - Now compiles successfully
+  # test_cstdio_puts.cpp - Now compiles successfully
+  # test_cstdlib.cpp - Compiles but has link issues (moved to expectedLinkFailures)
   # test_lambda_cpp20_comprehensive.cpp - Now compiles with unsupported features commented out
 )
 
@@ -174,6 +174,7 @@ $expectedLinkFailures = @(
     # Self-contained ABI tests (link on Linux but fail on Windows)
     "test_mixed_abi.cpp"
     "test_linux_abi.cpp"  # Tests 6 integer params (Linux ABI specific)
+    "test_cstdlib.cpp"    # Needs builtin functions (__builtin_labs, __builtin_llabs, __builtin_fabs, __builtin_fabsf)
     "test_full_spec_inherit.cpp"          # Demonstrates full specialization inheritance parsing (Priority 8b: implicit constructor issue)
     "test_full_spec_inherit_simple.cpp"   # Demonstrates full specialization inheritance parsing (Priority 8b: implicit constructor issue)
 )
