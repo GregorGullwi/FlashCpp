@@ -3498,49 +3498,92 @@ ParseResult Parser::parse_struct_declaration()
 				continue;
 			}
 
-			// Check for nested class/struct declaration
-			if (keyword == "class" || keyword == "struct") {
-				// Parse nested class
-				auto nested_result = parse_struct_declaration();
-				if (nested_result.is_error()) {
-					return nested_result;
-				}
-
-				if (auto nested_node = nested_result.node()) {
-					// Set enclosing class relationship
-					auto& nested_struct = nested_node->as<StructDeclarationNode>();
-					nested_struct.set_enclosing_class(&struct_ref);
-
-					// Add to outer class
-					struct_ref.add_nested_class(*nested_node);
-
-					// Update type info - use qualified name to avoid ambiguity with multiple nested classes with the same simple name
-					// The qualified name is "Outer::Inner" and was registered at the start of parse_struct_declaration
-					// Use qualified_struct_name for deeper nesting support (e.g., "Outer::Middle::Inner")
-					std::string_view qualified_nested_name = StringBuilder()
-						.append(qualified_struct_name)
-						.append("::")
-						.append(nested_struct.name())
-						.commit();
-					auto nested_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_nested_name));
-					if (nested_type_it != gTypesByName.end()) {
-						const StructTypeInfo* nested_info_const = nested_type_it->second->getStructInfo();
-						if (nested_info_const) {
-							// Cast away const for adding to nested classes
-							StructTypeInfo* nested_info = const_cast<StructTypeInfo*>(nested_info_const);
-							struct_info->addNestedClass(nested_info);
+			// Check for nested class/struct/union declaration
+			if (keyword == "class" || keyword == "struct" || keyword == "union") {
+				// Peek ahead to determine if this is:
+				// 1. Anonymous struct/union: struct { ... } member;
+				// 2. Nested struct declaration: struct Name { ... };
+				// 3. Member with struct type: struct Name member; or struct Name *ptr;
+				SaveHandle saved_pos = save_token_position();
+				consume_token(); // consume 'struct', 'class', or 'union'
+				
+				if (peek_token().has_value() && peek_token()->value() == "{") {
+					// Pattern 1: Anonymous union/struct as a member
+					// Skip the entire anonymous union/struct block
+					// This is a minimal implementation - full support would require flattening members into the parent struct
+					
+					int brace_depth = 0;
+					do {
+						if (peek_token()->value() == "{") {
+							brace_depth++;
+						} else if (peek_token()->value() == "}") {
+							brace_depth--;
 						}
-
-						// Also register the qualified name using the StructDeclarationNode's qualified_name()
-						// This ensures consistency with the type lookup
-						auto qualified_name = StringTable::getOrInternStringHandle(qualified_nested_name);
-						if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
-							gTypesByName.emplace(qualified_name, nested_type_it->second);
-						}
+						consume_token();
+					} while (peek_token().has_value() && brace_depth > 0);
+					
+					// After the closing '}', there should be a member name or semicolon
+					// Consume until we hit a semicolon
+					while (peek_token().has_value() && peek_token()->value() != ";") {
+						consume_token();
 					}
-				}
+					if (peek_token().has_value() && peek_token()->value() == ";") {
+						consume_token();
+					}
+					
+					discard_saved_token(saved_pos);
+					continue;  // Skip to next member
+				} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+					// Could be pattern 2 or 3
+					consume_token(); // consume the identifier (struct name)
+					
+					if (peek_token().has_value() && (peek_token()->value() == "{" || peek_token()->value() == ";")) {
+						// Pattern 2: Nested struct declaration
+						restore_token_position(saved_pos);
+						auto nested_result = parse_struct_declaration();
+						if (nested_result.is_error()) {
+							return nested_result;
+						}
 
-				continue;  // Skip to next member
+						if (auto nested_node = nested_result.node()) {
+							// Set enclosing class relationship
+							auto& nested_struct = nested_node->as<StructDeclarationNode>();
+							nested_struct.set_enclosing_class(&struct_ref);
+
+							// Add to outer class
+							struct_ref.add_nested_class(*nested_node);
+
+							// Update type info - use qualified name to avoid ambiguity
+							std::string_view qualified_nested_name = StringBuilder()
+								.append(qualified_struct_name)
+								.append("::")
+								.append(nested_struct.name())
+								.commit();
+							auto nested_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_nested_name));
+							if (nested_type_it != gTypesByName.end()) {
+								const StructTypeInfo* nested_info_const = nested_type_it->second->getStructInfo();
+								if (nested_info_const) {
+									StructTypeInfo* nested_info = const_cast<StructTypeInfo*>(nested_info_const);
+									struct_info->addNestedClass(nested_info);
+								}
+
+								auto qualified_name = StringTable::getOrInternStringHandle(qualified_nested_name);
+								if (gTypesByName.find(qualified_name) == gTypesByName.end()) {
+									gTypesByName.emplace(qualified_name, nested_type_it->second);
+								}
+							}
+						}
+
+						continue;  // Skip to next member
+					} else {
+						// Pattern 3: Member with struct type (struct Name member; or struct Name *ptr;)
+						// Restore and let normal member parsing handle it
+						restore_token_position(saved_pos);
+					}
+				} else {
+					// Not a nested declaration, restore and let normal parsing handle it
+					restore_token_position(saved_pos);
+				}
 			}
 		}
 
@@ -5316,7 +5359,7 @@ ParseResult Parser::parse_typedef_declaration()
 		// Pattern 2: typedef struct Name { ... } alias;
 		// Pattern 3: typedef union { ... } alias;
 		// Pattern 4: typedef union Name { ... } alias;
-		auto next_pos = current_token_;
+		SaveHandle next_pos = save_token_position();
 		consume_token(); // consume 'struct', 'class', or 'union'
 
 		// Check if next token is '{' (anonymous struct/union) or identifier followed by '{'
@@ -5326,6 +5369,7 @@ ParseResult Parser::parse_typedef_declaration()
 			// Use a unique temporary name for the struct/union (will be replaced by typedef alias)
 			// Use the current AST size to make it unique
 			struct_name_for_typedef = StringTable::getOrInternStringHandle(StringBuilder().append("__anonymous_typedef_struct_"sv).append(ast_nodes_.size()));
+			discard_saved_token(next_pos);
 		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 			auto struct_name_token = peek_token();
 			consume_token(); // consume struct/union name
@@ -5334,14 +5378,15 @@ ParseResult Parser::parse_typedef_declaration()
 				// Pattern 2/4: typedef struct/union Name { ... } alias;
 				is_inline_struct = true;
 				struct_name_for_typedef = StringTable::getOrInternStringHandle(struct_name_token->value());
+				discard_saved_token(next_pos);
 			} else {
 				// Not an inline definition, restore position and parse normally
-				current_token_ = next_pos;
+				restore_token_position(next_pos);
 				is_inline_struct = false;
 			}
 		} else {
 			// Not an inline definition, restore position and parse normally
-			current_token_ = next_pos;
+			restore_token_position(next_pos);
 			is_inline_struct = false;
 		}
 	}
@@ -5514,6 +5559,42 @@ ParseResult Parser::parse_typedef_declaration()
 		AccessSpecifier current_access = AccessSpecifier::Public;
 
 		while (peek_token().has_value() && peek_token()->value() != "}") {
+			// Check for anonymous union/struct (union { ... } member_name;)
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+			    (peek_token()->value() == "union" || peek_token()->value() == "struct")) {
+				// Peek ahead to see if this is anonymous (followed by '{')
+				SaveHandle saved_pos = save_token_position();
+				consume_token(); // consume 'union' or 'struct'
+				
+				if (peek_token().has_value() && peek_token()->value() == "{") {
+					// Anonymous union/struct - skip it for now
+					// Full implementation would parse and flatten members
+					int brace_depth = 0;
+					do {
+						if (peek_token()->value() == "{") {
+							brace_depth++;
+						} else if (peek_token()->value() == "}") {
+							brace_depth--;
+						}
+						consume_token();
+					} while (peek_token().has_value() && brace_depth > 0);
+					
+					// Skip to semicolon
+					while (peek_token().has_value() && peek_token()->value() != ";") {
+						consume_token();
+					}
+					if (peek_token().has_value() && peek_token()->value() == ";") {
+						consume_token();
+					}
+					
+					discard_saved_token(saved_pos);
+					continue;
+				} else {
+					// Named union/struct - restore and parse as type
+					restore_token_position(saved_pos);
+				}
+			}
+			
 			// Parse member declaration
 			auto member_type_result = parse_type_specifier();
 			if (member_type_result.is_error()) {
@@ -6726,14 +6807,14 @@ ParseResult Parser::parse_type_specifier()
 	// - "enum : type { }" and "enum TypeName { }" are declarations, not type specifiers
 	//   and should be caught by higher-level parsing (e.g., in struct member loop)
 	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Keyword &&
-	         (current_token_opt->value() == "struct" || current_token_opt->value() == "class")) {
-		// Handle "struct TypeName" or "class TypeName"
-		consume_token(); // consume 'struct' or 'class'
+	         (current_token_opt->value() == "struct" || current_token_opt->value() == "class" || current_token_opt->value() == "union")) {
+		// Handle "struct TypeName", "class TypeName", or "union TypeName"
+		consume_token(); // consume 'struct', 'class', or 'union'
 
 		// Get the type name
 		current_token_opt = peek_token();
 		if (!current_token_opt.has_value() || current_token_opt->type() != Token::Type::Identifier) {
-			return ParseResult::error("Expected type name after 'struct' or 'class'",
+			return ParseResult::error("Expected type name after 'struct', 'class', or 'union'",
 			                          current_token_opt.value_or(Token()));
 		}
 
