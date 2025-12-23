@@ -1004,7 +1004,8 @@ private:
 };
 
 // Global lazy member instantiation registry
-extern LazyMemberInstantiationRegistry gLazyMemberRegistry;
+// Note: Use LazyMemberInstantiationRegistry::getInstance() to access
+// (cannot use global variable due to singleton pattern)
 
 // ============================================================================
 // C++20 Concepts Registry (inline with TemplateRegistry since they're related)
