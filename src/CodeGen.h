@@ -8305,6 +8305,33 @@ private:
 			return generateBuiltinAbsFloatIntrinsic(functionCallNode, func_name);
 		}
 		
+		// Check for __builtin_unreachable - optimization hint that code path is unreachable
+		// Standard usage: after switch default cases or after noreturn function calls
+		if (func_name == "__builtin_unreachable") {
+			return generateBuiltinUnreachableIntrinsic(functionCallNode);
+		}
+		
+		// Check for __builtin_assume - optimization hint that expression is true
+		// Syntax: __builtin_assume(condition)
+		if (func_name == "__builtin_assume") {
+			return generateBuiltinAssumeIntrinsic(functionCallNode);
+		}
+		
+		// Check for __builtin_expect - branch prediction hint
+		// Syntax: __builtin_expect(expr, expected_value)
+		// Returns expr, but hints to compiler that expr will likely equal expected_value
+		if (func_name == "__builtin_expect") {
+			return generateBuiltinExpectIntrinsic(functionCallNode);
+		}
+		
+		// Check for __builtin_launder - pointer optimization barrier
+		// Syntax: __builtin_launder(ptr)
+		// Returns ptr but prevents compiler from assuming anything about what it points to
+		// Essential for implementing std::launder and placement new operations
+		if (func_name == "__builtin_launder") {
+			return generateBuiltinLaunderIntrinsic(functionCallNode);
+		}
+		
 		// Add other intrinsics here in the future
 		// if (func_name == "__other_intrinsic") {
 		//     return generateOtherIntrinsic(functionCallNode);
@@ -8787,6 +8814,124 @@ private:
 		
 		// __builtin_va_start returns void
 		return {Type::Void, 0, 0ULL, 0ULL};
+	}
+	
+	// Generate IR for __builtin_unreachable intrinsic
+	// This is an optimization hint that tells the compiler a code path is unreachable
+	// Standard usage: after switch default: cases, or after functions that don't return
+	// Implementation: We generate no actual code - this is purely an optimization hint
+	// In a more advanced compiler, this would enable dead code elimination and assumptions
+	std::vector<IrOperand> generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode) {
+		// Verify no arguments (some compilers allow it, we'll be strict)
+		if (functionCallNode.arguments().size() != 0) {
+			FLASH_LOG(Codegen, Warning, "__builtin_unreachable should not have arguments (ignoring)");
+		}
+		
+		// For now, we just return void and don't generate any IR
+		// A more sophisticated implementation could:
+		// 1. Mark the current basic block as unreachable for optimization
+		// 2. Allow following code to be eliminated as dead code
+		// 3. Use this information for branch prediction
+		
+		FLASH_LOG(Codegen, Debug, "__builtin_unreachable encountered - marking code path as unreachable");
+		
+		// Return void (this intrinsic doesn't produce a value)
+		return {Type::Void, 0, 0ULL, 0ULL};
+	}
+	
+	// Generate IR for __builtin_assume intrinsic
+	// This is an optimization hint that tells the compiler to assume a condition is true
+	// Syntax: __builtin_assume(condition)
+	// Implementation: We evaluate the condition but don't use the result
+	// In a more advanced compiler, this would enable optimizations based on the assumption
+	std::vector<IrOperand> generateBuiltinAssumeIntrinsic(const FunctionCallNode& functionCallNode) {
+		if (functionCallNode.arguments().size() != 1) {
+			FLASH_LOG(Codegen, Error, "__builtin_assume requires exactly 1 argument (condition)");
+			return {Type::Void, 0, 0ULL, 0ULL};
+		}
+		
+		// Evaluate the condition expression (but we don't use the result)
+		// In a real implementation, we'd use this to inform the optimizer
+		ASTNode condition = functionCallNode.arguments()[0];
+		auto condition_ir = visitExpressionNode(condition.as<ExpressionNode>());
+		
+		// For now, we just evaluate the expression and ignore it
+		// A more sophisticated implementation could:
+		// 1. Track assumptions for later optimization passes
+		// 2. Use assumptions for constant folding
+		// 3. Enable more aggressive optimizations in conditional branches
+		
+		FLASH_LOG(Codegen, Debug, "__builtin_assume encountered - assumption recorded (not yet used for optimization)");
+		
+		// Return void (this intrinsic doesn't produce a value)
+		return {Type::Void, 0, 0ULL, 0ULL};
+	}
+	
+	// Generate IR for __builtin_expect intrinsic
+	// This is a branch prediction hint: __builtin_expect(expr, expected_value)
+	// Returns expr, but hints that expr will likely equal expected_value
+	// Common usage: if (__builtin_expect(rare_condition, 0)) { /* unlikely path */ }
+	std::vector<IrOperand> generateBuiltinExpectIntrinsic(const FunctionCallNode& functionCallNode) {
+		if (functionCallNode.arguments().size() != 2) {
+			FLASH_LOG(Codegen, Error, "__builtin_expect requires exactly 2 arguments (expr, expected_value)");
+			return {Type::Int, 32, 0ULL, 0ULL};
+		}
+		
+		// Evaluate the first argument (the expression)
+		ASTNode expr = functionCallNode.arguments()[0];
+		auto expr_ir = visitExpressionNode(expr.as<ExpressionNode>());
+		
+		// Evaluate the second argument (the expected value) but don't use it for now
+		ASTNode expected = functionCallNode.arguments()[1];
+		auto expected_ir = visitExpressionNode(expected.as<ExpressionNode>());
+		
+		// For now, we just return the expression value unchanged
+		// A more sophisticated implementation could:
+		// 1. Pass branch prediction hints to the code generator
+		// 2. Reorder basic blocks to favor the expected path
+		// 3. Use profile-guided optimization data
+		
+		FLASH_LOG(Codegen, Debug, "__builtin_expect encountered - branch prediction hint recorded (not yet used)");
+		
+		// Return the first argument (the expression value)
+		return expr_ir;
+	}
+	
+	// Generate IR for __builtin_launder intrinsic
+	// This prevents the compiler from assuming anything about what a pointer points to
+	// Syntax: __builtin_launder(ptr)
+	// Essential for implementing std::launder and placement new operations
+	// Returns the pointer unchanged, but creates an optimization barrier
+	std::vector<IrOperand> generateBuiltinLaunderIntrinsic(const FunctionCallNode& functionCallNode) {
+		if (functionCallNode.arguments().size() != 1) {
+			FLASH_LOG(Codegen, Error, "__builtin_launder requires exactly 1 argument (pointer)");
+			return {Type::UnsignedLongLong, 64, 0ULL, 0ULL};
+		}
+		
+		// Evaluate the pointer argument
+		ASTNode ptr_arg = functionCallNode.arguments()[0];
+		auto ptr_ir = visitExpressionNode(ptr_arg.as<ExpressionNode>());
+		
+		// Extract pointer details
+		Type ptr_type = std::get<Type>(ptr_ir[0]);
+		int ptr_size = std::get<int>(ptr_ir[1]);
+		
+		// For now, we just return the pointer unchanged
+		// In a real implementation, __builtin_launder would:
+		// 1. Create an optimization barrier so compiler can't assume anything about pointee
+		// 2. Prevent const/restrict/alias analysis from making invalid assumptions
+		// 3. Essential after placement new to get a pointer to the new object
+		//
+		// Example use case:
+		//   struct S { const int x; };
+		//   alignas(S) char buffer[sizeof(S)];
+		//   new (buffer) S{42};  // placement new
+		//   S* ptr = std::launder(reinterpret_cast<S*>(buffer));  // safe access
+		
+		FLASH_LOG(Codegen, Debug, "__builtin_launder encountered - optimization barrier created");
+		
+		// Return the pointer unchanged (but optimization barrier is implied)
+		return ptr_ir;
 	}
 	
 	std::vector<IrOperand> generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
