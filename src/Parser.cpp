@@ -10339,6 +10339,40 @@ ParseResult Parser::parse_unary_expression()
 		return ParseResult::success(builtin_call);
 	}
 
+	// Check for '__builtin_addressof' intrinsic
+	// Returns the actual address of an object, bypassing any overloaded operator&
+	// Syntax: __builtin_addressof(obj)
+	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "__builtin_addressof"sv) {
+		Token builtin_token = *current_token_;
+		consume_token(); // consume '__builtin_addressof'
+
+		if (!consume_punctuator("("sv)) {
+			return ParseResult::error("Expected '(' after '__builtin_addressof'", *current_token_);
+		}
+
+		// Parse argument: the object to get the address of
+		ParseResult arg_result = parse_expression();
+		if (arg_result.is_error()) {
+			return ParseResult::error("Expected expression as argument to __builtin_addressof", *current_token_);
+		}
+
+		if (!consume_punctuator(")"sv)) {
+			return ParseResult::error("Expected ')' after __builtin_addressof argument", *current_token_);
+		}
+
+		// Create a unary expression with the AddressOf operator
+		// This will use the address-of logic but without calling any overloaded operator&
+		// Create a synthetic token for the & operator
+		Token addressof_token = Token(Token::Type::Operator, "&", 
+		                               builtin_token.line(), builtin_token.column(), 
+		                               builtin_token.file_index());
+		
+		auto addressof_expr = emplace_node<ExpressionNode>(
+			UnaryOperatorNode(addressof_token, *arg_result.node(), true));
+		
+		return ParseResult::success(addressof_expr);
+	}
+
 	// Check if the current token is a unary operator
 	if (current_token_->type() == Token::Type::Operator) {
 		std::string_view op = current_token_->value();
