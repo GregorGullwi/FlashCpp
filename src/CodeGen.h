@@ -5562,9 +5562,11 @@ private:
 			const auto& decl_node = symbol->as<DeclarationNode>();
 			const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
-			// Check if this is an enum value (constant)
-			if (type_node.type() == Type::Enum) {
-				// This is an enum value - look up its constant value
+			// Check if this is an enum value (enumerator constant)
+			// IMPORTANT: References and pointers to enum are VARIABLES, not enumerator constants
+			// Only non-reference, non-pointer enum-typed identifiers can be enumerators
+			if (type_node.type() == Type::Enum && !type_node.is_reference() && type_node.pointer_depth() == 0) {
+				// This might be an enumerator constant - look up its constant value
 				size_t enum_type_index = type_node.type_index();
 				if (enum_type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[enum_type_index];
@@ -5632,10 +5634,13 @@ private:
 					// Use helper function to calculate size_bits with proper fallback handling
 					int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
 					
-					// For the 4th element (same logic as regular variables)
-					unsigned long long fourth_element = (type_node.type() == Type::Struct)
-						? static_cast<unsigned long long>(type_node.type_index())
-						: ((type_node.pointer_depth() > 0) ? static_cast<unsigned long long>(type_node.pointer_depth()) : 0ULL);
+					// For the 4th element: include type_index for Struct and Enum types
+					unsigned long long fourth_element = 0ULL;
+					if (type_node.type() == Type::Struct || type_node.type() == Type::Enum) {
+						fourth_element = static_cast<unsigned long long>(type_node.type_index());
+					} else if (type_node.pointer_depth() > 0) {
+						fourth_element = static_cast<unsigned long long>(type_node.pointer_depth());
+					}
 					return { type_node.type(), size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
 				}
 				
