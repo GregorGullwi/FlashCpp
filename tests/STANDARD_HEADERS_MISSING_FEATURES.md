@@ -84,7 +84,12 @@ int main() {
 
 **Impact**: Essential for implementing `std::addressof` and related standard library functions.
 
-**Note**: Currently implemented without full overload resolution. See Parser.cpp line 10342 for detailed plan on standard-compliant implementation with proper operator overloading support.
+**Note**: Infrastructure for operator overload resolution is now in place (December 2024):
+- Added `is_builtin_addressof` flag to UnaryOperatorNode to distinguish `__builtin_addressof` from regular `&`
+- Added `findUnaryOperatorOverload()` function in OverloadResolution.h to detect operator overloads
+- Parser now marks `__builtin_addressof` calls with the special flag
+- Full resolution in CodeGen is deferred due to complexity (see Parser.cpp line 10342 for implementation plan)
+- Currently, both `&` and `__builtin_addressof` behave identically (bypass overloads)
 
 #### 3. Type Traits Intrinsics
 **Status**: ✅ **Already Implemented** (verified during analysis)
@@ -602,12 +607,17 @@ Supporting standard library headers is a complex undertaking requiring many adva
   - Function arguments: `func(myStruct)` where func expects different type ✅
   - Return statements: `return myStruct;` where return type differs ✅
 ✅ Library feature test macros - Added 6 standard library feature detection macros (`__cpp_lib_*`)
+🔄 Operator overload resolution infrastructure - **PARTIALLY IMPLEMENTED** (December 2024):
+  - Added `is_builtin_addressof` flag to distinguish `__builtin_addressof` from `&` ✅
+  - Added `findUnaryOperatorOverload()` helper function ✅
+  - Parser marks `__builtin_addressof` appropriately ✅
+  - Full CodeGen integration deferred due to complexity ⏸️
 
 ### Most Impactful Next Steps
 1. ~~Fix static constexpr member access in templates~~ ✅ **WORKING** - Enables `std::integral_constant`
 2. ~~Implement implicit conversion sequences~~ ✅ **FULLY COMPLETED** - Enables automatic type conversions in all contexts
 3. ~~Add library feature test macros~~ ✅ **COMPLETED** - Enables conditional compilation in standard headers
-4. Add operator overload resolution (standard-compliant operator behavior)
+4. Complete operator overload resolution (standard-compliant operator behavior) - **IN PROGRESS**
 5. Optimize template instantiation (reduces timeouts)
 6. Improve constexpr support for complex expressions
 

@@ -6616,108 +6616,14 @@ private:
 	std::vector<IrOperand> generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode) {
 		std::vector<IrOperand> irOperands;
 
-		// OPERATOR OVERLOAD RESOLUTION
-		// Check for operator overloads (e.g., operator&) before applying built-in semantics
-		// Skip if this is __builtin_addressof (which must always bypass overloads)
-		if (!unaryOperatorNode.is_builtin_addressof() && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
-			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-			
-			// Get the type of the operand
-			// For now, only handle simple identifiers (can be extended later)
-			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
-				const IdentifierNode& ident = std::get<IdentifierNode>(operandExpr);
-				StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident.name());
-				
-				std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
-				if (!symbol.has_value() && global_symbol_table_) {
-					symbol = global_symbol_table_->lookup(identifier_handle);
-				}
-				
-				if (symbol.has_value()) {
-					const TypeSpecifierNode* type_node = nullptr;
-					if (symbol->is<DeclarationNode>()) {
-						type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-					} else if (symbol->is<VariableDeclarationNode>()) {
-						type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-					}
-					
-					if (type_node && type_node->type() == Type::Struct) {
-						// Check for operator overload
-						auto overload_result = findUnaryOperatorOverload(type_node->type_index(), unaryOperatorNode.op());
-						
-						if (overload_result.has_overload) {
-							// Found an overload! Generate a member function call instead
-							FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator{} overload for type index {}", 
-							         unaryOperatorNode.op(), type_node->type_index());
-							
-							// We need to call the operator as a member function
-							// For operator&, it's called as: obj.operator&()
-							// This translates to a call with 'this' pointer as the first (implicit) argument
-							
-							const StructMemberFunction& member_func = *overload_result.member_overload;
-							const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-							
-							// Get the address of the object (for 'this' pointer)
-							auto object_operands = visitExpressionNode(operandExpr);
-							if (object_operands.size() < 3) {
-								FLASH_LOG(Codegen, Error, "Failed to get operands for object in operator overload");
-								// Fall through to regular handling
-							} else {
-								// Generate IR for calling the member function
-								// Get object address for 'this' pointer
-								TempVar object_addr = var_counter.next();
-								
-								// For operator&, we need the address of the object
-								// Use AddressOf to get the address
-								std::vector<IrOperand> addr_operands;
-								addr_operands.emplace_back(object_operands[0]); // type
-								addr_operands.emplace_back(64); // pointer size
-								addr_operands.emplace_back(identifier_handle); // identifier
-								addr_operands.emplace_back(object_operands.size() > 3 ? object_operands[3] : 0ULL); // type_index or pointer_depth
-								
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, addr_operands, unaryOperatorNode.get_token()));
-								ir_.addInstruction(IrInstruction(IrOpcode::AssignRegToTemp, {object_addr}, Token()));
-								
-								// Get mangled name for the operator function
-								std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
-								
-								StringBuilder sb;
-								sb.append("operator").append(unaryOperatorNode.op());
-								std::string_view operator_name = sb.commit();
-								
-								std::string mangled_name = mangleMemberFunctionName(
-									struct_name, operator_name, func_decl.parameter_nodes(), 
-									member_func.is_const, member_func.is_volatile, member_func.ref_qualifier
-								);
-								
-								// Prepare arguments: just 'this' pointer for unary operator
-								std::vector<IrOperand> call_args;
-								call_args.emplace_back(Type::Struct); // 'this' type
-								call_args.emplace_back(64); // pointer size
-								call_args.emplace_back(object_addr); // 'this' pointer
-								call_args.emplace_back(static_cast<unsigned long long>(type_node->type_index()));
-								
-								// Call the operator function
-								TempVar result = var_counter.next();
-								ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, call_args, unaryOperatorNode.get_token()));
-								ir_.addInstruction(IrInstruction(IrOpcode::AssignRegToTemp, {result}, Token()));
-								ir_.addInstruction(IrInstruction(IrOpcode::CallTarget, {mangled_name}, Token()));
-								
-								// Get return type from function declaration
-								const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-								int return_size_bits = static_cast<int>(return_type.size_in_bits());
-								if (return_size_bits == 0) {
-									return_size_bits = get_type_size_bits(return_type.type());
-								}
-								
-								return {return_type.type(), return_size_bits, result, 
-								        static_cast<unsigned long long>(return_type.pointer_depth())};
-							}
-						}
-					}
-				}
-			}
-		}
+		// TODO: OPERATOR OVERLOAD RESOLUTION
+		// For full standard compliance, operator& should call overloaded operator& if it exists.
+		// __builtin_addressof (marked with is_builtin_addressof flag) always bypasses overloads.
+		// Implementation requires:
+		// 1. Check if operand has operator& overload (using findUnaryOperatorOverload)
+		// 2. If yes and !is_builtin_addressof, generate member function call
+		// 3. Otherwise, use built-in address-of behavior
+		// Currently deferred due to complexity - both & and __builtin_addressof behave identically.
 
 		auto tryBuildIdentifierOperand = [&](const IdentifierNode& identifier, std::vector<IrOperand>& out) -> bool {
 			// Phase 4: Using StringHandle for lookup
