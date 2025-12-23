@@ -25,6 +25,30 @@ fi
 EXPECTED_FAIL=(
     # Note: extern "C" parsing has been fixed, test_extern_c_blocks.cpp now works
     # Note: Function type typedef parsing has been fixed, test_cstdio_puts.cpp now works
+    
+    # Standard header tests - require advanced C++ features not yet implemented
+    # See tests/STANDARD_HEADERS_MISSING_FEATURES.md for detailed analysis
+    "test_std_type_traits.cpp"        # Requires conversion operators, advanced type traits intrinsics
+    "test_std_string_view.cpp"        # Timeout - complex template instantiation, constexpr support
+    "test_std_string.cpp"             # Timeout - complex template instantiation, allocators, exceptions
+    "test_std_iostream.cpp"           # Timeout - virtual inheritance, locales, complex templates
+    "test_std_tuple.cpp"              # Timeout - variadic templates, complex SFINAE
+    "test_std_vector.cpp"             # Timeout - allocators, exceptions, complex templates
+    "test_std_array.cpp"              # Timeout - constexpr support, complex templates
+    "test_std_algorithm.cpp"          # Timeout - iterators, concepts, complex templates
+    "test_std_utility.cpp"            # Parse errors - std::pair, std::move, perfect forwarding
+    "test_std_memory.cpp"             # Timeout - smart pointers, allocators, custom deleters
+    "test_std_functional.cpp"         # Timeout - std::function, type erasure, complex templates
+    "test_std_map.cpp"                # Timeout - red-black trees, allocators, complex templates
+    "test_std_set.cpp"                # Timeout - red-black trees, allocators, complex templates
+    "test_std_optional.cpp"           # Timeout - variant-like implementation, union templates
+    "test_std_variant.cpp"            # Timeout - advanced union handling, visitor pattern
+    "test_std_any.cpp"                # Parse errors - type erasure, RTTI, virtual functions
+    "test_std_span.cpp"               # Timeout - constexpr support, bounds checking
+    "test_std_concepts.cpp"           # Parse errors - requires clauses, constraint checking
+    "test_std_ranges.cpp"             # Timeout - concepts, views, complex lazy evaluation
+    "test_std_limits.cpp"             # Parse errors - numeric_limits specializations
+    "test_std_chrono.cpp"             # Timeout - ratio templates, duration arithmetic
 )
 
 # Expected link failures - files that compile but require external C helper files
