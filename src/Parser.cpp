@@ -33,6 +33,7 @@ ChunkedStringAllocator gChunkedStringAllocator;
 // Global registries
 TemplateRegistry gTemplateRegistry;
 ConceptRegistry gConceptRegistry;
+LazyMemberInstantiationRegistry gLazyMemberRegistry;
 
 // Type keywords set - used for if-statement initializer detection
 static const std::unordered_set<std::string_view> type_keywords = {

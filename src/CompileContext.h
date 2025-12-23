@@ -209,6 +209,17 @@ public:
 		return false;
 	}
 
+	// Getter and setter for lazy template instantiation mode
+	// When enabled, template member functions are instantiated only when used (C++ standard behavior)
+	// When disabled, all template members are instantiated eagerly (for testing/debugging)
+	bool isLazyTemplateInstantiationEnabled() const {
+		return enableLazyTemplateInstantiation_;
+	}
+
+	void setLazyTemplateInstantiation(bool enable) {
+		enableLazyTemplateInstantiation_ = enable;
+	}
+
 private:
 	std::vector<std::string> includeDirs_;
 	std::optional<std::string> inputFile_;
@@ -216,6 +227,7 @@ private:
 	bool verboseMode_ = false;
 	bool preprocessorOnlyMode_ = false; // Added member variable for -E option
 	bool disableAccessControl_ = false; // Disable access control checking (for debugging)
+	bool enableLazyTemplateInstantiation_ = true; // Enable lazy template member instantiation (default: on)
 	CompilerMode compilerMode_ = CompilerMode::MSVC;  // Default to MSVC mode
 	ManglingStyle manglingStyle_ = 
 #if defined(_WIN32) || defined(_WIN64)
