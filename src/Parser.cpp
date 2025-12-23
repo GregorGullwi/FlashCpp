@@ -10348,6 +10348,33 @@ ParseResult Parser::parse_unary_expression()
 	// overload resolution (overloaded operators would require a separate overload
 	// resolution phase). Therefore, this UnaryOperatorNode will always get the
 	// true address, which is the correct behavior for __builtin_addressof.
+	//
+	// LIMITATION & FUTURE WORK:
+	// Currently, FlashCpp does not perform overload resolution on unary operators,
+	// so regular & operator also bypasses overloaded operator&. This means both
+	// __builtin_addressof and & behave identically. For standard compliance:
+	//
+	// Plan for standard-compliant operator overloading:
+	// 1. Add overload resolution phase after AST construction (before IR generation)
+	// 2. For UnaryOperatorNode with &:
+	//    a. Check if the operand type has an overloaded operator& (member or non-member)
+	//    b. If overloaded operator& exists and applies to regular &:
+	//       - Replace UnaryOperatorNode with FunctionCallNode to the overloaded operator
+	//    c. If no overload or __builtin_addressof:
+	//       - Keep UnaryOperatorNode for direct address-of operation
+	// 3. Add a flag to UnaryOperatorNode: is_builtin_addressof
+	//    - Set to true only for __builtin_addressof
+	//    - Overload resolution will skip operators marked with this flag
+	// 4. Implement in OverloadResolution.h:
+	//    - resolveUnaryOperator(UnaryOperatorNode&, TypeContext&)
+	//    - findOperatorOverload(operator_name, operand_type, is_member)
+	// 5. Similar approach needed for other overloadable operators (++, --, etc.)
+	//
+	// Benefits of this approach:
+	// - Standard-compliant: & calls overloaded operator&, __builtin_addressof doesn't
+	// - Minimal AST changes: Just add is_builtin_addressof flag
+	// - Enables other operator overloading (arithmetic, comparison, etc.)
+	// - IR generation remains unchanged (operates on resolved nodes)
 	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "__builtin_addressof"sv) {
 		Token builtin_token = *current_token_;
 		consume_token(); // consume '__builtin_addressof'
