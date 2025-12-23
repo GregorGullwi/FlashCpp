@@ -560,19 +560,24 @@ namespace my_std {
 
 **Example: Simplified Optional**
 ```cpp
-// my_optional.h
+// my_optional.h - Note: This is a simplified runtime-only version
 template<typename T>
 class optional {
     bool has_val;
     alignas(T) char storage[sizeof(T)];
     
 public:
-    constexpr optional() : has_val(false) {}
-    constexpr optional(const T& val) : has_val(true) {
-        new (storage) T(val);
+    optional() : has_val(false) {}
+    
+    optional(const T& val) : has_val(true) {
+        new (storage) T(val);  // Placement new (not constexpr-compatible)
     }
-    constexpr bool has_value() const { return has_val; }
-    constexpr T& value() { return *reinterpret_cast<T*>(storage); }
+    
+    bool has_value() const { return has_val; }
+    
+    T& value() { 
+        return *reinterpret_cast<T*>(storage);  // Not constexpr-compatible
+    }
 };
 ```
 
