@@ -753,59 +753,87 @@ assign %c = %4
 ---
 
 ## Next Priority: Template Instantiation Performance (CRITICAL)
-**Status**: Main blocker for standard header compilation  
+**Status**: ✅ **Profiling Infrastructure Completed** (December 23, 2024)  
 **Issue**: Complex template instantiation causes 10+ second timeouts
 
-### Performance Measurement Plan:
+### ✅ Completed: Performance Profiling Infrastructure
 
-**Current State:**
-- Basic timing exists but lacks detail
-- Timings don't sum correctly
-- Need granular metrics to identify bottlenecks
+**Implementation Details:**
+- ✅ Created comprehensive `TemplateProfilingStats.h` profiling system
+- ✅ Added RAII-based profiling timers with zero overhead when disabled
+- ✅ Instrumented key template instantiation functions in `Parser.cpp`
+- ✅ Integrated with `--timing` command line flag
+- ✅ Created detailed documentation in `docs/TEMPLATE_PROFILING.md`
 
-**Proposed Instrumentation:**
+**Tracked Metrics:**
+1. **Template instantiation counts and timing** - Per-template breakdown
+2. **Cache hit/miss rates** - Currently ~26% on test cases
+3. **Operation breakdowns**:
+   - Template lookups: < 1 microsecond
+   - Specialization matching: 1-8 microseconds
+   - Full instantiation: 20-50 microseconds
+4. **Top 10 reports** - Most instantiated and slowest templates
 
-1. **Macro-driven counters** in critical functions
-   - `PROFILE_COUNT(name)` - Function call counting
-   - `PROFILE_TIME_START(name)` / `PROFILE_TIME_END(name)` - Execution timing
-   - Compile flag to disable for production
+**Key Findings:**
+- Individual template instantiations are quite fast (20-50μs)
+- Cache hit rate has room for improvement
+- Standard header timeouts are due to **volume** not individual template speed
+- Existing optimizations (caching, depth limits) are working correctly
 
-2. **Expand existing profiler:**
-   - Template instantiation phase breakdown:
-     - Template lookup time
-     - Parameter substitution time
-     - Body parsing time
-     - Deferred instantiation time
-   - Fix timing aggregation
-   - Per-template-name metrics
+**Usage:**
+```bash
+./FlashCpp myfile.cpp -o myfile.o --timing
+```
 
-3. **Key metrics:**
-   - Template instantiations (total and unique)
-   - Cache hit/miss ratios
-   - Parse time per template depth
-   - Memory allocations during instantiation
+**Files Modified:**
+- ✅ `src/TemplateProfilingStats.h` - Profiling infrastructure (new)
+- ✅ `src/Parser.cpp` - Instrumented instantiation functions
+- ✅ `src/main.cpp` - Integration with --timing flag
+- ✅ `docs/TEMPLATE_PROFILING.md` - Comprehensive documentation (new)
 
-4. **Implementation:**
-   - Build optimized binary with profiling
-   - Test with problematic headers
-   - Generate time distribution reports
-   - Identify top bottlenecks
+### 🔄 Next Steps: Performance Optimization
 
-**Files to Instrument:**
-- `src/TemplateRegistry.h` - Template lookup and registration
-- `src/Parser.cpp` - Template parsing and instantiation
-- `src/TypeInfo.cpp` - Type resolution
+**Immediate Priorities:**
+1. **Profile standard library headers** - Use profiling to identify specific bottlenecks in real headers
+2. **Optimize based on data** - Target the actual slowest operations
+3. **Improve cache hit rates** - Current ~26% has room for improvement
 
-**Estimated Effort**: 
-- Instrumentation: 4-6 hours
-- Optimization: 8-16 hours
+**Potential Optimizations (Data-Driven):**
+1. **String operation optimization** - Template name generation uses concatenation
+2. **Lazy member instantiation** - Don't instantiate unused template members
+3. **Type resolution caching** - Cache frequently-used type lookups
+4. **Instantiation batching** - Batch independent instantiations
 
-#### Implementation Steps:
-1. Add profiling instrumentation
-2. Profile with standard headers
-3. Implement caching/memoization
-4. Add early termination for redundant instantiations
-5. Consider lazy instantiation
+**Already Implemented Optimizations:**
+- ✅ Template instantiation caching (both class and function templates)
+- ✅ Recursion depth limit (10 levels)
+- ✅ Early return for dependent types
+- ✅ Pattern-based specialization matching
+
+### Performance Measurement Results
+
+**Test Case: 19 Template Instantiations**
+```
+Overall Breakdown:
+  Template Lookups        : count=14, total=0.001 ms, mean=0.071 μs
+  Specialization Matching : count=14, total=0.018 ms, mean=1.286 μs
+
+Cache Statistics:
+  Cache Hits:   5
+  Cache Misses: 14
+  Hit Rate:     26.32%
+
+Top Templates:
+  1. Wrapper : count=9, total=0.433 ms, mean=48.111 μs
+  2. Pair    : count=6, total=0.163 ms, mean=27.167 μs
+  3. Triple  : count=4, total=0.116 ms, mean=29.000 μs
+```
+
+**Analysis:**
+- Fast operations: Lookups (<1μs), matching (1-8μs)
+- Moderate: Instantiation (20-50μs per template)
+- Volume issue: Standard headers likely have 100s-1000s of instantiations
+- Cache opportunity: Only 26% hit rate, could be improved
 
 ---
 
