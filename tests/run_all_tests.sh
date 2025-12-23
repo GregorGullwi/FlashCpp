@@ -27,16 +27,13 @@ EXPECTED_FAIL=(
     # Note: Function type typedef parsing has been fixed, test_cstdio_puts.cpp now works
 )
 
-# Expected link failures - files that compile but require external C helper files or RTTI support
+# Expected link failures - files that compile but require external C helper files
+# Note: test_dynamic_cast_debug_ret10.cpp and test_abstract_class_ret98.cpp now work - RTTI support has been implemented
+# Note: test_virtual_inheritance.cpp, test_covariant_return.cpp, test_varargs.cpp link successfully but may have runtime issues
 EXPECTED_LINK_FAIL=(
-    "test_external_abi.cpp"
-    "test_external_abi_simple.cpp"
-    "test_dynamic_cast_debug.cpp"         # Needs RTTI data structures
-    "test_virtual_inheritance.cpp"        # Needs typeinfo for virtual classes
-	"test_abstract_class.cpp"             # Needs typeinfo for virtual classes
-    "test_covariant_return.cpp"           # Needs RTTI (typeinfo) and has incorrect copy constructor call for reference binding
-    "test_varargs.cpp"                    # Needs external C helper functions (sum_ints, sum_mixed)
-    "test_cstdlib.cpp"                    # Needs builtin functions (__builtin_labs, __builtin_llabs, __builtin_fabs, __builtin_fabsf)
+    "test_external_abi.cpp"               # Needs external C helper functions
+    "test_external_abi_simple.cpp"        # Needs external C helper functions
+    "test_cstdlib.cpp"                    # Multiple definition issues with std::abs
 )
 
 # Results
