@@ -24,6 +24,7 @@
 #include "Log.h"
 #include "ObjFileWriter.h"
 #include "NameMangling.h"
+#include "TemplateProfilingStats.h"
 
 // Only include ELF writer on non-Windows platforms
 #if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
@@ -467,6 +468,11 @@ int main(int argc, char *argv[]) {
         FLASH_LOG(General, Info, "Phase Details:");
         FLASH_LOG(General, Info, "  Parsing includes: lexing + template instantiation from parsing phase");
         FLASH_LOG(General, Info, "  Template Inst: lambda/struct member function generation");
+        
+        // Print template profiling statistics
+        #if ENABLE_TEMPLATE_PROFILING
+        TemplateProfilingStats::getInstance().printStats();
+        #endif
     }
 
     if (show_perf_stats) {
