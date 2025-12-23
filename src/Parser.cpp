@@ -6,6 +6,7 @@
 #include "TemplateRegistry.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
+#include "TemplateProfilingStats.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -20606,6 +20607,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 // Try to instantiate a function template with the given argument types
 // Returns the instantiated function declaration node if successful
 std::optional<ASTNode> Parser::try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types) {
+	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name) + "_func");
+	
 	static int recursion_depth = 0;
 	recursion_depth++;
 	
@@ -20840,9 +20843,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
 		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Found existing instantiation, returning it");
-
+		PROFILE_TEMPLATE_CACHE_HIT(std::string(template_name) + "_func");
 		return *existing_inst;  // Return existing instantiation
 	}
+	PROFILE_TEMPLATE_CACHE_MISS(std::string(template_name) + "_func");
 
 	// Step 3: Instantiate the template
 	// For Phase 2, we'll create a simplified instantiation
@@ -21876,6 +21880,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 }
 
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
+	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
+	
 	// Check if any template arguments are dependent (contain template parameters)
 	// If so, we cannot instantiate the template yet - it's a dependent type
 	for (const auto& arg : template_args) {
@@ -21973,18 +21979,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Check if we already have this instantiation
 	auto existing_type = gTypesByName.find(instantiated_name);
 	if (existing_type != gTypesByName.end()) {
+		PROFILE_TEMPLATE_CACHE_HIT(std::string(template_name));
 		return std::nullopt;
 	}
+	PROFILE_TEMPLATE_CACHE_MISS(std::string(template_name));
 	
 	// First, check if there's an exact specialization match
 	// Try to match a specialization pattern and get the substitution mapping
-	std::unordered_map<std::string, TemplateTypeArg> param_substitutions;
-	FLASH_LOG(Templates, Debug, "Looking for pattern match for ", template_name, " with ", template_args.size(), " args");
-	auto pattern_match_opt = gTemplateRegistry.matchSpecializationPattern(template_name, template_args);
-	if (pattern_match_opt.has_value()) {
-		FLASH_LOG(Templates, Debug, "Found pattern match!");
-		// Found a matching pattern - we need to instantiate it with concrete types
-		const ASTNode& pattern_node = *pattern_match_opt;
+	{
+		PROFILE_TEMPLATE_SPECIALIZATION_MATCH();
+		std::unordered_map<std::string, TemplateTypeArg> param_substitutions;
+		FLASH_LOG(Templates, Debug, "Looking for pattern match for ", template_name, " with ", template_args.size(), " args");
+		auto pattern_match_opt = gTemplateRegistry.matchSpecializationPattern(template_name, template_args);
+		if (pattern_match_opt.has_value()) {
+			FLASH_LOG(Templates, Debug, "Found pattern match!");
+			// Found a matching pattern - we need to instantiate it with concrete types
+			const ASTNode& pattern_node = *pattern_match_opt;
 		
 		if (!pattern_node.is<StructDeclarationNode>()) {
 			FLASH_LOG(Templates, Error, "Pattern node is not a StructDeclarationNode");
@@ -22617,16 +22627,21 @@ if (struct_type_info.getStructInfo()) {
 		}
 		
 		return instantiated_struct;  // Return the struct node for code generation
+		}
 	}
 
 	// No specialization found - use the primary template
-	auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
-	if (!template_opt.has_value()) {
-		FLASH_LOG(Templates, Error, "No primary template found for '", template_name, "', returning nullopt");
-		return std::nullopt;  // No template with this name
+	ASTNode template_node;
+	{
+		PROFILE_TEMPLATE_LOOKUP();
+		auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+		if (!template_opt.has_value()) {
+			FLASH_LOG(Templates, Error, "No primary template found for '", template_name, "', returning nullopt");
+			return std::nullopt;  // No template with this name
+		}
+		template_node = *template_opt;
 	}
-
-	const ASTNode& template_node = *template_opt;
+	
 	if (!template_node.is<TemplateClassDeclarationNode>()) {
 		FLASH_LOG(Templates, Error, "Template node is not a TemplateClassDeclarationNode, returning nullopt");
 		return std::nullopt;  // Not a class template
