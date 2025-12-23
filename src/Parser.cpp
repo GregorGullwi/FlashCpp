@@ -10342,6 +10342,12 @@ ParseResult Parser::parse_unary_expression()
 	// Check for '__builtin_addressof' intrinsic
 	// Returns the actual address of an object, bypassing any overloaded operator&
 	// Syntax: __builtin_addressof(obj)
+	// 
+	// Implementation note: We create a UnaryOperatorNode with the & operator.
+	// In FlashCpp's current implementation, unary & operators are not subject to
+	// overload resolution (overloaded operators would require a separate overload
+	// resolution phase). Therefore, this UnaryOperatorNode will always get the
+	// true address, which is the correct behavior for __builtin_addressof.
 	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "__builtin_addressof"sv) {
 		Token builtin_token = *current_token_;
 		consume_token(); // consume '__builtin_addressof'
