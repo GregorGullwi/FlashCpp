@@ -159,10 +159,10 @@ Write-Host ""
 #
 # Unimplemented features:
 $expectedCompileFailures = @(
+  "test_cstddef.cpp"
   "test_cstdio_puts.cpp"
   "test_cstdlib.cpp"
   # test_lambda_cpp20_comprehensive.cpp - Now compiles with unsupported features commented out
-  # Note: test_cstddef.cpp has been fixed and now works properly
 )
 
 # Expected link failures - files that compile but have known link issues
