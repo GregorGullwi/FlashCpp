@@ -992,7 +992,7 @@ private:
 		
 		for (size_t i = 0; i < arguments.size(); ++i) {
 			// Evaluate the argument with outer bindings (for nested calls)
-			auto arg_result = evaluate_expression_with_bindings(arguments[i], outer_bindings, context);
+			auto arg_result = evaluate_expression_with_bindings_const(arguments[i], outer_bindings, context);
 			if (!arg_result.success) {
 				return arg_result;
 			}
@@ -1118,10 +1118,401 @@ private:
 			return EvalResult::error("Statement executed (not a return)");
 		}
 		
+		// Handle for loops (C++14 constexpr)
+		if (stmt_node.is<ForStatementNode>()) {
+			const ForStatementNode& for_stmt = stmt_node.as<ForStatementNode>();
+			
+			// Execute init statement if present
+			if (for_stmt.has_init()) {
+				auto init_result = evaluate_statement_with_bindings(for_stmt.get_init_statement().value(), bindings, context);
+				// Ignore result for init statement (it's usually a variable declaration)
+			}
+			
+			// Loop until condition is false
+			while (true) {
+				// Check complexity limit
+				if (++context.step_count > context.max_steps) {
+					return EvalResult::error("Constexpr evaluation exceeded complexity limit in for loop");
+				}
+				
+				// Evaluate condition if present
+				if (for_stmt.has_condition()) {
+					auto cond_result = evaluate_expression_with_bindings(for_stmt.get_condition().value(), bindings, context);
+					if (!cond_result.success) {
+						return cond_result;
+					}
+					if (!cond_result.as_bool()) {
+						break;  // Exit loop when condition is false
+					}
+				}
+				
+				// Execute loop body
+				const ASTNode& body = for_stmt.get_body_statement();
+				if (body.is<BlockNode>()) {
+					const BlockNode& block = body.as<BlockNode>();
+					const auto& statements = block.get_statements();
+					for (size_t i = 0; i < statements.size(); i++) {
+						auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
+						// If this was a return statement, propagate it up
+						if (statements[i].is<ReturnStatementNode>()) {
+							return result;
+						}
+					}
+				} else {
+					auto result = evaluate_statement_with_bindings(body, bindings, context);
+					// If this was a return statement, propagate it up
+					if (body.is<ReturnStatementNode>()) {
+						return result;
+					}
+				}
+				
+				// Execute update expression if present
+				if (for_stmt.has_update()) {
+					auto update_result = evaluate_expression_with_bindings(for_stmt.get_update_expression().value(), bindings, context);
+					// Update expression result is ignored (side effects have been applied)
+				}
+			}
+			
+			return EvalResult::error("Statement executed (not a return)");
+		}
+		
+		// Handle while loops (C++14 constexpr)
+		if (stmt_node.is<WhileStatementNode>()) {
+			const WhileStatementNode& while_stmt = stmt_node.as<WhileStatementNode>();
+			
+			while (true) {
+				// Check complexity limit
+				if (++context.step_count > context.max_steps) {
+					return EvalResult::error("Constexpr evaluation exceeded complexity limit in while loop");
+				}
+				
+				// Evaluate condition
+				auto cond_result = evaluate_expression_with_bindings(while_stmt.get_condition(), bindings, context);
+				if (!cond_result.success) {
+					return cond_result;
+				}
+				if (!cond_result.as_bool()) {
+					break;  // Exit loop when condition is false
+				}
+				
+				// Execute loop body
+				const ASTNode& body = while_stmt.get_body_statement();
+				if (body.is<BlockNode>()) {
+					const BlockNode& block = body.as<BlockNode>();
+					const auto& statements = block.get_statements();
+					for (size_t i = 0; i < statements.size(); i++) {
+						auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
+						// If this was a return statement, propagate it up
+						if (statements[i].is<ReturnStatementNode>()) {
+							return result;
+						}
+					}
+				} else {
+					auto result = evaluate_statement_with_bindings(body, bindings, context);
+					// If this was a return statement, propagate it up
+					if (body.is<ReturnStatementNode>()) {
+						return result;
+					}
+				}
+			}
+			
+			return EvalResult::error("Statement executed (not a return)");
+		}
+		
+		// Handle if statements (C++14 constexpr)
+		if (stmt_node.is<IfStatementNode>()) {
+			const IfStatementNode& if_stmt = stmt_node.as<IfStatementNode>();
+			
+			// Execute init statement if present (C++17 feature)
+			if (if_stmt.has_init()) {
+				auto init_result = evaluate_statement_with_bindings(if_stmt.get_init_statement().value(), bindings, context);
+				// Ignore result for init statement
+			}
+			
+			// Evaluate condition
+			auto cond_result = evaluate_expression_with_bindings(if_stmt.get_condition(), bindings, context);
+			if (!cond_result.success) {
+				return cond_result;
+			}
+			
+			// Execute then or else branch
+			if (cond_result.as_bool()) {
+				// Execute then branch
+				const ASTNode& then_stmt = if_stmt.get_then_statement();
+				if (then_stmt.is<BlockNode>()) {
+					const BlockNode& block = then_stmt.as<BlockNode>();
+					const auto& statements = block.get_statements();
+					for (size_t i = 0; i < statements.size(); i++) {
+						auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
+						// If this was a return statement, propagate it up
+						if (statements[i].is<ReturnStatementNode>()) {
+							return result;
+						}
+					}
+				} else {
+					auto result = evaluate_statement_with_bindings(then_stmt, bindings, context);
+					if (then_stmt.is<ReturnStatementNode>()) {
+						return result;
+					}
+				}
+			} else if (if_stmt.has_else()) {
+				// Execute else branch
+				const ASTNode& else_stmt = if_stmt.get_else_statement().value();
+				if (else_stmt.is<BlockNode>()) {
+					const BlockNode& block = else_stmt.as<BlockNode>();
+					const auto& statements = block.get_statements();
+					for (size_t i = 0; i < statements.size(); i++) {
+						auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
+						// If this was a return statement, propagate it up
+						if (statements[i].is<ReturnStatementNode>()) {
+							return result;
+						}
+					}
+				} else {
+					auto result = evaluate_statement_with_bindings(else_stmt, bindings, context);
+					if (else_stmt.is<ReturnStatementNode>()) {
+						return result;
+					}
+				}
+			}
+			
+			return EvalResult::error("Statement executed (not a return)");
+		}
+		
+		// Handle expression statements (assignments, increments, etc.)
+		if (stmt_node.is<ExpressionNode>()) {
+			// Evaluate the expression (which may have side effects like assignments)
+			auto result = evaluate_expression_with_bindings(stmt_node, bindings, context);
+			// Expression statements don't return values to the caller
+			return EvalResult::error("Statement executed (not a return)");
+		}
+		
+		// Handle block statements (nested blocks)
+		if (stmt_node.is<BlockNode>()) {
+			const BlockNode& block = stmt_node.as<BlockNode>();
+			const auto& statements = block.get_statements();
+			for (size_t i = 0; i < statements.size(); i++) {
+				auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
+				// If this was a return statement, propagate it up
+				if (statements[i].is<ReturnStatementNode>()) {
+					return result;
+				}
+			}
+			return EvalResult::error("Statement executed (not a return)");
+		}
+		
 		return EvalResult::error("Unsupported statement type in constexpr function");
 	}
 
+	// Overload for mutable bindings (used in statements with side effects like assignments)
 	static EvalResult evaluate_expression_with_bindings(
+		const ASTNode& expr_node,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context) {
+		
+		if (!expr_node.is<ExpressionNode>()) {
+			return EvalResult::error("Not an expression node");
+		}
+		
+		const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+		
+		// Check if it's an identifier that matches a parameter
+		if (std::holds_alternative<IdentifierNode>(expr)) {
+			const IdentifierNode& id = std::get<IdentifierNode>(expr);
+			std::string_view name = id.name();
+			
+			// Check if it's a bound parameter
+			auto it = bindings.find(name);
+			if (it != bindings.end()) {
+				return it->second;  // Return the bound value
+			}
+			
+			// Not a parameter, evaluate normally
+			return evaluate_identifier(id, context);
+		}
+		
+		// For binary operators, recursively evaluate with bindings
+		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+			const auto& bin_op = std::get<BinaryOperatorNode>(expr);
+			std::string_view op = bin_op.op();
+			
+			// Handle assignment operators specially (they modify bindings)
+			if (op == "=" || op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%=") {
+				// Get the left-hand side variable name
+				const ASTNode& lhs = bin_op.get_lhs();
+				if (lhs.is<ExpressionNode>()) {
+					const ExpressionNode& lhs_expr = lhs.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
+						const IdentifierNode& id = std::get<IdentifierNode>(lhs_expr);
+						std::string_view var_name = id.name();
+						
+						// Evaluate the right-hand side
+						auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+						if (!rhs_result.success) return rhs_result;
+						
+						// Perform the assignment
+						if (op == "=") {
+							bindings[var_name] = rhs_result;
+							return rhs_result;
+						} else {
+							// Compound assignment - get current value first
+							auto it = bindings.find(var_name);
+							if (it == bindings.end()) {
+								return EvalResult::error("Variable not found for compound assignment: " + std::string(var_name));
+							}
+							EvalResult current = it->second;
+							
+							// Apply the operation
+							EvalResult new_value;
+							if (op == "+=") {
+								new_value = apply_binary_op(current, rhs_result, "+");
+							} else if (op == "-=") {
+								new_value = apply_binary_op(current, rhs_result, "-");
+							} else if (op == "*=") {
+								new_value = apply_binary_op(current, rhs_result, "*");
+							} else if (op == "/=") {
+								new_value = apply_binary_op(current, rhs_result, "/");
+							} else if (op == "%=") {
+								new_value = apply_binary_op(current, rhs_result, "%");
+							}
+							
+							if (!new_value.success) return new_value;
+							bindings[var_name] = new_value;
+							return new_value;
+						}
+					}
+				}
+				return EvalResult::error("Left-hand side of assignment must be a variable");
+			}
+			
+			// Regular binary operators (non-assignment)
+			auto lhs_result = evaluate_expression_with_bindings(bin_op.get_lhs(), bindings, context);
+			auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+			
+			if (!lhs_result.success) return lhs_result;
+			if (!rhs_result.success) return rhs_result;
+			
+			return apply_binary_op(lhs_result, rhs_result, bin_op.op());
+		}
+		
+		// Handle unary operators (including ++ and --)
+		if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+			const auto& unary_op = std::get<UnaryOperatorNode>(expr);
+			std::string_view op = unary_op.op();
+			
+			// Handle increment and decrement operators (they modify bindings)
+			if (op == "++" || op == "--") {
+				const ASTNode& operand = unary_op.get_operand();
+				if (operand.is<ExpressionNode>()) {
+					const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(operand_expr)) {
+						const IdentifierNode& id = std::get<IdentifierNode>(operand_expr);
+						std::string_view var_name = id.name();
+						
+						// Get current value
+						auto it = bindings.find(var_name);
+						if (it == bindings.end()) {
+							return EvalResult::error("Variable not found for increment/decrement: " + std::string(var_name));
+						}
+						EvalResult current = it->second;
+						
+						// Calculate new value
+						EvalResult one = EvalResult::from_int(1);
+						EvalResult new_value;
+						if (op == "++") {
+							new_value = apply_binary_op(current, one, "+");
+						} else {
+							new_value = apply_binary_op(current, one, "-");
+						}
+						
+						if (!new_value.success) return new_value;
+						bindings[var_name] = new_value;
+						
+						// Return old value for postfix, new value for prefix
+						if (unary_op.is_prefix()) {
+							return new_value;  // Prefix: return new value
+						} else {
+							return current;  // Postfix: return old value
+						}
+					}
+				}
+				return EvalResult::error("Operand of increment/decrement must be a variable");
+			}
+			
+			// Regular unary operators
+			auto operand_result = evaluate_expression_with_bindings(unary_op.get_operand(), bindings, context);
+			if (!operand_result.success) return operand_result;
+			return apply_unary_op(operand_result, op);
+		}
+		
+		// For ternary operators
+		if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+			const auto& ternary = std::get<TernaryOperatorNode>(expr);
+			auto cond_result = evaluate_expression_with_bindings(ternary.condition(), bindings, context);
+			
+			if (!cond_result.success) return cond_result;
+			
+			if (cond_result.as_bool()) {
+				return evaluate_expression_with_bindings(ternary.true_expr(), bindings, context);
+			} else {
+				return evaluate_expression_with_bindings(ternary.false_expr(), bindings, context);
+			}
+		}
+		
+		// For function calls (for recursion)
+		if (std::holds_alternative<FunctionCallNode>(expr)) {
+			const auto& func_call = std::get<FunctionCallNode>(expr);
+			
+			// Look up the function
+			const DeclarationNode& func_decl_node = func_call.function_declaration();
+			std::string_view func_name = func_decl_node.identifier_token().value();
+			
+			if (!context.symbols) {
+				return EvalResult::error("Cannot evaluate function call: no symbol table provided");
+			}
+			
+			auto symbol_opt = context.symbols->lookup(func_name);
+			if (!symbol_opt.has_value()) {
+				return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
+			}
+			
+			const ASTNode& symbol_node = symbol_opt.value();
+			if (!symbol_node.is<FunctionDeclarationNode>()) {
+				return EvalResult::error("Identifier is not a function: " + std::string(func_name));
+			}
+			
+			const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
+			
+			// Check if it's a constexpr function
+			if (!func_decl.is_constexpr()) {
+				return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
+			}
+			
+			// Evaluate the function with bindings passed through
+			return evaluate_function_call_with_bindings(func_decl, func_call.arguments(), bindings, context);
+		}
+		
+		// For member access on 'this' (e.g., this->x in a member function)
+		// This handles implicit member accesses like 'x' which parser transforms to 'this->x'
+		if (std::holds_alternative<MemberAccessNode>(expr)) {
+			const auto& member_access = std::get<MemberAccessNode>(expr);
+			std::string_view member_name = member_access.member_name();
+			
+			// Check if the object is 'this' (implicit member access)
+			const ASTNode& obj = member_access.object();
+			if (obj.is<ExpressionNode>()) {
+				const ExpressionNode& obj_expr = obj.as<ExpressionNode>();
+				// For now, fall back to regular evaluation
+			}
+		}
+		
+		// For other expression types, use the const version (cast bindings to const)
+		const std::unordered_map<std::string_view, EvalResult>& const_bindings = bindings;
+		return evaluate_expression_with_bindings_const(expr_node, const_bindings, context);
+	}
+	
+	// Original const version for backward compatibility
+	static EvalResult evaluate_expression_with_bindings_const(
 		const ASTNode& expr_node,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context) {
@@ -1150,8 +1541,8 @@ private:
 		// For binary operators, recursively evaluate with bindings
 		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 			const auto& bin_op = std::get<BinaryOperatorNode>(expr);
-			auto lhs_result = evaluate_expression_with_bindings(bin_op.get_lhs(), bindings, context);
-			auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
+			auto lhs_result = evaluate_expression_with_bindings_const(bin_op.get_lhs(), bindings, context);
+			auto rhs_result = evaluate_expression_with_bindings_const(bin_op.get_rhs(), bindings, context);
 			
 			if (!lhs_result.success) return lhs_result;
 			if (!rhs_result.success) return rhs_result;
@@ -1162,14 +1553,14 @@ private:
 		// For ternary operators
 		if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 			const auto& ternary = std::get<TernaryOperatorNode>(expr);
-			auto cond_result = evaluate_expression_with_bindings(ternary.condition(), bindings, context);
+			auto cond_result = evaluate_expression_with_bindings_const(ternary.condition(), bindings, context);
 			
 			if (!cond_result.success) return cond_result;
 			
 			if (cond_result.as_bool()) {
-				return evaluate_expression_with_bindings(ternary.true_expr(), bindings, context);
+				return evaluate_expression_with_bindings_const(ternary.true_expr(), bindings, context);
 			} else {
-				return evaluate_expression_with_bindings(ternary.false_expr(), bindings, context);
+				return evaluate_expression_with_bindings_const(ternary.false_expr(), bindings, context);
 			}
 		}
 		
