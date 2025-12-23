@@ -752,6 +752,21 @@ void Parser::register_builtin_functions() {
 	register_builtin("__builtin_fabsf", Type::Float, Type::Float);
 	register_builtin("__builtin_fabsl", Type::LongDouble, Type::LongDouble);
 	
+	// Register optimization hint intrinsics
+	// __builtin_unreachable() - marks unreachable code paths
+	register_no_param_builtin("__builtin_unreachable", Type::Void);
+	
+	// __builtin_assume(condition) - assumes condition is true for optimization
+	register_builtin("__builtin_assume", Type::Void, Type::Bool);
+	
+	// __builtin_expect(expr, expected) - branch prediction hint, returns expr
+	// Using LongLong to match typical usage pattern
+	register_two_param_builtin("__builtin_expect", Type::LongLong, Type::LongLong, Type::LongLong);
+	
+	// __builtin_launder(ptr) - optimization barrier for pointers
+	// Using UnsignedLongLong (pointer-sized) for the parameter and return type
+	register_builtin("__builtin_launder", Type::UnsignedLongLong, Type::UnsignedLongLong);
+	
 	// Register std::terminate - no pre-computed mangled name, will be mangled with namespace context
 	// Note: Forward declarations inside functions don't capture namespace context,
 	// so we register it globally without explicit mangling

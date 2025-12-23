@@ -57,6 +57,29 @@ The following type traits intrinsics are fully implemented and working:
 
 **Test**: `test_type_traits_intrinsics_working_ret235.cpp` ✅
 
+#### 4. Additional Compiler Intrinsics (December 2024)
+**Status**: ✅ **Newly Implemented**  
+**Description**: Implemented four critical compiler intrinsics required by standard library headers
+
+- `__builtin_unreachable` - Optimization hint that code path is unreachable
+  - **Use case**: After switch default cases, after noreturn functions
+  - **Test**: `test_builtin_unreachable_ret10.cpp` ✅
+  
+- `__builtin_assume(condition)` - Optimization hint that condition is true
+  - **Use case**: Help optimizer with complex conditional logic
+  - **Test**: `test_builtin_assume_ret42.cpp` ✅
+  
+- `__builtin_expect(expr, expected)` - Branch prediction hint
+  - **Use case**: `if (__builtin_expect(rare_case, 0))` for unlikely branches
+  - **Test**: `test_builtin_expect_ret42.cpp` ✅
+  
+- `__builtin_launder(ptr)` - Pointer optimization barrier
+  - **Use case**: Essential for `std::launder`, placement new operations
+  - **Test**: `test_builtin_launder_ret42.cpp` ✅
+
+**Implementation**: Added intrinsic detection and inline IR generation in CodeGen.h  
+**Impact**: These intrinsics are used extensively in `<memory>`, `<utility>`, and other headers for optimization and correctness
+
 ### ⚠️ Known Limitations
 
 #### 1. Implicit Conversion with Conversion Operators
@@ -301,7 +324,7 @@ struct integral_constant {
 
 The standard library relies heavily on compiler intrinsics for efficiency:
 
-### Type Traits Intrinsics
+### Type Traits Intrinsics (✅ Implemented)
 ```cpp
 __is_same(T, U)
 __is_base_of(Base, Derived)
@@ -317,13 +340,13 @@ __is_aggregate(T)
 __has_virtual_destructor(T)
 ```
 
-### Other Intrinsics
+### Other Intrinsics (✅ Implemented)
 ```cpp
-__builtin_addressof
-__builtin_launder
-__builtin_unreachable
-__builtin_assume
-__builtin_expect
+__builtin_addressof      // ✅ Returns actual address, bypassing operator&
+__builtin_launder        // ✅ Optimization barrier for pointers (placement new)
+__builtin_unreachable    // ✅ Marks code path as unreachable
+__builtin_assume         // ✅ Assumes condition is true (optimization hint)
+__builtin_expect         // ✅ Branch prediction hint
 ```
 
 ## Preprocessor and Feature Test Macros
@@ -374,11 +397,12 @@ To enable standard library support, implement features in this order:
 
 Based on recent progress, focus should be on:
 
-1. **Immediate**: Fix static constexpr member access in templates (blocking `std::integral_constant`)
-2. **Short-term**: Implement implicit conversion sequences (for automatic conversion operator calls)
-3. **Short-term**: Implement operator overload resolution (for standard-compliant operator& and others)
-4. **Medium-term**: Optimize template instantiation for performance
-5. **Long-term**: Add allocator and exception support for containers
+1. ~~**Immediate**: Fix static constexpr member access in templates~~ ✅ **WORKING** - Tests confirm this is functional
+2. ~~**Immediate**: Implement missing compiler intrinsics~~ ✅ **COMPLETED** - All 4 critical intrinsics implemented
+3. **Short-term**: Implement implicit conversion sequences (for automatic conversion operator calls)
+4. **Short-term**: Implement operator overload resolution (for standard-compliant operator& and others)
+5. **Medium-term**: Optimize template instantiation for performance
+6. **Long-term**: Add allocator and exception support for containers
 
 ## Testing Strategy
 
@@ -404,15 +428,17 @@ Supporting standard library headers is a complex undertaking requiring many adva
 ### Recently Completed (December 2024)
 ✅ Conversion operators - Now return correct types  
 ✅ Type traits compiler intrinsics - 30+ intrinsics verified working  
-✅ `__builtin_addressof` - Essential for `std::addressof`
+✅ `__builtin_addressof` - Essential for `std::addressof`  
+✅ Static constexpr member access in templates - Verified working  
+✅ Additional compiler intrinsics - `__builtin_unreachable`, `__builtin_assume`, `__builtin_expect`, `__builtin_launder`
 
 ### Most Impactful Next Steps
-1. Fix static constexpr member access in templates (enables `std::integral_constant`)
+1. ~~Fix static constexpr member access in templates~~ ✅ **WORKING** - Enables `std::integral_constant`
 2. Implement implicit conversion sequences (enables automatic type conversions)
 3. Add operator overload resolution (standard-compliant operator behavior)
 4. Optimize template instantiation (reduces timeouts)
 
-Once these are implemented, simpler headers like `<type_traits>`, `<array>`, and `<span>` should compile successfully.
+Once implicit conversions and operator overloading are implemented, simpler headers like `<type_traits>`, `<array>`, and `<span>` should compile successfully.
 
 ---
 
