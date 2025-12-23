@@ -23152,6 +23152,14 @@ if (struct_type_info.getStructInfo()) {
 	);
 	StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
 	
+	// Determine if we should use lazy instantiation
+	bool use_lazy_instantiation = context_.isLazyTemplateInstantiationEnabled();
+	
+	if (use_lazy_instantiation) {
+		FLASH_LOG(Templates, Debug, "Using LAZY instantiation for ", instantiated_name, " - registering ", 
+		          class_decl.member_functions().size(), " member functions for on-demand instantiation");
+	}
+	
 	// Copy member functions from the template
 	for (const StructMemberFunctionDecl& mem_func : class_decl.member_functions()) {
 
@@ -23159,6 +23167,40 @@ if (struct_type_info.getStructInfo()) {
 			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
 			const DeclarationNode& decl = func_decl.decl_node();
 
+			// For lazy instantiation, register function for later instantiation instead of instantiating now
+			if (use_lazy_instantiation && func_decl.get_definition().has_value()) {
+				// Register this member function for lazy instantiation
+				LazyMemberFunctionInfo lazy_info;
+				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
+				lazy_info.instantiated_class_name = instantiated_name;
+				lazy_info.member_function_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				lazy_info.original_function_node = mem_func.function_declaration;
+				lazy_info.template_params = template_params;
+				lazy_info.template_args = template_args_to_use;
+				lazy_info.access = mem_func.access;
+				lazy_info.is_virtual = mem_func.is_virtual;
+				lazy_info.is_pure_virtual = mem_func.is_pure_virtual;
+				lazy_info.is_override = mem_func.is_override;
+				lazy_info.is_final = mem_func.is_final;
+				lazy_info.is_const_method = mem_func.is_const;
+				lazy_info.is_constructor = false;
+				lazy_info.is_destructor = false;
+				
+				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
+				
+				FLASH_LOG(Templates, Debug, "Registered lazy member function: ", 
+				          instantiated_name, "::", decl.identifier_token().value());
+				
+				// Still need to add function signature to StructTypeInfo (without body)
+				// so it can be looked up during name resolution
+				// We'll create a declaration without definition for now
+				// The actual instantiation will happen when the function is called
+				
+				// For now, skip adding to struct - we'll handle this when implementing on-demand instantiation
+				continue;
+			}
+			
+			// EAGER INSTANTIATION PATH (original code)
 			// If the function has a definition, we need to substitute template parameters
 			if (func_decl.get_definition().has_value()) {
 				// Substitute return type
@@ -23385,6 +23427,32 @@ if (struct_type_info.getStructInfo()) {
 			}
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();
+			
+			// For lazy instantiation, register constructor for later instantiation
+			if (use_lazy_instantiation && ctor_decl.get_definition().has_value()) {
+				LazyMemberFunctionInfo lazy_info;
+				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
+				lazy_info.instantiated_class_name = instantiated_name;
+				lazy_info.member_function_name = instantiated_name; // Constructor name is same as class name
+				lazy_info.original_function_node = mem_func.function_declaration;
+				lazy_info.template_params = template_params;
+				lazy_info.template_args = template_args_to_use;
+				lazy_info.access = mem_func.access;
+				lazy_info.is_virtual = false;
+				lazy_info.is_pure_virtual = false;
+				lazy_info.is_override = false;
+				lazy_info.is_final = false;
+				lazy_info.is_const_method = false;
+				lazy_info.is_constructor = true;
+				lazy_info.is_destructor = false;
+				
+				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
+				
+				FLASH_LOG(Templates, Debug, "Registered lazy constructor: ", instantiated_name);
+				continue;
+			}
+			
+			// EAGER INSTANTIATION PATH (original code)
 			if (ctor_decl.get_definition().has_value()) {
 				// Convert TemplateTypeArg vector to TemplateArgument vector
 				std::vector<TemplateArgument> converted_template_args;
@@ -23492,6 +23560,35 @@ if (struct_type_info.getStructInfo()) {
 			}
 		} else if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
 			const DestructorDeclarationNode& dtor_decl = mem_func.function_declaration.as<DestructorDeclarationNode>();
+			
+			// For lazy instantiation, register destructor for later instantiation
+			if (use_lazy_instantiation && dtor_decl.get_definition().has_value()) {
+				LazyMemberFunctionInfo lazy_info;
+				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
+				lazy_info.instantiated_class_name = instantiated_name;
+				// Destructor name is "~ClassName"
+				lazy_info.member_function_name = StringTable::getOrInternStringHandle(
+					StringBuilder().append("~").append(instantiated_name).commit()
+				);
+				lazy_info.original_function_node = mem_func.function_declaration;
+				lazy_info.template_params = template_params;
+				lazy_info.template_args = template_args_to_use;
+				lazy_info.access = mem_func.access;
+				lazy_info.is_virtual = mem_func.is_virtual;
+				lazy_info.is_pure_virtual = false;
+				lazy_info.is_override = false;
+				lazy_info.is_final = false;
+				lazy_info.is_const_method = false;
+				lazy_info.is_constructor = false;
+				lazy_info.is_destructor = true;
+				
+				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
+				
+				FLASH_LOG(Templates, Debug, "Registered lazy destructor: ~", instantiated_name);
+				continue;
+			}
+			
+			// EAGER INSTANTIATION PATH (original code)
 			if (dtor_decl.get_definition().has_value()) {
 				// Convert TemplateTypeArg vector to TemplateArgument vector
 				std::vector<TemplateArgument> converted_template_args;
