@@ -3960,13 +3960,11 @@ ParseResult Parser::parse_struct_declaration()
 			                              operator_keyword_token.line(), operator_keyword_token.column(),
 			                              operator_keyword_token.file_index());
 			
-			// Create a void type specifier for the "return type" (conversion operators don't have explicit return types)
-			// The return type is implicitly the target type, but we'll use void as a placeholder
-			TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0, operator_keyword_token);
-			
-			// Create declaration node with void type and operator name
+			// Conversion operators implicitly return the target type
+			// Use the parsed target type as the return type
+			// Create declaration node with target type as return type and operator name
 			ASTNode decl_node = emplace_node<DeclarationNode>(
-				emplace_node<TypeSpecifierNode>(void_type),
+				type_result.node().value(),
 				identifier_token
 			);
 			
@@ -10339,6 +10337,73 @@ ParseResult Parser::parse_unary_expression()
 			FunctionCallNode(const_cast<DeclarationNode&>(func_decl), std::move(args), builtin_token));
 		
 		return ParseResult::success(builtin_call);
+	}
+
+	// Check for '__builtin_addressof' intrinsic
+	// Returns the actual address of an object, bypassing any overloaded operator&
+	// Syntax: __builtin_addressof(obj)
+	// 
+	// Implementation note: We create a UnaryOperatorNode with the & operator.
+	// In FlashCpp's current implementation, unary & operators are not subject to
+	// overload resolution (overloaded operators would require a separate overload
+	// resolution phase). Therefore, this UnaryOperatorNode will always get the
+	// true address, which is the correct behavior for __builtin_addressof.
+	//
+	// LIMITATION & FUTURE WORK:
+	// Currently, FlashCpp does not perform overload resolution on unary operators,
+	// so regular & operator also bypasses overloaded operator&. This means both
+	// __builtin_addressof and & behave identically. For standard compliance:
+	//
+	// Plan for standard-compliant operator overloading:
+	// 1. Add overload resolution phase after AST construction (before IR generation)
+	// 2. For UnaryOperatorNode with &:
+	//    a. Check if the operand type has an overloaded operator& (member or non-member)
+	//    b. If overloaded operator& exists and applies to regular &:
+	//       - Replace UnaryOperatorNode with FunctionCallNode to the overloaded operator
+	//    c. If no overload or __builtin_addressof:
+	//       - Keep UnaryOperatorNode for direct address-of operation
+	// 3. Add a flag to UnaryOperatorNode: is_builtin_addressof
+	//    - Set to true only for __builtin_addressof
+	//    - Overload resolution will skip operators marked with this flag
+	// 4. Implement in OverloadResolution.h:
+	//    - resolveUnaryOperator(UnaryOperatorNode&, TypeContext&)
+	//    - findOperatorOverload(operator_name, operand_type, is_member)
+	// 5. Similar approach needed for other overloadable operators (++, --, etc.)
+	//
+	// Benefits of this approach:
+	// - Standard-compliant: & calls overloaded operator&, __builtin_addressof doesn't
+	// - Minimal AST changes: Just add is_builtin_addressof flag
+	// - Enables other operator overloading (arithmetic, comparison, etc.)
+	// - IR generation remains unchanged (operates on resolved nodes)
+	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "__builtin_addressof"sv) {
+		Token builtin_token = *current_token_;
+		consume_token(); // consume '__builtin_addressof'
+
+		if (!consume_punctuator("("sv)) {
+			return ParseResult::error("Expected '(' after '__builtin_addressof'", *current_token_);
+		}
+
+		// Parse argument: the object to get the address of
+		ParseResult arg_result = parse_expression();
+		if (arg_result.is_error()) {
+			return ParseResult::error("Expected expression as argument to __builtin_addressof", *current_token_);
+		}
+
+		if (!consume_punctuator(")"sv)) {
+			return ParseResult::error("Expected ')' after __builtin_addressof argument", *current_token_);
+		}
+
+		// Create a unary expression with the AddressOf operator
+		// The true parameter indicates this is a prefix operator
+		// Note: __builtin_addressof always gets the true address, bypassing any overloaded operator&
+		Token addressof_token = Token(Token::Type::Operator, "&", 
+		                               builtin_token.line(), builtin_token.column(), 
+		                               builtin_token.file_index());
+		
+		auto addressof_expr = emplace_node<ExpressionNode>(
+			UnaryOperatorNode(addressof_token, *arg_result.node(), true));
+		
+		return ParseResult::success(addressof_expr);
 	}
 
 	// Check if the current token is a unary operator
