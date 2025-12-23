@@ -9471,7 +9471,25 @@ private:
 
 		// Process arguments - match them with parameter types
 		size_t arg_index = 0;
-		const auto& param_nodes = matched_func_decl ? matched_func_decl->parameter_nodes() : std::vector<ASTNode>{};
+		const auto& func_decl_node = functionCallNode.function_declaration();
+		
+		// Get parameters from the function declaration
+		std::vector<ASTNode> param_nodes;
+		if (matched_func_decl) {
+			param_nodes = matched_func_decl->parameter_nodes();
+		} else {
+			// Try to get from the function declaration stored in FunctionCallNode
+			// Look up the function in symbol table to get full declaration with parameters
+			auto func_symbol = symbol_table.lookup(func_decl_node.identifier_token().value());
+			if (!func_symbol.has_value() && global_symbol_table_) {
+				func_symbol = global_symbol_table_->lookup(func_decl_node.identifier_token().value());
+			}
+			if (func_symbol.has_value() && func_symbol->is<FunctionDeclarationNode>()) {
+				const auto& func_decl = func_symbol->as<FunctionDeclarationNode>();
+				param_nodes = func_decl.parameter_nodes();
+			}
+		}
+		
 		functionCallNode.arguments().visit([&](ASTNode argument) {
 			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 			
@@ -9481,6 +9499,109 @@ private:
 				param_type = &param_nodes[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 			}
 			arg_index++;
+			
+			// Check if we need to call a conversion operator for this argument
+			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
+			if (param_type && argumentIrOperands.size() >= 3) {
+				Type arg_type = std::get<Type>(argumentIrOperands[0]);
+				int arg_size = std::get<int>(argumentIrOperands[1]);
+				Type param_base_type = param_type->type();
+				
+				// Check if argument is struct type and parameter expects different type
+				if (arg_type == Type::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
+					TypeIndex arg_type_index = 0;
+					if (argumentIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(argumentIrOperands[3])) {
+						arg_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(argumentIrOperands[3]));
+					}
+					
+					if (arg_type_index > 0 && arg_type_index < gTypeInfo.size()) {
+						const TypeInfo& source_type_info = gTypeInfo[arg_type_index];
+						const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
+						
+						// Look for a conversion operator to the parameter type
+						const StructMemberFunction* conv_op = findConversionOperator(
+							source_struct_info, param_base_type, param_type->type_index());
+						
+						if (conv_op) {
+							FLASH_LOG(Codegen, Debug, "Found conversion operator for function argument from ",
+								StringTable::getStringView(source_type_info.name()),
+								" to parameter type");
+							
+							// Generate call to the conversion operator
+							TempVar result_var = var_counter.next();
+							
+							// Get the source value
+							IrValue source_value = std::visit([](auto&& arg) -> IrValue {
+								using T = std::decay_t<decltype(arg)>;
+								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+								              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+									return arg;
+								} else {
+									return 0ULL;
+								}
+							}, argumentIrOperands[2]);
+							
+							// Generate the call to conversion operator
+							if (conv_op->function_decl.is<FunctionDeclarationNode>()) {
+								const auto& func_decl = conv_op->function_decl.as<FunctionDeclarationNode>();
+								std::string_view mangled_name;
+								if (func_decl.has_mangled_name()) {
+									mangled_name = func_decl.mangled_name();
+								} else {
+									StringHandle struct_name_handle = source_type_info.name();
+									std::string_view struct_name = StringTable::getStringView(struct_name_handle);
+									mangled_name = generateMangledNameForCall(func_decl, struct_name);
+								}
+								
+								CallOp call_op;
+								call_op.result = result_var;
+								call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+								call_op.return_type = param_base_type;
+								call_op.return_size_in_bits = param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits());
+								call_op.return_type_index = param_type->type_index();
+								call_op.is_member_function = true;
+								call_op.is_variadic = false;
+								
+								// For member function calls, first argument is 'this' pointer
+								if (std::holds_alternative<StringHandle>(source_value)) {
+									// It's a variable - take its address
+									TempVar this_ptr = var_counter.next();
+									AddressOfOp addr_op;
+									addr_op.result = this_ptr;
+									addr_op.pointee_type = arg_type;
+									addr_op.pointee_size_in_bits = arg_size;
+									addr_op.operand = std::get<StringHandle>(source_value);
+									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+									
+									// Add 'this' as first argument
+									TypedValue this_arg;
+									this_arg.type = arg_type;
+									this_arg.size_in_bits = 64;  // Pointer size
+									this_arg.value = this_ptr;
+									this_arg.type_index = arg_type_index;
+									call_op.args.push_back(std::move(this_arg));
+								} else if (std::holds_alternative<TempVar>(source_value)) {
+									// It's already a temporary
+									TypedValue this_arg;
+									this_arg.type = arg_type;
+									this_arg.size_in_bits = 64;  // Pointer size for 'this'
+									this_arg.value = std::get<TempVar>(source_value);
+									this_arg.type_index = arg_type_index;
+									call_op.args.push_back(std::move(this_arg));
+								}
+								
+								ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
+								
+								// Replace argumentIrOperands with the result of the conversion
+								argumentIrOperands.clear();
+								argumentIrOperands.emplace_back(param_base_type);
+								argumentIrOperands.emplace_back(param_type->pointer_depth() > 0 ? 64 : static_cast<int>(param_type->size_in_bits()));
+								argumentIrOperands.emplace_back(result_var);
+							}
+						}
+					}
+				}
+			}
 			
 			// Check if visitExpressionNode returned a TempVar - this means the value was computed
 			// (e.g., global load, expression result, etc.) and we should use the TempVar directly

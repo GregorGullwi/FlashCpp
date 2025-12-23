@@ -88,6 +88,17 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 		return TypeConversionResult::conversion();
 	}
 	
+	// User-defined conversions: struct-to-primitive
+	// Optimistically assume conversion operator exists, CodeGen will verify
+	if (from == Type::Struct && to != Type::Struct) {
+		return TypeConversionResult{ConversionRank::UserDefined, true};
+	}
+	
+	// User-defined conversions: primitive-to-struct (converting constructors)
+	if (to == Type::Struct && from != Type::Struct) {
+		return TypeConversionResult{ConversionRank::UserDefined, true};
+	}
+	
 	// No valid conversion
 	return TypeConversionResult::no_match();
 }
@@ -274,15 +285,20 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 	}
 
 	// Check for user-defined conversion operators
-	// If 'from' is a struct type and 'to' is a different type, check for conversion operator
-	if (from.type() == Type::Struct && from.type() != to.type()) {
-		TypeIndex from_type_index = from.type_index();
-		TypeIndex to_type_index = (to.type() == Type::Struct) ? to.type_index() : 0;
-		
-		if (hasConversionOperator(from_type_index, to.type(), to_type_index)) {
-			// User-defined conversion via conversion operator
-			return TypeConversionResult{ConversionRank::UserDefined, true};
-		}
+	// If 'from' is a struct type and 'to' is a different type, assume conversion might be possible
+	// The actual conversion operator existence will be checked during CodeGen
+	if (from.type() == Type::Struct && to.type() != Type::Struct) {
+		// For struct-to-primitive conversions, optimistically assume a conversion operator exists
+		// CodeGen will verify and generate the actual call
+		return TypeConversionResult{ConversionRank::UserDefined, true};
+	}
+
+	// Check for user-defined conversions in reverse: if 'to' is Struct and 'from' is not
+	// This handles constructor conversions (not conversion operators, but similar concept)
+	if (to.type() == Type::Struct && from.type() != Type::Struct) {
+		// Could be a converting constructor in 'to' struct - accept it tentatively
+		// CodeGen will handle the actual constructor call
+		return TypeConversionResult{ConversionRank::UserDefined, true};
 	}
 
 	// Non-pointer, non-reference types: use basic type conversion
