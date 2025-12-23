@@ -134,6 +134,30 @@ enum class Type : int_fast16_t {
 
 using TypeIndex = size_t;
 
+/// Helper function to get the C++ name string for a Type
+/// Returns the string used in C++ source code (e.g., "int", "unsigned long")
+/// Returns empty string_view for non-primitive types
+inline std::string_view getTypeName(Type t) {
+	switch (t) {
+		case Type::Int: return "int";
+		case Type::UnsignedInt: return "unsigned int";
+		case Type::Long: return "long";
+		case Type::UnsignedLong: return "unsigned long";
+		case Type::LongLong: return "long long";
+		case Type::UnsignedLongLong: return "unsigned long long";
+		case Type::Short: return "short";
+		case Type::UnsignedShort: return "unsigned short";
+		case Type::Char: return "char";
+		case Type::UnsignedChar: return "unsigned char";
+		case Type::Bool: return "bool";
+		case Type::Float: return "float";
+		case Type::Double: return "double";
+		case Type::LongDouble: return "long double";
+		case Type::Void: return "void";
+		default: return "";
+	}
+}
+
 /// Helper function to determine if a Type is signed (for MOVSX vs MOVZX)
 /// MSVC treats char as signed by default.
 inline bool isSignedType(Type t) {

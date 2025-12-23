@@ -2,6 +2,8 @@
 
 #include "AstNodeTypes.h"
 #include "SymbolTable.h"
+#include "CompileContext.h"
+#include "ChunkedString.h"
 #include <vector>
 #include <optional>
 
@@ -11,7 +13,7 @@ enum class ConversionRank {
 	ExactMatch = 0,          // No conversion needed
 	Promotion = 1,           // Integral or floating-point promotion
 	Conversion = 2,          // Standard conversion (int to double, etc.)
-	UserDefined = 3,         // User-defined conversion (not implemented yet)
+	UserDefined = 3,         // User-defined conversion via conversion operator
 	NoMatch = 4              // No valid conversion
 };
 
@@ -86,8 +88,91 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 		return TypeConversionResult::conversion();
 	}
 	
+	// User-defined conversions: struct-to-primitive
+	// Optimistically assume conversion operator exists, CodeGen will verify
+	if (from == Type::Struct && to != Type::Struct) {
+		return TypeConversionResult{ConversionRank::UserDefined, true};
+	}
+	
+	// User-defined conversions: primitive-to-struct (converting constructors)
+	if (to == Type::Struct && from != Type::Struct) {
+		return TypeConversionResult{ConversionRank::UserDefined, true};
+	}
+	
 	// No valid conversion
 	return TypeConversionResult::no_match();
+}
+
+// Helper function to find a conversion operator in a struct
+// Returns true if a conversion operator exists from source_type to target_type
+// This version searches both gTypeInfo (for CodeGen) and gSymbolTable (for Parser/overload resolution)
+inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type, TypeIndex target_type_index = 0) {
+	// First, try to get struct name from gTypeInfo and search gSymbolTable
+	// This is needed during parsing when gTypeInfo.member_functions is not yet populated
+	if (source_type_index > 0 && source_type_index < gTypeInfo.size()) {
+		const TypeInfo& source_type_info = gTypeInfo[source_type_index];
+		std::string_view struct_name = StringTable::getStringView(source_type_info.name());
+		
+		// Build the target type name for the operator
+		std::string_view target_type_name;
+		if (target_type == Type::Struct && target_type_index > 0 && target_type_index < gTypeInfo.size()) {
+			target_type_name = StringTable::getStringView(gTypeInfo[target_type_index].name());
+		} else {
+			// For primitive types, use the helper function to get the type name
+			target_type_name = getTypeName(target_type);
+			if (target_type_name.empty()) {
+				return false;
+			}
+		}
+		
+		// Create the operator name (e.g., "operator int")
+		StringBuilder sb;
+		sb.append("operator ").append(target_type_name);
+		std::string_view operator_name = sb.commit();
+		
+		// Look up the struct in gSymbolTable
+		extern SymbolTable gSymbolTable;
+		auto struct_symbol = gSymbolTable.lookup(StringTable::getOrInternStringHandle(struct_name));
+		if (struct_symbol.has_value() && struct_symbol->is<StructDeclarationNode>()) {
+			const StructDeclarationNode& struct_node = struct_symbol->template as<StructDeclarationNode>();
+			
+			// Search member functions in the StructDeclarationNode
+			for (const auto& member_func_decl : struct_node.member_functions()) {
+				const ASTNode& member_func = member_func_decl.function_declaration;
+				if (member_func.template is<FunctionDeclarationNode>()) {
+					const auto& func_decl = member_func.template as<FunctionDeclarationNode>();
+					std::string_view func_name = func_decl.decl_node().identifier_token().value();
+					if (func_name == operator_name) {
+						return true;  // Found conversion operator in parsed struct
+					}
+				}
+			}
+		}
+		
+		// Also check gTypeInfo.member_functions (for CodeGen where it's populated)
+		const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
+		if (source_struct_info) {
+			StringHandle operator_name_handle = StringTable::getOrInternStringHandle(operator_name);
+			
+			// Search member functions for the conversion operator
+			for (const auto& member_func : source_struct_info->member_functions) {
+				if (member_func.getName() == operator_name_handle) {
+					return true;
+				}
+			}
+			
+			// Search base classes recursively
+			for (const auto& base_spec : source_struct_info->base_classes) {
+				if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
+					if (hasConversionOperator(base_spec.type_index, target_type, target_type_index)) {
+						return true;
+					}
+				}
+			}
+		}
+	}
+	
+	return false;
 }
 
 // Check if one type can be implicitly converted to another (considering pointers and references)
@@ -183,6 +268,23 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		}
 
 		return TypeConversionResult::no_match();
+	}
+
+	// Check for user-defined conversion operators
+	// If 'from' is a struct type and 'to' is a different type, assume conversion might be possible
+	// The actual conversion operator existence will be checked during CodeGen
+	if (from.type() == Type::Struct && to.type() != Type::Struct) {
+		// For struct-to-primitive conversions, optimistically assume a conversion operator exists
+		// CodeGen will verify and generate the actual call
+		return TypeConversionResult{ConversionRank::UserDefined, true};
+	}
+
+	// Check for user-defined conversions in reverse: if 'to' is Struct and 'from' is not
+	// This handles constructor conversions (not conversion operators, but similar concept)
+	if (to.type() == Type::Struct && from.type() != Type::Struct) {
+		// Could be a converting constructor in 'to' struct - accept it tentatively
+		// CodeGen will handle the actual constructor call
+		return TypeConversionResult{ConversionRank::UserDefined, true};
 	}
 
 	// Non-pointer, non-reference types: use basic type conversion
