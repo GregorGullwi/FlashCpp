@@ -3,7 +3,7 @@
 # Tests each standard header individually with timeout protection
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
 # Build if needed
@@ -50,7 +50,7 @@ declare -a TIMEOUT=()
 declare -a FAILED=()
 
 for test_file in "${TEST_FILES[@]}"; do
-    test_path="tests/$test_file"
+    test_path="tests/std/$test_file"
     obj_file="${test_file%.cpp}.obj"
     
     echo -n "Testing $test_file... "
