@@ -874,7 +874,45 @@ private:
 
 		std::string_view func_name = func_decl_node.identifier_token().value();
 		auto symbol_opt = context.symbols->lookup(func_name);
+		
+		// If simple lookup fails, try to find the function as a static member in struct types
 		if (!symbol_opt.has_value()) {
+			// Search all struct types for a static member function with this name
+			// This handles cases like Point::static_sum where the parser creates a FunctionCallNode
+			// but the function name is just "static_sum" without the qualifier
+			
+			for (const auto& type_info : ::gTypeInfo) {
+				if (!type_info.struct_info_) continue;
+				
+				// Search member functions in this struct
+				for (const auto& member_func : type_info.struct_info_->member_functions) {
+					if (member_func.name == StringTable::getOrInternStringHandle(func_name)) {
+						// Found a matching member function - check if it's static and constexpr
+						const ASTNode& func_node = member_func.function_decl;
+						if (func_node.is<FunctionDeclarationNode>()) {
+							const FunctionDeclarationNode& func_decl = func_node.as<FunctionDeclarationNode>();
+							
+							// For static member functions, we can evaluate them like regular functions
+							if (func_decl.is_constexpr()) {
+								// Get the function body
+								const auto& definition = func_decl.get_definition();
+								if (definition.has_value()) {
+									// Evaluate arguments
+									const auto& arguments = func_call.arguments();
+									const auto& parameters = func_decl.parameter_nodes();
+									
+									if (arguments.size() == parameters.size()) {
+										// Pass empty bindings for static member function calls
+										std::unordered_map<std::string_view, EvalResult> empty_bindings;
+										return evaluate_function_call_with_bindings(func_decl, arguments, empty_bindings, context);
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			
 			return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
 		}
 
