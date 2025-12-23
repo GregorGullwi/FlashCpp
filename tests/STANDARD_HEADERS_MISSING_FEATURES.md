@@ -11,6 +11,57 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ---
 
+## What Works Today
+
+### ✅ Working Features for Custom Code
+
+While full standard library headers don't compile yet, FlashCpp supports many C++20 features for custom code:
+
+**Type Traits & Intrinsics:**
+- All type trait intrinsics (`__is_same`, `__is_class`, `__is_pod`, etc.) ✅
+- Custom `integral_constant`-like patterns work ✅
+- Conversion operators in all contexts ✅
+
+**Templates:**
+- Class templates, function templates, variable templates ✅
+- Template specialization (full and partial) ✅
+- Variadic templates and fold expressions ✅
+- Concepts (basic support) ✅
+- CTAD (Class Template Argument Deduction) ✅
+
+**Modern C++ Features:**
+- Lambdas (including captures, generic lambdas) ✅
+- Structured bindings ✅
+- Range-based for loops ✅
+- `if constexpr` ✅
+- constexpr variables and simple functions ✅
+
+**Example - Custom Type Trait:**
+```cpp
+template<typename T, T v>
+struct my_integral_constant {
+    static constexpr T value = v;
+    constexpr operator T() const { return value; }
+};
+
+// Works with implicit conversions
+int main() {
+    my_integral_constant<int, 42> answer;
+    int x = answer;  // ✅ Calls conversion operator
+    return x;
+}
+```
+
+### ❌ What Doesn't Work Yet
+
+**Standard Library Headers:**
+- Including `<type_traits>`, `<vector>`, `<string>`, etc. causes timeouts
+- Main blockers: template instantiation performance, advanced constexpr, allocators
+
+**Workaround:** Write your own simplified versions of standard utilities for now.
+
+---
+
 ## Recent Progress (December 2024)
 
 ### ✅ Completed Features
@@ -81,12 +132,14 @@ The following type traits intrinsics are fully implemented and working:
 **Impact**: These intrinsics are used extensively in `<memory>`, `<utility>`, and other headers for optimization and correctness
 
 #### 5. Implicit Conversion Sequences (December 2024)
-**Status**: ✅ **Partially Implemented**  
-**Description**: Conversion operators now work for variable initialization with implicit type conversion
+**Status**: ✅ **Fully Implemented**  
+**Description**: Conversion operators now work in all contexts including variable initialization, function arguments, and return statements
 
 **What Works**:
 - Variable initialization with conversion operators: `int i = myStruct;` ✅
-- Conversion operators are automatically called when initializing a variable of different type
+- Function arguments with implicit conversion: `func(myStruct)` where func expects different type ✅
+- Return statements with implicit conversion: `return myStruct;` where return type differs ✅
+- Conversion operators are automatically called when type conversion is needed
 - Proper `this` pointer handling and member function call generation
 
 **Implementation Details**:
@@ -100,6 +153,8 @@ The following type traits intrinsics are fully implemented and working:
 - `test_conversion_add_ret84.cpp` ✅
 - `test_conversion_comprehensive_ret84.cpp` ✅
 - `test_implicit_conversion_fails.cpp` ✅
+- `test_implicit_conversion_arg_ret42.cpp` ✅
+- `test_implicit_conversion_return_ret42.cpp` ✅
 
 **Example IR Generated**:
 ```
@@ -112,33 +167,11 @@ assign %i = %2                     ← Assign result to target
 ret int32 %i
 ```
 
-**What Still Needs Work**:
-- Function arguments: `func(myStruct)` where func expects different type ❌
-  - Note: `test_implicit_conversion_arg_ret42.cpp` demonstrates this case but doesn't compile yet
-- Return statements: `return myStruct;` where return type differs ❌
-  - Note: `test_implicit_conversion_return_ret42.cpp` compiles but doesn't call conversion operator (returns struct directly, works by accident)
-- These require modifications to overload resolution and return statement processing
+**Impact**: Enables full automatic type conversion support, essential for standard library compatibility where implicit conversions are heavily used (e.g., `std::integral_constant::operator T()`).
 
 ### ⚠️ Known Limitations
 
-#### 1. Implicit Conversion with Conversion Operators
-**Status**: ⚠️ **Partial Support - Variable Initialization Works**  
-**What Works**: Variable initialization like `int i = mi;` now correctly calls conversion operators
-**What Doesn't**: Function arguments and return statements don't yet trigger automatic conversions
-**Example**:
-```cpp
-struct MyInt {
-    operator int() const { return 42; }
-};
-MyInt mi;
-int i = mi;          // ✅ Now works - calls conversion operator
-func(mi);            // ❌ Doesn't work if func expects int (fails to compile)
-return mi;           // ❌ Doesn't call conversion operator (may work by accident if value is at offset 0)
-```
-**Workaround**: Use explicit casts for function arguments and return statements  
-**Next Steps**: Extend conversion logic to overload resolution and return statement processing
-
-#### 2. Static Constexpr Members in Templates
+#### 1. Static Constexpr Members in Templates
 **Status**: ⚠️ **Known Issue**  
 **Issue**: Accessing static constexpr members in template classes can cause crashes
 **Example**:
@@ -152,7 +185,7 @@ bool b = integral_constant<int, 42>::value;  // May crash
 **Impact**: Prevents full `std::integral_constant` pattern from working  
 **Next Steps**: Requires improvements to constexpr evaluation and template instantiation
 
-#### 3. Template Instantiation Performance
+#### 2. Template Instantiation Performance
 **Status**: ⚠️ **Known Issue**  
 **Issue**: Complex template instantiation causes 10+ second timeouts  
 **Impact**: Prevents compilation of full standard headers  
@@ -187,7 +220,7 @@ struct integral_constant {
 
 **Impact**: High - Enables `<type_traits>` functionality  
 **Files affected**: `test_std_type_traits.cpp`, `test_std_limits.cpp`, `test_std_chrono.cpp`  
-**Remaining work**: Implicit conversion sequences need implementation for automatic conversions
+**Remaining work**: None - feature is fully implemented
 
 ### 2. Advanced constexpr Support
 **Status**: Partial - basic constexpr variables work, but not advanced usage
@@ -393,19 +426,47 @@ __builtin_expect         // ✅ Branch prediction hint
 
 ## Preprocessor and Feature Test Macros
 
-Standard headers check for many feature test macros:
+Standard headers check for many feature test macros. FlashCpp now defines:
 
+**Language Feature Macros:**
 ```cpp
-__cpp_concepts
+__cpp_exceptions
+__cpp_rtti
+__cpp_static_assert
+__cpp_decltype
+__cpp_auto_type
+__cpp_nullptr
+__cpp_lambdas
+__cpp_range_based_for
+__cpp_variadic_templates
+__cpp_initializer_lists
+__cpp_delegating_constructors
 __cpp_constexpr
-__cpp_constexpr_dynamic_alloc
-__cpp_lib_concepts
-__cpp_lib_ranges
+__cpp_if_constexpr
+__cpp_inline_variables
+__cpp_structured_bindings
+__cpp_noexcept_function_type
+__cpp_concepts
+__cpp_aggregate_bases
+```
+
+**Library Feature Macros (New in December 2024):**
+```cpp
+__cpp_lib_type_trait_variable_templates  // ✅ C++17 type traits as variables
+__cpp_lib_addressof_constexpr           // ✅ C++17 constexpr addressof
+__cpp_lib_integral_constant_callable    // ✅ C++14 integral_constant::operator()
+__cpp_lib_is_aggregate                  // ✅ C++17 is_aggregate
+__cpp_lib_void_t                        // ✅ C++17 void_t
+__cpp_lib_bool_constant                 // ✅ C++17 bool_constant
+```
+
+**Attribute Detection Macros:**
+```cpp
 __has_cpp_attribute(nodiscard)
 __has_cpp_attribute(deprecated)
 ```
 
-These need to be defined appropriately based on FlashCpp's feature support.
+These macros enable conditional compilation in standard library headers based on FlashCpp's feature support.
 
 ## Performance Issues
 
@@ -441,10 +502,10 @@ Based on recent progress, focus should be on:
 
 1. ~~**Immediate**: Fix static constexpr member access in templates~~ ✅ **WORKING** - Tests confirm this is functional
 2. ~~**Immediate**: Implement missing compiler intrinsics~~ ✅ **COMPLETED** - All 4 critical intrinsics implemented
-3. ~~**Short-term**: Implement implicit conversion sequences (for automatic conversion operator calls)~~ ✅ **PARTIALLY COMPLETED** - Variable initialization now works
-4. **Short-term**: Complete implicit conversion sequences (function arguments and return statements)
-5. **Short-term**: Implement operator overload resolution (for standard-compliant operator& and others)
-6. **Medium-term**: Optimize template instantiation for performance
+3. ~~**Short-term**: Implement implicit conversion sequences~~ ✅ **FULLY COMPLETED** - Working in all contexts (variables, function args, returns)
+4. **Short-term**: Implement operator overload resolution (for standard-compliant operator& and others)
+5. **Medium-term**: Optimize template instantiation for performance
+6. **Medium-term**: Improve constexpr support for complex expressions
 7. **Long-term**: Add allocator and exception support for containers
 
 ## Testing Strategy
@@ -464,6 +525,68 @@ Consider creating minimal versions of standard headers for testing:
 
 This allows testing individual features without full standard library complexity.
 
+## Practical Workarounds for Using FlashCpp Today
+
+### Create Your Own Simplified Standard Library Components
+
+Since full standard headers timeout, you can create lightweight versions for your projects:
+
+**Example: Minimal Type Traits**
+```cpp
+// my_type_traits.h
+namespace my_std {
+    template<typename T, T v>
+    struct integral_constant {
+        static constexpr T value = v;
+        constexpr operator T() const noexcept { return value; }
+    };
+    
+    template<bool B>
+    using bool_constant = integral_constant<bool, B>;
+    
+    using true_type = bool_constant<true>;
+    using false_type = bool_constant<false>;
+    
+    template<typename T, typename U>
+    struct is_same : false_type {};
+    
+    template<typename T>
+    struct is_same<T, T> : true_type {};
+    
+    template<typename T, typename U>
+    inline constexpr bool is_same_v = is_same<T, U>::value;
+}
+```
+
+**Example: Simplified Optional**
+```cpp
+// my_optional.h - Note: This is a simplified runtime-only version
+template<typename T>
+class optional {
+    bool has_val;
+    alignas(T) char storage[sizeof(T)];
+    
+public:
+    optional() : has_val(false) {}
+    
+    optional(const T& val) : has_val(true) {
+        new (storage) T(val);  // Placement new (not constexpr-compatible)
+    }
+    
+    bool has_value() const { return has_val; }
+    
+    T& value() { 
+        return *reinterpret_cast<T*>(storage);  // Not constexpr-compatible
+    }
+};
+```
+
+**Tips:**
+- Use FlashCpp's type trait intrinsics directly: `__is_same(T, U)`, `__is_class(T)`, etc.
+- Avoid complex template metaprogramming patterns that cause deep instantiation
+- Keep constexpr functions simple (basic arithmetic and logic only)
+- Don't rely on allocators or exceptions yet
+
 ## Conclusion
 
 Supporting standard library headers is a complex undertaking requiring many advanced C++ features. 
@@ -474,16 +597,21 @@ Supporting standard library headers is a complex undertaking requiring many adva
 ✅ `__builtin_addressof` - Essential for `std::addressof`  
 ✅ Static constexpr member access in templates - Verified working  
 ✅ Additional compiler intrinsics - `__builtin_unreachable`, `__builtin_assume`, `__builtin_expect`, `__builtin_launder`  
-✅ Implicit conversion sequences (variable initialization) - Conversion operators now called automatically for `int i = myStruct;`
+✅ Implicit conversion sequences - **FULLY WORKING** - Conversion operators now called automatically in all contexts:
+  - Variable initialization: `int i = myStruct;` ✅
+  - Function arguments: `func(myStruct)` where func expects different type ✅
+  - Return statements: `return myStruct;` where return type differs ✅
+✅ Library feature test macros - Added 6 standard library feature detection macros (`__cpp_lib_*`)
 
 ### Most Impactful Next Steps
 1. ~~Fix static constexpr member access in templates~~ ✅ **WORKING** - Enables `std::integral_constant`
-2. ~~Implement implicit conversion sequences (variable initialization)~~ ✅ **COMPLETED** - Enables automatic type conversions for variables
-3. Complete implicit conversion sequences (function arguments and returns) - Enables full automatic conversions
+2. ~~Implement implicit conversion sequences~~ ✅ **FULLY COMPLETED** - Enables automatic type conversions in all contexts
+3. ~~Add library feature test macros~~ ✅ **COMPLETED** - Enables conditional compilation in standard headers
 4. Add operator overload resolution (standard-compliant operator behavior)
 5. Optimize template instantiation (reduces timeouts)
+6. Improve constexpr support for complex expressions
 
-Once implicit conversions and operator overloading are implemented, simpler headers like `<type_traits>`, `<array>`, and `<span>` should compile successfully.
+Once operator overloading and template optimization are implemented, simpler headers like `<type_traits>`, `<array>`, and `<span>` should compile successfully.
 
 ---
 
