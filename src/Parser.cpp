@@ -23191,12 +23191,111 @@ if (struct_type_info.getStructInfo()) {
 				FLASH_LOG(Templates, Debug, "Registered lazy member function: ", 
 				          instantiated_name, "::", decl.identifier_token().value());
 				
-				// Still need to add function signature to StructTypeInfo (without body)
-				// so it can be looked up during name resolution
-				// We'll create a declaration without definition for now
-				// The actual instantiation will happen when the function is called
+				// Create function declaration with signature but WITHOUT body
+				// This allows the function to be found during name lookup, but defers code generation
 				
-				// For now, skip adding to struct - we'll handle this when implementing on-demand instantiation
+				// Substitute return type
+				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+				auto [return_type, return_type_index] = substitute_template_parameter(
+					return_type_spec, template_params, template_args_to_use
+				);
+
+				// Create substituted return type node
+				TypeSpecifierNode substituted_return_type(
+					return_type,
+					return_type_spec.qualifier(),
+					get_type_size_bits(return_type),
+					decl.identifier_token()
+				);
+				substituted_return_type.set_type_index(return_type_index);
+
+				// Copy pointer levels and reference qualifiers from original
+				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
+					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+				}
+				if (return_type_spec.is_rvalue_reference()) {
+					substituted_return_type.set_reference(true);
+				} else if (return_type_spec.is_reference()) {
+					substituted_return_type.set_reference(false);
+				}
+
+				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
+
+				// Create a new function declaration with substituted return type but NO BODY
+				auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
+					substituted_return_node, decl.identifier_token()
+				);
+				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+					new_func_decl_ref, instantiated_name
+				);
+
+				// Substitute and copy parameters
+				for (const auto& param : func_decl.parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const DeclarationNode& param_decl = param.as<DeclarationNode>();
+						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+						// Substitute parameter type
+						auto [param_type, param_type_index] = substitute_template_parameter(
+							param_type_spec, template_params, template_args_to_use
+						);
+
+						// Create substituted parameter type
+						TypeSpecifierNode substituted_param_type(
+							param_type,
+							param_type_spec.qualifier(),
+							get_type_size_bits(param_type),
+							param_decl.identifier_token(),
+							param_type_spec.cv_qualifier()
+						);
+						substituted_param_type.set_type_index(param_type_index);
+
+						// Copy pointer levels and reference qualifiers
+						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+						}
+						if (param_type_spec.is_rvalue_reference()) {
+							substituted_param_type.set_reference(true);
+						} else if (param_type_spec.is_reference()) {
+							substituted_param_type.set_reference(false);
+						}
+
+						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
+						auto substituted_param_decl = emplace_node<DeclarationNode>(
+							substituted_param_type_node, param_decl.identifier_token()
+						);
+						new_func_ref.add_parameter_node(substituted_param_decl);
+					} else {
+						// Non-declaration parameter, copy as-is
+						new_func_ref.add_parameter_node(param);
+					}
+				}
+
+				// Copy function properties but DO NOT set definition
+				new_func_ref.set_is_constexpr(func_decl.is_constexpr());
+				new_func_ref.set_is_consteval(func_decl.is_consteval());
+				new_func_ref.set_is_constinit(func_decl.is_constinit());
+				new_func_ref.set_noexcept(func_decl.is_noexcept());
+				new_func_ref.set_is_variadic(func_decl.is_variadic());
+				new_func_ref.set_linkage(func_decl.linkage());
+				new_func_ref.set_calling_convention(func_decl.calling_convention());
+
+				// Add the signature-only function to the instantiated struct
+				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+				
+				// Also add to struct_info so it can be found during codegen
+				StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				struct_info_ptr->addMemberFunction(
+					func_name_handle,
+					new_func_node,
+					mem_func.access,
+					mem_func.is_virtual,
+					mem_func.is_pure_virtual,
+					mem_func.is_override,
+					mem_func.is_final
+				);
+				
+				// Skip to next function - body will be instantiated on-demand
 				continue;
 			}
 			
@@ -23428,29 +23527,8 @@ if (struct_type_info.getStructInfo()) {
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();
 			
-			// For lazy instantiation, register constructor for later instantiation
-			if (use_lazy_instantiation && ctor_decl.get_definition().has_value()) {
-				LazyMemberFunctionInfo lazy_info;
-				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
-				lazy_info.instantiated_class_name = instantiated_name;
-				lazy_info.member_function_name = instantiated_name; // Constructor name is same as class name
-				lazy_info.original_function_node = mem_func.function_declaration;
-				lazy_info.template_params = template_params;
-				lazy_info.template_args = template_args_to_use;
-				lazy_info.access = mem_func.access;
-				lazy_info.is_virtual = false;
-				lazy_info.is_pure_virtual = false;
-				lazy_info.is_override = false;
-				lazy_info.is_final = false;
-				lazy_info.is_const_method = false;
-				lazy_info.is_constructor = true;
-				lazy_info.is_destructor = false;
-				
-				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
-				
-				FLASH_LOG(Templates, Debug, "Registered lazy constructor: ", instantiated_name);
-				continue;
-			}
+			// NOTE: Constructors are ALWAYS eagerly instantiated (not lazy)
+			// because they're needed for object creation
 			
 			// EAGER INSTANTIATION PATH (original code)
 			if (ctor_decl.get_definition().has_value()) {
@@ -23561,32 +23639,8 @@ if (struct_type_info.getStructInfo()) {
 		} else if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
 			const DestructorDeclarationNode& dtor_decl = mem_func.function_declaration.as<DestructorDeclarationNode>();
 			
-			// For lazy instantiation, register destructor for later instantiation
-			if (use_lazy_instantiation && dtor_decl.get_definition().has_value()) {
-				LazyMemberFunctionInfo lazy_info;
-				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
-				lazy_info.instantiated_class_name = instantiated_name;
-				// Destructor name is "~ClassName"
-				lazy_info.member_function_name = StringTable::getOrInternStringHandle(
-					StringBuilder().append("~").append(instantiated_name).commit()
-				);
-				lazy_info.original_function_node = mem_func.function_declaration;
-				lazy_info.template_params = template_params;
-				lazy_info.template_args = template_args_to_use;
-				lazy_info.access = mem_func.access;
-				lazy_info.is_virtual = mem_func.is_virtual;
-				lazy_info.is_pure_virtual = false;
-				lazy_info.is_override = false;
-				lazy_info.is_final = false;
-				lazy_info.is_const_method = false;
-				lazy_info.is_constructor = false;
-				lazy_info.is_destructor = true;
-				
-				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
-				
-				FLASH_LOG(Templates, Debug, "Registered lazy destructor: ~", instantiated_name);
-				continue;
-			}
+			// NOTE: Destructors are ALWAYS eagerly instantiated (not lazy)
+			// because they're needed for object destruction
 			
 			// EAGER INSTANTIATION PATH (original code)
 			if (dtor_decl.get_definition().has_value()) {
