@@ -14169,16 +14169,17 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 			}
 		}
 		// Check for member access operator . or ->
-		else if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
+		bool is_arrow_access = false;
+		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
 			consume_token(); // consume '.'
+			is_arrow_access = false;
 		} else if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "->"sv) {
-			Token arrow_token = *peek_token();
 			consume_token(); // consume '->'
-			// Transform ptr->member to (*ptr).member
-			// Create a dereference node
-			Token deref_token(Token::Type::Operator, "*", arrow_token.line(), arrow_token.column(), arrow_token.file_index());
-			result = emplace_node<ExpressionNode>(
-				UnaryOperatorNode(deref_token, *result, true));
+			is_arrow_access = true;
+			// Note: We don't transform ptr->member to (*ptr).member here anymore.
+			// Instead, we pass the is_arrow flag to MemberAccessNode, and CodeGen will
+			// handle operator-> overload resolution. For raw pointers, it will generate
+			// the equivalent of (*ptr).member; for objects with operator->, it will call that.
 		} else {
 			break;  // No more postfix operators
 		}
@@ -14322,7 +14323,7 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 
 		// Regular member access (not a function call)
 		result = emplace_node<ExpressionNode>(
-			MemberAccessNode(*result, member_name_token));
+			MemberAccessNode(*result, member_name_token, is_arrow_access));
 		continue;  // Check for more postfix operators (e.g., obj.member1.member2)
 	}
 
