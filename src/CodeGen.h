@@ -8874,7 +8874,8 @@ private:
 	std::vector<IrOperand> generateBuiltinExpectIntrinsic(const FunctionCallNode& functionCallNode) {
 		if (functionCallNode.arguments().size() != 2) {
 			FLASH_LOG(Codegen, Error, "__builtin_expect requires exactly 2 arguments (expr, expected_value)");
-			return {Type::Int, 32, 0ULL, 0ULL};
+			// Return a default value matching typical usage (long type)
+			return {Type::LongLong, 64, 0ULL, 0ULL};
 		}
 		
 		// Evaluate the first argument (the expression)
