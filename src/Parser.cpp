@@ -10361,8 +10361,8 @@ ParseResult Parser::parse_unary_expression()
 		}
 
 		// Create a unary expression with the AddressOf operator
-		// This will use the address-of logic but without calling any overloaded operator&
-		// Create a synthetic token for the & operator
+		// The true parameter indicates this is a prefix operator
+		// Note: __builtin_addressof always gets the true address, bypassing any overloaded operator&
 		Token addressof_token = Token(Token::Type::Operator, "&", 
 		                               builtin_token.line(), builtin_token.column(), 
 		                               builtin_token.file_index());

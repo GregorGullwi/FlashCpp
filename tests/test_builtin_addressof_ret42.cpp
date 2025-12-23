@@ -6,7 +6,9 @@ struct HasOverloadedAddressOf {
 	
 	HasOverloadedAddressOf(int v) : value(v) {}
 	
-	// Overloaded operator& that returns nullptr (bad behavior)
+	// Overloaded operator& that returns nullptr
+	// This is intentionally bad behavior for testing purposes
+	// to demonstrate that __builtin_addressof bypasses this overload
 	HasOverloadedAddressOf* operator&() {
 		return nullptr;
 	}
