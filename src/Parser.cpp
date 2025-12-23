@@ -10410,13 +10410,14 @@ ParseResult Parser::parse_unary_expression()
 
 		// Create a unary expression with the AddressOf operator
 		// The true parameter indicates this is a prefix operator
+		// The fourth parameter (is_builtin_addressof=true) marks this to bypass operator overload resolution
 		// Note: __builtin_addressof always gets the true address, bypassing any overloaded operator&
 		Token addressof_token = Token(Token::Type::Operator, "&", 
 		                               builtin_token.line(), builtin_token.column(), 
 		                               builtin_token.file_index());
 		
 		auto addressof_expr = emplace_node<ExpressionNode>(
-			UnaryOperatorNode(addressof_token, *arg_result.node(), true));
+			UnaryOperatorNode(addressof_token, *arg_result.node(), true, true));
 		
 		return ParseResult::success(addressof_expr);
 	}

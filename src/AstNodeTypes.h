@@ -1329,18 +1329,20 @@ private:
 
 class UnaryOperatorNode {
 public:
-	explicit UnaryOperatorNode(Token identifier, ASTNode operand_node, bool is_prefix = true)
-		: identifier_(identifier), operand_node_(operand_node), is_prefix_(is_prefix) {}
+	explicit UnaryOperatorNode(Token identifier, ASTNode operand_node, bool is_prefix = true, bool is_builtin_addressof = false)
+		: identifier_(identifier), operand_node_(operand_node), is_prefix_(is_prefix), is_builtin_addressof_(is_builtin_addressof) {}
 
 	std::string_view op() const { return identifier_.value(); }
 	const Token& get_token() const { return identifier_; }
 	auto get_operand() const { return operand_node_; }
 	bool is_prefix() const { return is_prefix_; }
+	bool is_builtin_addressof() const { return is_builtin_addressof_; }
 
 private:
 	Token identifier_;
 	ASTNode operand_node_;
 	bool is_prefix_;
+	bool is_builtin_addressof_; // True if created from __builtin_addressof intrinsic
 };
 
 class TernaryOperatorNode {

@@ -429,3 +429,53 @@ inline OverloadResolutionResult resolve_overload(
 	return OverloadResolutionResult(best_match);
 }
 
+// Result of operator overload resolution
+struct OperatorOverloadResult {
+	const StructMemberFunction* member_overload = nullptr;
+	bool has_overload = false;
+	
+	OperatorOverloadResult() = default;
+	OperatorOverloadResult(const StructMemberFunction* overload) 
+		: member_overload(overload), has_overload(true) {}
+	
+	static OperatorOverloadResult no_overload() {
+		return OperatorOverloadResult();
+	}
+};
+
+// Find operator overload in a struct type
+// Returns the member function that overloads the given operator, or nullptr if not found
+inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_index, std::string_view operator_symbol) {
+	// Only struct types can have operator overloads
+	if (operand_type_index == 0 || operand_type_index >= gTypeInfo.size()) {
+		return OperatorOverloadResult::no_overload();
+	}
+	
+	const TypeInfo& type_info = gTypeInfo[operand_type_index];
+	const StructTypeInfo* struct_info = type_info.getStructInfo();
+	
+	if (!struct_info) {
+		return OperatorOverloadResult::no_overload();
+	}
+	
+	// Search for the operator overload in member functions
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.is_operator_overload && member_func.operator_symbol == operator_symbol) {
+			return OperatorOverloadResult(&member_func);
+		}
+	}
+	
+	// Search base classes recursively
+	for (const auto& base_spec : struct_info->base_classes) {
+		if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
+			auto result = findUnaryOperatorOverload(base_spec.type_index, operator_symbol);
+			if (result.has_overload) {
+				return result;
+			}
+		}
+	}
+	
+	return OperatorOverloadResult::no_overload();
+}
+
+
