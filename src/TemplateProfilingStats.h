@@ -6,6 +6,8 @@
 #include <vector>
 #include <algorithm>
 #include <cstdio>
+#include <climits>
+#include <cstdint>
 
 // Compile-time flag to enable/disable template profiling
 // Set to 1 to enable profiling, 0 to disable for production builds
