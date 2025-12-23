@@ -7985,6 +7985,168 @@ private:
 		int lhsSize = std::get<int>(lhsIrOperands[1]);
 		int rhsSize = std::get<int>(rhsIrOperands[1]);
 
+		// Check for binary operator overloads on struct types
+		// Binary operators like +, -, *, etc. can be overloaded as member functions
+		// This should be checked before trying to generate built-in arithmetic operations
+		if (lhsType == Type::Struct && lhsIrOperands.size() >= 4) {
+			// Get the type index of the left operand
+			TypeIndex lhs_type_index = 0;
+			if (std::holds_alternative<unsigned long long>(lhsIrOperands[3])) {
+				lhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(lhsIrOperands[3]));
+			}
+			
+			// Get the type index of the right operand (if it's a struct)
+			TypeIndex rhs_type_index = 0;
+			if (rhsType == Type::Struct && rhsIrOperands.size() >= 4) {
+				if (std::holds_alternative<unsigned long long>(rhsIrOperands[3])) {
+					rhs_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(rhsIrOperands[3]));
+				}
+			}
+			
+			// List of binary operators that can be overloaded
+			// Skip assignment operators (=, +=, -=, etc.) as they are handled separately
+			static const std::unordered_set<std::string_view> overloadable_binary_ops = {
+				"+", "-", "*", "/", "%",           // Arithmetic
+				"==", "!=", "<", ">", "<=", ">=",  // Comparison
+				"&&", "||",                        // Logical
+				"&", "|", "^",                     // Bitwise
+				"<<", ">>",                        // Shift
+				",",                               // Comma (already handled above)
+				"<=>",                             // Spaceship (handled below)
+			};
+			
+			if (overloadable_binary_ops.count(op) > 0 && lhs_type_index > 0) {
+				// Check for operator overload
+				auto overload_result = findBinaryOperatorOverload(lhs_type_index, rhs_type_index, op);
+				
+				if (overload_result.has_overload) {
+					// Found an overload! Generate a member function call instead of built-in operation
+					FLASH_LOG_FORMAT(Codegen, Debug, "Resolving binary operator{} overload for type index {}", 
+					         op, lhs_type_index);
+					
+					const StructMemberFunction& member_func = *overload_result.member_overload;
+					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+					
+					// Get struct name for mangling
+					std::string_view struct_name = StringTable::getStringView(gTypeInfo[lhs_type_index].name());
+					
+					// Get the return type from the function declaration
+					const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+					
+					// Get the parameter types for mangling
+					std::vector<TypeSpecifierNode> param_types;
+					for (const auto& param_node : func_decl.parameter_nodes()) {
+						if (param_node.is<DeclarationNode>()) {
+							const auto& param_decl = param_node.as<DeclarationNode>();
+							const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+							param_types.push_back(param_type);
+						}
+					}
+					
+					// Generate mangled name for the operator
+					std::string operator_func_name = "operator";
+					operator_func_name += op;
+					std::vector<std::string_view> empty_namespace;
+					auto mangled_name = NameMangling::generateMangledName(
+						operator_func_name,
+						return_type,
+						param_types,
+						false, // not variadic
+						struct_name,
+						empty_namespace,
+						Linkage::CPlusPlus
+					);
+					
+					// Generate the call to the operator overload
+					// For member function: a.operator+(b) where 'a' is 'this' and 'b' is the parameter
+					TempVar result_var = var_counter.next();
+					
+					// Take address of LHS to pass as 'this' pointer
+					// The LHS operand contains a struct value - extract it properly
+					std::variant<StringHandle, TempVar> lhs_value;
+					if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
+						lhs_value = std::get<StringHandle>(lhsIrOperands[2]);
+					} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
+						lhs_value = std::get<TempVar>(lhsIrOperands[2]);
+					} else {
+						// Can't take address of non-lvalue
+						FLASH_LOG(Codegen, Error, "Cannot take address of binary operator LHS - not an lvalue");
+						return {};
+					}
+					
+					TempVar lhs_addr = var_counter.next();
+					AddressOfOp addr_op;
+					addr_op.result = lhs_addr;
+					addr_op.pointee_type = lhsType;
+					addr_op.pointee_size_in_bits = lhsSize;
+					addr_op.operand = lhs_value;
+					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
+					
+					// Create the call operation
+					CallOp call_op;
+					call_op.result = result_var;
+					call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+					call_op.return_type = return_type.type();
+					call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+					call_op.return_type_index = return_type.type_index();
+					call_op.is_member_function = true;  // This is a member function call
+					
+					// Detect if returning struct by value (needs hidden return parameter for RVO)
+					bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
+					if (returns_struct_by_value) {
+						call_op.uses_return_slot = true;
+					}
+					
+					// Add 'this' pointer as first argument
+					TypedValue this_arg;
+					this_arg.type = lhsType;
+					this_arg.size_in_bits = 64;  // 'this' is always a pointer (64-bit)
+					this_arg.value = lhs_addr;
+					call_op.args.push_back(this_arg);
+					
+					// Add RHS as the second argument
+					// Check if the parameter is a reference - if so, we need to pass the address
+					if (!param_types.empty() && param_types[0].is_reference()) {
+						// Parameter is a reference - we need to pass the address of RHS
+						std::variant<StringHandle, TempVar> rhs_value;
+						if (std::holds_alternative<StringHandle>(rhsIrOperands[2])) {
+							rhs_value = std::get<StringHandle>(rhsIrOperands[2]);
+						} else if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
+							rhs_value = std::get<TempVar>(rhsIrOperands[2]);
+						} else {
+							// Can't take address of non-lvalue
+							FLASH_LOG(Codegen, Error, "Cannot take address of binary operator RHS - not an lvalue");
+							return {};
+						}
+						
+						TempVar rhs_addr = var_counter.next();
+						AddressOfOp rhs_addr_op;
+						rhs_addr_op.result = rhs_addr;
+						rhs_addr_op.pointee_type = rhsType;
+						rhs_addr_op.pointee_size_in_bits = rhsSize;
+						rhs_addr_op.operand = rhs_value;
+						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(rhs_addr_op), binaryOperatorNode.get_token()));
+						
+						// Create TypedValue with the address
+						TypedValue rhs_arg;
+						rhs_arg.type = rhsType;
+						rhs_arg.size_in_bits = 64;  // Reference is a pointer (64-bit)
+						rhs_arg.value = rhs_addr;
+						call_op.args.push_back(rhs_arg);
+					} else {
+						// Parameter is not a reference - pass the value directly
+						call_op.args.push_back(toTypedValue(rhsIrOperands));
+					}
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
+					
+					// Return the result
+					return {return_type.type(), static_cast<int>(return_type.size_in_bits()), result_var, 
+					        return_type.type_index()};
+				}
+			}
+		}
+
 		// Special handling for spaceship operator <=> on struct types
 		// This should be converted to a member function call: lhs.operator<=>(rhs)
 		if (op == "<=>") {
