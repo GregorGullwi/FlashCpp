@@ -11,6 +11,57 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ---
 
+## What Works Today
+
+### ✅ Working Features for Custom Code
+
+While full standard library headers don't compile yet, FlashCpp supports many C++20 features for custom code:
+
+**Type Traits & Intrinsics:**
+- All type trait intrinsics (`__is_same`, `__is_class`, `__is_pod`, etc.) ✅
+- Custom `integral_constant`-like patterns work ✅
+- Conversion operators in all contexts ✅
+
+**Templates:**
+- Class templates, function templates, variable templates ✅
+- Template specialization (full and partial) ✅
+- Variadic templates and fold expressions ✅
+- Concepts (basic support) ✅
+- CTAD (Class Template Argument Deduction) ✅
+
+**Modern C++ Features:**
+- Lambdas (including captures, generic lambdas) ✅
+- Structured bindings ✅
+- Range-based for loops ✅
+- `if constexpr` ✅
+- constexpr variables and simple functions ✅
+
+**Example - Custom Type Trait:**
+```cpp
+template<typename T, T v>
+struct my_integral_constant {
+    static constexpr T value = v;
+    constexpr operator T() const { return value; }
+};
+
+// Works with implicit conversions
+int main() {
+    my_integral_constant<int, 42> answer;
+    int x = answer;  // ✅ Calls conversion operator
+    return x;
+}
+```
+
+### ❌ What Doesn't Work Yet
+
+**Standard Library Headers:**
+- Including `<type_traits>`, `<vector>`, `<string>`, etc. causes timeouts
+- Main blockers: template instantiation performance, advanced constexpr, allocators
+
+**Workaround:** Write your own simplified versions of standard utilities for now.
+
+---
+
 ## Recent Progress (December 2024)
 
 ### ✅ Completed Features
@@ -473,6 +524,63 @@ Consider creating minimal versions of standard headers for testing:
 - `<mini_string>` - Just basic_string without locales
 
 This allows testing individual features without full standard library complexity.
+
+## Practical Workarounds for Using FlashCpp Today
+
+### Create Your Own Simplified Standard Library Components
+
+Since full standard headers timeout, you can create lightweight versions for your projects:
+
+**Example: Minimal Type Traits**
+```cpp
+// my_type_traits.h
+namespace my_std {
+    template<typename T, T v>
+    struct integral_constant {
+        static constexpr T value = v;
+        constexpr operator T() const noexcept { return value; }
+    };
+    
+    template<bool B>
+    using bool_constant = integral_constant<bool, B>;
+    
+    using true_type = bool_constant<true>;
+    using false_type = bool_constant<false>;
+    
+    template<typename T, typename U>
+    struct is_same : false_type {};
+    
+    template<typename T>
+    struct is_same<T, T> : true_type {};
+    
+    template<typename T, typename U>
+    inline constexpr bool is_same_v = is_same<T, U>::value;
+}
+```
+
+**Example: Simplified Optional**
+```cpp
+// my_optional.h
+template<typename T>
+class optional {
+    bool has_val;
+    alignas(T) char storage[sizeof(T)];
+    
+public:
+    constexpr optional() : has_val(false) {}
+    constexpr optional(const T& val) : has_val(true) {
+        new (storage) T(val);
+    }
+    constexpr bool has_value() const { return has_val; }
+    constexpr T& value() { return *reinterpret_cast<T*>(storage); }
+};
+```
+
+**Tips:**
+- Use FlashCpp's type trait intrinsics directly: `__is_same(T, U)`, `__is_class(T)`, etc.
+- Avoid complex template metaprogramming patterns that cause deep instantiation
+- Keep constexpr functions simple (basic arithmetic and logic only)
+- Don't rely on allocators or exceptions yet
 
 ## Conclusion
 
