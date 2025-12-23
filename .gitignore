@@ -22,3 +22,4 @@ output/*.obj
 # Test executables
 test_*_exe
 *_exe
+*.backup
