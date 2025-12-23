@@ -6656,24 +6656,26 @@ private:
 							// Get struct name for mangling
 							std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
 							
-							// Build mangled function name for operator&
-							// Format: _ZN<length><struct_name><operator_length>operator<symbol>Ev
-							// Example: _ZN7Counter9operator&Ev for Counter::operator&()
-							StringBuilder mangled_sb;
-							mangled_sb.append("_ZN");
-							mangled_sb.append(static_cast<uint64_t>(struct_name.length()));
-							mangled_sb.append(struct_name);
-							std::string_view op_name = "operator&";
-							mangled_sb.append(static_cast<uint64_t>(op_name.length()));
-							mangled_sb.append(op_name);
-							mangled_sb.append("Ev");  // Empty parameter list, void return encoding
-							std::string_view mangled_name = mangled_sb.commit();
+							// Get the return type from the function declaration
+							const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+							
+							// Generate mangled name using the proper mangling infrastructure
+							// This handles both Itanium (Linux) and MSVC (Windows) name mangling
+							std::string_view operator_func_name = "operator&";
+							std::vector<TypeSpecifierNode> empty_params; // No explicit parameters (only implicit 'this')
+							std::vector<std::string_view> empty_namespace;
+							auto mangled_name = NameMangling::generateMangledName(
+								operator_func_name,
+								return_type,
+								empty_params,
+								false, // not variadic
+								struct_name,
+								empty_namespace,
+								Linkage::CPlusPlus
+							);
 							
 							// Generate the call
 							TempVar ret_var = var_counter.next();
-							
-							// Get return type from function declaration
-							const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 							
 							// Create CallOp
 							CallOp call_op;
@@ -6683,7 +6685,7 @@ private:
 							if (call_op.return_size_in_bits == 0) {
 								call_op.return_size_in_bits = get_type_size_bits(return_type.type());
 							}
-							call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+							call_op.function_name = mangled_name;  // MangledName implicitly converts to StringHandle
 							call_op.is_variadic = false;
 							call_op.uses_return_slot = false;
 							call_op.is_member_function = true;  // This is a member function call
