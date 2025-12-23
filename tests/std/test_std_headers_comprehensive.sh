@@ -50,7 +50,7 @@ declare -a TIMEOUT=()
 declare -a FAILED=()
 
 for test_file in "${TEST_FILES[@]}"; do
-    test_path="tests/standard_headers/$test_file"
+    test_path="tests/std/$test_file"
     obj_file="${test_file%.cpp}.obj"
     
     echo -n "Testing $test_file... "

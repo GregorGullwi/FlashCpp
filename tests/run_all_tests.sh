@@ -23,9 +23,9 @@ fi
 
 # Expected failures
 EXPECTED_FAIL=(
-    # Standard header tests have been moved to tests/standard_headers/
+    # Standard header tests have been moved to tests/std/
     # They are no longer run by this script to avoid timeouts and failures
-    # See tests/standard_headers/STANDARD_HEADERS_MISSING_FEATURES.md for detailed analysis
+    # See tests/std/STANDARD_HEADERS_MISSING_FEATURES.md for detailed analysis
 )
 
 # Expected link failures - files that compile but require external C helper files

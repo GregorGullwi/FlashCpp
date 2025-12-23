@@ -15,7 +15,7 @@ The main test suite (`tests/run_all_tests.sh`) is designed to test FlashCpp's co
 To test standard header support, use the dedicated test script:
 
 ```bash
-cd tests/standard_headers
+cd tests/std
 ./test_std_headers_comprehensive.sh
 ```
 
