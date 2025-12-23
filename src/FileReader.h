@@ -1923,12 +1923,13 @@ private:
 
 		// C++ library feature test macros (SD-6)
 		// These indicate which C++ standard library features are supported
-		defines_["__cpp_lib_type_trait_variable_templates"] = DefineDirective{ "201510L", {} };  // C++17 type traits as variables
-		defines_["__cpp_lib_addressof_constexpr"] = DefineDirective{ "201603L", {} };  // C++17 constexpr addressof
-		defines_["__cpp_lib_integral_constant_callable"] = DefineDirective{ "201304L", {} };  // C++14 integral_constant::operator()
-		defines_["__cpp_lib_is_aggregate"] = DefineDirective{ "201703L", {} };  // C++17 is_aggregate
-		defines_["__cpp_lib_void_t"] = DefineDirective{ "201411L", {} };  // C++17 void_t
-		defines_["__cpp_lib_bool_constant"] = DefineDirective{ "201505L", {} };  // C++17 bool_constant
+		// Values are in format YYYYMML (year/month when feature was standardized)
+		defines_["__cpp_lib_type_trait_variable_templates"] = DefineDirective{ "201510L", {} };  // C++17 (Oct 2015)
+		defines_["__cpp_lib_addressof_constexpr"] = DefineDirective{ "201603L", {} };  // C++17 (Mar 2016)
+		defines_["__cpp_lib_integral_constant_callable"] = DefineDirective{ "201304L", {} };  // C++14 (Apr 2013)
+		defines_["__cpp_lib_is_aggregate"] = DefineDirective{ "201703L", {} };  // C++17 (Mar 2017)
+		defines_["__cpp_lib_void_t"] = DefineDirective{ "201411L", {} };  // C++17 (Nov 2014)
+		defines_["__cpp_lib_bool_constant"] = DefineDirective{ "201505L", {} };  // C++17 (May 2015)
 
 		// Compiler builtin type macros - values depend on compiler mode
 		// MSVC (default): Windows x64 types

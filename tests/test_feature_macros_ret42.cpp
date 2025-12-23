@@ -1,5 +1,7 @@
 // Test that library feature test macros are defined
 int main() {
+    // Count the number of defined library feature macros
+    constexpr int EXPECTED_FEATURE_COUNT = 6;
     int result = 0;
     
     // Check __cpp_lib_type_trait_variable_templates
@@ -32,6 +34,7 @@ int main() {
     result += 1;
     #endif
     
-    // Should have 6 features defined = 42
-    return result * 7;  // 6 * 7 = 42
+    // Should have EXPECTED_FEATURE_COUNT features defined
+    // Return 42 if all features are present
+    return result * (42 / EXPECTED_FEATURE_COUNT);  // 6 * 7 = 42
 }
