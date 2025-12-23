@@ -1353,7 +1353,7 @@ private:
 		
 		if (!struct_info) return nullptr;
 		
-		// Build the operator name we're looking for (e.g., "operator int")
+		// Build the operator name we are looking for (e.g., "operator int")
 		std::string_view target_type_name;
 		if (target_type == Type::Struct && target_type_index < gTypeInfo.size()) {
 			target_type_name = StringTable::getStringView(gTypeInfo[target_type_index].name());
@@ -4858,7 +4858,7 @@ private:
 					if (init_operands.size() >= 3) {
 						Type init_type = std::get<Type>(init_operands[0]);
 						int init_size = std::get<int>(init_operands[1]);
-						TypeIndex init_type_index = 0;
+						TypeIndex init_type_index = 0;  // Will be set below if type_index is available
 						
 						// Extract type_index if available (4th element in init_operands)
 						if (init_operands.size() >= 4 && std::holds_alternative<unsigned long long>(init_operands[3])) {
