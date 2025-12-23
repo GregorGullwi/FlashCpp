@@ -81,12 +81,14 @@ The following type traits intrinsics are fully implemented and working:
 **Impact**: These intrinsics are used extensively in `<memory>`, `<utility>`, and other headers for optimization and correctness
 
 #### 5. Implicit Conversion Sequences (December 2024)
-**Status**: ✅ **Partially Implemented**  
-**Description**: Conversion operators now work for variable initialization with implicit type conversion
+**Status**: ✅ **Fully Implemented**  
+**Description**: Conversion operators now work in all contexts including variable initialization, function arguments, and return statements
 
 **What Works**:
 - Variable initialization with conversion operators: `int i = myStruct;` ✅
-- Conversion operators are automatically called when initializing a variable of different type
+- Function arguments with implicit conversion: `func(myStruct)` where func expects different type ✅
+- Return statements with implicit conversion: `return myStruct;` where return type differs ✅
+- Conversion operators are automatically called when type conversion is needed
 - Proper `this` pointer handling and member function call generation
 
 **Implementation Details**:
@@ -100,6 +102,8 @@ The following type traits intrinsics are fully implemented and working:
 - `test_conversion_add_ret84.cpp` ✅
 - `test_conversion_comprehensive_ret84.cpp` ✅
 - `test_implicit_conversion_fails.cpp` ✅
+- `test_implicit_conversion_arg_ret42.cpp` ✅
+- `test_implicit_conversion_return_ret42.cpp` ✅
 
 **Example IR Generated**:
 ```
@@ -112,33 +116,11 @@ assign %i = %2                     ← Assign result to target
 ret int32 %i
 ```
 
-**What Still Needs Work**:
-- Function arguments: `func(myStruct)` where func expects different type ❌
-  - Note: `test_implicit_conversion_arg_ret42.cpp` demonstrates this case but doesn't compile yet
-- Return statements: `return myStruct;` where return type differs ❌
-  - Note: `test_implicit_conversion_return_ret42.cpp` compiles but doesn't call conversion operator (returns struct directly, works by accident)
-- These require modifications to overload resolution and return statement processing
+**Impact**: Enables full automatic type conversion support, essential for standard library compatibility where implicit conversions are heavily used (e.g., `std::integral_constant::operator T()`).
 
 ### ⚠️ Known Limitations
 
-#### 1. Implicit Conversion with Conversion Operators
-**Status**: ⚠️ **Partial Support - Variable Initialization Works**  
-**What Works**: Variable initialization like `int i = mi;` now correctly calls conversion operators
-**What Doesn't**: Function arguments and return statements don't yet trigger automatic conversions
-**Example**:
-```cpp
-struct MyInt {
-    operator int() const { return 42; }
-};
-MyInt mi;
-int i = mi;          // ✅ Now works - calls conversion operator
-func(mi);            // ❌ Doesn't work if func expects int (fails to compile)
-return mi;           // ❌ Doesn't call conversion operator (may work by accident if value is at offset 0)
-```
-**Workaround**: Use explicit casts for function arguments and return statements  
-**Next Steps**: Extend conversion logic to overload resolution and return statement processing
-
-#### 2. Static Constexpr Members in Templates
+#### 1. Static Constexpr Members in Templates
 **Status**: ⚠️ **Known Issue**  
 **Issue**: Accessing static constexpr members in template classes can cause crashes
 **Example**:
@@ -152,7 +134,7 @@ bool b = integral_constant<int, 42>::value;  // May crash
 **Impact**: Prevents full `std::integral_constant` pattern from working  
 **Next Steps**: Requires improvements to constexpr evaluation and template instantiation
 
-#### 3. Template Instantiation Performance
+#### 2. Template Instantiation Performance
 **Status**: ⚠️ **Known Issue**  
 **Issue**: Complex template instantiation causes 10+ second timeouts  
 **Impact**: Prevents compilation of full standard headers  
@@ -441,10 +423,10 @@ Based on recent progress, focus should be on:
 
 1. ~~**Immediate**: Fix static constexpr member access in templates~~ ✅ **WORKING** - Tests confirm this is functional
 2. ~~**Immediate**: Implement missing compiler intrinsics~~ ✅ **COMPLETED** - All 4 critical intrinsics implemented
-3. ~~**Short-term**: Implement implicit conversion sequences (for automatic conversion operator calls)~~ ✅ **PARTIALLY COMPLETED** - Variable initialization now works
-4. **Short-term**: Complete implicit conversion sequences (function arguments and return statements)
-5. **Short-term**: Implement operator overload resolution (for standard-compliant operator& and others)
-6. **Medium-term**: Optimize template instantiation for performance
+3. ~~**Short-term**: Implement implicit conversion sequences~~ ✅ **FULLY COMPLETED** - Working in all contexts (variables, function args, returns)
+4. **Short-term**: Implement operator overload resolution (for standard-compliant operator& and others)
+5. **Medium-term**: Optimize template instantiation for performance
+6. **Medium-term**: Improve constexpr support for complex expressions
 7. **Long-term**: Add allocator and exception support for containers
 
 ## Testing Strategy
@@ -474,16 +456,19 @@ Supporting standard library headers is a complex undertaking requiring many adva
 ✅ `__builtin_addressof` - Essential for `std::addressof`  
 ✅ Static constexpr member access in templates - Verified working  
 ✅ Additional compiler intrinsics - `__builtin_unreachable`, `__builtin_assume`, `__builtin_expect`, `__builtin_launder`  
-✅ Implicit conversion sequences (variable initialization) - Conversion operators now called automatically for `int i = myStruct;`
+✅ Implicit conversion sequences - **FULLY WORKING** - Conversion operators now called automatically in all contexts:
+  - Variable initialization: `int i = myStruct;` ✅
+  - Function arguments: `func(myStruct)` where func expects different type ✅
+  - Return statements: `return myStruct;` where return type differs ✅
 
 ### Most Impactful Next Steps
 1. ~~Fix static constexpr member access in templates~~ ✅ **WORKING** - Enables `std::integral_constant`
-2. ~~Implement implicit conversion sequences (variable initialization)~~ ✅ **COMPLETED** - Enables automatic type conversions for variables
-3. Complete implicit conversion sequences (function arguments and returns) - Enables full automatic conversions
-4. Add operator overload resolution (standard-compliant operator behavior)
-5. Optimize template instantiation (reduces timeouts)
+2. ~~Implement implicit conversion sequences~~ ✅ **FULLY COMPLETED** - Enables automatic type conversions in all contexts
+3. Add operator overload resolution (standard-compliant operator behavior)
+4. Optimize template instantiation (reduces timeouts)
+5. Improve constexpr support for complex expressions
 
-Once implicit conversions and operator overloading are implemented, simpler headers like `<type_traits>`, `<array>`, and `<span>` should compile successfully.
+Once operator overloading and template optimization are implemented, simpler headers like `<type_traits>`, `<array>`, and `<span>` should compile successfully.
 
 ---
 
