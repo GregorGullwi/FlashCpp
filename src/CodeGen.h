@@ -8088,7 +8088,14 @@ private:
 					call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 					call_op.return_type = return_type.type();
 					call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+					call_op.return_type_index = return_type.type_index();
 					call_op.is_member_function = true;  // This is a member function call
+					
+					// Detect if returning struct by value (needs hidden return parameter for RVO)
+					bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
+					if (returns_struct_by_value) {
+						call_op.uses_return_slot = true;
+					}
 					
 					// Add 'this' pointer as first argument
 					TypedValue this_arg;
