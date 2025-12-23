@@ -2982,8 +2982,115 @@ private:
 		
 				// Convert if types don't match
 				if (expr_type != return_type || expr_size != return_size) {
-					// Update operands with the converted value
-					operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+					// Check for user-defined conversion operator
+					// If expr is a struct type with a conversion operator to return_type, call it
+					if (expr_type == Type::Struct && operands.size() >= 4) {
+						TypeIndex expr_type_index = 0;
+						if (std::holds_alternative<unsigned long long>(operands[3])) {
+							expr_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(operands[3]));
+						}
+						
+						if (expr_type_index > 0 && expr_type_index < gTypeInfo.size()) {
+							const TypeInfo& source_type_info = gTypeInfo[expr_type_index];
+							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
+							
+							// Look for a conversion operator to the return type
+							const StructMemberFunction* conv_op = findConversionOperator(
+								source_struct_info, return_type, 0);
+							
+							if (conv_op) {
+								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ", 
+									StringTable::getStringView(source_type_info.name()), 
+									" to return type");
+								
+								// Generate call to the conversion operator
+								TempVar result_var = var_counter.next();
+								
+								// Get the source variable value
+								IrValue source_value = std::visit([](auto&& arg) -> IrValue {
+									using T = std::decay_t<decltype(arg)>;
+									if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+									              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+										return arg;
+									} else {
+										return 0ULL;
+									}
+								}, operands[2]);
+								
+								// Build the mangled name for the conversion operator
+								StringHandle struct_name_handle = source_type_info.name();
+								std::string_view struct_name = StringTable::getStringView(struct_name_handle);
+								
+								// Generate the call using CallOp (member function call)
+								if (conv_op->function_decl.is<FunctionDeclarationNode>()) {
+									const auto& func_decl = conv_op->function_decl.as<FunctionDeclarationNode>();
+									std::string_view mangled_name;
+									if (func_decl.has_mangled_name()) {
+										mangled_name = func_decl.mangled_name();
+									} else {
+										// Generate mangled name for the conversion operator
+										mangled_name = generateMangledNameForCall(func_decl, struct_name);
+									}
+									
+									CallOp call_op;
+									call_op.result = result_var;
+									call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+									call_op.return_type = return_type;
+									call_op.return_size_in_bits = return_size;
+									call_op.return_type_index = 0;
+									call_op.is_member_function = true;
+									call_op.is_variadic = false;
+									
+									// For member function calls, first argument is 'this' pointer
+									if (std::holds_alternative<StringHandle>(source_value)) {
+										// It's a variable - take its address
+										TempVar this_ptr = var_counter.next();
+										AddressOfOp addr_op;
+										addr_op.result = this_ptr;
+										addr_op.pointee_type = expr_type;
+										addr_op.pointee_size_in_bits = expr_size;
+										addr_op.operand = std::get<StringHandle>(source_value);
+										ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+										
+										// Add 'this' as first argument
+										TypedValue this_arg;
+										this_arg.type = expr_type;
+										this_arg.size_in_bits = 64;  // Pointer size
+										this_arg.value = this_ptr;
+										this_arg.type_index = expr_type_index;
+										call_op.args.push_back(std::move(this_arg));
+									} else if (std::holds_alternative<TempVar>(source_value)) {
+										// It's already a temporary
+										// ASSUMPTION: For struct types, TempVars at this point
+										// represent the address of the object (not the object value itself).
+										TypedValue this_arg;
+										this_arg.type = expr_type;
+										this_arg.size_in_bits = 64;  // Pointer size for 'this'
+										this_arg.value = std::get<TempVar>(source_value);
+										this_arg.type_index = expr_type_index;
+										call_op.args.push_back(std::move(this_arg));
+									}
+									
+									ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), node.return_token()));
+									
+									// Replace operands with the result of the conversion
+									operands.clear();
+									operands.emplace_back(return_type);
+									operands.emplace_back(return_size);
+									operands.emplace_back(result_var);
+								}
+							} else {
+								// No conversion operator found - fall back to generateTypeConversion
+								operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+							}
+						} else {
+							// No valid type_index - fall back to generateTypeConversion
+							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+						}
+					} else {
+						// Not a struct type - use standard type conversion
+						operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+					}
 				}
 			}
 			

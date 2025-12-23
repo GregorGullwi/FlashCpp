@@ -2,6 +2,8 @@
 
 #include "AstNodeTypes.h"
 #include "SymbolTable.h"
+#include "CompileContext.h"
+#include "ChunkedString.h"
 #include <vector>
 #include <optional>
 
@@ -11,7 +13,7 @@ enum class ConversionRank {
 	ExactMatch = 0,          // No conversion needed
 	Promotion = 1,           // Integral or floating-point promotion
 	Conversion = 2,          // Standard conversion (int to double, etc.)
-	UserDefined = 3,         // User-defined conversion (not implemented yet)
+	UserDefined = 3,         // User-defined conversion via conversion operator
 	NoMatch = 4              // No valid conversion
 };
 
@@ -88,6 +90,71 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 	
 	// No valid conversion
 	return TypeConversionResult::no_match();
+}
+
+// Helper function to find a conversion operator in a struct
+// Returns true if a conversion operator exists from source_type to target_type
+inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type, TypeIndex target_type_index = 0) {
+	if (source_type_index == 0 || source_type_index >= gTypeInfo.size()) {
+		return false;
+	}
+	
+	const TypeInfo& source_type_info = gTypeInfo[source_type_index];
+	const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
+	if (!source_struct_info) {
+		return false;
+	}
+	
+	// Build the operator name we are looking for (e.g., "operator int")
+	std::string_view target_type_name;
+	if (target_type == Type::Struct && target_type_index > 0 && target_type_index < gTypeInfo.size()) {
+		target_type_name = StringTable::getStringView(gTypeInfo[target_type_index].name());
+	} else {
+		// For primitive types, convert Type enum to string
+		// Note: Type names must match how conversion operators are declared in C++
+		switch (target_type) {
+			case Type::Int: target_type_name = "int"; break;
+			case Type::UnsignedInt: target_type_name = "unsigned int"; break;
+			case Type::Long: target_type_name = "long"; break;
+			case Type::UnsignedLong: target_type_name = "unsigned long"; break;
+			case Type::LongLong: target_type_name = "long long"; break;
+			case Type::UnsignedLongLong: target_type_name = "unsigned long long"; break;
+			case Type::Short: target_type_name = "short"; break;
+			case Type::UnsignedShort: target_type_name = "unsigned short"; break;
+			case Type::Char: target_type_name = "char"; break;
+			case Type::UnsignedChar: target_type_name = "unsigned char"; break;
+			case Type::Bool: target_type_name = "bool"; break;
+			case Type::Float: target_type_name = "float"; break;
+			case Type::Double: target_type_name = "double"; break;
+			case Type::LongDouble: target_type_name = "long double"; break;
+			case Type::Void: target_type_name = "void"; break;
+			default: return false;
+		}
+	}
+	
+	// Create the operator name string (e.g., "operator int")
+	StringBuilder sb;
+	sb.append("operator ").append(target_type_name);
+	std::string_view operator_name = sb.commit();
+	StringHandle operator_name_handle = StringTable::getOrInternStringHandle(operator_name);
+	
+	// Search member functions for the conversion operator
+	for (const auto& member_func : source_struct_info->member_functions) {
+		if (member_func.getName() == operator_name_handle) {
+			return true;
+		}
+	}
+	
+	// Search base classes recursively
+	for (const auto& base_spec : source_struct_info->base_classes) {
+		if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
+			if (hasConversionOperator(base_spec.type_index, target_type, target_type_index)) {
+				return true;
+			}
+		}
+	}
+	
+	return false;
 }
 
 // Check if one type can be implicitly converted to another (considering pointers and references)
@@ -183,6 +250,18 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		}
 
 		return TypeConversionResult::no_match();
+	}
+
+	// Check for user-defined conversion operators
+	// If 'from' is a struct type and 'to' is a different type, check for conversion operator
+	if (from.type() == Type::Struct && from.type() != to.type()) {
+		TypeIndex from_type_index = from.type_index();
+		TypeIndex to_type_index = (to.type() == Type::Struct) ? to.type_index() : 0;
+		
+		if (hasConversionOperator(from_type_index, to.type(), to_type_index)) {
+			// User-defined conversion via conversion operator
+			return TypeConversionResult{ConversionRank::UserDefined, true};
+		}
 	}
 
 	// Non-pointer, non-reference types: use basic type conversion
