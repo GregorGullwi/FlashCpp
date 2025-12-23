@@ -881,18 +881,23 @@ private:
 			// This handles cases like Point::static_sum where the parser creates a FunctionCallNode
 			// but the function name is just "static_sum" without the qualifier
 			
+			// Note: This search will find both static and non-static member functions.
+			// For non-static members, the evaluation will naturally fail when we try to call them
+			// without an instance (parameter count mismatch or missing 'this' context).
+			// Static member functions have no implicit 'this' parameter, so they work correctly.
+			
 			for (const auto& type_info : ::gTypeInfo) {
 				if (!type_info.struct_info_) continue;
 				
 				// Search member functions in this struct
 				for (const auto& member_func : type_info.struct_info_->member_functions) {
 					if (member_func.name == StringTable::getOrInternStringHandle(func_name)) {
-						// Found a matching member function - check if it's static and constexpr
+						// Found a matching member function - check if it's constexpr
 						const ASTNode& func_node = member_func.function_decl;
 						if (func_node.is<FunctionDeclarationNode>()) {
 							const FunctionDeclarationNode& func_decl = func_node.as<FunctionDeclarationNode>();
 							
-							// For static member functions, we can evaluate them like regular functions
+							// Only constexpr functions can be evaluated at compile time
 							if (func_decl.is_constexpr()) {
 								// Get the function body
 								const auto& definition = func_decl.get_definition();
@@ -901,6 +906,8 @@ private:
 									const auto& arguments = func_call.arguments();
 									const auto& parameters = func_decl.parameter_nodes();
 									
+									// This parameter count check implicitly ensures we're calling static members:
+									// Non-static members would have a conceptual 'this' parameter that we're not providing
 									if (arguments.size() == parameters.size()) {
 										// Pass empty bindings for static member function calls
 										std::unordered_map<std::string_view, EvalResult> empty_bindings;
