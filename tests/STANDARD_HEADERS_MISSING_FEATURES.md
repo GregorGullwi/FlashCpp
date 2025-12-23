@@ -416,5 +416,5 @@ Once these are implemented, simpler headers like `<type_traits>`, `<array>`, and
 
 ---
 
-**Last Updated**: December 23, 2024  
+**Last Updated**: December 2024  
 **Recent Contributors**: GitHub Copilot, FlashCpp team
