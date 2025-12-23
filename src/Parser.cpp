@@ -20843,9 +20843,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
 		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Found existing instantiation, returning it");
-
+		PROFILE_TEMPLATE_CACHE_HIT(std::string(template_name) + "_func");
 		return *existing_inst;  // Return existing instantiation
 	}
+	PROFILE_TEMPLATE_CACHE_MISS(std::string(template_name) + "_func");
 
 	// Step 3: Instantiate the template
 	// For Phase 2, we'll create a simplified instantiation
