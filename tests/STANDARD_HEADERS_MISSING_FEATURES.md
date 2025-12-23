@@ -114,7 +114,9 @@ ret int32 %i
 
 **What Still Needs Work**:
 - Function arguments: `func(myStruct)` where func expects different type ❌
+  - Note: `test_implicit_conversion_arg_ret42.cpp` demonstrates this case but doesn't compile yet
 - Return statements: `return myStruct;` where return type differs ❌
+  - Note: `test_implicit_conversion_return_ret42.cpp` compiles but doesn't call conversion operator (returns struct directly, works by accident)
 - These require modifications to overload resolution and return statement processing
 
 ### ⚠️ Known Limitations
@@ -130,8 +132,8 @@ struct MyInt {
 };
 MyInt mi;
 int i = mi;          // ✅ Now works - calls conversion operator
-func(mi);            // ❌ Doesn't work if func expects int
-return mi;           // ❌ Doesn't work if return type is int
+func(mi);            // ❌ Doesn't work if func expects int (fails to compile)
+return mi;           // ❌ Doesn't call conversion operator (may work by accident if value is at offset 0)
 ```
 **Workaround**: Use explicit casts for function arguments and return statements  
 **Next Steps**: Extend conversion logic to overload resolution and return statement processing

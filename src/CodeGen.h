@@ -1359,6 +1359,7 @@ private:
 			target_type_name = StringTable::getStringView(gTypeInfo[target_type_index].name());
 		} else {
 			// For primitive types, convert Type enum to string
+			// Note: Type names must match how conversion operators are declared in C++
 			switch (target_type) {
 				case Type::Int: target_type_name = "int"; break;
 				case Type::UnsignedInt: target_type_name = "unsigned int"; break;
@@ -4942,7 +4943,9 @@ private:
 									} else if (std::holds_alternative<TempVar>(source_value)) {
 										// It's already a temporary - it might be an address or value
 										// For conversion operators, we need the address
-										// Assume it's an object address if it's a struct type
+										// ASSUMPTION: For struct types, TempVars at this point in variable initialization
+										// represent the address of the object (not the object value itself).
+										// This is because visitExpressionNode returns addresses for struct identifiers.
 										TypedValue this_arg;
 										this_arg.type = init_type;
 										this_arg.size_in_bits = 64;  // Pointer size for 'this'
