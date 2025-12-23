@@ -1358,25 +1358,10 @@ private:
 		if (target_type == Type::Struct && target_type_index < gTypeInfo.size()) {
 			target_type_name = StringTable::getStringView(gTypeInfo[target_type_index].name());
 		} else {
-			// For primitive types, convert Type enum to string
-			// Note: Type names must match how conversion operators are declared in C++
-			switch (target_type) {
-				case Type::Int: target_type_name = "int"; break;
-				case Type::UnsignedInt: target_type_name = "unsigned int"; break;
-				case Type::Long: target_type_name = "long"; break;
-				case Type::UnsignedLong: target_type_name = "unsigned long"; break;
-				case Type::LongLong: target_type_name = "long long"; break;
-				case Type::UnsignedLongLong: target_type_name = "unsigned long long"; break;
-				case Type::Short: target_type_name = "short"; break;
-				case Type::UnsignedShort: target_type_name = "unsigned short"; break;
-				case Type::Char: target_type_name = "char"; break;
-				case Type::UnsignedChar: target_type_name = "unsigned char"; break;
-				case Type::Bool: target_type_name = "bool"; break;
-				case Type::Float: target_type_name = "float"; break;
-				case Type::Double: target_type_name = "double"; break;
-				case Type::LongDouble: target_type_name = "long double"; break;
-				case Type::Void: target_type_name = "void"; break;
-				default: return nullptr;
+			// For primitive types, use the helper function to get the type name
+			target_type_name = getTypeName(target_type);
+			if (target_type_name.empty()) {
+				return nullptr;
 			}
 		}
 		
@@ -3037,7 +3022,7 @@ private:
 									call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 									call_op.return_type = return_type;
 									call_op.return_size_in_bits = return_size;
-									call_op.return_type_index = 0;
+									call_op.return_type_index = (return_type == Type::Struct) ? current_function_return_type_index_ : 0;
 									call_op.is_member_function = true;
 									call_op.is_variadic = false;
 									
