@@ -8202,10 +8202,21 @@ private:
 			// Assignment using typed payload
 			if (op == "=") {
 				AssignmentOp assign_op;
-				assign_op.result = result_var;
+				// Extract the LHS value directly (it's either StringHandle or TempVar)
+				if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
+					assign_op.result = std::get<StringHandle>(lhsIrOperands[2]);
+				} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
+					assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
+				} else {
+					// LHS is an immediate value - this shouldn't happen for valid assignments
+					assert(false && "Assignment LHS cannot be an immediate value");
+					return {};
+				}
 				assign_op.lhs = toTypedValue(lhsIrOperands);
 				assign_op.rhs = toTypedValue(rhsIrOperands);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+				// Assignment expression returns the LHS (the assigned-to value)
+				return lhsIrOperands;
 			}
 			else {
 				assert(false && "Unsupported binary operator in this code path");
@@ -8217,6 +8228,10 @@ private:
 		// For other operations, return the common type
 		if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
 			return { Type::Bool, 8, result_var, 0ULL };
+		} else if (op == "=") {
+			// Assignment already handled above, should never reach here
+			assert(false && "Assignment should have been handled earlier");
+			return {};
 		} else {
 			// Return the result variable with its type and size
 			return { commonType, get_type_size_bits(commonType), result_var, 0ULL };
