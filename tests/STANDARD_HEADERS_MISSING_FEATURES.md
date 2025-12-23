@@ -689,5 +689,103 @@ Once template optimization is implemented, simpler headers like `<type_traits>`,
 
 ---
 
-**Last Updated**: December 2024  
+## Current Work Plan (December 23, 2024)
+
+### Priority 1: Fix Operator Parsing Issues (MUST FIX BEFORE MERGE)
+**Status**: Parsing failures with operator-> and operator+  
+**Root cause**: Unknown - requires investigation
+
+#### Issues Identified:
+- `operator->` - Parsing fails with complex constructor patterns
+- Binary arithmetic operators (e.g., `operator+`) - Timeout with constructor calls
+- Test files affected:
+  - `test_operator_arrow_overload_ret100.cpp` 
+  - `test_operator_plus_overload_ret15.cpp`
+
+#### Investigation Plan:
+1. **Isolate the issue:**
+   - Create minimal test cases without constructors
+   - Gradually add complexity to identify breaking point
+
+2. **Analyze parser behavior:**
+   - Add debug logging to operator parsing code
+   - Check operator declaration parsing
+   - Check operator call resolution
+   - Check constructor interaction with operators
+
+3. **Potential root causes:**
+   - Operator precedence conflicts with constructors
+   - Ambiguous grammar for operator declarations
+   - Template instantiation issues with operator overloads
+   - Constructor overload resolution interfering with operators
+
+4. **Fix approach:**
+   - If parser bug: Fix grammar/parsing logic
+   - If constructor interaction: Improve overload resolution
+   - If template issue: Fix template instantiation for operators
+
+**Files to Investigate:**
+- `src/Parser.cpp` - Operator parsing logic
+- `src/OverloadResolution.h` - Operator overload resolution
+
+**Estimated Effort**: 4-8 hours
+
+### Priority 2: Template Instantiation Performance (CRITICAL)
+**Status**: Main blocker for standard header compilation  
+**Issue**: Complex template instantiation causes 10+ second timeouts
+
+#### Performance Measurement Plan:
+
+**Current State:**
+- Basic timing exists but lacks detail
+- Timings don't sum correctly
+- Need granular metrics to identify bottlenecks
+
+**Proposed Instrumentation:**
+
+1. **Macro-driven counters** in critical functions
+   - `PROFILE_COUNT(name)` - Function call counting
+   - `PROFILE_TIME_START(name)` / `PROFILE_TIME_END(name)` - Execution timing
+   - Compile flag to disable for production
+
+2. **Expand existing profiler:**
+   - Template instantiation phase breakdown:
+     - Template lookup time
+     - Parameter substitution time
+     - Body parsing time
+     - Deferred instantiation time
+   - Fix timing aggregation
+   - Per-template-name metrics
+
+3. **Key metrics:**
+   - Template instantiations (total and unique)
+   - Cache hit/miss ratios
+   - Parse time per template depth
+   - Memory allocations during instantiation
+
+4. **Implementation:**
+   - Build optimized binary with profiling
+   - Test with problematic headers
+   - Generate time distribution reports
+   - Identify top bottlenecks
+
+**Files to Instrument:**
+- `src/TemplateRegistry.h` - Template lookup and registration
+- `src/Parser.cpp` - Template parsing and instantiation
+- `src/TypeInfo.cpp` - Type resolution
+
+**Estimated Effort**: 
+- Instrumentation: 4-6 hours
+- Optimization: 8-16 hours
+
+#### Implementation Steps:
+1. Add profiling instrumentation
+2. Profile with standard headers
+3. Implement caching/memoization
+4. Add early termination for redundant instantiations
+5. Consider lazy instantiation
+
+---
+
+**Last Updated**: December 23, 2024  
 **Recent Contributors**: GitHub Copilot, FlashCpp team
