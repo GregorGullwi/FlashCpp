@@ -35,6 +35,6 @@ int main() {
     #endif
     
     // Should have EXPECTED_FEATURE_COUNT features defined
-    // Return 42 if all features are present
-    return result * (42 / EXPECTED_FEATURE_COUNT);  // 6 * 7 = 42
+    // Return 42 if all features are present, 0 otherwise
+    return (result == EXPECTED_FEATURE_COUNT) ? 42 : 0;
 }
