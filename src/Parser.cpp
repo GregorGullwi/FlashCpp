@@ -16992,22 +16992,16 @@ ParseResult Parser::parse_template_declaration() {
 							continue;  // Skip to next base class or exit loop
 						}
 						
-auto instantiated_base = try_instantiate_class_template(base_class_name, template_args);
-						
-
-						
-// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
-						
-if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
-						
-	ast_nodes_.push_back(*instantiated_base);
-						
-}
 						// Check if the base class is a template
 						auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
 						if (template_entry) {
 							// Try to instantiate the base template
-							try_instantiate_class_template(base_class_name, template_args);
+							auto instantiated_base = try_instantiate_class_template(base_class_name, template_args);
+							
+							// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
+							if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
+								ast_nodes_.push_back(*instantiated_base);
+							}
 							
 							// Use the instantiated name as the base class
 							// get_instantiated_class_name returns a persistent string_view
@@ -17855,12 +17849,7 @@ if (struct_type_info.getStructInfo()) {
 						// If template arguments are dependent, we're inside a template declaration
 						// Don't try to instantiate or resolve the base class yet
 						if (has_dependent_args) {
-							auto instantiated_base = try_instantiate_class_template(base_class_name, template_args);
-							
-							// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
-							if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
-								ast_nodes_.push_back(*instantiated_base);
-							}
+							FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
 							// Skip base class resolution for now
 							// The base class will be resolved when this template is instantiated
 							continue;  // Skip to next base class or exit loop
@@ -17870,7 +17859,12 @@ if (struct_type_info.getStructInfo()) {
 						auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
 						if (template_entry) {
 							// Try to instantiate the base template
-							try_instantiate_class_template(base_class_name, template_args);
+							auto instantiated_base = try_instantiate_class_template(base_class_name, template_args);
+							
+							// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
+							if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
+								ast_nodes_.push_back(*instantiated_base);
+							}
 							
 							// Use the instantiated name as the base class
 							// get_instantiated_class_name returns a persistent string_view
