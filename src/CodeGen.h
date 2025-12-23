@@ -5639,6 +5639,18 @@ private:
 					// Use helper function to calculate size_bits with proper fallback handling
 					int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
 					
+					// For enum references, return the underlying type (not the enum type)
+					// This ensures assignment operations work with the correct storage type
+					Type return_type = type_node.type();
+					if (type_node.type() == Type::Enum && type_node.type_index() < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+						const EnumTypeInfo* enum_info = type_info.getEnumInfo();
+						if (enum_info) {
+							return_type = enum_info->underlying_type;
+							size_bits = static_cast<int>(enum_info->underlying_size);
+						}
+					}
+					
 					// For the 4th element: include type_index for Struct and Enum types
 					unsigned long long fourth_element = 0ULL;
 					if (type_node.type() == Type::Struct || type_node.type() == Type::Enum) {
@@ -5646,7 +5658,7 @@ private:
 					} else if (type_node.pointer_depth() > 0) {
 						fourth_element = static_cast<unsigned long long>(type_node.pointer_depth());
 					}
-					return { type_node.type(), size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
+					return { return_type, size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
 				}
 				
 				// For non-array references in Load context, we need to dereference to get the value
