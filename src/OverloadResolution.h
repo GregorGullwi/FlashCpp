@@ -478,4 +478,49 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 	return OperatorOverloadResult::no_overload();
 }
 
+// Find binary operator overload in a struct type (member function form)
+// For binary operators like operator+, operator-, etc.
+// Returns the member function that overloads the given operator, or nullptr if not found
+// This handles the member function form: a.operator+(b)
+inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, std::string_view operator_symbol) {
+	// Only struct types can have operator overloads
+	if (left_type_index == 0 || left_type_index >= gTypeInfo.size()) {
+		return OperatorOverloadResult::no_overload();
+	}
+	
+	const TypeInfo& left_type_info = gTypeInfo[left_type_index];
+	const StructTypeInfo* left_struct_info = left_type_info.getStructInfo();
+	
+	if (!left_struct_info) {
+		return OperatorOverloadResult::no_overload();
+	}
+	
+	// Search for the operator overload in member functions
+	// For member function form: Number::operator+(const Number& other)
+	for (const auto& member_func : left_struct_info->member_functions) {
+		if (member_func.is_operator_overload && member_func.operator_symbol == operator_symbol) {
+			// Found an operator overload
+			// TODO: In the future, we could check parameter type compatibility here
+			// For now, we assume the first matching operator is correct
+			return OperatorOverloadResult(&member_func);
+		}
+	}
+	
+	// Search base classes recursively
+	for (const auto& base_spec : left_struct_info->base_classes) {
+		if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
+			auto result = findBinaryOperatorOverload(base_spec.type_index, right_type_index, operator_symbol);
+			if (result.has_overload) {
+				return result;
+			}
+		}
+	}
+	
+	// TODO: In the future, also search for free function operator overloads
+	// e.g., operator+(const Number& a, const Number& b)
+	// This would require searching the global scope for matching functions
+	
+	return OperatorOverloadResult::no_overload();
+}
+
 
