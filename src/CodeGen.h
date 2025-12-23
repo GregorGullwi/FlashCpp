@@ -5564,18 +5564,23 @@ private:
 
 			// Check if this is an enum value (enumerator constant)
 			// IMPORTANT: References and pointers to enum are VARIABLES, not enumerator constants
-			// Only non-reference, non-pointer enum-typed identifiers can be enumerators
+			// Only non-reference, non-pointer enum-typed identifiers CAN BE enumerators
+			// We must verify the identifier actually exists as an enumerator before treating it as a constant
 			if (type_node.type() == Type::Enum && !type_node.is_reference() && type_node.pointer_depth() == 0) {
-				// This might be an enumerator constant - look up its constant value
+				// Check if this identifier is actually an enumerator (not just a variable of enum type)
 				size_t enum_type_index = type_node.type_index();
 				if (enum_type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[enum_type_index];
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 					if (enum_info) {
-						long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(identifierNode.name()));
-						// Return the enum value as a constant (using the underlying type)
-						return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
-						         static_cast<unsigned long long>(enum_value) };
+						// Use findEnumerator to check if this identifier is actually an enumerator
+						const Enumerator* enumerator = enum_info->findEnumerator(StringTable::getOrInternStringHandle(identifierNode.name()));
+						if (enumerator) {
+							// This IS an enumerator constant - return its value using the underlying type
+							return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
+							         static_cast<unsigned long long>(enumerator->value) };
+						}
+						// If not found as an enumerator, it's a variable of enum type - fall through to variable handling
 					}
 				}
 			}
@@ -5658,12 +5663,23 @@ private:
 					pointee_size = 32;
 				}
 				
+				// For enum references, treat dereferenced value as underlying type
+				// This allows enum variables to work in arithmetic/bitwise operations
+				if (pointee_type == Type::Enum && type_node.type_index() < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
+					if (enum_info) {
+						pointee_type = enum_info->underlying_type;
+						pointee_size = static_cast<int>(enum_info->underlying_size);
+					}
+				}
+				
 				deref_op.pointee_type = pointee_type;
 				deref_op.pointee_size_in_bits = pointee_size;
 				deref_op.pointer = StringTable::getOrInternStringHandle(identifierNode.name());  // The reference parameter holds the address
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
 				
-				TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
+				TypeIndex type_index = (pointee_type == Type::Struct || type_node.type() == Type::Enum) ? type_node.type_index() : 0;
 				return { pointee_type, pointee_size, result_temp, static_cast<unsigned long long>(type_index) };
 			}
 			
@@ -5671,14 +5687,30 @@ private:
 			// Use helper function to calculate size_bits with proper fallback handling
 			int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
 			
+			// For enum variables (not enumerators), return the underlying integer type
+			// This allows enum variables to work in arithmetic/bitwise operations
+			Type return_type = type_node.type();
+			if (type_node.type() == Type::Enum && type_node.type_index() < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+				const EnumTypeInfo* enum_info = type_info.getEnumInfo();
+				if (enum_info) {
+					return_type = enum_info->underlying_type;
+					size_bits = static_cast<int>(enum_info->underlying_size);
+				}
+			}
+			
 			// For the 4th element: 
 			// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
-			// - For non-struct pointer types, return pointer_depth
+			// - For enum types, return type_index to preserve type information
+			// - For non-struct/enum pointer types, return pointer_depth
 			// - Otherwise return 0
-			unsigned long long fourth_element = (type_node.type() == Type::Struct)
-				? static_cast<unsigned long long>(type_node.type_index())
-				: ((type_node.pointer_depth() > 0) ? static_cast<unsigned long long>(type_node.pointer_depth()) : 0ULL);
-			return { type_node.type(), size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
+			unsigned long long fourth_element = 0ULL;
+			if (type_node.type() == Type::Struct || type_node.type() == Type::Enum) {
+				fourth_element = static_cast<unsigned long long>(type_node.type_index());
+			} else if (type_node.pointer_depth() > 0) {
+				fourth_element = static_cast<unsigned long long>(type_node.pointer_depth());
+			}
+			return { return_type, size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
 		}
 
 		// Check if it's a VariableDeclarationNode
