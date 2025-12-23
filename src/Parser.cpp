@@ -3960,13 +3960,11 @@ ParseResult Parser::parse_struct_declaration()
 			                              operator_keyword_token.line(), operator_keyword_token.column(),
 			                              operator_keyword_token.file_index());
 			
-			// Create a void type specifier for the "return type" (conversion operators don't have explicit return types)
-			// The return type is implicitly the target type, but we'll use void as a placeholder
-			TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0, operator_keyword_token);
-			
-			// Create declaration node with void type and operator name
+			// Conversion operators implicitly return the target type
+			// Use the parsed target type as the return type
+			// Create declaration node with target type as return type and operator name
 			ASTNode decl_node = emplace_node<DeclarationNode>(
-				emplace_node<TypeSpecifierNode>(void_type),
+				type_result.node().value(),
 				identifier_token
 			);
 			
