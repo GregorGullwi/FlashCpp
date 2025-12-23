@@ -1696,12 +1696,11 @@ private:
 		// Skip duplicate function definitions to prevent multiple codegen of the same function
 		// This is especially important for inline functions from standard headers (like std::abs)
 		// that may be parsed multiple times
-		std::string mangled_name_str(mangled_name);
-		if (generated_function_names_.count(mangled_name_str) > 0) {
+		if (generated_function_names_.count(func_decl_op.mangled_name) > 0) {
 			FLASH_LOG(Codegen, Debug, "Skipping duplicate function definition: ", func_decl.identifier_token().value(), " (", mangled_name, ")");
 			return;
 		}
-		generated_function_names_.insert(mangled_name_str);
+		generated_function_names_.insert(func_decl_op.mangled_name);
 
 		// Add parameters to function declaration
 		for (const auto& param : node.parameter_nodes()) {
@@ -14075,7 +14074,8 @@ private:
 	
 	// Track generated functions to prevent duplicate codegen
 	// Key: mangled function name - prevents generating the same function body multiple times
-	std::unordered_set<std::string> generated_function_names_;
+	// Phase 4: Using StringHandle
+	std::unordered_set<StringHandle> generated_function_names_;
 	
 	// Generic lambda instantiation tracking
 	// Key: lambda_id concatenated with deduced type signature (e.g., "0_int_double")
