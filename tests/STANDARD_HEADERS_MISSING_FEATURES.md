@@ -375,19 +375,47 @@ __builtin_expect         // ✅ Branch prediction hint
 
 ## Preprocessor and Feature Test Macros
 
-Standard headers check for many feature test macros:
+Standard headers check for many feature test macros. FlashCpp now defines:
 
+**Language Feature Macros:**
 ```cpp
-__cpp_concepts
+__cpp_exceptions
+__cpp_rtti
+__cpp_static_assert
+__cpp_decltype
+__cpp_auto_type
+__cpp_nullptr
+__cpp_lambdas
+__cpp_range_based_for
+__cpp_variadic_templates
+__cpp_initializer_lists
+__cpp_delegating_constructors
 __cpp_constexpr
-__cpp_constexpr_dynamic_alloc
-__cpp_lib_concepts
-__cpp_lib_ranges
+__cpp_if_constexpr
+__cpp_inline_variables
+__cpp_structured_bindings
+__cpp_noexcept_function_type
+__cpp_concepts
+__cpp_aggregate_bases
+```
+
+**Library Feature Macros (New in December 2024):**
+```cpp
+__cpp_lib_type_trait_variable_templates  // ✅ C++17 type traits as variables
+__cpp_lib_addressof_constexpr           // ✅ C++17 constexpr addressof
+__cpp_lib_integral_constant_callable    // ✅ C++14 integral_constant::operator()
+__cpp_lib_is_aggregate                  // ✅ C++17 is_aggregate
+__cpp_lib_void_t                        // ✅ C++17 void_t
+__cpp_lib_bool_constant                 // ✅ C++17 bool_constant
+```
+
+**Attribute Detection Macros:**
+```cpp
 __has_cpp_attribute(nodiscard)
 __has_cpp_attribute(deprecated)
 ```
 
-These need to be defined appropriately based on FlashCpp's feature support.
+These macros enable conditional compilation in standard library headers based on FlashCpp's feature support.
 
 ## Performance Issues
 
@@ -460,13 +488,15 @@ Supporting standard library headers is a complex undertaking requiring many adva
   - Variable initialization: `int i = myStruct;` ✅
   - Function arguments: `func(myStruct)` where func expects different type ✅
   - Return statements: `return myStruct;` where return type differs ✅
+✅ Library feature test macros - Added 6 standard library feature detection macros (`__cpp_lib_*`)
 
 ### Most Impactful Next Steps
 1. ~~Fix static constexpr member access in templates~~ ✅ **WORKING** - Enables `std::integral_constant`
 2. ~~Implement implicit conversion sequences~~ ✅ **FULLY COMPLETED** - Enables automatic type conversions in all contexts
-3. Add operator overload resolution (standard-compliant operator behavior)
-4. Optimize template instantiation (reduces timeouts)
-5. Improve constexpr support for complex expressions
+3. ~~Add library feature test macros~~ ✅ **COMPLETED** - Enables conditional compilation in standard headers
+4. Add operator overload resolution (standard-compliant operator behavior)
+5. Optimize template instantiation (reduces timeouts)
+6. Improve constexpr support for complex expressions
 
 Once operator overloading and template optimization are implemented, simpler headers like `<type_traits>`, `<array>`, and `<span>` should compile successfully.
 
