@@ -37,10 +37,7 @@ EXPECTED_LINK_FAIL=(
     "test_dynamic_cast_debug.cpp"
     "test_virtual_inheritance.cpp"
     "test_varargs.cpp"
-    "test_cstddef.cpp"
     "test_cstdlib.cpp"
-    "test_full_spec_inherit.cpp"
-    "test_full_spec_inherit_simple.cpp"
 )
 
 # Known test files with valid out-of-range return values

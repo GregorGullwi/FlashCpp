@@ -36,10 +36,7 @@ EXPECTED_LINK_FAIL=(
 	"test_abstract_class.cpp"             # Needs typeinfo for virtual classes
     "test_covariant_return.cpp"           # Needs RTTI (typeinfo) and has incorrect copy constructor call for reference binding
     "test_varargs.cpp"                    # Needs external C helper functions (sum_ints, sum_mixed)
-    "test_cstddef.cpp"                    # Needs std::terminate() and operator() implementation
     "test_cstdlib.cpp"                    # Needs builtin functions (__builtin_labs, __builtin_llabs, __builtin_fabs, __builtin_fabsf)
-    "test_full_spec_inherit.cpp"          # Demonstrates full specialization inheritance parsing (Priority 8b: implicit constructor issue)
-    "test_full_spec_inherit_simple.cpp"   # Demonstrates full specialization inheritance parsing (Priority 8b: implicit constructor issue)
 )
 
 # Results

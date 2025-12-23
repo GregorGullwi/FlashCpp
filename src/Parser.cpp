@@ -3153,18 +3153,10 @@ ParseResult Parser::parse_struct_declaration()
 				continue;  // Skip to next base class or exit loop
 			}
 			
-			// Check if the base class is a template
-			auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
-			if (template_entry) {
-				// Try to instantiate the base template
-				// Note: try_instantiate_class_template returns nullopt on success 
-				// (type is registered in gTypesByName)
-				try_instantiate_class_template(base_class_name, template_args);
-				
-				// Use the instantiated name as the base class
-				instantiated_base_name = get_instantiated_class_name(base_class_name, template_args);
-				base_class_name = instantiated_base_name;
-			}
+			// Instantiate base class template if needed and register in AST
+			// Note: try_instantiate_class_template returns nullopt on success 
+			// (type is registered in gTypesByName)
+			instantiated_base_name = instantiate_and_register_base_template(base_class_name, template_args);
 		}
 
 		// Look up base class type
@@ -16987,16 +16979,8 @@ ParseResult Parser::parse_template_declaration() {
 							continue;  // Skip to next base class or exit loop
 						}
 						
-						// Check if the base class is a template
-						auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
-						if (template_entry) {
-							// Try to instantiate the base template
-							try_instantiate_class_template(base_class_name, template_args);
-							
-							// Use the instantiated name as the base class
-							// get_instantiated_class_name returns a persistent string_view
-							base_class_name = get_instantiated_class_name(base_class_name, template_args);
-						}
+						// Instantiate base class template if needed and register in AST
+						instantiate_and_register_base_template(base_class_name, template_args);
 					}
 
 					// Look up base class type
@@ -17617,8 +17601,12 @@ if (struct_type_info.getStructInfo()) {
 			struct_info_ptr->needs_default_constructor = !has_constructor;
 			FLASH_LOG(Templates, Debug, "Full spec ", instantiated_name, " has_constructor=", has_constructor);
 
-			// Finalize the struct layout
-			struct_info_ptr->finalize();
+			// Finalize the struct layout with base classes
+			if (!struct_ref.base_classes().empty()) {
+				struct_info_ptr->finalizeWithBases();
+			} else {
+				struct_info_ptr->finalize();
+			}
 
 			// Parse delayed function bodies for specialization member functions
 			SaveHandle position_after_struct = save_token_position();
@@ -17841,16 +17829,8 @@ if (struct_type_info.getStructInfo()) {
 							continue;  // Skip to next base class or exit loop
 						}
 						
-						// Check if the base class is a template
-						auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
-						if (template_entry) {
-							// Try to instantiate the base template
-							try_instantiate_class_template(base_class_name, template_args);
-							
-							// Use the instantiated name as the base class
-							// get_instantiated_class_name returns a persistent string_view
-							base_class_name = get_instantiated_class_name(base_class_name, template_args);
-						}
+						// Instantiate base class template if needed and register in AST
+						instantiate_and_register_base_template(base_class_name, template_args);
 					}
 
 					// Look up base class type
@@ -21345,6 +21325,32 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 	}
 
 	return result.commit();
+}
+
+// Helper function to instantiate base class template and register it in the AST
+// This consolidates the duplicated code for instantiating base class templates
+// Returns the instantiated name, or empty string_view if not a template
+std::string_view Parser::instantiate_and_register_base_template(
+	std::string_view& base_class_name, 
+	const std::vector<TemplateTypeArg>& template_args) {
+	
+	// Check if the base class is a template
+	auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
+	if (template_entry) {
+		// Try to instantiate the base template
+		auto instantiated_base = try_instantiate_class_template(base_class_name, template_args);
+		
+		// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
+		if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
+			ast_nodes_.push_back(*instantiated_base);
+		}
+		
+		// Get the instantiated name and update base_class_name
+		std::string_view instantiated_name = get_instantiated_class_name(base_class_name, template_args);
+		base_class_name = instantiated_name;
+		return instantiated_name;
+	}
+	return std::string_view();
 }
 
 // Helper function to substitute template parameters in an expression
