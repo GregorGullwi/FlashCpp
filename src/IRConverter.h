@@ -11851,9 +11851,6 @@ private:
 		
 		// Extract typed payload - all MemberAccess instructions use typed payloads
 		const MemberLoadOp& op = std::any_cast<const MemberLoadOp&>(instruction.getTypedPayload());
-		
-		FLASH_LOG_FORMAT(Codegen, Debug, "handleMemberAccess: member={}, is_pointer_to_member={}", 
-		         StringTable::getStringView(op.member_name), op.is_pointer_to_member);
 
 		// Get the object's base stack offset or pointer
 		int32_t object_base_offset = 0;
@@ -11888,8 +11885,6 @@ private:
 				// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
 				if (StringTable::getStringView(object_name_handle) == "this"sv || reference_stack_info_.count(object_base_offset) > 0 || op.is_pointer_to_member) {
 					is_pointer_access = true;
-					FLASH_LOG_FORMAT(Codegen, Debug, "Setting is_pointer_access=true for object '{}' (is_pointer_to_member={})", 
-					         StringTable::getStringView(object_name_handle), op.is_pointer_to_member);
 				}
 			}
 		} else {

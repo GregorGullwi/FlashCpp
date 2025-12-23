@@ -11431,9 +11431,6 @@ private:
 		ASTNode object_node = memberAccessNode.object();
 		std::string_view member_name = memberAccessNode.member_name();
 		bool is_arrow = memberAccessNode.is_arrow();
-		
-		FLASH_LOG_FORMAT(Codegen, Debug, "generateMemberAccessIr: member_name={}, is_arrow={}", 
-		         member_name, is_arrow);
 
 		// Variables to hold the base object info
 		std::variant<StringHandle, TempVar> base_object;
@@ -11560,13 +11557,9 @@ private:
 				}
 				
 				if (!handled) {
-					FLASH_LOG_FORMAT(Codegen, Debug, "Calling validateAndSetupIdentifierMemberAccess for '{}' (is_arrow={})", 
-					         object_name, is_arrow);
 					if (!validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference)) {
 						return {};
 					}
-					FLASH_LOG_FORMAT(Codegen, Debug, "After validateAndSetupIdentifierMemberAccess: is_pointer_dereference={}", 
-					         is_pointer_dereference);
 					// Note: validateAndSetupIdentifierMemberAccess already sets is_pointer_dereference
 					// for pointer types, so no additional handling needed for is_arrow
 				}
@@ -11962,9 +11955,6 @@ private:
 		member_load.is_rvalue_reference = member->is_rvalue_reference;
 		member_load.struct_type_info = nullptr;
 		member_load.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
-		
-		FLASH_LOG_FORMAT(Codegen, Debug, "Setting member_load.is_pointer_to_member={} for member '{}'", 
-		         is_pointer_dereference, member_name);
 
 		// When context is LValueAddress, skip the load and return address/metadata only
 		if (context == ExpressionContext::LValueAddress) {
