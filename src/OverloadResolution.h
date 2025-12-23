@@ -94,62 +94,83 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 
 // Helper function to find a conversion operator in a struct
 // Returns true if a conversion operator exists from source_type to target_type
+// This version searches both gTypeInfo (for CodeGen) and gSymbolTable (for Parser/overload resolution)
 inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type, TypeIndex target_type_index = 0) {
-	if (source_type_index == 0 || source_type_index >= gTypeInfo.size()) {
-		return false;
-	}
-	
-	const TypeInfo& source_type_info = gTypeInfo[source_type_index];
-	const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
-	if (!source_struct_info) {
-		return false;
-	}
-	
-	// Build the operator name we are looking for (e.g., "operator int")
-	std::string_view target_type_name;
-	if (target_type == Type::Struct && target_type_index > 0 && target_type_index < gTypeInfo.size()) {
-		target_type_name = StringTable::getStringView(gTypeInfo[target_type_index].name());
-	} else {
-		// For primitive types, convert Type enum to string
-		// Note: Type names must match how conversion operators are declared in C++
-		switch (target_type) {
-			case Type::Int: target_type_name = "int"; break;
-			case Type::UnsignedInt: target_type_name = "unsigned int"; break;
-			case Type::Long: target_type_name = "long"; break;
-			case Type::UnsignedLong: target_type_name = "unsigned long"; break;
-			case Type::LongLong: target_type_name = "long long"; break;
-			case Type::UnsignedLongLong: target_type_name = "unsigned long long"; break;
-			case Type::Short: target_type_name = "short"; break;
-			case Type::UnsignedShort: target_type_name = "unsigned short"; break;
-			case Type::Char: target_type_name = "char"; break;
-			case Type::UnsignedChar: target_type_name = "unsigned char"; break;
-			case Type::Bool: target_type_name = "bool"; break;
-			case Type::Float: target_type_name = "float"; break;
-			case Type::Double: target_type_name = "double"; break;
-			case Type::LongDouble: target_type_name = "long double"; break;
-			case Type::Void: target_type_name = "void"; break;
-			default: return false;
+	// First, try to get struct name from gTypeInfo and search gSymbolTable
+	// This is needed during parsing when gTypeInfo.member_functions is not yet populated
+	if (source_type_index > 0 && source_type_index < gTypeInfo.size()) {
+		const TypeInfo& source_type_info = gTypeInfo[source_type_index];
+		std::string_view struct_name = StringTable::getStringView(source_type_info.name());
+		
+		// Build the target type name for the operator
+		std::string_view target_type_name;
+		if (target_type == Type::Struct && target_type_index > 0 && target_type_index < gTypeInfo.size()) {
+			target_type_name = StringTable::getStringView(gTypeInfo[target_type_index].name());
+		} else {
+			// For primitive types, convert Type enum to string
+			switch (target_type) {
+				case Type::Int: target_type_name = "int"; break;
+				case Type::UnsignedInt: target_type_name = "unsigned int"; break;
+				case Type::Long: target_type_name = "long"; break;
+				case Type::UnsignedLong: target_type_name = "unsigned long"; break;
+				case Type::LongLong: target_type_name = "long long"; break;
+				case Type::UnsignedLongLong: target_type_name = "unsigned long long"; break;
+				case Type::Short: target_type_name = "short"; break;
+				case Type::UnsignedShort: target_type_name = "unsigned short"; break;
+				case Type::Char: target_type_name = "char"; break;
+				case Type::UnsignedChar: target_type_name = "unsigned char"; break;
+				case Type::Bool: target_type_name = "bool"; break;
+				case Type::Float: target_type_name = "float"; break;
+				case Type::Double: target_type_name = "double"; break;
+				case Type::LongDouble: target_type_name = "long double"; break;
+				case Type::Void: target_type_name = "void"; break;
+				default: return false;
+			}
 		}
-	}
-	
-	// Create the operator name string (e.g., "operator int")
-	StringBuilder sb;
-	sb.append("operator ").append(target_type_name);
-	std::string_view operator_name = sb.commit();
-	StringHandle operator_name_handle = StringTable::getOrInternStringHandle(operator_name);
-	
-	// Search member functions for the conversion operator
-	for (const auto& member_func : source_struct_info->member_functions) {
-		if (member_func.getName() == operator_name_handle) {
-			return true;
+		
+		// Create the operator name (e.g., "operator int")
+		StringBuilder sb;
+		sb.append("operator ").append(target_type_name);
+		std::string_view operator_name = sb.commit();
+		
+		// Look up the struct in gSymbolTable
+		extern SymbolTable gSymbolTable;
+		auto struct_symbol = gSymbolTable.lookup(StringTable::getOrInternStringHandle(struct_name));
+		if (struct_symbol.has_value() && struct_symbol->is<StructDeclarationNode>()) {
+			const StructDeclarationNode& struct_node = struct_symbol->template as<StructDeclarationNode>();
+			
+			// Search member functions in the StructDeclarationNode
+			for (const auto& member_func_decl : struct_node.member_functions()) {
+				const ASTNode& member_func = member_func_decl.function_declaration;
+				if (member_func.template is<FunctionDeclarationNode>()) {
+					const auto& func_decl = member_func.template as<FunctionDeclarationNode>();
+					std::string_view func_name = func_decl.decl_node().identifier_token().value();
+					if (func_name == operator_name) {
+						return true;  // Found conversion operator in parsed struct
+					}
+				}
+			}
 		}
-	}
-	
-	// Search base classes recursively
-	for (const auto& base_spec : source_struct_info->base_classes) {
-		if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
-			if (hasConversionOperator(base_spec.type_index, target_type, target_type_index)) {
-				return true;
+		
+		// Also check gTypeInfo.member_functions (for CodeGen where it's populated)
+		const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
+		if (source_struct_info) {
+			StringHandle operator_name_handle = StringTable::getOrInternStringHandle(operator_name);
+			
+			// Search member functions for the conversion operator
+			for (const auto& member_func : source_struct_info->member_functions) {
+				if (member_func.getName() == operator_name_handle) {
+					return true;
+				}
+			}
+			
+			// Search base classes recursively
+			for (const auto& base_spec : source_struct_info->base_classes) {
+				if (base_spec.type_index > 0 && base_spec.type_index < gTypeInfo.size()) {
+					if (hasConversionOperator(base_spec.type_index, target_type, target_type_index)) {
+						return true;
+					}
+				}
 			}
 		}
 	}
