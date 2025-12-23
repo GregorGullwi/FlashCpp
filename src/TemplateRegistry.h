@@ -950,7 +950,7 @@ public:
 			.append(instantiated_class_name)
 			.append("::")
 			.append(member_function_name)
-			.preview();
+			.commit();  // Changed from preview() to commit()
 		
 		auto handle = StringTable::getOrInternStringHandle(key);
 		return lazy_members_.find(handle) != lazy_members_.end();

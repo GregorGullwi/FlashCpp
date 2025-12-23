@@ -14306,44 +14306,39 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 
 			// Check for lazy template instantiation
 			// If the member function is registered for lazy instantiation, instantiate it now
-			// DISABLED FOR NOW - causes infinite loop, needs more investigation
-			/*
 			if (object_struct_name.has_value() && !instantiating_lazy_member_) {
 				std::string_view func_name = member_name_token.value();
-				StringHandle class_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
-				StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 				
-				FLASH_LOG(Templates, Debug, "Checking lazy instantiation for: ", *object_struct_name, "::", func_name);
-				
-				// Check if this function needs lazy instantiation
-				if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, func_name_handle)) {
-					FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for: ", *object_struct_name, "::", func_name);
+				if (!func_name.empty()) {
+					StringHandle class_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
+					StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 					
-					// Get the lazy member info
-					auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, func_name_handle);
-					if (lazy_info_opt.has_value()) {
-						const LazyMemberFunctionInfo& lazy_info = *lazy_info_opt;
+					// Check if this function needs lazy instantiation
+					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, func_name_handle)) {
+						FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for: ", *object_struct_name, "::", func_name);
 						
-						// Set flag to prevent recursive instantiation
-						instantiating_lazy_member_ = true;
-						
-						// Instantiate the function body now
-						// We need to do the template parameter substitution that was skipped earlier
-						instantiated_func = instantiateLazyMemberFunction(lazy_info);
-						
-						// Clear flag
-						instantiating_lazy_member_ = false;
-						
-						// Mark as instantiated
-						LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, func_name_handle);
-						
-						FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
+						// Get the lazy member info
+						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, func_name_handle);
+						if (lazy_info_opt.has_value()) {
+							const LazyMemberFunctionInfo& lazy_info = *lazy_info_opt;
+							
+							// Set flag to prevent recursive instantiation
+							instantiating_lazy_member_ = true;
+							
+							// Instantiate the function body now
+							instantiated_func = instantiateLazyMemberFunction(lazy_info);
+							
+							// Clear flag
+							instantiating_lazy_member_ = false;
+							
+							// Mark as instantiated
+							LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, func_name_handle);
+							
+							FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
+						}
 					}
-				} else {
-					FLASH_LOG(Templates, Debug, "No lazy instantiation needed for: ", *object_struct_name, "::", func_name);
 				}
 			}
-			*/
 
 			// Use the instantiated function if available, otherwise create temporary placeholder
 			FunctionDeclarationNode* func_ref_ptr = nullptr;
@@ -25020,10 +25015,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	new_func_ref.set_linkage(func_decl.linkage());
 	new_func_ref.set_calling_convention(func_decl.calling_convention());
 
-	// NOTE: We don't add to ast_nodes_ here because we're in the middle of parsing
-	// The function will be available through StructTypeInfo and can be code-generated
-	// when needed during the normal codegen phase
-	// ast_nodes_.push_back(new_func_node);  // REMOVED - causes infinite recursion
+	// Add the instantiated function to the AST so it gets visited during codegen
+	// This is safe now that the StringBuilder bug is fixed
+	ast_nodes_.push_back(new_func_node);
 	
 	// Also update the StructTypeInfo to replace the signature-only function with the full definition
 	// Find the struct in gTypesByName
