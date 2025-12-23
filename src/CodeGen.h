@@ -11430,18 +11430,116 @@ private:
 		// Get the object being accessed
 		ASTNode object_node = memberAccessNode.object();
 		std::string_view member_name = memberAccessNode.member_name();
+		bool is_arrow = memberAccessNode.is_arrow();
 
 		// Variables to hold the base object info
 		std::variant<StringHandle, TempVar> base_object;
 		Type base_type = Type::Void;
 		size_t base_type_index = 0;
 		bool is_pointer_dereference = false;  // Track if we're accessing through pointer (ptr->member)
+		bool base_setup_complete = false;
 
-		// Unwrap ExpressionNode if needed
-		if (object_node.is<ExpressionNode>()) {
+		// OPERATOR-> OVERLOAD RESOLUTION
+		// If this is arrow access (obj->member), check if the object has operator->() overload
+		if (is_arrow && object_node.is<ExpressionNode>()) {
+			const ExpressionNode& expr = object_node.as<ExpressionNode>();
+			
+			// For now, only handle simple identifiers  
+			if (std::holds_alternative<IdentifierNode>(expr)) {
+				const IdentifierNode& ident = std::get<IdentifierNode>(expr);
+				StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident.name());
+				
+				std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(identifier_handle);
+				}
+				
+				if (symbol.has_value()) {
+					const TypeSpecifierNode* type_node = nullptr;
+					if (symbol->is<DeclarationNode>()) {
+						type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					} else if (symbol->is<VariableDeclarationNode>()) {
+						type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+					}
+					
+					// Check if it's a struct with operator-> overload
+					if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
+						auto overload_result = findUnaryOperatorOverload(type_node->type_index(), "->");
+						
+						if (overload_result.has_overload) {
+							// Found an overload! Call operator->() to get pointer, then access member
+							FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator-> overload for type index {}", 
+							         type_node->type_index());
+							
+							const StructMemberFunction& member_func = *overload_result.member_overload;
+							const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+							
+							// Get struct name for mangling
+							std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
+							
+							// Get the return type from the function declaration (should be a pointer)
+							const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+							
+							// Generate mangled name for operator->
+							std::string_view operator_func_name = "operator->";
+							std::vector<TypeSpecifierNode> empty_params;
+							std::vector<std::string_view> empty_namespace;
+							auto mangled_name = NameMangling::generateMangledName(
+								operator_func_name,
+								return_type,
+								empty_params,
+								false,
+								struct_name,
+								empty_namespace,
+								Linkage::CPlusPlus
+							);
+							
+							// Generate the call to operator->()
+							TempVar ptr_result = var_counter.next();
+							
+							CallOp call_op;
+							call_op.result = ptr_result;
+							call_op.return_type = return_type.type();
+							call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+							if (call_op.return_size_in_bits == 0) {
+								call_op.return_size_in_bits = get_type_size_bits(return_type.type());
+							}
+							call_op.function_name = mangled_name;
+							call_op.is_variadic = false;
+							call_op.uses_return_slot = false;
+							call_op.is_member_function = true;
+							
+							// Add 'this' pointer as first argument
+							call_op.args.push_back(TypedValue{
+								.type = type_node->type(),
+								.size_in_bits = 64,  // Pointer size
+								.value = IrValue(identifier_handle)
+							});
+							
+							// Add the function call instruction
+							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
+							
+							// Now we have a pointer in ptr_result
+							// operator-> should return a pointer, so we treat ptr_result as pointing to the actual object
+							// Set up base_object info for the dereferenced pointer
+							if (return_type.pointer_depth() > 0) {
+								base_object = ptr_result;
+								base_type = return_type.type();
+								base_type_index = return_type.type_index();
+								is_pointer_dereference = true;  // We'll dereference this pointer to access the member
+								base_setup_complete = true;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// If we haven't already set up base_object from operator-> overload, do normal processing
+		if (!base_setup_complete && object_node.is<ExpressionNode>()) {
 			const ExpressionNode& expr = object_node.as<ExpressionNode>();
 
-			// Case 1: Simple identifier (e.g., obj.member)
+			// Case 1: Simple identifier (e.g., obj.member or ptr->member where ptr is raw pointer)
 			if (std::holds_alternative<IdentifierNode>(expr)) {
 				const IdentifierNode& object_ident = std::get<IdentifierNode>(expr);
 				std::string_view object_name = object_ident.name();
@@ -11462,6 +11560,8 @@ private:
 					if (!validateAndSetupIdentifierMemberAccess(object_name, base_object, base_type, base_type_index, is_pointer_dereference)) {
 						return {};
 					}
+					// Note: validateAndSetupIdentifierMemberAccess already sets is_pointer_dereference
+					// for pointer types, so no additional handling needed for is_arrow
 				}
 			}
 			// Case 2: Nested member access (e.g., obj.inner.member)
@@ -11674,7 +11774,7 @@ private:
 				}
 			}
 		}
-		else {
+		else if (!base_setup_complete) {
 			std::cerr << "error: member access on unsupported object type\n";
 			return {};
 		}
