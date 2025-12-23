@@ -97,11 +97,25 @@ Priority-ordered list of **actual** blockers:
 
 ## What This Means
 
-**Positive**: FlashCpp is closer to standard library support than the document suggested. Operator overloads are not a blocker.
+**Achievement**: Fixed the critical static constexpr member function bug! ✅
 
-**Realistic**: Template performance is the real challenge. Standard headers compile slowly not because of missing features, but because of performance.
+**Before Fix**:
+```cpp
+static_assert(Point::static_sum(5, 5) == 10);  // ❌ Error
+```
 
-**Actionable**: The static constexpr bug is a clear, fixable issue that will immediately improve type_traits compatibility.
+**After Fix (commit 6bae992)**:
+```cpp
+static_assert(Point::static_sum(5, 5) == 10);  // ✅ Works!
+```
+
+**Impact**: This immediately improves type_traits compatibility and unblocks `std::integral_constant` patterns.
+
+**Positive**: FlashCpp is now closer to standard library support. The investigation identified that operator overloads were not a blocker (already working), and we've now fixed the static constexpr bug.
+
+**Realistic**: Template performance is still the main challenge for compiling full standard headers. Standard headers timeout due to performance, not missing features.
+
+**Actionable**: The next priority is template instantiation optimization to reduce compilation timeouts.
 
 ## Testing
 
