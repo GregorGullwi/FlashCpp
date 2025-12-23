@@ -11774,7 +11774,7 @@ private:
 				}
 			}
 		}
-		else {
+		else if (!base_setup_complete) {
 			std::cerr << "error: member access on unsupported object type\n";
 			return {};
 		}
