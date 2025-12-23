@@ -1,8 +1,6 @@
 // Test __builtin_unreachable intrinsic
 // This tells the compiler a code path is never reached
 
-void __builtin_unreachable();
-
 int test_switch(int x) {
     switch(x) {
         case 1: return 10;

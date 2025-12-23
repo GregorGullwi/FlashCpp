@@ -1,8 +1,6 @@
 // Test __builtin_expect intrinsic
 // This is a branch prediction hint
 
-long __builtin_expect(long, long);
-
 int main() {
     int x = 42;
     

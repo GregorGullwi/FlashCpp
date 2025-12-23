@@ -8283,59 +8283,40 @@ private:
 	// Helper function to handle compiler intrinsics
 	// Returns true if the function is an intrinsic and has been handled, false otherwise
 	std::optional<std::vector<IrOperand>> tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode) {
-		// Check for va_start intrinsics (support both Clang and MSVC naming)
-		// __builtin_va_start(va_list*, last_fixed_param) - Clang-style
-		// __va_start(va_list*, last_fixed_param) - MSVC-style (legacy)
-		// On x64 Windows, this sets va_list to point to the first variadic argument
+		// Lookup table for intrinsic handlers using if-else chain
+		// More maintainable than multiple nested if statements
+		
+		// Variadic argument intrinsics
 		if (func_name == "__builtin_va_start" || func_name == "__va_start") {
 			return generateVaStartIntrinsic(functionCallNode);
 		}
-		
-		// Check for __builtin_va_arg intrinsic (Clang-style)
-		// __builtin_va_arg(va_list, type) reads value at va_list, advances pointer by 8 bytes
 		if (func_name == "__builtin_va_arg") {
 			return generateVaArgIntrinsic(functionCallNode);
 		}
 		
-		// Check for builtin abs functions
+		// Integer abs intrinsics
 		if (func_name == "__builtin_labs" || func_name == "__builtin_llabs") {
 			return generateBuiltinAbsIntIntrinsic(functionCallNode);
 		}
+		
+		// Floating point abs intrinsics
 		if (func_name == "__builtin_fabs" || func_name == "__builtin_fabsf" || func_name == "__builtin_fabsl") {
 			return generateBuiltinAbsFloatIntrinsic(functionCallNode, func_name);
 		}
 		
-		// Check for __builtin_unreachable - optimization hint that code path is unreachable
-		// Standard usage: after switch default cases or after noreturn function calls
+		// Optimization hint intrinsics
 		if (func_name == "__builtin_unreachable") {
 			return generateBuiltinUnreachableIntrinsic(functionCallNode);
 		}
-		
-		// Check for __builtin_assume - optimization hint that expression is true
-		// Syntax: __builtin_assume(condition)
 		if (func_name == "__builtin_assume") {
 			return generateBuiltinAssumeIntrinsic(functionCallNode);
 		}
-		
-		// Check for __builtin_expect - branch prediction hint
-		// Syntax: __builtin_expect(expr, expected_value)
-		// Returns expr, but hints to compiler that expr will likely equal expected_value
 		if (func_name == "__builtin_expect") {
 			return generateBuiltinExpectIntrinsic(functionCallNode);
 		}
-		
-		// Check for __builtin_launder - pointer optimization barrier
-		// Syntax: __builtin_launder(ptr)
-		// Returns ptr but prevents compiler from assuming anything about what it points to
-		// Essential for implementing std::launder and placement new operations
 		if (func_name == "__builtin_launder") {
 			return generateBuiltinLaunderIntrinsic(functionCallNode);
 		}
-		
-		// Add other intrinsics here in the future
-		// if (func_name == "__other_intrinsic") {
-		//     return generateOtherIntrinsic(functionCallNode);
-		// }
 		
 		return std::nullopt;  // Not an intrinsic
 	}
