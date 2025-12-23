@@ -6616,14 +6616,100 @@ private:
 	std::vector<IrOperand> generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode) {
 		std::vector<IrOperand> irOperands;
 
-		// TODO: OPERATOR OVERLOAD RESOLUTION
+		// OPERATOR OVERLOAD RESOLUTION
 		// For full standard compliance, operator& should call overloaded operator& if it exists.
 		// __builtin_addressof (marked with is_builtin_addressof flag) always bypasses overloads.
-		// Implementation requires:
-		// 1. Check if operand has operator& overload (using findUnaryOperatorOverload)
-		// 2. If yes and !is_builtin_addressof, generate member function call
-		// 3. Otherwise, use built-in address-of behavior
-		// Currently deferred due to complexity - both & and __builtin_addressof behave identically.
+		if (!unaryOperatorNode.is_builtin_addressof() && unaryOperatorNode.op() == "&" && 
+		    unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			
+			// For now, only handle simple identifiers
+			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+				const IdentifierNode& ident = std::get<IdentifierNode>(operandExpr);
+				StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident.name());
+				
+				std::optional<ASTNode> symbol = symbol_table.lookup(identifier_handle);
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(identifier_handle);
+				}
+				
+				if (symbol.has_value()) {
+					const TypeSpecifierNode* type_node = nullptr;
+					if (symbol->is<DeclarationNode>()) {
+						type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					} else if (symbol->is<VariableDeclarationNode>()) {
+						type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+					}
+					
+					if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
+						// Check for operator& overload
+						auto overload_result = findUnaryOperatorOverload(type_node->type_index(), "&");
+						
+						if (overload_result.has_overload) {
+							// Found an overload! Generate a member function call instead of built-in address-of
+							FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator& overload for type index {}", 
+							         type_node->type_index());
+							
+							const StructMemberFunction& member_func = *overload_result.member_overload;
+							const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+							
+							// Get struct name for mangling
+							std::string_view struct_name = StringTable::getStringView(gTypeInfo[type_node->type_index()].name());
+							
+							// Build mangled function name for operator&
+							// Format: _ZN<length><struct_name><operator_length>operator<symbol>Ev
+							// Example: _ZN7Counter9operator&Ev for Counter::operator&()
+							StringBuilder mangled_sb;
+							mangled_sb.append("_ZN");
+							mangled_sb.append(static_cast<uint64_t>(struct_name.length()));
+							mangled_sb.append(struct_name);
+							std::string_view op_name = "operator&";
+							mangled_sb.append(static_cast<uint64_t>(op_name.length()));
+							mangled_sb.append(op_name);
+							mangled_sb.append("Ev");  // Empty parameter list, void return encoding
+							std::string_view mangled_name = mangled_sb.commit();
+							
+							// Generate the call
+							TempVar ret_var = var_counter.next();
+							
+							// Get return type from function declaration
+							const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+							
+							// Create CallOp
+							CallOp call_op;
+							call_op.result = ret_var;
+							call_op.return_type = return_type.type();
+							call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+							if (call_op.return_size_in_bits == 0) {
+								call_op.return_size_in_bits = get_type_size_bits(return_type.type());
+							}
+							call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+							call_op.is_variadic = false;
+							call_op.uses_return_slot = false;
+							call_op.is_member_function = true;  // This is a member function call
+							
+							// Add 'this' pointer as first argument
+							call_op.args.push_back(TypedValue{
+								.type = type_node->type(),
+								.size_in_bits = 64,  // Pointer size
+								.value = IrValue(identifier_handle)
+							});
+							
+							// Add the function call instruction
+							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), unaryOperatorNode.get_token()));
+							
+							// Return the result
+							unsigned long long fourth_element = static_cast<unsigned long long>(return_type.pointer_depth());
+							if (fourth_element == 0 && return_type.type() == Type::Struct) {
+								fourth_element = static_cast<unsigned long long>(return_type.type_index());
+							}
+							
+							return {return_type.type(), call_op.return_size_in_bits, ret_var, fourth_element};
+						}
+					}
+				}
+			}
+		}
 
 		auto tryBuildIdentifierOperand = [&](const IdentifierNode& identifier, std::vector<IrOperand>& out) -> bool {
 			// Phase 4: Using StringHandle for lookup
