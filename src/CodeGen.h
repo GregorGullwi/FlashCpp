@@ -1343,6 +1343,71 @@ private:
 		return func_addr_var;
 	}
 
+	// Helper to find a conversion operator in a struct that converts to the target type
+	// Returns nullptr if no suitable conversion operator is found
+	// Searches the struct and its base classes for "operator target_type()"
+	const StructMemberFunction* findConversionOperator(
+		const StructTypeInfo* struct_info,
+		Type target_type,
+		TypeIndex target_type_index = 0) const {
+		
+		if (!struct_info) return nullptr;
+		
+		// Build the operator name we're looking for (e.g., "operator int")
+		std::string_view target_type_name;
+		if (target_type == Type::Struct && target_type_index < gTypeInfo.size()) {
+			target_type_name = StringTable::getStringView(gTypeInfo[target_type_index].name());
+		} else {
+			// For primitive types, convert Type enum to string
+			switch (target_type) {
+				case Type::Int: target_type_name = "int"; break;
+				case Type::UnsignedInt: target_type_name = "unsigned int"; break;
+				case Type::Long: target_type_name = "long"; break;
+				case Type::UnsignedLong: target_type_name = "unsigned long"; break;
+				case Type::LongLong: target_type_name = "long long"; break;
+				case Type::UnsignedLongLong: target_type_name = "unsigned long long"; break;
+				case Type::Short: target_type_name = "short"; break;
+				case Type::UnsignedShort: target_type_name = "unsigned short"; break;
+				case Type::Char: target_type_name = "char"; break;
+				case Type::UnsignedChar: target_type_name = "unsigned char"; break;
+				case Type::Bool: target_type_name = "bool"; break;
+				case Type::Float: target_type_name = "float"; break;
+				case Type::Double: target_type_name = "double"; break;
+				case Type::LongDouble: target_type_name = "long double"; break;
+				case Type::Void: target_type_name = "void"; break;
+				default: return nullptr;
+			}
+		}
+		
+		// Create the operator name string (e.g., "operator int")
+		StringBuilder sb;
+		sb.append("operator ").append(target_type_name);
+		std::string_view operator_name = sb.commit();
+		StringHandle operator_name_handle = StringTable::getOrInternStringHandle(operator_name);
+		
+		// Search member functions for the conversion operator
+		for (const auto& member_func : struct_info->member_functions) {
+			if (member_func.getName() == operator_name_handle) {
+				return &member_func;
+			}
+		}
+		
+		// Search base classes recursively
+		for (const auto& base_spec : struct_info->base_classes) {
+			if (base_spec.type_index < gTypeInfo.size()) {
+				const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+				if (base_type_info.isStruct()) {
+					const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+					const StructMemberFunction* result = findConversionOperator(
+						base_struct_info, target_type, target_type_index);
+					if (result) return result;
+				}
+			}
+		}
+		
+		return nullptr;
+	}
+
 	// Helper to get the size of a type in bytes
 	// Reuses the same logic as sizeof() operator
 	// Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
@@ -4786,6 +4851,118 @@ private:
 				
 				if (!is_copy_init_for_struct) {
 					auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+					
+					// Check if we need implicit conversion via conversion operator
+					// This handles cases like: int i = myStruct; where myStruct has operator int()
+					if (init_operands.size() >= 3) {
+						Type init_type = std::get<Type>(init_operands[0]);
+						int init_size = std::get<int>(init_operands[1]);
+						TypeIndex init_type_index = 0;
+						
+						// Extract type_index if available (4th element in init_operands)
+						if (init_operands.size() >= 4 && std::holds_alternative<unsigned long long>(init_operands[3])) {
+							init_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(init_operands[3]));
+						}
+						
+						// Check if source and target types differ and source is a struct
+						bool need_conversion = (init_type != type_node.type()) || 
+						                       (init_type == Type::Struct && init_type_index != type_node.type_index());
+						
+						if (need_conversion && init_type == Type::Struct && init_type_index < gTypeInfo.size()) {
+							const TypeInfo& source_type_info = gTypeInfo[init_type_index];
+							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
+							
+							// Look for a conversion operator to the target type
+							const StructMemberFunction* conv_op = findConversionOperator(
+								source_struct_info, type_node.type(), type_node.type_index());
+							
+							if (conv_op) {
+								FLASH_LOG(Codegen, Debug, "Found conversion operator from ", 
+									StringTable::getStringView(source_type_info.name()), 
+									" to target type");
+								
+								// Generate call to the conversion operator
+								// The conversion operator is a const member function taking no parameters
+								TempVar result_var = var_counter.next();
+								
+								// Get the source variable value
+								IrValue source_value = std::visit([](auto&& arg) -> IrValue {
+									using T = std::decay_t<decltype(arg)>;
+									if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+									              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+										return arg;
+									} else {
+										return 0ULL;
+									}
+								}, init_operands[2]);
+								
+								// Build the mangled name for the conversion operator
+								StringHandle struct_name_handle = source_type_info.name();
+								std::string_view struct_name = StringTable::getStringView(struct_name_handle);
+								
+								// Generate the call using CallOp (member function call)
+								if (conv_op->function_decl.is<FunctionDeclarationNode>()) {
+									const auto& func_decl = conv_op->function_decl.as<FunctionDeclarationNode>();
+									std::string_view mangled_name;
+									if (func_decl.has_mangled_name()) {
+										mangled_name = func_decl.mangled_name();
+									} else {
+										// Generate mangled name for the conversion operator
+										mangled_name = generateMangledNameForCall(func_decl, struct_name);
+									}
+									
+									CallOp call_op;
+									call_op.result = result_var;
+									call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+									call_op.return_type = type_node.type();
+									call_op.return_size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+									call_op.return_type_index = type_node.type_index();
+									call_op.is_member_function = true;
+									call_op.is_variadic = false;
+									
+									// For member function calls, first argument is 'this' pointer
+									// We need to pass the address of the source object
+									if (std::holds_alternative<StringHandle>(source_value)) {
+										// It's a variable - take its address
+										TempVar this_ptr = var_counter.next();
+										AddressOfOp addr_op;
+										addr_op.result = this_ptr;
+										addr_op.pointee_type = init_type;
+										addr_op.pointee_size_in_bits = init_size;
+										addr_op.operand = std::get<StringHandle>(source_value);
+										ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+										
+										// Add 'this' as first argument
+										TypedValue this_arg;
+										this_arg.type = init_type;
+										this_arg.size_in_bits = 64;  // Pointer size
+										this_arg.value = this_ptr;
+										this_arg.type_index = init_type_index;
+										call_op.args.push_back(std::move(this_arg));
+									} else if (std::holds_alternative<TempVar>(source_value)) {
+										// It's already a temporary - it might be an address or value
+										// For conversion operators, we need the address
+										// Assume it's an object address if it's a struct type
+										TypedValue this_arg;
+										this_arg.type = init_type;
+										this_arg.size_in_bits = 64;  // Pointer size for 'this'
+										this_arg.value = std::get<TempVar>(source_value);
+										this_arg.type_index = init_type_index;
+										call_op.args.push_back(std::move(this_arg));
+									}
+									
+									ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), decl.identifier_token()));
+									
+									// Replace init_operands with the result of the conversion
+									init_operands.clear();
+									init_operands.emplace_back(type_node.type());
+									init_operands.emplace_back(type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits()));
+									init_operands.emplace_back(result_var);
+								}
+							}
+						}
+					}
+					
 					operands.insert(operands.end(), init_operands.begin(), init_operands.end());
 				} else {
 					// For struct with constructor, evaluate the initializer to check if it's an rvalue
