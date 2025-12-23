@@ -1674,7 +1674,13 @@ private:
 		// Member functions defined inside the class body are implicitly inline (C++ standard)
 		// Mark them as inline so they get weak linkage in the object file to allow duplicate definitions
 		// This includes constructors, destructors, and regular member functions defined inline
-		func_decl_op.is_inline = node.is_member_function();
+		// Also mark functions in std namespace as inline to handle standard library functions that
+		// are defined in headers (like std::abs) and may be instantiated multiple times
+		bool is_in_std_namespace = false;
+		if (!current_namespace_stack_.empty()) {
+			is_in_std_namespace = (current_namespace_stack_[0] == "std");
+		}
+		func_decl_op.is_inline = node.is_member_function() || is_in_std_namespace;
 
 		// Use pre-computed mangled name from AST node if available (Phase 6 migration)
 		// Fall back to generating it here if not (for backward compatibility during migration)
@@ -1686,6 +1692,16 @@ private:
 			mangled_name = generateMangledNameForCall(node, struct_name_for_function, current_namespace_stack_);
 		}
 		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled_name);
+
+		// Skip duplicate function definitions to prevent multiple codegen of the same function
+		// This is especially important for inline functions from standard headers (like std::abs)
+		// that may be parsed multiple times
+		std::string mangled_name_str(mangled_name);
+		if (generated_function_names_.count(mangled_name_str) > 0) {
+			FLASH_LOG(Codegen, Debug, "Skipping duplicate function definition: ", func_decl.identifier_token().value(), " (", mangled_name, ")");
+			return;
+		}
+		generated_function_names_.insert(mangled_name_str);
 
 		// Add parameters to function declaration
 		for (const auto& param : node.parameter_nodes()) {
@@ -14056,6 +14072,10 @@ private:
 	// Collected lambdas for deferred generation
 	std::vector<LambdaInfo> collected_lambdas_;
 	std::unordered_set<int> generated_lambda_ids_;  // Track which lambdas have been generated to prevent duplicates
+	
+	// Track generated functions to prevent duplicate codegen
+	// Key: mangled function name - prevents generating the same function body multiple times
+	std::unordered_set<std::string> generated_function_names_;
 	
 	// Generic lambda instantiation tracking
 	// Key: lambda_id concatenated with deduced type signature (e.g., "0_int_double")

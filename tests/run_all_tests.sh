@@ -30,10 +30,10 @@ EXPECTED_FAIL=(
 # Expected link failures - files that compile but require external C helper files
 # Note: test_dynamic_cast_debug_ret10.cpp and test_abstract_class_ret98.cpp now work - RTTI support has been implemented
 # Note: test_virtual_inheritance.cpp, test_covariant_return.cpp, test_varargs.cpp link successfully but may have runtime issues
+# Note: test_cstdlib.cpp now works - duplicate function definitions fixed with weak linkage and deduplication
 EXPECTED_LINK_FAIL=(
-    "test_external_abi.cpp"               # Needs external C helper functions
-    "test_external_abi_simple.cpp"        # Needs external C helper functions
-    "test_cstdlib.cpp"                    # Multiple definition issues with std::abs
+    "test_external_abi.cpp"               # Needs external C helper functions from test_external_abi_helper.c
+    "test_external_abi_simple.cpp"        # Needs external C helper functions from test_external_abi_helper.c
 )
 
 # Results
