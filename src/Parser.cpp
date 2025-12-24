@@ -20614,7 +20614,13 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// by verifying that the next token is ',' or '>'
 				FLASH_LOG_FORMAT(Templates, Debug, "After parsing expression, peek_token={}", 
 				                 peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
-				if (peek_token().has_value() && 
+				
+				// Special case: If out_type_nodes is provided (e.g., for deduction guides), 
+				// we should fall through to type parsing so identifiers get properly converted to TypeSpecifierNode
+				// This is needed because deduction guides expect TypeSpecifierNode in out_type_nodes
+				bool should_try_type_parsing = out_type_nodes != nullptr;
+				
+				if (!should_try_type_parsing && peek_token().has_value() && 
 				    (peek_token()->value() == "," || peek_token()->value() == ">")) {
 					FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
 					// Successfully parsed a dependent expression
