@@ -22896,6 +22896,24 @@ if (struct_type_info.getStructInfo()) {
 	// Create StructTypeInfo
 	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public);
 
+	// Handle base classes from the primary template
+	// Base classes need to be instantiated with concrete template arguments
+	FLASH_LOG(Templates, Debug, "Primary template has ", class_decl.base_classes().size(), " base classes");
+	for (const auto& base : class_decl.base_classes()) {
+		std::string_view base_class_name = base.name;
+		FLASH_LOG(Templates, Debug, "Processing primary template base class: ", base_class_name);
+		
+		// Look up the base class type (may need to resolve type aliases)
+		auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
+		if (base_type_it != gTypesByName.end()) {
+			const TypeInfo* base_type_info = base_type_it->second;
+			struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base.access, base.is_virtual);
+			FLASH_LOG(Templates, Debug, "Added base class: ", base_class_name, " with type_index=", base_type_info->type_index_);
+		} else {
+			FLASH_LOG(Templates, Warning, "Base class ", base_class_name, " not found in gTypesByName");
+		}
+	}
+
 	// Copy members from the template, substituting template parameters with concrete types
 	for (const auto& member_decl : class_decl.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
@@ -23244,7 +23262,11 @@ if (struct_type_info.getStructInfo()) {
 	}
 
 	// Finalize the struct layout
-	struct_info->finalize();
+	if (!class_decl.base_classes().empty()) {
+		struct_info->finalizeWithBases();
+	} else {
+		struct_info->finalize();
+	}
 
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));

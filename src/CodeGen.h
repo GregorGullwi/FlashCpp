@@ -368,6 +368,13 @@ public:
 				continue;
 			}
 			
+			// Skip structs with "_unknown" in their name - they're incomplete template instantiations
+			// from type alias parsing where template parameters weren't yet known
+			if (type_name_view.find("_unknown") != std::string::npos) {
+				FLASH_LOG(Codegen, Debug, "Skipping struct '", type_name_view, "' with _unknown in name (incomplete instantiation)");
+				continue;
+			}
+			
 			// Skip if we've already processed this TypeInfo pointer
 			// (same struct can be registered under multiple keys in gTypesByName)
 			if (processed_type_infos_.count(type_info) > 0) {
@@ -6169,13 +6176,17 @@ private:
 
 			// Check if this is a static member access (e.g., StructName::static_member or ns::StructName::static_member)
 			auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
+			FLASH_LOG(Codegen, Debug, "generateQualifiedIdentifierIr: struct_or_enum_name='", struct_or_enum_name, "', found=", (struct_type_it != gTypesByName.end()));
 			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				if (struct_info) {
+					FLASH_LOG(Codegen, Debug, "Looking for static member '", qualifiedIdNode.name(), "' in struct '", struct_or_enum_name, "'");
 					// Look for static member recursively (checks base classes too)
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
+					FLASH_LOG(Codegen, Debug, "findStaticMemberRecursive result: static_member=", (static_member != nullptr), ", owner_struct=", (owner_struct != nullptr));
 					if (static_member && owner_struct) {
 						// This is a static member access - generate GlobalLoad
+						FLASH_LOG(Codegen, Debug, "Found static member in owner struct: ", owner_struct->getName());
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
@@ -11547,8 +11558,21 @@ private:
 			symbol = global_symbol_table_->lookup(object_name);
 		}
 		
+		// If not found in symbol tables, check if it's a type name (for static member access like ClassName::member)
 		if (!symbol.has_value()) {
-			FLASH_LOG(Codegen, Error, "object '", object_name, "' not found in symbol table");
+			FLASH_LOG(Codegen, Debug, "validateAndSetupIdentifierMemberAccess: object_name='", object_name, "' not in symbol table, checking gTypesByName");
+			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(object_name));
+			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+				// This is a type name - set up for static member access
+				FLASH_LOG(Codegen, Debug, "Found type '", object_name, "' in gTypesByName with type_index=", type_it->second->type_index_);
+				base_object = StringTable::getOrInternStringHandle(object_name);
+				base_type = Type::Struct;
+				base_type_index = type_it->second->type_index_;
+				is_pointer_dereference = false;  // Type names don't need dereferencing
+				return true;
+			}
+			
+			FLASH_LOG(Codegen, Error, "object '", object_name, "' not found in symbol table or type registry");
 			return false;
 		}
 
