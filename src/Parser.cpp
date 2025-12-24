@@ -17303,18 +17303,10 @@ ParseResult Parser::parse_template_declaration() {
 						}
 					}
 				}
+				
+				// Note: We already consumed the tokens, so type_spec still points to the _unknown type
+				// We don't need to re-parse again - just use the existing type_spec
 			}
-		}
-		
-		// If we re-parsed for deferred info, we need to restore position and parse again
-		// to get the full type with modifiers
-		if (has_unresolved_params) {
-			restore_token_position(target_type_start_pos);
-			type_result = parse_type_specifier();
-			if (type_result.is_error()) {
-				return type_result;
-			}
-			type_spec = type_result.node()->as<TypeSpecifierNode>();
 		}
 		
 		// Discard the saved position since we've consumed the type
