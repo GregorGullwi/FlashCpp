@@ -6332,14 +6332,28 @@ private:
 							// Try to resolve to the actual instantiated type
 							const TypeInfo* resolved_type = struct_type_it->second;
 							
-							// If it's a type alias, follow the type_index to get the actual type
-							if (resolved_type->type_index_ < gTypeInfo.size() && 
-							    resolved_type->type_index_ != 0) {
+							// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
+							std::unordered_set<TypeIndex> visited;
+							while (resolved_type && 
+							       resolved_type->type_index_ < gTypeInfo.size() && 
+							       resolved_type->type_index_ != 0 &&
+							       !visited.contains(resolved_type->type_index_)) {
+								visited.insert(resolved_type->type_index_);
 								const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_];
+								
 								if (target_type && target_type->isStruct() && target_type->getStructInfo()) {
 									// Use the target struct's name
 									qualified_struct_name = target_type->name();
 									FLASH_LOG(Codegen, Debug, "Resolved type alias to: ", qualified_struct_name);
+									
+									// If target is also an alias, continue following
+									if (target_type->type_index_ != 0 && target_type->type_index_ != resolved_type->type_index_) {
+										resolved_type = target_type;
+									} else {
+										break;
+									}
+								} else {
+									break;
 								}
 							}
 							
