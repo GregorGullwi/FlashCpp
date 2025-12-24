@@ -432,17 +432,14 @@ public:
 					// Build the qualified name for deduplication
 					StringBuilder qualified_name_sb;
 					qualified_name_sb.append(type_name).append("::").append(StringTable::getStringView(static_member.getName()));
-					std::string qualified_name(qualified_name_sb.commit());
+					std::string_view qualified_name = qualified_name_sb.commit();
+					StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
 					
 					// Skip if already emitted
-					if (emitted_static_members_.count(qualified_name) > 0) {
+					if (emitted_static_members_.count(name_handle) > 0) {
 						continue;
 					}
-					emitted_static_members_.insert(qualified_name);
-
-					// Phase 3: Use StringTable to create StringHandle (replaces StringBuilder)
-					// StringHandle is interned and deduplicates identical names
-					StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
+					emitted_static_members_.insert(name_handle);
 
 					GlobalVariableDeclOp op;
 					op.type = static_member.type;
@@ -601,21 +598,20 @@ public:
 							// Generate definition for this derived class
 							StringBuilder derived_qualified_name_sb;
 							derived_qualified_name_sb.append(type_name).append("::").append(member_name);
-							std::string derived_qualified_name(derived_qualified_name_sb.commit());
+							std::string_view derived_qualified_name = derived_qualified_name_sb.commit();
+							StringHandle derived_name_handle = StringTable::getOrInternStringHandle(derived_qualified_name);
 							
 							// Skip if already emitted
-							if (emitted_static_members_.count(derived_qualified_name) > 0) {
+							if (emitted_static_members_.count(derived_name_handle) > 0) {
 								continue;
 							}
-							emitted_static_members_.insert(derived_qualified_name);
+							emitted_static_members_.insert(derived_name_handle);
 							
 							// Use the original base class name from the BaseClassSpecifier, not the resolved type
-							std::string base_name_str = std::string(base.name);
+							std::string_view base_name_str = base.name;
 							
 							FLASH_LOG(Codegen, Debug, "Generating inherited static member '", member_name, 
 							          "' for ", type_name, " from base ", base_name_str);
-							
-							StringHandle derived_name_handle = StringTable::getOrInternStringHandle(derived_qualified_name);
 							
 							GlobalVariableDeclOp alias_op;
 							alias_op.type = static_member_ptr->type;
@@ -623,19 +619,21 @@ public:
 							alias_op.var_name = derived_name_handle;
 							alias_op.is_initialized = true;
 							
-							// Phase 2 workaround: Infer value from base class name
-							// true_type/false_type are special cases where the value is in the name
+							// Phase 2 legacy optimization: Infer value from base class name
+							// true_type/false_type are special cases where the value can be inferred from the name
+							// This is kept for compatibility and as a fast path, but Phase 3 constexpr evaluation
+							// should handle most cases through the initializer evaluation below
 							bool found_base_value = false;
 							unsigned long long inferred_value = 0;
 							
-							if (base_name_str == "true_type") {
+							if (base_name_str == "true_type" || base_name_str == "std_true_type") {
 								inferred_value = 1;
 								found_base_value = true;
-								FLASH_LOG(Codegen, Debug, "Inferred value 1 (true) from base class name 'true_type'");
-							} else if (base_name_str == "false_type") {
+								FLASH_LOG(Codegen, Debug, "Inferred value 1 (true) from base class name '", base_name_str, "'");
+							} else if (base_name_str == "false_type" || base_name_str == "std_false_type") {
 								inferred_value = 0;
 								found_base_value = true;
-								FLASH_LOG(Codegen, Debug, "Inferred value 0 (false) from base class name 'false_type'");
+								FLASH_LOG(Codegen, Debug, "Inferred value 0 (false) from base class name '", base_name_str, "'");
 							}
 							
 							// If not inferred from name, try to evaluate the initializer
@@ -2235,17 +2233,14 @@ private:
 							// the type name from gTypesByName iterator (important for template instantiations)
 							StringBuilder qualified_name_sb;
 							qualified_name_sb.append(StringTable::getStringView(type_info->name())).append("::").append(StringTable::getStringView(static_member.getName()));
-							std::string qualified_name(qualified_name_sb.commit());
+							std::string_view qualified_name = qualified_name_sb.commit();
+							StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
 							
 							// Skip if already emitted
-							if (emitted_static_members_.count(qualified_name) > 0) {
+							if (emitted_static_members_.count(name_handle) > 0) {
 								continue;
 							}
-							emitted_static_members_.insert(qualified_name);
-
-							// Phase 3: Use StringTable to create StringHandle (replaces StringBuilder)
-							// StringHandle is interned and deduplicates identical names
-							StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
+							emitted_static_members_.insert(name_handle);
 
 							GlobalVariableDeclOp op;
 							op.type = static_member.type;
@@ -6436,13 +6431,14 @@ private:
 							if (looks_like_primary_template) {
 								// Search for an instantiated version that has this static member
 								std::string search_suffix = std::string("::") + std::string(StringTable::getStringView(StringTable::getOrInternStringHandle(qualifiedIdNode.name())));
-								for (const auto& emitted : emitted_static_members_) {
+								for (const auto& emitted_handle : emitted_static_members_) {
+									std::string_view emitted = StringTable::getStringView(emitted_handle);
 									if (emitted.find(search_suffix) != std::string::npos &&
 									    emitted.find(std::string(owner_name_str) + "_") == 0) {
 										// Found an instantiated version - extract the struct name
 										size_t colon_pos = emitted.find("::");
 										if (colon_pos != std::string::npos) {
-											std::string inst_name = emitted.substr(0, colon_pos);
+											std::string inst_name = std::string(emitted.substr(0, colon_pos));
 											qualified_struct_name = StringTable::getOrInternStringHandle(inst_name);
 											FLASH_LOG(Codegen, Debug, "Using instantiated version: ", inst_name, " instead of primary template");
 											break;
@@ -15282,7 +15278,7 @@ private:
 	std::vector<TemplateInstantiationInfo> collected_template_instantiations_;
 
 	// Track emitted static members to avoid duplicates
-	std::unordered_set<std::string> emitted_static_members_;
+	std::unordered_set<StringHandle> emitted_static_members_;
 	
 	// Track processed TypeInfo pointers to avoid processing the same struct twice
 	// (same struct can be registered under multiple keys in gTypesByName)

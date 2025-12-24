@@ -21971,28 +21971,15 @@ ASTNode Parser::substitute_template_params_in_expression(
 	}
 	
 	// Handle qualified identifiers (e.g., SomeTemplate<T>::member)
-	// Phase 3: This is critical for variable templates that reference class template static members
-	if (std::holds_alternative<QualifiedIdentifierNode>(expr_variant)) {
-		const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr_variant);
-		
-		// The qualified identifier might reference a template like "is_pointer_impl<T>::value"
-		// where T is a template parameter. During substitution, we can't modify the qualified
-		// identifier here because:
-		// 1. The namespace component contains the mangled name with template parameters
-		// 2. We don't have enough context to re-parse and instantiate the template
-		// 3. The type_substitution_map only contains type indices, not the full template arguments
-		//
-		// Instead, this is handled in try_instantiate_variable_template() which:
-		// - Has access to the concrete template arguments
-		// - Extracts the template name from the mangled namespace component
-		// - Triggers class template instantiation with specialization pattern matching
-		// - Updates the qualified identifier with the actual instantiated class name
-		//
-		// This approach ensures proper separation of concerns and keeps substitution logic simple.
-		return expr;
-	}
+	// Phase 3: For variable templates that reference class template static members,
+	// substitution is intentionally deferred to try_instantiate_variable_template() because:
+	// 1. The namespace component contains the mangled name with template parameters
+	// 2. We don't have enough context here to re-parse and instantiate the template
+	// 3. The type_substitution_map only contains type indices, not the full template arguments
+	// The actual template instantiation happens in try_instantiate_variable_template() which has
+	// access to concrete template arguments and can trigger proper specialization pattern matching.
 	
-	// For other expression types (literals, identifiers, etc.), return as-is
+	// For all expression types (including QualifiedIdentifierNode), return as-is
 	return expr;
 }
 
@@ -22127,8 +22114,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					FLASH_LOG(Templates, Debug, "Phase 3: Number of namespaces: ", namespaces.size());
 					
 					if (!namespaces.empty()) {
-						std::string struct_name(namespaces.back());
-						std::string_view struct_name_view = struct_name;
+						// With USE_OLD_STRING_APPROACH=1, namespaces.back() returns std::string
+						std::string_view struct_name_view = namespaces.back();
 						
 						FLASH_LOG(Templates, Debug, "Phase 3: Struct name from qualified ID: '", struct_name_view, "'");
 						
