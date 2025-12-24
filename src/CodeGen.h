@@ -563,6 +563,12 @@ public:
 				continue;
 			}
 			
+			// Skip structs with "_unknown" in their name - they're incomplete template instantiations
+			if (type_name_view2.find("_unknown") != std::string::npos) {
+				FLASH_LOG(Codegen, Debug, "Skipping trivial constructor for '", type_name_view2, "' with _unknown in name (incomplete instantiation)");
+				continue;
+			}
+			
 			// Skip if already processed
 			if (processed.count(type_info) > 0) {
 				continue;
@@ -1958,6 +1964,13 @@ private:
 		// Pattern structs have "_pattern_" in their name
 		std::string_view struct_name = StringTable::getStringView(node.name());
 		if (struct_name.find("_pattern_") != std::string_view::npos) {
+			return;
+		}
+		
+		// Skip structs with "_unknown" in their name - they're incomplete template instantiations
+		// from type alias parsing where template parameters weren't yet known
+		if (struct_name.find("_unknown") != std::string_view::npos) {
+			FLASH_LOG(Codegen, Debug, "Skipping struct '", struct_name, "' with _unknown in name (incomplete instantiation)");
 			return;
 		}
 
@@ -5147,6 +5160,17 @@ private:
 			TypeIndex type_index = type_node.type_index();
 			if (type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_index];
+				
+				// Skip incomplete template instantiations (with "_unknown" in name)
+				std::string_view type_name = StringTable::getStringView(type_info.name());
+				if (type_name.find("_unknown") != std::string_view::npos) {
+					FLASH_LOG(Codegen, Debug, "Skipping constructor call for '", type_name, "' with _unknown in name (incomplete instantiation)");
+					// Don't generate constructor calls for incomplete template instantiations
+					// Just treat them as plain data (no initialization)
+					// The variable declaration was already emitted above
+					return;
+				}
+				
 				if (type_info.struct_info_) {
 					// Check if this is an abstract class (only for non-pointer types)
 					if (type_info.struct_info_->is_abstract && type_node.pointer_levels().empty()) {
@@ -6185,6 +6209,16 @@ private:
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					FLASH_LOG(Codegen, Debug, "findStaticMemberRecursive result: static_member=", (static_member != nullptr), ", owner_struct=", (owner_struct != nullptr));
 					if (static_member && owner_struct) {
+						// Check if the owner struct is an incomplete template instantiation
+						std::string_view owner_name = StringTable::getStringView(owner_struct->getName());
+						if (owner_name.find("_unknown") != std::string_view::npos) {
+							FLASH_LOG(Codegen, Error, "Cannot access static member '", qualifiedIdNode.name(), 
+							          "' from incomplete template instantiation '", owner_name, "'");
+							// Return a placeholder value instead of generating GlobalLoad
+							// This prevents linker errors from undefined references to incomplete instantiations
+							return { Type::Bool, 8, 0ULL, 0ULL };
+						}
+						
 						// This is a static member access - generate GlobalLoad
 						FLASH_LOG(Codegen, Debug, "Found static member in owner struct: ", owner_struct->getName());
 						TempVar result_temp = var_counter.next();
