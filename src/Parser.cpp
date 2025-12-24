@@ -20615,10 +20615,13 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				FLASH_LOG_FORMAT(Templates, Debug, "After parsing expression, peek_token={}", 
 				                 peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 				
-				// Special case: If out_type_nodes is provided (e.g., for deduction guides), 
-				// we should fall through to type parsing so identifiers get properly converted to TypeSpecifierNode
-				// This is needed because deduction guides expect TypeSpecifierNode in out_type_nodes
-				bool should_try_type_parsing = out_type_nodes != nullptr;
+				// Special case: If out_type_nodes is provided AND the expression is a simple identifier,
+				// we should fall through to type parsing so identifiers get properly converted to TypeSpecifierNode.
+				// This is needed for deduction guides where template parameters must be TypeSpecifierNode.
+				// However, complex expressions like is_int<T>::value should still be accepted as dependent expressions.
+				bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) || 
+				                            std::holds_alternative<TemplateParameterReferenceNode>(expr);
+				bool should_try_type_parsing = out_type_nodes != nullptr && is_simple_identifier;
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
 				    (peek_token()->value() == "," || peek_token()->value() == ">")) {
