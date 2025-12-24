@@ -20486,10 +20486,12 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		SaveHandle arg_saved_pos = save_token_position();
 
 		// First, try to parse an expression (for non-type template parameters)
-		// Use parse_expression(2) instead of parse_primary_expression() to handle
+		// Use parse_expression(14) instead of parse_primary_expression() to handle
 		// member access expressions like is_int<T>::value
-		// Precedence 2 ensures commas (precedence 1) are not consumed as operators
-		auto expr_result = parse_expression(2);
+		// Precedence 14 ensures operators with precedence < 14 are not consumed, including:
+		// - Comparison operators like > (precedence 13) - prevents ambiguity with template closing bracket
+		// - Comma operators (precedence 1) - prevents consuming multiple template arguments as one
+		auto expr_result = parse_expression(14);
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
 			// Successfully parsed an expression - check if it's a boolean or numeric literal
 			const ExpressionNode& expr = expr_result.node()->as<ExpressionNode>();
@@ -20612,7 +20614,16 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// by verifying that the next token is ',' or '>'
 				FLASH_LOG_FORMAT(Templates, Debug, "After parsing expression, peek_token={}", 
 				                 peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
-				if (peek_token().has_value() && 
+				
+				// Special case: If out_type_nodes is provided AND the expression is a simple identifier,
+				// we should fall through to type parsing so identifiers get properly converted to TypeSpecifierNode.
+				// This is needed for deduction guides where template parameters must be TypeSpecifierNode.
+				// However, complex expressions like is_int<T>::value should still be accepted as dependent expressions.
+				bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) || 
+				                            std::holds_alternative<TemplateParameterReferenceNode>(expr);
+				bool should_try_type_parsing = out_type_nodes != nullptr && is_simple_identifier;
+				
+				if (!should_try_type_parsing && peek_token().has_value() && 
 				    (peek_token()->value() == "," || peek_token()->value() == ">")) {
 					FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
 					// Successfully parsed a dependent expression
