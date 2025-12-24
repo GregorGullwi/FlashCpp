@@ -16598,20 +16598,89 @@ ParseResult Parser::parse_template_declaration() {
 	}
 
 	// Check if this is an explicit template instantiation (no '<' after 'template')
-	// Syntax: template void Container<int>::set(int);
-	//         template class Container<int>;
+	// Syntax: template class Container<int>;           // Explicit instantiation definition
+	//         extern template class Container<int>;    // Explicit instantiation declaration
+	//         template void Container<int>::set(int);  // Explicit member function instantiation
 	if (peek_token().has_value() && peek_token()->value() != "<") {
-		// This is an explicit template instantiation - skip it for now
-		// The template should already be instantiated when it's first used
-		// Just consume tokens until we hit ';'
+		// Check if this is an extern declaration (suppresses implicit instantiation)
+		bool is_extern = false;
+		if (peek_token()->value() == "extern") {
+			is_extern = true;
+			consume_token(); // consume 'extern'
+			
+			// Re-check that we still have 'template'
+			if (!peek_token().has_value() || peek_token()->value() != "template") {
+				return ParseResult::error("Expected 'template' after 'extern'", *current_token_);
+			}
+			consume_token(); // consume second 'template'
+		}
+		
+		// Now peek at what type of explicit instantiation this is
+		if (!peek_token().has_value()) {
+			return ParseResult::error("Unexpected end after 'template' keyword", *current_token_);
+		}
+		
+		std::string_view next_token = peek_token()->value();
+		
+		// Handle: template class/struct Name<Args>;
+		if (next_token == "class" || next_token == "struct") {
+			consume_token(); // consume 'class' or 'struct'
+			
+			// Parse the template name and arguments
+			if (!peek_token().has_value()) {
+				return ParseResult::error("Expected template name after 'template class'", *current_token_);
+			}
+			
+			Token name_token = *peek_token();
+			consume_token(); // consume template name
+			
+			// Parse template arguments: Name<Args>
+			std::optional<std::vector<TemplateTypeArg>> template_args;
+			if (peek_token().has_value() && peek_token()->value() == "<") {
+				template_args = parse_explicit_template_arguments();
+				if (!template_args.has_value()) {
+					return ParseResult::error("Failed to parse template arguments in explicit instantiation", *current_token_);
+				}
+			}
+			
+			// Expect ';'
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after explicit template instantiation", *current_token_);
+			}
+			
+			// For explicit instantiation DEFINITION (not extern), force instantiation even in lazy mode
+			if (!is_extern && template_args.has_value()) {
+				FLASH_LOG(Templates, Debug, "Explicit template instantiation: ", name_token.value());
+				
+				// Try to instantiate the class template with force_eager=true
+				auto instantiated = try_instantiate_class_template(name_token.value(), *template_args, true);
+				if (instantiated.has_value()) {
+					// Success - the template is now explicitly instantiated
+					// Add the instantiated struct to the AST so its member functions get code-generated
+					ast_nodes_.push_back(*instantiated);
+					FLASH_LOG(Templates, Debug, "Successfully explicitly instantiated: ", name_token.value());
+				} else {
+					// Template not found or instantiation failed
+					FLASH_LOG(Templates, Warning, "Could not explicitly instantiate template: ", name_token.value());
+				}
+			} else if (is_extern) {
+				// extern template - suppresses implicit instantiation
+				// For now, we just note it (could be used to optimize away redundant instantiations)
+				FLASH_LOG(Templates, Debug, "Extern template declaration (suppresses implicit instantiation): ", name_token.value());
+			}
+			
+			return saved_position.success();
+		}
+		
+		// Handle other explicit instantiations (functions, etc.)
+		// For now, just consume until ';'
+		FLASH_LOG(Templates, Debug, "Explicit template instantiation (other): skipping");
 		while (peek_token().has_value() && peek_token()->value() != ";") {
 			consume_token();
 		}
 		if (peek_token().has_value() && peek_token()->value() == ";") {
 			consume_token(); // consume ';'
 		}
-		// Return success with no node - explicit instantiation doesn't need AST representation
-		// since FlashCpp instantiates templates on-demand when they're used
 		return saved_position.success();
 	}
 
@@ -21956,7 +22025,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	return std::nullopt;  // Return nullopt since we don't need to add anything to AST
 }
 
-std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
+std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 	
 	// Check if any template arguments are dependent (contain template parameters)
@@ -23230,11 +23299,15 @@ if (struct_type_info.getStructInfo()) {
 	StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
 	
 	// Determine if we should use lazy instantiation
-	bool use_lazy_instantiation = context_.isLazyTemplateInstantiationEnabled();
+	// Can be overridden by force_eager parameter (used for explicit instantiation)
+	bool use_lazy_instantiation = context_.isLazyTemplateInstantiationEnabled() && !force_eager;
 	
 	if (use_lazy_instantiation) {
 		FLASH_LOG(Templates, Debug, "Using LAZY instantiation for ", instantiated_name, " - registering ", 
 		          class_decl.member_functions().size(), " member functions for on-demand instantiation");
+	} else if (force_eager) {
+		FLASH_LOG(Templates, Debug, "Using EAGER instantiation for ", instantiated_name, " (forced by explicit instantiation) - instantiating ", 
+		          class_decl.member_functions().size(), " member functions immediately");
 	}
 	
 	// Copy member functions from the template
