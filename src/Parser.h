@@ -368,6 +368,9 @@ private:
         bool parsing_template_body_ = false;
         std::vector<std::string_view> template_param_names_;  // Template parameter names in current scope
         
+        // Track if we're instantiating a lazy member function (to prevent infinite recursion)
+        bool instantiating_lazy_member_ = false;
+        
         // Track if we're in SFINAE context (template argument substitution)
         // When true, type resolution errors should be treated as substitution failures instead of hard errors
         bool in_sfinae_context_ = false;
@@ -506,12 +509,13 @@ private:
         std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
         std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types, int& recursion_depth);  // Helper: Try to instantiate a specific template node (for SFINAE)
         std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types);  // NEW: Instantiate with explicit args
-        std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Instantiate class template
+        std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);  // NEW: Instantiate class template
         std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, const ASTNode& spec_node);  // Instantiate full specialization
         std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Instantiate variable template
         ASTNode substitute_template_params_in_expression(const ASTNode& expr, const std::unordered_map<TypeIndex, TemplateTypeArg>& type_substitution_map);  // NEW: Substitute template parameters in expressions
         std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Instantiate member function template
         std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, const std::vector<TemplateTypeArg>& template_type_args);  // NEW: Instantiate member function template with explicit args
+        std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
         std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Get mangled name for instantiated class
         std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, const std::vector<TemplateTypeArg>& template_args);  // Helper: Instantiate base class template and add to AST
         std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const std::vector<StringHandle>& template_param_names);  // NEW: Parse out-of-line template member function

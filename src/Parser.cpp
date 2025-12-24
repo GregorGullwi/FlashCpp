@@ -14287,21 +14287,98 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 			// Try to instantiate member function template if applicable
 			std::optional<ASTNode> instantiated_func;
 			
-			// If we have explicit template arguments, use them for instantiation
-			if (object_struct_name.has_value() && explicit_template_args.has_value()) {
-				instantiated_func = try_instantiate_member_function_template_explicit(
-					*object_struct_name,
-					member_name_token.value(),
-					*explicit_template_args
-				);
+			// Check for lazy member function template instantiation FIRST
+			bool lazy_template_found = false;
+			if (object_struct_name.has_value() && explicit_template_args.has_value() && context_.isLazyTemplateInstantiationEnabled()) {
+				// Build qualified name for lookup
+				std::string_view qualified_name = StringBuilder()
+					.append(*object_struct_name)
+					.append("::")
+					.append(member_name_token.value())
+					.commit();
+				StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
+				
+				// Check if this is a registered lazy member function template
+				if (LazyMemberFunctionTemplateRegistry::getInstance().needsInstantiation(qualified_handle, *explicit_template_args)) {
+					FLASH_LOG(Templates, Debug, "Lazy member function template instantiation triggered for: ", qualified_name);
+					
+					auto lazy_info_opt = LazyMemberFunctionTemplateRegistry::getInstance().getLazyMemberTemplateInfo(
+						qualified_handle, *explicit_template_args);
+					
+					if (lazy_info_opt.has_value()) {
+						// Perform the actual instantiation now
+						const LazyMemberFunctionTemplateInfo& lazy_info = *lazy_info_opt;
+						
+						// Call the regular instantiation function
+						instantiated_func = try_instantiate_member_function_template_explicit(
+							*object_struct_name,
+							member_name_token.value(),
+							lazy_info.pending_template_args
+						);
+						
+						// Mark as instantiated
+						LazyMemberFunctionTemplateRegistry::getInstance().markInstantiated(qualified_handle, *explicit_template_args);
+						
+						lazy_template_found = true;
+						FLASH_LOG(Templates, Debug, "Lazy member function template instantiation completed for: ", qualified_name);
+					}
+				}
 			}
-			// Otherwise, try argument type deduction
-			else if (object_struct_name.has_value() && !arg_types.empty()) {
-				instantiated_func = try_instantiate_member_function_template(
-					*object_struct_name,
-					member_name_token.value(),
-					arg_types
-				);
+			
+			// If not found in lazy registry, try regular instantiation
+			if (!lazy_template_found) {
+				// If we have explicit template arguments, use them for instantiation
+				if (object_struct_name.has_value() && explicit_template_args.has_value()) {
+					instantiated_func = try_instantiate_member_function_template_explicit(
+						*object_struct_name,
+						member_name_token.value(),
+						*explicit_template_args
+					);
+				}
+				// Otherwise, try argument type deduction
+				else if (object_struct_name.has_value() && !arg_types.empty()) {
+					instantiated_func = try_instantiate_member_function_template(
+						*object_struct_name,
+						member_name_token.value(),
+						arg_types
+					);
+				}
+			}
+
+			// Check for lazy template instantiation
+			// If the member function is registered for lazy instantiation, instantiate it now
+			if (object_struct_name.has_value() && !instantiating_lazy_member_) {
+				std::string_view func_name = member_name_token.value();
+				
+				if (!func_name.empty()) {
+					StringHandle class_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
+					StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+					
+					// Check if this function needs lazy instantiation
+					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(class_name_handle, func_name_handle)) {
+						FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for: ", *object_struct_name, "::", func_name);
+						
+						// Get the lazy member info
+						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(class_name_handle, func_name_handle);
+						if (lazy_info_opt.has_value()) {
+							const LazyMemberFunctionInfo& lazy_info = *lazy_info_opt;
+							
+							// Set flag to prevent recursive instantiation
+							instantiating_lazy_member_ = true;
+							
+							// Instantiate the function body now
+							instantiated_func = instantiateLazyMemberFunction(lazy_info);
+							
+							// Clear flag
+							instantiating_lazy_member_ = false;
+							
+							// Mark as instantiated
+							LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, func_name_handle);
+							
+							FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
+						}
+					}
+				}
 			}
 
 			// Use the instantiated function if available, otherwise create temporary placeholder
@@ -16521,20 +16598,89 @@ ParseResult Parser::parse_template_declaration() {
 	}
 
 	// Check if this is an explicit template instantiation (no '<' after 'template')
-	// Syntax: template void Container<int>::set(int);
-	//         template class Container<int>;
+	// Syntax: template class Container<int>;           // Explicit instantiation definition
+	//         extern template class Container<int>;    // Explicit instantiation declaration
+	//         template void Container<int>::set(int);  // Explicit member function instantiation
 	if (peek_token().has_value() && peek_token()->value() != "<") {
-		// This is an explicit template instantiation - skip it for now
-		// The template should already be instantiated when it's first used
-		// Just consume tokens until we hit ';'
+		// Check if this is an extern declaration (suppresses implicit instantiation)
+		bool is_extern = false;
+		if (peek_token()->value() == "extern") {
+			is_extern = true;
+			consume_token(); // consume 'extern'
+			
+			// Re-check that we still have 'template'
+			if (!peek_token().has_value() || peek_token()->value() != "template") {
+				return ParseResult::error("Expected 'template' after 'extern'", *current_token_);
+			}
+			consume_token(); // consume second 'template'
+		}
+		
+		// Now peek at what type of explicit instantiation this is
+		if (!peek_token().has_value()) {
+			return ParseResult::error("Unexpected end after 'template' keyword", *current_token_);
+		}
+		
+		std::string_view next_token = peek_token()->value();
+		
+		// Handle: template class/struct Name<Args>;
+		if (next_token == "class" || next_token == "struct") {
+			consume_token(); // consume 'class' or 'struct'
+			
+			// Parse the template name and arguments
+			if (!peek_token().has_value()) {
+				return ParseResult::error("Expected template name after 'template class'", *current_token_);
+			}
+			
+			Token name_token = *peek_token();
+			consume_token(); // consume template name
+			
+			// Parse template arguments: Name<Args>
+			std::optional<std::vector<TemplateTypeArg>> template_args;
+			if (peek_token().has_value() && peek_token()->value() == "<") {
+				template_args = parse_explicit_template_arguments();
+				if (!template_args.has_value()) {
+					return ParseResult::error("Failed to parse template arguments in explicit instantiation", *current_token_);
+				}
+			}
+			
+			// Expect ';'
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after explicit template instantiation", *current_token_);
+			}
+			
+			// For explicit instantiation DEFINITION (not extern), force instantiation even in lazy mode
+			if (!is_extern && template_args.has_value()) {
+				FLASH_LOG(Templates, Debug, "Explicit template instantiation: ", name_token.value());
+				
+				// Try to instantiate the class template with force_eager=true
+				auto instantiated = try_instantiate_class_template(name_token.value(), *template_args, true);
+				if (instantiated.has_value()) {
+					// Success - the template is now explicitly instantiated
+					// Add the instantiated struct to the AST so its member functions get code-generated
+					ast_nodes_.push_back(*instantiated);
+					FLASH_LOG(Templates, Debug, "Successfully explicitly instantiated: ", name_token.value());
+				} else {
+					// Template not found or instantiation failed
+					FLASH_LOG(Templates, Warning, "Could not explicitly instantiate template: ", name_token.value());
+				}
+			} else if (is_extern) {
+				// extern template - suppresses implicit instantiation
+				// For now, we just note it (could be used to optimize away redundant instantiations)
+				FLASH_LOG(Templates, Debug, "Extern template declaration (suppresses implicit instantiation): ", name_token.value());
+			}
+			
+			return saved_position.success();
+		}
+		
+		// Handle other explicit instantiations (functions, etc.)
+		// For now, just consume until ';'
+		FLASH_LOG(Templates, Debug, "Explicit template instantiation (other): skipping");
 		while (peek_token().has_value() && peek_token()->value() != ";") {
 			consume_token();
 		}
 		if (peek_token().has_value() && peek_token()->value() == ";") {
 			consume_token(); // consume ';'
 		}
-		// Return success with no node - explicit instantiation doesn't need AST representation
-		// since FlashCpp instantiates templates on-demand when they're used
 		return saved_position.success();
 	}
 
@@ -21879,7 +22025,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	return std::nullopt;  // Return nullopt since we don't need to add anything to AST
 }
 
-std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
+std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 	
 	// Check if any template arguments are dependent (contain template parameters)
@@ -23152,6 +23298,18 @@ if (struct_type_info.getStructInfo()) {
 	);
 	StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
 	
+	// Determine if we should use lazy instantiation
+	// Can be overridden by force_eager parameter (used for explicit instantiation)
+	bool use_lazy_instantiation = context_.isLazyTemplateInstantiationEnabled() && !force_eager;
+	
+	if (use_lazy_instantiation) {
+		FLASH_LOG(Templates, Debug, "Using LAZY instantiation for ", instantiated_name, " - registering ", 
+		          class_decl.member_functions().size(), " member functions for on-demand instantiation");
+	} else if (force_eager) {
+		FLASH_LOG(Templates, Debug, "Using EAGER instantiation for ", instantiated_name, " (forced by explicit instantiation) - instantiating ", 
+		          class_decl.member_functions().size(), " member functions immediately");
+	}
+	
 	// Copy member functions from the template
 	for (const StructMemberFunctionDecl& mem_func : class_decl.member_functions()) {
 
@@ -23159,6 +23317,139 @@ if (struct_type_info.getStructInfo()) {
 			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
 			const DeclarationNode& decl = func_decl.decl_node();
 
+			// For lazy instantiation, register function for later instantiation instead of instantiating now
+			if (use_lazy_instantiation && func_decl.get_definition().has_value()) {
+				// Register this member function for lazy instantiation
+				LazyMemberFunctionInfo lazy_info;
+				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
+				lazy_info.instantiated_class_name = instantiated_name;
+				lazy_info.member_function_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				lazy_info.original_function_node = mem_func.function_declaration;
+				lazy_info.template_params = template_params;
+				lazy_info.template_args = template_args_to_use;
+				lazy_info.access = mem_func.access;
+				lazy_info.is_virtual = mem_func.is_virtual;
+				lazy_info.is_pure_virtual = mem_func.is_pure_virtual;
+				lazy_info.is_override = mem_func.is_override;
+				lazy_info.is_final = mem_func.is_final;
+				lazy_info.is_const_method = mem_func.is_const;
+				lazy_info.is_constructor = false;
+				lazy_info.is_destructor = false;
+				
+				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
+				
+				FLASH_LOG(Templates, Debug, "Registered lazy member function: ", 
+				          instantiated_name, "::", decl.identifier_token().value());
+				
+				// Create function declaration with signature but WITHOUT body
+				// This allows the function to be found during name lookup, but defers code generation
+				
+				// Substitute return type
+				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+				auto [return_type, return_type_index] = substitute_template_parameter(
+					return_type_spec, template_params, template_args_to_use
+				);
+
+				// Create substituted return type node
+				TypeSpecifierNode substituted_return_type(
+					return_type,
+					return_type_spec.qualifier(),
+					get_type_size_bits(return_type),
+					decl.identifier_token()
+				);
+				substituted_return_type.set_type_index(return_type_index);
+
+				// Copy pointer levels and reference qualifiers from original
+				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
+					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+				}
+				if (return_type_spec.is_rvalue_reference()) {
+					substituted_return_type.set_reference(true);
+				} else if (return_type_spec.is_reference()) {
+					substituted_return_type.set_reference(false);
+				}
+
+				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
+
+				// Create a new function declaration with substituted return type but NO BODY
+				auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
+					substituted_return_node, decl.identifier_token()
+				);
+				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+					new_func_decl_ref, instantiated_name
+				);
+
+				// Substitute and copy parameters
+				for (const auto& param : func_decl.parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const DeclarationNode& param_decl = param.as<DeclarationNode>();
+						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+						// Substitute parameter type
+						auto [param_type, param_type_index] = substitute_template_parameter(
+							param_type_spec, template_params, template_args_to_use
+						);
+
+						// Create substituted parameter type
+						TypeSpecifierNode substituted_param_type(
+							param_type,
+							param_type_spec.qualifier(),
+							get_type_size_bits(param_type),
+							param_decl.identifier_token(),
+							param_type_spec.cv_qualifier()
+						);
+						substituted_param_type.set_type_index(param_type_index);
+
+						// Copy pointer levels and reference qualifiers
+						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+						}
+						if (param_type_spec.is_rvalue_reference()) {
+							substituted_param_type.set_reference(true);
+						} else if (param_type_spec.is_reference()) {
+							substituted_param_type.set_reference(false);
+						}
+
+						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
+						auto substituted_param_decl = emplace_node<DeclarationNode>(
+							substituted_param_type_node, param_decl.identifier_token()
+						);
+						new_func_ref.add_parameter_node(substituted_param_decl);
+					} else {
+						// Non-declaration parameter, copy as-is
+						new_func_ref.add_parameter_node(param);
+					}
+				}
+
+				// Copy function properties but DO NOT set definition
+				new_func_ref.set_is_constexpr(func_decl.is_constexpr());
+				new_func_ref.set_is_consteval(func_decl.is_consteval());
+				new_func_ref.set_is_constinit(func_decl.is_constinit());
+				new_func_ref.set_noexcept(func_decl.is_noexcept());
+				new_func_ref.set_is_variadic(func_decl.is_variadic());
+				new_func_ref.set_linkage(func_decl.linkage());
+				new_func_ref.set_calling_convention(func_decl.calling_convention());
+
+				// Add the signature-only function to the instantiated struct
+				instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+				
+				// Also add to struct_info so it can be found during codegen
+				StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+				struct_info_ptr->addMemberFunction(
+					func_name_handle,
+					new_func_node,
+					mem_func.access,
+					mem_func.is_virtual,
+					mem_func.is_pure_virtual,
+					mem_func.is_override,
+					mem_func.is_final
+				);
+				
+				// Skip to next function - body will be instantiated on-demand
+				continue;
+			}
+			
+			// EAGER INSTANTIATION PATH (original code)
 			// If the function has a definition, we need to substitute template parameters
 			if (func_decl.get_definition().has_value()) {
 				// Substitute return type
@@ -23385,6 +23676,11 @@ if (struct_type_info.getStructInfo()) {
 			}
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();
+			
+			// NOTE: Constructors are ALWAYS eagerly instantiated (not lazy)
+			// because they're needed for object creation
+			
+			// EAGER INSTANTIATION PATH (original code)
 			if (ctor_decl.get_definition().has_value()) {
 				// Convert TemplateTypeArg vector to TemplateArgument vector
 				std::vector<TemplateArgument> converted_template_args;
@@ -23492,6 +23788,11 @@ if (struct_type_info.getStructInfo()) {
 			}
 		} else if (mem_func.function_declaration.is<DestructorDeclarationNode>()) {
 			const DestructorDeclarationNode& dtor_decl = mem_func.function_declaration.as<DestructorDeclarationNode>();
+			
+			// NOTE: Destructors are ALWAYS eagerly instantiated (not lazy)
+			// because they're needed for object destruction
+			
+			// EAGER INSTANTIATION PATH (original code)
 			if (dtor_decl.get_definition().has_value()) {
 				// Convert TemplateTypeArg vector to TemplateArgument vector
 				std::vector<TemplateArgument> converted_template_args;
@@ -24690,6 +24991,170 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
 
+	return new_func_node;
+}
+
+// Instantiate a lazy member function on-demand
+// This performs the template parameter substitution that was deferred during lazy registration
+std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info) {
+	FLASH_LOG(Templates, Debug, "instantiateLazyMemberFunction: ", 
+	          lazy_info.instantiated_class_name, "::", lazy_info.member_function_name);
+	
+	// Get the original function declaration
+	if (!lazy_info.original_function_node.is<FunctionDeclarationNode>()) {
+		FLASH_LOG(Templates, Error, "Lazy member function node is not a FunctionDeclarationNode");
+		return std::nullopt;
+	}
+	
+	const FunctionDeclarationNode& func_decl = lazy_info.original_function_node.as<FunctionDeclarationNode>();
+	const DeclarationNode& decl = func_decl.decl_node();
+	
+	if (!func_decl.get_definition().has_value()) {
+		FLASH_LOG(Templates, Error, "Lazy member function has no definition");
+		return std::nullopt;
+	}
+	
+	// Perform template parameter substitution (same as eager path)
+	// Substitute return type
+	const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+	auto [return_type, return_type_index] = substitute_template_parameter(
+		return_type_spec, lazy_info.template_params, lazy_info.template_args
+	);
+
+	// Create substituted return type node
+	TypeSpecifierNode substituted_return_type(
+		return_type,
+		return_type_spec.qualifier(),
+		get_type_size_bits(return_type),
+		decl.identifier_token()
+	);
+	substituted_return_type.set_type_index(return_type_index);
+
+	// Copy pointer levels and reference qualifiers from original
+	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
+		substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+	}
+	if (return_type_spec.is_rvalue_reference()) {
+		substituted_return_type.set_reference(true);
+	} else if (return_type_spec.is_reference()) {
+		substituted_return_type.set_reference(false);
+	}
+
+	auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
+
+	// Create a new function declaration with substituted return type
+	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
+		substituted_return_node, decl.identifier_token()
+	);
+	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+		new_func_decl_ref, lazy_info.instantiated_class_name
+	);
+
+	// Substitute and copy parameters
+	for (const auto& param : func_decl.parameter_nodes()) {
+		if (param.is<DeclarationNode>()) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+
+			// Substitute parameter type
+			auto [param_type, param_type_index] = substitute_template_parameter(
+				param_type_spec, lazy_info.template_params, lazy_info.template_args
+			);
+
+			// Create substituted parameter type
+			TypeSpecifierNode substituted_param_type(
+				param_type,
+				param_type_spec.qualifier(),
+				get_type_size_bits(param_type),
+				param_decl.identifier_token(),
+				param_type_spec.cv_qualifier()
+			);
+			substituted_param_type.set_type_index(param_type_index);
+
+			// Copy pointer levels and reference qualifiers
+			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+				substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+			}
+			if (param_type_spec.is_rvalue_reference()) {
+				substituted_param_type.set_reference(true);
+			} else if (param_type_spec.is_reference()) {
+				substituted_param_type.set_reference(false);
+			}
+
+			auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
+			auto substituted_param_decl = emplace_node<DeclarationNode>(
+				substituted_param_type_node, param_decl.identifier_token()
+			);
+			new_func_ref.add_parameter_node(substituted_param_decl);
+		} else {
+			// Non-declaration parameter, copy as-is
+			new_func_ref.add_parameter_node(param);
+		}
+	}
+
+	// Substitute template parameters in the function body
+	// Convert TemplateTypeArg vector to TemplateArgument vector
+	std::vector<TemplateArgument> converted_template_args;
+	for (const auto& ttype_arg : lazy_info.template_args) {
+		if (ttype_arg.is_value) {
+			converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+		} else {
+			converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+		}
+	}
+
+	try {
+		ASTNode substituted_body = substituteTemplateParameters(
+			*func_decl.get_definition(),
+			lazy_info.template_params,
+			converted_template_args
+		);
+		new_func_ref.set_definition(substituted_body);
+	} catch (const std::exception& e) {
+		FLASH_LOG(Templates, Error, "Exception during lazy template parameter substitution for function ", 
+		          decl.identifier_token().value(), ": ", e.what());
+		throw;
+	} catch (...) {
+		FLASH_LOG(Templates, Error, "Unknown exception during lazy template parameter substitution for function ", 
+		          decl.identifier_token().value());
+		throw;
+	}
+
+	// Copy function properties
+	new_func_ref.set_is_constexpr(func_decl.is_constexpr());
+	new_func_ref.set_is_consteval(func_decl.is_consteval());
+	new_func_ref.set_is_constinit(func_decl.is_constinit());
+	new_func_ref.set_noexcept(func_decl.is_noexcept());
+	new_func_ref.set_is_variadic(func_decl.is_variadic());
+	new_func_ref.set_linkage(func_decl.linkage());
+	new_func_ref.set_calling_convention(func_decl.calling_convention());
+
+	// Add the instantiated function to the AST so it gets visited during codegen
+	// This is safe now that the StringBuilder bug is fixed
+	ast_nodes_.push_back(new_func_node);
+	
+	// Also update the StructTypeInfo to replace the signature-only function with the full definition
+	// Find the struct in gTypesByName
+	auto struct_it = gTypesByName.find(lazy_info.instantiated_class_name);
+	if (struct_it != gTypesByName.end()) {
+		const TypeInfo* struct_type_info = struct_it->second;
+		StructTypeInfo* struct_info = const_cast<StructTypeInfo*>(struct_type_info->getStructInfo());
+		if (struct_info) {
+			// Find and update the member function
+			for (auto& member_func : struct_info->member_functions) {
+				if (member_func.getName() == lazy_info.member_function_name) {
+					// Replace with the instantiated function
+					member_func.function_decl = new_func_node;
+					FLASH_LOG(Templates, Debug, "Updated StructTypeInfo with instantiated function body");
+					break;
+				}
+			}
+		}
+	}
+	
+	FLASH_LOG(Templates, Debug, "Successfully instantiated lazy member function: ", 
+	          lazy_info.instantiated_class_name, "::", lazy_info.member_function_name);
+	
 	return new_func_node;
 }
 

@@ -229,6 +229,13 @@ int main(int argc, char *argv[]) {
     // Set global debug flag (also enabled by verbose mode)
     g_enable_debug_output = show_debug || context.isVerboseMode();
 
+    // Lazy template instantiation mode (enabled by default, can be disabled for testing)
+    bool lazy_instantiation = !argsparser.hasFlag("eager-template-instantiation"sv);
+    context.setLazyTemplateInstantiation(lazy_instantiation);
+    if (!lazy_instantiation && context.isVerboseMode()) {
+        FLASH_LOG(General, Info, "Eager template instantiation mode enabled (all template members instantiated immediately)");
+    }
+
     // Process input file arguments here...
     const auto& inputFileArgs = argsparser.inputFileArgs();
     if (inputFileArgs.empty()) {

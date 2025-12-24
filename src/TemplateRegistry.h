@@ -900,6 +900,220 @@ private:
 extern TemplateRegistry gTemplateRegistry;
 
 // ============================================================================
+// Lazy Template Member Function Instantiation Registry
+// ============================================================================
+
+// Information needed to instantiate a template member function on-demand
+struct LazyMemberFunctionInfo {
+	StringHandle class_template_name;          // Original template name (e.g., "vector")
+	StringHandle instantiated_class_name;      // Instantiated class name (e.g., "vector_int")
+	StringHandle member_function_name;         // Member function name
+	ASTNode original_function_node;            // Original function from template
+	std::vector<ASTNode> template_params;      // Template parameters from class template
+	std::vector<TemplateTypeArg> template_args; // Concrete template arguments used for instantiation
+	AccessSpecifier access;                    // Access specifier (public/private/protected)
+	bool is_virtual;                           // Virtual function flag
+	bool is_pure_virtual;                      // Pure virtual flag
+	bool is_override;                          // Override flag
+	bool is_final;                             // Final flag
+	bool is_const_method;                      // Const member function flag
+	bool is_constructor;                       // Constructor flag
+	bool is_destructor;                        // Destructor flag
+};
+
+// Information needed to instantiate a MEMBER FUNCTION TEMPLATE on-demand
+// This is for cases like: template<typename T> struct S { template<typename U> U convert(); };
+struct LazyMemberFunctionTemplateInfo {
+	StringHandle qualified_template_name;      // Qualified name (e.g., "vector_int::convert")
+	ASTNode template_node;                     // TemplateFunctionDeclarationNode
+	std::vector<TemplateTypeArg> pending_template_args; // Template args to use for instantiation
+};
+
+// Registry for tracking uninstantiated template member functions
+// Allows lazy (on-demand) instantiation for better compilation performance
+class LazyMemberInstantiationRegistry {
+public:
+	static LazyMemberInstantiationRegistry& getInstance() {
+		static LazyMemberInstantiationRegistry instance;
+		return instance;
+	}
+	
+	// Register a member function for lazy instantiation
+	// Key format: "instantiated_class_name::member_function_name"
+	void registerLazyMember(LazyMemberFunctionInfo info) {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(info.instantiated_class_name)
+			.append("::")
+			.append(info.member_function_name)
+			.commit();
+		
+		lazy_members_[StringTable::getOrInternStringHandle(key)] = std::move(info);
+	}
+	
+	// Check if a member function needs lazy instantiation
+	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_function_name) const {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(instantiated_class_name)
+			.append("::")
+			.append(member_function_name)
+			.commit();  // Changed from preview() to commit()
+		
+		auto handle = StringTable::getOrInternStringHandle(key);
+		return lazy_members_.find(handle) != lazy_members_.end();
+	}
+	
+	// Get lazy member info for instantiation
+	std::optional<LazyMemberFunctionInfo> getLazyMemberInfo(StringHandle instantiated_class_name, StringHandle member_function_name) {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(instantiated_class_name)
+			.append("::")
+			.append(member_function_name)
+			.commit();
+		
+		auto handle = StringTable::getOrInternStringHandle(key);
+		auto it = lazy_members_.find(handle);
+		if (it != lazy_members_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
+	}
+	
+	// Mark a member function as instantiated (remove from lazy registry)
+	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_function_name) {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(instantiated_class_name)
+			.append("::")
+			.append(member_function_name)
+			.commit();
+		
+		auto handle = StringTable::getOrInternStringHandle(key);
+		lazy_members_.erase(handle);
+	}
+	
+	// Clear all lazy members (for testing)
+	void clear() {
+		lazy_members_.clear();
+	}
+	
+	// Get count of uninstantiated members (for diagnostics)
+	size_t getUninstantiatedCount() const {
+		return lazy_members_.size();
+	}
+
+private:
+	LazyMemberInstantiationRegistry() = default;
+	
+	// Map from "instantiated_class::member_function" to lazy instantiation info
+	std::unordered_map<StringHandle, LazyMemberFunctionInfo, TransparentStringHash, std::equal_to<>> lazy_members_;
+};
+
+// Registry for tracking uninstantiated MEMBER FUNCTION TEMPLATES
+// Handles cases like: template<typename T> struct S { template<typename U> U convert(); };
+class LazyMemberFunctionTemplateRegistry {
+public:
+	static LazyMemberFunctionTemplateRegistry& getInstance() {
+		static LazyMemberFunctionTemplateRegistry instance;
+		return instance;
+	}
+	
+	// Register a member function template for lazy instantiation
+	// Key format: "qualified_name::template_args_encoded"
+	void registerLazyMemberTemplate(LazyMemberFunctionTemplateInfo info) {
+		// Create a unique key that includes both the function name and template arguments
+		StringBuilder key_builder;
+		key_builder.append(info.qualified_template_name).append("<");
+		for (size_t i = 0; i < info.pending_template_args.size(); ++i) {
+			if (i > 0) key_builder.append(",");
+			// Use type index and base type to create a unique identifier
+			key_builder.append(std::to_string(static_cast<int>(info.pending_template_args[i].base_type)));
+			key_builder.append("_");
+			key_builder.append(std::to_string(info.pending_template_args[i].type_index));
+		}
+		key_builder.append(">");
+		std::string_view key = key_builder.commit();
+		
+		lazy_member_templates_[StringTable::getOrInternStringHandle(key)] = std::move(info);
+	}
+	
+	// Check if a member function template needs lazy instantiation
+	bool needsInstantiation(StringHandle qualified_name, const std::vector<TemplateTypeArg>& template_args) const {
+		StringBuilder key_builder;
+		key_builder.append(qualified_name).append("<");
+		for (size_t i = 0; i < template_args.size(); ++i) {
+			if (i > 0) key_builder.append(",");
+			key_builder.append(std::to_string(static_cast<int>(template_args[i].base_type)));
+			key_builder.append("_");
+			key_builder.append(std::to_string(template_args[i].type_index));
+		}
+		key_builder.append(">");
+		std::string_view key = key_builder.commit();
+		
+		auto handle = StringTable::getOrInternStringHandle(key);
+		return lazy_member_templates_.find(handle) != lazy_member_templates_.end();
+	}
+	
+	// Get lazy member function template info
+	std::optional<LazyMemberFunctionTemplateInfo> getLazyMemberTemplateInfo(
+		StringHandle qualified_name, 
+		const std::vector<TemplateTypeArg>& template_args) {
+		
+		StringBuilder key_builder;
+		key_builder.append(qualified_name).append("<");
+		for (size_t i = 0; i < template_args.size(); ++i) {
+			if (i > 0) key_builder.append(",");
+			key_builder.append(std::to_string(static_cast<int>(template_args[i].base_type)));
+			key_builder.append("_");
+			key_builder.append(std::to_string(template_args[i].type_index));
+		}
+		key_builder.append(">");
+		std::string_view key = key_builder.commit();
+		
+		auto handle = StringTable::getOrInternStringHandle(key);
+		auto it = lazy_member_templates_.find(handle);
+		if (it != lazy_member_templates_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
+	}
+	
+	// Mark a member function template as instantiated
+	void markInstantiated(StringHandle qualified_name, const std::vector<TemplateTypeArg>& template_args) {
+		StringBuilder key_builder;
+		key_builder.append(qualified_name).append("<");
+		for (size_t i = 0; i < template_args.size(); ++i) {
+			if (i > 0) key_builder.append(",");
+			key_builder.append(std::to_string(static_cast<int>(template_args[i].base_type)));
+			key_builder.append("_");
+			key_builder.append(std::to_string(template_args[i].type_index));
+		}
+		key_builder.append(">");
+		std::string_view key = key_builder.commit();
+		
+		auto handle = StringTable::getOrInternStringHandle(key);
+		lazy_member_templates_.erase(handle);
+	}
+	
+	// Clear all lazy member templates (for testing)
+	void clear() {
+		lazy_member_templates_.clear();
+	}
+
+private:
+	LazyMemberFunctionTemplateRegistry() = default;
+	
+	// Map from "qualified_name<args>" to lazy instantiation info
+	std::unordered_map<StringHandle, LazyMemberFunctionTemplateInfo, TransparentStringHash, std::equal_to<>> lazy_member_templates_;
+};
+
+// Global lazy member instantiation registry
+// Note: Use LazyMemberInstantiationRegistry::getInstance() to access
+// (cannot use global variable due to singleton pattern)
+
+// ============================================================================
 // C++20 Concepts Registry (inline with TemplateRegistry since they're related)
 // ============================================================================
 
