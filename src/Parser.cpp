@@ -20488,8 +20488,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// First, try to parse an expression (for non-type template parameters)
 		// Use parse_expression(14) instead of parse_primary_expression() to handle
 		// member access expressions like is_int<T>::value
-		// Precedence 14 ensures commas (precedence 1) and comparison operators like > (precedence 13)
-		// are not consumed as operators, preventing ambiguity in template argument parsing
+		// Precedence 14 ensures operators with precedence < 14 are not consumed, including:
+		// - Comparison operators like > (precedence 13) - prevents ambiguity with template closing bracket
+		// - Comma operators (precedence 1) - prevents consuming multiple template arguments as one
 		auto expr_result = parse_expression(14);
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
 			// Successfully parsed an expression - check if it's a boolean or numeric literal
