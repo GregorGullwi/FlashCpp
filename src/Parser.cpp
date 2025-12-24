@@ -17263,7 +17263,7 @@ ParseResult Parser::parse_template_declaration() {
 		// This happens when parsing things like: template<bool B> using bool_constant = integral_constant<bool, B>
 		// The integral_constant<bool, B> gets instantiated as "integral_constant_bool_unknown"
 		bool has_unresolved_params = false;
-		std::string_view target_template_name;
+		StringHandle target_template_name;
 		std::vector<ASTNode> target_template_arg_nodes;
 		
 		if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) && 
@@ -17281,7 +17281,7 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// Parse the template name
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-					target_template_name = peek_token()->value();
+					target_template_name = StringTable::getOrInternStringHandle(peek_token()->value());
 					consume_token();
 					
 					// Parse template arguments as AST nodes (not evaluated)
@@ -17358,8 +17358,8 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Create TemplateAliasNode - use deferred constructor if we have unresolved parameters
 		ASTNode alias_node;
-		if (has_unresolved_params && !target_template_name.empty()) {
-			FLASH_LOG(Parser, Debug, "Creating deferred TemplateAliasNode for '", alias_name, "' -> '", target_template_name, "'");
+		if (has_unresolved_params && target_template_name.isValid()) {
+			FLASH_LOG(Parser, Debug, "Creating deferred TemplateAliasNode for '", alias_name, "' -> '", target_template_name.view(), "'");
 			alias_node = emplace_node<TemplateAliasNode>(
 				std::move(template_params),
 				std::move(template_param_names),

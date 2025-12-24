@@ -1682,7 +1682,7 @@ public:
 	                  std::vector<StringHandle> param_names,
 	                  StringHandle alias_name,
 	                  ASTNode target_type,
-	                  std::string_view target_template_name,
+	                  StringHandle target_template_name,
 	                  std::vector<ASTNode> target_template_args)
 		: template_parameters_(std::move(template_params))
 		, template_param_names_(std::move(param_names))
@@ -1699,7 +1699,7 @@ public:
 	
 	// Deferred instantiation support
 	bool is_deferred() const { return is_deferred_; }
-	std::string_view target_template_name() const { return target_template_name_; }
+	std::string_view target_template_name() const { return target_template_name_.view(); }
 	const std::vector<ASTNode>& target_template_args() const { return target_template_args_; }
 
 	// Get the underlying TypeSpecifierNode
@@ -1718,7 +1718,7 @@ private:
 	
 	// Deferred instantiation (Option 1: cleaner than string parsing)
 	bool is_deferred_;  // True if target is a template with unresolved parameters
-	std::string_view target_template_name_;  // Template name (e.g., "integral_constant")
+	StringHandle target_template_name_;  // Template name (e.g., "integral_constant")
 	std::vector<ASTNode> target_template_args_;  // Unevaluated argument AST nodes
 };
 
