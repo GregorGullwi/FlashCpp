@@ -22093,6 +22093,91 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			orig_var_decl.initializer().value(),
 			type_substitution_map
 		);
+		
+		// PHASE 3 FIX: After substitution, trigger instantiation of any class templates 
+		// referenced in the initializer expression. This ensures specialization pattern 
+		// matching happens before codegen.
+		// For example: is_pointer_v<int*> = is_pointer_impl<int*>::value
+		// After substitution, we need to instantiate is_pointer_impl<int*> which should
+		// match the specialization pattern is_pointer_impl<T*> and inherit from true_type.
+		if (new_initializer.has_value()) {
+			FLASH_LOG(Templates, Debug, "Phase 3: Checking initializer for variable template '", template_name, 
+			          "', is ExpressionNode: ", new_initializer->is<ExpressionNode>());
+			
+			if (new_initializer->is<ExpressionNode>()) {
+				const ExpressionNode& init_expr = new_initializer->as<ExpressionNode>();
+				
+				// Check if the initializer is a qualified identifier (e.g., Template<Args>::member)
+				bool is_qual_id = std::holds_alternative<QualifiedIdentifierNode>(init_expr);
+				FLASH_LOG(Templates, Debug, "Phase 3: Is QualifiedIdentifierNode: ", is_qual_id);
+				
+				if (is_qual_id) {
+					const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(init_expr);
+					
+					// The struct/class name is the last namespace component
+					// For "is_pointer_impl<int*>::value", namespaces.back() is "is_pointer_impl<int*>"
+					const auto& namespaces = qual_id.namespaces();
+					FLASH_LOG(Templates, Debug, "Phase 3: Number of namespaces: ", namespaces.size());
+					
+					if (!namespaces.empty()) {
+						std::string struct_name(namespaces.back());
+						std::string_view struct_name_view = struct_name;
+						
+						FLASH_LOG(Templates, Debug, "Phase 3: Struct name from qualified ID: '", struct_name_view, "'");
+						
+						// The struct name might be a mangled template instantiation like "is_pointer_impl_T"
+						// We need to extract the template name by removing the underscore suffix
+						// For example: "is_pointer_impl_T" -> "is_pointer_impl"
+						size_t underscore_pos = struct_name_view.rfind('_');
+						std::string_view template_name_to_lookup = struct_name_view;
+						if (underscore_pos != std::string_view::npos) {
+							// Check if what comes after _ looks like a template parameter (single letter or typename)
+							std::string_view suffix = struct_name_view.substr(underscore_pos + 1);
+							if (suffix.length() == 1 || suffix == "typename") {
+								template_name_to_lookup = struct_name_view.substr(0, underscore_pos);
+								FLASH_LOG(Templates, Debug, "Phase 3: Extracted template name: '", template_name_to_lookup, "'");
+							}
+						}
+						
+						// Try to instantiate the struct/class referenced in the qualified identifier
+						// Look it up to see if it's a template
+						auto template_opt = gTemplateRegistry.lookupTemplate(template_name_to_lookup);
+						if (template_opt.has_value() && template_args.size() > 0) {
+							// This is a template - try to instantiate it with the concrete arguments
+							// The template arguments from the variable template should be used
+							FLASH_LOG(Templates, Debug, "Phase 3: Triggering instantiation of '", template_name_to_lookup, 
+							          "' with ", template_args.size(), " args from variable template initializer");
+							
+							auto instantiated = try_instantiate_class_template(template_name_to_lookup, template_args);
+							if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
+								// Add to AST so it gets codegen
+								ast_nodes_.push_back(*instantiated);
+								
+								// Now update the qualified identifier to use the correct instantiated name
+								// Get the instantiated class name (e.g., "is_pointer_impl_intP")
+								std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, template_args);
+								FLASH_LOG(Templates, Debug, "Phase 3: Instantiated class name: '", instantiated_name, "'");
+								
+								// Create a new qualified identifier with the updated namespace
+								std::vector<StringType<>> new_namespaces;
+								// Copy all namespaces except the last one
+								for (size_t i = 0; i + 1 < namespaces.size(); ++i) {
+									new_namespaces.push_back(namespaces[i]);
+								}
+								// Add the instantiated name as the last namespace
+								new_namespaces.emplace_back(StringType<>(instantiated_name));
+								
+								// Create new qualified identifier node
+								QualifiedIdentifierNode new_qual_id(std::move(new_namespaces), qual_id.identifier_token());
+								new_initializer = emplace_node<ExpressionNode>(new_qual_id);
+								
+								FLASH_LOG(Templates, Debug, "Phase 3: Successfully instantiated and updated qualifier in variable template initializer");
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 	
 	// Create instantiated variable declaration
