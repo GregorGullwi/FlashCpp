@@ -21976,12 +21976,19 @@ ASTNode Parser::substitute_template_params_in_expression(
 		const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr_variant);
 		
 		// The qualified identifier might reference a template like "is_pointer_impl<T>::value"
-		// where T needs to be substituted. The namespace parts contain the template instantiation.
-		// After substitution, we need to trigger instantiation of the class template.
-		
-		// For now, return as-is. The real fix is to ensure the class template is instantiated
-		// when the qualified identifier is used during codegen or earlier.
-		// This will be handled by eager instantiation during variable template processing.
+		// where T is a template parameter. During substitution, we can't modify the qualified
+		// identifier here because:
+		// 1. The namespace component contains the mangled name with template parameters
+		// 2. We don't have enough context to re-parse and instantiate the template
+		// 3. The type_substitution_map only contains type indices, not the full template arguments
+		//
+		// Instead, this is handled in try_instantiate_variable_template() which:
+		// - Has access to the concrete template arguments
+		// - Extracts the template name from the mangled namespace component
+		// - Triggers class template instantiation with specialization pattern matching
+		// - Updates the qualified identifier with the actual instantiated class name
+		//
+		// This approach ensures proper separation of concerns and keeps substitution logic simple.
 		return expr;
 	}
 	

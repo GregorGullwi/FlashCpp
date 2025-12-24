@@ -1257,21 +1257,25 @@ private:
 				}
 			} else if (if_stmt.has_else()) {
 				// Execute else branch
-				const ASTNode& else_stmt = if_stmt.get_else_statement().value();
-				if (else_stmt.is<BlockNode>()) {
-					const BlockNode& block = else_stmt.as<BlockNode>();
-					const auto& statements = block.get_statements();
-					for (size_t i = 0; i < statements.size(); i++) {
-						auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
-						// If this was a return statement, propagate it up
-						if (statements[i].is<ReturnStatementNode>()) {
+				// Fix dangling reference warning by storing the value first
+				std::optional<ASTNode> else_stmt_opt = if_stmt.get_else_statement();
+				if (else_stmt_opt.has_value()) {
+					const ASTNode& else_stmt = *else_stmt_opt;
+					if (else_stmt.is<BlockNode>()) {
+						const BlockNode& block = else_stmt.as<BlockNode>();
+						const auto& statements = block.get_statements();
+						for (size_t i = 0; i < statements.size(); i++) {
+							auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
+							// If this was a return statement, propagate it up
+							if (statements[i].is<ReturnStatementNode>()) {
+								return result;
+							}
+						}
+					} else {
+						auto result = evaluate_statement_with_bindings(else_stmt, bindings, context);
+						if (else_stmt.is<ReturnStatementNode>()) {
 							return result;
 						}
-					}
-				} else {
-					auto result = evaluate_statement_with_bindings(else_stmt, bindings, context);
-					if (else_stmt.is<ReturnStatementNode>()) {
-						return result;
 					}
 				}
 			}

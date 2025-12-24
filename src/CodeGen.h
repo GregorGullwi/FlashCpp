@@ -13,6 +13,8 @@
 #include <variant>
 #include <vector>
 #include <unordered_map>
+#include <queue>
+#include <unordered_set>
 #include <assert.h>
 #include <cstdint>
 #include <typeinfo>
@@ -549,7 +551,7 @@ public:
 		}
 			
 			// Also check if this struct inherits static members from base classes
-			// and generate alias definitions if needed (Phase 2: proper template alias support)
+			// and generate alias definitions if needed (Phase 3: Generate ALL inherited static members)
 			if (!struct_info->base_classes.empty()) {
 				for (const auto& base : struct_info->base_classes) {
 					if (base.type_index >= gTypeInfo.size()) {
@@ -559,15 +561,46 @@ public:
 					const TypeInfo& base_type = gTypeInfo[base.type_index];
 					const StructTypeInfo* base_info = base_type.getStructInfo();
 					
-					// Use findStaticMemberRecursive to properly traverse inheritance chain
+					// Iterate through ALL static members in the base class hierarchy (Phase 3 fix)
 					if (base_info) {
-						// Get all static members through recursive lookup
-						auto [static_member_ptr, owner_struct] = base_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle("value"));
+						// Collect all static members recursively from this base and its bases
+						std::vector<std::pair<const StructStaticMember*, const StructTypeInfo*>> all_static_members;
 						
-						if (static_member_ptr && owner_struct) {
+						// Use a queue to traverse the inheritance hierarchy
+						std::queue<const StructTypeInfo*> to_visit;
+						std::unordered_set<const StructTypeInfo*> visited;
+						to_visit.push(base_info);
+						
+						while (!to_visit.empty()) {
+							const StructTypeInfo* current = to_visit.front();
+							to_visit.pop();
+							
+							if (visited.count(current)) continue;
+							visited.insert(current);
+							
+							// Add all static members from current struct
+							for (const auto& static_member : current->static_members) {
+								all_static_members.emplace_back(&static_member, current);
+							}
+							
+							// Add base classes to queue
+							for (const auto& base_spec : current->base_classes) {
+								if (base_spec.type_index < gTypeInfo.size()) {
+									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+									if (const StructTypeInfo* base_struct = base_type_info.getStructInfo()) {
+										to_visit.push(base_struct);
+									}
+								}
+							}
+						}
+						
+						// Generate inherited static member definitions for each one found
+						for (const auto& [static_member_ptr, owner_struct] : all_static_members) {
+							std::string_view member_name = StringTable::getStringView(static_member_ptr->name);
+							
 							// Generate definition for this derived class
 							StringBuilder derived_qualified_name_sb;
-							derived_qualified_name_sb.append(type_name).append("::value");
+							derived_qualified_name_sb.append(type_name).append("::").append(member_name);
 							std::string derived_qualified_name(derived_qualified_name_sb.commit());
 							
 							// Skip if already emitted
@@ -579,7 +612,8 @@ public:
 							// Use the original base class name from the BaseClassSpecifier, not the resolved type
 							std::string base_name_str = std::string(base.name);
 							
-							FLASH_LOG(Codegen, Debug, "Generating inherited static member for ", type_name, " from base ", base_name_str);
+							FLASH_LOG(Codegen, Debug, "Generating inherited static member '", member_name, 
+							          "' for ", type_name, " from base ", base_name_str);
 							
 							StringHandle derived_name_handle = StringTable::getOrInternStringHandle(derived_qualified_name);
 							
