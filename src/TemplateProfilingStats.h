@@ -98,20 +98,20 @@ public:
 
         // Overall statistics
         printf("Overall Breakdown:\n");
-        printf("  %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8ld μs, max=%8ld μs\n",
+        printf("  %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8lld μs, max=%8lld μs\n",
                "Template Lookups", lookup_time_.count(), lookup_time_.total_duration() / 1000.0,
-               lookup_time_.mean_duration(), lookup_time_.min_duration(), lookup_time_.max_duration());
-        printf("  %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8ld μs, max=%8ld μs\n",
+               lookup_time_.mean_duration(), (long long)lookup_time_.min_duration(), (long long)lookup_time_.max_duration());
+        printf("  %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8lld μs, max=%8lld μs\n",
                "Template Parsing", parsing_time_.count(), parsing_time_.total_duration() / 1000.0,
-               parsing_time_.mean_duration(), parsing_time_.min_duration(), parsing_time_.max_duration());
-        printf("  %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8ld μs, max=%8ld μs\n",
+               parsing_time_.mean_duration(), (long long)parsing_time_.min_duration(), (long long)parsing_time_.max_duration());
+        printf("  %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8lld μs, max=%8lld μs\n",
                "Type Substitution", substitution_time_.count(), substitution_time_.total_duration() / 1000.0,
-               substitution_time_.mean_duration(), substitution_time_.min_duration(), substitution_time_.max_duration());
-        printf("  %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8ld μs, max=%8ld μs\n",
+               substitution_time_.mean_duration(), (long long)substitution_time_.min_duration(), (long long)substitution_time_.max_duration());
+        printf("  %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8lld μs, max=%8lld μs\n",
                "Specialization Matching", specialization_match_time_.count(), 
                specialization_match_time_.total_duration() / 1000.0,
-               specialization_match_time_.mean_duration(), specialization_match_time_.min_duration(), 
-               specialization_match_time_.max_duration());
+               specialization_match_time_.mean_duration(), (long long)specialization_match_time_.min_duration(), 
+               (long long)specialization_match_time_.max_duration());
 
         printf("\nCache Statistics:\n");
         size_t total_hits = 0, total_misses = 0;
@@ -137,7 +137,7 @@ public:
             std::sort(sorted.begin(), sorted.end(),
                      [](const auto& a, const auto& b) { return a.second->count() > b.second->count(); });
 
-            for (size_t i = 0; i < std::min(size_t(10), sorted.size()); ++i) {
+            for (size_t i = 0; i < (std::min)(size_t(10), sorted.size()); ++i) {
                 const auto& [name, acc] = sorted[i];
                 printf("  %2zu. %-40s: count=%5zu, total=%8.3f ms, mean=%8.3f μs\n",
                        i + 1, name.c_str(), acc->count(), acc->total_duration() / 1000.0, acc->mean_duration());
@@ -156,7 +156,7 @@ public:
                          return a.second->total_duration() > b.second->total_duration(); 
                      });
 
-            for (size_t i = 0; i < std::min(size_t(10), sorted.size()); ++i) {
+            for (size_t i = 0; i < (std::min)(size_t(10), sorted.size()); ++i) {
                 const auto& [name, acc] = sorted[i];
                 printf("  %2zu. %-40s: count=%5zu, total=%8.3f ms, mean=%8.3f μs\n",
                        i + 1, name.c_str(), acc->count(), acc->total_duration() / 1000.0, acc->mean_duration());
