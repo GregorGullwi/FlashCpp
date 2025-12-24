@@ -647,6 +647,16 @@ public:
 		return nullptr;
 	}
 	
+	// Get all registered template names (for smart re-instantiation)
+	std::vector<std::string_view> getAllTemplateNames() const {
+		std::vector<std::string_view> result;
+		result.reserve(templates_.size());
+		for (const auto& [name, _] : templates_) {
+			result.push_back(name);
+		}
+		return result;
+	}
+	
 	// Check if a template instantiation already exists
 	bool hasInstantiation(const TemplateInstantiationKey& key) const {
 		return instantiations_.find(key) != instantiations_.end();

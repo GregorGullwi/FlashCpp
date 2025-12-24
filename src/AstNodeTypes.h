@@ -1674,12 +1674,33 @@ public:
 		: template_parameters_(std::move(template_params))
 		, template_param_names_(std::move(param_names))
 		, alias_name_(alias_name)
-		, target_type_(target_type) {}
+		, target_type_(target_type)
+		, is_deferred_(false) {}
+	
+	// Constructor for deferred template instantiation (Option 1)
+	TemplateAliasNode(std::vector<ASTNode> template_params,
+	                  std::vector<StringHandle> param_names,
+	                  StringHandle alias_name,
+	                  ASTNode target_type,
+	                  StringHandle target_template_name,
+	                  std::vector<ASTNode> target_template_args)
+		: template_parameters_(std::move(template_params))
+		, template_param_names_(std::move(param_names))
+		, alias_name_(alias_name)
+		, target_type_(target_type)
+		, is_deferred_(true)
+		, target_template_name_(target_template_name)
+		, target_template_args_(std::move(target_template_args)) {}
 
 	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
 	const std::vector<StringHandle>& template_param_names() const { return template_param_names_; }
 	std::string_view alias_name() const { return alias_name_.view(); }
 	ASTNode target_type() const { return target_type_; }
+	
+	// Deferred instantiation support
+	bool is_deferred() const { return is_deferred_; }
+	std::string_view target_template_name() const { return target_template_name_.view(); }
+	const std::vector<ASTNode>& target_template_args() const { return target_template_args_; }
 
 	// Get the underlying TypeSpecifierNode
 	TypeSpecifierNode& target_type_node() {
@@ -1694,6 +1715,11 @@ private:
 	std::vector<StringHandle> template_param_names_;  // Parameter names for lookup
 	StringHandle alias_name_;  // The name of the alias (e.g., "Ptr")
 	ASTNode target_type_;  // TypeSpecifierNode - the target type (e.g., T*)
+	
+	// Deferred instantiation (Option 1: cleaner than string parsing)
+	bool is_deferred_;  // True if target is a template with unresolved parameters
+	StringHandle target_template_name_;  // Template name (e.g., "integral_constant")
+	std::vector<ASTNode> target_template_args_;  // Unevaluated argument AST nodes
 };
 
 // Deduction guide declaration: template<typename T> ClassName(T) -> ClassName<T>;

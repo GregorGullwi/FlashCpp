@@ -11,6 +11,7 @@
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
 #include <array> // Include array for std::array
+#include <charconv> // Include charconv for std::from_chars
 #include "ChunkedString.h"
 #include "Log.h"
 
@@ -6916,6 +6917,128 @@ ParseResult Parser::parse_type_specifier()
 				if (alias_opt.has_value()) {
 					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
 					
+					// Check for recursion: if we're already resolving this alias, return error
+					if (resolving_aliases_.find(type_name) != resolving_aliases_.end()) {
+						FLASH_LOG(Parser, Error, "Circular template alias dependency detected for '", type_name, "'");
+						return ParseResult::error("Circular template alias dependency", type_name_token);
+					}
+					
+					// Add this alias to the resolution stack
+					resolving_aliases_.insert(type_name);
+					
+					// RAII guard to ensure we remove the alias from the stack even if we return early
+					ScopeGuard alias_guard([this, type_name]() {
+						resolving_aliases_.erase(type_name);
+					});
+					
+					// OPTION 1: DEFERRED INSTANTIATION (preferred over string parsing)
+					// Check if this alias uses deferred instantiation (target is a template with unresolved params)
+					if (alias_node.is_deferred()) {
+						FLASH_LOG(Parser, Debug, "Using deferred instantiation for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
+						
+						// Build substituted template arguments by replacing alias parameters with concrete values
+						std::vector<TemplateTypeArg> substituted_args;
+						const auto& param_names = alias_node.template_param_names();
+						const auto& target_template_args = alias_node.target_template_args();
+						
+						// For each argument in the target template (e.g., bool, B in integral_constant<bool, B>)
+						for (size_t i = 0; i < target_template_args.size(); ++i) {
+							const ASTNode& arg_node = target_template_args[i];
+							
+							// Check if this argument is a type specifier
+							if (arg_node.is<TypeSpecifierNode>()) {
+								const TypeSpecifierNode& arg_type = arg_node.as<TypeSpecifierNode>();
+								
+								// Check if this type is one of the alias template parameters
+								// We check the token value, not type_index, because type_index may be 0 (placeholder) for template parameters
+								bool is_alias_param = false;
+								size_t alias_param_idx = 0;
+								
+								Token arg_token = arg_type.token();
+								if (arg_token.type() == Token::Type::Identifier) {
+									std::string_view arg_token_value = arg_token.value();
+									for (size_t j = 0; j < param_names.size(); ++j) {
+										if (arg_token_value == param_names[j].view()) {
+											is_alias_param = true;
+											alias_param_idx = j;
+											break;
+										}
+									}
+								}
+								
+								if (is_alias_param && alias_param_idx < template_args->size()) {
+									// This argument references an alias parameter - substitute it with the actual argument
+									// IMPORTANT: The alias argument might be a value (e.g., true), not a type
+									FLASH_LOG(Parser, Debug, "Substituting alias parameter '", param_names[alias_param_idx].view(), "' at position ", alias_param_idx);
+									substituted_args.push_back((*template_args)[alias_param_idx]);
+								} else {
+									// This argument is a concrete type - keep it as is
+									substituted_args.push_back(TemplateTypeArg(arg_type));
+								}
+							}
+						}
+						
+						FLASH_LOG(Parser, Debug, "Instantiating '", alias_node.target_template_name(), "' with ", substituted_args.size(), " substituted arguments");
+						
+						// Debug: log the substituted arguments
+						for (size_t i = 0; i < substituted_args.size(); ++i) {
+							const auto& arg = substituted_args[i];
+							FLASH_LOG(Parser, Debug, "  Arg[", i, "]: is_value=", arg.is_value, 
+							          ", base_type=", static_cast<int>(arg.base_type), 
+							          ", value=", arg.value);
+						}
+						
+						// Instantiate the target template with substituted arguments
+						auto instantiated_class = try_instantiate_class_template(alias_node.target_template_name(), substituted_args);
+						
+						if (instantiated_class.has_value()) {
+							// Add to AST if it's a struct
+							if (instantiated_class->is<StructDeclarationNode>()) {
+								ast_nodes_.push_back(*instantiated_class);
+							}
+							
+							// Look up the instantiated type
+							std::string_view instantiated_name = get_instantiated_class_name(alias_node.target_template_name(), substituted_args);
+							
+							// Find the type by scanning gTypeInfo (safer than using gTypesByName pointer)
+							TypeIndex type_idx = 0;
+							bool found = false;
+							StringHandle target_handle = StringTable::getOrInternStringHandle(instantiated_name);
+							
+							for (size_t i = 0; i < gTypeInfo.size(); ++i) {
+								if (gTypeInfo[i].name() == target_handle) {
+									type_idx = i;
+									found = true;
+									break;
+								}
+							}
+							
+							if (found) {
+								const TypeInfo& new_ti = gTypeInfo[type_idx];
+								
+								FLASH_LOG(Parser, Debug, "Deferred instantiation succeeded: '", instantiated_name, "' at index ", type_idx);
+								
+								// Create the final type specifier
+								auto new_type_spec = emplace_node<TypeSpecifierNode>(
+									Type::Struct,
+									type_idx,
+									static_cast<unsigned char>(new_ti.type_size_),
+									Token(),
+									CVQualifier::None
+								);
+								
+								return ParseResult::success(new_type_spec);
+							} else {
+								FLASH_LOG(Parser, Warning, "Deferred instantiation: type '", instantiated_name, "' not found after instantiation");
+							}
+						} else {
+							FLASH_LOG(Parser, Warning, "Deferred instantiation failed for '", alias_node.target_template_name(), "'");
+						}
+						
+						// Fall through to simple alias handling if deferred instantiation failed or not applicable
+					}
+					
+					// Handle non-deferred aliases (e.g., template<typename T> using Ptr = T*)
 					// Substitute template arguments into the target type
 					TypeSpecifierNode instantiated_type = alias_node.target_type_node();
 					const auto& template_params = alias_node.template_parameters();
@@ -6984,6 +7107,7 @@ ParseResult Parser::parse_type_specifier()
 							}
 						}
 					}
+					
 					
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 				}
@@ -16912,6 +17036,9 @@ ParseResult Parser::parse_template_declaration() {
 		}
 		consume_token(); // consume '='
 		
+		// Save position before parsing target type - we may need to reparse
+		auto target_type_start_pos = save_token_position();
+		
 		// Parse the target type
 		ParseResult type_result = parse_type_specifier();
 		if (type_result.is_error()) {
@@ -16920,6 +17047,59 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Get the TypeSpecifierNode and check for pointer/reference modifiers
 		TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+		
+		// Check if the target type is a template instantiation with unresolved parameters
+		// This happens when parsing things like: template<bool B> using bool_constant = integral_constant<bool, B>
+		// The integral_constant<bool, B> gets instantiated as "integral_constant_bool_unknown"
+		bool has_unresolved_params = false;
+		StringHandle target_template_name;
+		std::vector<ASTNode> target_template_arg_nodes;
+		
+		if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) && 
+		    type_spec.type_index() < gTypeInfo.size()) {
+			const TypeInfo& ti = gTypeInfo[type_spec.type_index()];
+			std::string_view type_name = StringTable::getStringView(ti.name());
+			
+			// Check for "_unknown" suffix indicating unresolved template parameters
+			if (type_name.find("_unknown") != std::string_view::npos) {
+				has_unresolved_params = true;
+				FLASH_LOG(Parser, Debug, "Alias target type '", type_name, "' has unresolved parameters - using deferred instantiation");
+				
+				// Rewind and re-parse to extract template name and arguments as AST nodes
+				restore_token_position(target_type_start_pos);
+				
+				// Parse the template name
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+					target_template_name = StringTable::getOrInternStringHandle(peek_token()->value());
+					consume_token();
+					
+					// Parse template arguments as AST nodes (not evaluated)
+					if (peek_token().has_value() && peek_token()->value() == "<") {
+						auto template_args_with_nodes = parse_explicit_template_arguments(&target_template_arg_nodes);
+						FLASH_LOG(Parser, Debug, "Captured ", target_template_arg_nodes.size(), " unevaluated template argument nodes for deferred instantiation");
+						
+						// Debug: log what we captured
+						for (size_t i = 0; i < target_template_arg_nodes.size(); ++i) {
+							const ASTNode& node = target_template_arg_nodes[i];
+							if (node.is<TypeSpecifierNode>()) {
+								const TypeSpecifierNode& ts = node.as<TypeSpecifierNode>();
+								if (ts.type_index() < gTypeInfo.size()) {
+									std::string_view node_type_name = StringTable::getStringView(gTypeInfo[ts.type_index()].name());
+									FLASH_LOG(Parser, Debug, "  Node[", i, "]: TypeSpecifier, type=", static_cast<int>(ts.type()), 
+									          ", type_name='", node_type_name, "'");
+								}
+							}
+						}
+					}
+				}
+				
+				// Note: We already consumed the tokens, so type_spec still points to the _unknown type
+				// We don't need to re-parse again - just use the existing type_spec
+			}
+		}
+		
+		// Discard the saved position since we've consumed the type
+		discard_saved_token(target_type_start_pos);
 		
 		// Handle pointer depth (*, **, etc.)
 		while (peek_token().has_value() && peek_token()->value() == "*") {
@@ -16965,13 +17145,27 @@ ParseResult Parser::parse_template_declaration() {
 			return ParseResult::error("Expected ';' after alias template declaration", *current_token_);
 		}
 		
-		// Create TemplateAliasNode
-		auto alias_node = emplace_node<TemplateAliasNode>(
-			std::move(template_params),
-			std::move(template_param_names),
-			StringTable::getOrInternStringHandle(alias_name),
-			type_result.node().value()
-		);
+		// Create TemplateAliasNode - use deferred constructor if we have unresolved parameters
+		ASTNode alias_node;
+		if (has_unresolved_params && target_template_name.isValid()) {
+			FLASH_LOG(Parser, Debug, "Creating deferred TemplateAliasNode for '", alias_name, "' -> '", target_template_name.view(), "'");
+			alias_node = emplace_node<TemplateAliasNode>(
+				std::move(template_params),
+				std::move(template_param_names),
+				StringTable::getOrInternStringHandle(alias_name),
+				type_result.node().value(),
+				target_template_name,
+				std::move(target_template_arg_nodes)
+			);
+		} else {
+			// Regular (non-deferred) alias
+			alias_node = emplace_node<TemplateAliasNode>(
+				std::move(template_params),
+				std::move(template_param_names),
+				StringTable::getOrInternStringHandle(alias_name),
+				type_result.node().value()
+			);
+		}
 		
 		// Register the alias template in the template registry
 		// We'll handle instantiation later when the alias is used
