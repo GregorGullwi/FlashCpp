@@ -7178,7 +7178,7 @@ ParseResult Parser::parse_type_specifier()
 				std::string_view instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
 				
 				// Check if any template arguments are dependent
-				// If so, we cannot parse qualified identifiers like ::type because the type is not yet resolved
+				// If so, we cannot instantiate the template, but we can still parse ::member syntax
 				bool has_dependent_args = false;
 				for (const auto& arg : filled_template_args) {
 					if (arg.is_dependent) {
@@ -7187,9 +7187,8 @@ ParseResult Parser::parse_type_specifier()
 					}
 				}
 				
-				// Check for qualified name after template arguments: Template<T>::nested
-				// Skip this if template arguments are dependent (type not yet resolved)
-				if (!has_dependent_args && peek_token().has_value() && peek_token()->value() == "::") {
+				// Check for qualified name after template arguments: Template<T>::nested or Template<T>::type
+				if (peek_token().has_value() && peek_token()->value() == "::") {
 					// Parse the qualified identifier path (e.g., Template<int>::Inner)
 					auto qualified_result = parse_qualified_identifier_after_template(type_name_token);
 					if (qualified_result.is_error()) {
@@ -7212,6 +7211,26 @@ ParseResult Parser::parse_type_specifier()
 						}
 					}
 					qualified_type_name += "::" + std::string(qualified_node.identifier_token().value());
+					
+					// For dependent templates, if the qualified type is not found, create a placeholder
+					if (has_dependent_args) {
+						auto qual_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
+						if (qual_type_it == gTypesByName.end()) {
+							// Type not found - create a placeholder for the dependent qualified type
+							FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
+							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
+							auto& type_info = gTypeInfo.emplace_back();
+							type_info.type_ = Type::UserDefined;
+							type_info.type_index_ = gTypeInfo.size() - 1;
+							type_info.type_size_ = 0;  // Unknown size for dependent type
+							type_info.name_ = type_idx;
+							gTypesByName[type_idx] = &type_info;
+							
+							return ParseResult::success(emplace_node<TypeSpecifierNode>(
+								Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
+						}
+						// If type IS found, continue with normal lookup below
+					}
 					
 					// Look up the fully qualified type (e.g., "Traits_int::nested")
 					auto qual_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
