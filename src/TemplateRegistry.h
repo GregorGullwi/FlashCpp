@@ -151,6 +151,16 @@ struct TemplateTypeArg {
 			case Type::UnsignedLongLong: result += "ulonglong"; break;
 			case Type::UnsignedShort: result += "ushort"; break;
 			case Type::UnsignedChar: result += "uchar"; break;
+			case Type::UserDefined:
+			case Type::Struct:
+			case Type::Enum:
+				// For user-defined types, look up the name from gTypeInfo
+				if (type_index < gTypeInfo.size()) {
+					result += std::string(StringTable::getStringView(gTypeInfo[type_index].name()));
+				} else {
+					result += "unknown";
+				}
+				break;
 			default: result += "unknown"; break;
 		}
 
