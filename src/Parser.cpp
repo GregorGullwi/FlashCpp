@@ -20486,10 +20486,11 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		SaveHandle arg_saved_pos = save_token_position();
 
 		// First, try to parse an expression (for non-type template parameters)
-		// Use parse_expression(2) instead of parse_primary_expression() to handle
+		// Use parse_expression(14) instead of parse_primary_expression() to handle
 		// member access expressions like is_int<T>::value
-		// Precedence 2 ensures commas (precedence 1) are not consumed as operators
-		auto expr_result = parse_expression(2);
+		// Precedence 14 ensures commas (precedence 1) and comparison operators like > (precedence 13)
+		// are not consumed as operators, preventing ambiguity in template argument parsing
+		auto expr_result = parse_expression(14);
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
 			// Successfully parsed an expression - check if it's a boolean or numeric literal
 			const ExpressionNode& expr = expr_result.node()->as<ExpressionNode>();
