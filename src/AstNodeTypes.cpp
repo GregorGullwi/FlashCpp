@@ -8,6 +8,57 @@
 #include <cstdlib>
 #include <cstring>
 
+// Helper class for cycle detection in recursive member lookup
+// Uses RAII to manage the resolution stack
+class RecursionGuard {
+private:
+    static thread_local std::unordered_set<const StructTypeInfo*> resolution_stack_;
+    static thread_local int recursion_depth_;
+    static constexpr int MAX_RECURSION_DEPTH = 100;
+    
+    const StructTypeInfo* type_;
+    bool is_active_;
+    
+public:
+    // Constructor: check for cycles and register this type
+    explicit RecursionGuard(const StructTypeInfo* type) 
+        : type_(type), is_active_(false) {
+        // Check if we're already resolving this type (cycle detection)
+        if (resolution_stack_.contains(type_)) {
+            return;  // Cycle detected, leave is_active_ as false
+        }
+        
+        // Check depth limit
+        if (recursion_depth_ >= MAX_RECURSION_DEPTH) {
+            return;  // Depth limit exceeded, leave is_active_ as false
+        }
+        
+        // Add this type to the resolution stack
+        resolution_stack_.insert(type_);
+        ++recursion_depth_;
+        is_active_ = true;
+    }
+    
+    // Destructor: cleanup
+    ~RecursionGuard() {
+        if (is_active_) {
+            resolution_stack_.erase(type_);
+            --recursion_depth_;
+        }
+    }
+    
+    // Check if this guard is active (no cycle/depth limit detected)
+    bool isActive() const { return is_active_; }
+    
+    // Disable copy and move
+    RecursionGuard(const RecursionGuard&) = delete;
+    RecursionGuard& operator=(const RecursionGuard&) = delete;
+};
+
+// Initialize static members
+thread_local std::unordered_set<const StructTypeInfo*> RecursionGuard::resolution_stack_;
+thread_local int RecursionGuard::recursion_depth_ = 0;
+
 std::deque<TypeInfo> gTypeInfo;
 std::unordered_map<StringHandle, const TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<Type, const TypeInfo*> gNativeTypes;
@@ -805,37 +856,11 @@ void StructTypeInfo::updateAbstractFlag() {
 
 // Find member recursively through base classes
 const StructMember* StructTypeInfo::findMemberRecursive(StringHandle member_name) const {
-    // Thread-local set to track StructTypeInfo objects currently being resolved
-    // This prevents infinite recursion in cases like variadic template partial specializations
-    static thread_local std::unordered_set<const StructTypeInfo*> resolution_stack;
-    
-    // Depth limit as an additional safety measure (Phase 1 recommendation)
-    static thread_local int recursion_depth = 0;
-    constexpr int MAX_RECURSION_DEPTH = 100;
-    
-    // Check if we're already resolving this type (cycle detection)
-    if (resolution_stack.contains(this)) {
-        return nullptr;  // Cycle detected, break the recursion
+    // Use RecursionGuard to prevent infinite recursion in variadic template patterns
+    RecursionGuard guard(this);
+    if (!guard.isActive()) {
+        return nullptr;  // Cycle or depth limit detected
     }
-    
-    // Check depth limit
-    if (recursion_depth >= MAX_RECURSION_DEPTH) {
-        return nullptr;  // Depth limit exceeded
-    }
-    
-    // Add this type to the resolution stack
-    resolution_stack.insert(this);
-    ++recursion_depth;
-    
-    // RAII guard to ensure cleanup on all exit paths
-    struct Guard {
-        const StructTypeInfo* type;
-        ~Guard() { 
-            resolution_stack.erase(type);
-            --recursion_depth;
-        }
-    };
-    Guard guard{this};
     
     // First, check own members
     for (const auto& member : members) {
@@ -870,37 +895,11 @@ const StructMember* StructTypeInfo::findMemberRecursive(StringHandle member_name
 }
 
 std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::findStaticMemberRecursive(StringHandle member_name) const {
-    // Thread-local set to track StructTypeInfo objects currently being resolved
-    // This prevents infinite recursion in cases like variadic template partial specializations
-    static thread_local std::unordered_set<const StructTypeInfo*> resolution_stack;
-    
-    // Depth limit as an additional safety measure (Phase 1 recommendation)
-    static thread_local int recursion_depth = 0;
-    constexpr int MAX_RECURSION_DEPTH = 100;
-    
-    // Check if we're already resolving this type (cycle detection)
-    if (resolution_stack.contains(this)) {
-        return { nullptr, nullptr };  // Cycle detected, break the recursion
+    // Use RecursionGuard to prevent infinite recursion in variadic template patterns
+    RecursionGuard guard(this);
+    if (!guard.isActive()) {
+        return { nullptr, nullptr };  // Cycle or depth limit detected
     }
-    
-    // Check depth limit
-    if (recursion_depth >= MAX_RECURSION_DEPTH) {
-        return { nullptr, nullptr };  // Depth limit exceeded
-    }
-    
-    // Add this type to the resolution stack
-    resolution_stack.insert(this);
-    ++recursion_depth;
-    
-    // RAII guard to ensure cleanup on all exit paths
-    struct Guard {
-        const StructTypeInfo* type;
-        ~Guard() { 
-            resolution_stack.erase(type);
-            --recursion_depth;
-        }
-    };
-    Guard guard{this};
     
     // First, check own static members
     for (const auto& static_member : static_members) {
