@@ -7149,8 +7149,10 @@ ParseResult Parser::parse_type_specifier()
 									if (reconstructed_args.size() > 0) {
 										FLASH_LOG(Parser, Debug, "Reconstructed ", reconstructed_args.size(), " template arguments");
 										
+										FLASH_LOG(Parser, Debug, "About to call try_instantiate_class_template for '", base_template_name, "'");
 										// Re-instantiate the template with the reconstructed arguments
 										auto re_instantiated_class = try_instantiate_class_template(base_template_name, reconstructed_args);
+										FLASH_LOG(Parser, Debug, "Returned from try_instantiate_class_template");
 										
 										if (re_instantiated_class.has_value()) {
 											FLASH_LOG(Parser, Debug, "Successfully re-instantiated template");
@@ -7160,14 +7162,29 @@ ParseResult Parser::parse_type_specifier()
 												ast_nodes_.push_back(*re_instantiated_class);
 											}
 											
-											// Get the instantiated name and look up the type
+											// Get the instantiated name
 											std::string_view instantiated_name = get_instantiated_class_name(base_template_name, reconstructed_args);
 											
-											// Look up the type by the instantiated name
-											auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
-											if (type_it != gTypesByName.end()) {
-												TypeIndex type_idx = type_it->second - &gTypeInfo[0];
+											FLASH_LOG(Parser, Debug, "Looking up type '", instantiated_name, "' by scanning gTypeInfo");
+											
+											// Find the type by scanning gTypeInfo (safer than using gTypesByName pointer)
+											// because gTypeInfo can be resized during instantiation, invalidating pointers
+											TypeIndex type_idx = 0;
+											bool found = false;
+											StringHandle target_handle = StringTable::getOrInternStringHandle(instantiated_name);
+											
+											for (size_t i = 0; i < gTypeInfo.size(); ++i) {
+												if (gTypeInfo[i].name() == target_handle) {
+													type_idx = i;
+													found = true;
+													break;
+												}
+											}
+											
+											if (found) {
 												const TypeInfo& new_ti = gTypeInfo[type_idx];
+												
+												FLASH_LOG(Parser, Debug, "Found type '", instantiated_name, "' at index ", type_idx);
 												
 												// Create a new TypeSpecifierNode with the properly instantiated type
 												auto new_type_spec = emplace_node<TypeSpecifierNode>(
@@ -7180,6 +7197,8 @@ ParseResult Parser::parse_type_specifier()
 												
 												FLASH_LOG(Parser, Debug, "Re-instantiated type: '", instantiated_name, "'");
 												return ParseResult::success(new_type_spec);
+											} else {
+												FLASH_LOG(Parser, Warning, "Type '", instantiated_name, "' not found in gTypeInfo after instantiation");
 											}
 										} else {
 											FLASH_LOG(Parser, Warning, "Failed to re-instantiate template '", base_template_name, "'");
