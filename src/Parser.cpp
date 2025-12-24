@@ -21970,6 +21970,21 @@ ASTNode Parser::substitute_template_params_in_expression(
 		return emplace_node<ExpressionNode>(new_unop);
 	}
 	
+	// Handle qualified identifiers (e.g., SomeTemplate<T>::member)
+	// Phase 3: This is critical for variable templates that reference class template static members
+	if (std::holds_alternative<QualifiedIdentifierNode>(expr_variant)) {
+		const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr_variant);
+		
+		// The qualified identifier might reference a template like "is_pointer_impl<T>::value"
+		// where T needs to be substituted. The namespace parts contain the template instantiation.
+		// After substitution, we need to trigger instantiation of the class template.
+		
+		// For now, return as-is. The real fix is to ensure the class template is instantiated
+		// when the qualified identifier is used during codegen or earlier.
+		// This will be handled by eager instantiation during variable template processing.
+		return expr;
+	}
+	
 	// For other expression types (literals, identifiers, etc.), return as-is
 	return expr;
 }
