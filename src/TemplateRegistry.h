@@ -305,6 +305,8 @@ struct TemplatePattern {
 	bool matches(const std::vector<TemplateTypeArg>& concrete_args, 
 	             std::unordered_map<std::string, TemplateTypeArg>& param_substitutions) const
 	{
+		FLASH_LOG(Templates, Trace, "      matches(): pattern has ", pattern_args.size(), " args, concrete has ", concrete_args.size(), " args");
+		
 		// Handle variadic templates: pattern may have fewer args if last template param is a pack
 		// Check if the last template parameter is variadic (a pack)
 		bool has_variadic_pack = false;
@@ -325,6 +327,8 @@ struct TemplatePattern {
 		// (pack can be empty, matching 0 or more args)
 		if (!has_variadic_pack) {
 			if (pattern_args.size() != concrete_args.size()) {
+				FLASH_LOG(Templates, Trace, "      Size mismatch: pattern_args.size()=", pattern_args.size(), 
+				          " != concrete_args.size()=", concrete_args.size());
 				return false;
 			}
 		} else {
@@ -784,11 +788,14 @@ public:
 	                                   const std::vector<TemplateTypeArg>& pattern_args, 
 	                                   ASTNode specialized_node) {
 		std::string key(template_name);
+		FLASH_LOG(Templates, Debug, "registerSpecializationPattern: template_name='", template_name, 
+		          "', num_template_params=", template_params.size(), ", num_pattern_args=", pattern_args.size());
 		TemplatePattern pattern;
 		pattern.template_params = template_params;
 		pattern.pattern_args = pattern_args;
 		pattern.specialized_node = specialized_node;
 		specialization_patterns_[key].push_back(std::move(pattern));
+		FLASH_LOG(Templates, Debug, "  Total patterns for '", template_name, "': ", specialization_patterns_[key].size());
 	}
 
 	// Register a template specialization (exact match)
@@ -809,14 +816,24 @@ public:
 
 	// Look up a template specialization (exact match first, then pattern match)
 	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) const {
+		FLASH_LOG(Templates, Debug, "lookupSpecialization: template_name='", template_name, "', num_args=", template_args.size());
+		
 		// First, try exact match
 		auto exact = lookupExactSpecialization(template_name, template_args);
 		if (exact.has_value()) {
+			FLASH_LOG(Templates, Debug, "  Found exact specialization match");
 			return exact;
 		}
 		
 		// No exact match - try pattern matching
-		return matchSpecializationPattern(template_name, template_args);
+		FLASH_LOG(Templates, Debug, "  No exact match, trying pattern matching...");
+		auto pattern_result = matchSpecializationPattern(template_name, template_args);
+		if (pattern_result.has_value()) {
+			FLASH_LOG(Templates, Debug, "  Found pattern match!");
+		} else {
+			FLASH_LOG(Templates, Debug, "  No pattern match found");
+		}
+		return pattern_result;
 	}
 	
 	// Find a matching specialization pattern
@@ -825,29 +842,40 @@ public:
 		// Heterogeneous lookup - string_view accepted directly
 		auto patterns_it = specialization_patterns_.find(template_name);
 		if (patterns_it == specialization_patterns_.end()) {
+			FLASH_LOG(Templates, Debug, "    No patterns registered for template '", template_name, "'");
 			return std::nullopt;  // No patterns for this template
 		}
 		
 		const std::vector<TemplatePattern>& patterns = patterns_it->second;
+		FLASH_LOG(Templates, Debug, "    Found ", patterns.size(), " pattern(s) for template '", template_name, "'");
+		
 		const TemplatePattern* best_match = nullptr;
 		int best_specificity = -1;
 		
 		// Find the most specific matching pattern
-		for (const auto& pattern : patterns) {
+		for (size_t i = 0; i < patterns.size(); ++i) {
+			const auto& pattern = patterns[i];
+			FLASH_LOG(Templates, Debug, "    Checking pattern #", i, " (specificity=", pattern.specificity(), ")");
 			std::unordered_map<std::string, TemplateTypeArg> substitutions;
 			if (pattern.matches(concrete_args, substitutions)) {
+				FLASH_LOG(Templates, Debug, "      Pattern #", i, " MATCHES!");
 				int spec = pattern.specificity();
 				if (spec > best_specificity) {
 					best_match = &pattern;
 					best_specificity = spec;
+					FLASH_LOG(Templates, Debug, "      New best match (specificity=", spec, ")");
 				}
+			} else {
+				FLASH_LOG(Templates, Debug, "      Pattern #", i, " does not match");
 			}
 		}
 		
 		if (best_match) {
+			FLASH_LOG(Templates, Debug, "    Selected best pattern (specificity=", best_specificity, ")");
 			return best_match->specialized_node;
 		}
 		
+		FLASH_LOG(Templates, Debug, "    No matching pattern found");
 		return std::nullopt;
 	}
 

@@ -20627,9 +20627,39 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				    (peek_token()->value() == "," || peek_token()->value() == ">")) {
 					FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
 					// Successfully parsed a dependent expression
-					// Create a dependent template argument with a placeholder value
-					TemplateTypeArg dependent_arg(0, Type::Bool);  // Placeholder value, actual type unknown
+					// Create a dependent template argument
+					// IMPORTANT: For template parameter references (like T in is_same<T, T>),
+					// this should be a TYPE argument, not a VALUE argument!
+					// Try to get the type_index for the template parameter so pattern matching can detect reused parameters
+					TemplateTypeArg dependent_arg;
+					dependent_arg.base_type = Type::UserDefined;  // Template parameter is a user-defined type placeholder
+					dependent_arg.type_index = 0;  // Default, will try to look up
+					dependent_arg.is_value = false;  // This is a TYPE parameter, not a value
 					dependent_arg.is_dependent = true;
+					
+					// Try to get the type_index for template parameter references
+					// For TemplateParameterReferenceNode or IdentifierNode that refers to a template parameter
+					if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+						const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+						StringHandle param_name = tparam_ref.param_name();
+						// Look up the template parameter type in gTypesByName
+						auto type_it = gTypesByName.find(param_name);
+						if (type_it != gTypesByName.end()) {
+							dependent_arg.type_index = type_it->second->type_index_;
+							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index, 
+							          " for template parameter '", StringTable::getStringView(param_name), "'");
+						}
+					} else if (std::holds_alternative<IdentifierNode>(expr)) {
+						const auto& id = std::get<IdentifierNode>(expr);
+						// Check if this identifier is a template parameter by looking it up
+						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(id.name()));
+						if (type_it != gTypesByName.end()) {
+							dependent_arg.type_index = type_it->second->type_index_;
+							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index, 
+							          " for identifier '", id.name(), "'");
+						}
+					}
+					
 					template_args.push_back(dependent_arg);
 					discard_saved_token(arg_saved_pos);
 					
@@ -22458,7 +22488,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Base classes need to be instantiated with concrete template arguments
 		FLASH_LOG(Templates, Debug, "Pattern has ", pattern_struct.base_classes().size(), " base classes");
 		for (const auto& pattern_base : pattern_struct.base_classes()) {
-			std::string base_name_str(pattern_base.name);  // Convert to string to avoid string_view issues
+			// IMPORTANT: pattern_base.name might be a string_view pointing to freed memory!
+			// Convert to string immediately to avoid issues
+			std::string base_name_str;
+			try {
+				base_name_str = std::string(pattern_base.name);  // Convert to string to avoid string_view issues
+			} catch (...) {
+				FLASH_LOG(Templates, Error, "Failed to convert base class name to string!");
+				continue;
+			}
+			
+			// Check if base_name_str is valid (not empty and printable)
+			if (base_name_str.empty()) {
+				FLASH_LOG(Templates, Error, "Base class name is empty!");
+				continue;
+			}
+			
 			FLASH_LOG(Templates, Debug, "Processing base class: ", base_name_str);
 			
 			// WORKAROUND: If the base class name ends with "_unknown", it was instantiated
@@ -22520,10 +22565,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Templates, Debug, "Base class resolved to: ", base_name_str);
 			}
 			
-			std::string_view base_class_name = base_name_str;
+			// Convert string_view to permanent string using StringTable
+			StringHandle base_class_handle = StringTable::getOrInternStringHandle(base_name_str);
+			std::string_view base_class_name = StringTable::getStringView(base_class_handle);
 			
 			// Look up the base class type
-			auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
+			auto base_type_it = gTypesByName.find(base_class_handle);
 			if (base_type_it != gTypesByName.end()) {
 				const TypeInfo* base_type_info = base_type_it->second;
 				struct_info->addBaseClass(base_class_name, base_type_info->type_index_, pattern_base.access, pattern_base.is_virtual);
