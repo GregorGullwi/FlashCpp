@@ -6203,6 +6203,13 @@ private:
 			FLASH_LOG(Codegen, Debug, "generateQualifiedIdentifierIr: struct_or_enum_name='", struct_or_enum_name, "', found=", (struct_type_it != gTypesByName.end()));
 			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+				// If struct_info is null, this might be a type alias - resolve it via type_index
+				if (!struct_info && struct_type_it->second->type_index_ < gTypeInfo.size()) {
+					const TypeInfo* resolved_type = &gTypeInfo[struct_type_it->second->type_index_];
+					if (resolved_type && resolved_type->isStruct()) {
+						struct_info = resolved_type->getStructInfo();
+					}
+				}
 				if (struct_info) {
 					FLASH_LOG(Codegen, Debug, "Looking for static member '", qualifiedIdNode.name(), "' in struct '", struct_or_enum_name, "'");
 					// Look for static member recursively (checks base classes too)
