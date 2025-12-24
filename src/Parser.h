@@ -396,6 +396,9 @@ private:
         // Track ASTNode addresses currently being processed in get_expression_type to prevent infinite recursion
         mutable std::unordered_set<const void*> expression_type_resolution_stack_;
 
+        // Track template aliases currently being resolved to prevent infinite recursion
+        std::unordered_set<std::string_view> resolving_aliases_;
+
         // Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
         std::vector<ASTNode> pending_struct_variables_;
 

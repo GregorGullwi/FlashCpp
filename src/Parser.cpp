@@ -11,6 +11,7 @@
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
 #include <array> // Include array for std::array
+#include <charconv> // Include charconv for std::from_chars
 #include "ChunkedString.h"
 #include "Log.h"
 
@@ -6916,6 +6917,20 @@ ParseResult Parser::parse_type_specifier()
 				if (alias_opt.has_value()) {
 					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
 					
+					// Check for recursion: if we're already resolving this alias, return error
+					if (resolving_aliases_.find(type_name) != resolving_aliases_.end()) {
+						FLASH_LOG(Parser, Error, "Circular template alias dependency detected for '", type_name, "'");
+						return ParseResult::error("Circular template alias dependency", type_name_token);
+					}
+					
+					// Add this alias to the resolution stack
+					resolving_aliases_.insert(type_name);
+					
+					// RAII guard to ensure we remove the alias from the stack even if we return early
+					ScopeGuard alias_guard([this, type_name]() {
+						resolving_aliases_.erase(type_name);
+					});
+					
 					// Substitute template arguments into the target type
 					TypeSpecifierNode instantiated_type = alias_node.target_type_node();
 					const auto& template_params = alias_node.template_parameters();
@@ -6981,6 +6996,198 @@ ParseResult Parser::parse_type_specifier()
 								instantiated_type.set_reference(true);  // rvalue ref
 							} else if (is_ref) {
 								instantiated_type.set_lvalue_reference(true);  // lvalue ref
+							}
+						}
+					}
+					
+					// SMART RE-INSTANTIATION: Check if the target type has "_unknown" in its name
+					// This indicates it's an incomplete template instantiation from declaration parsing
+					// where template parameters weren't yet known
+					if (instantiated_type.type() == Type::Struct || instantiated_type.type() == Type::UserDefined) {
+						if (instantiated_type.type_index() < gTypeInfo.size()) {
+							const TypeInfo& ti = gTypeInfo[instantiated_type.type_index()];
+							std::string_view target_type_name = StringTable::getStringView(ti.name());
+							
+							if (target_type_name.find("_unknown") != std::string_view::npos) {
+								FLASH_LOG(Parser, Debug, "Detected incomplete template instantiation '", target_type_name, "' in alias '", type_name, "' - attempting smart re-instantiation");
+								
+								// Extract the base template name by finding the longest registered template name
+								// that's a prefix of the target type name
+								std::string_view base_template_name;
+								size_t best_match_len = 0;
+								
+								// Get all registered templates and find the best match
+								auto all_templates = gTemplateRegistry.getAllTemplateNames();
+								for (const auto& tmpl_name : all_templates) {
+									// Check if this template name is a prefix of target_type_name
+									if (target_type_name.substr(0, tmpl_name.size()) == tmpl_name) {
+										// Check that it's followed by '_' (template arg separator)
+										if (tmpl_name.size() < target_type_name.size() && 
+										    target_type_name[tmpl_name.size()] == '_') {
+											// This is a valid match - use longest match
+											if (tmpl_name.size() > best_match_len) {
+												base_template_name = tmpl_name;
+												best_match_len = tmpl_name.size();
+											}
+										}
+									}
+								}
+								
+								if (!base_template_name.empty()) {
+									FLASH_LOG(Parser, Debug, "Found base template '", base_template_name, "' for incomplete instantiation");
+									
+									// Parse the mangled name to extract template arguments
+									// Format: template_name_arg1_arg2_..._argN
+									// We need to reconstruct the arguments, substituting "unknown" with actual values
+									std::string_view args_part = target_type_name.substr(base_template_name.size() + 1); // +1 for the '_'
+									
+									// Split the arguments by '_'
+									std::vector<std::string_view> mangled_args;
+									size_t start = 0;
+									size_t pos = 0;
+									while (pos <= args_part.size()) {
+										if (pos == args_part.size() || args_part[pos] == '_') {
+											if (pos > start) {
+												mangled_args.push_back(args_part.substr(start, pos - start));
+											}
+											start = pos + 1;
+										}
+										pos++;
+									}
+									
+									FLASH_LOG(Parser, Debug, "Extracted ", mangled_args.size(), " mangled arguments from target type name");
+									
+									// Build the actual template arguments by substituting "unknown" with concrete values
+									std::vector<TemplateTypeArg> reconstructed_args;
+									size_t alias_arg_index = 0; // Track which alias argument to use for substitution
+									
+									for (size_t i = 0; i < mangled_args.size(); ++i) {
+										std::string_view arg_str = mangled_args[i];
+										FLASH_LOG(Parser, Debug, "Processing mangled arg[", i, "]: '", arg_str, "'");
+										
+										if (arg_str == "unknown") {
+											// This is a template parameter - substitute with the corresponding alias argument
+											if (alias_arg_index < template_args->size()) {
+												reconstructed_args.push_back((*template_args)[alias_arg_index]);
+												FLASH_LOG(Parser, Debug, "Substituted unknown with alias arg[", alias_arg_index, "]");
+												alias_arg_index++;
+											} else {
+												FLASH_LOG(Parser, Error, "Not enough alias arguments to substitute for unknown parameters");
+												break;
+											}
+										} else {
+											// This is a known type argument - keep it
+											// Convert the mangled string back to a TemplateTypeArg
+											TemplateTypeArg arg;
+											arg.is_value = false;
+											arg.is_pack = false;
+											arg.is_dependent = false;
+											arg.is_reference = false;
+											arg.is_rvalue_reference = false;
+											arg.pointer_depth = 0;
+											arg.cv_qualifier = CVQualifier::None;
+											
+											// Map string to Type
+											if (arg_str == "bool") {
+												arg.base_type = Type::Bool;
+											} else if (arg_str == "int") {
+												arg.base_type = Type::Int;
+											} else if (arg_str == "char") {
+												arg.base_type = Type::Char;
+											} else if (arg_str == "float") {
+												arg.base_type = Type::Float;
+											} else if (arg_str == "double") {
+												arg.base_type = Type::Double;
+											} else if (arg_str == "long") {
+												arg.base_type = Type::Long;
+											} else if (arg_str == "short") {
+												arg.base_type = Type::Short;
+											} else if (arg_str == "uint") {
+												arg.base_type = Type::UnsignedInt;
+											} else if (arg_str == "ulong") {
+												arg.base_type = Type::UnsignedLong;
+											} else if (arg_str == "uchar") {
+												arg.base_type = Type::UnsignedChar;
+											} else if (arg_str == "ushort") {
+												arg.base_type = Type::UnsignedShort;
+											} else if (arg_str == "longlong") {
+												arg.base_type = Type::LongLong;
+											} else if (arg_str == "ulonglong") {
+												arg.base_type = Type::UnsignedLongLong;
+											} else if (arg_str == "true" || arg_str == "false") {
+												// This is a boolean value argument (non-type template parameter)
+												arg.is_value = true;
+												arg.base_type = Type::Bool;
+												arg.value = (arg_str == "true") ? 1 : 0;
+											} else if (arg_str.find_first_not_of("0123456789-") == std::string_view::npos) {
+												// This looks like an integer value (non-type template parameter)
+												arg.is_value = true;
+												arg.base_type = Type::Int;
+												// Parse the integer
+												int64_t val = 0;
+												std::from_chars(arg_str.data(), arg_str.data() + arg_str.size(), val);
+												arg.value = val;
+											} else {
+												// Unknown type - might be a user-defined type
+												// Look it up in gTypesByName
+												auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(arg_str));
+												if (type_it != gTypesByName.end()) {
+													TypeIndex type_idx = type_it->second - &gTypeInfo[0];
+													arg.base_type = Type::Struct;
+													arg.type_index = type_idx;
+												} else {
+													FLASH_LOG(Parser, Warning, "Unknown mangled type '", arg_str, "' in template arguments");
+													arg.base_type = Type::Invalid;
+												}
+											}
+											
+											reconstructed_args.push_back(arg);
+											FLASH_LOG(Parser, Debug, "Kept known arg: '", arg_str, "'");
+										}
+									}
+									
+									if (reconstructed_args.size() > 0) {
+										FLASH_LOG(Parser, Debug, "Reconstructed ", reconstructed_args.size(), " template arguments");
+										
+										// Re-instantiate the template with the reconstructed arguments
+										auto re_instantiated_class = try_instantiate_class_template(base_template_name, reconstructed_args);
+										
+										if (re_instantiated_class.has_value()) {
+											FLASH_LOG(Parser, Debug, "Successfully re-instantiated template");
+											
+											// Add the instantiated class to AST if it's a struct
+											if (re_instantiated_class->is<StructDeclarationNode>()) {
+												ast_nodes_.push_back(*re_instantiated_class);
+											}
+											
+											// Get the instantiated name and look up the type
+											std::string_view instantiated_name = get_instantiated_class_name(base_template_name, reconstructed_args);
+											
+											// Look up the type by the instantiated name
+											auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
+											if (type_it != gTypesByName.end()) {
+												TypeIndex type_idx = type_it->second - &gTypeInfo[0];
+												const TypeInfo& new_ti = gTypeInfo[type_idx];
+												
+												// Create a new TypeSpecifierNode with the properly instantiated type
+												auto new_type_spec = emplace_node<TypeSpecifierNode>(
+													Type::Struct,
+													type_idx,
+													static_cast<unsigned char>(new_ti.type_size_),
+													Token(),
+													CVQualifier::None
+												);
+												
+												FLASH_LOG(Parser, Debug, "Re-instantiated type: '", instantiated_name, "'");
+												return ParseResult::success(new_type_spec);
+											}
+										} else {
+											FLASH_LOG(Parser, Warning, "Failed to re-instantiate template '", base_template_name, "'");
+										}
+									}
+								} else {
+									FLASH_LOG(Parser, Warning, "Could not find base template name for '", target_type_name, "'");
+								}
 							}
 						}
 					}
