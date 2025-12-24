@@ -6218,23 +6218,71 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			// Try to parse as a type specifier (for type aliases like: using value_type = T;)
 			ParseResult type_result = parse_type_specifier();
 			if (!type_result.is_error()) {
-				// This is a type alias
-				if (!consume_punctuator(";")) {
-					return ParseResult::error("Expected ';' after type alias", *current_token_);
-				}
-
-				// Register the type alias in gTypesByName
+				// Parse any pointer/reference modifiers after the type
+				// For example: using RvalueRef = typename T::type&&;
 				if (type_result.node().has_value()) {
-					const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+					TypeSpecifierNode type_spec = type_result.node()->as<TypeSpecifierNode>();
 					
+					// Parse pointer declarators: * [const] [volatile] *...
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+					       peek_token()->value() == "*") {
+						consume_token(); // consume '*'
+						
+						// Check for CV-qualifiers after the *
+						CVQualifier ptr_cv = CVQualifier::None;
+						while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+							std::string_view kw = peek_token()->value();
+							if (kw == "const") {
+								ptr_cv = static_cast<CVQualifier>(
+									static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
+								consume_token();
+							} else if (kw == "volatile") {
+								ptr_cv = static_cast<CVQualifier>(
+									static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+								consume_token();
+							} else {
+								break;
+							}
+						}
+						
+						type_spec.add_pointer_level(ptr_cv);
+					}
+					
+					// Parse reference declarators: & or &&
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+						std::string_view op_value = peek_token()->value();
+						
+						if (op_value == "&&") {
+							// Rvalue reference
+							consume_token();
+							type_spec.set_reference(true);  // true = rvalue reference
+						} else if (op_value == "&") {
+							// Lvalue reference
+							consume_token();
+							type_spec.set_reference(false);  // false = lvalue reference
+						}
+					}
+					
+					// This is a type alias
+					if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected ';' after type alias", *current_token_);
+					}
+
+					// Register the type alias in gTypesByName
 					// Create a TypeInfo for the alias that points to the underlying type
 					auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(alias_token->value()), type_spec.type(), gTypeInfo.size());
 					alias_type_info.type_index_ = type_spec.type_index();
 					alias_type_info.type_size_ = type_spec.size_in_bits();
 					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
-				}
 
-				// Return success (no AST node needed for type aliases)
+					// Return success (no AST node needed for type aliases)
+					return saved_position.success();
+				}
+				
+				// If we didn't get a node from parse_type_specifier, just check for semicolon
+				if (!consume_punctuator(";")) {
+					return ParseResult::error("Expected ';' after type alias", *current_token_);
+				}
 				return saved_position.success();
 			} else if (parsing_template_body_ || gSymbolTable.get_current_scope_type() == ScopeType::Function) {
 				// If we're in a template body OR function body and type parsing failed, it's likely a template-dependent type
