@@ -619,25 +619,11 @@ public:
 							alias_op.var_name = derived_name_handle;
 							alias_op.is_initialized = true;
 							
-							// Phase 2 legacy optimization: Infer value from base class name
-							// true_type/false_type are special cases where the value can be inferred from the name
-							// This is kept for compatibility and as a fast path, but Phase 3 constexpr evaluation
-							// should handle most cases through the initializer evaluation below
+							// Evaluate the initializer to get the value
 							bool found_base_value = false;
 							unsigned long long inferred_value = 0;
 							
-							if (base_name_str == "true_type" || base_name_str == "std_true_type") {
-								inferred_value = 1;
-								found_base_value = true;
-								FLASH_LOG(Codegen, Debug, "Inferred value 1 (true) from base class name '", base_name_str, "'");
-							} else if (base_name_str == "false_type" || base_name_str == "std_false_type") {
-								inferred_value = 0;
-								found_base_value = true;
-								FLASH_LOG(Codegen, Debug, "Inferred value 0 (false) from base class name '", base_name_str, "'");
-							}
-							
-							// If not inferred from name, try to evaluate the initializer
-							if (!found_base_value && static_member_ptr->initializer.has_value() && 
+							if (static_member_ptr->initializer.has_value() && 
 							    static_member_ptr->initializer->is<ExpressionNode>()) {
 								const ExpressionNode& init_expr = static_member_ptr->initializer->as<ExpressionNode>();
 								
