@@ -156,7 +156,7 @@ struct TemplateTypeArg {
 			case Type::Enum:
 				// For user-defined types, look up the name from gTypeInfo
 				if (type_index < gTypeInfo.size()) {
-					result += std::string(StringTable::getStringView(gTypeInfo[type_index].name()));
+					result += StringTable::getStringView(gTypeInfo[type_index].name());
 				} else {
 					result += "unknown";
 				}
