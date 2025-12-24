@@ -7177,8 +7177,19 @@ ParseResult Parser::parse_type_specifier()
 				// the type should now be registered. Look it up using filled args.
 				std::string_view instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
 				
+				// Check if any template arguments are dependent
+				// If so, we cannot parse qualified identifiers like ::type because the type is not yet resolved
+				bool has_dependent_args = false;
+				for (const auto& arg : filled_template_args) {
+					if (arg.is_dependent) {
+						has_dependent_args = true;
+						break;
+					}
+				}
+				
 				// Check for qualified name after template arguments: Template<T>::nested
-				if (peek_token().has_value() && peek_token()->value() == "::") {
+				// Skip this if template arguments are dependent (type not yet resolved)
+				if (!has_dependent_args && peek_token().has_value() && peek_token()->value() == "::") {
 					// Parse the qualified identifier path (e.g., Template<int>::Inner)
 					auto qualified_result = parse_qualified_identifier_after_template(type_name_token);
 					if (qualified_result.is_error()) {
@@ -20456,7 +20467,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		SaveHandle arg_saved_pos = save_token_position();
 
 		// First, try to parse an expression (for non-type template parameters)
-		auto expr_result = parse_primary_expression();
+		// Use parse_expression(2) instead of parse_primary_expression() to handle
+		// member access expressions like is_int<T>::value
+		// Precedence 2 ensures commas (precedence 1) are not consumed as operators
+		auto expr_result = parse_expression(2);
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
 			// Successfully parsed an expression - check if it's a boolean or numeric literal
 			const ExpressionNode& expr = expr_result.node()->as<ExpressionNode>();
@@ -20573,6 +20587,33 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				}
 			} else {
 				FLASH_LOG(Templates, Debug, "Skipping constant expression evaluation (not in SFINAE context - during template declaration)");
+				
+				// During template declaration, expressions like is_int<T>::value are dependent
+				// and cannot be evaluated yet. Check if we successfully parsed such an expression
+				// by verifying that the next token is ',' or '>'
+				FLASH_LOG_FORMAT(Templates, Debug, "After parsing expression, peek_token={}", 
+				                 peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+				if (peek_token().has_value() && 
+				    (peek_token()->value() == "," || peek_token()->value() == ">")) {
+					FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
+					// Successfully parsed a dependent expression
+					// Create a dependent template argument with a placeholder value
+					TemplateTypeArg dependent_arg(0, Type::Bool);  // Placeholder value, actual type unknown
+					dependent_arg.is_dependent = true;
+					template_args.push_back(dependent_arg);
+					discard_saved_token(arg_saved_pos);
+					
+					// Check for ',' or '>' after the expression
+					if (peek_token()->value() == ">") {
+						consume_token(); // consume '>'
+						break;
+					}
+					
+					if (peek_token()->value() == ",") {
+						consume_token(); // consume ','
+						continue;
+					}
+				}
 			}
 
 			// Expression is not a numeric literal or evaluable constant - fall through to type parsing
@@ -20678,6 +20719,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			return std::nullopt;
 		}
 
+		FLASH_LOG_FORMAT(Parser, Debug, "After adding type argument, peek_token={}", std::string(peek_token()->value()));
+		
 		if (peek_token()->value() == ">") {
 			consume_token(); // consume '>'
 			break;
