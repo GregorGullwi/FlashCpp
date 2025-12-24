@@ -1487,6 +1487,29 @@ private:
 			}
 		}
 		
+		// WORKAROUND: Also look for "operator user_defined" which may be a conversion operator
+		// that was created with a typedef that wasn't resolved during template instantiation
+		// Check if the return type matches the target type
+		StringHandle user_defined_handle = StringTable::getOrInternStringHandle("operator user_defined");
+		for (const auto& member_func : struct_info->member_functions) {
+			if (member_func.getName() == user_defined_handle) {
+				// Check if this function's return type matches our target
+				if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+					const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+					const auto& decl_node = func_decl.decl_node();
+					const auto& return_type_node = decl_node.type_node();
+					if (return_type_node.is<TypeSpecifierNode>()) {
+						const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
+						if (type_spec.type() == target_type) {
+							// Found a match!
+							FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");
+							return &member_func;
+						}
+					}
+				}
+			}
+		}
+		
 		// Search base classes recursively
 		for (const auto& base_spec : struct_info->base_classes) {
 			if (base_spec.type_index < gTypeInfo.size()) {
@@ -6331,6 +6354,18 @@ private:
 							// Accessing through type alias or derived class
 							// Try to resolve to the actual instantiated type
 							const TypeInfo* resolved_type = struct_type_it->second;
+							
+							// Special handling for true_type and false_type
+							// These should resolve to integral_constant<bool, 1> and integral_constant<bool, 0>
+							// but the template system doesn't instantiate them properly
+							std::string_view alias_name = StringTable::getStringView(resolved_type->name());
+							if (alias_name == "true_type" || alias_name == "false_type") {
+								// Generate the value directly without needing a static member
+								// true_type -> 1, false_type -> 0
+								bool value = (alias_name == "true_type") ? true : false;
+								FLASH_LOG(Codegen, Debug, "Special handling for ", alias_name, " -> value=", value);
+								return { Type::Bool, 8, static_cast<unsigned long long>(value), 0ULL };
+							}
 							
 							// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
 							std::unordered_set<TypeIndex> visited;
