@@ -6226,17 +6226,38 @@ private:
 							return { Type::Bool, 8, 0ULL, 0ULL };
 						}
 						
+						// Determine the correct qualified name to use
+						// If we accessed through a type alias (struct_type_it->second) that resolves to
+						// a different struct than the owner, we should use the resolved struct name
+						StringHandle qualified_struct_name = owner_struct->getName();
+						
+						// Check if we're accessing through a type alias by comparing names
+						if (struct_type_it->second->name() != owner_struct->getName()) {
+							// Accessing through type alias or derived class
+							// Try to resolve to the actual instantiated type
+							const TypeInfo* resolved_type = struct_type_it->second;
+							
+							// If it's a type alias, follow the type_index to get the actual type
+							if (resolved_type->type_index_ < gTypeInfo.size() && 
+							    resolved_type->type_index_ != 0) {
+								const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_];
+								if (target_type && target_type->isStruct() && target_type->getStructInfo()) {
+									// Use the target struct's name
+									qualified_struct_name = target_type->name();
+									FLASH_LOG(Codegen, Debug, "Resolved type alias to: ", qualified_struct_name);
+								}
+							}
+						}
+						
 						// This is a static member access - generate GlobalLoad
-						FLASH_LOG(Codegen, Debug, "Found static member in owner struct: ", owner_struct->getName());
+						FLASH_LOG(Codegen, Debug, "Found static member in owner struct: ", owner_struct->getName(), ", using qualified name with: ", qualified_struct_name);
 						TempVar result_temp = var_counter.next();
 						GlobalLoadOp op;
 						op.result.type = static_member->type;
 						op.result.size_in_bits = static_cast<int>(static_member->size * 8);
 						op.result.value = result_temp;
-						// Use qualified name as the global symbol name: OwnerStructName::static_member
-						// The owner_struct is the struct that actually defines the static member
-						// (could be a base class)
-						op.global_name = StringTable::getOrInternStringHandle(StringBuilder().append(owner_struct->getName()).append("::"sv).append(qualifiedIdNode.name()));
+						// Use qualified name as the global symbol name: StructName::static_member
+						op.global_name = StringTable::getOrInternStringHandle(StringBuilder().append(qualified_struct_name).append("::"sv).append(qualifiedIdNode.name()));
 						ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
 						// Return the temp variable that will hold the loaded value
