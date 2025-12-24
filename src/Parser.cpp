@@ -6218,23 +6218,71 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			// Try to parse as a type specifier (for type aliases like: using value_type = T;)
 			ParseResult type_result = parse_type_specifier();
 			if (!type_result.is_error()) {
-				// This is a type alias
-				if (!consume_punctuator(";")) {
-					return ParseResult::error("Expected ';' after type alias", *current_token_);
-				}
-
-				// Register the type alias in gTypesByName
+				// Parse any pointer/reference modifiers after the type
+				// For example: using RvalueRef = typename T::type&&;
 				if (type_result.node().has_value()) {
-					const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+					TypeSpecifierNode type_spec = type_result.node()->as<TypeSpecifierNode>();
 					
+					// Parse pointer declarators: * [const] [volatile] *...
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+					       peek_token()->value() == "*") {
+						consume_token(); // consume '*'
+						
+						// Check for CV-qualifiers after the *
+						CVQualifier ptr_cv = CVQualifier::None;
+						while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+							std::string_view kw = peek_token()->value();
+							if (kw == "const") {
+								ptr_cv = static_cast<CVQualifier>(
+									static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
+								consume_token();
+							} else if (kw == "volatile") {
+								ptr_cv = static_cast<CVQualifier>(
+									static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+								consume_token();
+							} else {
+								break;
+							}
+						}
+						
+						type_spec.add_pointer_level(ptr_cv);
+					}
+					
+					// Parse reference declarators: & or &&
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+						std::string_view op_value = peek_token()->value();
+						
+						if (op_value == "&&") {
+							// Rvalue reference
+							consume_token();
+							type_spec.set_reference(true);  // true = rvalue reference
+						} else if (op_value == "&") {
+							// Lvalue reference
+							consume_token();
+							type_spec.set_reference(false);  // false = lvalue reference
+						}
+					}
+					
+					// This is a type alias
+					if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected ';' after type alias", *current_token_);
+					}
+
+					// Register the type alias in gTypesByName
 					// Create a TypeInfo for the alias that points to the underlying type
 					auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(alias_token->value()), type_spec.type(), gTypeInfo.size());
 					alias_type_info.type_index_ = type_spec.type_index();
 					alias_type_info.type_size_ = type_spec.size_in_bits();
 					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
-				}
 
-				// Return success (no AST node needed for type aliases)
+					// Return success (no AST node needed for type aliases)
+					return saved_position.success();
+				}
+				
+				// If we didn't get a node from parse_type_specifier, just check for semicolon
+				if (!consume_punctuator(";")) {
+					return ParseResult::error("Expected ';' after type alias", *current_token_);
+				}
 				return saved_position.success();
 			} else if (parsing_template_body_ || gSymbolTable.get_current_scope_type() == ScopeType::Function) {
 				// If we're in a template body OR function body and type parsing failed, it's likely a template-dependent type
@@ -21970,7 +22018,16 @@ ASTNode Parser::substitute_template_params_in_expression(
 		return emplace_node<ExpressionNode>(new_unop);
 	}
 	
-	// For other expression types (literals, identifiers, etc.), return as-is
+	// Handle qualified identifiers (e.g., SomeTemplate<T>::member)
+	// Phase 3: For variable templates that reference class template static members,
+	// substitution is intentionally deferred to try_instantiate_variable_template() because:
+	// 1. The namespace component contains the mangled name with template parameters
+	// 2. We don't have enough context here to re-parse and instantiate the template
+	// 3. The type_substitution_map only contains type indices, not the full template arguments
+	// The actual template instantiation happens in try_instantiate_variable_template() which has
+	// access to concrete template arguments and can trigger proper specialization pattern matching.
+	
+	// For all expression types (including QualifiedIdentifierNode), return as-is
 	return expr;
 }
 
@@ -22078,6 +22135,91 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			orig_var_decl.initializer().value(),
 			type_substitution_map
 		);
+		
+		// PHASE 3 FIX: After substitution, trigger instantiation of any class templates 
+		// referenced in the initializer expression. This ensures specialization pattern 
+		// matching happens before codegen.
+		// For example: is_pointer_v<int*> = is_pointer_impl<int*>::value
+		// After substitution, we need to instantiate is_pointer_impl<int*> which should
+		// match the specialization pattern is_pointer_impl<T*> and inherit from true_type.
+		if (new_initializer.has_value()) {
+			FLASH_LOG(Templates, Debug, "Phase 3: Checking initializer for variable template '", template_name, 
+			          "', is ExpressionNode: ", new_initializer->is<ExpressionNode>());
+			
+			if (new_initializer->is<ExpressionNode>()) {
+				const ExpressionNode& init_expr = new_initializer->as<ExpressionNode>();
+				
+				// Check if the initializer is a qualified identifier (e.g., Template<Args>::member)
+				bool is_qual_id = std::holds_alternative<QualifiedIdentifierNode>(init_expr);
+				FLASH_LOG(Templates, Debug, "Phase 3: Is QualifiedIdentifierNode: ", is_qual_id);
+				
+				if (is_qual_id) {
+					const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(init_expr);
+					
+					// The struct/class name is the last namespace component
+					// For "is_pointer_impl<int*>::value", namespaces.back() is "is_pointer_impl<int*>"
+					const auto& namespaces = qual_id.namespaces();
+					FLASH_LOG(Templates, Debug, "Phase 3: Number of namespaces: ", namespaces.size());
+					
+					if (!namespaces.empty()) {
+						// With USE_OLD_STRING_APPROACH=1, namespaces.back() returns std::string
+						std::string_view struct_name_view = namespaces.back();
+						
+						FLASH_LOG(Templates, Debug, "Phase 3: Struct name from qualified ID: '", struct_name_view, "'");
+						
+						// The struct name might be a mangled template instantiation like "is_pointer_impl_T"
+						// We need to extract the template name by removing the underscore suffix
+						// For example: "is_pointer_impl_T" -> "is_pointer_impl"
+						size_t underscore_pos = struct_name_view.rfind('_');
+						std::string_view template_name_to_lookup = struct_name_view;
+						if (underscore_pos != std::string_view::npos) {
+							// Check if what comes after _ looks like a template parameter (single letter or typename)
+							std::string_view suffix = struct_name_view.substr(underscore_pos + 1);
+							if (suffix.length() == 1 || suffix == "typename") {
+								template_name_to_lookup = struct_name_view.substr(0, underscore_pos);
+								FLASH_LOG(Templates, Debug, "Phase 3: Extracted template name: '", template_name_to_lookup, "'");
+							}
+						}
+						
+						// Try to instantiate the struct/class referenced in the qualified identifier
+						// Look it up to see if it's a template
+						auto template_opt = gTemplateRegistry.lookupTemplate(template_name_to_lookup);
+						if (template_opt.has_value() && template_args.size() > 0) {
+							// This is a template - try to instantiate it with the concrete arguments
+							// The template arguments from the variable template should be used
+							FLASH_LOG(Templates, Debug, "Phase 3: Triggering instantiation of '", template_name_to_lookup, 
+							          "' with ", template_args.size(), " args from variable template initializer");
+							
+							auto instantiated = try_instantiate_class_template(template_name_to_lookup, template_args);
+							if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
+								// Add to AST so it gets codegen
+								ast_nodes_.push_back(*instantiated);
+								
+								// Now update the qualified identifier to use the correct instantiated name
+								// Get the instantiated class name (e.g., "is_pointer_impl_intP")
+								std::string_view instantiated_name = get_instantiated_class_name(template_name_to_lookup, template_args);
+								FLASH_LOG(Templates, Debug, "Phase 3: Instantiated class name: '", instantiated_name, "'");
+								
+								// Create a new qualified identifier with the updated namespace
+								std::vector<StringType<>> new_namespaces;
+								// Copy all namespaces except the last one
+								for (size_t i = 0; i + 1 < namespaces.size(); ++i) {
+									new_namespaces.push_back(namespaces[i]);
+								}
+								// Add the instantiated name as the last namespace
+								new_namespaces.emplace_back(StringType<>(instantiated_name));
+								
+								// Create new qualified identifier node
+								QualifiedIdentifierNode new_qual_id(std::move(new_namespaces), qual_id.identifier_token());
+								new_initializer = emplace_node<ExpressionNode>(new_qual_id);
+								
+								FLASH_LOG(Templates, Debug, "Phase 3: Successfully instantiated and updated qualifier in variable template initializer");
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 	
 	// Create instantiated variable declaration

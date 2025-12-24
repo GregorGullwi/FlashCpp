@@ -1257,21 +1257,25 @@ private:
 				}
 			} else if (if_stmt.has_else()) {
 				// Execute else branch
-				const ASTNode& else_stmt = if_stmt.get_else_statement().value();
-				if (else_stmt.is<BlockNode>()) {
-					const BlockNode& block = else_stmt.as<BlockNode>();
-					const auto& statements = block.get_statements();
-					for (size_t i = 0; i < statements.size(); i++) {
-						auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
-						// If this was a return statement, propagate it up
-						if (statements[i].is<ReturnStatementNode>()) {
+				// Fix dangling reference warning by storing the value first
+				std::optional<ASTNode> else_stmt_opt = if_stmt.get_else_statement();
+				if (else_stmt_opt.has_value()) {
+					const ASTNode& else_stmt = *else_stmt_opt;
+					if (else_stmt.is<BlockNode>()) {
+						const BlockNode& block = else_stmt.as<BlockNode>();
+						const auto& statements = block.get_statements();
+						for (size_t i = 0; i < statements.size(); i++) {
+							auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
+							// If this was a return statement, propagate it up
+							if (statements[i].is<ReturnStatementNode>()) {
+								return result;
+							}
+						}
+					} else {
+						auto result = evaluate_statement_with_bindings(else_stmt, bindings, context);
+						if (else_stmt.is<ReturnStatementNode>()) {
 							return result;
 						}
-					}
-				} else {
-					auto result = evaluate_statement_with_bindings(else_stmt, bindings, context);
-					if (else_stmt.is<ReturnStatementNode>()) {
-						return result;
 					}
 				}
 			}
@@ -1837,7 +1841,60 @@ public:
 		// Try to look up the qualified name
 		auto symbol_opt = context.symbols->lookup_qualified(qualified_id.namespaces(), qualified_id.name());
 		if (!symbol_opt.has_value()) {
-			// For now, return error - in the future we may need to handle template instantiation
+			// PHASE 3 FIX: If not found in symbol table, try looking up as struct static member
+			// This handles cases like is_pointer_impl<int*>::value where value is a static member
+			const auto& namespaces = qualified_id.namespaces();
+			if (!namespaces.empty()) {
+				// The struct name is the last namespace component
+				std::string struct_name(namespaces.back());
+				StringHandle struct_handle = StringTable::getOrInternStringHandle(struct_name);
+				
+				FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Looking up struct '", struct_name, "' for member '", qualified_id.name(), "'");
+				
+				// Look up the struct in gTypesByName
+				auto struct_type_it = gTypesByName.find(struct_handle);
+				if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
+					const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+					
+					// Resolve type alias if needed
+					if (!struct_info && struct_type_it->second->type_index_ < gTypeInfo.size()) {
+						const TypeInfo* resolved_type = &gTypeInfo[struct_type_it->second->type_index_];
+						if (resolved_type && resolved_type->isStruct()) {
+							struct_info = resolved_type->getStructInfo();
+						}
+					}
+					
+					if (struct_info) {
+						// Look for static member recursively (checks base classes too)
+						StringHandle member_handle = StringTable::getOrInternStringHandle(qualified_id.name());
+						auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+						
+						FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Static member found: ", (static_member != nullptr), 
+						          ", owner: ", (owner_struct != nullptr));
+						
+						if (static_member && owner_struct) {
+							FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Static member is_const: ", static_member->is_const, 
+							          ", has_initializer: ", static_member->initializer.has_value());
+							
+							// Found a static member - evaluate its initializer if available
+							// Note: Even if not marked const, we can evaluate constexpr initializers
+							if (static_member->initializer.has_value()) {
+								FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Evaluating static member initializer");
+								return evaluate(static_member->initializer.value(), context);
+							}
+							
+							// If not constexpr or no initializer, return default value based on type
+							FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Returning default value for type: ", static_cast<int>(static_member->type));
+							if (static_member->type == Type::Bool) {
+								return EvalResult::from_bool(false);
+							}
+							return EvalResult::from_int(0);
+						}
+					}
+				}
+			}
+			
+			// Not found in symbol table or as struct static member
 			return EvalResult::error("Undefined qualified identifier in constant expression: " + qualified_id.full_name());
 		}
 
