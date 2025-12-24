@@ -383,71 +383,73 @@ public:
 			processed_type_infos_.insert(type_info);
 			
 			const StructTypeInfo* struct_info = type_info->getStructInfo();
-			if (!struct_info || struct_info->static_members.empty()) {
+			if (!struct_info) {
 				continue;
 			}
 			
-			for (const auto& static_member : struct_info->static_members) {
-				// Skip static members with unsubstituted template parameters, identifiers, or sizeof...
-				// These are in pattern templates and should only generate code when instantiated
-				if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
-					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
-					if (std::holds_alternative<SizeofPackNode>(expr)) {
-						// This is an uninstantiated template - skip
-						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
-						          "' with unsubstituted sizeof... in type '", type_name, "'");
-						continue;
-					}
-					if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
-						// Template parameter not substituted - this is a template pattern, not an instantiation
-						// Skip it (instantiated versions will have NumericLiteralNode instead)
-						const auto& tparam = std::get<TemplateParameterReferenceNode>(expr);
-						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
-						          "' with unsubstituted template parameter '", tparam.param_name(), 
-						          "' in type '", type_name, "'");
-						continue;
-					}
-					// Also skip IdentifierNode that looks like an unsubstituted template parameter
-					// (pattern templates may have IdentifierNode instead of TemplateParameterReferenceNode)
-					if (std::holds_alternative<IdentifierNode>(expr)) {
-						const auto& id = std::get<IdentifierNode>(expr);
-						// If the identifier is not in the global symbol table and is a simple name (no qualified access),
-						// it's likely an unsubstituted template parameter - skip it
-						// Instantiated templates will have NumericLiteralNode or other concrete expressions
-						auto symbol = global_symbol_table_->lookup(id.name());
-						if (!symbol.has_value()) {
-							// Not found in global symbol table - likely a template parameter
+			// Generate static members that this struct directly owns
+			if (!struct_info->static_members.empty()) {
+				for (const auto& static_member : struct_info->static_members) {
+					// Skip static members with unsubstituted template parameters, identifiers, or sizeof...
+					// These are in pattern templates and should only generate code when instantiated
+					if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
+						const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
+						if (std::holds_alternative<SizeofPackNode>(expr)) {
+							// This is an uninstantiated template - skip
 							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
-							          "' with identifier initializer '", id.name(), 
-							          "' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
+							          "' with unsubstituted sizeof... in type '", type_name, "'");
 							continue;
 						}
+						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+							// Template parameter not substituted - this is a template pattern, not an instantiation
+							// Skip it (instantiated versions will have NumericLiteralNode instead)
+							const auto& tparam = std::get<TemplateParameterReferenceNode>(expr);
+							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
+							          "' with unsubstituted template parameter '", tparam.param_name(), 
+							          "' in type '", type_name, "'");
+							continue;
+						}
+						// Also skip IdentifierNode that looks like an unsubstituted template parameter
+						// (pattern templates may have IdentifierNode instead of TemplateParameterReferenceNode)
+						if (std::holds_alternative<IdentifierNode>(expr)) {
+							const auto& id = std::get<IdentifierNode>(expr);
+							// If the identifier is not in the global symbol table and is a simple name (no qualified access),
+							// it's likely an unsubstituted template parameter - skip it
+							// Instantiated templates will have NumericLiteralNode or other concrete expressions
+							auto symbol = global_symbol_table_->lookup(id.name());
+							if (!symbol.has_value()) {
+								// Not found in global symbol table - likely a template parameter
+								FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
+								          "' with identifier initializer '", id.name(), 
+								          "' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
+								continue;
+							}
+						}
 					}
-				}
 
-				// Build the qualified name for deduplication
-				StringBuilder qualified_name_sb;
-				qualified_name_sb.append(type_name).append("::").append(StringTable::getStringView(static_member.getName()));
-				std::string qualified_name(qualified_name_sb.commit());
-				
-				// Skip if already emitted
-				if (emitted_static_members_.count(qualified_name) > 0) {
-					continue;
-				}
-				emitted_static_members_.insert(qualified_name);
+					// Build the qualified name for deduplication
+					StringBuilder qualified_name_sb;
+					qualified_name_sb.append(type_name).append("::").append(StringTable::getStringView(static_member.getName()));
+					std::string qualified_name(qualified_name_sb.commit());
+					
+					// Skip if already emitted
+					if (emitted_static_members_.count(qualified_name) > 0) {
+						continue;
+					}
+					emitted_static_members_.insert(qualified_name);
 
-				// Phase 3: Use StringTable to create StringHandle (replaces StringBuilder)
-				// StringHandle is interned and deduplicates identical names
-				StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
+					// Phase 3: Use StringTable to create StringHandle (replaces StringBuilder)
+					// StringHandle is interned and deduplicates identical names
+					StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
 
-				GlobalVariableDeclOp op;
-				op.type = static_member.type;
-				op.size_in_bits = static_cast<int>(static_member.size * 8);
-				op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
+					GlobalVariableDeclOp op;
+					op.type = static_member.type;
+					op.size_in_bits = static_cast<int>(static_member.size * 8);
+					op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
 
-				// Check if static member has an initializer
-				op.is_initialized = static_member.initializer.has_value();
-				if (op.is_initialized) {
+					// Check if static member has an initializer
+					op.is_initialized = static_member.initializer.has_value();
+					if (op.is_initialized) {
 					const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
 					
 					// Check for ConstructorCallNode (e.g., T() which becomes int() after substitution)
@@ -543,6 +545,76 @@ public:
 					}
 				}
 				ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), Token()));
+			}
+		}
+			
+			// Also check if this struct inherits static members from base classes
+			// and generate alias definitions if needed (Phase 2: proper template alias support)
+			if (!struct_info->base_classes.empty()) {
+				for (const auto& base : struct_info->base_classes) {
+					if (base.type_index >= gTypeInfo.size()) {
+						continue;
+					}
+					
+					const TypeInfo& base_type = gTypeInfo[base.type_index];
+					const StructTypeInfo* base_info = base_type.getStructInfo();
+					
+					if (base_info && !base_info->static_members.empty()) {
+						// Found inherited static members
+						for (const auto& static_member : base_info->static_members) {
+							// Generate alias for this derived class
+							StringBuilder derived_qualified_name_sb;
+							derived_qualified_name_sb.append(type_name).append("::").append(StringTable::getStringView(static_member.getName()));
+							std::string derived_qualified_name(derived_qualified_name_sb.commit());
+							
+							// Skip if already emitted
+							if (emitted_static_members_.count(derived_qualified_name) > 0) {
+								continue;
+							}
+							emitted_static_members_.insert(derived_qualified_name);
+							
+							// Generate alias/reference to base class member
+							// Use weak linkage so it can be overridden if a real definition exists
+							StringHandle derived_name_handle = StringTable::getOrInternStringHandle(derived_qualified_name);
+							
+							GlobalVariableDeclOp alias_op;
+							alias_op.type = static_member.type;
+							alias_op.size_in_bits = static_cast<int>(static_member.size * 8);
+							alias_op.var_name = derived_name_handle;
+							alias_op.is_initialized = static_member.initializer.has_value();
+							
+							if (alias_op.is_initialized && static_member.initializer->is<ExpressionNode>()) {
+								const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
+								
+								// Evaluate the initializer for the alias
+								if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
+									const auto& bool_lit = std::get<BoolLiteralNode>(init_expr);
+									unsigned long long value = bool_lit.value() ? 1ULL : 0ULL;
+									size_t byte_count = alias_op.size_in_bits / 8;
+									for (size_t i = 0; i < byte_count; ++i) {
+										alias_op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+									}
+									FLASH_LOG(Codegen, Debug, "Generated alias for inherited static member: ", derived_qualified_name);
+								} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
+									auto init_operands = visitExpressionNode(init_expr);
+									if (init_operands.size() >= 3) {
+										unsigned long long value = 0;
+										if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+											value = std::get<unsigned long long>(init_operands[2]);
+										}
+										size_t byte_count = alias_op.size_in_bits / 8;
+										for (size_t i = 0; i < byte_count; ++i) {
+											alias_op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+										}
+										FLASH_LOG(Codegen, Debug, "Generated alias for inherited static member: ", derived_qualified_name);
+									}
+								}
+							}
+							
+							ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(alias_op), Token()));
+						}
+					}
+				}
 			}
 		}
 	}
@@ -6245,6 +6317,31 @@ private:
 									// Use the target struct's name
 									qualified_struct_name = target_type->name();
 									FLASH_LOG(Codegen, Debug, "Resolved type alias to: ", qualified_struct_name);
+								}
+							}
+							
+							// If still resolving to a primary template (no template args in name),
+							// try to find a properly instantiated version by checking emitted static members
+							std::string_view owner_name_str = StringTable::getStringView(qualified_struct_name);
+							bool looks_like_primary_template = 
+								(owner_name_str.find('_') == std::string_view::npos || 
+								 owner_name_str == StringTable::getStringView(owner_struct->getName()));
+							
+							if (looks_like_primary_template) {
+								// Search for an instantiated version that has this static member
+								std::string search_suffix = std::string("::") + std::string(StringTable::getStringView(StringTable::getOrInternStringHandle(qualifiedIdNode.name())));
+								for (const auto& emitted : emitted_static_members_) {
+									if (emitted.find(search_suffix) != std::string::npos &&
+									    emitted.find(std::string(owner_name_str) + "_") == 0) {
+										// Found an instantiated version - extract the struct name
+										size_t colon_pos = emitted.find("::");
+										if (colon_pos != std::string::npos) {
+											std::string inst_name = emitted.substr(0, colon_pos);
+											qualified_struct_name = StringTable::getOrInternStringHandle(inst_name);
+											FLASH_LOG(Codegen, Debug, "Using instantiated version: ", inst_name, " instead of primary template");
+											break;
+										}
+									}
 								}
 							}
 						}
