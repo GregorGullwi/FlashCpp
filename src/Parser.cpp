@@ -7181,11 +7181,29 @@ ParseResult Parser::parse_type_specifier()
 					}
 					qualified_type_name += "::" + std::string(qualified_node.identifier_token().value());
 					
-					// For dependent templates, if the qualified type is not found, create a placeholder
+					// For dependent templates, if the qualified type is not found, check for template arguments
+					// before creating a placeholder
+					std::string_view member_name = qualified_node.identifier_token().value();
+					bool has_template_args = (peek_token().has_value() && peek_token()->value() == "<");
+					
 					if (has_dependent_args) {
 						auto qual_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
 						if (qual_type_it == gTypesByName.end()) {
-							// Type not found - create a placeholder for the dependent qualified type
+							// Type not found
+							// If there are template arguments, we need to parse them and include in the type name
+							if (has_template_args) {
+								// Parse template arguments for the member (e.g., type<_If, _Else>)
+								auto member_template_args = parse_explicit_template_arguments();
+								if (!member_template_args.has_value()) {
+									return ParseResult::error("Failed to parse template arguments for dependent member template", type_name_token);
+								}
+								
+								// Append template arguments to qualified_type_name
+								// For dependent types in template declarations, we just create a generic placeholder
+								qualified_type_name += "<...>";
+							}
+							
+							// Create a placeholder for the dependent qualified type
 							FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
 							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
 							auto& type_info = gTypeInfo.emplace_back();
@@ -7226,10 +7244,10 @@ ParseResult Parser::parse_type_specifier()
 					}
 					
 					// Check if this might be a member template alias (e.g., Template<int>::type<Args>)
-					std::string_view member_name = qualified_node.identifier_token().value();
+					// member_name and has_template_args already declared above
 					
 					// Check if the next token is '<', indicating template arguments for the member
-					if (peek_token().has_value() && peek_token()->value() == "<") {
+					if (has_template_args) {
 						// First try looking up with the instantiated name
 						// Note: qualified_type_name already includes ::member_name from line 6689
 						auto member_alias_opt = gTemplateRegistry.lookup_alias_template(qualified_type_name);
@@ -16183,6 +16201,12 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 		// Current identifier becomes a namespace part
 		namespaces.emplace_back(StringType<32>(final_identifier.value()));
 		consume_token(); // consume ::
+		
+		// Handle optional 'template' keyword in dependent contexts
+		// e.g., typename Base<T>::template member<U>
+		if (peek_token().has_value() && peek_token()->value() == "template") {
+			consume_token(); // consume 'template'
+		}
 		
 		// Get next identifier
 		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
