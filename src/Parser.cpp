@@ -6545,6 +6545,37 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	return saved_position.success(decl_node);
 }
 
+// Helper function to get Type and size for built-in type keywords
+// Used by both parse_type_specifier and functional-style cast parsing
+std::optional<std::pair<Type, unsigned char>> Parser::get_builtin_type_info(std::string_view type_name) {
+	static const std::unordered_map<std::string_view, std::pair<Type, unsigned char>> builtin_types = {
+		{"void", {Type::Void, 0}},
+		{"bool", {Type::Bool, 8}},
+		{"char", {Type::Char, 8}},
+		{"wchar_t", {Type::Int, 32}},
+		{"char8_t", {Type::UnsignedChar, 8}},
+		{"char16_t", {Type::UnsignedShort, 16}},
+		{"char32_t", {Type::UnsignedInt, 32}},
+		{"short", {Type::Short, 16}},
+		{"int", {Type::Int, 32}},
+		{"long", {Type::Long, static_cast<unsigned char>(sizeof(long) * 8)}},
+		{"float", {Type::Float, 32}},
+		{"double", {Type::Double, 64}},
+		{"__int8", {Type::Char, 8}},
+		{"__int16", {Type::Short, 16}},
+		{"__int32", {Type::Int, 32}},
+		{"__int64", {Type::LongLong, 64}},
+		{"signed", {Type::Int, 32}},  // signed without type defaults to int
+		{"unsigned", {Type::UnsignedInt, 32}},  // unsigned without type defaults to unsigned int
+	};
+	
+	auto it = builtin_types.find(type_name);
+	if (it != builtin_types.end()) {
+		return it->second;
+	}
+	return std::nullopt;
+}
+
 ParseResult Parser::parse_type_specifier()
 {
 	FLASH_LOG(Parser, Debug, "parse_type_specifier: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
@@ -11459,36 +11490,19 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::error("Expected ')' after functional cast expression", *current_token_);
 				}
 				
-				// Create a type specifier for the cast
-				Type cast_type = Type::Int;
+				// Create a type specifier for the cast using the helper function
+				Type cast_type = Type::Int; // default
 				TypeQualifier qualifier = TypeQualifier::None;
 				unsigned char type_size = 32;
 				
-				if (kw == "bool") {
-					cast_type = Type::Bool;
-					type_size = 8;
-				} else if (kw == "char") {
-					cast_type = Type::Char;
-					type_size = 8;
-				} else if (kw == "short") {
-					cast_type = Type::Short;
-					type_size = 16;
-				} else if (kw == "int") {
-					cast_type = Type::Int;
-					type_size = 32;
-				} else if (kw == "long") {
-					cast_type = Type::Long;
-					type_size = 64;
-				} else if (kw == "float") {
-					cast_type = Type::Float;
-					type_size = 32;
-				} else if (kw == "double") {
-					cast_type = Type::Double;
-					type_size = 64;
-				} else if (kw == "unsigned") {
-					cast_type = Type::UnsignedInt;
-					qualifier = TypeQualifier::Unsigned;
-					type_size = 32;
+				auto type_info = get_builtin_type_info(kw);
+				if (type_info.has_value()) {
+					cast_type = type_info->first;
+					type_size = type_info->second;
+					// Handle special case for unsigned qualifier
+					if (kw == "unsigned") {
+						qualifier = TypeQualifier::Unsigned;
+					}
 				}
 				
 				auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token);
@@ -12167,36 +12181,19 @@ ParseResult Parser::parse_primary_expression()
 					return ParseResult::error("Expected ')' after functional cast expression", *current_token_);
 				}
 				
-				// Create a type specifier for the cast
+				// Create a type specifier for the cast using the helper function
 				Type cast_type = Type::Int; // default
 				TypeQualifier qualifier = TypeQualifier::None;
 				unsigned char type_size = 32;
 				
-				if (id_name == "bool") {
-					cast_type = Type::Bool;
-					type_size = 8;
-				} else if (id_name == "char") {
-					cast_type = Type::Char;
-					type_size = 8;
-				} else if (id_name == "short") {
-					cast_type = Type::Short;
-					type_size = 16;
-				} else if (id_name == "int") {
-					cast_type = Type::Int;
-					type_size = 32;
-				} else if (id_name == "long") {
-					cast_type = Type::Long;
-					type_size = 64;
-				} else if (id_name == "float") {
-					cast_type = Type::Float;
-					type_size = 32;
-				} else if (id_name == "double") {
-					cast_type = Type::Double;
-					type_size = 64;
-				} else if (id_name == "unsigned") {
-					cast_type = Type::UnsignedInt;
-					qualifier = TypeQualifier::Unsigned;
-					type_size = 32;
+				auto type_info = get_builtin_type_info(id_name);
+				if (type_info.has_value()) {
+					cast_type = type_info->first;
+					type_size = type_info->second;
+					// Handle special case for unsigned qualifier
+					if (id_name == "unsigned") {
+						qualifier = TypeQualifier::Unsigned;
+					}
 				} else {
 					// User-defined type - look it up
 					StringHandle type_handle = StringTable::getOrInternStringHandle(id_name);
