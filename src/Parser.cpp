@@ -13568,6 +13568,8 @@ ParseResult Parser::parse_primary_expression()
 							
 								TypeSpecifierNode arg_type_node = *arg_type;
 							
+								FLASH_LOG(Parser, Debug, "  get_expression_type returned: type=", (int)arg_type_node.type(), ", is_ref=", arg_type_node.is_reference(), ", is_rvalue_ref=", arg_type_node.is_rvalue_reference());
+							
 								// For perfect forwarding: check if argument is an lvalue
 								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
 								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
@@ -13635,6 +13637,11 @@ ParseResult Parser::parse_primary_expression()
 									}
 								} else {
 									// No explicit template arguments - try overload resolution first
+									FLASH_LOG(Parser, Debug, "Function call to '", idenfifier_token.value(), "': found ", all_overloads.size(), " overload(s), ", arg_types.size(), " argument(s)");
+									for (size_t i = 0; i < arg_types.size(); ++i) {
+										const auto& arg = arg_types[i];
+										FLASH_LOG(Parser, Debug, "  Arg[", i, "]: type=", (int)arg.type(), ", is_ref=", arg.is_reference(), ", is_rvalue_ref=", arg.is_rvalue_reference(), ", is_lvalue_ref=", arg.is_lvalue_reference());
+									}
 									if (all_overloads.empty()) {
 										// No overloads found - try template instantiation (skip in extern "C" - C has no templates)
 										std::optional<ASTNode> instantiated_func;
@@ -13663,6 +13670,8 @@ ParseResult Parser::parse_primary_expression()
 										// Have overloads - do overload resolution
 										auto resolution_result = resolve_overload(all_overloads, arg_types);
 
+										FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution_result.has_match, ", is_ambiguous=", resolution_result.is_ambiguous);
+										
 										if (resolution_result.is_ambiguous) {
 											return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 										} else if (!resolution_result.has_match) {
@@ -16287,6 +16296,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const auto& func_call = std::get<FunctionCallNode>(expr);
 		const auto& decl = func_call.function_declaration();
 		TypeSpecifierNode return_type = decl.type_node().as<TypeSpecifierNode>();
+		
+		FLASH_LOG(Parser, Debug, "get_expression_type for function '", decl.identifier_token().value(), "': return_type=", (int)return_type.type(), ", is_ref=", return_type.is_reference(), ", is_rvalue_ref=", return_type.is_rvalue_reference());
 		
 		// If the return type is still auto, the function should have been deduced already
 		// during parsing. The TypeSpecifierNode in the declaration should have been updated.
@@ -21433,6 +21444,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Create return type - re-parse declaration if available (for SFINAE)
 	const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
 	
+	FLASH_LOG(Parser, Debug, "Template original return type: type=", (int)orig_return_type.type(), ", is_ref=", orig_return_type.is_reference(), ", is_rvalue_ref=", orig_return_type.is_rvalue_reference());
+	
 	ASTNode return_type;
 	Token func_name_token = orig_decl.identifier_token();
 	
@@ -21514,6 +21527,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		// Re-parse the return type with template parameters in scope
 		auto return_type_result = parse_type_specifier();
+		
+		FLASH_LOG(Parser, Debug, "Template instantiation: parsed return type, is_error=", return_type_result.is_error(), ", has_node=", return_type_result.node().has_value());
+		if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
+			const auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
+			FLASH_LOG(Parser, Debug, "  Return type: type=", (int)rt.type(), ", is_ref=", rt.is_reference(), ", is_rvalue_ref=", rt.is_rvalue_reference());
+		}
 		
 		// Restore position
 		restore_lexer_position_only(current_pos);
@@ -21599,12 +21618,37 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			orig_return_type, template_params, template_args_as_type_args
 		);
 		
-		return_type = emplace_node<TypeSpecifierNode>(
+		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_enum, ", type_index=", return_type_index);
+		if (return_type_index > 0 && return_type_index < gTypeInfo.size()) {
+			FLASH_LOG(Parser, Debug, "  type_index points to: '", StringTable::getStringView(gTypeInfo[return_type_index].name()), "'");
+		}
+		
+		TypeSpecifierNode new_return_type(
 			return_type_enum,
 			TypeQualifier::None,
 			get_type_size_bits(return_type_enum),
-			Token()
+			Token(),
+			orig_return_type.cv_qualifier()  // Preserve const/volatile qualifiers (CVQualifier)
 		);
+		new_return_type.set_type_index(return_type_index);
+		
+		FLASH_LOG(Parser, Debug, "Template fallback: created return type with type=", (int)return_type_enum, ", type_index=", return_type_index);
+		
+		// Preserve reference qualifiers from original return type
+		if (orig_return_type.is_reference()) {
+			if (orig_return_type.is_rvalue_reference()) {
+				new_return_type.set_reference(true);  // true = rvalue reference
+			} else {
+				new_return_type.set_lvalue_reference(true);
+			}
+		}
+		
+		// Preserve pointer levels
+		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
+			new_return_type.add_pointer_level(ptr_level.cv_qualifier);
+		}
+		
+		return_type = emplace_node<TypeSpecifierNode>(new_return_type);
 	}
 
 	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);

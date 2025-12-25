@@ -192,6 +192,8 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				bool from_is_rvalue = from.is_rvalue_reference();
 				bool to_is_rvalue = to.is_rvalue_reference();
 				
+				FLASH_LOG(Parser, Debug, "can_convert_type: both are references. from_is_rvalue=", from_is_rvalue, ", to_is_rvalue=", to_is_rvalue, ", from.type()=", (int)from.type(), ", to.type()=", (int)to.type(), ", from.type_index()=", from.type_index(), ", to.type_index()=", to.type_index());
+				
 				// Exact match: both lvalue ref or both rvalue ref, same base type
 				if (from_is_rvalue == to_is_rvalue && from.type() == to.type()) {
 					return TypeConversionResult::exact_match();
