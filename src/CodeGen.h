@@ -1829,14 +1829,16 @@ private:
 		
 		// Return type information
 		func_decl_op.return_type = ret_type.type();
-		// For pointer return types or reference return types, use 64-bit size (pointer size on x64)
-		// References are represented as pointers at the IR level
-		func_decl_op.return_size_in_bits = (ret_type.pointer_depth() > 0 || ret_type.is_reference()) 
+		// For pointer return types, use 64-bit size (pointer size on x64)
+		// For reference return types, keep the base type size (the reference itself is 64-bit at ABI level,
+		// but we display it as the base type with a reference qualifier)
+		func_decl_op.return_size_in_bits = (ret_type.pointer_depth() > 0) 
 			? 64 
 			: static_cast<int>(ret_type.size_in_bits());
 		func_decl_op.return_pointer_depth = ret_type.pointer_depth();
 		func_decl_op.return_type_index = ret_type.type_index();
 		func_decl_op.returns_reference = ret_type.is_reference();
+		func_decl_op.returns_rvalue_reference = ret_type.is_rvalue_reference();
 		
 		// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this (pointer/reference returns are in RAX like regular pointers)
