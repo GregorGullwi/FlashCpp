@@ -231,6 +231,22 @@ private:
         std::variant<std::monostate, ASTNode, Error> value_or_error_;
 };
 
+// Phase 2: Unified Qualified Identifier Parser Result Structure
+// This consolidates all qualified identifier parsing into a single interface
+struct QualifiedIdParseResult {
+    std::vector<StringHandle> namespaces;
+    Token final_identifier;
+    std::optional<std::vector<TemplateTypeArg>> template_args;
+    bool has_template_arguments;
+    
+    QualifiedIdParseResult(const std::vector<StringHandle>& ns, const Token& id)
+        : namespaces(ns), final_identifier(id), has_template_arguments(false) {}
+    
+    QualifiedIdParseResult(const std::vector<StringHandle>& ns, const Token& id, 
+                          const std::vector<TemplateTypeArg>& args)
+        : namespaces(ns), final_identifier(id), template_args(args), has_template_arguments(true) {}
+};
+
 class Parser {
 public:
         static constexpr size_t default_ast_tree_size_ = 256 * 1024;
@@ -516,6 +532,11 @@ private:
         ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
         ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
         std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes = nullptr);  // NEW: Parse explicit template arguments like <int, float>
+        bool could_be_template_arguments();  // NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
+        
+        // Phase 2: Unified Qualified Identifier Parser (Sprint 3-4)
+        std::optional<QualifiedIdParseResult> parse_qualified_identifier_with_templates();  // NEW: Unified parser for all qualified identifier contexts
+        
         std::optional<ConstantValue> try_evaluate_constant_expression(const ASTNode& expr_node);  // NEW: Evaluate constant expressions for template arguments (e.g., is_int<T>::value)
         std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
         std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types, int& recursion_depth);  // Helper: Try to instantiate a specific template node (for SFINAE)
