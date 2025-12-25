@@ -21258,7 +21258,7 @@ std::optional<QualifiedIdParseResult> Parser::parse_qualified_identifier_with_te
 		return std::nullopt;
 	}
 	
-	std::vector<StringType<32>> namespaces;
+	std::vector<StringHandle> namespaces;
 	Token final_identifier = *current_token_;
 	consume_token(); // consume first identifier
 	
@@ -21271,8 +21271,8 @@ std::optional<QualifiedIdParseResult> Parser::parse_qualified_identifier_with_te
 	
 	// Collect namespace parts
 	while (current_token_.has_value() && current_token_->value() == "::") {
-		// Current identifier becomes a namespace part
-		namespaces.emplace_back(StringType<32>(final_identifier.value()));
+		// Current identifier becomes a namespace part - intern into string table
+		namespaces.emplace_back(StringTable::getOrInternStringHandle(final_identifier.value()));
 		consume_token(); // consume ::
 		
 		// Get next identifier

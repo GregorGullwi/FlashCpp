@@ -234,15 +234,15 @@ private:
 // Phase 2: Unified Qualified Identifier Parser Result Structure
 // This consolidates all qualified identifier parsing into a single interface
 struct QualifiedIdParseResult {
-    std::vector<StringType<32>> namespaces;
+    std::vector<StringHandle> namespaces;
     Token final_identifier;
     std::optional<std::vector<TemplateTypeArg>> template_args;
     bool has_template_arguments;
     
-    QualifiedIdParseResult(const std::vector<StringType<32>>& ns, const Token& id)
+    QualifiedIdParseResult(const std::vector<StringHandle>& ns, const Token& id)
         : namespaces(ns), final_identifier(id), has_template_arguments(false) {}
     
-    QualifiedIdParseResult(const std::vector<StringType<32>>& ns, const Token& id, 
+    QualifiedIdParseResult(const std::vector<StringHandle>& ns, const Token& id, 
                           const std::vector<TemplateTypeArg>& args)
         : namespaces(ns), final_identifier(id), template_args(args), has_template_arguments(true) {}
 };
