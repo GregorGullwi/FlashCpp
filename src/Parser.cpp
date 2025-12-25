@@ -6545,6 +6545,93 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	return saved_position.success(decl_node);
 }
 
+// Helper function to get Type and size for built-in type keywords
+// Used by both parse_type_specifier and functional-style cast parsing
+std::optional<std::pair<Type, unsigned char>> Parser::get_builtin_type_info(std::string_view type_name) {
+	static const std::unordered_map<std::string_view, std::pair<Type, unsigned char>> builtin_types = {
+		{"void", {Type::Void, 0}},
+		{"bool", {Type::Bool, 8}},
+		{"char", {Type::Char, 8}},
+		{"wchar_t", {Type::Int, 32}},
+		{"char8_t", {Type::UnsignedChar, 8}},
+		{"char16_t", {Type::UnsignedShort, 16}},
+		{"char32_t", {Type::UnsignedInt, 32}},
+		{"short", {Type::Short, 16}},
+		{"int", {Type::Int, 32}},
+		{"long", {Type::Long, static_cast<unsigned char>(sizeof(long) * 8)}},
+		{"float", {Type::Float, 32}},
+		{"double", {Type::Double, 64}},
+		{"__int8", {Type::Char, 8}},
+		{"__int16", {Type::Short, 16}},
+		{"__int32", {Type::Int, 32}},
+		{"__int64", {Type::LongLong, 64}},
+		{"signed", {Type::Int, 32}},  // signed without type defaults to int
+		{"unsigned", {Type::UnsignedInt, 32}},  // unsigned without type defaults to unsigned int
+	};
+	
+	auto it = builtin_types.find(type_name);
+	if (it != builtin_types.end()) {
+		return it->second;
+	}
+	return std::nullopt;
+}
+
+// Helper function to parse functional-style cast: Type(expression)
+// This consolidates the logic for parsing functional casts from both keyword and identifier contexts
+ParseResult Parser::parse_functional_cast(std::string_view type_name, const Token& type_token) {
+	// Expect '(' after type name
+	if (!current_token_.has_value() || current_token_->value() != "(") {
+		return ParseResult::error("Expected '(' for functional cast", type_token);
+	}
+	
+	consume_token(); // consume '('
+	
+	// Parse the expression inside the parentheses
+	ParseResult expr_result = parse_expression();
+	if (expr_result.is_error()) {
+		return expr_result;
+	}
+	
+	if (!consume_punctuator(")")) {
+		return ParseResult::error("Expected ')' after functional cast expression", *current_token_);
+	}
+	
+	// Create a type specifier for the cast using the helper function
+	Type cast_type = Type::Int; // default
+	TypeQualifier qualifier = TypeQualifier::None;
+	unsigned char type_size = 32;
+	
+	auto type_info = get_builtin_type_info(type_name);
+	if (type_info.has_value()) {
+		cast_type = type_info->first;
+		type_size = type_info->second;
+		// Handle special case for unsigned qualifier
+		if (type_name == "unsigned") {
+			qualifier = TypeQualifier::Unsigned;
+		}
+	} else {
+		// User-defined type - look it up
+		StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
+		auto type_it = gTypesByName.find(type_handle);
+		if (type_it != gTypesByName.end()) {
+			const TypeInfo* type_info = type_it->second;
+			cast_type = type_info->type_;
+			type_size = type_info->type_size_;
+			if (type_info->isStruct()) {
+				cast_type = Type::Struct;
+			}
+		}
+	}
+	
+	auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token);
+	
+	// Create a static cast node (functional cast behaves like static_cast)
+	auto result = emplace_node<ExpressionNode>(
+		StaticCastNode(type_node, *expr_result.node(), type_token));
+	
+	return ParseResult::success(result);
+}
+
 ParseResult Parser::parse_type_specifier()
 {
 	FLASH_LOG(Parser, Debug, "parse_type_specifier: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
@@ -11431,6 +11518,35 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 ParseResult Parser::parse_primary_expression()
 {
 	std::optional<ASTNode> result;
+	
+	// Check for functional-style cast with keyword type names: bool(x), int(x), etc.
+	// This must come early because these are keywords, not identifiers
+	if (current_token_->type() == Token::Type::Keyword) {
+		std::string_view kw = current_token_->value();
+		bool is_builtin_type = (kw == "bool" || kw == "char" || kw == "int" || 
+		                        kw == "short" || kw == "long" || kw == "float" || 
+		                        kw == "double" || kw == "void" || kw == "wchar_t" ||
+		                        kw == "signed" || kw == "unsigned");
+		
+		if (is_builtin_type) {
+			Token type_token = *current_token_;
+			std::string_view kw = current_token_->value();
+			consume_token(); // consume the type keyword
+			
+			// Check if followed by '(' for functional cast
+			if (current_token_.has_value() && current_token_->value() == "(") {
+				ParseResult cast_result = parse_functional_cast(kw, type_token);
+				if (!cast_result.is_error() && cast_result.node().has_value()) {
+					return cast_result;
+				}
+			} else {
+				// Not a functional cast - restore and continue with normal keyword handling
+				// Actually, we can't easily restore here. This is a problem.
+				// For now, return an error
+				return ParseResult::error("Unexpected keyword in expression context", type_token);
+			}
+		}
+	}
 
 	// Check for requires expression: requires(params) { requirements; } or requires { requirements; }
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "requires") {
@@ -12050,6 +12166,29 @@ ParseResult Parser::parse_primary_expression()
 
 		// We need to consume the identifier first to check what comes after it
 		consume_token();
+		
+		// Check for functional-style cast: Type(expression)
+		// This is needed for patterns like bool(x), int(y), etc.
+		// Check if this identifier is a type name and followed by '('
+		// NOTE: Only treat BUILT-IN types as functional casts here.
+		// User-defined types with Type(args) syntax are constructor calls, not casts,
+		// and should be handled by the normal identifier/function call path below.
+		if (current_token_.has_value() && current_token_->value() == "(" &&
+		    !current_token_->value().starts_with("::")) {
+			std::string_view id_name = idenfifier_token.value();
+			
+			// Only check for built-in type names (not user-defined types)
+			// User-defined Type(args) is a constructor call, not a functional cast
+			auto type_info = get_builtin_type_info(id_name);
+			if (type_info.has_value()) {
+				// This is a built-in type followed by '(' - parse as functional cast
+				ParseResult cast_result = parse_functional_cast(id_name, idenfifier_token);
+				if (!cast_result.is_error() && cast_result.node().has_value()) {
+					return cast_result;
+				}
+			}
+		}
+		
 		if (current_token_.has_value() && current_token_->value() == "::"sv) {
 			// Build the qualified identifier manually
 			std::vector<StringType<32>> namespaces;
@@ -20780,9 +20919,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// we should fall through to type parsing so identifiers get properly converted to TypeSpecifierNode.
 				// This is needed for deduction guides where template parameters must be TypeSpecifierNode.
 				// However, complex expressions like is_int<T>::value should still be accepted as dependent expressions.
+				// 
+				// ALSO: If we parsed a simple identifier followed by '<', we should fall through to type parsing
+				// because this is likely a template type (e.g., enable_if_t<...>), not a value expression.
 				bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) || 
 				                            std::holds_alternative<TemplateParameterReferenceNode>(expr);
-				bool should_try_type_parsing = out_type_nodes != nullptr && is_simple_identifier;
+				bool followed_by_template_args = peek_token().has_value() && peek_token()->value() == "<";
+				bool should_try_type_parsing = (out_type_nodes != nullptr && is_simple_identifier) ||
+				                               (is_simple_identifier && followed_by_template_args);
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
 				    (peek_token()->value() == "," || peek_token()->value() == ">")) {

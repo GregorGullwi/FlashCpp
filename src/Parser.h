@@ -464,6 +464,14 @@ private:
         ParseResult parse_using_directive_or_declaration();  // Parse using directive/declaration/alias
         ParseResult parse_type_specifier();
         ParseResult parse_decltype_specifier();  // NEW: Parse decltype(expr) type specifier
+        
+        // Helper function to get Type and size for built-in type keywords
+        std::optional<std::pair<Type, unsigned char>> get_builtin_type_info(std::string_view type_name);
+        
+        // Helper function to parse functional-style cast: Type(expression)
+        // Returns ParseResult with StaticCastNode on success
+        ParseResult parse_functional_cast(std::string_view type_name, const Token& type_token);
+        
         ParseResult parse_declaration_or_function_definition();
         ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default);
         ParseResult parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);  // Phase 1: Unified parameter list parsing
