@@ -301,6 +301,7 @@ private:
         Lexer& lexer_;
         CompileContext& context_;
         std::optional<Token> current_token_;
+        std::optional<Token> injected_token_;  // Phase 5: For >> splitting in nested templates
         std::vector<ASTNode> ast_nodes_;
         std::string last_error_;
 
@@ -468,6 +469,10 @@ private:
 
         std::optional<Token> peek_token();
         std::optional<Token> peek_token(size_t lookahead);  // Peek ahead N tokens (0 = current, 1 = next, etc.)
+
+        // Phase 5: >> token splitting for nested templates (e.g., Foo<Bar<int>>)
+        // When we encounter >> and need just >, this splits it by consuming first > and injecting second >
+        void split_right_shift_token();  // Split >> into > and > (for nested templates)
 
         // Parsing functions for different constructs
         ParseResult parse_top_level_node();
