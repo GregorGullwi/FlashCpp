@@ -7199,8 +7199,10 @@ ParseResult Parser::parse_type_specifier()
 								}
 								
 								// Append template arguments to qualified_type_name
-								// For dependent types in template declarations, we just create a generic placeholder
-								qualified_type_name += "<...>";
+								// For dependent types, include argument count for better debugging
+								qualified_type_name += "<";
+								qualified_type_name += std::to_string(member_template_args->size());
+								qualified_type_name += " args>";
 							}
 							
 							// Create a placeholder for the dependent qualified type
@@ -20116,6 +20118,11 @@ ParseResult Parser::parse_template_function_declaration_body(
 		ParseResult trailing_type_specifier = parse_type_specifier();
 		if (trailing_type_specifier.is_error()) {
 			return trailing_type_specifier;
+		}
+		
+		// Verify we got a TypeSpecifierNode
+		if (!trailing_type_specifier.node().has_value() || !trailing_type_specifier.node()->is<TypeSpecifierNode>()) {
+			return ParseResult::error("Expected type specifier for trailing return type", *current_token_);
 		}
 		
 		// Replace the auto type with the trailing return type
