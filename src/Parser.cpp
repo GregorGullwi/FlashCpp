@@ -21247,6 +21247,60 @@ bool Parser::could_be_template_arguments() {
 	return template_args.has_value();
 }
 
+// Phase 2: Unified Qualified Identifier Parser (Sprint 3-4)
+// Consolidates all qualified identifier parsing into a single, consistent code path.
+// This function parses patterns like: A::B::C or ns::Template<Args>::member
+std::optional<QualifiedIdParseResult> Parser::parse_qualified_identifier_with_templates() {
+	FLASH_LOG(Parser, Debug, "parse_qualified_identifier_with_templates: starting");
+	
+	// Must start with an identifier
+	if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+		return std::nullopt;
+	}
+	
+	std::vector<StringType<32>> namespaces;
+	Token final_identifier = *current_token_;
+	consume_token(); // consume first identifier
+	
+	// Check if followed by ::
+	if (!current_token_.has_value() || current_token_->value() != "::") {
+		// Single identifier, no qualification - not a qualified identifier
+		// Restore position for caller to handle
+		return std::nullopt;
+	}
+	
+	// Collect namespace parts
+	while (current_token_.has_value() && current_token_->value() == "::") {
+		// Current identifier becomes a namespace part
+		namespaces.emplace_back(StringType<32>(final_identifier.value()));
+		consume_token(); // consume ::
+		
+		// Get next identifier
+		if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+			// Error: expected identifier after ::
+			return std::nullopt;
+		}
+		final_identifier = *current_token_;
+		consume_token(); // consume the identifier
+	}
+	
+	// At this point: current_token_ is the token after final identifier
+	// Check for template arguments: A::B::C<Args>
+	if (current_token_.has_value() && current_token_->value() == "<") {
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_qualified_identifier_with_templates: parsing template args for '{}'", 
+		                final_identifier.value());
+		auto template_args = parse_explicit_template_arguments();
+		if (template_args.has_value()) {
+			FLASH_LOG_FORMAT(Parser, Debug, "parse_qualified_identifier_with_templates: parsed {} template args", 
+			                template_args->size());
+			return QualifiedIdParseResult(namespaces, final_identifier, *template_args);
+		}
+	}
+	
+	// No template arguments or parsing failed
+	return QualifiedIdParseResult(namespaces, final_identifier);
+}
+
 // Try to instantiate a template with explicit template arguments
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types) {
 	// FIRST: Check if we have an explicit specialization for these template arguments

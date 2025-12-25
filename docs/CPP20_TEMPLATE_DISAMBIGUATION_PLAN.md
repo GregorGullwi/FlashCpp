@@ -243,11 +243,15 @@ if (peek_token()->value() == "<" && result.node().has_value()) {
 
 **Status**: Completed December 2024. Basic template disambiguation working for qualified identifiers followed by `<`. Function templates with explicit arguments properly instantiate and execute. All 734 tests passing.
 
-### Sprint 3-4: Unification (Weeks 3-4) - FUTURE WORK
-- [ ] Design unified qualified identifier parser interface
-- [ ] Audit and catalog all qualified identifier creation points
-- [ ] Implement `parse_qualified_identifier_with_templates()`
-- [ ] Begin migration of first 2-3 call sites
+### Sprint 3-4: Unification (Weeks 3-4) - IN PROGRESS
+- [x] Design unified qualified identifier parser interface
+- [x] Implement `parse_qualified_identifier_with_templates()` base function
+- [x] Create test case to validate unified parser
+- [ ] Audit and catalog all qualified identifier creation points (13+ locations identified)
+- [ ] Begin migration of call sites (0/13 migrated)
+- [ ] Verify no regressions with incremental migration
+
+**Status**: Started December 2024. Foundation complete with `QualifiedIdParseResult` structure and `parse_qualified_identifier_with_templates()` function. Next step is systematic migration of existing call sites.
 
 ### Sprint 5-7: Migration (Weeks 5-7) - FUTURE WORK
 - [ ] Migrate remaining qualified identifier parsing locations
