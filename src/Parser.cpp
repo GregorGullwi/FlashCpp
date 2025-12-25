@@ -17628,93 +17628,93 @@ if (struct_type_info.getStructInfo()) {
 							return type_and_name;
 						}
 
-// Check if this is a static member function (has '(')
-if (peek_token().has_value() && peek_token()->value() == "(") {
-// This is a static member function
-if (!type_and_name.node().has_value() || !type_and_name.node()->is<DeclarationNode>()) {
-return ParseResult::error("Expected declaration node for static member function", *peek_token());
-}
+						// Check if this is a static member function (has '(')
+						if (peek_token().has_value() && peek_token()->value() == "(") {
+							// This is a static member function
+							if (!type_and_name.node().has_value() || !type_and_name.node()->is<DeclarationNode>()) {
+								return ParseResult::error("Expected declaration node for static member function", *peek_token());
+							}
 
-DeclarationNode& decl_node = const_cast<DeclarationNode&>(type_and_name.node()->as<DeclarationNode>());
+							DeclarationNode& decl_node = const_cast<DeclarationNode&>(type_and_name.node()->as<DeclarationNode>());
 
-// Parse function declaration with parameters
-auto func_result = parse_function_declaration(decl_node);
-if (func_result.is_error()) {
-return func_result;
-}
+							// Parse function declaration with parameters
+							auto func_result = parse_function_declaration(decl_node);
+							if (func_result.is_error()) {
+								return func_result;
+							}
 
-if (!func_result.node().has_value()) {
-return ParseResult::error("Failed to create function declaration node", *peek_token());
-}
+							if (!func_result.node().has_value()) {
+								return ParseResult::error("Failed to create function declaration node", *peek_token());
+							}
 
-FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+							FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
 
-// Create a new FunctionDeclarationNode with member function info
-auto [member_func_node, member_func_ref] =
-emplace_node_ref<FunctionDeclarationNode>(decl_node, instantiated_name);
+							// Create a new FunctionDeclarationNode with member function info
+							auto [member_func_node, member_func_ref] =
+							emplace_node_ref<FunctionDeclarationNode>(decl_node, instantiated_name);
 
-// Copy parameters from the parsed function
-for (const auto& param : func_decl.parameter_nodes()) {
-member_func_ref.add_parameter_node(param);
-}
+							// Copy parameters from the parsed function
+							for (const auto& param : func_decl.parameter_nodes()) {
+								member_func_ref.add_parameter_node(param);
+							}
 
-// Mark as constexpr
-member_func_ref.set_is_constexpr(is_static_constexpr);
+							// Mark as constexpr
+							member_func_ref.set_is_constexpr(is_static_constexpr);
 
-// Skip any trailing specifiers (const, volatile, noexcept, etc.) after parameter list
-skip_function_trailing_specifiers();
+							// Skip any trailing specifiers (const, volatile, noexcept, etc.) after parameter list
+							skip_function_trailing_specifiers();
 
-// Parse function body if present
-if (peek_token().has_value() && peek_token()->value() == "{") {
-// DELAYED PARSING: Save the current position (start of '{')
-SaveHandle body_start = save_token_position();
+							// Parse function body if present
+							if (peek_token().has_value() && peek_token()->value() == "{") {
+									// DELAYED PARSING: Save the current position (start of '{')
+									SaveHandle body_start = save_token_position();
 
-// Look up the struct type
-auto type_it = gTypesByName.find(instantiated_name);
-size_t struct_type_idx = 0;
-if (type_it != gTypesByName.end()) {
-struct_type_idx = type_it->second->type_index_;
-}
+									// Look up the struct type
+									auto type_it = gTypesByName.find(instantiated_name);
+									size_t struct_type_idx = 0;
+									if (type_it != gTypesByName.end()) {
+										struct_type_idx = type_it->second->type_index_;
+									}
 
-// Skip over the function body by counting braces
-skip_balanced_braces();
+									// Skip over the function body by counting braces
+									skip_balanced_braces();
 
-// Record this for delayed parsing
-delayed_function_bodies_.push_back({
-&member_func_ref,
-body_start,
-{},       // initializer_list_start (not used)
-instantiated_name,
-struct_type_idx,
-&struct_ref,
-false,    // has_initializer_list
-false,    // is_constructor
-false,    // is_destructor
-nullptr,  // ctor_node
-nullptr,  // dtor_node
-current_template_param_names_
-});
-} else if (!consume_punctuator(";")) {
-return ParseResult::error("Expected '{' or ';' after static member function declaration", *peek_token());
-}
+									// Record this for delayed parsing
+									delayed_function_bodies_.push_back({
+										&member_func_ref,
+										body_start,
+										{},       // initializer_list_start (not used)
+										instantiated_name,
+										struct_type_idx,
+										&struct_ref,
+										false,    // has_initializer_list
+										false,    // is_constructor
+										false,    // is_destructor
+										nullptr,  // ctor_node
+										nullptr,  // dtor_node
+										current_template_param_names_
+									});
+								} else if (!consume_punctuator(";")) {
+								return ParseResult::error("Expected '{' or ';' after static member function declaration", *peek_token());
+								}
 
-// Add static member function to struct
-struct_ref.add_member_function(member_func_node, current_access, false, false, false);
+								// Add static member function to struct
+								struct_ref.add_member_function(member_func_node, current_access, false, false, false);
 
-// Also register in StructTypeInfo
-struct_info->member_functions.emplace_back(
-StringTable::getOrInternStringHandle(decl_node.identifier_token().value()),
-member_func_node,
-current_access,
-false,  // is_virtual
-false,  // is_pure_virtual
-false   // is_override
-);
+								// Also register in StructTypeInfo
+								struct_info->member_functions.emplace_back(
+								StringTable::getOrInternStringHandle(decl_node.identifier_token().value()),
+								member_func_node,
+								current_access,
+								false,  // is_virtual
+								false,  // is_pure_virtual
+								false   // is_override
+								);
 
-continue;
-}
+								continue;
+							}
 
-// If not a function, handle as static data member
+							// If not a function, handle as static data member
 
 						// Optional initializer
 						std::optional<ASTNode> init_expr_opt;
@@ -18541,93 +18541,93 @@ continue;
 							return type_and_name;
 						}
 
-// Check if this is a static member function (has '(')
-if (peek_token().has_value() && peek_token()->value() == "(") {
-// This is a static member function
-if (!type_and_name.node().has_value() || !type_and_name.node()->is<DeclarationNode>()) {
-return ParseResult::error("Expected declaration node for static member function", *peek_token());
-}
+						// Check if this is a static member function (has '(')
+						if (peek_token().has_value() && peek_token()->value() == "(") {
+							// This is a static member function
+							if (!type_and_name.node().has_value() || !type_and_name.node()->is<DeclarationNode>()) {
+								return ParseResult::error("Expected declaration node for static member function", *peek_token());
+							}
 
-DeclarationNode& decl_node = const_cast<DeclarationNode&>(type_and_name.node()->as<DeclarationNode>());
+							DeclarationNode& decl_node = const_cast<DeclarationNode&>(type_and_name.node()->as<DeclarationNode>());
 
-// Parse function declaration with parameters
-auto func_result = parse_function_declaration(decl_node);
-if (func_result.is_error()) {
-return func_result;
-}
+							// Parse function declaration with parameters
+							auto func_result = parse_function_declaration(decl_node);
+							if (func_result.is_error()) {
+								return func_result;
+							}
 
-if (!func_result.node().has_value()) {
-return ParseResult::error("Failed to create function declaration node", *peek_token());
-}
+							if (!func_result.node().has_value()) {
+								return ParseResult::error("Failed to create function declaration node", *peek_token());
+							}
 
-FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+							FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
 
-// Create a new FunctionDeclarationNode with member function info
-auto [member_func_node, member_func_ref] =
-emplace_node_ref<FunctionDeclarationNode>(decl_node, instantiated_name);
+							// Create a new FunctionDeclarationNode with member function info
+							auto [member_func_node, member_func_ref] =
+							emplace_node_ref<FunctionDeclarationNode>(decl_node, instantiated_name);
 
-// Copy parameters from the parsed function
-for (const auto& param : func_decl.parameter_nodes()) {
-member_func_ref.add_parameter_node(param);
-}
+							// Copy parameters from the parsed function
+							for (const auto& param : func_decl.parameter_nodes()) {
+								member_func_ref.add_parameter_node(param);
+							}
 
-// Mark as constexpr
-member_func_ref.set_is_constexpr(is_static_constexpr);
+							// Mark as constexpr
+							member_func_ref.set_is_constexpr(is_static_constexpr);
 
-// Skip any trailing specifiers (const, volatile, noexcept, etc.) after parameter list
-skip_function_trailing_specifiers();
+							// Skip any trailing specifiers (const, volatile, noexcept, etc.) after parameter list
+							skip_function_trailing_specifiers();
 
-// Parse function body if present
-if (peek_token().has_value() && peek_token()->value() == "{") {
-// DELAYED PARSING: Save the current position (start of '{')
-SaveHandle body_start = save_token_position();
+							// Parse function body if present
+							if (peek_token().has_value() && peek_token()->value() == "{") {
+									// DELAYED PARSING: Save the current position (start of '{')
+									SaveHandle body_start = save_token_position();
 
-// Look up the struct type
-auto type_it = gTypesByName.find(instantiated_name);
-size_t struct_type_idx = 0;
-if (type_it != gTypesByName.end()) {
-struct_type_idx = type_it->second->type_index_;
-}
+									// Look up the struct type
+									auto type_it = gTypesByName.find(instantiated_name);
+									size_t struct_type_idx = 0;
+									if (type_it != gTypesByName.end()) {
+										struct_type_idx = type_it->second->type_index_;
+									}
 
-// Skip over the function body by counting braces
-skip_balanced_braces();
+									// Skip over the function body by counting braces
+									skip_balanced_braces();
 
-// Record this for delayed parsing
-delayed_function_bodies_.push_back({
-&member_func_ref,
-body_start,
-{},       // initializer_list_start (not used)
-instantiated_name,
-struct_type_idx,
-&struct_ref,
-false,    // has_initializer_list
-false,    // is_constructor
-false,    // is_destructor
-nullptr,  // ctor_node
-nullptr,  // dtor_node
-current_template_param_names_
-});
-} else if (!consume_punctuator(";")) {
-return ParseResult::error("Expected '{' or ';' after static member function declaration", *peek_token());
-}
+									// Record this for delayed parsing
+									delayed_function_bodies_.push_back({
+										&member_func_ref,
+										body_start,
+										{},       // initializer_list_start (not used)
+										instantiated_name,
+										struct_type_idx,
+										&struct_ref,
+										false,    // has_initializer_list
+										false,    // is_constructor
+										false,    // is_destructor
+										nullptr,  // ctor_node
+										nullptr,  // dtor_node
+										current_template_param_names_
+									});
+								} else if (!consume_punctuator(";")) {
+								return ParseResult::error("Expected '{' or ';' after static member function declaration", *peek_token());
+								}
 
-// Add static member function to struct
-struct_ref.add_member_function(member_func_node, current_access, false, false, false);
+								// Add static member function to struct
+								struct_ref.add_member_function(member_func_node, current_access, false, false, false);
 
-// Also register in StructTypeInfo
-struct_info->member_functions.emplace_back(
-StringTable::getOrInternStringHandle(decl_node.identifier_token().value()),
-member_func_node,
-current_access,
-false,  // is_virtual
-false,  // is_pure_virtual
-false   // is_override
-);
+								// Also register in StructTypeInfo
+								struct_info->member_functions.emplace_back(
+								StringTable::getOrInternStringHandle(decl_node.identifier_token().value()),
+								member_func_node,
+								current_access,
+								false,  // is_virtual
+								false,  // is_pure_virtual
+								false   // is_override
+								);
 
-continue;
-}
+								continue;
+							}
 
-// If not a function, handle as static data member
+							// If not a function, handle as static data member
 
 						// Optional initializer
 						std::optional<ASTNode> init_expr_opt;
