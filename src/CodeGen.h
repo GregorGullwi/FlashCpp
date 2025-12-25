@@ -1792,7 +1792,7 @@ private:
 		if (FLASH_LOG_ENABLED(Codegen, Debug)) {
 			const TypeSpecifierNode& debug_ret_type = func_decl.type_node().as<TypeSpecifierNode>();
 			FLASH_LOG(Codegen, Debug, "===== CODEGEN visitFunctionDeclarationNode: ", func_decl.identifier_token().value(), " =====");
-			FLASH_LOG(Codegen, Debug, "  return_type: ", (int)debug_ret_type.type(), " size: ", (int)debug_ret_type.size_in_bits(), " ptr_depth: ", debug_ret_type.pointer_depth());
+			FLASH_LOG(Codegen, Debug, "  return_type: ", (int)debug_ret_type.type(), " size: ", (int)debug_ret_type.size_in_bits(), " ptr_depth: ", debug_ret_type.pointer_depth(), " is_ref: ", debug_ret_type.is_reference(), " is_rvalue_ref: ", debug_ret_type.is_rvalue_reference());
 			FLASH_LOG(Codegen, Debug, "  is_member_function: ", node.is_member_function());
 			if (node.is_member_function()) {
 				FLASH_LOG(Codegen, Debug, "  parent_struct_name: ", node.parent_struct_name());
@@ -1807,7 +1807,9 @@ private:
 							  , "' type=", (int)param_type.type() 
 							  , " size=", (int)param_type.size_in_bits()
 							  , " ptr_depth=", param_type.pointer_depth()
-							  , " base_cv=", (int)param_type.cv_qualifier());
+							  , " base_cv=", (int)param_type.cv_qualifier()
+							  , " is_ref=", param_type.is_reference()
+							  , " is_rvalue_ref=", param_type.is_rvalue_reference());
 					for (size_t j = 0; j < param_type.pointer_levels().size(); ++j) {
 						FLASH_LOG(Codegen, Debug, " ptr[", j, "]_cv=", (int)param_type.pointer_levels()[j].cv_qualifier);
 					}

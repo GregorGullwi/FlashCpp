@@ -21771,6 +21771,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				if (arg_type_index < arg_types.size()) {
 					const TypeSpecifierNode& arg_type = arg_types[arg_type_index];
 					
+					// Check if the original parameter type is a forwarding reference (T&&)
+					const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					bool is_forwarding_reference = orig_param_type.is_rvalue_reference();
+					
 					ASTNode param_type = emplace_node<TypeSpecifierNode>(
 						arg_type.type(),
 						arg_type.qualifier(),
@@ -21778,6 +21782,32 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						Token()
 					);
 					param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
+					
+					// If the original parameter was a forwarding reference (T&&), apply reference collapsing
+					// Reference collapsing rules:
+					//   T& && → T&    (lvalue reference wins)
+					//   T&& && → T&&  (both rvalue → rvalue)
+					//   T && → T&&    (non-reference + && → rvalue reference)
+					if (is_forwarding_reference) {
+						if (arg_type.is_lvalue_reference()) {
+							// Deduced type is lvalue reference (e.g., int&)
+							// Applying && gives int& && which collapses to int&
+							param_type.as<TypeSpecifierNode>().set_lvalue_reference(true);
+						} else if (arg_type.is_rvalue_reference()) {
+							// Deduced type is rvalue reference (e.g., int&&)
+							// Applying && gives int&& && which collapses to int&&
+							param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+						} else {
+							// Deduced type is non-reference (e.g., int from literal)
+							// Applying && gives int&&
+							param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+						}
+					}
+					
+					// Copy pointer levels and CV qualifiers
+					for (const auto& ptr_level : arg_type.pointer_levels()) {
+						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+					}
 					
 					auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 					new_func_ref.add_parameter_node(new_param_decl);
