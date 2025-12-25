@@ -10775,6 +10775,30 @@ ParseResult Parser::parse_expression(int precedence)
 			break;
 		}
 
+		// Phase 1: C++20 Template Argument Disambiguation
+		// Before treating '<' as a comparison operator, check if it could be template arguments
+		// This handles cases like: decltype(ns::func<Args...>(0)) where '<' after qualified-id
+		// should be parsed as template arguments, not as less-than operator
+		if (is_operator && peek_token()->value() == "<" && result.node().has_value()) {
+			FLASH_LOG(Parser, Debug, "Binary operator loop: checking if '<' is template arguments");
+			
+			// Use lookahead to check if this could be template arguments
+			if (could_be_template_arguments()) {
+				FLASH_LOG(Parser, Debug, "Confirmed: '<' starts template arguments, not comparison operator");
+				// Template arguments were successfully parsed by could_be_template_arguments()
+				// The parse_explicit_template_arguments() call inside it already consumed the tokens
+				// We need to re-parse to get the actual template arguments
+				auto template_args = parse_explicit_template_arguments();
+				
+				// Note: We don't directly use template_args here because the postfix operator loop
+				// will handle function calls with template arguments. We just needed to prevent
+				// the binary operator loop from consuming '<' as a comparison operator.
+				// Continue to the next iteration to let postfix operators handle this.
+				continue;
+			}
+			// If could_be_template_arguments() returned false, fall through to treat '<' as operator
+		}
+
 		// Get the precedence of the current operator
 		int current_operator_precedence =
 			get_operator_precedence(peek_token()->value());
@@ -12285,9 +12309,10 @@ ParseResult Parser::parse_primary_expression()
 
 		// Check if qualified identifier is followed by template arguments: ns::Template<Args>
 		// This must come BEFORE we try to use current_token_ as an operator
-		// Skip this if we're already parsing a template body to avoid infinite recursion
+		// Phase 1: C++20 Template Argument Disambiguation - always try to parse template arguments
+		// after qualified identifiers, regardless of context
 		std::optional<std::vector<TemplateTypeArg>> template_args;
-		if (!parsing_template_body_ && current_token_.has_value() && current_token_->value() == "<") {
+		if (current_token_.has_value() && current_token_->value() == "<") {
 			// Build the qualified name from namespaces using StringBuilder
 			StringBuilder qualified_name_builder;
 			for (const auto& ns : qual_id.namespaces()) {
@@ -12296,15 +12321,14 @@ ParseResult Parser::parse_primary_expression()
 			qualified_name_builder.append(qual_id.name());
 			std::string_view qualified_name = qualified_name_builder.preview();
 			
-			// Check if this identifier is a registered template
-			if (gTemplateRegistry.lookupTemplate(qualified_name).has_value() || 
-			    gTemplateRegistry.lookupTemplate(qual_id.name()).has_value()) {
+			// Phase 1: Always try to parse template arguments speculatively
+			// C++20 spec: After :: in qualified-id, '<' is always template argument delimiter
+			FLASH_LOG_FORMAT(Parser, Debug, "Qualified identifier '{}' followed by '<', attempting template argument parsing", qualified_name);
+			template_args = parse_explicit_template_arguments();
+			
+			if (template_args.has_value()) {
+				FLASH_LOG_FORMAT(Parser, Debug, "Successfully parsed {} template arguments for '{}'", template_args->size(), qualified_name);
 				qualified_name_builder.reset();
-				// Yes, this is a template - parse template arguments
-				template_args = parse_explicit_template_arguments();
-				if (!template_args.has_value()) {
-					return ParseResult::error("Failed to parse template arguments", *current_token_);
-				}
 				
 				// Try to instantiate the template with these arguments
 				// Note: try_instantiate_class_template returns nullopt on success (type registered in gTypesByName)
@@ -12319,7 +12343,9 @@ ParseResult Parser::parse_primary_expression()
 						if (instantiation_result.has_value()) {
 							instantiation_result = try_instantiate_template_explicit(qualified_name, *template_args);
 							if (instantiation_result.has_value()) {
-								return ParseResult::error("Failed to instantiate template", final_identifier);
+								// Template instantiation failed - this might not be a template after all
+								// But we successfully parsed template arguments, so continue with the parsed args
+								FLASH_LOG_FORMAT(Parser, Warning, "Parsed template arguments but instantiation failed for '{}'", qualified_name);
 							}
 						}
 					}
@@ -21176,6 +21202,32 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	discard_saved_token(saved_pos);
 	last_failed_template_arg_parse_handle_ = SIZE_MAX;  // Clear failure marker on success
 	return template_args;
+}
+
+// Phase 1: C++20 Template Argument Disambiguation
+// Check if '<' at current position could start template arguments without consuming tokens.
+// This implements lookahead to disambiguate template argument lists from comparison operators.
+// Returns true if parse_explicit_template_arguments() would succeed at this position.
+bool Parser::could_be_template_arguments() {
+	FLASH_LOG(Parser, Debug, "could_be_template_arguments: checking if '<' starts template arguments");
+	
+	// Quick check: must have '<' at current position
+	if (!peek_token().has_value() || peek_token()->value() != "<") {
+		return false;
+	}
+	
+	// Save position BEFORE attempting to parse template arguments
+	// This ensures we restore position even on success, making this truly non-consuming
+	auto saved_pos = save_token_position();
+	
+	// Try to parse template arguments speculatively
+	auto template_args = parse_explicit_template_arguments();
+	
+	// Always restore position - this makes the function non-consuming
+	restore_token_position(saved_pos);
+	
+	// Return true if parsing would succeed
+	return template_args.has_value();
 }
 
 // Try to instantiate a template with explicit template arguments

@@ -516,6 +516,7 @@ private:
         ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
         ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
         std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes = nullptr);  // NEW: Parse explicit template arguments like <int, float>
+        bool could_be_template_arguments();  // NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
         std::optional<ConstantValue> try_evaluate_constant_expression(const ASTNode& expr_node);  // NEW: Evaluate constant expressions for template arguments (e.g., is_int<T>::value)
         std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
         std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types, int& recursion_depth);  // Helper: Try to instantiate a specific template node (for SFINAE)
