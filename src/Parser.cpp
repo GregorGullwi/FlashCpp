@@ -3133,13 +3133,37 @@ ParseResult Parser::parse_struct_declaration()
 				consume_token();
 			}
 
-		// Parse base class name
-		auto base_name_token = consume_token();
-		if (!base_name_token.has_value() || base_name_token->type() != Token::Type::Identifier) {
-			return ParseResult::error("Expected base class name", base_name_token.value_or(Token()));
+		// Parse base class name (or decltype expression)
+		// Check if this is a decltype base class (e.g., : decltype(expr))
+		std::string_view base_class_name;
+		TypeSpecifierNode base_type_spec;
+		bool is_decltype_base = false;
+		Token base_name_token;  // For error reporting
+		
+		if (peek_token().has_value() && peek_token()->value() == "decltype") {
+			// Parse decltype(expr) as base class
+			base_name_token = *peek_token();  // Save for error reporting
+			auto decltype_result = parse_decltype_specifier();
+			if (decltype_result.is_error()) {
+				return decltype_result;
+			}
+			
+			if (!decltype_result.node().has_value()) {
+				return ParseResult::error("Expected type specifier from decltype", *peek_token());
+			}
+			
+			// For decltype bases, we need to defer resolution
+			// This will be resolved during template instantiation
+			FLASH_LOG(Templates, Debug, "Skipping decltype base class - will be resolved during template instantiation");
+			continue;  // Skip to next base class or exit loop
+		} else {
+			auto base_name_token_opt = consume_token();
+			if (!base_name_token_opt.has_value() || base_name_token_opt->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected base class name", base_name_token_opt.value_or(Token()));
+			}
+			base_name_token = *base_name_token_opt;
+			base_class_name = base_name_token.value();
 		}
-
-		std::string_view base_class_name = base_name_token->value();
 		
 		// Check if this is a template base class (e.g., Base<T>)
 		std::string instantiated_base_name;
@@ -3179,17 +3203,17 @@ ParseResult Parser::parse_struct_declaration()
 		// Look up base class type
 		auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
 		if (base_type_it == gTypesByName.end()) {
-			return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
+			return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", base_name_token);
 		}
 
 		const TypeInfo* base_type_info = base_type_it->second;
 		if (base_type_info->type_ != Type::Struct) {
-			return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", *base_name_token);
+			return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", base_name_token);
 		}
 
 		// Check if base class is final
 		if (base_type_info->struct_info_ && base_type_info->struct_info_->is_final) {
-			return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", *base_name_token);
+			return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", base_name_token);
 		}
 
 		// Add base class to struct node and type info
