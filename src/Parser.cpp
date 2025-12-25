@@ -7167,7 +7167,8 @@ ParseResult Parser::parse_type_specifier()
 					
 					// Build fully qualified type name using instantiated template name
 					const auto& qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
-					std::string qualified_type_name(instantiated_name);
+					StringBuilder qualified_type_name_builder;
+					qualified_type_name_builder.append(instantiated_name);
 					for (const auto& ns_part : qualified_node.namespaces()) {
 						// Skip the first part (template name itself) as it's already in instantiated_name
 #if USE_OLD_STRING_APPROACH
@@ -7176,10 +7177,11 @@ ParseResult Parser::parse_type_specifier()
 						std::string_view ns_view = ns_part.view();
 #endif
 						if (ns_view != type_name) {
-							qualified_type_name += "::" + std::string(ns_view);
+							qualified_type_name_builder.append("::").append(ns_view);
 						}
 					}
-					qualified_type_name += "::" + std::string(qualified_node.identifier_token().value());
+					qualified_type_name_builder.append("::").append(qualified_node.identifier_token().value());
+					std::string_view qualified_type_name = qualified_type_name_builder.commit();
 					
 					// For dependent templates, if the qualified type is not found, check for template arguments
 					// before creating a placeholder
@@ -7200,15 +7202,13 @@ ParseResult Parser::parse_type_specifier()
 								
 								// Append template arguments to qualified_type_name
 								// For dependent types, include argument count for better debugging
-								StringBuilder type_name_builder;
-								std::string_view extended_name = type_name_builder
+								StringBuilder extended_name_builder;
+								qualified_type_name = extended_name_builder
 									.append(qualified_type_name)
 									.append("<")
 									.append(member_template_args->size())
 									.append(" args>")
 									.commit();
-								qualified_type_name = std::string(extended_name);
-								type_name_builder.reset();
 							}
 							
 							// Create a placeholder for the dependent qualified type
@@ -7396,10 +7396,14 @@ ParseResult Parser::parse_type_specifier()
 						FLASH_LOG_FORMAT(Parser, Debug, "SFINAE: Substitution failure - unknown nested type: {}", qualified_type_name);
 						// Return a placeholder type that will cause instantiation to fail
 						// The caller (try_instantiate_single_template) will catch this and try the next overload
-						return ParseResult::error("SFINAE substitution failure: " + qualified_type_name, type_name_token);
+						StringBuilder error_builder;
+						std::string_view error_msg = error_builder.append("SFINAE substitution failure: ").append(qualified_type_name).commit();
+						return ParseResult::error(std::string(error_msg), type_name_token);
 					}
 					
-					return ParseResult::error("Unknown nested type: " + qualified_type_name, type_name_token);
+					StringBuilder error_builder;
+					std::string_view error_msg = error_builder.append("Unknown nested type: ").append(qualified_type_name).commit();
+					return ParseResult::error(std::string(error_msg), type_name_token);
 				}
 				
 				auto inst_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
