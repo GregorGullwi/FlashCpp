@@ -623,6 +623,16 @@ public:  // Public methods for template instantiation
             const std::vector<StringHandle>& current_template_param_names
         );
         
+        // Helper to parse entire static member block (data or function) - reduces code duplication
+        ParseResult parse_static_member_block(
+            StringHandle struct_name_handle,
+            StructDeclarationNode& struct_ref,
+            StructTypeInfo* struct_info,
+            AccessSpecifier current_access,
+            const std::vector<StringHandle>& current_template_param_names,
+            bool use_struct_type_info = false  // If true, use struct_type_info.getStructInfo() for data members
+        );
+        
         Linkage parse_declspec_attributes();          // Parse Microsoft __declspec(...) and return linkage
         AttributeInfo parse_attributes();             // Parse all types of attributes and return linkage + calling convention
         CallingConvention parse_calling_convention(); // Parse calling convention keywords
