@@ -11431,6 +11431,82 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 ParseResult Parser::parse_primary_expression()
 {
 	std::optional<ASTNode> result;
+	
+	// Check for functional-style cast with keyword type names: bool(x), int(x), etc.
+	// This must come early because these are keywords, not identifiers
+	if (current_token_->type() == Token::Type::Keyword) {
+		std::string_view kw = current_token_->value();
+		bool is_builtin_type = (kw == "bool" || kw == "char" || kw == "int" || 
+		                        kw == "short" || kw == "long" || kw == "float" || 
+		                        kw == "double" || kw == "void" || kw == "wchar_t" ||
+		                        kw == "signed" || kw == "unsigned");
+		
+		if (is_builtin_type) {
+			Token type_token = *current_token_;
+			consume_token(); // consume the type keyword
+			
+			// Check if followed by '(' for functional cast
+			if (current_token_.has_value() && current_token_->value() == "(") {
+				consume_token(); // consume '('
+				
+				// Parse the expression inside the parentheses
+				ParseResult expr_result = parse_expression();
+				if (expr_result.is_error()) {
+					return expr_result;
+				}
+				
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after functional cast expression", *current_token_);
+				}
+				
+				// Create a type specifier for the cast
+				Type cast_type = Type::Int;
+				TypeQualifier qualifier = TypeQualifier::None;
+				unsigned char type_size = 32;
+				
+				if (kw == "bool") {
+					cast_type = Type::Bool;
+					type_size = 8;
+				} else if (kw == "char") {
+					cast_type = Type::Char;
+					type_size = 8;
+				} else if (kw == "short") {
+					cast_type = Type::Short;
+					type_size = 16;
+				} else if (kw == "int") {
+					cast_type = Type::Int;
+					type_size = 32;
+				} else if (kw == "long") {
+					cast_type = Type::Long;
+					type_size = 64;
+				} else if (kw == "float") {
+					cast_type = Type::Float;
+					type_size = 32;
+				} else if (kw == "double") {
+					cast_type = Type::Double;
+					type_size = 64;
+				} else if (kw == "unsigned") {
+					cast_type = Type::UnsignedInt;
+					qualifier = TypeQualifier::Unsigned;
+					type_size = 32;
+				}
+				
+				auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token);
+				
+				// Create a static cast node (functional cast behaves like static_cast)
+				result = emplace_node<ExpressionNode>(
+					StaticCastNode(type_node, *expr_result.node(), type_token));
+				
+				if (result.has_value())
+					return ParseResult::success(*result);
+			} else {
+				// Not a functional cast - restore and continue with normal keyword handling
+				// Actually, we can't easily restore here. This is a problem.
+				// For now, return an error
+				return ParseResult::error("Unexpected keyword in expression context", type_token);
+			}
+		}
+	}
 
 	// Check for requires expression: requires(params) { requirements; } or requires { requirements; }
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "requires") {
@@ -12050,6 +12126,102 @@ ParseResult Parser::parse_primary_expression()
 
 		// We need to consume the identifier first to check what comes after it
 		consume_token();
+		
+		// Check for functional-style cast: Type(expression)
+		// This is needed for patterns like bool(x), int(y), etc.
+		// Check if this identifier is a type name and followed by '('
+		if (current_token_.has_value() && current_token_->value() == "(" &&
+		    !current_token_->value().starts_with("::")) {
+			// Check if the identifier is a known type (built-in or user-defined)
+			std::string_view id_name = idenfifier_token.value();
+			bool is_type_name = false;
+			
+			// Check for built-in type names
+			if (id_name == "bool" || id_name == "char" || id_name == "int" || 
+			    id_name == "short" || id_name == "long" || id_name == "float" || 
+			    id_name == "double" || id_name == "void" || id_name == "wchar_t" ||
+			    id_name == "char8_t" || id_name == "char16_t" || id_name == "char32_t" ||
+			    id_name == "signed" || id_name == "unsigned") {
+				is_type_name = true;
+			}
+			// Check for user-defined types
+			else {
+				StringHandle type_handle = StringTable::getOrInternStringHandle(id_name);
+				auto type_it = gTypesByName.find(type_handle);
+				if (type_it != gTypesByName.end()) {
+					is_type_name = true;
+				}
+			}
+			
+			if (is_type_name) {
+				// Parse as functional-style cast: Type(expression)
+				consume_token(); // consume '('
+				
+				// Parse the expression inside the parentheses
+				ParseResult expr_result = parse_expression();
+				if (expr_result.is_error()) {
+					return expr_result;
+				}
+				
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after functional cast expression", *current_token_);
+				}
+				
+				// Create a type specifier for the cast
+				Type cast_type = Type::Int; // default
+				TypeQualifier qualifier = TypeQualifier::None;
+				unsigned char type_size = 32;
+				
+				if (id_name == "bool") {
+					cast_type = Type::Bool;
+					type_size = 8;
+				} else if (id_name == "char") {
+					cast_type = Type::Char;
+					type_size = 8;
+				} else if (id_name == "short") {
+					cast_type = Type::Short;
+					type_size = 16;
+				} else if (id_name == "int") {
+					cast_type = Type::Int;
+					type_size = 32;
+				} else if (id_name == "long") {
+					cast_type = Type::Long;
+					type_size = 64;
+				} else if (id_name == "float") {
+					cast_type = Type::Float;
+					type_size = 32;
+				} else if (id_name == "double") {
+					cast_type = Type::Double;
+					type_size = 64;
+				} else if (id_name == "unsigned") {
+					cast_type = Type::UnsignedInt;
+					qualifier = TypeQualifier::Unsigned;
+					type_size = 32;
+				} else {
+					// User-defined type - look it up
+					StringHandle type_handle = StringTable::getOrInternStringHandle(id_name);
+					auto type_it = gTypesByName.find(type_handle);
+					if (type_it != gTypesByName.end()) {
+						const TypeInfo* type_info = type_it->second;
+						cast_type = type_info->type_;
+						type_size = type_info->type_size_;
+						if (type_info->isStruct()) {
+							cast_type = Type::Struct;
+						}
+					}
+				}
+				
+				auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, idenfifier_token);
+				
+				// Create a static cast node (functional cast behaves like static_cast)
+				result = emplace_node<ExpressionNode>(
+					StaticCastNode(type_node, *expr_result.node(), idenfifier_token));
+				
+				if (result.has_value())
+					return ParseResult::success(*result);
+			}
+		}
+		
 		if (current_token_.has_value() && current_token_->value() == "::"sv) {
 			// Build the qualified identifier manually
 			std::vector<StringType<32>> namespaces;
@@ -20780,9 +20952,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// we should fall through to type parsing so identifiers get properly converted to TypeSpecifierNode.
 				// This is needed for deduction guides where template parameters must be TypeSpecifierNode.
 				// However, complex expressions like is_int<T>::value should still be accepted as dependent expressions.
+				// 
+				// ALSO: If we parsed a simple identifier followed by '<', we should fall through to type parsing
+				// because this is likely a template type (e.g., enable_if_t<...>), not a value expression.
 				bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) || 
 				                            std::holds_alternative<TemplateParameterReferenceNode>(expr);
-				bool should_try_type_parsing = out_type_nodes != nullptr && is_simple_identifier;
+				bool followed_by_template_args = peek_token().has_value() && peek_token()->value() == "<";
+				bool should_try_type_parsing = (out_type_nodes != nullptr && is_simple_identifier) ||
+				                               (is_simple_identifier && followed_by_template_args);
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
 				    (peek_token()->value() == "," || peek_token()->value() == ">")) {
