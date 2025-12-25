@@ -6218,11 +6218,10 @@ private:
 			} else {
 				// This is a local variable
 				
-				// Check if this is a lvalue reference variable - if so, we need to dereference it
-				// Lvalue reference variables hold an address, and we need to load the value from that address
+				// Check if this is a reference variable - if so, we need to dereference it
+				// Reference variables (both lvalue & and rvalue &&) hold an address, and we need to load the value from that address
 				// EXCEPT for array references, where the reference IS the array pointer
-				// NOTE: Rvalue references (&&) are NOT dereferenced - they're stored as pointers but used as-is
-				if (type_node.is_reference() && !type_node.is_rvalue_reference()) {
+				if (type_node.is_reference()) {
 					// For references to arrays (e.g., int (&arr)[3]), the reference variable
 					// already holds the array address directly. We don't dereference it.
 					// Just return it as a pointer (64 bits on x64 architecture).
@@ -13995,7 +13994,10 @@ private:
 		Type source_type = std::get<Type>(expr_operands[0]);
 		int source_size = std::get<int>(expr_operands[1]);
 
-		FLASH_LOG(Codegen, Debug, "generateStaticCastIr: target_type=", (int)target_type, ", is_rvalue_ref=", target_type_node.is_rvalue_reference(), ", is_lvalue_ref=", target_type_node.is_lvalue_reference());
+		// Special handling for rvalue reference casts: static_cast<T&&>(expr)
+		// This produces an xvalue - has identity but can be moved from
+		// Equivalent to std::move
+		if (target_type_node.is_rvalue_reference()) {
 			return handleRValueReferenceCast(expr_operands, target_type, target_size, staticCastNode.cast_token(), "static_cast");
 		}
 

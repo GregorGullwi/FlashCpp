@@ -21455,8 +21455,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Create return type - re-parse declaration if available (for SFINAE)
 	const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
 	
-	FLASH_LOG(Parser, Debug, "Template original return type: type=", (int)orig_return_type.type(), ", is_ref=", orig_return_type.is_reference(), ", is_rvalue_ref=", orig_return_type.is_rvalue_reference());
-	
 	ASTNode return_type;
 	Token func_name_token = orig_decl.identifier_token();
 	
@@ -21551,22 +21549,18 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		FLASH_LOG(Parser, Debug, "Template instantiation: parsed return type, is_error=", return_type_result.is_error(), ", has_node=", return_type_result.node().has_value(), ", current_token=", current_token_->value(), ", token_type=", (int)current_token_->type());
 		if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
 			auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
-			FLASH_LOG(Parser, Debug, "  Return type before ref parsing: type=", (int)rt.type(), ", is_ref=", rt.is_reference(), ", is_rvalue_ref=", rt.is_rvalue_reference());
 			
 			// Check if there are reference qualifiers after the type specifier
 			bool is_punctuator_or_operator = current_token_->type() == Token::Type::Punctuator || current_token_->type() == Token::Type::Operator;
 			bool is_ampamp = current_token_->value() == "&&";
 			bool is_amp = current_token_->value() == "&";
-			FLASH_LOG(Parser, Debug, "  Check ref: is_punctuator_or_operator=", is_punctuator_or_operator, ", is_ampamp=", is_ampamp, ", is_amp=", is_amp);
 			
 			if (is_punctuator_or_operator && is_ampamp) {
 				consume_token();  // Consume &&
 				rt.set_reference(true);  // Set rvalue reference
-				FLASH_LOG(Parser, Debug, "  Parsed &&, set rvalue reference");
 			} else if (is_punctuator_or_operator && is_amp) {
 				consume_token();  // Consume &
 				rt.set_lvalue_reference(true);  // Set lvalue reference
-				FLASH_LOG(Parser, Debug, "  Parsed &, set lvalue reference");
 			}
 		}
 		
@@ -21689,11 +21683,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 	
-	// Debug: Check what return type was set
-	if (return_type.is<TypeSpecifierNode>()) {
-		const auto& rt_check = return_type.as<TypeSpecifierNode>();
-		FLASH_LOG(Parser, Debug, "Final return type for ", mangled_name, ": type=", (int)rt_check.type(), ", is_ref=", rt_check.is_reference(), ", is_rvalue_ref=", rt_check.is_rvalue_reference());
-	}
 	
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
 
