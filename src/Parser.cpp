@@ -21469,9 +21469,18 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				should_reparse = true;
 			} else if (orig_return_type.type_index() < gTypeInfo.size()) {
 				const TypeInfo& orig_type_info = gTypeInfo[orig_return_type.type_index()];
-				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", StringTable::getStringView(orig_type_info.name()));
-				// Re-parse if type contains _unknown (template-dependent marker)
-				should_reparse = (StringTable::getStringView(orig_type_info.name()).find("_unknown") != std::string::npos);
+				std::string_view type_name = StringTable::getStringView(orig_type_info.name());
+				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", type_name);
+				// Re-parse if type contains _unknown (legacy template-dependent marker)
+				// OR if type name contains template parameter markers like _T or ::type (typename member access)
+				// This is more robust than just checking for _unknown
+				bool has_unknown = type_name.find("_unknown") != std::string::npos;
+				bool has_template_param = type_name.find("_T") != std::string::npos || 
+				                          type_name.find("::type") != std::string::npos;
+				should_reparse = has_unknown || has_template_param;
+				if (should_reparse) {
+					FLASH_LOG(Templates, Debug, "Return type appears template-dependent - will re-parse");
+				}
 			} else {
 				should_reparse = false;
 			}
@@ -21528,10 +21537,26 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// Re-parse the return type with template parameters in scope
 		auto return_type_result = parse_type_specifier();
 		
-		FLASH_LOG(Parser, Debug, "Template instantiation: parsed return type, is_error=", return_type_result.is_error(), ", has_node=", return_type_result.node().has_value());
+		FLASH_LOG(Parser, Debug, "Template instantiation: parsed return type, is_error=", return_type_result.is_error(), ", has_node=", return_type_result.node().has_value(), ", current_token=", current_token_->value(), ", token_type=", (int)current_token_->type());
 		if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
-			const auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
-			FLASH_LOG(Parser, Debug, "  Return type: type=", (int)rt.type(), ", is_ref=", rt.is_reference(), ", is_rvalue_ref=", rt.is_rvalue_reference());
+			auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
+			FLASH_LOG(Parser, Debug, "  Return type before ref parsing: type=", (int)rt.type(), ", is_ref=", rt.is_reference(), ", is_rvalue_ref=", rt.is_rvalue_reference());
+			
+			// Check if there are reference qualifiers after the type specifier
+			bool is_punctuator_or_operator = current_token_->type() == Token::Type::Punctuator || current_token_->type() == Token::Type::Operator;
+			bool is_ampamp = current_token_->value() == "&&";
+			bool is_amp = current_token_->value() == "&";
+			FLASH_LOG(Parser, Debug, "  Check ref: is_punctuator_or_operator=", is_punctuator_or_operator, ", is_ampamp=", is_ampamp, ", is_amp=", is_amp);
+			
+			if (is_punctuator_or_operator && is_ampamp) {
+				consume_token();  // Consume &&
+				rt.set_reference(true);  // Set rvalue reference
+				FLASH_LOG(Parser, Debug, "  Parsed &&, set rvalue reference");
+			} else if (is_punctuator_or_operator && is_amp) {
+				consume_token();  // Consume &
+				rt.set_lvalue_reference(true);  // Set lvalue reference
+				FLASH_LOG(Parser, Debug, "  Parsed &, set lvalue reference");
+			}
 		}
 		
 		// Restore position
@@ -21652,6 +21677,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
+	
+	// Debug: Check what return type was set
+	if (return_type.is<TypeSpecifierNode>()) {
+		const auto& rt_check = return_type.as<TypeSpecifierNode>();
+		FLASH_LOG(Parser, Debug, "Final return type for ", mangled_name, ": type=", (int)rt_check.type(), ", is_ref=", rt_check.is_reference(), ", is_rvalue_ref=", rt_check.is_rvalue_reference());
+	}
+	
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
 
 	// Add parameters with substituted types
