@@ -14569,6 +14569,13 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 			// Look up the qualified identifier
 			auto qualified_symbol = gSymbolTable.lookup_qualified(namespaces, final_identifier.value());
 			
+			// Check if this is followed by template arguments: ns::func<Args>
+			std::optional<std::vector<TemplateTypeArg>> template_args;
+			if (peek_token().has_value() && peek_token()->value() == "<") {
+				template_args = parse_explicit_template_arguments();
+				// If parsing failed, it might be a less-than operator, continue normally
+			}
+			
 			// Check if this is a function call
 			if (peek_token().has_value() && peek_token()->value() == "(") {
 				consume_token(); // consume '('
