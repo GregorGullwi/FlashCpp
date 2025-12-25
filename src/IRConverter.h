@@ -12445,9 +12445,18 @@ private:
 				var_offset = it->second.offset;
 			}
 
-			// Calculate the address: LEA RAX, [RBP + offset]
+			// Calculate the address
+			// If the variable is a reference, it already holds an address - use MOV to load it
+			// Otherwise, use LEA to compute the address of the variable
 			X64Register target_reg = X64Register::RAX;
-			emitLeaFromFrame(target_reg, var_offset);
+			auto ref_it = reference_stack_info_.find(var_offset);
+			if (ref_it != reference_stack_info_.end()) {
+				// Variable is a reference - load the address it contains
+				emitMovFromFrame(target_reg, var_offset);
+			} else {
+				// Regular variable - compute its address
+				emitLeaFromFrame(target_reg, var_offset);
+			}
 
 			// Store the address to result_var (pointer is always 64-bit)
 			int32_t result_offset = getStackOffsetFromTempVar(op.result);
