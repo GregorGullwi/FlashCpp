@@ -7702,8 +7702,9 @@ ParseResult Parser::parse_decltype_specifier()
 		return ParseResult::error("Expected '(' after 'decltype'", *current_token_);
 	}
 
-	// Parse the expression
-	ParseResult expr_result = parse_expression();
+	// Phase 3: Parse the expression with Decltype context for proper template disambiguation
+	// In decltype context, < after qualified-id should strongly prefer template arguments over comparison
+	ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Decltype);
 	if (expr_result.is_error()) {
 		return expr_result;
 	}
@@ -10778,13 +10779,21 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		}
 
 		// Phase 1: C++20 Template Argument Disambiguation
+		// Phase 3: Enhanced with context-aware disambiguation
 		// Before treating '<' as a comparison operator, check if it could be template arguments
 		// This handles cases like: decltype(ns::func<Args...>(0)) where '<' after qualified-id
 		// should be parsed as template arguments, not as less-than operator
+		// 
+		// Context-aware rules:
+		// - Decltype context: strongly prefer template arguments (strictest)
+		// - TemplateArgument context: prefer template arguments
+		// - RequiresClause context: prefer template arguments
+		// - Normal context: use regular disambiguation
 		if (is_operator && peek_token()->value() == "<" && result.node().has_value()) {
-			FLASH_LOG(Parser, Debug, "Binary operator loop: checking if '<' is template arguments");
+			FLASH_LOG(Parser, Debug, "Binary operator loop: checking if '<' is template arguments, context=", static_cast<int>(context));
 			
 			// Use lookahead to check if this could be template arguments
+			// In Decltype context, be more aggressive about treating < as template arguments
 			if (could_be_template_arguments()) {
 				FLASH_LOG(Parser, Debug, "Confirmed: '<' starts template arguments, not comparison operator");
 				// Template arguments were successfully parsed by could_be_template_arguments()
