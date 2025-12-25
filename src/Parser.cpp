@@ -6273,6 +6273,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(alias_token->value()), type_spec.type(), gTypeInfo.size());
 					alias_type_info.type_index_ = type_spec.type_index();
 					alias_type_info.type_size_ = type_spec.size_in_bits();
+					alias_type_info.pointer_depth_ = type_spec.pointer_depth();
+					alias_type_info.is_reference_ = type_spec.is_reference();
+					alias_type_info.is_rvalue_reference_ = type_spec.is_rvalue_reference();
 					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 
 					// Return success (no AST node needed for type aliases)
@@ -7581,11 +7584,19 @@ ParseResult Parser::parse_type_specifier()
 			if (is_typedef) {
 				resolved_type = type_it->second->type_;
 				type_size = type_it->second->type_size_;
-				// Create TypeSpecifierNode and add pointer levels from typedef
+				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
 					resolved_type, user_type_index, type_size, type_name_token, cv_qualifier);
 				for (size_t i = 0; i < type_it->second->pointer_depth_; ++i) {
 					type_spec_node.as<TypeSpecifierNode>().add_pointer_level();
+				}
+				// Add reference qualifiers from typedef
+				if (type_it->second->is_reference_) {
+					if (type_it->second->is_rvalue_reference_) {
+						type_spec_node.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+					} else {
+						type_spec_node.as<TypeSpecifierNode>().set_lvalue_reference(true);  // lvalue reference
+					}
 				}
 				return ParseResult::success(type_spec_node);
 			} else if (user_type_index < gTypeInfo.size()) {

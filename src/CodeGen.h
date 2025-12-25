@@ -13968,23 +13968,33 @@ private:
 	}
 
 	std::vector<IrOperand> generateStaticCastIr(const StaticCastNode& staticCastNode) {
-		// Evaluate the expression to cast
-		auto expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>());
-
-		// Get the target type from the type specifier
+		// Get the target type from the type specifier first
 		const auto& target_type_node = staticCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
 		size_t target_pointer_depth = target_type_node.pointer_depth();
+		
+		// For reference casts (both lvalue and rvalue), we need the address of the expression,
+		// not its loaded value. Use LValueAddress context to get the address without dereferencing.
+		ExpressionContext eval_context = ExpressionContext::Load;
+		if (target_type_node.is_reference()) {
+			eval_context = ExpressionContext::LValueAddress;
+		}
+		
+		// Evaluate the expression to cast
+		auto expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>(), eval_context);
 
 		// Get the source type
 		Type source_type = std::get<Type>(expr_operands[0]);
 		int source_size = std::get<int>(expr_operands[1]);
 
+		FLASH_LOG(Codegen, Debug, "generateStaticCastIr: target_type=", (int)target_type, ", is_rvalue_ref=", target_type_node.is_rvalue_reference(), ", is_lvalue_ref=", target_type_node.is_lvalue_reference());
+
 		// Special handling for rvalue reference casts: static_cast<T&&>(expr)
 		// This produces an xvalue - has identity but can be moved from
 		// Equivalent to std::move
 		if (target_type_node.is_rvalue_reference()) {
+			FLASH_LOG(Codegen, Debug, "Handling rvalue reference cast in static_cast");
 			return handleRValueReferenceCast(expr_operands, target_type, target_size, staticCastNode.cast_token(), "static_cast");
 		}
 
