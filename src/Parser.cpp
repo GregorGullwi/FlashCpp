@@ -12170,31 +12170,18 @@ ParseResult Parser::parse_primary_expression()
 		// Check for functional-style cast: Type(expression)
 		// This is needed for patterns like bool(x), int(y), etc.
 		// Check if this identifier is a type name and followed by '('
+		// NOTE: Only treat BUILT-IN types as functional casts here.
+		// User-defined types with Type(args) syntax are constructor calls, not casts,
+		// and should be handled by the normal identifier/function call path below.
 		if (current_token_.has_value() && current_token_->value() == "(" &&
 		    !current_token_->value().starts_with("::")) {
-			// Check if the identifier is a known type (built-in or user-defined)
 			std::string_view id_name = idenfifier_token.value();
-			bool is_type_name = false;
 			
-			// Check for built-in type names
-			if (id_name == "bool" || id_name == "char" || id_name == "int" || 
-			    id_name == "short" || id_name == "long" || id_name == "float" || 
-			    id_name == "double" || id_name == "void" || id_name == "wchar_t" ||
-			    id_name == "char8_t" || id_name == "char16_t" || id_name == "char32_t" ||
-			    id_name == "signed" || id_name == "unsigned") {
-				is_type_name = true;
-			}
-			// Check for user-defined types
-			else {
-				StringHandle type_handle = StringTable::getOrInternStringHandle(id_name);
-				auto type_it = gTypesByName.find(type_handle);
-				if (type_it != gTypesByName.end()) {
-					is_type_name = true;
-				}
-			}
-			
-			if (is_type_name) {
-				// Parse as functional-style cast: Type(expression)
+			// Only check for built-in type names (not user-defined types)
+			// User-defined Type(args) is a constructor call, not a functional cast
+			auto type_info = get_builtin_type_info(id_name);
+			if (type_info.has_value()) {
+				// This is a built-in type followed by '(' - parse as functional cast
 				ParseResult cast_result = parse_functional_cast(id_name, idenfifier_token);
 				if (!cast_result.is_error() && cast_result.node().has_value()) {
 					return cast_result;
