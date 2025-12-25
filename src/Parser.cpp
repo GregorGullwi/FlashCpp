@@ -20974,10 +20974,13 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// 
 				// ALSO: If we parsed a simple identifier followed by '<', we should fall through to type parsing
 				// because this is likely a template type (e.g., enable_if_t<...>), not a value expression.
+				// 
+				// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
 				bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) || 
 				                            std::holds_alternative<TemplateParameterReferenceNode>(expr);
 				bool followed_by_template_args = peek_token().has_value() && peek_token()->value() == "<";
-				bool should_try_type_parsing = (out_type_nodes != nullptr && is_simple_identifier) ||
+				bool followed_by_pack_expansion = peek_token().has_value() && peek_token()->value() == "...";
+				bool should_try_type_parsing = (out_type_nodes != nullptr && is_simple_identifier && !followed_by_pack_expansion) ||
 				                               (is_simple_identifier && followed_by_template_args);
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
