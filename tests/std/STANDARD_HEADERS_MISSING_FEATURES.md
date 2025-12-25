@@ -839,6 +839,81 @@ Top Templates:
 
 ## Latest Updates (December 25, 2024)
 
+### ✅ Parsing Improvements - December 25, 2024 (Evening)
+
+**Status**: ✅ **TWO NEW FEATURES IMPLEMENTED**
+
+#### 1. ::template Keyword Support
+
+**Issue**: Standard library headers use `::template` syntax to access member templates in dependent contexts, but FlashCpp didn't recognize this syntax.
+
+**What Was Fixed:**
+- Modified `parse_qualified_identifier_after_template()` to consume optional `template` keyword after `::`
+- Added handling for template arguments following `::template member<Args>`
+- Created dependent type placeholders that include template argument information
+
+**Example Now Working:**
+```cpp
+template<typename T>
+using conditional_t = typename Base<T>::template type<int, double>;
+```
+
+**Impact**: Enables parsing of complex template metaprogramming patterns used throughout the standard library.
+
+**Test**: `test_template_parsing_ret42.cpp` ✅
+
+#### 2. Auto Return Type with Trailing Return Type in Template Functions
+
+**Issue**: Template functions with `auto` return type and trailing return type syntax were not supported, only regular functions had this feature.
+
+**What Was Fixed:**
+- Modified `parse_template_function_declaration_body()` to check for `->` after auto return type
+- Parses trailing return type and replaces the auto type before checking trailing specifiers
+- Ensures proper order: parameters → trailing return type → trailing specifiers → body
+
+**Example Now Working:**
+```cpp
+template<typename T>
+auto test_func(T x) -> decltype(x + 1) {
+    return x + 1;
+}
+```
+
+**Impact**: Critical for C++11/14 style generic programming with deduced return types.
+
+**Test**: `test_auto_trailing_return_ret42.cpp` ✅
+
+### 📊 Progress on <type_traits> Header
+
+**Before Today:**
+- Line 157: ❌ Failed with `error: Expected identifier after '::'`
+- Could not parse `typename __conditional<_Cond>::template type<_If, _Else>;`
+
+**After Fix 1 (::template support):**
+- Line 157: ✅ **FIXED** - Now parses successfully
+- Line 175: ❌ Failed with `error: Expected type specifier` at `auto __or_fn(int) ->`
+
+**After Fix 2 (auto + trailing return):**
+- Line 175: ✅ **IMPROVED** - Now accepts `->` and starts parsing return type
+- Line 175: ❌ Current blocker at column 38 - Complex template argument expression
+
+**Current Blocker Details:**
+```cpp
+template<typename... _Bn>
+auto __or_fn(int) -> __first_t<false_type,
+                                __enable_if_t<!bool(_Bn::value)>...>;
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^
+                                         Parser struggles here
+```
+
+The issue is parsing `!bool(_Bn::value)` as a template argument, which involves:
+- Negation operator `!`
+- Type conversion/constructor `bool(...)`
+- Parameter pack member access `_Bn::value`
+- Parameter pack expansion `...`
+
+This is advanced SFINAE and would require significant template metaprogramming support.
+
 ### ✅ Parsing Bug Fixes - noexcept Support
 
 **Status**: ✅ **COMPLETED**
@@ -900,5 +975,5 @@ For immediate productivity, create simplified custom implementations of standard
 
 ---
 
-**Last Updated**: December 25, 2024  
+**Last Updated**: December 25, 2024 (Evening Update)
 **Recent Contributors**: GitHub Copilot, FlashCpp team

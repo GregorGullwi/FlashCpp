@@ -7167,7 +7167,8 @@ ParseResult Parser::parse_type_specifier()
 					
 					// Build fully qualified type name using instantiated template name
 					const auto& qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
-					std::string qualified_type_name(instantiated_name);
+					StringBuilder qualified_type_name_builder;
+					qualified_type_name_builder.append(instantiated_name);
 					for (const auto& ns_part : qualified_node.namespaces()) {
 						// Skip the first part (template name itself) as it's already in instantiated_name
 #if USE_OLD_STRING_APPROACH
@@ -7176,16 +7177,41 @@ ParseResult Parser::parse_type_specifier()
 						std::string_view ns_view = ns_part.view();
 #endif
 						if (ns_view != type_name) {
-							qualified_type_name += "::" + std::string(ns_view);
+							qualified_type_name_builder.append("::").append(ns_view);
 						}
 					}
-					qualified_type_name += "::" + std::string(qualified_node.identifier_token().value());
+					qualified_type_name_builder.append("::").append(qualified_node.identifier_token().value());
+					std::string_view qualified_type_name = qualified_type_name_builder.commit();
 					
-					// For dependent templates, if the qualified type is not found, create a placeholder
+					// For dependent templates, if the qualified type is not found, check for template arguments
+					// before creating a placeholder
+					std::string_view member_name = qualified_node.identifier_token().value();
+					bool has_template_args = (peek_token().has_value() && peek_token()->value() == "<");
+					
 					if (has_dependent_args) {
 						auto qual_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
 						if (qual_type_it == gTypesByName.end()) {
-							// Type not found - create a placeholder for the dependent qualified type
+							// Type not found
+							// If there are template arguments, we need to parse them and include in the type name
+							if (has_template_args) {
+								// Parse template arguments for the member (e.g., type<_If, _Else>)
+								auto member_template_args = parse_explicit_template_arguments();
+								if (!member_template_args.has_value()) {
+									return ParseResult::error("Failed to parse template arguments for dependent member template", type_name_token);
+								}
+								
+								// Append template arguments to qualified_type_name
+								// For dependent types, include argument count for better debugging
+								StringBuilder extended_name_builder;
+								qualified_type_name = extended_name_builder
+									.append(qualified_type_name)
+									.append("<")
+									.append(member_template_args->size())
+									.append(" args>")
+									.commit();
+							}
+							
+							// Create a placeholder for the dependent qualified type
 							FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
 							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
 							auto& type_info = gTypeInfo.emplace_back();
@@ -7226,10 +7252,10 @@ ParseResult Parser::parse_type_specifier()
 					}
 					
 					// Check if this might be a member template alias (e.g., Template<int>::type<Args>)
-					std::string_view member_name = qualified_node.identifier_token().value();
+					// member_name and has_template_args already declared above
 					
 					// Check if the next token is '<', indicating template arguments for the member
-					if (peek_token().has_value() && peek_token()->value() == "<") {
+					if (has_template_args) {
 						// First try looking up with the instantiated name
 						// Note: qualified_type_name already includes ::member_name from line 6689
 						auto member_alias_opt = gTemplateRegistry.lookup_alias_template(qualified_type_name);
@@ -7370,10 +7396,14 @@ ParseResult Parser::parse_type_specifier()
 						FLASH_LOG_FORMAT(Parser, Debug, "SFINAE: Substitution failure - unknown nested type: {}", qualified_type_name);
 						// Return a placeholder type that will cause instantiation to fail
 						// The caller (try_instantiate_single_template) will catch this and try the next overload
-						return ParseResult::error("SFINAE substitution failure: " + qualified_type_name, type_name_token);
+						StringBuilder error_builder;
+						std::string_view error_msg = error_builder.append("SFINAE substitution failure: ").append(qualified_type_name).commit();
+						return ParseResult::error(std::string(error_msg), type_name_token);
 					}
 					
-					return ParseResult::error("Unknown nested type: " + qualified_type_name, type_name_token);
+					StringBuilder error_builder;
+					std::string_view error_msg = error_builder.append("Unknown nested type: ").append(qualified_type_name).commit();
+					return ParseResult::error(std::string(error_msg), type_name_token);
 				}
 				
 				auto inst_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
@@ -16184,6 +16214,12 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 		namespaces.emplace_back(StringType<32>(final_identifier.value()));
 		consume_token(); // consume ::
 		
+		// Handle optional 'template' keyword in dependent contexts
+		// e.g., typename Base<T>::template member<U>
+		if (peek_token().has_value() && peek_token()->value() == "template") {
+			consume_token(); // consume 'template'
+		}
+		
 		// Get next identifier
 		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
 			return ParseResult::error("Expected identifier after '::'", peek_token().value_or(Token()));
@@ -20080,6 +20116,28 @@ ParseResult Parser::parse_template_function_declaration_body(
 	}
 
 	FunctionDeclarationNode& func_decl = *func_decl_ptr;
+
+	// Handle trailing return type for auto return type
+	// This must be done BEFORE skip_function_trailing_specifiers()
+	// Example: template<typename T> auto func(T x) -> decltype(x + 1)
+	DeclarationNode& decl_node = func_decl.decl_node();
+	TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+	if (return_type.type() == Type::Auto && peek_token().has_value() && peek_token()->value() == "->") {
+		consume_token();  // consume '->'
+		
+		ParseResult trailing_type_specifier = parse_type_specifier();
+		if (trailing_type_specifier.is_error()) {
+			return trailing_type_specifier;
+		}
+		
+		// Verify we got a TypeSpecifierNode
+		if (!trailing_type_specifier.node().has_value() || !trailing_type_specifier.node()->is<TypeSpecifierNode>()) {
+			return ParseResult::error("Expected type specifier for trailing return type", *current_token_);
+		}
+		
+		// Replace the auto type with the trailing return type
+		return_type = trailing_type_specifier.node()->as<TypeSpecifierNode>();
+	}
 
 	// Skip trailing function specifiers (const, volatile, &, &&, noexcept, etc.)
 	// These appear after the parameter list but before the function body
