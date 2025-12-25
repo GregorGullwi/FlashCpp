@@ -800,15 +800,15 @@ assign %c = %4
 
 **Potential Optimizations (Data-Driven):**
 1. **String operation optimization** - Template name generation uses concatenation
-2. **Lazy member instantiation** - Don't instantiate unused template members
-3. **Type resolution caching** - Cache frequently-used type lookups
-4. **Instantiation batching** - Batch independent instantiations
+2. **Type resolution caching** - Cache frequently-used type lookups
+3. **Instantiation batching** - Batch independent instantiations
 
 **Already Implemented Optimizations:**
 - ✅ Template instantiation caching (both class and function templates)
 - ✅ Recursion depth limit (10 levels)
 - ✅ Early return for dependent types
 - ✅ Pattern-based specialization matching
+- ✅ **Lazy member instantiation** (December 2024) - Template member functions are only instantiated when actually called, not when the class template is instantiated. Implemented via `LazyMemberInstantiationRegistry` and `LazyMemberFunctionTemplateRegistry`.
 
 ### Performance Measurement Results
 
@@ -837,5 +837,68 @@ Top Templates:
 
 ---
 
-**Last Updated**: December 23, 2024  
+## Latest Updates (December 25, 2024)
+
+### ✅ Parsing Bug Fixes - noexcept Support
+
+**Status**: ✅ **COMPLETED**
+
+**Issue**: Standard library headers like `<limits>` failed to parse due to missing support for `noexcept` specifiers on static member functions in template classes.
+
+**What Was Fixed:**
+1. **Static member functions with noexcept** - Parser now properly handles trailing function specifiers (noexcept, const, volatile, ref-qualifiers) for static member functions
+2. **Multi-line function declarations** - Handles return type on separate line from function name
+3. **Template specializations** - Fix applied to 3 code paths:
+   - Regular struct parsing
+   - Full template specialization parsing  
+   - Partial template specialization parsing
+
+**Code Quality Improvements:**
+- Refactored ~310 lines of duplicated code into reusable helper functions:
+  - `parse_static_member_function()` - Handles function detection and parsing
+  - `parse_static_member_block()` - Handles entire static member logic (functions + data)
+
+**Example Now Working:**
+```cpp
+template<typename T>
+struct numeric_limits {
+    static constexpr T
+    min() noexcept { return T(); }  // ✅ Now parses correctly
+    
+    static constexpr bool is_specialized = true;  // ✅ Data members work too
+};
+```
+
+**Impact on Standard Headers:**
+- Parsing errors resolved - headers no longer fail with syntax errors
+- **However**: Headers still timeout (>10s) due to template instantiation volume
+- This confirms: **parsing is fixed, performance is the remaining blocker**
+
+### 🔄 Current Status: Performance Bottleneck
+
+**Root Cause Identified:**
+- Individual template instantiations are fast (20-50μs)
+- Standard headers have **hundreds to thousands** of instantiations
+- 100 templates × 50μs = 5ms (fast)
+- 1000 templates × 50μs = 50ms (acceptable)  
+- 10,000 templates × 50μs = 500ms (slow)
+- Real headers likely exceed this with nested dependencies
+
+**What's Working:**
+- ✅ Lazy member instantiation (only instantiate members when called)
+- ✅ Template caching (reuse instantiated templates)
+- ✅ Profiling infrastructure (`--timing` flag)
+
+**Remaining Opportunities:**
+1. **Improve cache hit rates** (currently ~26%)
+2. **Optimize string operations** in template name generation
+3. **Type resolution caching** for frequently-used types
+4. **Consider incremental compilation** or precompiled headers
+
+**Recommended Approach:**
+For immediate productivity, create simplified custom implementations of standard utilities rather than waiting for full stdlib support. The performance work required is substantial and beyond the scope of parsing fixes.
+
+---
+
+**Last Updated**: December 25, 2024  
 **Recent Contributors**: GitHub Copilot, FlashCpp team

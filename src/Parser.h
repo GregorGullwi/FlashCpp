@@ -611,6 +611,28 @@ public:  // Public methods for template instantiation
         void skip_gcc_attributes();                   // Skip GCC __attribute__((...)) specifications
         void skip_noexcept_specifier();               // Skip noexcept or noexcept(expr) specifier
         void skip_function_trailing_specifiers();     // Skip all trailing specifiers after function parameters
+        
+        // Helper to parse static member functions (reduces code duplication)
+        bool parse_static_member_function(
+            ParseResult& type_and_name_result,
+            bool is_static_constexpr,
+            StringHandle struct_name_handle,
+            StructDeclarationNode& struct_ref,
+            StructTypeInfo* struct_info,
+            AccessSpecifier current_access,
+            const std::vector<StringHandle>& current_template_param_names
+        );
+        
+        // Helper to parse entire static member block (data or function) - reduces code duplication
+        ParseResult parse_static_member_block(
+            StringHandle struct_name_handle,
+            StructDeclarationNode& struct_ref,
+            StructTypeInfo* struct_info,
+            AccessSpecifier current_access,
+            const std::vector<StringHandle>& current_template_param_names,
+            bool use_struct_type_info = false  // If true, use struct_type_info.getStructInfo() for data members
+        );
+        
         Linkage parse_declspec_attributes();          // Parse Microsoft __declspec(...) and return linkage
         AttributeInfo parse_attributes();             // Parse all types of attributes and return linkage + calling convention
         CallingConvention parse_calling_convention(); // Parse calling convention keywords

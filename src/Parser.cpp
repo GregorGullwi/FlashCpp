@@ -3369,95 +3369,13 @@ ParseResult Parser::parse_struct_declaration()
 				}
 				
 				// Check if this is a static member function (has '(')
-				if (peek_token().has_value() && peek_token()->value() == "(") {
-					// This is a static member function
-					if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
-						return ParseResult::error("Expected declaration node for static member function", *peek_token());
+				if (parse_static_member_function(type_and_name_result, is_static_constexpr,
+				                                   qualified_struct_name, struct_ref, struct_info.get(),
+				                                   current_access, current_template_param_names_)) {
+					// Function was handled (or error occurred)
+					if (type_and_name_result.is_error()) {
+						return type_and_name_result;
 					}
-
-					DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
-
-					// Parse function declaration with parameters
-					auto func_result = parse_function_declaration(decl_node);
-					if (func_result.is_error()) {
-						return func_result;
-					}
-
-					if (!func_result.node().has_value()) {
-						return ParseResult::error("Failed to create function declaration node", *peek_token());
-					}
-
-					FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
-
-					// Create a new FunctionDeclarationNode with member function info
-					auto [member_func_node, member_func_ref] =
-						emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_struct_name);
-
-					// Copy parameters from the parsed function
-					for (const auto& param : func_decl.parameter_nodes()) {
-						member_func_ref.add_parameter_node(param);
-					}
-
-					// Mark as constexpr
-					member_func_ref.set_is_constexpr(is_static_constexpr);
-
-					// Skip any CV-qualifiers (const/volatile) after parameter list
-					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-						std::string_view kw = peek_token()->value();
-						if (kw == "const" || kw == "volatile") {
-							consume_token();
-						} else {
-							break;
-						}
-					}
-
-					// Parse function body if present
-					if (peek_token().has_value() && peek_token()->value() == "{") {
-						// DELAYED PARSING: Save the current position (start of '{')
-						SaveHandle body_start = save_token_position();
-
-						// Look up the struct type
-						auto type_it = gTypesByName.find(struct_name);
-						size_t struct_type_idx = 0;
-						if (type_it != gTypesByName.end()) {
-							struct_type_idx = type_it->second->type_index_;
-						}
-
-						// Skip over the function body by counting braces
-						skip_balanced_braces();
-
-						// Record this for delayed parsing
-						delayed_function_bodies_.push_back({
-							&member_func_ref,
-							body_start,
-							{},       // initializer_list_start (not used)
-							struct_name,
-							struct_type_idx,
-							&struct_ref,
-							false,    // has_initializer_list
-							false,    // is_constructor
-							false,    // is_destructor
-							nullptr,  // ctor_node
-							nullptr,  // dtor_node
-							current_template_param_names_
-						});
-					} else if (!consume_punctuator(";")) {
-						return ParseResult::error("Expected '{' or ';' after static member function declaration", *peek_token());
-					}
-
-					// Add static member function to struct
-					struct_ref.add_member_function(member_func_node, current_access, false, false, false);
-					
-					// Also register in StructTypeInfo
-					struct_info->member_functions.emplace_back(
-						StringTable::getOrInternStringHandle(decl_node.identifier_token().value()),
-						member_func_node,
-						current_access,
-						false,  // is_virtual
-						false,  // is_pure_virtual
-						false   // is_override
-					);
-
 					continue;
 				}
 				
@@ -11107,6 +11025,226 @@ void Parser::skip_function_trailing_specifiers()
 	}
 }
 
+// Helper to parse static member functions - reduces code duplication across three call sites
+bool Parser::parse_static_member_function(
+	ParseResult& type_and_name_result,
+	bool is_static_constexpr,
+	StringHandle struct_name_handle,
+	StructDeclarationNode& struct_ref,
+	StructTypeInfo* struct_info,
+	AccessSpecifier current_access,
+	const std::vector<StringHandle>& current_template_param_names
+) {
+	// Check if this is a function (has '(')
+	if (!peek_token().has_value() || peek_token()->value() != "(") {
+		return false;  // Not a function, caller should handle as static data member
+	}
+
+	// This is a static member function
+	if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
+		// Set error in result
+		type_and_name_result = ParseResult::error("Expected declaration node for static member function", *peek_token());
+		return true;  // We handled it (even though it's an error)
+	}
+
+	DeclarationNode& decl_node = const_cast<DeclarationNode&>(type_and_name_result.node()->as<DeclarationNode>());
+
+	// Parse function declaration with parameters
+	auto func_result = parse_function_declaration(decl_node);
+	if (func_result.is_error()) {
+		type_and_name_result = func_result;
+		return true;
+	}
+
+	if (!func_result.node().has_value()) {
+		type_and_name_result = ParseResult::error("Failed to create function declaration node", *peek_token());
+		return true;
+	}
+
+	FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+
+	// Create a new FunctionDeclarationNode with member function info
+	auto [member_func_node, member_func_ref] =
+		emplace_node_ref<FunctionDeclarationNode>(decl_node, struct_name_handle);
+
+	// Copy parameters from the parsed function
+	for (const auto& param : func_decl.parameter_nodes()) {
+		member_func_ref.add_parameter_node(param);
+	}
+
+	// Mark as constexpr
+	member_func_ref.set_is_constexpr(is_static_constexpr);
+
+	// Skip any trailing specifiers (const, volatile, noexcept, etc.) after parameter list
+	skip_function_trailing_specifiers();
+
+	// Parse function body if present
+	if (peek_token().has_value() && peek_token()->value() == "{") {
+		// DELAYED PARSING: Save the current position (start of '{')
+		SaveHandle body_start = save_token_position();
+
+		// Look up the struct type
+		auto type_it = gTypesByName.find(struct_name_handle);
+		size_t struct_type_idx = 0;
+		if (type_it != gTypesByName.end()) {
+			struct_type_idx = type_it->second->type_index_;
+		}
+
+		// Skip over the function body by counting braces
+		skip_balanced_braces();
+
+		// Record this for delayed parsing
+		delayed_function_bodies_.push_back({
+			&member_func_ref,
+			body_start,
+			{},       // initializer_list_start (not used)
+			struct_name_handle,
+			struct_type_idx,
+			&struct_ref,
+			false,    // has_initializer_list
+			false,    // is_constructor
+			false,    // is_destructor
+			nullptr,  // ctor_node
+			nullptr,  // dtor_node
+			current_template_param_names
+		});
+	} else if (!consume_punctuator(";")) {
+		type_and_name_result = ParseResult::error("Expected '{' or ';' after static member function declaration", *peek_token());
+		return true;
+	}
+
+	// Add static member function to struct
+	struct_ref.add_member_function(member_func_node, current_access, false, false, false);
+	
+	// Also register in StructTypeInfo
+	struct_info->member_functions.emplace_back(
+		StringTable::getOrInternStringHandle(decl_node.identifier_token().value()),
+		member_func_node,
+		current_access,
+		false,  // is_virtual
+		false,  // is_pure_virtual
+		false   // is_override
+	);
+
+	return true;  // Successfully handled as a function
+}
+
+// Helper to parse entire static member block (data or function) - reduces code duplication
+ParseResult Parser::parse_static_member_block(
+	StringHandle struct_name_handle,
+	StructDeclarationNode& struct_ref,
+	StructTypeInfo* struct_info,
+	AccessSpecifier current_access,
+	const std::vector<StringHandle>& current_template_param_names,
+	bool use_struct_type_info
+) {
+	// consume "static" already done by caller
+	
+	// Handle optional const and constexpr
+	bool is_const = false;
+	bool is_static_constexpr = false;
+	while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+		std::string_view kw = peek_token()->value();
+		if (kw == "const") {
+			is_const = true;
+			consume_token();
+		} else if (kw == "constexpr") {
+			is_static_constexpr = true;
+			consume_token();
+		} else if (kw == "inline") {
+			consume_token(); // consume 'inline'
+		} else {
+			break;
+		}
+	}
+	
+	// Parse type and name
+	auto type_and_name = parse_type_and_name();
+	if (type_and_name.is_error()) {
+		return type_and_name;
+	}
+
+	// Check if this is a static member function (has '(')
+	if (parse_static_member_function(type_and_name, is_static_constexpr,
+	                                   struct_name_handle, struct_ref, struct_info,
+	                                   current_access, current_template_param_names)) {
+		// Function was handled (or error occurred)
+		if (type_and_name.is_error()) {
+			return type_and_name;
+		}
+		return ParseResult::success();  // Signal caller to continue
+	}
+
+	// If not a function, handle as static data member
+	// Optional initializer
+	std::optional<ASTNode> init_expr_opt;
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator
+		&& peek_token()->value() == "=") {
+		consume_token(); // consume "="
+
+		// Parse initializer expression
+		auto init_result = parse_expression();
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		init_expr_opt = init_result.node();
+	}
+
+	// Consume semicolon
+	if (!consume_punctuator(";")) {
+		return ParseResult::error("Expected ';' after static member declaration", *peek_token());
+	}
+
+	// Get the declaration and type specifier
+	if (!type_and_name.node().has_value()) {
+		return ParseResult::error("Expected static member declaration", *peek_token());
+	}
+	const DeclarationNode& decl = type_and_name.node()->as<DeclarationNode>();
+	const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+
+	// Register static member in struct info
+	// Calculate size and alignment for the static member
+	size_t member_size = get_type_size_bits(type_spec.type()) / 8;
+	size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
+
+	// Register the static member
+	StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+	
+	// Determine the access specifier to use
+	AccessSpecifier access = current_access;
+	if (use_struct_type_info) {
+		// For template specializations that use struct_type_info.getStructInfo()
+		// We need to get it from the global map
+		auto type_it = gTypesByName.find(struct_name_handle);
+		if (type_it != gTypesByName.end() && type_it->second->getStructInfo()) {
+			const_cast<StructTypeInfo*>(type_it->second->getStructInfo())->addStaticMember(
+				static_member_name_handle,
+				type_spec.type(),
+				type_spec.type_index(),
+				member_size,
+				member_alignment,
+				AccessSpecifier::Public,  // Full specializations use Public
+				init_expr_opt,
+				is_const
+			);
+		}
+	} else {
+		// Normal case - use provided struct_info directly
+		struct_info->addStaticMember(
+			static_member_name_handle,
+			type_spec.type(),
+			type_spec.type_index(),
+			member_size,
+			member_alignment,
+			access,
+			init_expr_opt,
+			is_const
+		);
+	}
+
+	return ParseResult::success();  // Signal caller to continue
+}
+
 // Parse Microsoft __declspec(...) attributes and return linkage
 Linkage Parser::parse_declspec_attributes()
 {
@@ -17611,65 +17749,12 @@ if (struct_type_info.getStructInfo()) {
 						// Handle static members: static const int size = 10;
 						consume_token(); // consume "static"
 						
-						// Handle optional const
-						bool is_const = false;
-						if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword 
-							&& peek_token()->value() == "const") {
-							is_const = true;
-							consume_token();
+						auto static_result = parse_static_member_block(instantiated_name, struct_ref, 
+						                                                 struct_info.get(), current_access, 
+						                                                 current_template_param_names_, true);
+						if (static_result.is_error()) {
+							return static_result;
 						}
-						
-						// Parse type and name
-						auto type_and_name = parse_type_and_name();
-						if (type_and_name.is_error()) {
-							return type_and_name;
-						}
-
-						// Optional initializer
-						std::optional<ASTNode> init_expr_opt;
-						if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator
-							&& peek_token()->value() == "=") {
-							consume_token(); // consume "="
-
-							// Parse initializer expression
-							auto init_result = parse_expression();
-							if (init_result.is_error()) {
-								return init_result;
-							}
-							init_expr_opt = init_result.node();
-						}
-
-						// Consume semicolon
-						if (!consume_punctuator(";")) {
-							return ParseResult::error("Expected ';' after static member declaration", *peek_token());
-						}
-
-						// Get the declaration and type specifier
-						if (!type_and_name.node().has_value()) {
-							return ParseResult::error("Expected static member declaration", *peek_token());
-						}
-						const DeclarationNode& decl = type_and_name.node()->as<DeclarationNode>();
-						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-
-						// Register static member in struct info
-						// Calculate size and alignment for the static member
-						size_t member_size = get_type_size_bits(type_spec.type()) / 8;
-						size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
-
-						// Register the static member
-						// Phase 7B: Intern static member name and use StringHandle overload
-						StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
-						struct_type_info.getStructInfo()->addStaticMember(
-							static_member_name_handle,
-							type_spec.type(),
-							type_spec.type_index(),
-							member_size,
-							member_alignment,
-							AccessSpecifier::Public,
-							init_expr_opt,
-							is_const
-						);
-
 						continue;
 					}
 				}
@@ -18426,64 +18511,12 @@ if (struct_type_info.getStructInfo()) {
 						// Handle static members: static const int size = 10;
 						consume_token(); // consume "static"
 						
-						// Handle optional const
-						bool is_const = false;
-						if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword 
-							&& peek_token()->value() == "const") {
-							is_const = true;
-							consume_token();
+						auto static_result = parse_static_member_block(instantiated_name, struct_ref, 
+						                                                 struct_info.get(), current_access, 
+						                                                 current_template_param_names_, false);
+						if (static_result.is_error()) {
+							return static_result;
 						}
-						
-						// Parse type and name
-						auto type_and_name = parse_type_and_name();
-						if (type_and_name.is_error()) {
-							return type_and_name;
-						}
-
-						// Optional initializer
-						std::optional<ASTNode> init_expr_opt;
-						if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator
-							&& peek_token()->value() == "=") {
-							consume_token(); // consume "="
-
-							// Parse initializer expression
-							auto init_result = parse_expression();
-							if (init_result.is_error()) {
-								return init_result;
-							}
-							init_expr_opt = init_result.node();
-						}
-
-						// Consume semicolon
-						if (!consume_punctuator(";")) {
-							return ParseResult::error("Expected ';' after static member declaration", *peek_token());
-						}
-
-						// Get the declaration and type specifier
-						if (!type_and_name.node().has_value()) {
-							return ParseResult::error("Expected static member declaration", *peek_token());
-						}
-						const DeclarationNode& decl = type_and_name.node()->as<DeclarationNode>();
-						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-
-						// Register static member in struct info
-						// Calculate size and alignment for the static member
-						size_t member_size = get_type_size_bits(type_spec.type()) / 8;
-						size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
-
-						// Register the static member
-						// Phase 7B: Intern static member name and use StringHandle overload
-						StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
-						struct_info->addStaticMember(
-							static_member_name_handle,
-							type_spec.type(),
-							type_spec.type_index(),
-							member_size,
-							member_alignment,
-							current_access,
-							init_expr_opt,
-							is_const
-						);
 						continue;
 					} else if (peek_token()->value() == "using") {
 						// Handle type alias inside partial specialization: using _Type = T;
