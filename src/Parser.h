@@ -613,15 +613,25 @@ public:  // Public methods for template instantiation
         // Helper function for counting pack elements in template parameter packs
         size_t count_pack_elements(std::string_view pack_name) const;
 
+        // Phase 3: Expression context tracking for template disambiguation
+        enum class ExpressionContext {
+            Normal,              // Regular expression context
+            Decltype,            // Inside decltype() - strictest template-first rules
+            TemplateArgument,    // Template argument context
+            RequiresClause,      // Requires clause expression
+            ConceptDefinition    // Concept definition context
+        };
+
         // Minimum precedence to accept all operators (assignment has lowest precedence = 3)
         static constexpr int MIN_PRECEDENCE = 0;
         // Default precedence excludes comma operator (precedence 1) to prevent it from being
         // treated as an operator in contexts where it's a separator (declarations, arguments, etc.)
         static constexpr int DEFAULT_PRECEDENCE = 2;
-        ParseResult parse_expression(int precedence = DEFAULT_PRECEDENCE);
+        ParseResult parse_expression(int precedence = DEFAULT_PRECEDENCE, ExpressionContext context = ExpressionContext::Normal);
         ParseResult parse_expression_statement() { return parse_expression(); }  // Wrapper for keyword map
-        ParseResult parse_primary_expression();
-        ParseResult parse_unary_expression();
+        ParseResult parse_primary_expression(ExpressionContext context = ExpressionContext::Normal);
+        ParseResult parse_postfix_expression(ExpressionContext context = ExpressionContext::Normal);  // Phase 3: New postfix operator layer
+        ParseResult parse_unary_expression(ExpressionContext context = ExpressionContext::Normal);
         ParseResult parse_qualified_identifier();  // Parse namespace::identifier
         ParseResult parse_qualified_identifier_after_template(const Token& template_base_token);  // Parse Template<T>::member
 
