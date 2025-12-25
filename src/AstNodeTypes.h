@@ -932,6 +932,10 @@ struct TypeInfo
 
 	// For typedef of pointer types, store the pointer depth
 	size_t pointer_depth_ = 0;
+	
+	// For typedef of reference types, store the reference qualifier
+	bool is_reference_ = false;
+	bool is_rvalue_reference_ = false;
 
 	StringHandle name() const { 
 		return name_;

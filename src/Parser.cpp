@@ -6273,6 +6273,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					auto& alias_type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(alias_token->value()), type_spec.type(), gTypeInfo.size());
 					alias_type_info.type_index_ = type_spec.type_index();
 					alias_type_info.type_size_ = type_spec.size_in_bits();
+					alias_type_info.pointer_depth_ = type_spec.pointer_depth();
+					alias_type_info.is_reference_ = type_spec.is_reference();
+					alias_type_info.is_rvalue_reference_ = type_spec.is_rvalue_reference();
 					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 
 					// Return success (no AST node needed for type aliases)
@@ -7581,11 +7584,19 @@ ParseResult Parser::parse_type_specifier()
 			if (is_typedef) {
 				resolved_type = type_it->second->type_;
 				type_size = type_it->second->type_size_;
-				// Create TypeSpecifierNode and add pointer levels from typedef
+				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
 					resolved_type, user_type_index, type_size, type_name_token, cv_qualifier);
 				for (size_t i = 0; i < type_it->second->pointer_depth_; ++i) {
 					type_spec_node.as<TypeSpecifierNode>().add_pointer_level();
+				}
+				// Add reference qualifiers from typedef
+				if (type_it->second->is_reference_) {
+					if (type_it->second->is_rvalue_reference_) {
+						type_spec_node.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+					} else {
+						type_spec_node.as<TypeSpecifierNode>().set_lvalue_reference(true);  // lvalue reference
+					}
 				}
 				return ParseResult::success(type_spec_node);
 			} else if (user_type_index < gTypeInfo.size()) {
@@ -13568,6 +13579,8 @@ ParseResult Parser::parse_primary_expression()
 							
 								TypeSpecifierNode arg_type_node = *arg_type;
 							
+								FLASH_LOG(Parser, Debug, "  get_expression_type returned: type=", (int)arg_type_node.type(), ", is_ref=", arg_type_node.is_reference(), ", is_rvalue_ref=", arg_type_node.is_rvalue_reference());
+							
 								// For perfect forwarding: check if argument is an lvalue
 								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
 								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
@@ -13635,6 +13648,11 @@ ParseResult Parser::parse_primary_expression()
 									}
 								} else {
 									// No explicit template arguments - try overload resolution first
+									FLASH_LOG(Parser, Debug, "Function call to '", idenfifier_token.value(), "': found ", all_overloads.size(), " overload(s), ", arg_types.size(), " argument(s)");
+									for (size_t i = 0; i < arg_types.size(); ++i) {
+										const auto& arg = arg_types[i];
+										FLASH_LOG(Parser, Debug, "  Arg[", i, "]: type=", (int)arg.type(), ", is_ref=", arg.is_reference(), ", is_rvalue_ref=", arg.is_rvalue_reference(), ", is_lvalue_ref=", arg.is_lvalue_reference());
+									}
 									if (all_overloads.empty()) {
 										// No overloads found - try template instantiation (skip in extern "C" - C has no templates)
 										std::optional<ASTNode> instantiated_func;
@@ -13663,6 +13681,8 @@ ParseResult Parser::parse_primary_expression()
 										// Have overloads - do overload resolution
 										auto resolution_result = resolve_overload(all_overloads, arg_types);
 
+										FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution_result.has_match, ", is_ambiguous=", resolution_result.is_ambiguous);
+										
 										if (resolution_result.is_ambiguous) {
 											return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 										} else if (!resolution_result.has_match) {
@@ -16287,6 +16307,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const auto& func_call = std::get<FunctionCallNode>(expr);
 		const auto& decl = func_call.function_declaration();
 		TypeSpecifierNode return_type = decl.type_node().as<TypeSpecifierNode>();
+		
+		FLASH_LOG(Parser, Debug, "get_expression_type for function '", decl.identifier_token().value(), "': return_type=", (int)return_type.type(), ", is_ref=", return_type.is_reference(), ", is_rvalue_ref=", return_type.is_rvalue_reference());
 		
 		// If the return type is still auto, the function should have been deduced already
 		// during parsing. The TypeSpecifierNode in the declaration should have been updated.
@@ -21456,9 +21478,18 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				should_reparse = true;
 			} else if (orig_return_type.type_index() < gTypeInfo.size()) {
 				const TypeInfo& orig_type_info = gTypeInfo[orig_return_type.type_index()];
-				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", StringTable::getStringView(orig_type_info.name()));
-				// Re-parse if type contains _unknown (template-dependent marker)
-				should_reparse = (StringTable::getStringView(orig_type_info.name()).find("_unknown") != std::string::npos);
+				std::string_view type_name = StringTable::getStringView(orig_type_info.name());
+				FLASH_LOG_FORMAT(Templates, Debug, "Return type name: '{}'", type_name);
+				// Re-parse if type contains _unknown (legacy template-dependent marker)
+				// OR if type name contains template parameter markers like _T or ::type (typename member access)
+				// This is more robust than just checking for _unknown
+				bool has_unknown = type_name.find("_unknown") != std::string::npos;
+				bool has_template_param = type_name.find("_T") != std::string::npos || 
+				                          type_name.find("::type") != std::string::npos;
+				should_reparse = has_unknown || has_template_param;
+				if (should_reparse) {
+					FLASH_LOG(Templates, Debug, "Return type appears template-dependent - will re-parse");
+				}
 			} else {
 				should_reparse = false;
 			}
@@ -21514,6 +21545,24 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		// Re-parse the return type with template parameters in scope
 		auto return_type_result = parse_type_specifier();
+		
+		FLASH_LOG(Parser, Debug, "Template instantiation: parsed return type, is_error=", return_type_result.is_error(), ", has_node=", return_type_result.node().has_value(), ", current_token=", current_token_->value(), ", token_type=", (int)current_token_->type());
+		if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
+			auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
+			
+			// Check if there are reference qualifiers after the type specifier
+			bool is_punctuator_or_operator = current_token_->type() == Token::Type::Punctuator || current_token_->type() == Token::Type::Operator;
+			bool is_ampamp = current_token_->value() == "&&";
+			bool is_amp = current_token_->value() == "&";
+			
+			if (is_punctuator_or_operator && is_ampamp) {
+				consume_token();  // Consume &&
+				rt.set_reference(true);  // Set rvalue reference
+			} else if (is_punctuator_or_operator && is_amp) {
+				consume_token();  // Consume &
+				rt.set_lvalue_reference(true);  // Set lvalue reference
+			}
+		}
 		
 		// Restore position
 		restore_lexer_position_only(current_pos);
@@ -21599,15 +21648,42 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			orig_return_type, template_params, template_args_as_type_args
 		);
 		
-		return_type = emplace_node<TypeSpecifierNode>(
+		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_enum, ", type_index=", return_type_index);
+		if (return_type_index > 0 && return_type_index < gTypeInfo.size()) {
+			FLASH_LOG(Parser, Debug, "  type_index points to: '", StringTable::getStringView(gTypeInfo[return_type_index].name()), "'");
+		}
+		
+		TypeSpecifierNode new_return_type(
 			return_type_enum,
 			TypeQualifier::None,
 			get_type_size_bits(return_type_enum),
-			Token()
+			Token(),
+			orig_return_type.cv_qualifier()  // Preserve const/volatile qualifiers (CVQualifier)
 		);
+		new_return_type.set_type_index(return_type_index);
+		
+		FLASH_LOG(Parser, Debug, "Template fallback: created return type with type=", (int)return_type_enum, ", type_index=", return_type_index);
+		
+		// Preserve reference qualifiers from original return type
+		if (orig_return_type.is_reference()) {
+			if (orig_return_type.is_rvalue_reference()) {
+				new_return_type.set_reference(true);  // true = rvalue reference
+			} else {
+				new_return_type.set_lvalue_reference(true);
+			}
+		}
+		
+		// Preserve pointer levels
+		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
+			new_return_type.add_pointer_level(ptr_level.cv_qualifier);
+		}
+		
+		return_type = emplace_node<TypeSpecifierNode>(new_return_type);
 	}
 
 	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
+	
+	
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
 
 	// Add parameters with substituted types
@@ -21695,6 +21771,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				if (arg_type_index < arg_types.size()) {
 					const TypeSpecifierNode& arg_type = arg_types[arg_type_index];
 					
+					// Check if the original parameter type is a forwarding reference (T&&)
+					const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					bool is_forwarding_reference = orig_param_type.is_rvalue_reference();
+					
 					ASTNode param_type = emplace_node<TypeSpecifierNode>(
 						arg_type.type(),
 						arg_type.qualifier(),
@@ -21702,6 +21782,32 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						Token()
 					);
 					param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
+					
+					// If the original parameter was a forwarding reference (T&&), apply reference collapsing
+					// Reference collapsing rules:
+					//   T& && → T&    (lvalue reference wins)
+					//   T&& && → T&&  (both rvalue → rvalue)
+					//   T && → T&&    (non-reference + && → rvalue reference)
+					if (is_forwarding_reference) {
+						if (arg_type.is_lvalue_reference()) {
+							// Deduced type is lvalue reference (e.g., int&)
+							// Applying && gives int& && which collapses to int&
+							param_type.as<TypeSpecifierNode>().set_lvalue_reference(true);
+						} else if (arg_type.is_rvalue_reference()) {
+							// Deduced type is rvalue reference (e.g., int&&)
+							// Applying && gives int&& && which collapses to int&&
+							param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+						} else {
+							// Deduced type is non-reference (e.g., int from literal)
+							// Applying && gives int&&
+							param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+						}
+					}
+					
+					// Copy pointer levels and CV qualifiers
+					for (const auto& ptr_level : arg_type.pointer_levels()) {
+						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+					}
 					
 					auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 					new_func_ref.add_parameter_node(new_param_decl);

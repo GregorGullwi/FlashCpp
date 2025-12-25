@@ -1218,6 +1218,7 @@ struct FunctionDeclOp {
 	int return_pointer_depth = 0;
 	TypeIndex return_type_index = 0;  // Type index for struct/class return types
 	bool returns_reference = false;   // True if function returns a reference (T& or T&&)
+	bool returns_rvalue_reference = false;  // True if function returns an rvalue reference (T&&)
 	StringHandle function_name;  // Pure StringHandle
 	StringHandle struct_name;  // Empty for non-member functions
 	Linkage linkage = Linkage::None;
@@ -1766,7 +1767,16 @@ public:
 			for (size_t i = 0; i < op.return_pointer_depth; ++i) {
 				oss << "*";
 			}
-			oss << op.return_size_in_bits << " ";
+			oss << op.return_size_in_bits;
+			
+			// Return type reference qualifiers
+			if (op.returns_rvalue_reference) {
+				oss << "&&";
+			} else if (op.returns_reference) {
+				oss << "&";
+			}
+			
+			oss << " ";
 		
 			// Function name (Phase 4: Use helper)
 			oss << "@";
@@ -1789,7 +1799,13 @@ public:
 				if (param_type_info != gNativeTypes.end()) {
 					oss << param_type_info->second->name();
 				}
-				for (size_t j = 0; j < param.pointer_depth; ++j) {
+				// Print pointer levels, but exclude the extra level added for lvalue references
+				// (that level is represented by the & suffix instead)
+				int effective_pointer_depth = param.pointer_depth;
+				if (param.is_reference && !param.is_rvalue_reference && effective_pointer_depth > 0) {
+					effective_pointer_depth -= 1;  // Lvalue ref was represented as +1 pointer depth
+				}
+				for (size_t j = 0; j < effective_pointer_depth; ++j) {
 					oss << "*";
 				}
 				oss << param.size_in_bits;

@@ -1792,7 +1792,7 @@ private:
 		if (FLASH_LOG_ENABLED(Codegen, Debug)) {
 			const TypeSpecifierNode& debug_ret_type = func_decl.type_node().as<TypeSpecifierNode>();
 			FLASH_LOG(Codegen, Debug, "===== CODEGEN visitFunctionDeclarationNode: ", func_decl.identifier_token().value(), " =====");
-			FLASH_LOG(Codegen, Debug, "  return_type: ", (int)debug_ret_type.type(), " size: ", (int)debug_ret_type.size_in_bits(), " ptr_depth: ", debug_ret_type.pointer_depth());
+			FLASH_LOG(Codegen, Debug, "  return_type: ", (int)debug_ret_type.type(), " size: ", (int)debug_ret_type.size_in_bits(), " ptr_depth: ", debug_ret_type.pointer_depth(), " is_ref: ", debug_ret_type.is_reference(), " is_rvalue_ref: ", debug_ret_type.is_rvalue_reference());
 			FLASH_LOG(Codegen, Debug, "  is_member_function: ", node.is_member_function());
 			if (node.is_member_function()) {
 				FLASH_LOG(Codegen, Debug, "  parent_struct_name: ", node.parent_struct_name());
@@ -1807,7 +1807,9 @@ private:
 							  , "' type=", (int)param_type.type() 
 							  , " size=", (int)param_type.size_in_bits()
 							  , " ptr_depth=", param_type.pointer_depth()
-							  , " base_cv=", (int)param_type.cv_qualifier());
+							  , " base_cv=", (int)param_type.cv_qualifier()
+							  , " is_ref=", param_type.is_reference()
+							  , " is_rvalue_ref=", param_type.is_rvalue_reference());
 					for (size_t j = 0; j < param_type.pointer_levels().size(); ++j) {
 						FLASH_LOG(Codegen, Debug, " ptr[", j, "]_cv=", (int)param_type.pointer_levels()[j].cv_qualifier);
 					}
@@ -1827,14 +1829,16 @@ private:
 		
 		// Return type information
 		func_decl_op.return_type = ret_type.type();
-		// For pointer return types or reference return types, use 64-bit size (pointer size on x64)
-		// References are represented as pointers at the IR level
-		func_decl_op.return_size_in_bits = (ret_type.pointer_depth() > 0 || ret_type.is_reference()) 
+		// For pointer return types, use 64-bit size (pointer size on x64)
+		// For reference return types, keep the base type size (the reference itself is 64-bit at ABI level,
+		// but we display it as the base type with a reference qualifier)
+		func_decl_op.return_size_in_bits = (ret_type.pointer_depth() > 0) 
 			? 64 
 			: static_cast<int>(ret_type.size_in_bits());
 		func_decl_op.return_pointer_depth = ret_type.pointer_depth();
 		func_decl_op.return_type_index = ret_type.type_index();
 		func_decl_op.returns_reference = ret_type.is_reference();
+		func_decl_op.returns_rvalue_reference = ret_type.is_rvalue_reference();
 		
 		// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this (pointer/reference returns are in RAX like regular pointers)
@@ -6069,12 +6073,11 @@ private:
 				return { type_node.type(), size_bits, result_temp, static_cast<unsigned long long>(type_index) };
 			}
 
-			// Check if this is a lvalue reference parameter - if so, we need to dereference it
-			// Lvalue reference parameters hold an address, and we need to load the value from that address
+			// Check if this is a reference parameter - if so, we need to dereference it
+			// Reference parameters (both lvalue & and rvalue &&) hold an address, and we need to load the value from that address
 			// EXCEPT for array references, where the reference IS the array pointer
-			// NOTE: Rvalue references (&&) are NOT dereferenced - they're passed/stored as pointers but used as-is
 			// IMPORTANT: When context is LValueAddress (e.g., LHS of assignment), DON'T dereference - return the parameter name directly
-			if (type_node.is_reference() && !type_node.is_rvalue_reference()) {
+			if (type_node.is_reference()) {
 				// For references to arrays (e.g., int (&arr)[3]), the reference parameter
 				// already holds the array address directly. We don't dereference it.
 				// Just return it as a pointer (64 bits on x64 architecture).
@@ -6215,11 +6218,10 @@ private:
 			} else {
 				// This is a local variable
 				
-				// Check if this is a lvalue reference variable - if so, we need to dereference it
-				// Lvalue reference variables hold an address, and we need to load the value from that address
+				// Check if this is a reference variable - if so, we need to dereference it
+				// Reference variables (both lvalue & and rvalue &&) hold an address, and we need to load the value from that address
 				// EXCEPT for array references, where the reference IS the array pointer
-				// NOTE: Rvalue references (&&) are NOT dereferenced - they're stored as pointers but used as-is
-				if (type_node.is_reference() && !type_node.is_rvalue_reference()) {
+				if (type_node.is_reference()) {
 					// For references to arrays (e.g., int (&arr)[3]), the reference variable
 					// already holds the array address directly. We don't dereference it.
 					// Just return it as a pointer (64 bits on x64 architecture).
@@ -10275,7 +10277,11 @@ private:
 		// Get return type information
 		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
 		call_op.return_type = return_type.type();
-		call_op.return_size_in_bits = (return_type.pointer_depth() > 0) ? 64 : static_cast<int>(return_type.size_in_bits());
+		// For pointers and references, use 64-bit size (pointer size on x64)
+		// References are represented as addresses at the IR level
+		call_op.return_size_in_bits = (return_type.pointer_depth() > 0 || return_type.is_reference()) 
+			? 64 
+			: static_cast<int>(return_type.size_in_bits());
 		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
 		
@@ -10331,7 +10337,11 @@ private:
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 
 		// Return the result variable with its type and size
-		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var, 0ULL };
+		// For references, return 64-bit size (address size)
+		int result_size = (return_type.pointer_depth() > 0 || return_type.is_reference())
+			? 64
+			: static_cast<int>(return_type.size_in_bits());
+		return { return_type.type(), result_size, ret_var, 0ULL };
 	}
 
 	std::vector<IrOperand> generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
@@ -13964,14 +13974,21 @@ private:
 	}
 
 	std::vector<IrOperand> generateStaticCastIr(const StaticCastNode& staticCastNode) {
-		// Evaluate the expression to cast
-		auto expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>());
-
-		// Get the target type from the type specifier
+		// Get the target type from the type specifier first
 		const auto& target_type_node = staticCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
 		size_t target_pointer_depth = target_type_node.pointer_depth();
+		
+		// For reference casts (both lvalue and rvalue), we need the address of the expression,
+		// not its loaded value. Use LValueAddress context to get the address without dereferencing.
+		ExpressionContext eval_context = ExpressionContext::Load;
+		if (target_type_node.is_reference()) {
+			eval_context = ExpressionContext::LValueAddress;
+		}
+		
+		// Evaluate the expression to cast
+		auto expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>(), eval_context);
 
 		// Get the source type
 		Type source_type = std::get<Type>(expr_operands[0]);

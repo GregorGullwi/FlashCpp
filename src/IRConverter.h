@@ -7863,6 +7863,7 @@ private:
 		current_function_offset_ = func_offset;
 		current_function_is_variadic_ = is_variadic;
 		current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
+		current_function_returns_reference_ = func_decl.returns_reference;  // Track if function returns a reference
 
 		// Patch pending branches from previous function before clearing
 		if (!pending_branches_.empty()) {
@@ -8506,9 +8507,10 @@ private:
 						int var_offset = it->second.offset;
 						
 						// Check if this is a reference variable - if so, dereference it
+						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
 						auto ref_it = reference_stack_info_.find(var_offset);
-						if (ref_it != reference_stack_info_.end()) {
-							// This is a reference - load pointer and dereference
+						if (ref_it != reference_stack_info_.end() && !current_function_returns_reference_) {
+							// This is a reference and function returns by value - load pointer and dereference
 							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing reference at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
 							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
@@ -8516,6 +8518,12 @@ private:
 							int value_size_bytes = ref_it->second.value_size_bits / 8;
 							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 							// Value is now in RAX, ready to return
+						} else if (ref_it != reference_stack_info_.end() && current_function_returns_reference_) {
+							// This is a reference and function returns a reference - return the address itself
+							FLASH_LOG(Codegen, Debug, "handleReturn: Returning reference address from offset ", var_offset);
+							X64Register ptr_reg = X64Register::RAX;
+							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer (address)
+							// Address is now in RAX, ready to return
 						} else {
 							// Not a reference - normal variable return
 							// Get the actual size of the variable being returned
@@ -12437,9 +12445,18 @@ private:
 				var_offset = it->second.offset;
 			}
 
-			// Calculate the address: LEA RAX, [RBP + offset]
+			// Calculate the address
+			// If the variable is a reference, it already holds an address - use MOV to load it
+			// Otherwise, use LEA to compute the address of the variable
 			X64Register target_reg = X64Register::RAX;
-			emitLeaFromFrame(target_reg, var_offset);
+			auto ref_it = reference_stack_info_.find(var_offset);
+			if (ref_it != reference_stack_info_.end()) {
+				// Variable is a reference - load the address it contains
+				emitMovFromFrame(target_reg, var_offset);
+			} else {
+				// Regular variable - compute its address
+				emitLeaFromFrame(target_reg, var_offset);
+			}
 
 			// Store the address to result_var (pointer is always 64-bit)
 			int32_t result_offset = getStackOffsetFromTempVar(op.result);
@@ -13944,6 +13961,7 @@ private:
 	uint32_t current_function_offset_ = 0;
 	bool current_function_is_variadic_ = false;
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter (RVO)
+	bool current_function_returns_reference_ = false;  // True if function returns a reference (lvalue or rvalue)
 	int32_t current_function_varargs_reg_save_offset_ = 0;  // Offset of varargs register save area (Linux only)
 
 	// Pending function info for exception handling
