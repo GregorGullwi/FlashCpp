@@ -75,7 +75,7 @@ int main() {
     : decltype(__detail::__or_fn<_Bn...>(0))
     { };
   ```
-  This pattern blocks `<utility>` and related headers.
+  This pattern blocks `<utility>` and related headers. The previous blocker (pack expansion in template arguments at line 175) has been FIXED as of December 25, 2024.
 
 **Other Headers Still Have Issues:**
 - `<vector>`, `<string>`, `<algorithm>` - Not yet tested after `<type_traits>` fix
@@ -885,7 +885,38 @@ Top Templates:
 
 ## Latest Updates (December 25, 2024)
 
-### ✅ Parsing Improvements - December 25, 2024 (Evening)
+### ✅ Parsing Improvements - December 25, 2024 (Evening - Part 2)
+
+**Status**: ✅ **PACK EXPANSION IN TEMPLATE ARGUMENTS IMPLEMENTED**
+
+#### 3. Pack Expansion in Template Arguments
+
+**Issue**: Standard library headers use pack expansion (`...`) in template argument expressions, which was not supported in template argument contexts.
+
+**What Was Fixed:**
+- Modified `parse_explicit_template_arguments()` to accept `...` as valid token after expressions
+- Added pack expansion handling for:
+  - Boolean literals (e.g., `true...`)
+  - Numeric literals (e.g., `42...`)
+  - Constant expressions in SFINAE context
+  - Dependent expressions in template declaration context (e.g., `!bool(Bn::value)...`)
+- Template arguments are now properly marked with `is_pack = true` when followed by `...`
+
+**Example Now Working:**
+```cpp
+template<typename... Bn>
+struct test {
+    // Pack expansion in template argument - the pattern from <type_traits> line 175
+    template<typename T>
+    using result = enable_if<!bool(Bn::value)...>;
+};
+```
+
+**Impact**: Enables parsing of SFINAE patterns with pack expansion in template arguments, unblocking line 175 of `<type_traits>` header.
+
+**Test**: `test_pack_expansion_template_args_ret42.cpp` ✅
+
+### ✅ Parsing Improvements - December 25, 2024 (Evening - Part 1)
 
 **Status**: ✅ **TWO NEW FEATURES IMPLEMENTED**
 
@@ -941,22 +972,21 @@ auto test_func(T x) -> decltype(x + 1) {
 
 **After Fix 2 (auto + trailing return):**
 - Line 175: ✅ **IMPROVED** - Now accepts `->` and starts parsing return type
-- Line 175: ❌ Current blocker at column 38 - Complex template argument expression
+- Line 175: ❌ Blocker at column 38 - Complex template argument expression with pack expansion
+
+**After Fix 3 (pack expansion in template arguments):**
+- Line 175: ✅ **FIXED** - Pack expansion `!bool(_Bn::value)...` now parses correctly
+- Line 194: ❌ **NEW BLOCKER** - `decltype` in base class specification
 
 **Current Blocker Details:**
 ```cpp
 template<typename... _Bn>
-auto __or_fn(int) -> __first_t<false_type,
-                                __enable_if_t<!bool(_Bn::value)>...>;
-                                         ^^^^^^^^^^^^^^^^^^^^^^^^
-                                         Parser struggles here
+struct __or_
+  : decltype(__detail::__or_fn<_Bn...>(0))
+    { };
 ```
 
-The issue is parsing `!bool(_Bn::value)` as a template argument, which involves:
-- Negation operator `!`
-- Type conversion/constructor `bool(...)`
-- Parameter pack member access `_Bn::value`
-- Parameter pack expansion `...`
+The issue is that `decltype` is not supported as a base class specifier. This requires significant changes to inheritance parsing logic.
 
 This is advanced SFINAE and would require significant template metaprogramming support.
 

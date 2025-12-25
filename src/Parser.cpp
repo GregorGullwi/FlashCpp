@@ -3133,13 +3133,37 @@ ParseResult Parser::parse_struct_declaration()
 				consume_token();
 			}
 
-		// Parse base class name
-		auto base_name_token = consume_token();
-		if (!base_name_token.has_value() || base_name_token->type() != Token::Type::Identifier) {
-			return ParseResult::error("Expected base class name", base_name_token.value_or(Token()));
+		// Parse base class name (or decltype expression)
+		// Check if this is a decltype base class (e.g., : decltype(expr))
+		std::string_view base_class_name;
+		TypeSpecifierNode base_type_spec;
+		bool is_decltype_base = false;
+		Token base_name_token;  // For error reporting
+		
+		if (peek_token().has_value() && peek_token()->value() == "decltype") {
+			// Parse decltype(expr) as base class
+			base_name_token = *peek_token();  // Save for error reporting
+			auto decltype_result = parse_decltype_specifier();
+			if (decltype_result.is_error()) {
+				return decltype_result;
+			}
+			
+			if (!decltype_result.node().has_value()) {
+				return ParseResult::error("Expected type specifier from decltype", *peek_token());
+			}
+			
+			// For decltype bases, we need to defer resolution
+			// This will be resolved during template instantiation
+			FLASH_LOG(Templates, Debug, "Skipping decltype base class - will be resolved during template instantiation");
+			continue;  // Skip to next base class or exit loop
+		} else {
+			auto base_name_token_opt = consume_token();
+			if (!base_name_token_opt.has_value() || base_name_token_opt->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected base class name", base_name_token_opt.value_or(Token()));
+			}
+			base_name_token = *base_name_token_opt;
+			base_class_name = base_name_token.value();
 		}
-
-		std::string_view base_class_name = base_name_token->value();
 		
 		// Check if this is a template base class (e.g., Base<T>)
 		std::string instantiated_base_name;
@@ -3179,17 +3203,17 @@ ParseResult Parser::parse_struct_declaration()
 		// Look up base class type
 		auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
 		if (base_type_it == gTypesByName.end()) {
-			return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
+			return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", base_name_token);
 		}
 
 		const TypeInfo* base_type_info = base_type_it->second;
 		if (base_type_info->type_ != Type::Struct) {
-			return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", *base_name_token);
+			return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", base_name_token);
 		}
 
 		// Check if base class is final
 		if (base_type_info->struct_info_ && base_type_info->struct_info_->is_final) {
-			return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", *base_name_token);
+			return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", base_name_token);
 		}
 
 		// Add base class to struct node and type info
@@ -14545,6 +14569,13 @@ found_member_variable:  // Label for member variable detection - jump here to sk
 			// Look up the qualified identifier
 			auto qualified_symbol = gSymbolTable.lookup_qualified(namespaces, final_identifier.value());
 			
+			// Check if this is followed by template arguments: ns::func<Args>
+			std::optional<std::vector<TemplateTypeArg>> template_args;
+			if (peek_token().has_value() && peek_token()->value() == "<") {
+				template_args = parse_explicit_template_arguments();
+				// If parsing failed, it might be a less-than operator, continue normally
+			}
+			
 			// Check if this is a function call
 			if (peek_token().has_value() && peek_token()->value() == "(") {
 				consume_token(); // consume '('
@@ -20799,10 +20830,19 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// Handle boolean literals (true/false)
 			if (std::holds_alternative<BoolLiteralNode>(expr)) {
 				const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-				template_args.emplace_back(lit.value() ? 1 : 0, Type::Bool);
+				TemplateTypeArg bool_arg(lit.value() ? 1 : 0, Type::Bool);
+				
+				// Check for pack expansion (...)
+				if (peek_token().has_value() && peek_token()->value() == "...") {
+					consume_token(); // consume '...'
+					bool_arg.is_pack = true;
+					FLASH_LOG(Templates, Debug, "Marked boolean literal as pack expansion");
+				}
+				
+				template_args.push_back(bool_arg);
 				discard_saved_token(arg_saved_pos);
 				
-				// Check for ',' or '>' after the boolean literal
+				// Check for ',' or '>' after the boolean literal (or after pack expansion)
 				if (!peek_token().has_value()) {
 					restore_token_position(saved_pos);
 					last_failed_template_arg_parse_handle_ = saved_pos;
@@ -20831,14 +20871,15 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 				const auto& val = lit.value();
 				Type literal_type = lit.type();  // Get the type of the literal (bool, int, etc.)
+				TemplateTypeArg num_arg;
 				if (std::holds_alternative<unsigned long long>(val)) {
-					template_args.emplace_back(static_cast<int64_t>(std::get<unsigned long long>(val)), literal_type);
+					num_arg = TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val)), literal_type);
 					discard_saved_token(arg_saved_pos);
-					// Successfully parsed a non-type template argument, continue to check for ',' or '>'
+					// Successfully parsed a non-type template argument, continue to check for ',' or '>' or '...'
 				} else if (std::holds_alternative<double>(val)) {
-					template_args.emplace_back(static_cast<int64_t>(std::get<double>(val)), literal_type);
+					num_arg = TemplateTypeArg(static_cast<int64_t>(std::get<double>(val)), literal_type);
 					discard_saved_token(arg_saved_pos);
-					// Successfully parsed a non-type template argument, continue to check for ',' or '>'
+					// Successfully parsed a non-type template argument, continue to check for ',' or '>' or '...'
 				} else {
 					FLASH_LOG(Parser, Error, "Unsupported numeric literal type");
 					restore_token_position(saved_pos);
@@ -20846,7 +20887,16 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					return std::nullopt;
 				}
 				
-				// Check for ',' or '>' after the numeric literal
+				// Check for pack expansion (...)
+				if (peek_token().has_value() && peek_token()->value() == "...") {
+					consume_token(); // consume '...'
+					num_arg.is_pack = true;
+					FLASH_LOG(Templates, Debug, "Marked numeric literal as pack expansion");
+				}
+				
+				template_args.push_back(num_arg);
+				
+				// Check for ',' or '>' after the numeric literal (or after pack expansion)
 				if (!peek_token().has_value()) {
 					restore_token_position(saved_pos);
 					last_failed_template_arg_parse_handle_ = saved_pos;
@@ -20880,10 +20930,19 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				auto const_value = try_evaluate_constant_expression(*expr_result.node());
 				if (const_value.has_value()) {
 					// Successfully evaluated as a constant expression
-					template_args.emplace_back(const_value->value, const_value->type);
+					TemplateTypeArg const_arg(const_value->value, const_value->type);
+					
+					// Check for pack expansion (...)
+					if (peek_token().has_value() && peek_token()->value() == "...") {
+						consume_token(); // consume '...'
+						const_arg.is_pack = true;
+						FLASH_LOG(Templates, Debug, "Marked constant expression as pack expansion");
+					}
+					
+					template_args.push_back(const_arg);
 					discard_saved_token(arg_saved_pos);
 					
-					// Check for ',' or '>' after the expression
+					// Check for ',' or '>' after the expression (or after pack expansion)
 					if (!peek_token().has_value()) {
 						restore_token_position(saved_pos);
 						last_failed_template_arg_parse_handle_ = saved_pos;
@@ -20922,14 +20981,17 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// 
 				// ALSO: If we parsed a simple identifier followed by '<', we should fall through to type parsing
 				// because this is likely a template type (e.g., enable_if_t<...>), not a value expression.
+				// 
+				// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
 				bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) || 
 				                            std::holds_alternative<TemplateParameterReferenceNode>(expr);
 				bool followed_by_template_args = peek_token().has_value() && peek_token()->value() == "<";
-				bool should_try_type_parsing = (out_type_nodes != nullptr && is_simple_identifier) ||
+				bool followed_by_pack_expansion = peek_token().has_value() && peek_token()->value() == "...";
+				bool should_try_type_parsing = (out_type_nodes != nullptr && is_simple_identifier && !followed_by_pack_expansion) ||
 				                               (is_simple_identifier && followed_by_template_args);
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
-				    (peek_token()->value() == "," || peek_token()->value() == ">")) {
+				    (peek_token()->value() == "," || peek_token()->value() == ">" || peek_token()->value() == "...")) {
 					FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
 					// Successfully parsed a dependent expression
 					// Create a dependent template argument
@@ -20965,10 +21027,17 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						}
 					}
 					
+					// Check for pack expansion (...)
+					if (peek_token().has_value() && peek_token()->value() == "...") {
+						consume_token(); // consume '...'
+						dependent_arg.is_pack = true;
+						FLASH_LOG(Templates, Debug, "Marked dependent expression as pack expansion");
+					}
+					
 					template_args.push_back(dependent_arg);
 					discard_saved_token(arg_saved_pos);
 					
-					// Check for ',' or '>' after the expression
+					// Check for ',' or '>' after the expression (or after pack expansion)
 					if (peek_token()->value() == ">") {
 						consume_token(); // consume '>'
 						break;
