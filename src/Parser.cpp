@@ -3401,15 +3401,8 @@ ParseResult Parser::parse_struct_declaration()
 					// Mark as constexpr
 					member_func_ref.set_is_constexpr(is_static_constexpr);
 
-					// Skip any CV-qualifiers (const/volatile) after parameter list
-					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-						std::string_view kw = peek_token()->value();
-						if (kw == "const" || kw == "volatile") {
-							consume_token();
-						} else {
-							break;
-						}
-					}
+					// Skip any trailing specifiers (const, volatile, noexcept, etc.) after parameter list
+					skip_function_trailing_specifiers();
 
 					// Parse function body if present
 					if (peek_token().has_value() && peek_token()->value() == "{") {
