@@ -7200,9 +7200,15 @@ ParseResult Parser::parse_type_specifier()
 								
 								// Append template arguments to qualified_type_name
 								// For dependent types, include argument count for better debugging
-								qualified_type_name += "<";
-								qualified_type_name += std::to_string(member_template_args->size());
-								qualified_type_name += " args>";
+								StringBuilder type_name_builder;
+								std::string_view extended_name = type_name_builder
+									.append(qualified_type_name)
+									.append("<")
+									.append(member_template_args->size())
+									.append(" args>")
+									.commit();
+								qualified_type_name = std::string(extended_name);
+								type_name_builder.reset();
 							}
 							
 							// Create a placeholder for the dependent qualified type
