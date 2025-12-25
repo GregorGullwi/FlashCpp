@@ -20799,10 +20799,19 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// Handle boolean literals (true/false)
 			if (std::holds_alternative<BoolLiteralNode>(expr)) {
 				const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-				template_args.emplace_back(lit.value() ? 1 : 0, Type::Bool);
+				TemplateTypeArg bool_arg(lit.value() ? 1 : 0, Type::Bool);
+				
+				// Check for pack expansion (...)
+				if (peek_token().has_value() && peek_token()->value() == "...") {
+					consume_token(); // consume '...'
+					bool_arg.is_pack = true;
+					FLASH_LOG(Templates, Debug, "Marked boolean literal as pack expansion");
+				}
+				
+				template_args.push_back(bool_arg);
 				discard_saved_token(arg_saved_pos);
 				
-				// Check for ',' or '>' after the boolean literal
+				// Check for ',' or '>' after the boolean literal (or after pack expansion)
 				if (!peek_token().has_value()) {
 					restore_token_position(saved_pos);
 					last_failed_template_arg_parse_handle_ = saved_pos;
@@ -20831,14 +20840,15 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 				const auto& val = lit.value();
 				Type literal_type = lit.type();  // Get the type of the literal (bool, int, etc.)
+				TemplateTypeArg num_arg;
 				if (std::holds_alternative<unsigned long long>(val)) {
-					template_args.emplace_back(static_cast<int64_t>(std::get<unsigned long long>(val)), literal_type);
+					num_arg = TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val)), literal_type);
 					discard_saved_token(arg_saved_pos);
-					// Successfully parsed a non-type template argument, continue to check for ',' or '>'
+					// Successfully parsed a non-type template argument, continue to check for ',' or '>' or '...'
 				} else if (std::holds_alternative<double>(val)) {
-					template_args.emplace_back(static_cast<int64_t>(std::get<double>(val)), literal_type);
+					num_arg = TemplateTypeArg(static_cast<int64_t>(std::get<double>(val)), literal_type);
 					discard_saved_token(arg_saved_pos);
-					// Successfully parsed a non-type template argument, continue to check for ',' or '>'
+					// Successfully parsed a non-type template argument, continue to check for ',' or '>' or '...'
 				} else {
 					FLASH_LOG(Parser, Error, "Unsupported numeric literal type");
 					restore_token_position(saved_pos);
@@ -20846,7 +20856,16 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					return std::nullopt;
 				}
 				
-				// Check for ',' or '>' after the numeric literal
+				// Check for pack expansion (...)
+				if (peek_token().has_value() && peek_token()->value() == "...") {
+					consume_token(); // consume '...'
+					num_arg.is_pack = true;
+					FLASH_LOG(Templates, Debug, "Marked numeric literal as pack expansion");
+				}
+				
+				template_args.push_back(num_arg);
+				
+				// Check for ',' or '>' after the numeric literal (or after pack expansion)
 				if (!peek_token().has_value()) {
 					restore_token_position(saved_pos);
 					last_failed_template_arg_parse_handle_ = saved_pos;
@@ -20880,10 +20899,19 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				auto const_value = try_evaluate_constant_expression(*expr_result.node());
 				if (const_value.has_value()) {
 					// Successfully evaluated as a constant expression
-					template_args.emplace_back(const_value->value, const_value->type);
+					TemplateTypeArg const_arg(const_value->value, const_value->type);
+					
+					// Check for pack expansion (...)
+					if (peek_token().has_value() && peek_token()->value() == "...") {
+						consume_token(); // consume '...'
+						const_arg.is_pack = true;
+						FLASH_LOG(Templates, Debug, "Marked constant expression as pack expansion");
+					}
+					
+					template_args.push_back(const_arg);
 					discard_saved_token(arg_saved_pos);
 					
-					// Check for ',' or '>' after the expression
+					// Check for ',' or '>' after the expression (or after pack expansion)
 					if (!peek_token().has_value()) {
 						restore_token_position(saved_pos);
 						last_failed_template_arg_parse_handle_ = saved_pos;
@@ -20929,7 +20957,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				                               (is_simple_identifier && followed_by_template_args);
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
-				    (peek_token()->value() == "," || peek_token()->value() == ">")) {
+				    (peek_token()->value() == "," || peek_token()->value() == ">" || peek_token()->value() == "...")) {
 					FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
 					// Successfully parsed a dependent expression
 					// Create a dependent template argument
@@ -20965,10 +20993,17 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						}
 					}
 					
+					// Check for pack expansion (...)
+					if (peek_token().has_value() && peek_token()->value() == "...") {
+						consume_token(); // consume '...'
+						dependent_arg.is_pack = true;
+						FLASH_LOG(Templates, Debug, "Marked dependent expression as pack expansion");
+					}
+					
 					template_args.push_back(dependent_arg);
 					discard_saved_token(arg_saved_pos);
 					
-					// Check for ',' or '>' after the expression
+					// Check for ',' or '>' after the expression (or after pack expansion)
 					if (peek_token()->value() == ">") {
 						consume_token(); // consume '>'
 						break;
