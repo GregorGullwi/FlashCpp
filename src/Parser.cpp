@@ -20105,6 +20105,23 @@ ParseResult Parser::parse_template_function_declaration_body(
 
 	FunctionDeclarationNode& func_decl = *func_decl_ptr;
 
+	// Handle trailing return type for auto return type
+	// This must be done BEFORE skip_function_trailing_specifiers()
+	// Example: template<typename T> auto func(T x) -> decltype(x + 1)
+	DeclarationNode& decl_node = func_decl.decl_node();
+	TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+	if (return_type.type() == Type::Auto && peek_token().has_value() && peek_token()->value() == "->") {
+		consume_token();  // consume '->'
+		
+		ParseResult trailing_type_specifier = parse_type_specifier();
+		if (trailing_type_specifier.is_error()) {
+			return trailing_type_specifier;
+		}
+		
+		// Replace the auto type with the trailing return type
+		return_type = trailing_type_specifier.node()->as<TypeSpecifierNode>();
+	}
+
 	// Skip trailing function specifiers (const, volatile, &, &&, noexcept, etc.)
 	// These appear after the parameter list but before the function body
 	// For namespace-scope template functions, we skip them (member functions handle them differently)
