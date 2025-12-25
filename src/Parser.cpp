@@ -12516,6 +12516,23 @@ ParseResult Parser::parse_primary_expression()
 				qualified_name_builder.append(qual_id.name());
 				std::string_view qualified_name = qualified_name_builder.commit();
 				
+				// Phase 1 C++20: If we have explicit template arguments, use them instead of deducing
+				if (template_args.has_value() && !template_args->empty()) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Using explicit template arguments for function call to '{}'", qualified_name);
+					// Try to instantiate with explicit template arguments
+					std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args);
+					if (!template_inst.has_value()) {
+						// Try with simple name
+						template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args);
+					}
+					
+					if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+						identifierType = *template_inst;
+						FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated function template '{}' with explicit arguments", qualified_name);
+					}
+				}
+				
+				// If still not found and no explicit template arguments, try deducing from function arguments
 				// Extract argument types for template instantiation
 				std::vector<TypeSpecifierNode> arg_types;
 				arg_types.reserve(args.size());
