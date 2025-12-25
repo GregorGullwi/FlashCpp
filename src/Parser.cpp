@@ -6576,6 +6576,62 @@ std::optional<std::pair<Type, unsigned char>> Parser::get_builtin_type_info(std:
 	return std::nullopt;
 }
 
+// Helper function to parse functional-style cast: Type(expression)
+// This consolidates the logic for parsing functional casts from both keyword and identifier contexts
+ParseResult Parser::parse_functional_cast(std::string_view type_name, const Token& type_token) {
+	// Expect '(' after type name
+	if (!current_token_.has_value() || current_token_->value() != "(") {
+		return ParseResult::error("Expected '(' for functional cast", type_token);
+	}
+	
+	consume_token(); // consume '('
+	
+	// Parse the expression inside the parentheses
+	ParseResult expr_result = parse_expression();
+	if (expr_result.is_error()) {
+		return expr_result;
+	}
+	
+	if (!consume_punctuator(")")) {
+		return ParseResult::error("Expected ')' after functional cast expression", *current_token_);
+	}
+	
+	// Create a type specifier for the cast using the helper function
+	Type cast_type = Type::Int; // default
+	TypeQualifier qualifier = TypeQualifier::None;
+	unsigned char type_size = 32;
+	
+	auto type_info = get_builtin_type_info(type_name);
+	if (type_info.has_value()) {
+		cast_type = type_info->first;
+		type_size = type_info->second;
+		// Handle special case for unsigned qualifier
+		if (type_name == "unsigned") {
+			qualifier = TypeQualifier::Unsigned;
+		}
+	} else {
+		// User-defined type - look it up
+		StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
+		auto type_it = gTypesByName.find(type_handle);
+		if (type_it != gTypesByName.end()) {
+			const TypeInfo* type_info = type_it->second;
+			cast_type = type_info->type_;
+			type_size = type_info->type_size_;
+			if (type_info->isStruct()) {
+				cast_type = Type::Struct;
+			}
+		}
+	}
+	
+	auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token);
+	
+	// Create a static cast node (functional cast behaves like static_cast)
+	auto result = emplace_node<ExpressionNode>(
+		StaticCastNode(type_node, *expr_result.node(), type_token));
+	
+	return ParseResult::success(result);
+}
+
 ParseResult Parser::parse_type_specifier()
 {
 	FLASH_LOG(Parser, Debug, "parse_type_specifier: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
@@ -11474,45 +11530,15 @@ ParseResult Parser::parse_primary_expression()
 		
 		if (is_builtin_type) {
 			Token type_token = *current_token_;
+			std::string_view kw = current_token_->value();
 			consume_token(); // consume the type keyword
 			
 			// Check if followed by '(' for functional cast
 			if (current_token_.has_value() && current_token_->value() == "(") {
-				consume_token(); // consume '('
-				
-				// Parse the expression inside the parentheses
-				ParseResult expr_result = parse_expression();
-				if (expr_result.is_error()) {
-					return expr_result;
+				ParseResult cast_result = parse_functional_cast(kw, type_token);
+				if (!cast_result.is_error() && cast_result.node().has_value()) {
+					return cast_result;
 				}
-				
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after functional cast expression", *current_token_);
-				}
-				
-				// Create a type specifier for the cast using the helper function
-				Type cast_type = Type::Int; // default
-				TypeQualifier qualifier = TypeQualifier::None;
-				unsigned char type_size = 32;
-				
-				auto type_info = get_builtin_type_info(kw);
-				if (type_info.has_value()) {
-					cast_type = type_info->first;
-					type_size = type_info->second;
-					// Handle special case for unsigned qualifier
-					if (kw == "unsigned") {
-						qualifier = TypeQualifier::Unsigned;
-					}
-				}
-				
-				auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token);
-				
-				// Create a static cast node (functional cast behaves like static_cast)
-				result = emplace_node<ExpressionNode>(
-					StaticCastNode(type_node, *expr_result.node(), type_token));
-				
-				if (result.has_value())
-					return ParseResult::success(*result);
 			} else {
 				// Not a functional cast - restore and continue with normal keyword handling
 				// Actually, we can't easily restore here. This is a problem.
@@ -12169,53 +12195,10 @@ ParseResult Parser::parse_primary_expression()
 			
 			if (is_type_name) {
 				// Parse as functional-style cast: Type(expression)
-				consume_token(); // consume '('
-				
-				// Parse the expression inside the parentheses
-				ParseResult expr_result = parse_expression();
-				if (expr_result.is_error()) {
-					return expr_result;
+				ParseResult cast_result = parse_functional_cast(id_name, idenfifier_token);
+				if (!cast_result.is_error() && cast_result.node().has_value()) {
+					return cast_result;
 				}
-				
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after functional cast expression", *current_token_);
-				}
-				
-				// Create a type specifier for the cast using the helper function
-				Type cast_type = Type::Int; // default
-				TypeQualifier qualifier = TypeQualifier::None;
-				unsigned char type_size = 32;
-				
-				auto type_info = get_builtin_type_info(id_name);
-				if (type_info.has_value()) {
-					cast_type = type_info->first;
-					type_size = type_info->second;
-					// Handle special case for unsigned qualifier
-					if (id_name == "unsigned") {
-						qualifier = TypeQualifier::Unsigned;
-					}
-				} else {
-					// User-defined type - look it up
-					StringHandle type_handle = StringTable::getOrInternStringHandle(id_name);
-					auto type_it = gTypesByName.find(type_handle);
-					if (type_it != gTypesByName.end()) {
-						const TypeInfo* type_info = type_it->second;
-						cast_type = type_info->type_;
-						type_size = type_info->type_size_;
-						if (type_info->isStruct()) {
-							cast_type = Type::Struct;
-						}
-					}
-				}
-				
-				auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, idenfifier_token);
-				
-				// Create a static cast node (functional cast behaves like static_cast)
-				result = emplace_node<ExpressionNode>(
-					StaticCastNode(type_node, *expr_result.node(), idenfifier_token));
-				
-				if (result.has_value())
-					return ParseResult::success(*result);
 			}
 		}
 		
