@@ -133,10 +133,28 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 		std::string_view func_name = decl_node.identifier_token().value();
 		FLASH_LOG(Templates, Debug, "  Function name: ", func_name);
 		
-		// Substitute template parameters in the template arguments
-		std::vector<TemplateTypeArg> substituted_template_args;
+		// Check if any arguments are pack expansions
+		bool has_pack_expansion = false;
 		for (const ASTNode& arg_node : template_arg_nodes) {
-			FLASH_LOG(Templates, Debug, "  Checking template argument node, has_value: ", arg_node.has_value(), " type: ", arg_node.type_name());
+			std::string_view pack_name;
+			if (isPackExpansion(arg_node, pack_name)) {
+				has_pack_expansion = true;
+				break;
+			}
+		}
+		
+		std::vector<TemplateTypeArg> substituted_template_args;
+		
+		if (has_pack_expansion) {
+			// Use pack expansion logic
+			FLASH_LOG(Templates, Debug, "  Template arguments contain pack expansion, expanding...");
+			substituted_template_args = expandPacksInArguments(template_arg_nodes);
+			FLASH_LOG(Templates, Debug, "  After pack expansion: ", substituted_template_args.size(), " arguments");
+		} else {
+			// Original logic for non-pack arguments
+			// Substitute template parameters in the template arguments
+			for (const ASTNode& arg_node : template_arg_nodes) {
+				FLASH_LOG(Templates, Debug, "  Checking template argument node, has_value: ", arg_node.has_value(), " type: ", arg_node.type_name());
 			
 			// Template arguments can be stored as TypeSpecifierNode for type arguments
 			if (arg_node.is<TypeSpecifierNode>()) {
@@ -224,6 +242,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				FLASH_LOG(Templates, Debug, "    Template argument is unknown type");
 			}
 		}
+		} // End of else block for non-pack arguments
 		
 		// Now we have substituted template arguments - instantiate the template
 		if (!substituted_template_args.empty()) {
@@ -493,4 +512,107 @@ void ExpressionSubstitutor::ensureTemplateInstantiated(
 	
 	// TODO: Use parser to trigger template instantiation
 	// This will be implemented once we integrate with the parser
+}
+
+// Helper: Check if a template argument node is a pack expansion
+bool ExpressionSubstitutor::isPackExpansion(const ASTNode& arg_node, std::string_view& pack_name) {
+	// Check if this is a TemplateParameterReferenceNode that refers to a pack
+	if (arg_node.is<ExpressionNode>()) {
+		const ExpressionNode& expr_variant = arg_node.as<ExpressionNode>();
+		bool is_template_param_ref = std::visit([](const auto& inner) -> bool {
+			using T = std::decay_t<decltype(inner)>;
+			return std::is_same_v<T, TemplateParameterReferenceNode>;
+		}, expr_variant);
+		
+		if (is_template_param_ref) {
+			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr_variant);
+			pack_name = tparam_ref.param_name().view();
+			
+			// Check if this parameter is in our pack map
+			if (pack_map_.find(pack_name) != pack_map_.end()) {
+				FLASH_LOG(Templates, Debug, "Detected pack expansion: ", pack_name);
+				return true;
+			}
+		}
+	}
+	
+	// Also check TypeSpecifierNode for pack types
+	if (arg_node.is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
+		if (type_spec.type_index() < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+			pack_name = StringTable::getStringView(type_info.name());
+			
+			// Check if this type is in our pack map
+			if (pack_map_.find(pack_name) != pack_map_.end()) {
+				FLASH_LOG(Templates, Debug, "Detected pack expansion (TypeSpecifier): ", pack_name);
+				return true;
+			}
+		}
+	}
+	
+	return false;
+}
+
+// Helper: Expand pack parameters in template arguments
+std::vector<TemplateTypeArg> ExpressionSubstitutor::expandPacksInArguments(
+	const std::vector<ASTNode>& template_arg_nodes) {
+	
+	std::vector<TemplateTypeArg> expanded_args;
+	
+	for (const ASTNode& arg_node : template_arg_nodes) {
+		std::string_view pack_name;
+		
+		// Check if this argument is a pack expansion
+		if (isPackExpansion(arg_node, pack_name)) {
+			// Expand the pack
+			auto pack_it = pack_map_.find(pack_name);
+			if (pack_it != pack_map_.end()) {
+				FLASH_LOG(Templates, Debug, "Expanding pack: ", pack_name, " with ", pack_it->second.size(), " arguments");
+				
+				// Add all arguments from the pack
+				for (const auto& pack_arg : pack_it->second) {
+					expanded_args.push_back(pack_arg);
+				}
+			}
+		} else {
+			// Regular argument - substitute if it's a template parameter
+			if (arg_node.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
+				std::string_view type_name = "";
+				
+				if (type_spec.type_index() < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					type_name = StringTable::getStringView(type_info.name());
+				}
+				
+				// Check if this is a scalar template parameter
+				auto it = param_map_.find(type_name);
+				if (it != param_map_.end()) {
+					expanded_args.push_back(it->second);
+				} else {
+					// Use as-is
+					expanded_args.push_back(TemplateTypeArg(type_spec));
+				}
+			} else if (arg_node.is<ExpressionNode>()) {
+				const ExpressionNode& expr_variant = arg_node.as<ExpressionNode>();
+				bool is_template_param_ref = std::visit([](const auto& inner) -> bool {
+					using T = std::decay_t<decltype(inner)>;
+					return std::is_same_v<T, TemplateParameterReferenceNode>;
+				}, expr_variant);
+				
+				if (is_template_param_ref) {
+					const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr_variant);
+					std::string_view param_name = tparam_ref.param_name().view();
+					
+					auto it = param_map_.find(param_name);
+					if (it != param_map_.end()) {
+						expanded_args.push_back(it->second);
+					}
+				}
+			}
+		}
+	}
+	
+	return expanded_args;
 }
