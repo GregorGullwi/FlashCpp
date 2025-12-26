@@ -3259,8 +3259,14 @@ ParseResult Parser::parse_struct_declaration()
 				discard_saved_token(saved_pos);
 				base_name_token = qualified_result->final_identifier;
 				
-				// Build the full qualified name
+				// Build the full qualified name efficiently
 				std::string full_name;
+				size_t total_size = qualified_result->final_identifier.value().size();
+				for (const auto& ns_handle : qualified_result->namespaces) {
+					total_size += StringTable::getStringView(ns_handle).size() + 2; // +2 for "::"
+				}
+				full_name.reserve(total_size);
+				
 				for (const auto& ns_handle : qualified_result->namespaces) {
 					if (!full_name.empty()) full_name += "::";
 					full_name += StringTable::getStringView(ns_handle);
@@ -3305,9 +3311,9 @@ ParseResult Parser::parse_struct_declaration()
 						continue;  // Skip to next base class or exit loop
 					}
 					
-					// Instantiate the template
-					std::string_view template_name = qualified_result->final_identifier.value();
-					auto instantiated_node = try_instantiate_class_template(template_name, template_args, true);
+					// Instantiate the template using the qualified name
+					// This handles namespace-qualified templates correctly
+					auto instantiated_node = try_instantiate_class_template(full_name, template_args, true);
 					if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
 						const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
 						full_name = StringTable::getStringView(class_decl.name());
