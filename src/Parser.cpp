@@ -23423,6 +23423,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			size_t member_alignment;
 			if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				member_alignment = 8;  // Pointer/reference alignment on x64
+			} else if (member_type == Type::Struct && member_type_index != 0) {
+				// For struct types, look up the actual alignment from gTypeInfo
+				const TypeInfo* member_struct_info = nullptr;
+				for (const auto& ti : gTypeInfo) {
+					if (ti.type_index_ == member_type_index) {
+						member_struct_info = &ti;
+						break;
+					}
+				}
+				if (member_struct_info && member_struct_info->getStructInfo()) {
+					member_alignment = member_struct_info->getStructInfo()->alignment;
+				} else {
+					member_alignment = get_type_alignment(member_type, member_size);
+				}
 			} else {
 				member_alignment = get_type_alignment(member_type, member_size);
 			}
@@ -24181,8 +24195,13 @@ if (struct_type_info.getStructInfo()) {
 				}
 				if (member_struct_info && member_struct_info->getStructInfo()) {
 					member_size = member_struct_info->getStructInfo()->total_size;
+					FLASH_LOG_FORMAT(Templates, Debug, "Primary template: Found struct member '{}' with type_index={}, total_size={} bytes, struct name={}", 
+					                 decl.identifier_token().value(), member_type_index, member_size,
+					                 StringTable::getStringView(member_struct_info->name()));
 				} else {
 					member_size = get_type_size_bits(member_type) / 8;
+					FLASH_LOG_FORMAT(Templates, Debug, "Primary template: Struct member '{}' type_index={} not found in gTypeInfo, using default size={} bytes", 
+					                 decl.identifier_token().value(), member_type_index, member_size);
 				}
 			} else {
 				member_size = get_type_size_bits(member_type) / 8;
@@ -24194,6 +24213,20 @@ if (struct_type_info.getStructInfo()) {
 		size_t member_alignment;
 		if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 			member_alignment = 8;  // Pointer/reference alignment on x64
+		} else if (member_type == Type::Struct && member_type_index != 0) {
+			// For struct types, look up the actual alignment from gTypeInfo
+			const TypeInfo* member_struct_info = nullptr;
+			for (const auto& ti : gTypeInfo) {
+				if (ti.type_index_ == member_type_index) {
+					member_struct_info = &ti;
+					break;
+				}
+			}
+			if (member_struct_info && member_struct_info->getStructInfo()) {
+				member_alignment = member_struct_info->getStructInfo()->alignment;
+			} else {
+				member_alignment = get_type_alignment(member_type, member_size);
+			}
 		} else {
 			member_alignment = get_type_alignment(member_type, member_size);
 		}
