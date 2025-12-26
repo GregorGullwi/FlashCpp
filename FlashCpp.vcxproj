@@ -167,6 +167,9 @@
     <ClCompile Include="src\AstNodeTypes.cpp" />
     <ClCompile Include="src\ChunkedAnyVector.cpp" />
     <ClCompile Include="src\CodeViewDebug.cpp" />
+    <ClCompile Include="src\ExpressionSubstitutor.cpp" />
+    <ClCompile Include="src\InstantiationQueue.cpp" />
+    <ClCompile Include="src\LazyMemberResolver.cpp" />
     <ClCompile Include="src\Parser.cpp" />
     <!-- Main file - exclude from Test and Benchmark -->
     <ClCompile Include="src\main.cpp">
@@ -200,12 +203,15 @@
     <ClInclude Include="src\CrashHandler.h" />
     <ClInclude Include="src\DwarfCFI.h" />
     <ClInclude Include="src\ElfFileWriter.h" />
+    <ClInclude Include="src\ExpressionSubstitutor.h" />
     <ClInclude Include="src\FileReader.h" />
     <ClInclude Include="src\FileTree.h" />
     <ClInclude Include="src\CompileContext.h" />
     <ClInclude Include="src\IRConverter.h" />
     <ClInclude Include="src\IROperandHelpers.h" />
     <ClInclude Include="src\IRTypes.h" />
+    <ClInclude Include="src\InstantiationQueue.h" />
+    <ClInclude Include="src\LazyMemberResolver.h" />
     <ClInclude Include="src\Lexer.h" />
     <ClInclude Include="src\AstNodeTypes.h" />
     <ClInclude Include="src\LLVMHeaders.h" />
