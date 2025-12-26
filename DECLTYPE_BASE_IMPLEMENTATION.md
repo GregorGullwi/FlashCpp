@@ -55,29 +55,42 @@ int main() {
 
 ### ⚠️ Template-Dependent decltype Expressions
 
-Template-dependent decltype expressions are **parsed and deferred correctly**, but evaluation during template instantiation requires template parameter substitution, which is not yet implemented.
+Template-dependent decltype expressions are **parsed and deferred correctly**, but full evaluation during template instantiation requires expression AST walking with template parameter substitution.
 
 **Example from `<type_traits>` (line 194):**
 ```cpp
 template<typename... _Bn>
 struct __or_
-  : decltype(__detail::__or_fn<_Bn...>(0))  // ⚠️ Needs template parameter substitution
+  : decltype(__detail::__or_fn<_Bn...>(0))  // ⚠️ Needs expression AST walker
     { };
 ```
 
-**What happens:**
-1. ✅ Parser correctly identifies this as a decltype base
-2. ✅ Expression is stored and deferred until instantiation
-3. ⚠️ During instantiation, the expression cannot be evaluated because `_Bn...` hasn't been substituted
-4. ⚠️ Base class is not added (type_index remains 0)
+**What works now:**
+1. ✅ Parser correctly identifies and defers decltype bases
+2. ✅ Substitution infrastructure is in place
+3. ✅ Error messages guide developers
 
-**To fully support this pattern, we need to:**
-1. Implement template parameter substitution in expression AST nodes
-2. Walk the decltype expression tree and replace template parameter references
-3. Re-evaluate the expression with concrete types
-4. Add the resulting base class
+**What's needed for full support:**
+1. **Expression AST Walker**: Traverse the decltype expression tree
+2. **Template Reference Detection**: Find references like `base_trait<T>` in the expression
+3. **Argument Substitution**: Replace `T` with concrete types in template arguments
+4. **Template Instantiation**: Instantiate `base_trait<int>` when `T=int`
+5. **Expression Update**: Update the expression to reference instantiated types
 
-This is a complex feature that affects expression evaluation, not just parsing.
+**Example showing the challenge:**
+```cpp
+template<typename T>
+struct wrapper : decltype(base_trait<T>()) { };  // T needs substitution
+
+// When instantiating wrapper<int>:
+// 1. Expression contains constructor call to base_trait<T>
+// 2. Need to substitute T → int in template arguments
+// 3. Instantiate base_trait<int>
+// 4. Update expression to reference base_trait<int>
+// 5. Evaluate to get final base class type
+```
+
+**Current Workaround**: Use explicit base class names or conditionals instead of decltype for template-dependent patterns.
 
 ## Testing
 
