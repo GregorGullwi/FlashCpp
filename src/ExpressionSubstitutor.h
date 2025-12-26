@@ -37,7 +37,7 @@ public:
 	/// @param parser Reference to the parser for triggering template instantiations
 	ExpressionSubstitutor(
 		const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
-		const std::unordered_map<std::string_view, std::vector<TemplateTypeArg>>& pack_map,
+		const std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>& pack_map,
 		Parser& parser)
 		: param_map_(param_map), pack_map_(pack_map), parser_(parser) {}
 
@@ -72,6 +72,6 @@ private:
 
 	// Substitution context
 	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map_;
-	const std::unordered_map<std::string_view, std::vector<TemplateTypeArg>> pack_map_;
+	const std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_map_;
 	Parser& parser_;
 };

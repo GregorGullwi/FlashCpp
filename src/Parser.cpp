@@ -24183,7 +24183,7 @@ if (struct_type_info.getStructInfo()) {
 			// Build maps from template parameter NAME to concrete type for substitution
 			// Note: We can't use type_index because template parameters are cleaned up after parsing
 			std::unordered_map<std::string_view, TemplateTypeArg> name_substitution_map;
-			std::unordered_map<std::string_view, std::vector<TemplateTypeArg>> pack_substitution_map;
+			std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_substitution_map;
 			
 			size_t arg_index = 0;
 			for (size_t i = 0; i < template_params.size(); ++i) {
@@ -24201,7 +24201,9 @@ if (struct_type_info.getStructInfo()) {
 					for (size_t j = arg_index; j < template_args_to_use.size(); ++j) {
 						pack_args.push_back(template_args_to_use[j]);
 					}
-					pack_substitution_map[param_name] = pack_args;
+					// Intern the pack name as StringHandle
+					StringHandle pack_handle = StringTable::getOrInternStringHandle(param_name);
+					pack_substitution_map[pack_handle] = pack_args;
 					FLASH_LOG(Templates, Debug, "Added pack substitution: ", param_name, " -> ", pack_args.size(), " arguments");
 					// All remaining args consumed
 					break;
