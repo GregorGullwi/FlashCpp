@@ -7,6 +7,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "TemplateProfilingStats.h"
+#include "ExpressionSubstitutor.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -13033,6 +13034,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Phase 1: C++20 Template Argument Disambiguation - always try to parse template arguments
 		// after qualified identifiers, regardless of context
 		std::optional<std::vector<TemplateTypeArg>> template_args;
+		std::vector<ASTNode> template_arg_nodes;  // Store the actual expression nodes
 		if (current_token_.has_value() && current_token_->value() == "<") {
 			// Build the qualified name from namespaces using StringBuilder
 			StringBuilder qualified_name_builder;
@@ -13045,7 +13047,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Phase 1: Always try to parse template arguments speculatively
 			// C++20 spec: After :: in qualified-id, '<' is always template argument delimiter
 			FLASH_LOG_FORMAT(Parser, Debug, "Qualified identifier '{}' followed by '<', attempting template argument parsing", qualified_name);
-			template_args = parse_explicit_template_arguments();
+			template_args = parse_explicit_template_arguments(&template_arg_nodes);
 			
 			if (template_args.has_value()) {
 				FLASH_LOG_FORMAT(Parser, Debug, "Successfully parsed {} template arguments for '{}'", template_args->size(), qualified_name);
@@ -13321,12 +13323,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Get the DeclarationNode (works for both DeclarationNode and FunctionDeclarationNode)
 			const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
 			if (!decl_ptr) {
-				return ParseResult::error("Invalid function declaration (template args path)", qual_id.identifier_token());
+				return ParseResult::error("Invalid function declaration (template args path)", *current_token_);
 			}
 
+				FLASH_LOG(Parser, Debug, "Creating FunctionCallNode for qualified identifier with template args");
 				// Create function call node with the qualified identifier
 				result = emplace_node<ExpressionNode>(
 					FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), qual_id.identifier_token()));
+				
+				// If explicit template arguments were provided, store them in the FunctionCallNode
+				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))
+				bool has_explicit_template_args = template_args.has_value() && !template_args->empty() && !template_arg_nodes.empty();
+				if (has_explicit_template_args) {
+					FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
+					func_call.set_template_arguments(std::move(template_arg_nodes));
+					FLASH_LOG(Templates, Debug, "Stored ", template_arg_nodes.size(), " template argument nodes in FunctionCallNode (path 1)");
+				}
 				
 				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 				if (identifierType->is<FunctionDeclarationNode>()) {
@@ -13383,9 +13395,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// Check if final identifier is followed by template arguments: ns::Template<Args>
 			std::optional<std::vector<TemplateTypeArg>> template_args;
+			std::vector<ASTNode> template_arg_nodes;  // Store the actual expression nodes
 			if (peek_token().has_value() && peek_token()->value() == "<") {
 				FLASH_LOG(Parser, Debug, "Qualified identifier followed by '<', attempting to parse template arguments");
-				template_args = parse_explicit_template_arguments();
+				template_args = parse_explicit_template_arguments(&template_arg_nodes);
 				// If parsing failed, it might be a less-than operator, continue normally
 			}
 			
@@ -13566,6 +13579,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Create function call node with the qualified identifier
 				auto function_call_node = emplace_node<ExpressionNode>(
 					FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), final_identifier));
+				
+				// If explicit template arguments were provided, store them in the FunctionCallNode
+				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))
+				if (template_args.has_value() && !template_args->empty() && !template_arg_nodes.empty()) {
+					std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_template_arguments(std::move(template_arg_nodes));
+					FLASH_LOG(Templates, Debug, "Stored ", template_arg_nodes.size(), " template argument nodes in FunctionCallNode");
+				}
 				
 				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 				if (identifierType->is<FunctionDeclarationNode>()) {
@@ -24084,7 +24104,7 @@ if (struct_type_info.getStructInfo()) {
 		
 		// The deferred base contains an expression that needs to be evaluated
 		// with concrete template arguments to determine the actual base class
-		if (deferred_base.decltype_expression.is<ExpressionNode>()) {
+		if (!deferred_base.decltype_expression.is<TypeSpecifierNode>()) {
 			// Build a map from template parameter NAME to concrete type for substitution
 			// Note: We can't use type_index because template parameters are cleaned up after parsing
 			std::unordered_map<std::string_view, TemplateTypeArg> name_substitution_map;
@@ -24100,16 +24120,13 @@ if (struct_type_info.getStructInfo()) {
 				FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", (int)template_args_to_use[i].base_type, " type_index=", template_args_to_use[i].type_index);
 			}
 			
-			// TODO: We need a more sophisticated substitution function that can handle:
-			// 1. Constructor calls with template arguments: base_trait<T>()
-			// 2. Function calls with template arguments: get_trait<T>()
-			// 3. Nested template instantiations
-			//
-			// For now, try to evaluate the expression as-is and see if it works
-			// (it might work if the template was already instantiated earlier)
+			// Use ExpressionSubstitutor to perform template parameter substitution
+			FLASH_LOG(Templates, Debug, "Using ExpressionSubstitutor to substitute template parameters in decltype expression");
+			ExpressionSubstitutor substitutor(name_substitution_map, *this);
+			ASTNode substituted_expr = substitutor.substitute(deferred_base.decltype_expression);
 			
-			// Get the type of the expression (without substitution for now)
-			auto type_spec_opt = get_expression_type(deferred_base.decltype_expression);
+			// Get the type of the substituted expression
+			auto type_spec_opt = get_expression_type(substituted_expr);
 			if (type_spec_opt.has_value()) {
 				const TypeSpecifierNode& base_type_spec = *type_spec_opt;
 				
