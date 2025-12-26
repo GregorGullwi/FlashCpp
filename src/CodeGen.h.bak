@@ -1411,12 +1411,7 @@ private:
 		store_op.pointer.type = pointee_type;
 		store_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
 		store_op.pointer.pointer_depth = 1;  // Single pointer dereference
-		// Convert std::variant<StringHandle, TempVar> to IrValue
-		if (std::holds_alternative<StringHandle>(pointer)) {
-			store_op.pointer.value = std::get<StringHandle>(pointer);
-		} else {
-			store_op.pointer.value = std::get<TempVar>(pointer);
-		}
+		store_op.pointer.value = pointer;
 		
 		ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
 	}
@@ -2049,6 +2044,7 @@ private:
 						deref_op.result = this_deref;
 						deref_op.pointer.type = Type::Struct;
 						deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+						deref_op.pointer.pointer_depth = 1;  // 'this' is a pointer to struct
 						deref_op.pointer.value = StringTable::getOrInternStringHandle("this");
 
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), func_decl.identifier_token()));
@@ -3198,10 +3194,9 @@ private:
 										TempVar this_ptr = var_counter.next();
 										AddressOfOp addr_op;
 										addr_op.result = this_ptr;
-										addr_op.operand.type = expr_type;
-										addr_op.operand.size_in_bits = expr_size;
-										addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-										addr_op.operand.value = std::get<StringHandle>(source_value);
+										addr_op.pointee_type = expr_type;
+										addr_op.pointee_size_in_bits = expr_size;
+										addr_op.operand = std::get<StringHandle>(source_value);
 										ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 										
 										// Add 'this' as first argument
@@ -4912,10 +4907,9 @@ private:
 														TempVar addr_var = var_counter.next();
 														AddressOfOp addr_op;
 														addr_op.result = addr_var;
-														addr_op.operand.type = arg_type.type();
-														addr_op.operand.size_in_bits = static_cast<int>(arg_type.size_in_bits());
-														addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-														addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
+														addr_op.pointee_type = arg_type.type();
+														addr_op.pointee_size_in_bits = static_cast<int>(arg_type.size_in_bits());
+														addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 														ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 														
 														// Create TypedValue with the address
@@ -5188,10 +5182,9 @@ private:
 										TempVar this_ptr = var_counter.next();
 										AddressOfOp addr_op;
 										addr_op.result = this_ptr;
-										addr_op.operand.type = init_type;
-										addr_op.operand.size_in_bits = init_size;
-										addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-										addr_op.operand.value = std::get<StringHandle>(source_value);
+										addr_op.pointee_type = init_type;
+										addr_op.pointee_size_in_bits = init_size;
+										addr_op.operand = std::get<StringHandle>(source_value);
 										ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 										
 										// Add 'this' as first argument
@@ -5429,10 +5422,9 @@ private:
 												TempVar addr_var = var_counter.next();
 												AddressOfOp addr_op;
 												addr_op.result = addr_var;
-												addr_op.operand.type = arg_type.type();
-												addr_op.operand.size_in_bits = static_cast<int>(arg_type.size_in_bits());
-												addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-												addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
+												addr_op.pointee_type = arg_type.type();
+												addr_op.pointee_size_in_bits = static_cast<int>(arg_type.size_in_bits());
+												addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 												ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 												
 												// Create TypedValue with the address
@@ -5825,6 +5817,7 @@ private:
 								deref_op.result = result_temp;
 								deref_op.pointer.type = orig_type.type();
 								deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+								deref_op.pointer.pointer_depth = 1;  // Captured by reference is single pointer
 								deref_op.pointer.value = ptr_temp;
 								ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
 								
@@ -6153,10 +6146,9 @@ private:
 					}
 				}
 				
-				deref_op.pointer.type = pointee_type;
-				deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-				deref_op.pointer.pointer_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;  // References are like pointers
-				deref_op.pointer.value = StringTable::getOrInternStringHandle(identifierNode.name());  // The reference parameter holds the address
+				deref_op.pointee_type = pointee_type;
+				deref_op.pointee_size_in_bits = pointee_size;
+				deref_op.pointer = StringTable::getOrInternStringHandle(identifierNode.name());  // The reference parameter holds the address
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
 				
 				TypeIndex type_index = (pointee_type == Type::Struct || type_node.type() == Type::Enum) ? type_node.type_index() : 0;
@@ -6258,10 +6250,9 @@ private:
 						pointee_size = 32;
 					}
 					
-					deref_op.pointer.type = pointee_type;
-					deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-					deref_op.pointer.pointer_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;  // References are like pointers
-					deref_op.pointer.value = StringTable::getOrInternStringHandle(identifierNode.name());  // The reference variable holds the address
+					deref_op.pointee_type = pointee_type;
+					deref_op.pointee_size_in_bits = pointee_size;
+					deref_op.pointer = StringTable::getOrInternStringHandle(identifierNode.name());  // The reference variable holds the address
 					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
 					
 					TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
@@ -7351,10 +7342,9 @@ private:
 				TempVar current_val = var_counter.next();
 				DereferenceOp deref_op;
 				deref_op.result = current_val;
-				deref_op.pointer.type = member->type;
-				deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-				deref_op.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
-				deref_op.pointer.value = ptr_temp;
+				deref_op.pointee_type = member->type;
+				deref_op.pointee_size_in_bits = member_size_bits;
+				deref_op.pointer = ptr_temp;
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), token));
 				
 				bool is_prefix = unaryOperatorNode.is_prefix();
@@ -7369,11 +7359,10 @@ private:
 				
 				// Store back through pointer
 				DereferenceStoreOp store_op;
-				store_op.pointer.type = member->type;
-				store_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-				store_op.pointer.pointer_depth = 1;  // Single pointer dereference
-				store_op.pointer.value = ptr_temp;
+				store_op.pointer = ptr_temp;
 				store_op.value = { member->type, member_size_bits, result_var };
+				store_op.pointee_type = member->type;
+				store_op.pointee_size_in_bits = member_size_bits;
 				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
 				
 				TempVar return_val = is_prefix ? result_var : current_val;
@@ -7871,16 +7860,9 @@ private:
 			
 			// Mark dereference result as lvalue (Option 2: Value Category Tracking)
 			// *ptr is an lvalue - it designates the dereferenced object
-			// Extract StringHandle or TempVar from pointer.value (IrValue)
-			std::variant<StringHandle, TempVar> base;
-			if (std::holds_alternative<StringHandle>(op.pointer.value)) {
-				base = std::get<StringHandle>(op.pointer.value);
-			} else if (std::holds_alternative<TempVar>(op.pointer.value)) {
-				base = std::get<TempVar>(op.pointer.value);
-			}
 			LValueInfo lvalue_info(
 				LValueInfo::Kind::Indirect,
-				base,
+				op.pointer.value,
 				0  // offset is 0 for simple dereference
 			);
 			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
@@ -8364,15 +8346,9 @@ private:
 					TempVar lhs_addr = var_counter.next();
 					AddressOfOp addr_op;
 					addr_op.result = lhs_addr;
-					addr_op.operand.type = lhsType;
-					addr_op.operand.size_in_bits = lhsSize;
-					addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-					// Convert std::variant<StringHandle, TempVar> to IrValue
-					if (std::holds_alternative<StringHandle>(lhs_value)) {
-						addr_op.operand.value = std::get<StringHandle>(lhs_value);
-					} else {
-						addr_op.operand.value = std::get<TempVar>(lhs_value);
-					}
+					addr_op.pointee_type = lhsType;
+					addr_op.pointee_size_in_bits = lhsSize;
+					addr_op.operand = lhs_value;
 					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
 					
 					// Create the call operation
@@ -8415,15 +8391,9 @@ private:
 						TempVar rhs_addr = var_counter.next();
 						AddressOfOp rhs_addr_op;
 						rhs_addr_op.result = rhs_addr;
-						rhs_addr_op.operand.type = rhsType;
-						rhs_addr_op.operand.size_in_bits = rhsSize;
-						rhs_addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-						// Convert std::variant<StringHandle, TempVar> to IrValue
-						if (std::holds_alternative<StringHandle>(rhs_value)) {
-							rhs_addr_op.operand.value = std::get<StringHandle>(rhs_value);
-						} else {
-							rhs_addr_op.operand.value = std::get<TempVar>(rhs_value);
-						}
+						rhs_addr_op.pointee_type = rhsType;
+						rhs_addr_op.pointee_size_in_bits = rhsSize;
+						rhs_addr_op.operand = rhs_value;
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(rhs_addr_op), binaryOperatorNode.get_token()));
 						
 						// Create TypedValue with the address
@@ -9334,9 +9304,8 @@ private:
 			TempVar current_offset = var_counter.next();
 			DereferenceOp load_offset;
 			load_offset.result = current_offset;
-			load_offset.pointer.type = Type::Int;  // Reading a 32-bit offset
-			load_offset.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			load_offset.pointer.pointer_depth = 1;
+			load_offset.pointee_type = Type::UnsignedInt;
+			load_offset.pointee_size_in_bits = 32;
 			
 			if (is_float_type) {
 				// fp_offset is at offset 4 - compute va_list_struct_ptr + 4
@@ -9356,11 +9325,11 @@ private:
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), functionCallNode.called_from()));
 				
 				// Read 32-bit fp_offset value from [va_list_struct + 4]
-				load_offset.pointer.value = materialized_fp_addr;
+				load_offset.pointer = materialized_fp_addr;
 			} else {
 				// gp_offset is at offset 0 - read directly from va_list_struct_ptr
 				// Read 32-bit gp_offset value from [va_list_struct + 0]
-				load_offset.pointer.value = va_list_struct_ptr;
+				load_offset.pointer = va_list_struct_ptr;
 			}
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_offset), functionCallNode.called_from()));
@@ -9384,10 +9353,9 @@ private:
 			TempVar reg_save_area_ptr = var_counter.next();
 			DereferenceOp load_reg_save_ptr;
 			load_reg_save_ptr.result = reg_save_area_ptr;
-			load_reg_save_ptr.pointer.type = Type::UnsignedLongLong;
-			load_reg_save_ptr.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			load_reg_save_ptr.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
-			load_reg_save_ptr.pointer.value = materialized_reg_save_addr;
+			load_reg_save_ptr.pointee_type = Type::UnsignedLongLong;
+			load_reg_save_ptr.pointee_size_in_bits = 64;
+			load_reg_save_ptr.pointer = materialized_reg_save_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), functionCallNode.called_from()));
 			
 			// Step 5: Compute address: reg_save_area + current_offset
@@ -9410,10 +9378,9 @@ private:
 			TempVar value = var_counter.next();
 			DereferenceOp read_value;
 			read_value.result = value;
-			read_value.pointer.type = requested_type;
-			read_value.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			read_value.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
-			read_value.pointer.value = arg_addr;
+			read_value.pointee_type = requested_type;
+			read_value.pointee_size_in_bits = requested_size;
+			read_value.pointer = arg_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_value), functionCallNode.called_from()));
 			
 			// Step 7: Increment the offset by 8 bytes (or 16 for floats in XMM regs) and store back
@@ -9437,9 +9404,6 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), functionCallNode.called_from()));
 			
 			DereferenceStoreOp store_offset;
-			store_offset.pointer.type = Type::UnsignedInt;
-			store_offset.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			store_offset.pointer.pointer_depth = 1;
 			if (is_float_type) {
 				// Store to fp_offset field at offset 4
 				TempVar fp_offset_store_addr = var_counter.next();
@@ -9457,12 +9421,14 @@ private:
 				materialize_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, fp_offset_store_addr};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_addr), functionCallNode.called_from()));
 				
-				store_offset.pointer.value = materialized_addr;
+				store_offset.pointer = materialized_addr;
 			} else {
 				// Store to gp_offset field at offset 0
-				store_offset.pointer.value = va_list_struct_ptr;
+				store_offset.pointer = va_list_struct_ptr;
 			}
 			store_offset.value = TypedValue{Type::UnsignedInt, 32, materialized_offset};
+			store_offset.pointee_type = Type::UnsignedInt;
+			store_offset.pointee_size_in_bits = 32;
 			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_offset), functionCallNode.called_from()));
 			
 			return {requested_type, requested_size, value};
@@ -9475,25 +9441,18 @@ private:
 			TempVar current_ptr = var_counter.next();
 			DereferenceOp deref_ptr_op;
 			deref_ptr_op.result = current_ptr;
-			deref_ptr_op.pointer.type = Type::UnsignedLongLong;
-			deref_ptr_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			deref_ptr_op.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
-			// Convert std::variant<StringHandle, TempVar> to IrValue
-			if (std::holds_alternative<StringHandle>(va_list_var)) {
-				deref_ptr_op.pointer.value = std::get<StringHandle>(va_list_var);
-			} else {
-				deref_ptr_op.pointer.value = std::get<TempVar>(va_list_var);
-			}
+			deref_ptr_op.pointee_type = Type::UnsignedLongLong;
+			deref_ptr_op.pointee_size_in_bits = 64;
+			deref_ptr_op.pointer = va_list_var;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_ptr_op), functionCallNode.called_from()));
 			
 			// Step 2: Read the value at the current pointer
 			TempVar value = var_counter.next();
 			DereferenceOp deref_value_op;
 			deref_value_op.result = value;
-			deref_value_op.pointer.type = requested_type;
-			deref_value_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			deref_value_op.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
-			deref_value_op.pointer.value = current_ptr;
+			deref_value_op.pointee_type = requested_type;
+			deref_value_op.pointee_size_in_bits = requested_size;
+			deref_value_op.pointer = current_ptr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), functionCallNode.called_from()));
 			
 			// Step 3: Advance va_list by 8 bytes
@@ -9557,10 +9516,9 @@ private:
 			TempVar va_list_struct_addr = var_counter.next();
 			AddressOfOp struct_addr_op;
 			struct_addr_op.result = va_list_struct_addr;
-			struct_addr_op.operand.type = Type::Char;
-			struct_addr_op.operand.size_in_bits = 8;
-			struct_addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-			struct_addr_op.operand.value = StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv);
+			struct_addr_op.pointee_type = Type::Char;
+			struct_addr_op.pointee_size_in_bits = 8;
+			struct_addr_op.operand = StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(struct_addr_op), functionCallNode.called_from()));
 			
 			// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
@@ -9602,10 +9560,9 @@ private:
 			const DeclarationNode& param_decl = param_symbol->as<DeclarationNode>();
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 			
-			addr_op.operand.type = param_type.type();
-			addr_op.operand.size_in_bits = static_cast<int>(param_type.size_in_bits());
-			addr_op.operand.pointer_depth = param_type.pointer_depth();
-			addr_op.operand.value = StringTable::getOrInternStringHandle(last_param_name);
+			addr_op.pointee_type = param_type.type();
+			addr_op.pointee_size_in_bits = static_cast<int>(param_type.size_in_bits());
+			addr_op.operand = StringTable::getOrInternStringHandle(last_param_name);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
 			
 			// Add 8 bytes (64 bits) to get to the next parameter slot
@@ -10125,10 +10082,9 @@ private:
 									TempVar this_ptr = var_counter.next();
 									AddressOfOp addr_op;
 									addr_op.result = this_ptr;
-									addr_op.operand.type = arg_type;
-									addr_op.operand.size_in_bits = arg_size;
-									addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-									addr_op.operand.value = std::get<StringHandle>(source_value);
+									addr_op.pointee_type = arg_type;
+									addr_op.pointee_size_in_bits = arg_size;
+									addr_op.operand = std::get<StringHandle>(source_value);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 									
 									// Add 'this' as first argument
@@ -10203,10 +10159,9 @@ private:
 					// Generate AddressOf IR instruction to get the address of the array
 					AddressOfOp addr_op;
 					addr_op.result = addr_var;
-					addr_op.operand.type = type_node.type();
-					addr_op.operand.size_in_bits = static_cast<int>(type_node.size_in_bits());
-					addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-					addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
+					addr_op.pointee_type = type_node.type();
+					addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
+					addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 					// Add the pointer (address) to the function call operands
@@ -10228,10 +10183,9 @@ private:
 
 						AddressOfOp addr_op;
 						addr_op.result = addr_var;
-						addr_op.operand.type = type_node.type();
-						addr_op.operand.size_in_bits = static_cast<int>(type_node.size_in_bits());
-						addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-						addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
+						addr_op.pointee_type = type_node.type();
+						addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
+						addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 						// Pass the address
@@ -10245,10 +10199,9 @@ private:
 
 					DereferenceOp deref_op;
 					deref_op.result = deref_var;
-					deref_op.pointer.type = type_node.type();
-					deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-					deref_op.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
-					deref_op.pointer.value = StringTable::getOrInternStringHandle(identifier.name());
+					deref_op.pointee_type = type_node.type();
+					deref_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
+					deref_op.pointer = StringTable::getOrInternStringHandle(identifier.name());
 					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
 					
 					// Pass the dereferenced value
@@ -10305,10 +10258,9 @@ private:
 						TempVar addr_var = var_counter.next();
 						AddressOfOp addr_op;
 						addr_op.result = addr_var;
-						addr_op.operand.type = literal_type;
-						addr_op.operand.size_in_bits = literal_size;
-						addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-						addr_op.operand.value = temp_var;
+						addr_op.pointee_type = literal_type;
+						addr_op.pointee_size_in_bits = literal_size;
+						addr_op.operand = temp_var;
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 						
 						// Pass the address
@@ -11421,10 +11373,9 @@ private:
 						
 								AddressOfOp addr_op;
 								addr_op.result = addr_var;
-								addr_op.operand.type = type_node.type();
-								addr_op.operand.size_in_bits = static_cast<int>(type_node.size_in_bits());
-								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-								addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
+								addr_op.pointee_type = type_node.type();
+								addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
+								addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 						
 								// Pass the address with pointer size
@@ -11466,10 +11417,9 @@ private:
 						
 								AddressOfOp addr_op;
 								addr_op.result = addr_var;
-								addr_op.operand.type = type_node.type();
-								addr_op.operand.size_in_bits = static_cast<int>(type_node.size_in_bits());
-								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-								addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
+								addr_op.pointee_type = type_node.type();
+								addr_op.pointee_size_in_bits = static_cast<int>(type_node.size_in_bits());
+								addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 						
 								// Pass the address with pointer size
@@ -11535,10 +11485,9 @@ private:
 							TempVar addr_var = var_counter.next();
 							AddressOfOp addr_op;
 							addr_op.result = addr_var;
-							addr_op.operand.type = literal_type;
-							addr_op.operand.size_in_bits = literal_size;
-							addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-							addr_op.operand.value = temp_var;
+							addr_op.pointee_type = literal_type;
+							addr_op.pointee_size_in_bits = literal_size;
+							addr_op.operand = temp_var;
 							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 							
 							// Pass the address
@@ -11558,10 +11507,9 @@ private:
 								TempVar addr_var = var_counter.next();
 								AddressOfOp addr_op;
 								addr_op.result = addr_var;
-								addr_op.operand.type = expr_type;
-								addr_op.operand.size_in_bits = expr_size;
-								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-								addr_op.operand.value = expr_var;
+								addr_op.pointee_type = expr_type;
+								addr_op.pointee_size_in_bits = expr_size;
+								addr_op.operand = expr_var;
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 								
 								call_op.args.push_back(TypedValue{
@@ -13997,10 +13945,9 @@ private:
 		if (std::holds_alternative<StringHandle>(base)) {
 			AddressOfOp addr_op;
 			addr_op.result = result_var;
-			addr_op.operand.type = target_type;
-			addr_op.operand.size_in_bits = target_size;
-			addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-			addr_op.operand.value = std::get<StringHandle>(base);
+			addr_op.pointee_type = target_type;
+			addr_op.pointee_size_in_bits = target_size;
+			addr_op.operand = std::get<StringHandle>(base);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
 		} else {
 			FLASH_LOG_FORMAT(Codegen, Debug, "{}: source is TempVar (stack location), using directly", cast_name);
@@ -14782,20 +14729,18 @@ private:
 									// and generates member access to this->var_name instead of direct variable access
 									AddressOfOp addr_op;
 									addr_op.result = addr_temp;
-									addr_op.operand.type = orig_type.type();
-									addr_op.operand.size_in_bits = static_cast<int>(orig_type.size_in_bits());
-									addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-									addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
+									addr_op.pointee_type = orig_type.type();
+									addr_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
+									addr_op.operand = StringTable::getOrInternStringHandle(var_name);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 								}
 							} else {
 								// Regular variable - generate AddressOf directly
 								AddressOfOp addr_op;
 								addr_op.result = addr_temp;
-								addr_op.operand.type = orig_type.type();
-								addr_op.operand.size_in_bits = static_cast<int>(orig_type.size_in_bits());
-								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-								addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
+								addr_op.pointee_type = orig_type.type();
+								addr_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
+								addr_op.operand = StringTable::getOrInternStringHandle(var_name);
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 							}
 
@@ -15703,10 +15648,9 @@ private:
 							TempVar addr_var = var_counter.next();
 							AddressOfOp addr_op;
 							addr_op.result = addr_var;
-							addr_op.operand.type = arg_type.type();
-							addr_op.operand.size_in_bits = static_cast<int>(arg_type.size_in_bits());
-							addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-							addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
+							addr_op.pointee_type = arg_type.type();
+							addr_op.pointee_size_in_bits = static_cast<int>(arg_type.size_in_bits());
+							addr_op.operand = StringTable::getOrInternStringHandle(identifier.name());
 							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), constructorCallNode.called_from()));
 							
 							// Create TypedValue with the address
