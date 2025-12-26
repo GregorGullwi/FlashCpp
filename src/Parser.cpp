@@ -3250,10 +3250,13 @@ ParseResult Parser::parse_struct_declaration()
 			// Note: code never reaches here due to continue statements above
 		} else {
 			// Try to parse as qualified identifier (e.g., ns::class, ns::template<Args>::type)
+			// Save position in case this is just a simple identifier
+			auto saved_pos = save_token_position();
 			auto qualified_result = parse_qualified_identifier_with_templates();
 			
 			if (qualified_result.has_value()) {
 				// Qualified identifier like ns::class or ns::template<Args>
+				discard_saved_token(saved_pos);
 				base_name_token = qualified_result->final_identifier;
 				
 				// Build the full qualified name
@@ -3314,7 +3317,8 @@ ParseResult Parser::parse_struct_declaration()
 				
 				base_class_name = full_name;
 			} else {
-				// Simple identifier
+				// Simple identifier - restore position and parse it
+				restore_token_position(saved_pos);
 				auto base_name_token_opt = consume_token();
 				if (!base_name_token_opt.has_value() || base_name_token_opt->type() != Token::Type::Identifier) {
 					return ParseResult::error("Expected base class name", base_name_token_opt.value_or(Token()));
