@@ -121,6 +121,154 @@ ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNo
 ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& call) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing function call");
 	FLASH_LOG(Templates, Debug, "  has_mangled_name: ", call.has_mangled_name());
+	FLASH_LOG(Templates, Debug, "  has_template_arguments: ", call.has_template_arguments());
+	
+	// Check if this function call has explicit template arguments (e.g., base_trait<T>())
+	if (call.has_template_arguments()) {
+		const std::vector<ASTNode>& template_arg_nodes = call.template_arguments();
+		FLASH_LOG(Templates, Debug, "  Found ", template_arg_nodes.size(), " template argument nodes");
+		
+		// Get the function/template name from the declaration
+		const DeclarationNode& decl_node = call.function_declaration();
+		std::string_view func_name = decl_node.identifier_token().value();
+		FLASH_LOG(Templates, Debug, "  Function name: ", func_name);
+		
+		// Substitute template parameters in the template arguments
+		std::vector<TemplateTypeArg> substituted_template_args;
+		for (const ASTNode& arg_node : template_arg_nodes) {
+			FLASH_LOG(Templates, Debug, "    Checking template argument node, has_value: ", arg_node.has_value(), " type: ", arg_node.type_name());
+			
+			// Template arguments can be stored as TypeSpecifierNode for type arguments
+			if (arg_node.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
+				FLASH_LOG(Templates, Debug, "    Template argument is TypeSpecifierNode: type=", (int)type_spec.type(), " type_index=", type_spec.type_index());
+				
+				// First, check if type_index points to a template parameter in gTypeInfo
+				std::string_view type_name = "";
+				if (type_spec.type_index() < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					type_name = StringTable::getStringView(type_info.name());
+					FLASH_LOG(Templates, Debug, "    Type name from gTypeInfo: ", type_name);
+				}
+				
+				// Check if this type_name is in our substitution map (indicating it's a template parameter)
+				auto it = param_map_.find(type_name);
+				if (it != param_map_.end()) {
+					// This is a template parameter - substitute it
+					FLASH_LOG(Templates, Debug, "    Substituting template parameter: ", type_name, " -> type_index=", it->second.type_index);
+					substituted_template_args.push_back(it->second);
+				}
+				// Check if this is a template parameter type (Type::Template)
+				else if (type_spec.type() == Type::Template) {
+					// This is a template parameter - we need to substitute it
+					// The type_index should point to a template parameter
+					FLASH_LOG(Templates, Debug, "    Type is Template, looking up in substitution map");
+					
+					// For template parameters, we need to look them up by name
+					// The type_spec.type_index() should tell us which parameter it is
+					// But we need the name to do the substitution
+					// Let's check if we can find it in gTypeInfo
+					if (type_spec.type_index() < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+						std::string_view param_name = StringTable::getStringView(type_info.name());
+						FLASH_LOG(Templates, Debug, "    Template parameter name: ", param_name);
+						
+						auto it2 = param_map_.find(param_name);
+						if (it2 != param_map_.end()) {
+							FLASH_LOG(Templates, Debug, "    Substituting: ", param_name, " -> type_index=", it2->second.type_index);
+							substituted_template_args.push_back(it2->second);
+						} else {
+							FLASH_LOG(Templates, Warning, "    Template parameter not found in substitution map: ", param_name);
+							// Return as-is if we can't substitute
+							ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
+							return ASTNode(&new_expr);
+						}
+					}
+				} else {
+					// Non-template type argument - use it directly
+					FLASH_LOG(Templates, Debug, "    Template argument is concrete type, using directly");
+					TemplateTypeArg arg(type_spec);
+					substituted_template_args.push_back(arg);
+				}
+			}
+			// Check if this is a TemplateParameterReferenceNode that needs substitution
+			else if (arg_node.is<ExpressionNode>()) {
+				const ExpressionNode& expr_variant = arg_node.as<ExpressionNode>();
+				bool is_template_param_ref = std::visit([](const auto& inner) -> bool {
+					using T = std::decay_t<decltype(inner)>;
+					return std::is_same_v<T, TemplateParameterReferenceNode>;
+				}, expr_variant);
+				
+				if (is_template_param_ref) {
+					// This is a template parameter reference - substitute it
+					const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr_variant);
+					std::string_view param_name = tparam_ref.param_name().view();
+					FLASH_LOG(Templates, Debug, "    Template argument is parameter reference: ", param_name);
+					
+					auto it = param_map_.find(param_name);
+					if (it != param_map_.end()) {
+						FLASH_LOG(Templates, Debug, "    Substituting: ", param_name, " -> type_index=", it->second.type_index);
+						substituted_template_args.push_back(it->second);
+					} else {
+						FLASH_LOG(Templates, Warning, "    Template parameter not found in substitution map: ", param_name);
+						// Return as-is if we can't substitute
+						ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
+						return ASTNode(&new_expr);
+					}
+				} else {
+					// Non-dependent template argument - evaluate to get the type
+					FLASH_LOG(Templates, Debug, "    Template argument is non-dependent expression");
+					// For now, skip - we'll handle this later if needed
+				}
+			} else {
+				FLASH_LOG(Templates, Debug, "    Template argument is unknown type");
+			}
+		}
+		
+		// Now we have substituted template arguments - instantiate the template
+		if (!substituted_template_args.empty()) {
+			FLASH_LOG(Templates, Debug, "  Attempting to instantiate template: ", func_name, " with ", substituted_template_args.size(), " arguments");
+			
+			auto instantiated_node = parser_.try_instantiate_class_template(func_name, substituted_template_args, true);
+			if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
+				const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
+				StringHandle instantiated_name = class_decl.name();
+				
+				// Look up the type index for the instantiated template
+				auto type_it = gTypesByName.find(instantiated_name);
+				if (type_it != gTypesByName.end()) {
+					TypeIndex new_type_index = type_it->second->type_index_;
+					
+					FLASH_LOG(Templates, Debug, "  Successfully instantiated template with type_index=", new_type_index);
+					
+					// Create a TypeSpecifierNode for the instantiated type
+					TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+						Type::Struct, new_type_index, 64, Token{}, CVQualifier::None
+					);
+					
+					// Create a ConstructorCallNode instead of FunctionCallNode
+					ChunkedVector<ASTNode> substituted_args_nodes;
+					for (size_t i = 0; i < call.arguments().size(); ++i) {
+						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
+					}
+					
+					ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
+						ASTNode(&new_type),
+						std::move(substituted_args_nodes),
+						call.called_from()
+					);
+					
+					// Wrap in ExpressionNode
+					ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
+					return ASTNode(&new_expr);
+				} else {
+					FLASH_LOG(Templates, Warning, "  Instantiated template not found in gTypesByName: ", instantiated_name.view());
+				}
+			} else {
+				FLASH_LOG(Templates, Warning, "  Failed to instantiate template: ", func_name);
+			}
+		}
+	}
 	
 	// Check if this is actually a template constructor call like base_trait<T>()
 	// In this case, the function_declaration might have template information

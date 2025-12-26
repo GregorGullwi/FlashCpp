@@ -1563,12 +1563,21 @@ public:
 	std::string_view mangled_name() const { return mangled_name_.view(); }
 	StringHandle mangled_name_handle() const { return mangled_name_; }
 	bool has_mangled_name() const { return mangled_name_.isValid(); }
+	
+	// Explicit template arguments support (for calls like foo<int>())
+	// These are stored as expression nodes which may contain TemplateParameterReferenceNode for dependent args
+	void set_template_arguments(std::vector<ASTNode>&& template_args) { 
+		template_arguments_ = std::move(template_args);
+	}
+	const std::vector<ASTNode>& template_arguments() const { return template_arguments_; }
+	bool has_template_arguments() const { return !template_arguments_.empty(); }
 
 private:
 	DeclarationNode& func_decl_;
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
 	StringHandle mangled_name_;  // Pre-computed mangled name
+	std::vector<ASTNode> template_arguments_;  // Explicit template arguments (e.g., <T> in foo<T>())
 };
 
 // Constructor call node - represents constructor calls like T(args)
