@@ -24085,10 +24085,30 @@ if (struct_type_info.getStructInfo()) {
 		// The deferred base contains an expression that needs to be evaluated
 		// with concrete template arguments to determine the actual base class
 		if (deferred_base.decltype_expression.is<ExpressionNode>()) {
-			// TODO: For now, try to evaluate the expression with current context
-			// In the future, we might need to substitute template parameters in the expression
+			// Build a map from template parameter NAME to concrete type for substitution
+			// Note: We can't use type_index because template parameters are cleaned up after parsing
+			std::unordered_map<std::string_view, TemplateTypeArg> name_substitution_map;
 			
-			// Get the type of the expression
+			for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
+				if (!template_params[i].is<TemplateParameterNode>()) continue;
+				
+				const auto& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.kind() != TemplateParameterKind::Type) continue;
+				
+				std::string_view param_name = tparam.name();
+				name_substitution_map[param_name] = template_args_to_use[i];
+				FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", (int)template_args_to_use[i].base_type, " type_index=", template_args_to_use[i].type_index);
+			}
+			
+			// TODO: We need a more sophisticated substitution function that can handle:
+			// 1. Constructor calls with template arguments: base_trait<T>()
+			// 2. Function calls with template arguments: get_trait<T>()
+			// 3. Nested template instantiations
+			//
+			// For now, try to evaluate the expression as-is and see if it works
+			// (it might work if the template was already instantiated earlier)
+			
+			// Get the type of the expression (without substitution for now)
 			auto type_spec_opt = get_expression_type(deferred_base.decltype_expression);
 			if (type_spec_opt.has_value()) {
 				const TypeSpecifierNode& base_type_spec = *type_spec_opt;
@@ -24107,6 +24127,8 @@ if (struct_type_info.getStructInfo()) {
 					FLASH_LOG(Templates, Debug, "Added deferred base class: ", base_class_name, " with type_index=", base_type_index);
 				} else {
 					FLASH_LOG(Templates, Warning, "Deferred base class type is not a struct or invalid type_index=", base_type_index);
+					FLASH_LOG(Templates, Warning, "This likely means template parameter substitution in decltype expressions is needed");
+					FLASH_LOG(Templates, Warning, "For decltype(base_trait<T>()), we need to instantiate base_trait with concrete type");
 				}
 			} else {
 				FLASH_LOG(Templates, Warning, "Could not evaluate deferred decltype base class expression");
