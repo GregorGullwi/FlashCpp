@@ -4616,7 +4616,7 @@ private:
 						else if (const DereferenceOp* deref_op = std::any_cast<DereferenceOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
 							// Determine size based on pointer depth: if depth > 1, result is a pointer (64 bits)
-							int result_size = (deref_op->pointer_depth > 1) ? 64 : deref_op->pointee_size_in_bits;
+							int result_size = (deref_op->pointer.pointer_depth > 1) ? 64 : deref_op->pointer.size_in_bits;
 							temp_var_sizes[StringTable::getOrInternStringHandle(deref_op->result.name())] = result_size;
 							handled_by_typed_payload = true;
 						}
@@ -12422,18 +12422,18 @@ private:
 			int32_t var_offset;
 			const StackVariableScope& current_scope = variable_scopes.back();
 			
-			// Get operand (variable to take address of)
-			if (std::holds_alternative<TempVar>(op.operand)) {
+			// Get operand (variable to take address of) from TypedValue
+			if (std::holds_alternative<TempVar>(op.operand.value)) {
 				// Taking address of a temporary variable (e.g., for rvalue references)
-				TempVar temp = std::get<TempVar>(op.operand);
+				TempVar temp = std::get<TempVar>(op.operand.value);
 				var_offset = getStackOffsetFromTempVar(temp);
 			} else {
 				// Taking address of a named variable
 				std::string_view operand_str;
-				if (std::holds_alternative<StringHandle>(op.operand)) {
-					operand_str = StringTable::getStringView(std::get<StringHandle>(op.operand));
+				if (std::holds_alternative<StringHandle>(op.operand.value)) {
+					operand_str = StringTable::getStringView(std::get<StringHandle>(op.operand.value));
 				} else {
-					assert(std::holds_alternative<TempVar>(op.operand) && "AddressOf operand must be StringHandle or TempVar");
+					assert(std::holds_alternative<TempVar>(op.operand.value) && "AddressOf operand must be StringHandle or TempVar");
 					return;
 				}
 
@@ -12468,7 +12468,7 @@ private:
 			// Mark the result as holding a pointer (so it's treated like a reference)
 			// This ensures that when passed to reference parameters, we MOV (load the pointer)
 			// instead of LEA (taking address of the temp variable holding the pointer)
-			setReferenceInfo(result_offset, op.pointee_type, op.pointee_size_in_bits, false, op.result);
+			setReferenceInfo(result_offset, op.operand.type, op.operand.size_in_bits, false, op.result);
 			
 			return;
 		}
@@ -12647,21 +12647,21 @@ private:
 			// THE FIX: Use pointer_depth to determine the correct dereference size
 			// If pointer_depth > 1, we're dereferencing a multi-level pointer (e.g., int*** -> int**)
 			// and the result is still a pointer (64 bits).
-			// If pointer_depth == 1, we're dereferencing to the final value (use pointee_size_in_bits).
+			// If pointer_depth == 1, we're dereferencing to the final value (use pointer.size_in_bits).
 			int value_size;
-			if (op.pointer_depth > 1) {
+			if (op.pointer.pointer_depth > 1) {
 				value_size = 64;  // Result is still a pointer
 			} else {
-				// Final dereference - use the pointee size
-				value_size = op.pointee_size_in_bits;
+				// Final dereference - use the pointee size (stored in size_in_bits of the pointer's type)
+				value_size = op.pointer.size_in_bits;
 			}
 			
 			// Load the pointer into a register
 			X64Register ptr_reg;
 			const StackVariableScope& current_scope = variable_scopes.back();
 			
-			if (std::holds_alternative<TempVar>(op.pointer)) {
-				TempVar temp = std::get<TempVar>(op.pointer);
+			if (std::holds_alternative<TempVar>(op.pointer.value)) {
+				TempVar temp = std::get<TempVar>(op.pointer.value);
 				int32_t temp_offset = getStackOffsetFromTempVar(temp);
 				
 				// Check if the TempVar is already in a register (e.g., from a previous operation)
@@ -12673,7 +12673,7 @@ private:
 					emitMovFromFrame(ptr_reg, temp_offset);
 				}
 			} else {
-				StringHandle var_name_handle = std::get<StringHandle>(op.pointer);
+				StringHandle var_name_handle = std::get<StringHandle>(op.pointer.value);
 				auto it = current_scope.variables.find(var_name_handle);
 				if (it == current_scope.variables.end()) {
 					assert(false && "Pointer variable not found");
@@ -12690,13 +12690,13 @@ private:
 			}
 
 			// Check if we're dereferencing a float/double type - use XMM register and MOVSD/MOVSS
-			bool is_float_type = (op.pointee_type == Type::Float || op.pointee_type == Type::Double);
+			bool is_float_type = (op.pointer.type == Type::Float || op.pointer.type == Type::Double);
 			
-			if (is_float_type && op.pointer_depth <= 1) {
+			if (is_float_type && op.pointer.pointer_depth <= 1) {
 				// Only use float instructions for final dereference
 				// Use XMM0 as the destination register for float loads
 				X64Register xmm_reg = X64Register::XMM0;
-				bool is_float = (op.pointee_type == Type::Float);
+				bool is_float = (op.pointer.type == Type::Float);
 				
 				// Load float/double from memory into XMM register
 				emitFloatMovFromMemory(xmm_reg, ptr_reg, 0, is_float);
@@ -12878,19 +12878,19 @@ private:
 		assert(instruction.hasTypedPayload() && "DereferenceStore instruction must use typed payload");
 		const auto& op = instruction.getTypedPayload<DereferenceStoreOp>();
 		
-		int value_size = op.pointee_size_in_bits;
+		int value_size = op.value.size_in_bits;
 		int value_size_bytes = value_size / 8;
 		
 		// Allocate registers through the register allocator to avoid conflicts
 		X64Register ptr_reg = allocateRegisterWithSpilling();
 		const StackVariableScope& current_scope = variable_scopes.back();
 		
-		if (std::holds_alternative<TempVar>(op.pointer)) {
-			TempVar temp = std::get<TempVar>(op.pointer);
+		if (std::holds_alternative<TempVar>(op.pointer.value)) {
+			TempVar temp = std::get<TempVar>(op.pointer.value);
 			int32_t temp_offset = getStackOffsetFromTempVar(temp);
 			emitMovFromFrame(ptr_reg, temp_offset);
 		} else {
-			StringHandle var_name_handle = std::get<StringHandle>(op.pointer);
+			StringHandle var_name_handle = std::get<StringHandle>(op.pointer.value);
 			auto it = current_scope.variables.find(var_name_handle);
 			if (it == current_scope.variables.end()) {
 				assert(false && "Pointer variable not found in DereferenceStore");

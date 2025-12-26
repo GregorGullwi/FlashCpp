@@ -2039,9 +2039,10 @@ private:
 						deref_operands.emplace_back(this_deref);  // result variable
 						DereferenceOp deref_op;
 						deref_op.result = this_deref;
-						deref_op.pointee_type = Type::Struct;
-						deref_op.pointee_size_in_bits = static_cast<int>(struct_info->total_size * 8);
-						deref_op.pointer = StringTable::getOrInternStringHandle("this");
+						deref_op.pointer.type = Type::Struct;
+						deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+						deref_op.pointer.pointer_depth = 1;  // 'this' is a pointer to struct
+						deref_op.pointer.value = StringTable::getOrInternStringHandle("this");
 
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), func_decl.identifier_token()));
 
@@ -5811,9 +5812,10 @@ private:
 								std::vector<IrOperand> deref_operands;
 								DereferenceOp deref_op;
 								deref_op.result = result_temp;
-								deref_op.pointee_type = orig_type.type();
-								deref_op.pointee_size_in_bits = static_cast<int>(orig_type.size_in_bits());
-								deref_op.pointer = ptr_temp;
+								deref_op.pointer.type = orig_type.type();
+								deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+								deref_op.pointer.pointer_depth = 1;  // Captured by reference is single pointer
+								deref_op.pointer.value = ptr_temp;
 								ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
 								
 								// Mark as lvalue with Indirect metadata for unified assignment handler
@@ -7760,20 +7762,22 @@ private:
 				operand_ptr_depth = std::get<unsigned long long>(operandIrOperands[3]);
 			}
 			
-			// Create typed payload
+			// Create typed payload with TypedValue
 			AddressOfOp op;
 			op.result = result_var;
-			op.pointee_type = operandType;
-			op.pointee_size_in_bits = std::get<int>(operandIrOperands[1]);
-			op.operand_pointer_depth = static_cast<int>(operand_ptr_depth);  // NEW: Set pointer depth
 			
-			// Get the operand - it's at index 2 in operandIrOperands
+			// Populate TypedValue with full type information
+			op.operand.type = operandType;
+			op.operand.size_in_bits = std::get<int>(operandIrOperands[1]);
+			op.operand.pointer_depth = static_cast<int>(operand_ptr_depth);
+			
+			// Get the operand value - it's at index 2 in operandIrOperands
 			if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
-				op.operand = std::get<StringHandle>(operandIrOperands[2]);
+				op.operand.value = std::get<StringHandle>(operandIrOperands[2]);
 			} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
-				op.operand = std::get<TempVar>(operandIrOperands[2]);
+				op.operand.value = std::get<TempVar>(operandIrOperands[2]);
 			} else {
-				assert(false && "AddressOf operand must be string_view, string, or TempVar");
+				assert(false && "AddressOf operand must be StringHandle or TempVar");
 			}
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
@@ -7831,20 +7835,22 @@ private:
 			}
 			// else: multi-level pointer, element_size stays 64 (pointer)
 		
-			// Create typed payload
+			// Create typed payload with TypedValue
 			DereferenceOp op;
 			op.result = result_var;
-			op.pointee_type = operandType;
-			op.pointee_size_in_bits = element_size;
-			op.pointer_depth = pointer_depth;  // NEW: Set pointer depth
-		
-			// Get the pointer operand - it's at index 2 in operandIrOperands
+			
+			// Populate TypedValue with full type information
+			op.pointer.type = operandType;
+			op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+			op.pointer.pointer_depth = pointer_depth;
+			
+			// Get the pointer value - it's at index 2 in operandIrOperands
 			if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
-				op.pointer = std::get<StringHandle>(operandIrOperands[2]);
+				op.pointer.value = std::get<StringHandle>(operandIrOperands[2]);
 			} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
-				op.pointer = std::get<TempVar>(operandIrOperands[2]);
+				op.pointer.value = std::get<TempVar>(operandIrOperands[2]);
 			} else {
-				assert(false && "Dereference pointer must be string_view or TempVar");
+				assert(false && "Dereference pointer must be StringHandle or TempVar");
 			}
 		
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, op, Token()));
@@ -7853,7 +7859,7 @@ private:
 			// *ptr is an lvalue - it designates the dereferenced object
 			LValueInfo lvalue_info(
 				LValueInfo::Kind::Indirect,
-				op.pointer,
+				op.pointer.value,
 				0  // offset is 0 for simple dereference
 			);
 			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
