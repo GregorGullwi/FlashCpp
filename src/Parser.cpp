@@ -14463,8 +14463,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					return ParseResult::success(*result);
 				}
 				
-				// Not a function call, template member access, template parameter reference, or pack expansion - this is an error
+				// Not a function call, template member access, template parameter reference, or pack expansion
+				// Check if this is a type alias in gTypesByName before erroring
+				// This handles cases like: template<typename T = false_type> where false_type is a using alias
 				if (!identifierType) {
+					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(idenfifier_token.value()));
+					if (type_it != gTypesByName.end()) {
+						// Found a type alias - treat it as an identifier reference to the type
+						// This allows type aliases to be used in template argument contexts
+						FLASH_LOG(Parser, Debug, "Identifier '", idenfifier_token.value(), "' found in gTypesByName, treating as type alias reference");
+						result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+						return ParseResult::success(*result);
+					}
+					
+					// Still not found - this is an error
 					FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
 					return ParseResult::error("Missing identifier", idenfifier_token);
 				}
