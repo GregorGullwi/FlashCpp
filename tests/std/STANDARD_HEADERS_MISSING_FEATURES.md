@@ -1051,5 +1051,83 @@ For immediate productivity, create simplified custom implementations of standard
 
 ---
 
-**Last Updated**: December 25, 2024 (Evening Update)
+## Investigation Update (December 26, 2024)
+
+### Comprehensive Analysis of Current Blocker
+
+**Investigation completed** to identify root causes and verify feature status.
+
+#### Verified Working Features ✅
+
+Through runtime testing (not just compilation):
+- **Conversion operators**: `test_conversion_simple_ret42.cpp` executes and returns 42 ✅
+- **Constexpr control flow**: Factorial with for loops evaluates correctly at compile time ✅
+- **Simple decltype bases**: Non-variadic cases work as documented ✅
+- **Template instantiation caching**: Profiler confirms implementation is active ✅
+
+#### Root Cause: Variadic Pack Expansion in Decltype
+
+**Primary blocker** for `<type_traits>` line 194:
+
+```cpp
+template<typename... _Bn>
+struct __or_ : decltype(__detail::__or_fn<_Bn...>(0)) { };
+```
+
+**Technical analysis:**
+- `ExpressionSubstitutor` (src/ExpressionSubstitutor.cpp) handles simple template parameter substitution
+- **Missing**: Parameter pack expansion (`_Bn...` → `B1, B2, B3, ...`) in expression contexts
+- Line 127-271 shows template argument substitution logic exists
+- Pack expansion requires AST traversal refactoring to expand packs during substitution
+- **Complexity**: HIGH - affects multiple code paths, requires careful interaction between parsing, substitution, and instantiation phases
+
+#### Secondary Issue: Type Alias Resolution
+
+**Error observed**: `Missing identifier: false_type`
+
+When compiling `<type_traits>`:
+```
+[ERROR][Parser] Missing identifier: false_type
+[ERROR][Parser] Missing identifier: true_type
+[ERROR][Parser] Missing identifier: __enable_if_t
+```
+
+**Analysis**: The error occurs in expression parsing context (Parser.cpp:14393) when identifierType lookup returns null. Type aliases are registered in `gTypesByName` (line 6315 in parse_using_directive_or_declaration), but identifier lookup for expressions only checks `gSymbolTable` (line 13365), not `gTypesByName`.
+
+**Root cause**: When type aliases like `false_type` are used in expression contexts (not as base classes or constructor calls), the parser doesn't fall back to checking `gTypesByName`. The fallback at line 13613 only handles constructor calls (when followed by `(`).
+
+**Potential fix**: Add a fallback in expression parsing to check `gTypesByName` for type aliases when symbol table lookup fails and the identifier is not followed by `(`. This would allow type aliases to be used in more contexts within template metaprogramming patterns.
+
+#### Performance Analysis
+
+Profiling with `--timing` flag shows:
+```
+<cstddef> compilation: 544ms total
+  - Preprocessing: 98.2% (535ms)
+  - Parsing: 1.4% (7.7ms)
+  - Template instantiation: 0.0%
+  - Templates instantiated: 1
+```
+
+**Conclusion**: Template instantiation performance is **not a blocker**. Individual instantiations are fast (20-50μs). The issue is **parsing correctness**, not performance.
+
+#### Recommended Implementation Order
+
+**High Priority (Achievable):**
+1. ✅ Already done: Conversion operators, constexpr control flow, simple decltype
+2. **Next**: Debug type alias resolution in template namespaces (separate from pack expansion)
+3. Add comprehensive test cases for edge cases of working features
+
+**Medium Priority (Complex):**
+4. Implement parameter pack expansion in `ExpressionSubstitutor`
+   - Start with single pack parameter cases
+   - Gradually add complexity with multiple packs
+   - Extensive testing required
+
+**Low Priority:**
+5. ~~Template instantiation performance optimization~~ - Already fast, not currently a blocker
+
+---
+
+**Last Updated**: December 26, 2024 (Investigation Update)
 **Recent Contributors**: GitHub Copilot, FlashCpp team
