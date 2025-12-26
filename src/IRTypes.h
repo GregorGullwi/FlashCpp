@@ -1079,10 +1079,7 @@ struct ArrayElementAddressOp {
 // Address-of operator (&x)
 struct AddressOfOp {
 	TempVar result;                                  // Result temp var (pointer)
-	Type pointee_type;                               // Type of the variable we're taking address of
-	int pointee_size_in_bits;                        // Size of pointee
-	std::variant<StringHandle, TempVar> operand;  // Variable or temp to take address of
-	int operand_pointer_depth = 0;                   // NEW: Pointer depth of operand
+	TypedValue operand;                              // Variable or temp to take address of (with full type info)
 };
 
 // AddressOf for struct member (&obj.member)
@@ -1120,18 +1117,13 @@ struct ComputeAddressOp {
 // Dereference operator (*ptr)
 struct DereferenceOp {
 	TempVar result;                                  // Result temp var
-	Type pointee_type;                               // Type being dereferenced to
-	int pointee_size_in_bits;                        // Size of dereferenced value
-	std::variant<StringHandle, TempVar> pointer; // Pointer to dereference
-	int pointer_depth = 0;                           // NEW: Pointer depth (how many levels of indirection)
+	TypedValue pointer;                              // Pointer to dereference (with full type info including pointer_depth)
 };
 
 // Dereference store operator (*ptr = value)
 struct DereferenceStoreOp {
 	TypedValue value;                                // Value to store
-	Type pointee_type;                               // Type being stored to
-	int pointee_size_in_bits;                        // Size of value
-	std::variant<StringHandle, TempVar> pointer; // Pointer to store through
+	TypedValue pointer;                              // Pointer to store through (with full type info including pointer_depth)
 };
 
 // Constructor call (invoke constructor on object)
@@ -2042,12 +2034,25 @@ public:
 			assert(hasTypedPayload() && "AddressOf instruction must use typed payload");
 			const auto& op = getTypedPayload<AddressOfOp>();
 			oss << '%' << op.result.var_number << " = addressof ";
-			oss << "[" << static_cast<int>(op.pointee_type) << "]" << op.pointee_size_in_bits << " ";
+			
+			// Print type and size from TypedValue
+			auto type_info = gNativeTypes.find(op.operand.type);
+			if (type_info != gNativeTypes.end()) {
+				oss << type_info->second->name();
+			}
+			oss << op.operand.size_in_bits;
+			
+			// Show pointer depth if any
+			if (op.operand.pointer_depth > 0) {
+				oss << " (ptr_depth=" << op.operand.pointer_depth << ")";
+			}
+			oss << " ";
 		
-			if (std::holds_alternative<StringHandle>(op.operand))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.operand));
-			else if (std::holds_alternative<TempVar>(op.operand))
-				oss << '%' << std::get<TempVar>(op.operand).var_number;
+			// Print operand value
+			if (std::holds_alternative<StringHandle>(op.operand.value))
+				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.operand.value));
+			else if (std::holds_alternative<TempVar>(op.operand.value))
+				oss << '%' << std::get<TempVar>(op.operand.value).var_number;
 		}
 		break;
 		
@@ -2104,18 +2109,28 @@ public:
 			const auto& op = getTypedPayload<DereferenceOp>();
 			oss << '%' << op.result.var_number << " = dereference ";
 			
+			// Print type and size from TypedValue
+			// If pointer_depth > 1, result is still a pointer (64 bits)
+			// If pointer_depth == 1, result is the pointee type
+			auto type_info = gNativeTypes.find(op.pointer.type);
+			if (type_info != gNativeTypes.end()) {
+				oss << type_info->second->name();
+			}
+			
+			int deref_size = (op.pointer.pointer_depth > 1) ? 64 : op.pointer.size_in_bits;
+			oss << deref_size;
+			
 			// Show pointer depth for debugging
-			int deref_size = (op.pointer_depth > 1) ? 64 : op.pointee_size_in_bits;
-			oss << "[" << static_cast<int>(op.pointee_type) << "]" << deref_size;
-			if (op.pointer_depth > 0) {
-				oss << " (ptr_depth=" << op.pointer_depth << ")";
+			if (op.pointer.pointer_depth > 0) {
+				oss << " (ptr_depth=" << op.pointer.pointer_depth << ")";
 			}
 			oss << " ";
 		
-			if (std::holds_alternative<StringHandle>(op.pointer))
-				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.pointer));
-			else if (std::holds_alternative<TempVar>(op.pointer))
-				oss << '%' << std::get<TempVar>(op.pointer).var_number;
+			// Print pointer value
+			if (std::holds_alternative<StringHandle>(op.pointer.value))
+				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.pointer.value));
+			else if (std::holds_alternative<TempVar>(op.pointer.value))
+				oss << '%' << std::get<TempVar>(op.pointer.value).var_number;
 		}
 		break;
 
@@ -2123,12 +2138,26 @@ public:
 		{
 			assert(hasTypedPayload() && "DereferenceStore instruction must use typed payload");
 			const auto& op = getTypedPayload<DereferenceStoreOp>();
-			oss << "store_through_ptr [" << static_cast<int>(op.pointee_type) << "]" << op.pointee_size_in_bits << " ";
+			oss << "store_through_ptr ";
+			
+			// Print pointer type and size
+			auto ptr_type_info = gNativeTypes.find(op.pointer.type);
+			if (ptr_type_info != gNativeTypes.end()) {
+				oss << ptr_type_info->second->name();
+			}
+			oss << op.pointer.size_in_bits;
+			
+			// Show pointer depth if any
+			if (op.pointer.pointer_depth > 0) {
+				oss << " (ptr_depth=" << op.pointer.pointer_depth << ")";
+			}
+			oss << " ";
 		
-			if (std::holds_alternative<StringHandle>(op.pointer))
-				oss << "%" << StringTable::getStringView(std::get<StringHandle>(op.pointer));
-			else if (std::holds_alternative<TempVar>(op.pointer))
-				oss << "%" << std::get<TempVar>(op.pointer).var_number;
+			// Print pointer value
+			if (std::holds_alternative<StringHandle>(op.pointer.value))
+				oss << "%" << StringTable::getStringView(std::get<StringHandle>(op.pointer.value));
+			else if (std::holds_alternative<TempVar>(op.pointer.value))
+				oss << "%" << std::get<TempVar>(op.pointer.value).var_number;
 			
 			oss << ", ";
 			
