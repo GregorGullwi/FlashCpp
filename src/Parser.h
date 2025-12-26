@@ -248,6 +248,9 @@ struct QualifiedIdParseResult {
 };
 
 class Parser {
+	// Friend classes that need access to private members
+	friend class ExpressionSubstitutor;
+	
 public:
         static constexpr size_t default_ast_tree_size_ = 256 * 1024;
 

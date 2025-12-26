@@ -7,6 +7,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "TemplateProfilingStats.h"
+#include "ExpressionSubstitutor.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -24084,7 +24085,7 @@ if (struct_type_info.getStructInfo()) {
 		
 		// The deferred base contains an expression that needs to be evaluated
 		// with concrete template arguments to determine the actual base class
-		if (deferred_base.decltype_expression.is<ExpressionNode>()) {
+		if (!deferred_base.decltype_expression.is<TypeSpecifierNode>()) {
 			// Build a map from template parameter NAME to concrete type for substitution
 			// Note: We can't use type_index because template parameters are cleaned up after parsing
 			std::unordered_map<std::string_view, TemplateTypeArg> name_substitution_map;
@@ -24100,16 +24101,13 @@ if (struct_type_info.getStructInfo()) {
 				FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", (int)template_args_to_use[i].base_type, " type_index=", template_args_to_use[i].type_index);
 			}
 			
-			// TODO: We need a more sophisticated substitution function that can handle:
-			// 1. Constructor calls with template arguments: base_trait<T>()
-			// 2. Function calls with template arguments: get_trait<T>()
-			// 3. Nested template instantiations
-			//
-			// For now, try to evaluate the expression as-is and see if it works
-			// (it might work if the template was already instantiated earlier)
+			// Use ExpressionSubstitutor to perform template parameter substitution
+			FLASH_LOG(Templates, Debug, "Using ExpressionSubstitutor to substitute template parameters in decltype expression");
+			ExpressionSubstitutor substitutor(name_substitution_map, *this);
+			ASTNode substituted_expr = substitutor.substitute(deferred_base.decltype_expression);
 			
-			// Get the type of the expression (without substitution for now)
-			auto type_spec_opt = get_expression_type(deferred_base.decltype_expression);
+			// Get the type of the substituted expression
+			auto type_spec_opt = get_expression_type(substituted_expr);
 			if (type_spec_opt.has_value()) {
 				const TypeSpecifierNode& base_type_spec = *type_spec_opt;
 				

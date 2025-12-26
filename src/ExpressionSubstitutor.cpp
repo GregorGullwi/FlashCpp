@@ -7,7 +7,47 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		return expr;
 	}
 
-	// Handle different expression node types
+	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor::substitute: checking node type: ", expr.type_name());
+
+	// Check if this is an ExpressionNode variant
+	if (expr.is<ExpressionNode>()) {
+		const ExpressionNode& expr_variant = expr.as<ExpressionNode>();
+		
+		// Use std::visit to dispatch to the correct handler based on variant type
+		auto& substitutor = *this;
+		return std::visit([&substitutor](auto&& node) -> ASTNode {
+			using T = std::decay_t<decltype(node)>;
+			
+			FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing variant type");
+			
+			if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteConstructorCall");
+				return substitutor.substituteConstructorCall(node);
+			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteFunctionCall");
+				return substitutor.substituteFunctionCall(node);
+			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+				return substitutor.substituteBinaryOp(node);
+			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+				return substitutor.substituteUnaryOp(node);
+			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
+				return substitutor.substituteIdentifier(node);
+			} else if constexpr (std::is_same_v<T, NumericLiteralNode> || 
+			                     std::is_same_v<T, BoolLiteralNode> || 
+			                     std::is_same_v<T, StringLiteralNode>) {
+				// Literals don't need substitution - return as ASTNode
+				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(node);
+				return ASTNode(&new_expr);
+			} else {
+				// For other types, return as-is wrapped in ExpressionNode
+				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Unhandled expression variant type, returning as-is");
+				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(node);
+				return ASTNode(&new_expr);
+			}
+		}, expr_variant);
+	}
+
+	// Handle direct node types (not wrapped in variant)
 	if (expr.is<ConstructorCallNode>()) {
 		return substituteConstructorCall(expr.as<ConstructorCallNode>());
 	}
@@ -48,7 +88,9 @@ ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNo
 	
 	if (!type_node.is<TypeSpecifierNode>()) {
 		FLASH_LOG(Templates, Warning, "ExpressionSubstitutor: Constructor type node is not TypeSpecifierNode");
-		return ASTNode(&const_cast<ConstructorCallNode&>(ctor));
+		// Return wrapped in ExpressionNode
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(ctor);
+		return ASTNode(&new_expr);
 	}
 	
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
@@ -71,15 +113,96 @@ ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNo
 		ctor.called_from()
 	);
 	
-	return ASTNode(&new_ctor);
+	// Wrap in ExpressionNode
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
+	return ASTNode(&new_expr);
 }
 
 ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& call) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing function call");
+	FLASH_LOG(Templates, Debug, "  has_mangled_name: ", call.has_mangled_name());
 	
-	// For now, just return the original call
-	// TODO: Implement function template instantiation with substituted arguments
-	return ASTNode(&const_cast<FunctionCallNode&>(call));
+	// Check if this is actually a template constructor call like base_trait<T>()
+	// In this case, the function_declaration might have template information
+	const DeclarationNode& decl_node = call.function_declaration();
+	FLASH_LOG(Templates, Debug, "  DeclarationNode identifier: ", decl_node.identifier_token().value());
+	
+	// Check if this has a mangled name that includes template information
+	if (call.has_mangled_name()) {
+		std::string_view mangled_name = call.mangled_name();
+		FLASH_LOG(Templates, Debug, "  Function has mangled name: ", mangled_name);
+		
+		// Parse the mangled name to extract template name and arguments
+		// Look for pattern like "detail::base_trait<T>"
+		size_t template_start = mangled_name.find('<');
+		if (template_start != std::string_view::npos) {
+			std::string_view template_name = mangled_name.substr(0, template_start);
+			size_t template_end = mangled_name.rfind('>');
+			
+			if (template_end != std::string_view::npos && template_end > template_start) {
+				std::string_view args_str = mangled_name.substr(template_start + 1, template_end - template_start - 1);
+				FLASH_LOG(Templates, Debug, "  Found template in mangled name: ", template_name, " with args: ", args_str);
+				
+				// Check if the argument needs substitution
+				// Trim whitespace
+				while (!args_str.empty() && (args_str.front() == ' ' || args_str.front() == '\t')) {
+					args_str.remove_prefix(1);
+				}
+				while (!args_str.empty() && (args_str.back() == ' ' || args_str.back() == '\t')) {
+					args_str.remove_suffix(1);
+				}
+				
+				auto it = param_map_.find(args_str);
+				if (it != param_map_.end()) {
+					FLASH_LOG(Templates, Debug, "  Substituting template argument: ", args_str);
+					
+					std::vector<TemplateTypeArg> substituted_args;
+					substituted_args.push_back(it->second);
+					
+					// Instantiate the template
+					auto instantiated_node = parser_.try_instantiate_class_template(template_name, substituted_args, true);
+					if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
+						const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
+						StringHandle instantiated_name = class_decl.name();
+						
+						FLASH_LOG(Templates, Debug, "  Successfully instantiated template, creating constructor call");
+						
+						// Look up the type index
+						auto type_it = gTypesByName.find(instantiated_name);
+						if (type_it != gTypesByName.end()) {
+							TypeIndex new_type_index = type_it->second->type_index_;
+							
+							// Create a TypeSpecifierNode for the instantiated type
+							TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+								Type::Struct, new_type_index, 64, Token{}, CVQualifier::None
+							);
+							
+							// Create a ConstructorCallNode instead of FunctionCallNode
+							ChunkedVector<ASTNode> substituted_args_nodes;
+							for (size_t i = 0; i < call.arguments().size(); ++i) {
+								substituted_args_nodes.push_back(substitute(call.arguments()[i]));
+							}
+							
+							ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
+								ASTNode(&new_type),
+								std::move(substituted_args_nodes),
+								call.called_from()
+							);
+							
+							// Wrap in ExpressionNode
+							ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
+							return ASTNode(&new_expr);
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// If not a template constructor call, return as-is
+	FLASH_LOG(Templates, Debug, "  Returning function call as-is");
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
+	return ASTNode(&new_expr);
 }
 
 ASTNode ExpressionSubstitutor::substituteBinaryOp(const BinaryOperatorNode& binop) {
@@ -162,9 +285,6 @@ ASTNode ExpressionSubstitutor::substituteLiteral(const ASTNode& literal) {
 TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNode& type) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Substituting in type");
 	
-	// For now, we need to handle the case where the type has template arguments
-	// This is the key part for decltype(base_trait<T>())
-	
 	// Check if this is a struct/class type that might have template arguments
 	if (type.type() == Type::Struct && type.type_index() < gTypeInfo.size()) {
 		const TypeInfo& type_info = gTypeInfo[type.type_index()];
@@ -179,22 +299,73 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			std::string_view base_name = type_name.substr(0, template_start);
 			FLASH_LOG(Templates, Debug, "  Found template type: ", base_name);
 			
-			// Extract template arguments from the type name
-			// This is a simplified approach - we need to parse the template arguments
-			// and substitute any template parameters in them
-			
-			// TODO: Parse template arguments from type name
-			// TODO: Substitute template parameters in each argument
-			// TODO: Instantiate template with substituted arguments
-			// TODO: Return new TypeSpecifierNode with instantiated type
-			
-			// For now, we'll try to trigger instantiation through the parser
-			// This is a placeholder - the actual implementation needs to parse
-			// the template arguments properly
+			// Extract the template arguments part (between < and >)
+			size_t template_end = type_name.rfind('>');
+			if (template_end != std::string_view::npos && template_end > template_start) {
+				std::string_view args_str = type_name.substr(template_start + 1, template_end - template_start - 1);
+				FLASH_LOG(Templates, Debug, "  Template arguments string: ", args_str);
+				
+				// Parse the arguments and check if any need substitution
+				// For now, we'll do a simple check: if any argument matches a template parameter name
+				bool needs_substitution = false;
+				for (const auto& [param_name, param_arg] : param_map_) {
+					if (args_str.find(param_name) != std::string_view::npos) {
+						needs_substitution = true;
+						FLASH_LOG(Templates, Debug, "  Found template parameter ", param_name, " in arguments");
+						break;
+					}
+				}
+				
+				if (needs_substitution) {
+					// We need to parse and substitute the template arguments
+					// For a simple case like "base_trait<T>", we substitute T
+					
+					// Simple parser for single template argument (most common case)
+					// TODO: Handle multiple arguments separated by commas
+					std::vector<TemplateTypeArg> substituted_args;
+					
+					// Trim whitespace
+					while (!args_str.empty() && (args_str.front() == ' ' || args_str.front() == '\t')) {
+						args_str.remove_prefix(1);
+					}
+					while (!args_str.empty() && (args_str.back() == ' ' || args_str.back() == '\t')) {
+						args_str.remove_suffix(1);
+					}
+					
+					// Check if this is a simple identifier that needs substitution
+					auto it = param_map_.find(args_str);
+					if (it != param_map_.end()) {
+						FLASH_LOG(Templates, Debug, "  Substituting template argument: ", args_str, " -> type_index=", it->second.type_index);
+						substituted_args.push_back(it->second);
+						
+						// Now instantiate the template with the substituted argument
+						auto instantiated_node = parser_.try_instantiate_class_template(base_name, substituted_args, true);
+						if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
+							const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
+							StringHandle instantiated_name = class_decl.name();
+							
+							// Look up the type index for the instantiated template
+							auto type_it = gTypesByName.find(instantiated_name);
+							if (type_it != gTypesByName.end()) {
+								TypeIndex new_type_index = type_it->second->type_index_;
+							
+								FLASH_LOG(Templates, Debug, "  Successfully instantiated template: ", base_name, " with type_index=", new_type_index);
+								
+								// Create a new TypeSpecifierNode with the instantiated type
+								return TypeSpecifierNode(Type::Struct, new_type_index, 64, Token{}, type.cv_qualifier());
+							} else {
+								FLASH_LOG(Templates, Warning, "  Instantiated template not found in gTypesByName: ", instantiated_name.view());
+							}
+						} else {
+							FLASH_LOG(Templates, Warning, "  Failed to instantiate template: ", base_name);
+						}
+					}
+				}
+			}
 		}
 	}
 	
-	// If no substitution needed, return a copy of the original type
+	// If no substitution needed or failed, return a copy of the original type
 	return type;
 }
 
