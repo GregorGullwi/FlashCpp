@@ -12382,8 +12382,7 @@ private:
 			did_unwrap ? accumulated_offset : static_cast<int>(member->offset)
 		);
 		// Store member name for unified assignment handler
-		// Use ultimate_member_name only if we unwrapped (LValueAddress context)
-		lvalue_info.member_name = did_unwrap ? ultimate_member_name : StringTable::getOrInternStringHandle(member_name);
+		lvalue_info.member_name = ultimate_member_name;
 		lvalue_info.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
