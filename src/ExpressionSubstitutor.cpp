@@ -127,79 +127,47 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 	const DeclarationNode& decl_node = call.function_declaration();
 	FLASH_LOG(Templates, Debug, "  DeclarationNode identifier: ", decl_node.identifier_token().value());
 	
-	// Check if this has a mangled name that includes template information
-	if (call.has_mangled_name()) {
-		std::string_view mangled_name = call.mangled_name();
-		FLASH_LOG(Templates, Debug, "  Function has mangled name: ", mangled_name);
+	// Check the type_node - it might contain template information
+	ASTNode type_node = decl_node.type_node();
+	if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		FLASH_LOG(Templates, Debug, "  TypeSpecifierNode: type=", (int)type_spec.type(), " type_index=", type_spec.type_index());
 		
-		// Parse the mangled name to extract template name and arguments
-		// Look for pattern like "detail::base_trait<T>"
-		size_t template_start = mangled_name.find('<');
-		if (template_start != std::string_view::npos) {
-			std::string_view template_name = mangled_name.substr(0, template_start);
-			size_t template_end = mangled_name.rfind('>');
+		// If this is a struct type, it might be a template instantiation
+		if (type_spec.type() == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+			std::string_view type_name = StringTable::getStringView(type_info.name());
+			FLASH_LOG(Templates, Debug, "  Type name: ", type_name);
 			
-			if (template_end != std::string_view::npos && template_end > template_start) {
-				std::string_view args_str = mangled_name.substr(template_start + 1, template_end - template_start - 1);
-				FLASH_LOG(Templates, Debug, "  Found template in mangled name: ", template_name, " with args: ", args_str);
+			// Try to substitute template arguments in this type
+			TypeSpecifierNode substituted_type = substituteInType(type_spec);
+			
+			// If substitution happened, create a new constructor call
+			// Check if the type_index changed
+			if (substituted_type.type_index() != type_spec.type_index()) {
+				FLASH_LOG(Templates, Debug, "  Type was substituted, creating ConstructorCallNode");
 				
-				// Check if the argument needs substitution
-				// Trim whitespace
-				while (!args_str.empty() && (args_str.front() == ' ' || args_str.front() == '\t')) {
-					args_str.remove_prefix(1);
-				}
-				while (!args_str.empty() && (args_str.back() == ' ' || args_str.back() == '\t')) {
-					args_str.remove_suffix(1);
+				// Create a ConstructorCallNode instead of FunctionCallNode
+				ChunkedVector<ASTNode> substituted_args_nodes;
+				for (size_t i = 0; i < call.arguments().size(); ++i) {
+					substituted_args_nodes.push_back(substitute(call.arguments()[i]));
 				}
 				
-				auto it = param_map_.find(args_str);
-				if (it != param_map_.end()) {
-					FLASH_LOG(Templates, Debug, "  Substituting template argument: ", args_str);
-					
-					std::vector<TemplateTypeArg> substituted_args;
-					substituted_args.push_back(it->second);
-					
-					// Instantiate the template
-					auto instantiated_node = parser_.try_instantiate_class_template(template_name, substituted_args, true);
-					if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
-						const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
-						StringHandle instantiated_name = class_decl.name();
-						
-						FLASH_LOG(Templates, Debug, "  Successfully instantiated template, creating constructor call");
-						
-						// Look up the type index
-						auto type_it = gTypesByName.find(instantiated_name);
-						if (type_it != gTypesByName.end()) {
-							TypeIndex new_type_index = type_it->second->type_index_;
-							
-							// Create a TypeSpecifierNode for the instantiated type
-							TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-								Type::Struct, new_type_index, 64, Token{}, CVQualifier::None
-							);
-							
-							// Create a ConstructorCallNode instead of FunctionCallNode
-							ChunkedVector<ASTNode> substituted_args_nodes;
-							for (size_t i = 0; i < call.arguments().size(); ++i) {
-								substituted_args_nodes.push_back(substitute(call.arguments()[i]));
-							}
-							
-							ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
-								ASTNode(&new_type),
-								std::move(substituted_args_nodes),
-								call.called_from()
-							);
-							
-							// Wrap in ExpressionNode
-							ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
-							return ASTNode(&new_expr);
-						}
-					}
-				}
+				TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(substituted_type);
+				ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
+					ASTNode(&new_type),
+					std::move(substituted_args_nodes),
+					call.called_from()
+				);
+				
+				// Wrap in ExpressionNode
+				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
+				return ASTNode(&new_expr);
 			}
 		}
 	}
 	
-	// If not a template constructor call, return as-is
+	// If not a template constructor call or no substitution needed, return as-is
 	FLASH_LOG(Templates, Debug, "  Returning function call as-is");
 	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
 	return ASTNode(&new_expr);
