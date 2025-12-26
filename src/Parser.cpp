@@ -3249,16 +3249,83 @@ ParseResult Parser::parse_struct_declaration()
 			
 			// Note: code never reaches here due to continue statements above
 		} else {
-			auto base_name_token_opt = consume_token();
-			if (!base_name_token_opt.has_value() || base_name_token_opt->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected base class name", base_name_token_opt.value_or(Token()));
+			// Try to parse as qualified identifier (e.g., ns::class, ns::template<Args>::type)
+			auto qualified_result = parse_qualified_identifier_with_templates();
+			
+			if (qualified_result.has_value()) {
+				// Qualified identifier like ns::class or ns::template<Args>
+				base_name_token = qualified_result->final_identifier;
+				
+				// Build the full qualified name
+				std::string full_name;
+				for (const auto& ns_handle : qualified_result->namespaces) {
+					if (!full_name.empty()) full_name += "::";
+					full_name += StringTable::getStringView(ns_handle);
+				}
+				if (!full_name.empty()) full_name += "::";
+				full_name += qualified_result->final_identifier.value();
+				
+				// Check if there are template arguments
+				if (qualified_result->has_template_arguments) {
+					// We have template arguments - instantiate the template
+					std::vector<TemplateTypeArg> template_args = *qualified_result->template_args;
+					
+					// Check if any template arguments are dependent
+					bool has_dependent_args = false;
+					for (const auto& arg : template_args) {
+						if (arg.is_dependent || arg.is_pack) {
+							has_dependent_args = true;
+							break;
+						}
+					}
+					
+					// Check for member type access (e.g., ::type) BEFORE deciding to defer
+					// We need to consume this even if deferring
+					if (current_token_.has_value() && current_token_->value() == "::") {
+						consume_token(); // consume ::
+						if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected member name after ::", current_token_.value_or(Token()));
+						}
+						std::string member_name = std::string(current_token_->value());
+						consume_token(); // consume member name
+						
+						// Build the fully qualified member type name
+						full_name += "::";
+						full_name += member_name;
+						
+						FLASH_LOG_FORMAT(Templates, Debug, "Found member type access: {}", full_name);
+					}
+					
+					// If template arguments are dependent, defer resolution
+					if (has_dependent_args) {
+						FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", full_name);
+						continue;  // Skip to next base class or exit loop
+					}
+					
+					// Instantiate the template
+					std::string_view template_name = qualified_result->final_identifier.value();
+					auto instantiated_node = try_instantiate_class_template(template_name, template_args, true);
+					if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
+						const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
+						full_name = StringTable::getStringView(class_decl.name());
+						FLASH_LOG_FORMAT(Templates, Debug, "Instantiated base class template: {}", full_name);
+					}
+				}
+				
+				base_class_name = full_name;
+			} else {
+				// Simple identifier
+				auto base_name_token_opt = consume_token();
+				if (!base_name_token_opt.has_value() || base_name_token_opt->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected base class name", base_name_token_opt.value_or(Token()));
+				}
+				base_name_token = *base_name_token_opt;
+				base_class_name = base_name_token.value();
 			}
-			base_name_token = *base_name_token_opt;
-			base_class_name = base_name_token.value();
 		}
 		
 		// Regular (non-decltype) base class processing
-		// Check if this is a template base class (e.g., Base<T>)
+		// Check if this is a template base class (e.g., Base<T>) and not already handled
 		std::string instantiated_base_name;
 		if (peek_token().has_value() && peek_token()->value() == "<") {
 			// Parse template arguments
