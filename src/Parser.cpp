@@ -311,16 +311,30 @@ ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
 
 std::optional<Token> Parser::consume_token() {
     std::optional<Token> token = peek_token();
-    Token next = lexer_.next_token();
-    FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from lexer='{}'", 
-        token.has_value() ? std::string(token->value()) : "N/A",
-        std::string(next.value()));
-    current_token_.emplace(next);
+    
+    // Phase 5: Check if we have an injected token (from >> splitting)
+    if (injected_token_.has_value()) {
+        // Use injected token as the next current_token_
+        current_token_ = injected_token_;
+        injected_token_.reset();
+        FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from injected='{}'", 
+            token.has_value() ? std::string(token->value()) : "N/A",
+            std::string(current_token_->value()));
+    } else {
+        // Normal path: get next token from lexer
+        Token next = lexer_.next_token();
+        FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from lexer='{}'", 
+            token.has_value() ? std::string(token->value()) : "N/A",
+            std::string(next.value()));
+        current_token_.emplace(next);
+    }
     return token;
 }
 
 std::optional<Token> Parser::peek_token() {
     if (!current_token_.has_value()) {
+        // If we have an injected token, that should never happen
+        // because we always set current_token_ when injecting
         current_token_.emplace(lexer_.next_token());
     }
     return current_token_;
@@ -352,12 +366,43 @@ std::optional<Token> Parser::peek_token(size_t lookahead) {
     return result;
 }
 
+// Phase 5: Split >> token into two > tokens for nested templates
+// This is needed for C++20 maximal munch rules: Foo<Bar<int>> should parse as Foo<Bar<int> >
+void Parser::split_right_shift_token() {
+    if (!current_token_.has_value() || current_token_->value() != ">>") {
+        FLASH_LOG(Parser, Error, "split_right_shift_token called but current token is not >>");
+        return;
+    }
+    
+    FLASH_LOG(Parser, Debug, "Splitting >> token into two > tokens for nested template");
+    
+    // Create two synthetic > tokens
+    // We use static storage for the ">" string since string_view needs valid memory
+    static const std::string_view gt_str = ">";
+    
+    Token first_gt(Token::Type::Operator, gt_str, 
+                   current_token_->line(), 
+                   current_token_->column(),
+                   current_token_->file_index());
+    
+    Token second_gt(Token::Type::Operator, gt_str, 
+                    current_token_->line(), 
+                    current_token_->column() + 1,  // Second > is one character after first
+                    current_token_->file_index());
+    
+    // Replace current >> with first >
+    current_token_ = first_gt;
+    
+    // Inject second > to be consumed next
+    injected_token_ = second_gt;
+}
+
 Parser::SaveHandle Parser::save_token_position() {
     // Generate unique handle using static incrementing counter
     // This prevents collisions even when multiple saves happen at the same cursor position
     SaveHandle handle = next_save_handle_++;
     
-    // Save current parser state
+    // Save current parser state (including injected token for >> splitting)
     TokenPosition lexer_pos = lexer_.save_token_position();
     saved_tokens_[handle] = { current_token_, ast_nodes_.size(), lexer_pos };
     
@@ -393,6 +438,10 @@ void Parser::restore_token_position(SaveHandle handle, const std::source_locatio
     
     lexer_.restore_token_position(saved_token.lexer_position_);
     current_token_ = saved_token.current_token_;
+    
+    // Phase 5: Clear any injected token when restoring position
+    // This prevents issues when backtracking after >> splitting
+    injected_token_.reset();
 	
     // Erase AST nodes that were added after the saved position,
     // BUT preserve FunctionDeclarationNodes which may be template instantiations.
@@ -20931,6 +20980,11 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					return std::nullopt;
 				}
 
+				// Phase 5: Handle >> token splitting for nested templates
+				if (peek_token()->value() == ">>") {
+					split_right_shift_token();
+				}
+
 				if (peek_token()->value() == ">") {
 					consume_token(); // consume '>'
 					break;
@@ -20985,6 +21039,11 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					return std::nullopt;
 				}
 
+				// Phase 5: Handle >> token splitting for nested templates
+				if (peek_token()->value() == ">>") {
+					split_right_shift_token();
+				}
+
 				if (peek_token()->value() == ">") {
 					consume_token(); // consume '>'
 					break;
@@ -21029,6 +21088,11 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						restore_token_position(saved_pos);
 						last_failed_template_arg_parse_handle_ = saved_pos;
 						return std::nullopt;
+					}
+
+					// Phase 5: Handle >> token splitting for nested templates
+					if (peek_token()->value() == ">>") {
+						split_right_shift_token();
 					}
 
 					if (peek_token()->value() == ">") {
@@ -21120,6 +21184,11 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					discard_saved_token(arg_saved_pos);
 					
 					// Check for ',' or '>' after the expression (or after pack expansion)
+					// Phase 5: Handle >> token splitting for nested templates
+					if (peek_token()->value() == ">>") {
+						split_right_shift_token();
+					}
+					
 					if (peek_token()->value() == ">") {
 						consume_token(); // consume '>'
 						break;
@@ -21236,6 +21305,13 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		}
 
 		FLASH_LOG_FORMAT(Parser, Debug, "After adding type argument, peek_token={}", std::string(peek_token()->value()));
+		
+		// Phase 5: Handle >> token splitting for nested templates
+		// C++20 maximal munch: Foo<Bar<int>> should parse as Foo<Bar<int> >
+		if (peek_token()->value() == ">>") {
+			FLASH_LOG(Parser, Debug, "Encountered >> token, splitting for nested template");
+			split_right_shift_token();
+		}
 		
 		if (peek_token()->value() == ">") {
 			consume_token(); // consume '>'
