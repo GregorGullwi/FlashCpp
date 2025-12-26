@@ -13326,15 +13326,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				return ParseResult::error("Invalid function declaration (template args path)", *current_token_);
 			}
 
-				FLASH_LOG(Parser, Debug, "@@@ Creating FunctionCallNode at line 13329, template_args available: ", template_args.has_value());
+				FLASH_LOG(Parser, Debug, "Creating FunctionCallNode for qualified identifier with template args");
 				// Create function call node with the qualified identifier
 				result = emplace_node<ExpressionNode>(
 					FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), qual_id.identifier_token()));
 				
 				// If explicit template arguments were provided, store them in the FunctionCallNode
 				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))
-				if (template_args.has_value() && !template_args->empty() && !template_arg_nodes.empty()) {
-					std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_template_arguments(std::move(template_arg_nodes));
+				bool has_explicit_template_args = template_args.has_value() && !template_args->empty() && !template_arg_nodes.empty();
+				if (has_explicit_template_args) {
+					FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
+					func_call.set_template_arguments(std::move(template_arg_nodes));
 					FLASH_LOG(Templates, Debug, "Stored ", template_arg_nodes.size(), " template argument nodes in FunctionCallNode (path 1)");
 				}
 				

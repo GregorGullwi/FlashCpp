@@ -136,7 +136,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 		// Substitute template parameters in the template arguments
 		std::vector<TemplateTypeArg> substituted_template_args;
 		for (const ASTNode& arg_node : template_arg_nodes) {
-			FLASH_LOG(Templates, Debug, "    Checking template argument node, has_value: ", arg_node.has_value(), " type: ", arg_node.type_name());
+			FLASH_LOG(Templates, Debug, "  Checking template argument node, has_value: ", arg_node.has_value(), " type: ", arg_node.type_name());
 			
 			// Template arguments can be stored as TypeSpecifierNode for type arguments
 			if (arg_node.is<TypeSpecifierNode>()) {
