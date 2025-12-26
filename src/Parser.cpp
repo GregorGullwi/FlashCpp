@@ -24180,24 +24180,44 @@ if (struct_type_info.getStructInfo()) {
 		// The deferred base contains an expression that needs to be evaluated
 		// with concrete template arguments to determine the actual base class
 		if (!deferred_base.decltype_expression.is<TypeSpecifierNode>()) {
-			// Build a map from template parameter NAME to concrete type for substitution
+			// Build maps from template parameter NAME to concrete type for substitution
 			// Note: We can't use type_index because template parameters are cleaned up after parsing
 			std::unordered_map<std::string_view, TemplateTypeArg> name_substitution_map;
+			std::unordered_map<std::string_view, std::vector<TemplateTypeArg>> pack_substitution_map;
 			
-			for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
+			size_t arg_index = 0;
+			for (size_t i = 0; i < template_params.size(); ++i) {
 				if (!template_params[i].is<TemplateParameterNode>()) continue;
 				
 				const auto& tparam = template_params[i].as<TemplateParameterNode>();
 				if (tparam.kind() != TemplateParameterKind::Type) continue;
 				
 				std::string_view param_name = tparam.name();
-				name_substitution_map[param_name] = template_args_to_use[i];
-				FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", (int)template_args_to_use[i].base_type, " type_index=", template_args_to_use[i].type_index);
+				
+				// Check if this is a variadic pack parameter
+				if (tparam.is_variadic()) {
+					// Collect remaining arguments as a pack
+					std::vector<TemplateTypeArg> pack_args;
+					for (size_t j = arg_index; j < template_args_to_use.size(); ++j) {
+						pack_args.push_back(template_args_to_use[j]);
+					}
+					pack_substitution_map[param_name] = pack_args;
+					FLASH_LOG(Templates, Debug, "Added pack substitution: ", param_name, " -> ", pack_args.size(), " arguments");
+					// All remaining args consumed
+					break;
+				} else {
+					// Regular scalar parameter
+					if (arg_index < template_args_to_use.size()) {
+						name_substitution_map[param_name] = template_args_to_use[arg_index];
+						FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", (int)template_args_to_use[arg_index].base_type, " type_index=", template_args_to_use[arg_index].type_index);
+						arg_index++;
+					}
+				}
 			}
 			
 			// Use ExpressionSubstitutor to perform template parameter substitution
 			FLASH_LOG(Templates, Debug, "Using ExpressionSubstitutor to substitute template parameters in decltype expression");
-			ExpressionSubstitutor substitutor(name_substitution_map, *this);
+			ExpressionSubstitutor substitutor(name_substitution_map, pack_substitution_map, *this);
 			ASTNode substituted_expr = substitutor.substitute(deferred_base.decltype_expression);
 			
 			// Get the type of the substituted expression
