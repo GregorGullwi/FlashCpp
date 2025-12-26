@@ -3192,19 +3192,61 @@ ParseResult Parser::parse_struct_declaration()
 		if (peek_token().has_value() && peek_token()->value() == "decltype") {
 			// Parse decltype(expr) as base class
 			base_name_token = *peek_token();  // Save for error reporting
-			auto decltype_result = parse_decltype_specifier();
-			if (decltype_result.is_error()) {
-				return decltype_result;
+			
+			// For decltype base classes, we need to parse and try to evaluate the expression
+			consume_token();  // consume 'decltype'
+			
+			if (!consume_punctuator("(")) {
+				return ParseResult::error("Expected '(' after 'decltype'", *peek_token());
 			}
 			
-			if (!decltype_result.node().has_value()) {
-				return ParseResult::error("Expected type specifier from decltype", *peek_token());
+			// Parse the expression inside decltype
+			ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Decltype);
+			if (expr_result.is_error()) {
+				return expr_result;
 			}
 			
-			// For decltype bases, we need to defer resolution
-			// This will be resolved during template instantiation
-			FLASH_LOG(Templates, Debug, "Skipping decltype base class - will be resolved during template instantiation");
-			continue;  // Skip to next base class or exit loop
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after decltype expression", *peek_token());
+			}
+			
+			// Try to evaluate the expression to get the base class type
+			auto type_spec_opt = get_expression_type(*expr_result.node());
+			
+			if (type_spec_opt.has_value() && 
+			    type_spec_opt->type() == Type::Struct && 
+			    type_spec_opt->type_index() > 0 &&
+			    type_spec_opt->type_index() < gTypeInfo.size()) {
+				// Successfully evaluated - add as regular base class
+				const TypeInfo& base_type_info = gTypeInfo[type_spec_opt->type_index()];
+				std::string_view base_class_name = StringTable::getStringView(base_type_info.name());
+				
+				FLASH_LOG(Templates, Debug, "Resolved decltype base class immediately: ", base_class_name);
+				
+				// Check if base class is final
+				if (base_type_info.struct_info_ && base_type_info.struct_info_->is_final) {
+					return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", base_name_token);
+				}
+				
+				// Add base class to struct node and type info
+				struct_ref.add_base_class(base_class_name, base_type_info.type_index_, base_access, is_virtual_base);
+				struct_info->addBaseClass(base_class_name, base_type_info.type_index_, base_access, is_virtual_base);
+				
+				// Continue to next base class - skip the rest of the loop body
+				continue;
+			} else {
+				// Could not evaluate now - must be template-dependent, so defer it
+				FLASH_LOG(Templates, Debug, "Deferring decltype base class - will be resolved during template instantiation");
+				is_decltype_base = true;
+				
+				// Add deferred base class to struct node with the unevaluated expression
+				struct_ref.add_deferred_base_class(*expr_result.node(), base_access, is_virtual_base);
+				
+				// Continue to next base class - skip the rest of the loop body
+				continue;
+			}
+			
+			// Note: code never reaches here due to continue statements above
 		} else {
 			auto base_name_token_opt = consume_token();
 			if (!base_name_token_opt.has_value() || base_name_token_opt->type() != Token::Type::Identifier) {
@@ -3214,6 +3256,7 @@ ParseResult Parser::parse_struct_declaration()
 			base_class_name = base_name_token.value();
 		}
 		
+		// Regular (non-decltype) base class processing
 		// Check if this is a template base class (e.g., Base<T>)
 		std::string instantiated_base_name;
 		if (peek_token().has_value() && peek_token()->value() == "<") {
@@ -3267,7 +3310,8 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Add base class to struct node and type info
 		struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
-		struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);		} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+		struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
+	} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 	}
 
 	// Check for 'final' keyword (after class/struct name or base class list)
@@ -24029,6 +24073,87 @@ if (struct_type_info.getStructInfo()) {
 			FLASH_LOG(Templates, Debug, "Added base class: ", base_class_name, " with type_index=", base_type_info->type_index_);
 		} else {
 			FLASH_LOG(Templates, Warning, "Base class ", base_class_name, " not found in gTypesByName");
+		}
+	}
+
+	// Handle deferred base classes (decltype bases) from the primary template
+	// These need to be evaluated with concrete template arguments
+	FLASH_LOG(Templates, Debug, "Primary template has ", class_decl.deferred_base_classes().size(), " deferred base classes");
+	for (const auto& deferred_base : class_decl.deferred_base_classes()) {
+		FLASH_LOG(Templates, Debug, "Processing deferred decltype base class");
+		
+		// The deferred base contains an expression that needs to be evaluated
+		// with concrete template arguments to determine the actual base class
+		if (deferred_base.decltype_expression.is<ExpressionNode>()) {
+			// Build a map from template parameter NAME to concrete type for substitution
+			// Note: We can't use type_index because template parameters are cleaned up after parsing
+			std::unordered_map<std::string_view, TemplateTypeArg> name_substitution_map;
+			
+			for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
+				if (!template_params[i].is<TemplateParameterNode>()) continue;
+				
+				const auto& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.kind() != TemplateParameterKind::Type) continue;
+				
+				std::string_view param_name = tparam.name();
+				name_substitution_map[param_name] = template_args_to_use[i];
+				FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", (int)template_args_to_use[i].base_type, " type_index=", template_args_to_use[i].type_index);
+			}
+			
+			// TODO: We need a more sophisticated substitution function that can handle:
+			// 1. Constructor calls with template arguments: base_trait<T>()
+			// 2. Function calls with template arguments: get_trait<T>()
+			// 3. Nested template instantiations
+			//
+			// For now, try to evaluate the expression as-is and see if it works
+			// (it might work if the template was already instantiated earlier)
+			
+			// Get the type of the expression (without substitution for now)
+			auto type_spec_opt = get_expression_type(deferred_base.decltype_expression);
+			if (type_spec_opt.has_value()) {
+				const TypeSpecifierNode& base_type_spec = *type_spec_opt;
+				
+				// Get the type information from the evaluated expression
+				Type base_type = base_type_spec.type();
+				TypeIndex base_type_index = base_type_spec.type_index();
+				
+				// Look up the base class type by its type index
+				if (base_type == Type::Struct && base_type_index < gTypeInfo.size()) {
+					const TypeInfo& base_type_info = gTypeInfo[base_type_index];
+					std::string_view base_class_name = StringTable::getStringView(base_type_info.name());
+					
+					// Add the base class to the instantiated struct
+					struct_info->addBaseClass(base_class_name, base_type_index, deferred_base.access, deferred_base.is_virtual);
+					FLASH_LOG(Templates, Debug, "Added deferred base class: ", base_class_name, " with type_index=", base_type_index);
+				} else {
+					FLASH_LOG(Templates, Warning, "Deferred base class type is not a struct or invalid type_index=", base_type_index);
+					FLASH_LOG(Templates, Warning, "This likely means template parameter substitution in decltype expressions is needed");
+					FLASH_LOG(Templates, Warning, "For decltype(base_trait<T>()), we need to instantiate base_trait with concrete type");
+				}
+			} else {
+				FLASH_LOG(Templates, Warning, "Could not evaluate deferred decltype base class expression");
+			}
+		} else if (deferred_base.decltype_expression.is<TypeSpecifierNode>()) {
+			// Legacy path - if it's already a TypeSpecifierNode
+			const TypeSpecifierNode& base_type_spec = deferred_base.decltype_expression.as<TypeSpecifierNode>();
+			
+			// Get the type information from the decltype expression
+			Type base_type = base_type_spec.type();
+			TypeIndex base_type_index = base_type_spec.type_index();
+			
+			// Look up the base class type by its type index
+			if (base_type == Type::Struct && base_type_index < gTypeInfo.size()) {
+				const TypeInfo& base_type_info = gTypeInfo[base_type_index];
+				std::string_view base_class_name = StringTable::getStringView(base_type_info.name());
+				
+				// Add the base class to the instantiated struct
+				struct_info->addBaseClass(base_class_name, base_type_index, deferred_base.access, deferred_base.is_virtual);
+				FLASH_LOG(Templates, Debug, "Added deferred base class: ", base_class_name, " with type_index=", base_type_index);
+			} else {
+				FLASH_LOG(Templates, Warning, "Deferred base class type is not a struct or invalid type_index=", base_type_index);
+			}
+		} else {
+			FLASH_LOG(Templates, Warning, "Deferred base class expression is neither ExpressionNode nor TypeSpecifierNode");
 		}
 	}
 

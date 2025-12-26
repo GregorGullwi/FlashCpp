@@ -241,6 +241,17 @@ struct BaseClassSpecifier {
 		: name(n), type_index(tidx), access(acc), is_virtual(virt), offset(off) {}
 };
 
+// Deferred base class specifier for decltype bases in templates
+// These are resolved during template instantiation
+struct DeferredBaseClassSpecifier {
+	ASTNode decltype_expression;  // The parsed decltype expression
+	AccessSpecifier access;        // Inheritance access (public/protected/private)
+	bool is_virtual;               // True for virtual inheritance
+
+	DeferredBaseClassSpecifier(ASTNode expr, AccessSpecifier acc, bool virt = false)
+		: decltype_expression(expr), access(acc), is_virtual(virt) {}
+};
+
 // Function signature for function pointers
 struct FunctionSignature {
 	Type return_type;
@@ -2021,6 +2032,8 @@ public:
 	const std::vector<StructMemberFunctionDecl>& member_functions() const { return member_functions_; }
 	std::vector<StructMemberFunctionDecl>& member_functions() { return member_functions_; }
 	const std::vector<BaseClassSpecifier>& base_classes() const { return base_classes_; }
+	const std::vector<DeferredBaseClassSpecifier>& deferred_base_classes() const { return deferred_base_classes_; }
+	std::vector<DeferredBaseClassSpecifier>& deferred_base_classes() { return deferred_base_classes_; }
 	bool is_class() const { return is_class_; }
 	bool is_final() const { return is_final_; }
 	void set_is_final(bool final) { is_final_ = final; }
@@ -2034,6 +2047,10 @@ public:
 
 	void add_base_class(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false) {
 		base_classes_.emplace_back(base_name, base_type_index, access, is_virtual, 0);
+	}
+
+	void add_deferred_base_class(ASTNode decltype_expr, AccessSpecifier access, bool is_virtual = false) {
+		deferred_base_classes_.emplace_back(decltype_expr, access, is_virtual);
 	}
 
 	void add_member_function(ASTNode function_decl, AccessSpecifier access,
@@ -2123,6 +2140,7 @@ private:
 	std::vector<StructMemberDecl> members_;
 	std::vector<StructMemberFunctionDecl> member_functions_;
 	std::vector<BaseClassSpecifier> base_classes_;  // Base classes for inheritance
+	std::vector<DeferredBaseClassSpecifier> deferred_base_classes_;  // Decltype base classes (for templates)
 	std::vector<ASTNode> friend_declarations_;  // Friend declarations
 	std::vector<ASTNode> nested_classes_;  // Nested classes
 	std::vector<TypeAliasDecl> type_aliases_;  // Type aliases (using X = Y;)
