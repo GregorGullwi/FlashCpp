@@ -12348,6 +12348,7 @@ private:
 		// This handles nested member access like arr[1].inner.y
 		int accumulated_offset = static_cast<int>(member->offset);
 		std::variant<StringHandle, TempVar> ultimate_base = base_object;
+		StringHandle ultimate_member_name = StringTable::getOrInternStringHandle(member_name);
 		
 		if (std::holds_alternative<TempVar>(base_object)) {
 			TempVar base_temp = std::get<TempVar>(base_object);
@@ -12359,6 +12360,11 @@ private:
 				accumulated_offset += base_lvalue_info->offset;
 				ultimate_base = base_lvalue_info->base;
 				is_pointer_dereference = base_lvalue_info->is_pointer_to_member;
+				// When unwrapping nested member access, use the first-level member name
+				// For example: obj.inner.value -> use "inner" (member of obj), not "value"
+				if (base_lvalue_info->member_name.has_value()) {
+					ultimate_member_name = base_lvalue_info->member_name.value();
+				}
 			}
 		}
 
@@ -12373,7 +12379,8 @@ private:
 			accumulated_offset
 		);
 		// Store member name for unified assignment handler
-		lvalue_info.member_name = StringTable::getOrInternStringHandle(member_name);
+		// Use ultimate_member_name which is the first-level member when unwrapped
+		lvalue_info.member_name = ultimate_member_name;
 		lvalue_info.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
@@ -12390,7 +12397,7 @@ private:
 			member_load.object = std::get<TempVar>(ultimate_base);
 		}
 
-		member_load.member_name = StringTable::getOrInternStringHandle(member_name);
+		member_load.member_name = ultimate_member_name;
 		member_load.offset = accumulated_offset;  // Use combined offset for nested access
 	
 		// Add reference metadata (required for proper handling of reference members)
