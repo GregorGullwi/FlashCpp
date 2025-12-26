@@ -23412,8 +23412,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				if (member_struct_info && member_struct_info->getStructInfo()) {
 					member_size = member_struct_info->getStructInfo()->total_size;
+					FLASH_LOG_FORMAT(Templates, Debug, "Found struct member '{}' with type_index={}, total_size={}", 
+					                 decl.identifier_token().value(), member_type_index, member_size);
 				} else {
 					member_size = get_type_size_bits(member_type) / 8;
+					FLASH_LOG_FORMAT(Templates, Debug, "Struct member '{}' type_index={} not found in gTypeInfo, using default size={}", 
+					                 decl.identifier_token().value(), member_type_index, member_size);
 				}
 			} else {
 				member_size = get_type_size_bits(member_type) / 8;
