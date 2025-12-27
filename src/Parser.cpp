@@ -6844,14 +6844,6 @@ ParseResult Parser::parse_type_specifier()
 		return parse_decltype_specifier();
 	}
 
-	// Check for typename keyword (used in template-dependent contexts)
-	// e.g., typename Container<T>::value_type
-	if (current_token_opt.has_value() && current_token_opt->value() == "typename") {
-		consume_token(); // consume 'typename'
-		current_token_opt = peek_token();
-		// Continue parsing the actual type after typename
-	}
-
 	// Skip C++11 attributes that might appear before the type
 	// e.g., [[nodiscard]] int foo();
 	skip_cpp_attributes();
@@ -6875,6 +6867,17 @@ ParseResult Parser::parse_type_specifier()
 		} else {
 			break;
 		}
+	}
+
+	// Check for typename keyword (used in template-dependent contexts)
+	// e.g., typename Container<T>::value_type
+	// e.g., constexpr typename my_or<...>::type func()
+	// This check MUST come after skipping function specifiers to handle patterns like:
+	// "constexpr typename" which appear in standard library headers
+	if (current_token_opt.has_value() && current_token_opt->value() == "typename") {
+		consume_token(); // consume 'typename'
+		current_token_opt = peek_token();
+		// Continue parsing the actual type after typename
 	}
 
 	if (!current_token_opt.has_value() ||
@@ -20555,14 +20558,15 @@ ParseResult Parser::parse_template_parameter() {
 		param_node.as<TemplateParameterNode>().set_variadic(true);
 	}
 
-	// Handle default arguments (e.g., int N = 10)
+	// Handle default arguments (e.g., int N = 10, size_t M = sizeof(T))
 	// Note: Parameter packs cannot have default arguments
 	if (!is_variadic && peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
 	    peek_token()->value() == "=") {
 		consume_token(); // consume '='
 		
-		// Parse the default value expression
-		auto default_value_result = parse_expression();
+		// Parse the default value expression in template argument context
+		// This context tells parse_expression to stop at '>' and ',' which delimit template arguments
+		auto default_value_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::TemplateArgument);
 		if (default_value_result.is_error()) {
 			return ParseResult::error("Expected expression after '=' in template parameter default", *current_token_);
 		}
