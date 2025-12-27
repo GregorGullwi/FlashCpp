@@ -1151,12 +1151,36 @@ ParseResult Parser::parse_type_and_name() {
     TypeSpecifierNode& type_spec = type_specifier_result.node()->as<TypeSpecifierNode>();
 
     // Check for structured binding: auto [a, b, c] = expr;
+    // Also support: auto& [a, b] = pair; and auto&& [x, y] = temp;
     // This must be checked after parsing the type specifier (auto) but before parsing pointer/reference/identifier
-    if (type_spec.type() == Type::Auto && peek_token().has_value() && peek_token()->value() == "[") {
-        FLASH_LOG(Parser, Debug, "parse_type_and_name: Detected structured binding pattern: auto [");
+    if (type_spec.type() == Type::Auto) {
+        // Check for optional reference qualifiers
+        ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
         
-        // Parse structured binding
-        return parse_structured_binding(type_spec.cv_qualifier());
+        if (peek_token().has_value() && peek_token()->value() == "&") {
+            consume_token(); // consume '&'
+            
+            // Check if it's && (rvalue reference) or just & (lvalue reference)
+            if (peek_token().has_value() && peek_token()->value() == "&") {
+                consume_token(); // consume second '&'
+                ref_qualifier = ReferenceQualifier::RValueReference;
+            } else {
+                ref_qualifier = ReferenceQualifier::LValueReference;
+            }
+        }
+        
+        // Now check for '[' to confirm structured binding
+        if (peek_token().has_value() && peek_token()->value() == "[") {
+            FLASH_LOG(Parser, Debug, "parse_type_and_name: Detected structured binding pattern: auto [");
+            
+            // Parse structured binding with reference qualifier
+            return parse_structured_binding(type_spec.cv_qualifier(), ref_qualifier);
+        }
+        
+        // If we consumed reference qualifiers but it's not a structured binding, that's an error
+        if (ref_qualifier != ReferenceQualifier::None) {
+            return ParseResult::error("Unexpected reference qualifier without structured binding", *current_token_);
+        }
     }
 
     // Extract calling convention specifiers that can appear after the type
@@ -1569,10 +1593,11 @@ ParseResult Parser::parse_type_and_name() {
 }
 
 // Parse structured binding: auto [a, b, c] = expr;
-ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers) {
+// Also supports: auto& [a, b] = pair; and auto&& [x, y] = temp;
+ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, ReferenceQualifier ref_qualifier) {
     FLASH_LOG(Parser, Debug, "parse_structured_binding: Starting");
     
-    // At this point, we've already parsed 'auto' and confirmed the next token is '['
+    // At this point, we've already parsed 'auto' (and optional &/&&) and confirmed the next token is '['
     // Consume the '['
     if (!peek_token().has_value() || peek_token()->value() != "[") {
         return ParseResult::error("Expected '[' for structured binding", *current_token_);
@@ -1654,15 +1679,15 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers) {
     FLASH_LOG(Parser, Debug, "parse_structured_binding: Successfully parsed initializer");
     
     // Create the StructuredBindingNode
-    // For now, reference qualifier is always None (we can extend this later for auto&, auto&&)
     ASTNode binding_node = emplace_node<StructuredBindingNode>(
         std::move(identifiers),
         *initializer,
         cv_qualifiers,
-        ReferenceQualifier::None
+        ref_qualifier
     );
     
     FLASH_LOG(Parser, Debug, "parse_structured_binding: Created StructuredBindingNode");
+
     
     // IMPORTANT: We need to add placeholder declarations to the symbol table for each identifier
     // so that the parser can find them when they're used later in the same scope.
