@@ -14384,13 +14384,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Not a function call - could be a template with `<` or just missing identifier
 				// Check if this might be a template: identifier<...>
 				// BUT: Don't attempt for regular variables (< could be comparison)
-				bool should_try_template = false;
+				bool should_try_template = true;  // Default: try template parsing
 				if (identifierType) {
-					// Check if it's NOT a regular variable
+					// Check if it's a regular variable
 					bool is_regular_var = identifierType->is<VariableDeclarationNode>() || 
 					                     identifierType->is<DeclarationNode>();
-					should_try_template = !is_regular_var;
+					should_try_template = !is_regular_var;  // Don't try for variables
 				}
+				// If identifierType is null (not found), default to true (might be a template)
 				
 				if (should_try_template && peek_token().has_value() && peek_token()->value() == "<") {
 					// Try to parse as template instantiation with member access
@@ -14531,21 +14532,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Check for explicit template arguments: identifier<type1, type2>(args)
 			// BUT: Don't attempt template argument parsing for regular variables (could be < comparison)
 			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
-			bool should_try_template_args = false;
+			bool should_try_template_args = true;  // Default: try template parsing
 			
-			// Only try template argument parsing if:
-			// 1. Identifier is a template function/variable, OR
-			// 2. Identifier is not a regular variable (could be a template we haven't seen yet)
+			// Only skip template argument parsing if we KNOW it's a regular variable
 			if (identifierType) {
-				// Check if it's a template or if we're uncertain (not a regular variable)
-				bool is_template = identifierType->is<TemplateFunctionDeclarationNode>() || 
-				                  identifierType->is<TemplateVariableDeclarationNode>();
+				// Check if it's a regular variable
 				bool is_regular_var = identifierType->is<VariableDeclarationNode>() || 
 				                     identifierType->is<DeclarationNode>();
 				
-				// Try template args if it's a template, or if it's neither (uncertain case)
-				should_try_template_args = is_template || (!is_regular_var && !identifierType->is<FunctionDeclarationNode>());
+				if (is_regular_var) {
+					// It's definitely a variable, don't try template args
+					should_try_template_args = false;
+				}
+				// For all other cases (templates, functions, unknown), try template args
 			}
+			// If identifierType is null (not found), default to true (might be a template)
 			
 			if (should_try_template_args && peek_token().has_value() && peek_token()->value() == "<") {
 				explicit_template_args = parse_explicit_template_arguments();
