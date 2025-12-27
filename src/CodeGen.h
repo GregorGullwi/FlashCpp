@@ -5645,7 +5645,9 @@ private:
 		// Step 2: Create a hidden temporary variable to hold the initializer
 		// Generate unique name for the hidden variable
 		TempVar hidden_var = var_counter.next();
-		std::string hidden_var_name = "__structured_binding_e_" + std::to_string(hidden_var.var_number);
+		StringBuilder sb;
+		sb.append("__structured_binding_e_").append(static_cast<uint64_t>(hidden_var.var_number));
+		std::string_view hidden_var_name = sb.commit();
 		StringHandle hidden_var_handle = StringTable::createStringHandle(hidden_var_name);
 		
 		// Declare the hidden variable
