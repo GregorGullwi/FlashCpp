@@ -5642,7 +5642,64 @@ private:
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Initializer type=", (int)init_type, 
 		          " type_index=", init_type_index);
 		
-		// Step 2: Create a hidden temporary variable to hold the initializer
+		// Step 2: Determine if initializer is an array by checking the symbol table
+		bool is_array = false;
+		size_t array_size = 0;
+		Type array_element_type = init_type;
+		int array_element_size = init_size;
+		
+		// Check if initializer is an identifier (which could be an array variable)
+		if (initializer.is<ExpressionNode>()) {
+			const ExpressionNode& expr_node = initializer.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(expr_node)) {
+				const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
+				std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
+				
+				if (symbol.has_value()) {
+					// Check if it's a DeclarationNode with array information
+					if (symbol->is<DeclarationNode>()) {
+						const DeclarationNode& decl = symbol->as<DeclarationNode>();
+						if (decl.is_array() && decl.array_size().has_value()) {
+							// Evaluate array size
+							ConstExpr::EvaluationContext ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
+							if (eval_result.success) {
+								is_array = true;
+								array_size = static_cast<size_t>(eval_result.as_int());
+								// Get element type and size from the type specifier
+								const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+								array_element_type = type_spec.type();
+								array_element_size = static_cast<int>(type_spec.size_in_bits());
+								FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Detected array with size ", array_size, 
+								          " element_type=", (int)array_element_type, " element_size=", array_element_size);
+							}
+						}
+					}
+					// Check if it's a VariableDeclarationNode with array information
+					else if (symbol->is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var_decl = symbol->as<VariableDeclarationNode>();
+						const DeclarationNode& decl = var_decl.declaration();
+						if (decl.is_array() && decl.array_size().has_value()) {
+							// Evaluate array size
+							ConstExpr::EvaluationContext ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
+							if (eval_result.success) {
+								is_array = true;
+								array_size = static_cast<size_t>(eval_result.as_int());
+								// Get element type and size from the type specifier
+								const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+								array_element_type = type_spec.type();
+								array_element_size = static_cast<int>(type_spec.size_in_bits());
+								FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Detected array with size ", array_size,
+								          " element_type=", (int)array_element_type, " element_size=", array_element_size);
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		// Step 3: Create a hidden temporary variable to hold the initializer
 		// Generate unique name for the hidden variable
 		TempVar hidden_var = var_counter.next();
 		StringBuilder sb;
@@ -5653,21 +5710,132 @@ private:
 		// Declare the hidden variable
 		VariableDeclOp hidden_decl_op;
 		hidden_decl_op.var_name = hidden_var_handle;
-		hidden_decl_op.type = init_type;
-		hidden_decl_op.size_in_bits = init_size;
-		hidden_decl_op.initializer = toTypedValue(init_operands);
+		
+		// For arrays, we need to set up the array info properly
+		if (is_array) {
+			hidden_decl_op.type = array_element_type;
+			hidden_decl_op.size_in_bits = array_element_size;
+			hidden_decl_op.is_array = true;
+			hidden_decl_op.array_element_type = array_element_type;
+			hidden_decl_op.array_element_size = array_element_size;
+			hidden_decl_op.array_count = array_size;
+			// Don't set initializer here for arrays - we'll copy element by element
+		} else {
+			hidden_decl_op.type = init_type;
+			hidden_decl_op.size_in_bits = init_size;
+			hidden_decl_op.initializer = toTypedValue(init_operands);
+		}
 		
 		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(hidden_decl_op), Token()));
 		
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Created hidden variable ", hidden_var_name);
 		
-		// Step 3: Determine decomposition strategy
-		// For now, only support aggregate (struct) decomposition
-		if (init_type != Type::Struct) {
-			FLASH_LOG(Codegen, Error, "Structured bindings currently only support struct types, got type=", (int)init_type);
+		// For arrays, copy elements from the source array to the hidden variable
+		if (is_array && initializer.is<ExpressionNode>()) {
+			const ExpressionNode& expr_node = initializer.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(expr_node)) {
+				const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
+				StringHandle source_array = StringTable::getOrInternStringHandle(id_node.name());
+				
+				// Copy each element
+				for (size_t i = 0; i < array_size; ++i) {
+					// Load element from source array
+					TempVar element_temp = var_counter.next();
+					ArrayAccessOp access_op;
+					access_op.result = element_temp;
+					access_op.array = source_array;
+					access_op.index = TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)};
+					access_op.element_type = array_element_type;
+					access_op.element_size_in_bits = array_element_size;
+					access_op.is_pointer_to_array = false;
+					access_op.member_offset = 0;
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(access_op), Token()));
+					
+					// Store element to hidden array
+					ArrayStoreOp store_op;
+					store_op.element_type = array_element_type;
+					store_op.element_size_in_bits = array_element_size;
+					store_op.array = hidden_var_handle;
+					store_op.index = TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)};
+					store_op.value = TypedValue{array_element_type, array_element_size, element_temp};
+					store_op.member_offset = 0;
+					store_op.is_pointer_to_array = false;
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), Token()));
+				}
+			}
+		}
+		
+		// Step 4: Determine decomposition strategy
+		if (is_array) {
+			// Array decomposition
+			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Using array decomposition strategy");
+			
+			// Validate identifier count matches array size
+			if (node.identifiers().size() != array_size) {
+				FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(), 
+				          ") does not match array size (", array_size, ")");
+				return;
+			}
+			
+			// Create bindings for each array element
+			for (size_t i = 0; i < array_size; ++i) {
+				StringHandle binding_id = node.identifiers()[i];
+				std::string_view binding_name = StringTable::getStringView(binding_id);
+				
+				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Creating binding '", binding_name, 
+				          "' to array element [", i, "]");
+				
+				// Create a TypeSpecifierNode for this binding's type
+				TypeSpecifierNode binding_type(array_element_type, TypeQualifier::None, 
+				                                static_cast<unsigned char>(array_element_size), Token());
+				
+				// Create a synthetic declaration node for the binding
+				Token binding_token(Token::Type::Identifier, binding_name, 0, 0, 0);
+				ASTNode binding_decl_node = ASTNode::emplace_node<DeclarationNode>(
+					ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
+					binding_token
+				);
+				
+				// Add to symbol table
+				symbol_table.insert(binding_name, binding_decl_node);
+				
+				// Generate IR to load the array element value
+				// First, generate an array access to load the value: hidden_var[i]
+				TempVar element_val = var_counter.next();
+				ArrayAccessOp load_op;
+				load_op.result = element_val;
+				load_op.array = hidden_var_handle;
+				load_op.index = TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)};
+				load_op.element_type = array_element_type;
+				load_op.element_size_in_bits = array_element_size;
+				load_op.is_pointer_to_array = false;  // Local array
+				load_op.member_offset = 0;
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(load_op), binding_token));
+				
+				// Now, declare the binding variable with the element value as initializer
+				VariableDeclOp binding_var_decl;
+				binding_var_decl.var_name = binding_id;
+				binding_var_decl.type = array_element_type;
+				binding_var_decl.size_in_bits = array_element_size;
+				binding_var_decl.initializer = TypedValue{array_element_type, array_element_size, element_val};
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
+				
+				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Added binding '", binding_name, "' to symbol table");
+			}
+			
+			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", array_size, " array bindings");
+			return;  // Early return for array case
+			
+		} else if (init_type != Type::Struct) {
+			FLASH_LOG(Codegen, Error, "Structured bindings currently only support struct and array types, got type=", (int)init_type);
 			return;
 		}
 		
+		// Step 5: Aggregate (struct) decomposition
 		// Get struct information
 		if (init_type_index >= gTypeInfo.size()) {
 			FLASH_LOG(Codegen, Error, "Invalid type index for structured binding: ", init_type_index);
@@ -5682,7 +5850,7 @@ private:
 			return;
 		}
 		
-		// Step 4: Validate that we have the correct number of identifiers
+		// Step 6: Validate that we have the correct number of identifiers
 		// Count non-static public members (all members in FlashCpp are non-static by default)
 		size_t public_member_count = 0;
 		for (const auto& member : struct_info->members) {
@@ -5700,7 +5868,7 @@ private:
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Decomposing struct with ", 
 		          public_member_count, " public members");
 		
-		// Step 5: Create bindings for each identifier
+		// Step 7: Create bindings for each identifier
 		// For each binding, we create a variable that's initialized with a member access expression
 		size_t binding_idx = 0;
 		for (const auto& member : struct_info->members) {
