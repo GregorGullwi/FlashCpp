@@ -24211,14 +24211,74 @@ if (struct_type_info.getStructInfo()) {
 		std::string_view base_class_name = base.name;
 		FLASH_LOG(Templates, Debug, "Processing primary template base class: ", base_class_name);
 		
-		// Look up the base class type (may need to resolve type aliases)
-		auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
-		if (base_type_it != gTypesByName.end()) {
-			const TypeInfo* base_type_info = base_type_it->second;
-			struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base.access, base.is_virtual);
-			FLASH_LOG(Templates, Debug, "Added base class: ", base_class_name, " with type_index=", base_type_info->type_index_);
+		// Check if this base class is deferred (a template parameter)
+		if (base.is_deferred) {
+			FLASH_LOG(Templates, Debug, "Base class '", base_class_name, "' is a template parameter - resolving with concrete type");
+			
+			// Find the template parameter by name and substitute with the concrete type
+			size_t arg_index = 0;
+			bool found = false;
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				if (!template_params[i].is<TemplateParameterNode>()) continue;
+				
+				const auto& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.kind() != TemplateParameterKind::Type) continue;
+				
+				std::string_view param_name = tparam.name();
+				
+				if (param_name == base_class_name) {
+					// Found the template parameter - get the concrete type
+					if (arg_index < template_args_to_use.size()) {
+						const TemplateTypeArg& concrete_arg = template_args_to_use[arg_index];
+						
+						// Validate that the concrete type is a struct/class
+						if (concrete_arg.type_index >= gTypeInfo.size()) {
+							FLASH_LOG(Templates, Error, "Template argument for base class has invalid type_index: ", concrete_arg.type_index);
+							break;
+						}
+						
+						const TypeInfo& concrete_type = gTypeInfo[concrete_arg.type_index];
+						if (concrete_type.type_ != Type::Struct) {
+							FLASH_LOG(Templates, Error, "Template argument '", concrete_type.name_, "' for base class must be a struct/class type");
+							// Could return error here, but for now just log and skip
+							break;
+						}
+						
+						// Check if the concrete type is final
+						if (concrete_type.struct_info_ && concrete_type.struct_info_->is_final) {
+							FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type.name_, "'");
+							// Could return error here, but for now just log and skip
+							break;
+						}
+						
+						// Add the resolved base class
+						struct_info->addBaseClass(StringTable::getStringView(concrete_type.name_), concrete_arg.type_index, base.access, base.is_virtual);
+						FLASH_LOG(Templates, Debug, "Resolved template parameter base '", base_class_name, "' to concrete type '", StringTable::getStringView(concrete_type.name_), "' with type_index=", concrete_arg.type_index);
+						found = true;
+					}
+					break;
+				}
+				
+				// Track regular parameters to match indices
+				if (!tparam.is_variadic()) {
+					arg_index++;
+				}
+			}
+			
+			if (!found) {
+				FLASH_LOG(Templates, Warning, "Could not resolve template parameter base class: ", base_class_name);
+			}
 		} else {
-			FLASH_LOG(Templates, Warning, "Base class ", base_class_name, " not found in gTypesByName");
+			// Regular (non-deferred) base class
+			// Look up the base class type (may need to resolve type aliases)
+			auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
+			if (base_type_it != gTypesByName.end()) {
+				const TypeInfo* base_type_info = base_type_it->second;
+				struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base.access, base.is_virtual);
+				FLASH_LOG(Templates, Debug, "Added base class: ", base_class_name, " with type_index=", base_type_info->type_index_);
+			} else {
+				FLASH_LOG(Templates, Warning, "Base class ", base_class_name, " not found in gTypesByName");
+			}
 		}
 	}
 
@@ -24689,7 +24749,7 @@ if (struct_type_info.getStructInfo()) {
 	}
 
 	// Finalize the struct layout
-	if (!class_decl.base_classes().empty()) {
+	if (!struct_info->base_classes.empty()) {
 		struct_info->finalizeWithBases();
 	} else {
 		struct_info->finalize();

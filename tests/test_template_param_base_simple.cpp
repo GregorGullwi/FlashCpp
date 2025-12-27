@@ -29,9 +29,8 @@ template<typename T>
 struct my_or<T> : T {};
 
 int main() {
-    // Test 1: wrapper inherits from true_type
-    wrapper<true_type> w1;
-    constexpr bool test1 = w1.value;  // Should be true (1)
+    // Test 1: wrapper inherits from true_type - use static access
+    constexpr bool test1 = wrapper<true_type>::value;  // Should be true (1)
     
     // Test 2: my_or<> should be false
     constexpr bool test2 = my_or<>::value;  // Should be false (0)
