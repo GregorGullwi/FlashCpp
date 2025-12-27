@@ -13504,6 +13504,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		
 		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}'", idenfifier_token.value(), identifierType.has_value() ? "found" : "not found", peek_token().has_value() ? peek_token()->value() : "N/A");
 		
+		// EARLY CHECK: If identifier not found and followed by '<', check if it's an alias template
+		// This must happen BEFORE any other template argument parsing to prevent "Missing identifier" error
+		if (!identifierType && peek_token().has_value() && peek_token()->value() == "<") {
+			auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
+			if (alias_opt.has_value()) {
+				FLASH_LOG(Parser, Debug, "Found alias template '", idenfifier_token.value(), "' - will be instantiated during type parsing");
+				// For alias templates, we need to let the type specifier parsing handle it
+				// The type parsing path has special alias instantiation logic
+				// Don't set identifierType here - let it remain null so we fall through to type parsing
+			}
+		}
+		
 		// If identifier is followed by ::, it might be a namespace-qualified identifier
 		// This handles both: 
 		// 1. Identifier not found (might be namespace name)
@@ -14463,6 +14475,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 				}
 			
+				// Check if this is an alias template (before checking template parameters)
+				// Example: remove_const_t<T> where remove_const_t is defined as "using remove_const_t = typename remove_const<T>::type;"
+				// This check must be before template parameter check, as alias templates can be used anywhere
+				FLASH_LOG(Parser, Info, "@@@ CHECKING ALIAS TEMPLATE: identifierType=", identifierType.has_value() ? "found" : "NULL", 
+				          ", peek='", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A", "'");
+				if (!identifierType && peek_token().has_value() && peek_token()->value() == "<") {
+					auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
+					FLASH_LOG(Parser, Info, "@@@ ALIAS LOOKUP for '", idenfifier_token.value(), "': ", alias_opt.has_value() ? "FOUND" : "NOT FOUND");
+					if (alias_opt.has_value()) {
+						FLASH_LOG(Parser, Info, "@@@ Found alias template '", idenfifier_token.value(), "' in expression context - will instantiate with template arguments");
+						// Don't return - let it fall through to template argument parsing logic below
+						// The alias template will be instantiated when we reach the template argument handling code
+					}
+				}
+			
 				// Check if we're parsing a template and this identifier is a template parameter
 				if (!identifierType && (parsing_template_class_ || !current_template_param_names_.empty())) {
 					// Check if this identifier matches any template parameter name
@@ -14535,8 +14562,25 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					return ParseResult::success(*result);
 				}
 				
-				// Not a function call, template member access, template parameter reference, or pack expansion - this is an error
-				if (!identifierType) {
+				// Before reporting error, check if this could be a template alias usage
+				// Example: remove_const_t<T> where remove_const_t is defined as "using remove_const_t = typename remove_const<T>::type;"
+				if (!identifierType && peek_token().has_value() && peek_token()->value() == "<") {
+					// Check if this is an alias template
+					auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
+					if (alias_opt.has_value()) {
+						// This is an alias template like "remove_const_t<T>"
+						// We need to instantiate it, which will happen in the normal template arg parsing flow below
+						// Set a marker that we found an alias template so we can handle it later
+						// For now, create a placeholder node and let the template instantiation logic handle it
+						FLASH_LOG(Parser, Debug, "Found alias template '", idenfifier_token.value(), "' in expression context");
+						// Don't return yet - let it fall through to template argument parsing below
+					} else {
+						// Not an alias template and not found anywhere
+						FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
+						return ParseResult::error("Missing identifier", idenfifier_token);
+					}
+				} else if (!identifierType) {
+					// Not a function call, template member access, template parameter reference, pack expansion, or alias template - this is an error
 					FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
 					return ParseResult::error("Missing identifier", idenfifier_token);
 				}
