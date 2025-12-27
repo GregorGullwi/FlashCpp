@@ -10965,6 +10965,18 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		if (is_operator && peek_token()->value() == "?") {
 			break;
 		}
+		
+		// In TemplateArgument context, stop at '>' and ',' as they delimit template arguments
+		// This allows parsing expressions like "T::value || X::value" while stopping at the
+		// template argument delimiter
+		if (context == ExpressionContext::TemplateArgument) {
+			if (peek_token()->value() == ">" || peek_token()->value() == ">>") {
+				break;  // Stop at template closing bracket
+			}
+			if (peek_token()->value() == ",") {
+				break;  // Stop at template argument separator
+			}
+		}
 
 		// Phase 1: C++20 Template Argument Disambiguation
 		// Phase 3: Enhanced with context-aware disambiguation
@@ -21138,12 +21150,12 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		SaveHandle arg_saved_pos = save_token_position();
 
 		// First, try to parse an expression (for non-type template parameters)
-		// Use parse_expression(14) instead of parse_primary_expression() to handle
-		// member access expressions like is_int<T>::value
-		// Precedence 14 ensures operators with precedence < 14 are not consumed, including:
-		// - Comparison operators like > (precedence 13) - prevents ambiguity with template closing bracket
-		// - Comma operators (precedence 1) - prevents consuming multiple template arguments as one
-		auto expr_result = parse_expression(14);
+		// Use parse_expression with ExpressionContext::TemplateArgument to handle
+		// member access expressions like is_int<T>::value and complex expressions
+		// like T::value || my_or<Rest...>::value
+		// Precedence 2 allows all binary operators except comma (precedence 1)
+		// The TemplateArgument context ensures we stop at '>' and ',' delimiters
+		auto expr_result = parse_expression(2, ExpressionContext::TemplateArgument);
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
 			// Successfully parsed an expression - check if it's a boolean or numeric literal
 			const ExpressionNode& expr = expr_result.node()->as<ExpressionNode>();
