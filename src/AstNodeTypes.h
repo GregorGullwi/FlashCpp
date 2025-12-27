@@ -1094,6 +1094,7 @@ public:
 	auto size_in_bits() const { return size_; }
 	auto qualifier() const { return qualifier_; }
 	auto cv_qualifier() const { return cv_qualifier_; }
+	void set_cv_qualifier(CVQualifier cv) { cv_qualifier_ = cv; }
 	auto type_index() const { return type_index_; }
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
@@ -1113,6 +1114,9 @@ public:
 	ReferenceQualifier reference_qualifier() const { return reference_qualifier_; }
 	void set_reference(bool is_rvalue = false) {
 		reference_qualifier_ = is_rvalue ? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference;
+	}
+	void set_reference_qualifier(ReferenceQualifier qual) {
+		reference_qualifier_ = qual;
 	}
 	void set_lvalue_reference(bool is_lvalue = true) {
 		if (is_lvalue) {

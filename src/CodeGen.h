@@ -5930,7 +5930,10 @@ private:
 			
 			// Create a TypeSpecifierNode for this binding's type
 			// The binding has the same type as the struct member
-			unsigned char member_size_bits = static_cast<unsigned char>(member.size * 8);
+			// For size_in_bits, clamp to 255 since TypeSpecifierNode uses unsigned char
+			// For struct types, type_index is what matters, not size_in_bits
+			size_t member_size_bits_full = member.size * 8;
+			unsigned char member_size_bits = (member_size_bits_full > 255) ? 255 : static_cast<unsigned char>(member_size_bits_full);
 			TypeSpecifierNode binding_type(member.type, TypeQualifier::None, member_size_bits, Token());
 			binding_type.set_type_index(member.type_index);
 			
@@ -6526,20 +6529,10 @@ private:
 				// For reference parameters: return the parameter name directly (it's already an address)
 				// For local reference variables: load the pointer, then mark as Indirect LValue
 				if (context == ExpressionContext::LValueAddress) {
-					// Check if this is a local reference variable by checking if it has a VariableDecl in IR
-					// For structured binding references, we created them with VariableDeclOp, so they're local
-					// For function parameters, they're passed as references and don't have VariableDeclOp
-					
-					// HACK: Check if this identifier was created as a local reference variable
-					// by checking if it's not a function parameter
-					// Function parameters are in the current function's parameter list
-					bool is_parameter = false;
-					// TODO: Add proper check for parameter vs local variable
-					// For now, assume if we're NOT in global scope, it could be either
-					
-					// Actually, a better approach: structured bindings are always local variables
-					// So if we have a reference in DeclarationNode, check if it might be a binding
-					// For now, let's use the same logic as for VariableDeclarationNode
+					// Check if this identifier is a function parameter
+					// Function parameters are handled differently - they don't have VariableDeclOp
+					// For now, assume all references in DeclarationNode are local variables
+					// (function parameters would come through a different code path)
 					
 					// For auto types, default to int (32 bits)
 					Type pointee_type = type_node.type();
@@ -6549,8 +6542,7 @@ private:
 						pointee_size = 32;
 					}
 					
-					// Try the local reference variable approach first
-					// Load the pointer from the reference variable into a temp
+					// Local reference variable: load the pointer from the variable into a temp
 					TempVar addr_temp = var_counter.next();
 					StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 					

@@ -9548,6 +9548,10 @@ ParseResult Parser::parse_variable_declaration()
 
 			// If the type is auto, deduce the type from the initializer
 			if (type_specifier.type() == Type::Auto && first_init_expr.has_value()) {
+				// Save the original reference qualifier before type deduction
+				ReferenceQualifier original_ref_qual = type_specifier.reference_qualifier();
+				CVQualifier original_cv_qual = type_specifier.cv_qualifier();
+				
 				// Get the full type specifier from the initializer expression
 				auto deduced_type_spec_opt = get_expression_type(*first_init_expr);
 				if (deduced_type_spec_opt.has_value()) {
@@ -9559,9 +9563,16 @@ ParseResult Parser::parse_variable_declaration()
 					// Fallback: deduce basic type
 					Type deduced_type = deduce_type_from_expression(*first_init_expr);
 					unsigned char deduced_size = get_type_size_bits(deduced_type);
-					type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, first_decl.identifier_token(), type_specifier.cv_qualifier());
+					type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, first_decl.identifier_token(), original_cv_qual);
 					FLASH_LOG(Parser, Debug, "Deduced auto variable type (fallback): type=", 
 							  (int)type_specifier.type(), " size=", (int)deduced_size);
+				}
+				
+				// Restore the original reference qualifier and CV qualifier (for const auto& etc.)
+				type_specifier.set_reference_qualifier(original_ref_qual);
+				// Also ensure CV qualifier is preserved (especially for const auto&)
+				if (original_cv_qual != CVQualifier::None) {
+					type_specifier.set_cv_qualifier(original_cv_qual);
 				}
 			}
 		}
