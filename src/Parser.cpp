@@ -10948,6 +10948,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 	}
 
 	while (true) {
+		// Safety check: ensure we have a token to examine
+		if (!peek_token().has_value()) {
+			break;
+		}
+		
 		// Check if the current token is a binary operator or comma (which can be an operator)
 		bool is_operator = peek_token()->type() == Token::Type::Operator;
 		bool is_comma = peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",";
@@ -11025,7 +11030,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		consume_token();
 
 		// Parse the right-hand side expression
-		ParseResult rhs_result = parse_expression(current_operator_precedence + 1);
+		ParseResult rhs_result = parse_expression(current_operator_precedence + 1, context);
 		if (rhs_result.is_error()) {
 			return rhs_result;
 		}
