@@ -13504,18 +13504,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		
 		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}'", idenfifier_token.value(), identifierType.has_value() ? "found" : "not found", peek_token().has_value() ? peek_token()->value() : "N/A");
 		
-		// EARLY CHECK: If identifier not found and followed by '<', check if it's an alias template
-		// This must happen BEFORE any other template argument parsing to prevent "Missing identifier" error
-		if (!identifierType && peek_token().has_value() && peek_token()->value() == "<") {
-			auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
-			if (alias_opt.has_value()) {
-				FLASH_LOG(Parser, Debug, "Found alias template '", idenfifier_token.value(), "' - will be instantiated during type parsing");
-				// For alias templates, we need to let the type specifier parsing handle it
-				// The type parsing path has special alias instantiation logic
-				// Don't set identifierType here - let it remain null so we fall through to type parsing
-			}
-		}
-		
 		// If identifier is followed by ::, it might be a namespace-qualified identifier
 		// This handles both: 
 		// 1. Identifier not found (might be namespace name)
@@ -14472,21 +14460,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							result = emplace_node<ExpressionNode>(qualified_node);
 							return ParseResult::success(*result);
 						}
-					}
-				}
-			
-				// Check if this is an alias template (before checking template parameters)
-				// Example: remove_const_t<T> where remove_const_t is defined as "using remove_const_t = typename remove_const<T>::type;"
-				// This check must be before template parameter check, as alias templates can be used anywhere
-				FLASH_LOG(Parser, Info, "@@@ CHECKING ALIAS TEMPLATE: identifierType=", identifierType.has_value() ? "found" : "NULL", 
-				          ", peek='", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A", "'");
-				if (!identifierType && peek_token().has_value() && peek_token()->value() == "<") {
-					auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
-					FLASH_LOG(Parser, Info, "@@@ ALIAS LOOKUP for '", idenfifier_token.value(), "': ", alias_opt.has_value() ? "FOUND" : "NOT FOUND");
-					if (alias_opt.has_value()) {
-						FLASH_LOG(Parser, Info, "@@@ Found alias template '", idenfifier_token.value(), "' in expression context - will instantiate with template arguments");
-						// Don't return - let it fall through to template argument parsing logic below
-						// The alias template will be instantiated when we reach the template argument handling code
 					}
 				}
 			
