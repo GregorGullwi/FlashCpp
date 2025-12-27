@@ -161,6 +161,9 @@ public:
 		else if (node.is<VariableDeclarationNode>()) {
 			visitVariableDeclarationNode(node);
 		}
+		else if (node.is<StructuredBindingNode>()) {
+			visitStructuredBindingNode(node);
+		}
 		else if (node.is<IfStatementNode>()) {
 			visitIfStatementNode(node.as<IfStatementNode>());
 		}
@@ -5605,6 +5608,173 @@ private:
 				}
 			}
 		}
+	}
+
+	void visitStructuredBindingNode(const ASTNode& ast_node) {
+		const StructuredBindingNode& node = ast_node.as<StructuredBindingNode>();
+		
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Processing structured binding with ", 
+		          node.identifiers().size(), " identifiers");
+		
+		// Step 1: Evaluate the initializer expression and get its type
+		const ASTNode& initializer = node.initializer();
+		if (!initializer.is<ExpressionNode>()) {
+			FLASH_LOG(Codegen, Error, "Structured binding initializer is not an expression");
+			return;
+		}
+		
+		auto init_operands = visitExpressionNode(initializer.as<ExpressionNode>());
+		if (init_operands.size() < 3) {
+			FLASH_LOG(Codegen, Error, "Structured binding initializer produced invalid operands");
+			return;
+		}
+		
+		// Extract initializer type information
+		Type init_type = std::get<Type>(init_operands[0]);
+		int init_size = std::get<int>(init_operands[1]);
+		TypeIndex init_type_index = 0;
+		
+		// Get type_index if available (4th element)
+		if (init_operands.size() >= 4 && std::holds_alternative<unsigned long long>(init_operands[3])) {
+			init_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(init_operands[3]));
+		}
+		
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Initializer type=", (int)init_type, 
+		          " type_index=", init_type_index);
+		
+		// Step 2: Create a hidden temporary variable to hold the initializer
+		// Generate unique name for the hidden variable
+		TempVar hidden_var = var_counter.next();
+		std::string hidden_var_name = "__structured_binding_e_" + std::to_string(hidden_var.index);
+		StringHandle hidden_var_handle = StringTable::createStringHandle(hidden_var_name);
+		
+		// Declare the hidden variable
+		VariableDeclOp hidden_decl_op;
+		hidden_decl_op.var_name = hidden_var_handle;
+		hidden_decl_op.type = init_type;
+		hidden_decl_op.size_in_bits = init_size;
+		hidden_decl_op.type_index = init_type_index;
+		hidden_decl_op.initializer = toTypedValue(init_operands);
+		
+		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(hidden_decl_op), Token()));
+		
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Created hidden variable ", hidden_var_name);
+		
+		// Step 3: Determine decomposition strategy
+		// For now, only support aggregate (struct) decomposition
+		if (init_type != Type::Struct) {
+			FLASH_LOG(Codegen, Error, "Structured bindings currently only support struct types, got type=", (int)init_type);
+			return;
+		}
+		
+		// Get struct information
+		if (init_type_index >= gTypeInfo.size()) {
+			FLASH_LOG(Codegen, Error, "Invalid type index for structured binding: ", init_type_index);
+			return;
+		}
+		
+		const TypeInfo& type_info = gTypeInfo[init_type_index];
+		const StructTypeInfo* struct_info = type_info.getStructInfo();
+		
+		if (!struct_info) {
+			FLASH_LOG(Codegen, Error, "Type is not a struct for structured binding");
+			return;
+		}
+		
+		// Step 4: Validate that we have the correct number of identifiers
+		// Count non-static public members
+		size_t public_member_count = 0;
+		for (const auto& member : struct_info->members) {
+			if (!member.is_static && member.access == AccessSpecifier::Public) {
+				public_member_count++;
+			}
+		}
+		
+		if (node.identifiers().size() != public_member_count) {
+			FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(), 
+			          ") does not match number of public members (", public_member_count, ")");
+			return;
+		}
+		
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Decomposing struct with ", 
+		          public_member_count, " public members");
+		
+		// Step 5: Create bindings for each identifier
+		// For each binding, we create a variable that's initialized with a member access expression
+		size_t binding_idx = 0;
+		for (const auto& member : struct_info->members) {
+			if (member.is_static || member.access != AccessSpecifier::Public) {
+				continue;  // Skip non-public or static members
+			}
+			
+			if (binding_idx >= node.identifiers().size()) {
+				break;  // Safety check
+			}
+			
+			StringHandle binding_id = node.identifiers()[binding_idx];
+			std::string_view binding_name = StringTable::getStringView(binding_id);
+			
+			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Creating binding '", binding_name, 
+			          "' to member '", StringTable::getStringView(member.name), "'");
+			
+			// Create a TypeSpecifierNode for this binding's type
+			// The binding has the same type as the struct member
+			unsigned char member_size_bits = static_cast<unsigned char>(member.size * 8);
+			TypeSpecifierNode binding_type(member.type, TypeQualifier::None, member_size_bits, Token());
+			binding_type.set_type_index(member.type_index);
+			
+			// Create a synthetic declaration node for the binding
+			// This allows the binding to be looked up in the symbol table
+			Token binding_token(Token::Type::Identifier, binding_name, 0, 0, 0);
+			ASTNode binding_decl_node = ASTNode::emplace_node<DeclarationNode>(
+				ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
+				binding_token
+			);
+			
+			// Add to symbol table
+			symbol_table.insert(binding_name, binding_decl_node);
+			
+			// Generate IR to load the member value into the binding variable
+			// First, create the binding variable declaration
+			VariableDeclOp binding_var_decl;
+			binding_var_decl.var_name = binding_id;
+			binding_var_decl.type = member.type;
+			binding_var_decl.size_in_bits = member_size_bits;
+			binding_var_decl.type_index = member.type_index;
+			
+			ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
+			
+			// Now, generate a member access to load the value: binding = hidden_var.member
+			// Use MemberLoad to read the member value
+			TempVar member_val = var_counter.next();
+			MemberLoadOp load_op;
+			load_op.result = member_val;
+			load_op.object = hidden_var_handle;
+			load_op.member_name = member.name;
+			load_op.member_offset = member.offset;
+			load_op.member_type = member.type;
+			load_op.member_size_bits = member_size_bits;
+			load_op.member_type_index = member.type_index;
+			load_op.object_type_index = init_type_index;
+			
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberLoad, std::move(load_op), binding_token));
+			
+			// Store the member value into the binding variable
+			StoreOp store_op;
+			store_op.destination = binding_id;
+			store_op.value.type = member.type;
+			store_op.value.size_in_bits = member_size_bits;
+			store_op.value.value = member_val;
+			store_op.value.type_index = member.type_index;
+			
+			ir_.addInstruction(IrInstruction(IrOpcode::Store, std::move(store_op), binding_token));
+			
+			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Added binding '", binding_name, "' to symbol table");
+			
+			binding_idx++;
+		}
+		
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", binding_idx, " bindings");
 	}
 
 	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode, 

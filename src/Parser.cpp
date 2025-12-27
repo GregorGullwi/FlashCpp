@@ -1150,6 +1150,15 @@ ParseResult Parser::parse_type_and_name() {
     // Get the type specifier node to modify it with pointer levels
     TypeSpecifierNode& type_spec = type_specifier_result.node()->as<TypeSpecifierNode>();
 
+    // Check for structured binding: auto [a, b, c] = expr;
+    // This must be checked after parsing the type specifier (auto) but before parsing pointer/reference/identifier
+    if (type_spec.type() == Type::Auto && peek_token().has_value() && peek_token()->value() == "[") {
+        FLASH_LOG(Parser, Debug, "parse_type_and_name: Detected structured binding pattern: auto [");
+        
+        // Parse structured binding
+        return parse_structured_binding(type_spec.cv_qualifier());
+    }
+
     // Extract calling convention specifiers that can appear after the type
     // Example: void __cdecl func(); or int __stdcall* func();
     // We consume them here and save to last_calling_convention_ for the caller to retrieve
@@ -1558,6 +1567,106 @@ ParseResult Parser::parse_type_and_name() {
     }
     return ParseResult::error("Invalid type specifier node", identifier_token);
 }
+
+// Parse structured binding: auto [a, b, c] = expr;
+ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers) {
+    FLASH_LOG(Parser, Debug, "parse_structured_binding: Starting");
+    
+    // At this point, we've already parsed 'auto' and confirmed the next token is '['
+    // Consume the '['
+    if (!peek_token().has_value() || peek_token()->value() != "[") {
+        return ParseResult::error("Expected '[' for structured binding", *current_token_);
+    }
+    consume_token(); // consume '['
+    
+    // Parse the identifier list: a, b, c
+    std::vector<StringHandle> identifiers;
+    
+    while (true) {
+        // Expect an identifier
+        if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+            return ParseResult::error("Expected identifier in structured binding", *current_token_);
+        }
+        
+        Token id_token = *peek_token();
+        StringHandle id_handle = StringTable::createStringHandle(id_token.value());
+        identifiers.push_back(id_handle);
+        consume_token(); // consume identifier
+        
+        FLASH_LOG(Parser, Debug, "parse_structured_binding: Parsed identifier: ", StringTable::getStringView(id_handle));
+        
+        // Check for comma (more identifiers) or closing bracket
+        if (peek_token().has_value() && peek_token()->value() == ",") {
+            consume_token(); // consume ','
+            // Continue to parse next identifier
+        } else if (peek_token().has_value() && peek_token()->value() == "]") {
+            // End of identifier list
+            break;
+        } else {
+            return ParseResult::error("Expected ',' or ']' in structured binding identifier list", *current_token_);
+        }
+    }
+    
+    // Consume the ']'
+    if (!peek_token().has_value() || peek_token()->value() != "]") {
+        return ParseResult::error("Expected ']' after structured binding identifiers", *current_token_);
+    }
+    consume_token(); // consume ']'
+    
+    FLASH_LOG(Parser, Debug, "parse_structured_binding: Parsed ", identifiers.size(), " identifiers");
+    
+    // Now expect the initializer: '=' expr or '{' expr '}' or '(' expr ')'
+    // For C++17, we support '=' and '{}' 
+    // C++20 adds '()' but let's keep it simple for now
+    if (!peek_token().has_value()) {
+        return ParseResult::error("Expected initializer after structured binding identifiers", *current_token_);
+    }
+    
+    std::optional<ASTNode> initializer;
+    
+    if (peek_token()->value() == "=") {
+        consume_token(); // consume '='
+        
+        // Parse the initializer expression
+        auto init_result = parse_expression();
+        if (init_result.is_error()) {
+            return init_result;
+        }
+        initializer = init_result.node();
+        
+    } else if (peek_token()->value() == "{") {
+        // Brace initializer: auto [a, b] {expr};
+        // For now, we'll parse this as an expression that starts with '{'
+        auto init_result = parse_expression();
+        if (init_result.is_error()) {
+            return init_result;
+        }
+        initializer = init_result.node();
+        
+    } else {
+        return ParseResult::error("Expected '=' or '{' after structured binding identifiers", *current_token_);
+    }
+    
+    if (!initializer.has_value()) {
+        return ParseResult::error("Failed to parse structured binding initializer", *current_token_);
+    }
+    
+    FLASH_LOG(Parser, Debug, "parse_structured_binding: Successfully parsed initializer");
+    
+    // Create the StructuredBindingNode
+    // For now, reference qualifier is always None (we can extend this later for auto&, auto&&)
+    ASTNode binding_node = emplace_node<StructuredBindingNode>(
+        std::move(identifiers),
+        *initializer,
+        cv_qualifiers,
+        ReferenceQualifier::None
+    );
+    
+    FLASH_LOG(Parser, Debug, "parse_structured_binding: Created StructuredBindingNode");
+    
+    return ParseResult::success(binding_node);
+}
+
 
 // NEW: Parse declarators (handles function pointers, arrays, etc.)
 ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linkage) {
@@ -9232,6 +9341,19 @@ ParseResult Parser::parse_variable_declaration()
 	// Parse the type specifier and identifier (name)
 	ParseResult type_and_name_result = parse_type_and_name();
 	if (type_and_name_result.is_error()) {
+		return type_and_name_result;
+	}
+
+	// Check if this is a structured binding declaration
+	if (type_and_name_result.node().has_value() && type_and_name_result.node()->is<StructuredBindingNode>()) {
+		// Structured bindings have their own handling
+		// They already include the initializer, so we just return the node
+		// Note: Structured bindings don't support storage class specifiers or constexpr/constinit
+		// TODO: Add validation for unsupported features with structured bindings
+		FLASH_LOG(Parser, Debug, "parse_variable_declaration: Handling structured binding");
+		
+		// For now, just return the structured binding node directly
+		// The code generation will handle decomposing it
 		return type_and_name_result;
 	}
 
