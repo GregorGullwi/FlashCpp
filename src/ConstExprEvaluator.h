@@ -635,6 +635,29 @@ private:
 			return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
 		}
 
+		// Check if the initializer is an InitializerListNode (for arrays)
+		if (initializer->is<InitializerListNode>()) {
+			const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+			const auto& initializers = init_list.initializers();
+			
+			// Evaluate each element
+			std::vector<int64_t> array_values;
+			for (const auto& elem : initializers) {
+				auto elem_result = evaluate(elem, context);
+				if (!elem_result.success) {
+					return elem_result;
+				}
+				array_values.push_back(elem_result.as_int());
+			}
+			
+			// Return as an array result
+			EvalResult array_result;
+			array_result.success = true;
+			array_result.is_array = true;
+			array_result.array_values = std::move(array_values);
+			return array_result;
+		}
+
 		// Recursively evaluate the initializer
 		return evaluate(initializer.value(), context);
 	}
@@ -1030,8 +1053,10 @@ private:
 		for (size_t i = 0; i < statements.size(); i++) {
 			auto result = evaluate_statement_with_bindings(statements[i], local_bindings, context);
 			
-			// If this was a return statement, we're done
-			if (statements[i].is<ReturnStatementNode>()) {
+			// If the result is successful, it means a return value was computed
+			// This can happen either directly from a return statement, or indirectly
+			// from an if/while/for statement that contains a return
+			if (result.success) {
 				context.current_depth--;
 				return result;
 			}
@@ -1624,6 +1649,45 @@ private:
 				}
 			}
 			// Fall through to normal evaluation for non-this member access
+		}
+		
+		// For array subscript (e.g., arr[i] where arr is a parameter)
+		if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+			const auto& subscript = std::get<ArraySubscriptNode>(expr);
+			
+			// Evaluate the index
+			auto index_result = evaluate_expression_with_bindings_const(subscript.index_expr(), bindings, context);
+			if (!index_result.success) {
+				return index_result;
+			}
+			
+			long long index = index_result.as_int();
+			if (index < 0) {
+				return EvalResult::error("Negative array index in constant expression");
+			}
+			
+			// Get the array expression
+			const ASTNode& array_expr = subscript.array_expr();
+			if (array_expr.is<ExpressionNode>()) {
+				const ExpressionNode& expr = array_expr.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(expr)) {
+					std::string_view var_name = std::get<IdentifierNode>(expr).name();
+					
+					// Check if it's in bindings (parameter array)
+					auto it = bindings.find(var_name);
+					if (it != bindings.end()) {
+						const EvalResult& array_result = it->second;
+						if (array_result.is_array) {
+							if (static_cast<size_t>(index) >= array_result.array_values.size()) {
+								return EvalResult::error("Array index out of bounds in constant expression");
+							}
+							return EvalResult::from_int(array_result.array_values[static_cast<size_t>(index)]);
+						}
+						return EvalResult::error("Subscript on non-array variable in constant expression");
+					}
+					// Fall through to normal variable lookup
+				}
+			}
 		}
 		
 		// For literals and other expressions without parameters, evaluate normally

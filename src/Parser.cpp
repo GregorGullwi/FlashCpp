@@ -14535,8 +14535,25 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					return ParseResult::success(*result);
 				}
 				
-				// Not a function call, template member access, template parameter reference, or pack expansion - this is an error
-				if (!identifierType) {
+				// Before reporting error, check if this could be a template alias usage
+				// Example: remove_const_t<T> where remove_const_t is defined as "using remove_const_t = typename remove_const<T>::type;"
+				if (!identifierType && peek_token().has_value() && peek_token()->value() == "<") {
+					// Check if this is an alias template
+					auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
+					if (alias_opt.has_value()) {
+						// This is an alias template like "remove_const_t<T>"
+						// We need to instantiate it, which will happen in the normal template arg parsing flow below
+						// Set a marker that we found an alias template so we can handle it later
+						// For now, create a placeholder node and let the template instantiation logic handle it
+						FLASH_LOG(Parser, Debug, "Found alias template '", idenfifier_token.value(), "' in expression context");
+						// Don't return yet - let it fall through to template argument parsing below
+					} else {
+						// Not an alias template and not found anywhere
+						FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
+						return ParseResult::error("Missing identifier", idenfifier_token);
+					}
+				} else if (!identifierType) {
+					// Not a function call, template member access, template parameter reference, pack expansion, or alias template - this is an error
 					FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
 					return ParseResult::error("Missing identifier", idenfifier_token);
 				}
