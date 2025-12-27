@@ -1,6 +1,20 @@
-// Test constexpr features
+// Comprehensive test of constexpr features
 
-// Test 1: Constexpr constructors and methods
+// Test 1: Basic constexpr function
+constexpr int add(int a, int b) {
+    return a + b;
+}
+
+static_assert(add(3, 4) == 7, "add failed");
+
+// Test 2: Constexpr with ternary operator
+constexpr int max_ternary(int a, int b) {
+    return (a > b) ? a : b;
+}
+
+static_assert(max_ternary(10, 5) == 10, "max_ternary failed");
+
+// Test 3: Constexpr constructors and methods
 struct Point {
     int x, y;
     
@@ -12,7 +26,7 @@ struct Point {
 constexpr Point p(3, 4);
 static_assert(p.sum() == 7, "constexpr constructor and method failed");
 
-// Test 2: Constexpr with more complex logic
+// Test 4: Constexpr loop
 constexpr int factorial(int n) {
     int result = 1;
     for (int i = 2; i <= n; ++i) {
@@ -23,7 +37,7 @@ constexpr int factorial(int n) {
 
 static_assert(factorial(5) == 120, "constexpr factorial failed");
 
-// Test 3: Constexpr with conditionals
+// Test 5: Constexpr with if-else conditionals
 constexpr int max(int a, int b) {
     if (a > b) {
         return a;
@@ -34,7 +48,7 @@ constexpr int max(int a, int b) {
 
 static_assert(max(10, 5) == 10, "constexpr max failed");
 
-// Test 4: Constexpr with arrays
+// Test 6: Constexpr with arrays
 constexpr int sum_array(const int* arr, int size) {
     int sum = 0;
     for (int i = 0; i < size; ++i) {
