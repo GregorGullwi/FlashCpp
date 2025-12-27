@@ -3344,6 +3344,26 @@ ParseResult Parser::parse_struct_declaration()
 			
 			std::vector<TemplateTypeArg> template_args = *template_args_opt;
 			
+			// Check for member type access (e.g., ::type) after template arguments
+			// This handles patterns like: __not_<T>::type
+			if (peek_token().has_value() && peek_token()->value() == "::") {
+				consume_token(); // consume ::
+				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected member name after ::", peek_token().value_or(Token()));
+				}
+				StringHandle member_name = StringTable::getOrInternStringHandle(peek_token()->value());
+				consume_token(); // consume member name
+				
+				// Build the fully qualified member type name
+				StringBuilder qualified_builder;
+				qualified_builder += base_class_name;
+				qualified_builder += "::";
+				qualified_builder.append(member_name);
+				base_class_name = qualified_builder.commit();
+				
+				FLASH_LOG_FORMAT(Templates, Debug, "Found member type access: {}", base_class_name);
+			}
+			
 			// Check if any template arguments are dependent
 			bool has_dependent_args = false;
 			for (const auto& arg : template_args) {
