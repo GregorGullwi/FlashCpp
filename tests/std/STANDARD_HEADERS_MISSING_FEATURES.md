@@ -54,7 +54,7 @@ While full standard library headers don't compile yet, FlashCpp supports many C+
 
 **Modern C++ Features:**
 - Lambdas (including captures, generic lambdas) ✅
-- Structured bindings ✅
+- Structured bindings ❌ **NOT IMPLEMENTED** (macro defined but feature missing)
 - Range-based for loops ✅
 - `if constexpr` ✅
 - constexpr variables and simple functions ✅
@@ -76,6 +76,23 @@ int main() {
 ```
 
 ### ❌ What Doesn't Work Yet
+
+**Structured Bindings (December 27, 2024):**
+- ❌ **NOT IMPLEMENTED** - Despite `__cpp_structured_bindings` macro being defined (201606L)
+- Parser fails when encountering `auto [a, b] = expr;` syntax
+- Error: "Missing identifier" when trying to parse binding names
+- **Impact**: Cannot use structured bindings with tuples, pairs, or struct decomposition
+- **Workaround**: Manually extract struct members or use `std::tie` patterns when available
+
+**Auto Type Deduction Status (Verified December 27, 2024):**
+- ✅ Basic auto works: `auto x = 42;`, `auto y = expr;`
+- ✅ Auto with function returns works: `auto p = makePoint();`
+- ✅ Auto& references work: `auto& ref = x;`
+- ✅ Const auto works: `const auto c = 50;`
+- ✅ Auto* pointers work: `auto* ptr = &x;`
+- ❌ Auto structured bindings don't work: `auto [x, y] = pair;`
+
+**Test**: `test_auto_comprehensive_ret282.cpp` verifies all working auto features ✅
 
 **Remaining Standard Library Blockers:**
 - **Full standard library headers still timeout** due to complex template instantiation volume
