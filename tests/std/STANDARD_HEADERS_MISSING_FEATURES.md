@@ -84,12 +84,15 @@ int main() {
 - **Impact**: Cannot use structured bindings with tuples, pairs, or struct decomposition
 - **Workaround**: Manually extract struct members or use `std::tie` patterns when available
 
-**Auto Type Deduction Status:**
+**Auto Type Deduction Status (Verified December 27, 2024):**
 - ✅ Basic auto works: `auto x = 42;`, `auto y = expr;`
 - ✅ Auto with function returns works: `auto p = makePoint();`
-- ⚠️ Auto& references need verification
-- ⚠️ Const auto needs verification  
+- ✅ Auto& references work: `auto& ref = x;`
+- ✅ Const auto works: `const auto c = 50;`
+- ✅ Auto* pointers work: `auto* ptr = &x;`
 - ❌ Auto structured bindings don't work: `auto [x, y] = pair;`
+
+**Test**: `test_auto_comprehensive_ret282.cpp` verifies all working auto features ✅
 
 **Remaining Standard Library Blockers:**
 - **Full standard library headers still timeout** due to complex template instantiation volume
