@@ -239,10 +239,57 @@ int main() {
 - `tests/test_sizeof_default_simple_ret4.cpp` - Test case (returns 4) ✅
 - `tests/test_sizeof_template_param_default_ret4.cpp` - Additional test case
 
-**Next Blocker**: Type alias resolution in some template contexts (e.g., "Missing identifier: false_type")
+
+#### 0d. Type Alias Resolution in Expression Contexts (December 27, 2024 - Late Evening)
+**Status**: ✅ **NEWLY IMPLEMENTED**
+
+**What Was Missing**: FlashCpp could not resolve type aliases like `false_type`, `true_type`, `__enable_if_t` when used in expression contexts. The parser only checked `gSymbolTable` for identifiers, but type aliases are registered in `gTypesByName`.
+
+**The Problem**: Standard library headers extensively use type aliases in template metaprogramming:
+```cpp
+using true_type = integral_constant<bool, true>;
+using false_type = integral_constant<bool, false>;
+
+template<typename T>
+struct is_const : false_type { };  // false_type used in expression
+```
+
+When parsing `false_type` in expression contexts (template arguments, base class specifications), the lookup failed:
+- Line 13706-13709: Identifier lookup only checked `gSymbolTable`
+- Type aliases registered in `gTypesByName` (line 6315) were not checked
+- Led to errors: "Missing identifier: false_type", "Missing identifier: true_type"
+
+**Implementation**:
+- Modified `src/Parser.cpp` lines 13713-13725
+- Added fallback check to `gTypesByName` when identifier not found in `gSymbolTable`
+- Sets `found_as_type_alias` flag to prevent "Missing identifier" errors
+- Updated error checks at lines 14771 and 14776 to consider `found_as_type_alias`
+
+**Test Cases**:
+```cpp
+// Now compiles without errors:
+using true_type = integral_constant<bool, true>;
+using false_type = integral_constant<bool, false>;
+
+template<typename T>
+struct is_const : false_type { };  // ✅ Works!
+
+bool b = true_type::value;  // ✅ Works!
+```
+
+**Impact**: Eliminates "Missing identifier" errors for type aliases used in `<type_traits>`, `<optional>`, `<variant>`, and other metaprogramming-heavy headers. This was identified as "Secondary Issue" and "Next Blocker" in the documentation.
+
+**Files Modified:**
+- `src/Parser.cpp` - Added gTypesByName fallback in parse_primary_expression()
+- Test cases:
+  - `tests/test_type_alias_simple_ret42.cpp` - Basic type alias usage ✅
+  - `tests/test_type_alias_expression_ret42.cpp` - Expression context usage ✅
+  - `tests/test_enable_if_t_ret42.cpp` - Template alias usage ✅
+
+**Current Status**: Type alias resolution now works. Headers transition from parsing errors to template instantiation timeouts, confirming that parsing correctness is resolved and performance optimization is the remaining blocker.
 
 
-#### 0d. Structured Bindings (December 27, 2024)
+#### 0e. Structured Bindings (December 27, 2024)
 **Status**: ✅ **NEWLY IMPLEMENTED**
 
 **What Was Missing**: FlashCpp did not support C++17 structured bindings syntax (`auto [a, b] = expr;`), despite defining the `__cpp_structured_bindings` feature test macro. This prevented decomposition of structs, arrays, tuples, and pairs.
@@ -553,6 +600,7 @@ The following critical features have been implemented:
 9. **Qualified Base Class Names** ✅ - Support for `ns::Template<Args>::type` patterns
 10. **Member Type Access in Base Classes** ✅ - NEW (December 27) - Patterns like `__not_<T>::type` now parse correctly
 11. **Structured Bindings** ✅ - **NEWLY COMPLETED** (December 27, 2024) - Full C++17 support with reference qualifiers
+12. **Type Alias Resolution in Expression Contexts** ✅ - **NEWLY COMPLETED** (December 27, 2024) - Type aliases like `false_type`, `true_type` now resolve in all contexts
 
 See "Recent Progress (December 2024)" section below for detailed implementation notes.
 
@@ -978,8 +1026,9 @@ Supporting standard library headers is a complex undertaking requiring many adva
 4. ~~Complete operator overload resolution~~ ✅ **FULLY COMPLETED** (commit e2c874a) - All unary and binary operators work
 5. ~~Expand constexpr control flow support~~ ✅ **COMPLETED** (commit 6458c39) - For loops, while loops, if/else, assignments
 6. ~~Implement structured bindings~~ ✅ **COMPLETED** (commit 2c5f5f3) - Full C++17 support with reference qualifiers
-7. **Optimize template instantiation** ← **HIGHEST PRIORITY NOW** - Reduces timeouts, main blocker for headers
-8. Complete remaining constexpr features (constructors, complex expressions)
+7. ~~Fix type alias resolution in expression contexts~~ ✅ **COMPLETED** (commit 29449d1) - Type aliases like false_type, true_type now resolve
+8. **Optimize template instantiation** ← **HIGHEST PRIORITY NOW** - Reduces timeouts, main blocker for headers
+9. Complete remaining constexpr features (constructors, complex expressions)
 
 Once template optimization is implemented, simpler headers like `<type_traits>`, `<array>`, and `<span>` should compile successfully.
 
