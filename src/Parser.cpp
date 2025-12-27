@@ -9548,7 +9548,10 @@ ParseResult Parser::parse_variable_declaration()
 
 			// If the type is auto, deduce the type from the initializer
 			if (type_specifier.type() == Type::Auto && first_init_expr.has_value()) {
-				// Save the original reference qualifier before type deduction
+				// IMPORTANT: Save the original reference and CV qualifiers before type deduction
+				// Auto type deduction replaces the entire TypeSpecifierNode, which would lose
+				// qualifiers set during parsing (e.g., const auto&, auto&&)
+				// We must preserve these to generate correct code for references
 				ReferenceQualifier original_ref_qual = type_specifier.reference_qualifier();
 				CVQualifier original_cv_qual = type_specifier.cv_qualifier();
 				
@@ -9568,7 +9571,7 @@ ParseResult Parser::parse_variable_declaration()
 							  (int)type_specifier.type(), " size=", (int)deduced_size);
 				}
 				
-				// Restore the original reference qualifier and CV qualifier (for const auto& etc.)
+				// Restore the original reference qualifier and CV qualifier (for const auto&, auto&, auto&& etc.)
 				type_specifier.set_reference_qualifier(original_ref_qual);
 				// Also ensure CV qualifier is preserved (especially for const auto&)
 				if (original_cv_qual != CVQualifier::None) {
