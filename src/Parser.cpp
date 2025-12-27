@@ -1177,9 +1177,14 @@ ParseResult Parser::parse_type_and_name() {
             return parse_structured_binding(type_spec.cv_qualifier(), ref_qualifier);
         }
         
-        // If we consumed reference qualifiers but it's not a structured binding, that's an error
+        // If we consumed reference qualifiers but it's not a structured binding,
+        // apply them to the type_spec (e.g., auto& ref = x; or auto&& rvalue = temp;)
         if (ref_qualifier != ReferenceQualifier::None) {
-            return ParseResult::error("Unexpected reference qualifier without structured binding", *current_token_);
+            if (ref_qualifier == ReferenceQualifier::RValueReference) {
+                type_spec.set_reference(true);  // true = rvalue reference
+            } else if (ref_qualifier == ReferenceQualifier::LValueReference) {
+                type_spec.set_reference(false);  // false = lvalue reference
+            }
         }
     }
 
