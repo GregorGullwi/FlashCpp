@@ -697,6 +697,16 @@ public:  // Public methods for template instantiation
         
         // Check if a base class name is a template parameter (used for template parameter inheritance)
         bool is_base_class_template_parameter(std::string_view base_class_name) const;
+        
+        // Helper: Validate and add a base class (consolidates lookup, validation, and registration)
+        // Returns ParseResult::success() on success, or error if validation fails
+        ParseResult validate_and_add_base_class(
+            std::string_view base_class_name,
+            StructDeclarationNode& struct_ref,
+            StructTypeInfo* struct_info,
+            AccessSpecifier base_access,
+            bool is_virtual_base,
+            const Token& error_token);
 
         // Substitute template parameter in a type specification
         // Handles complex transformations like const T& -> const int&, T* -> int*, etc.

@@ -3368,33 +3368,11 @@ ParseResult Parser::parse_struct_declaration()
 			instantiated_base_name = instantiate_and_register_base_template(base_class_name, template_args);
 		}
 
-		// Look up base class type
-		auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
-		if (base_type_it == gTypesByName.end()) {
-			return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", base_name_token);
+		// Validate and add the base class
+		ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info.get(), base_access, is_virtual_base, base_name_token);
+		if (result.is_error()) {
+			return result;
 		}
-
-		const TypeInfo* base_type_info = base_type_it->second;
-		
-		// Check if base class is a template parameter
-		bool is_template_param = is_base_class_template_parameter(base_class_name);
-		
-		// Allow Type::Struct for concrete types OR template parameters
-		if (!is_template_param && base_type_info->type_ != Type::Struct) {
-			return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", base_name_token);
-		}
-
-		// For template parameters, skip 'final' check and other concrete type validations
-		if (!is_template_param) {
-			// Check if base class is final
-			if (base_type_info->struct_info_ && base_type_info->struct_info_->is_final) {
-				return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", base_name_token);
-			}
-		}
-
-		// Add base class to struct node and type info
-		struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_template_param);
-		struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_template_param);
 	} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 	}
 
@@ -16767,6 +16745,46 @@ bool Parser::is_base_class_template_parameter(std::string_view base_class_name) 
 	return false;
 }
 
+// Helper: Validate and add a base class (consolidates lookup, validation, and registration)
+ParseResult Parser::validate_and_add_base_class(
+	std::string_view base_class_name,
+	StructDeclarationNode& struct_ref,
+	StructTypeInfo* struct_info,
+	AccessSpecifier base_access,
+	bool is_virtual_base,
+	const Token& error_token)
+{
+	// Look up base class type
+	auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
+	if (base_type_it == gTypesByName.end()) {
+		return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", error_token);
+	}
+
+	const TypeInfo* base_type_info = base_type_it->second;
+	
+	// Check if base class is a template parameter
+	bool is_template_param = is_base_class_template_parameter(base_class_name);
+	
+	// Allow Type::Struct for concrete types OR template parameters
+	if (!is_template_param && base_type_info->type_ != Type::Struct) {
+		return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", error_token);
+	}
+
+	// For template parameters, skip 'final' check and other concrete type validations
+	if (!is_template_param) {
+		// Check if base class is final
+		if (base_type_info->struct_info_ && base_type_info->struct_info_->is_final) {
+			return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", error_token);
+		}
+	}
+
+	// Add base class to struct node and type info
+	struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_template_param);
+	struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_template_param);
+	
+	return ParseResult::success();
+}
+
 // Substitute template parameter in a type specification
 // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
 std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
@@ -18159,25 +18177,11 @@ ParseResult Parser::parse_template_declaration() {
 						instantiate_and_register_base_template(base_class_name, template_args);
 					}
 
-					// Look up base class type
-					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
-					if (base_type_it == gTypesByName.end()) {
-						return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
+					// Validate and add the base class
+					ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info.get(), base_access, is_virtual_base, *base_name_token);
+					if (result.is_error()) {
+						return result;
 					}
-
-					const TypeInfo* base_type_info = base_type_it->second;
-					
-					// Check if base class is a template parameter
-					bool is_template_param = is_base_class_template_parameter(base_class_name);
-					
-					// Allow Type::Struct for concrete types OR template parameters
-					if (!is_template_param && base_type_info->type_ != Type::Struct) {
-						return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", *base_name_token);
-					}
-
-					// Add base class to struct node and type info
-					struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_template_param);
-					struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_template_param);
 				} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 			}
 			
@@ -18961,25 +18965,11 @@ if (struct_type_info.getStructInfo()) {
 						instantiate_and_register_base_template(base_class_name, template_args);
 					}
 
-					// Look up base class type
-					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
-					if (base_type_it == gTypesByName.end()) {
-						return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
+					// Validate and add the base class
+					ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info.get(), base_access, is_virtual_base, *base_name_token);
+					if (result.is_error()) {
+						return result;
 					}
-
-					const TypeInfo* base_type_info = base_type_it->second;
-					
-					// Check if base class is a template parameter
-					bool is_template_param = is_base_class_template_parameter(base_class_name);
-					
-					// Allow Type::Struct for concrete types OR template parameters
-					if (!is_template_param && base_type_info->type_ != Type::Struct) {
-						return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", *base_name_token);
-					}
-
-					// Add base class to struct node and type info
-					struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_template_param);
-					struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_template_param);
 				} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 			}
 			
