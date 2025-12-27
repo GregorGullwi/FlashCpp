@@ -4,21 +4,24 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
-**UPDATE (December 26, 2024)**: With qualified base class parsing and pack expansion implemented, several more features now work!
+**UPDATE (December 27, 2024)**: Additional parsing fix for base class member type access implemented. Continue making progress toward `<type_traits>` compilation.
 
 ### Successfully Compiling Headers ✅
 
 **C Library Wrappers:**
-- `<cstddef>` - ~790ms (provides `size_t`, `ptrdiff_t`, `nullptr_t`)
-- `<cstdint>` - ~200ms (provides `int32_t`, `uint64_t`, etc.)
-- `<cstdio>` - ~770ms (provides `printf`, `scanf`, etc.)
+- `<cstddef>` - ~790ms (provides `size_t`, `ptrdiff_t`, `nullptr_t`) ✅
+- `<cstdint>` - ~200ms (provides `int32_t`, `uint64_t`, etc.) ✅  
+- `<cstdio>` - ~770ms (provides `printf`, `scanf`, etc.) ✅
+
+**Combined Test (December 27, 2024):**
+- `<cstddef>` + `<cstdint>` together: ~933ms ✅
 
 **C++ Standard Library:**
-- **`<type_traits>`** - Core patterns now supported! 🎉
+- **`<type_traits>`** - Partial support, core patterns work, but full header still has parsing issues
 
 ### Original Test Results (Before Recent Fixes)
 - **Total headers tested**: 21
-- **Successfully compiled**: 0 → **NOW: 4+ headers work!**
+- **Successfully compiled**: 0 → **NOW: 3+ headers confirmed working!**
 - **Timed out (>10s)**: 16
 - **Failed with errors**: 5
 
@@ -85,6 +88,47 @@ int main() {
 ## Recent Progress (December 2024)
 
 ### ✅ Completed Features
+
+#### 0a. Member Type Access After Template Arguments in Base Classes (December 27, 2024)
+**Status**: ✅ **NEWLY IMPLEMENTED**
+
+**What Was Missing**: FlashCpp could not parse member type access (e.g., `::type`) after template arguments when the base class was specified as a simple identifier (not qualified with namespaces).
+
+**The Problem**: Patterns like `struct negation : __not_<T>::type { };` would fail to parse because:
+- The parser handled `ns::Template<Args>::type` correctly (qualified case)
+- But failed on `Template<Args>::type` (simple identifier case)
+- After parsing `Template<Args>`, it never checked for `::type`
+
+**Implementation**: 
+- Modified `src/Parser.cpp` lines 3335-3369
+- Added check for `::` and member name after parsing template arguments
+- Mirrors the logic already present for qualified identifiers (lines 3286-3304)
+- Builds fully qualified member type name (e.g., `__not_<T>::type`)
+- Properly defers resolution when template arguments are dependent
+
+**Test Cases**:
+```cpp
+// Now parses successfully:
+template<typename T>
+struct wrapper {
+    using type = int;
+};
+
+template<typename T>
+struct negation : wrapper<T>::type { };  // ✅ Works!
+
+// From <type_traits>:
+template<typename _Pp>
+struct negation : __not_<_Pp>::type { };  // ✅ Now parses!
+```
+
+**Impact**: Allows more `<type_traits>` patterns to parse correctly. This complements the December 26 work on qualified base class names.
+
+**Files Modified:**
+- `src/Parser.cpp` - Base class template argument parsing
+- `tests/test_base_class_member_type_access_ret42.cpp` - Test case added
+
+**Next Blocker**: Multi-line template function declarations (type_traits line 296)
 
 #### 0. Qualified Base Class Names and Pack Expansion (December 26, 2024)
 **Status**: ✅ **NEWLY IMPLEMENTED**
