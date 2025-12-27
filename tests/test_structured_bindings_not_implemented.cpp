@@ -1,6 +1,6 @@
-// Test structured bindings - EXPECTED TO FAIL
-// This test documents that structured bindings are not yet implemented
-// despite __cpp_structured_bindings being defined
+// Test structured bindings - NOW IMPLEMENTED!
+// This test verifies that structured bindings work correctly
+// with function return values
 
 struct Pair {
     int first;
@@ -15,14 +15,8 @@ Pair makePair() {
 }
 
 int main() {
-    // This syntax is NOT supported yet
-    // Parser error: "Missing identifier: a"
-    // auto [a, b] = makePair();
-    
-    // Workaround: Manual extraction
-    Pair p = makePair();
-    int a = p.first;
-    int b = p.second;
+    // This syntax NOW WORKS! ✅
+    auto [a, b] = makePair();
     
     return a + b;  // Should return 42
 }
