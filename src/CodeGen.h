@@ -5645,7 +5645,7 @@ private:
 		// Step 2: Create a hidden temporary variable to hold the initializer
 		// Generate unique name for the hidden variable
 		TempVar hidden_var = var_counter.next();
-		std::string hidden_var_name = "__structured_binding_e_" + std::to_string(hidden_var.index);
+		std::string hidden_var_name = "__structured_binding_e_" + std::to_string(hidden_var.var_number);
 		StringHandle hidden_var_handle = StringTable::createStringHandle(hidden_var_name);
 		
 		// Declare the hidden variable
@@ -5653,7 +5653,6 @@ private:
 		hidden_decl_op.var_name = hidden_var_handle;
 		hidden_decl_op.type = init_type;
 		hidden_decl_op.size_in_bits = init_size;
-		hidden_decl_op.type_index = init_type_index;
 		hidden_decl_op.initializer = toTypedValue(init_operands);
 		
 		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(hidden_decl_op), Token()));
@@ -5682,10 +5681,10 @@ private:
 		}
 		
 		// Step 4: Validate that we have the correct number of identifiers
-		// Count non-static public members
+		// Count non-static public members (all members in FlashCpp are non-static by default)
 		size_t public_member_count = 0;
 		for (const auto& member : struct_info->members) {
-			if (!member.is_static && member.access == AccessSpecifier::Public) {
+			if (member.access == AccessSpecifier::Public) {
 				public_member_count++;
 			}
 		}
@@ -5703,8 +5702,8 @@ private:
 		// For each binding, we create a variable that's initialized with a member access expression
 		size_t binding_idx = 0;
 		for (const auto& member : struct_info->members) {
-			if (member.is_static || member.access != AccessSpecifier::Public) {
-				continue;  // Skip non-public or static members
+			if (member.access != AccessSpecifier::Public) {
+				continue;  // Skip non-public members
 			}
 			
 			if (binding_idx >= node.identifiers().size()) {
@@ -5734,40 +5733,32 @@ private:
 			// Add to symbol table
 			symbol_table.insert(binding_name, binding_decl_node);
 			
-			// Generate IR to load the member value into the binding variable
-			// First, create the binding variable declaration
+			// Generate IR to load the member value and initialize the binding variable
+			// First, generate a member access to load the value
+			TempVar member_val = var_counter.next();
+			MemberLoadOp load_op;
+			load_op.result.type = member.type;
+			load_op.result.size_in_bits = member_size_bits;
+			load_op.result.value = member_val;
+			load_op.result.type_index = member.type_index;
+			load_op.object = hidden_var_handle;
+			load_op.member_name = member.name;
+			load_op.offset = static_cast<int>(member.offset);
+			load_op.struct_type_info = &type_info;
+			load_op.is_reference = member.is_reference;
+			load_op.is_rvalue_reference = member.is_rvalue_reference;
+			load_op.is_pointer_to_member = false;
+			
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), binding_token));
+			
+			// Now, declare the binding variable with the member value as initializer
 			VariableDeclOp binding_var_decl;
 			binding_var_decl.var_name = binding_id;
 			binding_var_decl.type = member.type;
 			binding_var_decl.size_in_bits = member_size_bits;
-			binding_var_decl.type_index = member.type_index;
+			binding_var_decl.initializer = TypedValue{member.type, static_cast<int>(member_size_bits), member_val, false, false, member.type_index};
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
-			
-			// Now, generate a member access to load the value: binding = hidden_var.member
-			// Use MemberLoad to read the member value
-			TempVar member_val = var_counter.next();
-			MemberLoadOp load_op;
-			load_op.result = member_val;
-			load_op.object = hidden_var_handle;
-			load_op.member_name = member.name;
-			load_op.member_offset = member.offset;
-			load_op.member_type = member.type;
-			load_op.member_size_bits = member_size_bits;
-			load_op.member_type_index = member.type_index;
-			load_op.object_type_index = init_type_index;
-			
-			ir_.addInstruction(IrInstruction(IrOpcode::MemberLoad, std::move(load_op), binding_token));
-			
-			// Store the member value into the binding variable
-			StoreOp store_op;
-			store_op.destination = binding_id;
-			store_op.value.type = member.type;
-			store_op.value.size_in_bits = member_size_bits;
-			store_op.value.value = member_val;
-			store_op.value.type_index = member.type_index;
-			
-			ir_.addInstruction(IrInstruction(IrOpcode::Store, std::move(store_op), binding_token));
 			
 			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Added binding '", binding_name, "' to symbol table");
 			

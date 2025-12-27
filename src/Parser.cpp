@@ -1664,6 +1664,31 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers) {
     
     FLASH_LOG(Parser, Debug, "parse_structured_binding: Created StructuredBindingNode");
     
+    // IMPORTANT: We need to add placeholder declarations to the symbol table for each identifier
+    // so that the parser can find them when they're used later in the same scope.
+    // The actual types will be determined during code generation, but we need placeholders for parsing.
+    const StructuredBindingNode& sb_node = binding_node.as<StructuredBindingNode>();
+    for (const auto& id_handle : sb_node.identifiers()) {
+        std::string_view id_name = StringTable::getStringView(id_handle);
+        
+        // Create a placeholder TypeSpecifierNode (we'll use Auto type as a placeholder)
+        TypeSpecifierNode placeholder_type(Type::Auto, TypeQualifier::None, 0, Token());
+        
+        // Create a placeholder DeclarationNode
+        Token placeholder_token(Token::Type::Identifier, id_name, 0, 0, 0);
+        ASTNode placeholder_decl = emplace_node<DeclarationNode>(
+            emplace_node<TypeSpecifierNode>(placeholder_type),
+            placeholder_token
+        );
+        
+        // Add to symbol table
+        if (!gSymbolTable.insert(id_name, placeholder_decl)) {
+            FLASH_LOG(Parser, Warning, "Structured binding identifier '", id_name, "' already exists in scope");
+        } else {
+            FLASH_LOG(Parser, Debug, "parse_structured_binding: Added placeholder for '", id_name, "' to symbol table");
+        }
+    }
+    
     return ParseResult::success(binding_node);
 }
 
