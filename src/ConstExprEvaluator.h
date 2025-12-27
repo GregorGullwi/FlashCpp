@@ -1030,8 +1030,10 @@ private:
 		for (size_t i = 0; i < statements.size(); i++) {
 			auto result = evaluate_statement_with_bindings(statements[i], local_bindings, context);
 			
-			// If this was a return statement, we're done
-			if (statements[i].is<ReturnStatementNode>()) {
+			// If the result is successful, it means a return value was computed
+			// This can happen either directly from a return statement, or indirectly
+			// from an if/while/for statement that contains a return
+			if (result.success) {
 				context.current_depth--;
 				return result;
 			}
