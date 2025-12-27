@@ -9374,7 +9374,22 @@ ParseResult Parser::parse_variable_declaration()
 		// Structured bindings have their own handling
 		// They already include the initializer, so we just return the node
 		// Note: Structured bindings don't support storage class specifiers or constexpr/constinit
-		// TODO: Add validation for unsupported features with structured bindings
+		
+		// Validate: structured bindings cannot have storage class specifiers
+		if (storage_class != StorageClass::None) {
+			return ParseResult::error("Structured bindings cannot have storage class specifiers (static, extern, etc.)", *current_token_);
+		}
+		
+		// Validate: structured bindings cannot be constexpr
+		if (is_constexpr) {
+			return ParseResult::error("Structured bindings cannot be constexpr", *current_token_);
+		}
+		
+		// Validate: structured bindings cannot be constinit
+		if (is_constinit) {
+			return ParseResult::error("Structured bindings cannot be constinit", *current_token_);
+		}
+		
 		FLASH_LOG(Parser, Debug, "parse_variable_declaration: Handling structured binding");
 		
 		// For now, just return the structured binding node directly
