@@ -10964,9 +10964,43 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		if (is_operator && peek_token()->value() == "<" && result.node().has_value()) {
 			FLASH_LOG(Parser, Debug, "Binary operator loop: checking if '<' is template arguments, context=", static_cast<int>(context));
 			
+			// Check if the left side could be a template name
+			// Don't attempt template argument parsing if it's clearly a simple variable
+			bool could_be_template_name = false;
+			
+			if (result.node()->is<ExpressionNode>()) {
+				const auto& expr = result.node()->as<ExpressionNode>();
+				
+				// Check if it's an identifier that could be a template
+				if (std::holds_alternative<IdentifierNode>(expr)) {
+					const auto& ident = std::get<IdentifierNode>(expr);
+					std::string_view ident_name = ident.name();
+					
+					// Check if this identifier is in the symbol table as a regular variable
+					auto symbol_type = gSymbolTable.lookup(StringTable::getOrInternStringHandle(ident_name), 
+					                                       gSymbolTable.get_current_scope_handle());
+					
+					// If it's a variable, don't try template argument parsing
+					if (symbol_type && (symbol_type->is<VariableDeclarationNode>() || 
+					                   symbol_type->is<DeclarationNode>())) {
+						// This is a regular variable, treat < as comparison
+						could_be_template_name = false;
+					} else {
+						// Not a known variable, could be a template
+						could_be_template_name = true;
+					}
+				} else {
+					// Not a simple identifier, could be a complex expression that needs template args
+					could_be_template_name = true;
+				}
+			} else {
+				// Not an expression node, be conservative and allow template parsing
+				could_be_template_name = true;
+			}
+			
 			// Use lookahead to check if this could be template arguments
 			// In Decltype context, be more aggressive about treating < as template arguments
-			if (could_be_template_arguments()) {
+			if (could_be_template_name && could_be_template_arguments()) {
 				FLASH_LOG(Parser, Debug, "Confirmed: '<' starts template arguments, not comparison operator");
 				// Template arguments were successfully parsed by could_be_template_arguments()
 				// The parse_explicit_template_arguments() call inside it already consumed the tokens
@@ -14349,7 +14383,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			else {
 				// Not a function call - could be a template with `<` or just missing identifier
 				// Check if this might be a template: identifier<...>
-				if (peek_token().has_value() && peek_token()->value() == "<") {
+				// BUT: Don't attempt for regular variables (< could be comparison)
+				bool should_try_template = false;
+				if (identifierType) {
+					// Check if it's NOT a regular variable
+					bool is_regular_var = identifierType->is<VariableDeclarationNode>() || 
+					                     identifierType->is<DeclarationNode>();
+					should_try_template = !is_regular_var;
+				}
+				
+				if (should_try_template && peek_token().has_value() && peek_token()->value() == "<") {
 					// Try to parse as template instantiation with member access
 					auto explicit_template_args = parse_explicit_template_arguments();
 					
@@ -14486,8 +14529,25 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Identifier already consumed at line 1621
 
 			// Check for explicit template arguments: identifier<type1, type2>(args)
+			// BUT: Don't attempt template argument parsing for regular variables (could be < comparison)
 			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
-			if (peek_token().has_value() && peek_token()->value() == "<") {
+			bool should_try_template_args = false;
+			
+			// Only try template argument parsing if:
+			// 1. Identifier is a template function/variable, OR
+			// 2. Identifier is not a regular variable (could be a template we haven't seen yet)
+			if (identifierType) {
+				// Check if it's a template or if we're uncertain (not a regular variable)
+				bool is_template = identifierType->is<TemplateFunctionDeclarationNode>() || 
+				                  identifierType->is<TemplateVariableDeclarationNode>();
+				bool is_regular_var = identifierType->is<VariableDeclarationNode>() || 
+				                     identifierType->is<DeclarationNode>();
+				
+				// Try template args if it's a template, or if it's neither (uncertain case)
+				should_try_template_args = is_template || (!is_regular_var && !identifierType->is<FunctionDeclarationNode>());
+			}
+			
+			if (should_try_template_args && peek_token().has_value() && peek_token()->value() == "<") {
 				explicit_template_args = parse_explicit_template_arguments();
 				// If parsing failed, it might be a less-than operator, so continue normally
 				
