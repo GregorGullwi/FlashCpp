@@ -481,6 +481,7 @@ private:
         ParseResult parse_top_level_node();
         ParseResult parse_pragma_pack_inner();   // NEW: Parse the contents of pragma pack()
         ParseResult parse_type_and_name();
+        ParseResult parse_structured_binding(CVQualifier cv_qualifiers, ReferenceQualifier ref_qualifier);  // NEW: Parse structured bindings: auto [a, b] = expr; auto& [x, y] = pair;
         ParseResult parse_declarator(TypeSpecifierNode& base_type, Linkage linkage = Linkage::None);  // NEW: Parse declarators (function pointers, arrays, etc.)
         ParseResult parse_direct_declarator(TypeSpecifierNode& base_type, Token& out_identifier, Linkage linkage);  // NEW: Helper for direct declarators
         ParseResult parse_postfix_declarator(TypeSpecifierNode& base_type, const Token& identifier);  // NEW: Helper for postfix declarators

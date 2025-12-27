@@ -161,6 +161,9 @@ public:
 		else if (node.is<VariableDeclarationNode>()) {
 			visitVariableDeclarationNode(node);
 		}
+		else if (node.is<StructuredBindingNode>()) {
+			visitStructuredBindingNode(node);
+		}
 		else if (node.is<IfStatementNode>()) {
 			visitIfStatementNode(node.as<IfStatementNode>());
 		}
@@ -5607,6 +5610,419 @@ private:
 		}
 	}
 
+	void visitStructuredBindingNode(const ASTNode& ast_node) {
+		const StructuredBindingNode& node = ast_node.as<StructuredBindingNode>();
+		
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Processing structured binding with ", 
+		          node.identifiers().size(), " identifiers");
+		
+		// Step 1: Evaluate the initializer expression and get its type
+		const ASTNode& initializer = node.initializer();
+		if (!initializer.is<ExpressionNode>()) {
+			FLASH_LOG(Codegen, Error, "Structured binding initializer is not an expression");
+			return;
+		}
+		
+		auto init_operands = visitExpressionNode(initializer.as<ExpressionNode>());
+		if (init_operands.size() < 3) {
+			FLASH_LOG(Codegen, Error, "Structured binding initializer produced invalid operands");
+			return;
+		}
+		
+		// Extract initializer type information
+		Type init_type = std::get<Type>(init_operands[0]);
+		int init_size = std::get<int>(init_operands[1]);
+		TypeIndex init_type_index = 0;
+		
+		// Get type_index if available (4th element)
+		if (init_operands.size() >= 4 && std::holds_alternative<unsigned long long>(init_operands[3])) {
+			init_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(init_operands[3]));
+		}
+		
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Initializer type=", (int)init_type, 
+		          " type_index=", init_type_index, " ref_qualifier=", (int)node.ref_qualifier());
+		
+		// Check if this is a reference binding (auto& or auto&&)
+		bool is_reference_binding = node.is_lvalue_reference() || node.is_rvalue_reference();
+		
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: is_reference_binding=", is_reference_binding,
+		          " is_lvalue_ref=", node.is_lvalue_reference(), " is_rvalue_ref=", node.is_rvalue_reference());
+		
+		// Step 2: Determine if initializer is an array by checking the symbol table
+		bool is_array = false;
+		size_t array_size = 0;
+		Type array_element_type = init_type;
+		int array_element_size = init_size;
+		
+		// Check if initializer is an identifier (which could be an array variable)
+		if (initializer.is<ExpressionNode>()) {
+			const ExpressionNode& expr_node = initializer.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(expr_node)) {
+				const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
+				std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
+				
+				if (symbol.has_value()) {
+					// Check if it's a DeclarationNode with array information
+					if (symbol->is<DeclarationNode>()) {
+						const DeclarationNode& decl = symbol->as<DeclarationNode>();
+						if (decl.is_array() && decl.array_size().has_value()) {
+							// Evaluate array size
+							ConstExpr::EvaluationContext ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
+							if (eval_result.success) {
+								is_array = true;
+								array_size = static_cast<size_t>(eval_result.as_int());
+								// Get element type and size from the type specifier
+								const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+								array_element_type = type_spec.type();
+								array_element_size = static_cast<int>(type_spec.size_in_bits());
+								FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Detected array with size ", array_size, 
+								          " element_type=", (int)array_element_type, " element_size=", array_element_size);
+							}
+						}
+					}
+					// Check if it's a VariableDeclarationNode with array information
+					else if (symbol->is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var_decl = symbol->as<VariableDeclarationNode>();
+						const DeclarationNode& decl = var_decl.declaration();
+						if (decl.is_array() && decl.array_size().has_value()) {
+							// Evaluate array size
+							ConstExpr::EvaluationContext ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
+							if (eval_result.success) {
+								is_array = true;
+								array_size = static_cast<size_t>(eval_result.as_int());
+								// Get element type and size from the type specifier
+								const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+								array_element_type = type_spec.type();
+								array_element_size = static_cast<int>(type_spec.size_in_bits());
+								FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Detected array with size ", array_size,
+								          " element_type=", (int)array_element_type, " element_size=", array_element_size);
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		// Step 3: Create a hidden temporary variable to hold the initializer
+		// Generate unique name for the hidden variable
+		TempVar hidden_var = var_counter.next();
+		StringBuilder sb;
+		sb.append("__structured_binding_e_").append(static_cast<uint64_t>(hidden_var.var_number));
+		std::string_view hidden_var_name = sb.commit();
+		StringHandle hidden_var_handle = StringTable::createStringHandle(hidden_var_name);
+		
+		// Declare the hidden variable
+		VariableDeclOp hidden_decl_op;
+		hidden_decl_op.var_name = hidden_var_handle;
+		
+		// For arrays, we need to set up the array info properly
+		if (is_array) {
+			hidden_decl_op.type = array_element_type;
+			hidden_decl_op.size_in_bits = array_element_size;
+			hidden_decl_op.is_array = true;
+			hidden_decl_op.array_element_type = array_element_type;
+			hidden_decl_op.array_element_size = array_element_size;
+			hidden_decl_op.array_count = array_size;
+			// Don't set initializer here for arrays - we'll copy element by element
+		} else {
+			hidden_decl_op.type = init_type;
+			hidden_decl_op.size_in_bits = init_size;
+			hidden_decl_op.initializer = toTypedValue(init_operands);
+		}
+		
+		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(hidden_decl_op), Token()));
+		
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Created hidden variable ", hidden_var_name);
+		
+		// For arrays, copy elements from the source array to the hidden variable
+		if (is_array && initializer.is<ExpressionNode>()) {
+			const ExpressionNode& expr_node = initializer.as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(expr_node)) {
+				const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
+				StringHandle source_array = StringTable::getOrInternStringHandle(id_node.name());
+				
+				// Copy each element
+				for (size_t i = 0; i < array_size; ++i) {
+					// Load element from source array
+					TempVar element_temp = var_counter.next();
+					ArrayAccessOp access_op;
+					access_op.result = element_temp;
+					access_op.array = source_array;
+					access_op.index = TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)};
+					access_op.element_type = array_element_type;
+					access_op.element_size_in_bits = array_element_size;
+					access_op.is_pointer_to_array = false;
+					access_op.member_offset = 0;
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(access_op), Token()));
+					
+					// Store element to hidden array
+					ArrayStoreOp store_op;
+					store_op.element_type = array_element_type;
+					store_op.element_size_in_bits = array_element_size;
+					store_op.array = hidden_var_handle;
+					store_op.index = TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)};
+					store_op.value = TypedValue{array_element_type, array_element_size, element_temp};
+					store_op.member_offset = 0;
+					store_op.is_pointer_to_array = false;
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), Token()));
+				}
+			}
+		}
+		
+		// Step 4: Determine decomposition strategy
+		if (is_array) {
+			// Array decomposition
+			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Using array decomposition strategy");
+			
+			// Validate identifier count matches array size
+			if (node.identifiers().size() != array_size) {
+				FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(), 
+				          ") does not match array size (", array_size, ")");
+				return;
+			}
+			
+			// Create bindings for each array element
+			for (size_t i = 0; i < array_size; ++i) {
+				StringHandle binding_id = node.identifiers()[i];
+				std::string_view binding_name = StringTable::getStringView(binding_id);
+				
+				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Creating binding '", binding_name, 
+				          "' to array element [", i, "]");
+				
+				// Create a TypeSpecifierNode for this binding's type
+				TypeSpecifierNode binding_type(array_element_type, TypeQualifier::None, 
+				                                static_cast<unsigned char>(array_element_size), Token());
+				
+				// If this is a reference binding (auto& or auto&&), mark the type as a reference
+				if (is_reference_binding) {
+					if (node.is_lvalue_reference()) {
+						binding_type.set_reference(false);  // false = lvalue reference
+					} else if (node.is_rvalue_reference()) {
+						// For auto&&, bindings to array elements become lvalue references
+						binding_type.set_reference(false);  // false = lvalue reference
+					}
+				}
+				
+				// Create a synthetic declaration node for the binding
+				Token binding_token(Token::Type::Identifier, binding_name, 0, 0, 0);
+				ASTNode binding_decl_node = ASTNode::emplace_node<DeclarationNode>(
+					ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
+					binding_token
+				);
+				
+				// Add to symbol table
+				symbol_table.insert(binding_name, binding_decl_node);
+				
+				// Generate IR for the binding
+				if (is_reference_binding) {
+					// For reference bindings, create a reference variable that points to the element
+					// Compute address of array element: &(hidden_var[i])
+					TempVar element_addr = var_counter.next();
+					ArrayElementAddressOp addr_op;
+					addr_op.result = element_addr;
+					addr_op.array = hidden_var_handle;
+					addr_op.index = TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)};
+					addr_op.element_type = array_element_type;
+					addr_op.element_size_in_bits = array_element_size;
+					addr_op.is_pointer_to_array = false;
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(addr_op), binding_token));
+					
+					// Declare the binding as a reference variable initialized with the address
+					VariableDeclOp binding_var_decl;
+					binding_var_decl.var_name = binding_id;
+					binding_var_decl.type = array_element_type;
+					binding_var_decl.size_in_bits = 64;  // References are pointers (64-bit addresses)
+					binding_var_decl.is_reference = true;  // Mark as reference
+					binding_var_decl.is_rvalue_reference = node.is_rvalue_reference();
+					binding_var_decl.initializer = TypedValue{array_element_type, 64, element_addr};
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
+				} else {
+					// For value bindings, load the element value (existing behavior)
+					TempVar element_val = var_counter.next();
+					ArrayAccessOp load_op;
+					load_op.result = element_val;
+					load_op.array = hidden_var_handle;
+					load_op.index = TypedValue{Type::Int, 32, static_cast<unsigned long long>(i)};
+					load_op.element_type = array_element_type;
+					load_op.element_size_in_bits = array_element_size;
+					load_op.is_pointer_to_array = false;  // Local array
+					load_op.member_offset = 0;
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(load_op), binding_token));
+					
+					// Now, declare the binding variable with the element value as initializer
+					VariableDeclOp binding_var_decl;
+					binding_var_decl.var_name = binding_id;
+					binding_var_decl.type = array_element_type;
+					binding_var_decl.size_in_bits = array_element_size;
+					binding_var_decl.initializer = TypedValue{array_element_type, array_element_size, element_val};
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
+				}
+				
+				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Added binding '", binding_name, "' to symbol table");
+			}
+			
+			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", array_size, " array bindings");
+			return;  // Early return for array case
+			
+		} else if (init_type != Type::Struct) {
+			FLASH_LOG(Codegen, Error, "Structured bindings currently only support struct and array types, got type=", (int)init_type);
+			return;
+		}
+		
+		// Step 5: Aggregate (struct) decomposition
+		// Get struct information
+		if (init_type_index >= gTypeInfo.size()) {
+			FLASH_LOG(Codegen, Error, "Invalid type index for structured binding: ", init_type_index);
+			return;
+		}
+		
+		const TypeInfo& type_info = gTypeInfo[init_type_index];
+		const StructTypeInfo* struct_info = type_info.getStructInfo();
+		
+		if (!struct_info) {
+			FLASH_LOG(Codegen, Error, "Type is not a struct for structured binding");
+			return;
+		}
+		
+		// Step 6: Validate that we have the correct number of identifiers
+		// Count non-static public members (all members in FlashCpp are non-static by default)
+		size_t public_member_count = 0;
+		for (const auto& member : struct_info->members) {
+			if (member.access == AccessSpecifier::Public) {
+				public_member_count++;
+			}
+		}
+		
+		if (node.identifiers().size() != public_member_count) {
+			FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(), 
+			          ") does not match number of public members (", public_member_count, ")");
+			return;
+		}
+		
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Decomposing struct with ", 
+		          public_member_count, " public members");
+		
+		// Step 7: Create bindings for each identifier
+		// For each binding, we create a variable that's initialized with a member access expression
+		size_t binding_idx = 0;
+		for (const auto& member : struct_info->members) {
+			if (member.access != AccessSpecifier::Public) {
+				continue;  // Skip non-public members
+			}
+			
+			if (binding_idx >= node.identifiers().size()) {
+				break;  // Safety check
+			}
+			
+			StringHandle binding_id = node.identifiers()[binding_idx];
+			std::string_view binding_name = StringTable::getStringView(binding_id);
+			
+			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Creating binding '", binding_name, 
+			          "' to member '", StringTable::getStringView(member.name), "'");
+			
+			// Create a TypeSpecifierNode for this binding's type
+			// The binding has the same type as the struct member
+			// For size_in_bits, clamp to 255 since TypeSpecifierNode uses unsigned char
+			// For struct types, type_index is what matters, not size_in_bits
+			size_t member_size_bits_full = member.size * 8;
+			unsigned char member_size_bits = (member_size_bits_full > 255) ? 255 : static_cast<unsigned char>(member_size_bits_full);
+			TypeSpecifierNode binding_type(member.type, TypeQualifier::None, member_size_bits, Token());
+			binding_type.set_type_index(member.type_index);
+			
+			// If this is a reference binding (auto& or auto&&), mark the type as a reference
+			if (is_reference_binding) {
+				if (node.is_lvalue_reference()) {
+					binding_type.set_reference(false);  // false = lvalue reference
+				} else if (node.is_rvalue_reference()) {
+					// For auto&&, the binding type depends on value category
+					// Since we're binding to members of the hidden variable, they're lvalues
+					// So auto&& bindings to struct members become lvalue references
+					binding_type.set_reference(false);  // false = lvalue reference
+				}
+			}
+			
+			// Create a synthetic declaration node for the binding
+			// This allows the binding to be looked up in the symbol table
+			Token binding_token(Token::Type::Identifier, binding_name, 0, 0, 0);
+			ASTNode binding_decl_node = ASTNode::emplace_node<DeclarationNode>(
+				ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
+				binding_token
+			);
+			
+			// Add to symbol table
+			symbol_table.insert(binding_name, binding_decl_node);
+			
+			// Generate IR for the binding
+			if (is_reference_binding) {
+				// For reference bindings, create a reference variable that points to the member
+				// We need to get the address of the member, not load its value
+				
+				// Compute address of member: &(hidden_var.member)
+				TempVar member_addr = var_counter.next();
+				ComputeAddressOp addr_op;
+				addr_op.result = member_addr;
+				addr_op.base = hidden_var_handle;
+				addr_op.total_member_offset = static_cast<int>(member.offset);
+				addr_op.result_type = member.type;
+				addr_op.result_size_bits = 64;  // Address is 64-bit pointer
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(addr_op), binding_token));
+				
+				// Declare the binding as a reference variable initialized with the address
+				VariableDeclOp binding_var_decl;
+				binding_var_decl.var_name = binding_id;
+				binding_var_decl.type = member.type;
+				binding_var_decl.size_in_bits = 64;  // References are pointers (64-bit addresses)
+				binding_var_decl.is_reference = true;  // Mark as reference
+				binding_var_decl.is_rvalue_reference = node.is_rvalue_reference();
+				binding_var_decl.initializer = TypedValue{member.type, 64, member_addr, false, false, member.type_index};
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
+			} else {
+				// For value bindings, load the member value (existing behavior)
+				// First, generate a member access to load the value
+				TempVar member_val = var_counter.next();
+				MemberLoadOp load_op;
+				load_op.result.type = member.type;
+				load_op.result.size_in_bits = member_size_bits;
+				load_op.result.value = member_val;
+				load_op.result.type_index = member.type_index;
+				load_op.object = hidden_var_handle;
+				load_op.member_name = member.name;
+				load_op.offset = static_cast<int>(member.offset);
+				load_op.struct_type_info = &type_info;
+				load_op.is_reference = member.is_reference;
+				load_op.is_rvalue_reference = member.is_rvalue_reference;
+				load_op.is_pointer_to_member = false;
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), binding_token));
+				
+				// Now, declare the binding variable with the member value as initializer
+				VariableDeclOp binding_var_decl;
+				binding_var_decl.var_name = binding_id;
+				binding_var_decl.type = member.type;
+				binding_var_decl.size_in_bits = member_size_bits;
+				binding_var_decl.initializer = TypedValue{member.type, static_cast<int>(member_size_bits), member_val, false, false, member.type_index};
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
+			}
+			
+			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Added binding '", binding_name, "' to symbol table");
+			
+			binding_idx++;
+		}
+		
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", binding_idx, " bindings");
+	}
+
 	std::vector<IrOperand> visitExpressionNode(const ExpressionNode& exprNode, 
 	                                            ExpressionContext context = ExpressionContext::Load) {
 		if (std::holds_alternative<IdentifierNode>(exprNode)) {
@@ -6089,7 +6505,17 @@ private:
 			// Reference parameters (both lvalue & and rvalue &&) hold an address, and we need to load the value from that address
 			// EXCEPT for array references, where the reference IS the array pointer
 			// IMPORTANT: When context is LValueAddress (e.g., LHS of assignment), DON'T dereference - return the parameter name directly
+			//
+			// NOTE: This handles both reference PARAMETERS and local reference VARIABLES (like structured binding references)
+			// The distinction is:
+			// - Reference parameters: stored in VariableDeclOp with is_reference=true during code generation
+			// - Local reference variables: created with DeclarationNode that has reference TypeSpecifierNode
 			if (type_node.is_reference()) {
+				// Check if this is actually a local reference variable (not a parameter)
+				// Local reference variables are stored on the stack and hold a pointer value
+				// We can detect this by checking if a VariableDeclOp was generated with is_reference=true
+				// For now, we'll treat all references as parameters unless they fail the parameter test
+				
 				// For references to arrays (e.g., int (&arr)[3]), the reference parameter
 				// already holds the array address directly. We don't dereference it.
 				// Just return it as a pointer (64 bits on x64 architecture).
@@ -6099,33 +6525,45 @@ private:
 					return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
 				}
 				
-				// For LValueAddress context (e.g., LHS of assignment), return the parameter name directly
-				// The parameter holds an address, and we want to assign to that address, not to a dereferenced temp
+				// For LValueAddress context (e.g., LHS of assignment)
+				// For reference parameters: return the parameter name directly (it's already an address)
+				// For local reference variables: load the pointer, then mark as Indirect LValue
 				if (context == ExpressionContext::LValueAddress) {
-					// Return the parameter name as the lvalue (it's a reference, so it's already an address)
-					// Use helper function to calculate size_bits with proper fallback handling
-					int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
+					// Check if this identifier is a function parameter
+					// Function parameters are handled differently - they don't have VariableDeclOp
+					// For now, assume all references in DeclarationNode are local variables
+					// (function parameters would come through a different code path)
 					
-					// For enum references, return the underlying type (not the enum type)
-					// This ensures assignment operations work with the correct storage type
-					Type return_type = type_node.type();
-					if (type_node.type() == Type::Enum && type_node.type_index() < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-						const EnumTypeInfo* enum_info = type_info.getEnumInfo();
-						if (enum_info) {
-							return_type = enum_info->underlying_type;
-							size_bits = static_cast<int>(enum_info->underlying_size);
-						}
+					// For auto types, default to int (32 bits)
+					Type pointee_type = type_node.type();
+					int pointee_size = static_cast<int>(type_node.size_in_bits());
+					if (pointee_type == Type::Auto || pointee_size == 0) {
+						pointee_type = Type::Int;
+						pointee_size = 32;
 					}
 					
-					// For the 4th element: include type_index for Struct and Enum types
-					unsigned long long fourth_element = 0ULL;
-					if (type_node.type() == Type::Struct || type_node.type() == Type::Enum) {
-						fourth_element = static_cast<unsigned long long>(type_node.type_index());
-					} else if (type_node.pointer_depth() > 0) {
-						fourth_element = static_cast<unsigned long long>(type_node.pointer_depth());
-					}
-					return { return_type, size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
+					// Local reference variable: load the pointer from the variable into a temp
+					TempVar addr_temp = var_counter.next();
+					StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+					
+					// Use AssignmentOp to copy the pointer value to a temp
+					AssignmentOp assign_op;
+					assign_op.result = addr_temp;
+					assign_op.lhs = TypedValue{pointee_type, 64, addr_temp};  // 64-bit pointer dest
+					assign_op.rhs = TypedValue{pointee_type, 64, var_handle};  // 64-bit pointer source
+					assign_op.is_pointer_store = false;
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+					
+					// Mark the temp with Indirect LValue metadata
+					LValueInfo lvalue_info(
+						LValueInfo::Kind::Indirect,
+						addr_temp,  // The pointer temp var
+						0  // offset is 0 for dereference
+					);
+					setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
+					
+					TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
+					return { pointee_type, pointee_size, addr_temp, static_cast<unsigned long long>(type_index) };
 				}
 				
 				// For non-array references in Load context, we need to dereference to get the value
@@ -6244,7 +6682,44 @@ private:
 						return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
 					}
 					
-					// For non-array references, we need to dereference to get the value
+					// For LValueAddress context (assignment LHS), we need to treat the reference variable
+					// as an indirect lvalue (pointer that needs dereferencing for stores)
+					if (context == ExpressionContext::LValueAddress) {
+						// For auto types, default to int (32 bits)
+						Type pointee_type = type_node.type();
+						int pointee_size = static_cast<int>(type_node.size_in_bits());
+						if (pointee_type == Type::Auto || pointee_size == 0) {
+							pointee_type = Type::Int;
+							pointee_size = 32;
+						}
+						
+						// The reference variable holds a pointer address
+						// We need to load it into a temp and mark it with Indirect LValue metadata
+						TempVar addr_temp = var_counter.next();
+						StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+						
+						// Use AssignmentOp to copy the pointer value to a temp
+						AssignmentOp assign_op;
+						assign_op.result = addr_temp;
+						assign_op.lhs = TypedValue{pointee_type, 64, addr_temp};  // 64-bit pointer dest
+						assign_op.rhs = TypedValue{pointee_type, 64, var_handle};  // 64-bit pointer source
+						assign_op.is_pointer_store = false;
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+						
+						// Mark the temp with Indirect LValue metadata
+						// This tells the assignment handler to use DereferenceStore
+						LValueInfo lvalue_info(
+							LValueInfo::Kind::Indirect,
+							addr_temp,  // The pointer temp var
+							0  // offset is 0 for dereference
+						);
+						setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
+						
+						TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
+						return { pointee_type, pointee_size, addr_temp, static_cast<unsigned long long>(type_index) };
+					}
+					
+					// For Load context (reading the value), dereference to get the value
 					TempVar result_temp = var_counter.next();
 					DereferenceOp deref_op;
 					deref_op.result = result_temp;

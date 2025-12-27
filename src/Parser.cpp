@@ -1150,6 +1150,44 @@ ParseResult Parser::parse_type_and_name() {
     // Get the type specifier node to modify it with pointer levels
     TypeSpecifierNode& type_spec = type_specifier_result.node()->as<TypeSpecifierNode>();
 
+    // Check for structured binding: auto [a, b, c] = expr;
+    // Also support: auto& [a, b] = pair; and auto&& [x, y] = temp;
+    // This must be checked after parsing the type specifier (auto) but before parsing pointer/reference/identifier
+    if (type_spec.type() == Type::Auto) {
+        // Check for optional reference qualifiers
+        ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
+        
+        if (peek_token().has_value() && peek_token()->value() == "&") {
+            consume_token(); // consume '&'
+            
+            // Check if it's && (rvalue reference) or just & (lvalue reference)
+            if (peek_token().has_value() && peek_token()->value() == "&") {
+                consume_token(); // consume second '&'
+                ref_qualifier = ReferenceQualifier::RValueReference;
+            } else {
+                ref_qualifier = ReferenceQualifier::LValueReference;
+            }
+        }
+        
+        // Now check for '[' to confirm structured binding
+        if (peek_token().has_value() && peek_token()->value() == "[") {
+            FLASH_LOG(Parser, Debug, "parse_type_and_name: Detected structured binding pattern: auto [");
+            
+            // Parse structured binding with reference qualifier
+            return parse_structured_binding(type_spec.cv_qualifier(), ref_qualifier);
+        }
+        
+        // If we consumed reference qualifiers but it's not a structured binding,
+        // apply them to the type_spec (e.g., auto& ref = x; or auto&& rvalue = temp;)
+        if (ref_qualifier != ReferenceQualifier::None) {
+            if (ref_qualifier == ReferenceQualifier::RValueReference) {
+                type_spec.set_reference(true);  // true = rvalue reference
+            } else if (ref_qualifier == ReferenceQualifier::LValueReference) {
+                type_spec.set_reference(false);  // false = lvalue reference
+            }
+        }
+    }
+
     // Extract calling convention specifiers that can appear after the type
     // Example: void __cdecl func(); or int __stdcall* func();
     // We consume them here and save to last_calling_convention_ for the caller to retrieve
@@ -1558,6 +1596,132 @@ ParseResult Parser::parse_type_and_name() {
     }
     return ParseResult::error("Invalid type specifier node", identifier_token);
 }
+
+// Parse structured binding: auto [a, b, c] = expr;
+// Also supports: auto& [a, b] = pair; and auto&& [x, y] = temp;
+ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, ReferenceQualifier ref_qualifier) {
+    FLASH_LOG(Parser, Debug, "parse_structured_binding: Starting");
+    
+    // At this point, we've already parsed 'auto' (and optional &/&&) and confirmed the next token is '['
+    // Consume the '['
+    if (!peek_token().has_value() || peek_token()->value() != "[") {
+        return ParseResult::error("Expected '[' for structured binding", *current_token_);
+    }
+    consume_token(); // consume '['
+    
+    // Parse the identifier list: a, b, c
+    std::vector<StringHandle> identifiers;
+    
+    while (true) {
+        // Expect an identifier
+        if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+            return ParseResult::error("Expected identifier in structured binding", *current_token_);
+        }
+        
+        Token id_token = *peek_token();
+        StringHandle id_handle = StringTable::createStringHandle(id_token.value());
+        identifiers.push_back(id_handle);
+        consume_token(); // consume identifier
+        
+        FLASH_LOG(Parser, Debug, "parse_structured_binding: Parsed identifier: ", StringTable::getStringView(id_handle));
+        
+        // Check for comma (more identifiers) or closing bracket
+        if (peek_token().has_value() && peek_token()->value() == ",") {
+            consume_token(); // consume ','
+            // Continue to parse next identifier
+        } else if (peek_token().has_value() && peek_token()->value() == "]") {
+            // End of identifier list
+            break;
+        } else {
+            return ParseResult::error("Expected ',' or ']' in structured binding identifier list", *current_token_);
+        }
+    }
+    
+    // Consume the ']'
+    if (!peek_token().has_value() || peek_token()->value() != "]") {
+        return ParseResult::error("Expected ']' after structured binding identifiers", *current_token_);
+    }
+    consume_token(); // consume ']'
+    
+    FLASH_LOG(Parser, Debug, "parse_structured_binding: Parsed ", identifiers.size(), " identifiers");
+    
+    // Now expect the initializer: '=' expr or '{' expr '}' or '(' expr ')'
+    // For C++17, we support '=' and '{}' 
+    // C++20 adds '()' but let's keep it simple for now
+    if (!peek_token().has_value()) {
+        return ParseResult::error("Expected initializer after structured binding identifiers", *current_token_);
+    }
+    
+    std::optional<ASTNode> initializer;
+    
+    if (peek_token()->value() == "=") {
+        consume_token(); // consume '='
+        
+        // Parse the initializer expression
+        auto init_result = parse_expression();
+        if (init_result.is_error()) {
+            return init_result;
+        }
+        initializer = init_result.node();
+        
+    } else if (peek_token()->value() == "{") {
+        // Brace initializer: auto [a, b] {expr};
+        // For now, we'll parse this as an expression that starts with '{'
+        auto init_result = parse_expression();
+        if (init_result.is_error()) {
+            return init_result;
+        }
+        initializer = init_result.node();
+        
+    } else {
+        return ParseResult::error("Expected '=' or '{' after structured binding identifiers", *current_token_);
+    }
+    
+    if (!initializer.has_value()) {
+        return ParseResult::error("Failed to parse structured binding initializer", *current_token_);
+    }
+    
+    FLASH_LOG(Parser, Debug, "parse_structured_binding: Successfully parsed initializer");
+    
+    // Create the StructuredBindingNode
+    ASTNode binding_node = emplace_node<StructuredBindingNode>(
+        std::move(identifiers),
+        *initializer,
+        cv_qualifiers,
+        ref_qualifier
+    );
+    
+    FLASH_LOG(Parser, Debug, "parse_structured_binding: Created StructuredBindingNode");
+
+    
+    // IMPORTANT: We need to add placeholder declarations to the symbol table for each identifier
+    // so that the parser can find them when they're used later in the same scope.
+    // The actual types will be determined during code generation, but we need placeholders for parsing.
+    const StructuredBindingNode& sb_node = binding_node.as<StructuredBindingNode>();
+    for (const auto& id_handle : sb_node.identifiers()) {
+        std::string_view id_name = StringTable::getStringView(id_handle);
+        
+        // Create a placeholder TypeSpecifierNode (we'll use Auto type as a placeholder)
+        TypeSpecifierNode placeholder_type(Type::Auto, TypeQualifier::None, 0, Token());
+        
+        // Create a placeholder DeclarationNode
+        Token placeholder_token(Token::Type::Identifier, id_name, 0, 0, 0);
+        ASTNode placeholder_decl = emplace_node<DeclarationNode>(
+            emplace_node<TypeSpecifierNode>(placeholder_type),
+            placeholder_token
+        );
+        
+        // Add to symbol table
+        if (!gSymbolTable.insert(id_name, placeholder_decl)) {
+            FLASH_LOG(Parser, Warning, "Structured binding identifier '", id_name, "' already exists in scope");
+        } else {
+            FLASH_LOG(Parser, Debug, "parse_structured_binding: Added placeholder for '", id_name, "' to symbol table");
+        }
+    }
+    
+    return ParseResult::success(binding_node);
+}
+
 
 // NEW: Parse declarators (handles function pointers, arrays, etc.)
 ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linkage) {
@@ -9235,6 +9399,34 @@ ParseResult Parser::parse_variable_declaration()
 		return type_and_name_result;
 	}
 
+	// Check if this is a structured binding declaration
+	if (type_and_name_result.node().has_value() && type_and_name_result.node()->is<StructuredBindingNode>()) {
+		// Structured bindings have their own handling
+		// They already include the initializer, so we just return the node
+		// Note: Structured bindings don't support storage class specifiers or constexpr/constinit
+		
+		// Validate: structured bindings cannot have storage class specifiers
+		if (storage_class != StorageClass::None) {
+			return ParseResult::error("Structured bindings cannot have storage class specifiers (static, extern, etc.)", *current_token_);
+		}
+		
+		// Validate: structured bindings cannot be constexpr
+		if (is_constexpr) {
+			return ParseResult::error("Structured bindings cannot be constexpr", *current_token_);
+		}
+		
+		// Validate: structured bindings cannot be constinit
+		if (is_constinit) {
+			return ParseResult::error("Structured bindings cannot be constinit", *current_token_);
+		}
+		
+		FLASH_LOG(Parser, Debug, "parse_variable_declaration: Handling structured binding");
+		
+		// For now, just return the structured binding node directly
+		// The code generation will handle decomposing it
+		return type_and_name_result;
+	}
+
 	// Get the type specifier for potential additional declarations
 	DeclarationNode& first_decl = type_and_name_result.node()->as<DeclarationNode>();
 	TypeSpecifierNode& type_specifier = first_decl.type_node().as<TypeSpecifierNode>();
@@ -9356,6 +9548,13 @@ ParseResult Parser::parse_variable_declaration()
 
 			// If the type is auto, deduce the type from the initializer
 			if (type_specifier.type() == Type::Auto && first_init_expr.has_value()) {
+				// IMPORTANT: Save the original reference and CV qualifiers before type deduction
+				// Auto type deduction replaces the entire TypeSpecifierNode, which would lose
+				// qualifiers set during parsing (e.g., const auto&, auto&&)
+				// We must preserve these to generate correct code for references
+				ReferenceQualifier original_ref_qual = type_specifier.reference_qualifier();
+				CVQualifier original_cv_qual = type_specifier.cv_qualifier();
+				
 				// Get the full type specifier from the initializer expression
 				auto deduced_type_spec_opt = get_expression_type(*first_init_expr);
 				if (deduced_type_spec_opt.has_value()) {
@@ -9367,9 +9566,16 @@ ParseResult Parser::parse_variable_declaration()
 					// Fallback: deduce basic type
 					Type deduced_type = deduce_type_from_expression(*first_init_expr);
 					unsigned char deduced_size = get_type_size_bits(deduced_type);
-					type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, first_decl.identifier_token(), type_specifier.cv_qualifier());
+					type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, first_decl.identifier_token(), original_cv_qual);
 					FLASH_LOG(Parser, Debug, "Deduced auto variable type (fallback): type=", 
 							  (int)type_specifier.type(), " size=", (int)deduced_size);
+				}
+				
+				// Restore the original reference qualifier and CV qualifier (for const auto&, auto&, auto&& etc.)
+				type_specifier.set_reference_qualifier(original_ref_qual);
+				// Also ensure CV qualifier is preserved (especially for const auto&)
+				if (original_cv_qual != CVQualifier::None) {
+					type_specifier.set_cv_qualifier(original_cv_qual);
 				}
 			}
 		}

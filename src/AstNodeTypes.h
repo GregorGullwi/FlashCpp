@@ -1094,6 +1094,7 @@ public:
 	auto size_in_bits() const { return size_; }
 	auto qualifier() const { return qualifier_; }
 	auto cv_qualifier() const { return cv_qualifier_; }
+	void set_cv_qualifier(CVQualifier cv) { cv_qualifier_ = cv; }
 	auto type_index() const { return type_index_; }
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
@@ -1113,6 +1114,9 @@ public:
 	ReferenceQualifier reference_qualifier() const { return reference_qualifier_; }
 	void set_reference(bool is_rvalue = false) {
 		reference_qualifier_ = is_rvalue ? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference;
+	}
+	void set_reference_qualifier(ReferenceQualifier qual) {
+		reference_qualifier_ = qual;
 	}
 	void set_lvalue_reference(bool is_lvalue = true) {
 		if (is_lvalue) {
@@ -1831,6 +1835,44 @@ private:
 	StorageClass storage_class_;
 	bool is_constexpr_;
 	bool is_constinit_;
+};
+
+// Structured binding declaration node (C++17 feature)
+// Represents: auto [a, b, c] = expr;
+class StructuredBindingNode {
+public:
+	StructuredBindingNode() = delete;
+	StructuredBindingNode(std::vector<StringHandle> identifiers, 
+	                      ASTNode initializer,
+	                      CVQualifier cv_qualifiers,
+	                      ReferenceQualifier ref_qualifier)
+		: identifiers_(std::move(identifiers))
+		, initializer_(initializer)
+		, cv_qualifiers_(cv_qualifiers)
+		, ref_qualifier_(ref_qualifier) {}
+	
+	const std::vector<StringHandle>& identifiers() const { return identifiers_; }
+	const ASTNode& initializer() const { return initializer_; }
+	CVQualifier cv_qualifiers() const { return cv_qualifiers_; }
+	ReferenceQualifier ref_qualifier() const { return ref_qualifier_; }
+	
+	bool is_const() const { 
+		return (static_cast<uint8_t>(cv_qualifiers_) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
+	}
+	
+	bool is_lvalue_reference() const { 
+		return ref_qualifier_ == ReferenceQualifier::LValueReference;
+	}
+	
+	bool is_rvalue_reference() const { 
+		return ref_qualifier_ == ReferenceQualifier::RValueReference;
+	}
+
+private:
+	std::vector<StringHandle> identifiers_;  // Binding names: [a, b, c]
+	ASTNode initializer_;                     // Expression to decompose
+	CVQualifier cv_qualifiers_;               // const/volatile qualifiers
+	ReferenceQualifier ref_qualifier_;        // &, &&, or none
 };
 
 // Member initializer for constructor initializer lists
