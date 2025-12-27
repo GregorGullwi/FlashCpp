@@ -4,21 +4,24 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
-**UPDATE (December 26, 2024)**: With qualified base class parsing and pack expansion implemented, several more features now work!
+**UPDATE (December 27, 2024)**: Additional parsing fix for base class member type access implemented. Continue making progress toward `<type_traits>` compilation.
 
 ### Successfully Compiling Headers ✅
 
 **C Library Wrappers:**
-- `<cstddef>` - ~790ms (provides `size_t`, `ptrdiff_t`, `nullptr_t`)
-- `<cstdint>` - ~200ms (provides `int32_t`, `uint64_t`, etc.)
-- `<cstdio>` - ~770ms (provides `printf`, `scanf`, etc.)
+- `<cstddef>` - ~790ms (provides `size_t`, `ptrdiff_t`, `nullptr_t`) ✅
+- `<cstdint>` - ~200ms (provides `int32_t`, `uint64_t`, etc.) ✅  
+- `<cstdio>` - ~770ms (provides `printf`, `scanf`, etc.) ✅
+
+**Combined Test (December 27, 2024):**
+- `<cstddef>` + `<cstdint>` together: ~933ms ✅
 
 **C++ Standard Library:**
-- **`<type_traits>`** - Core patterns now supported! 🎉
+- **`<type_traits>`** - Partial support, core patterns work, but full header still has parsing issues
 
 ### Original Test Results (Before Recent Fixes)
 - **Total headers tested**: 21
-- **Successfully compiled**: 0 → **NOW: 4+ headers work!**
+- **Successfully compiled**: 0 → **NOW: 3+ headers confirmed working!**
 - **Timed out (>10s)**: 16
 - **Failed with errors**: 5
 
@@ -85,6 +88,47 @@ int main() {
 ## Recent Progress (December 2024)
 
 ### ✅ Completed Features
+
+#### 0a. Member Type Access After Template Arguments in Base Classes (December 27, 2024)
+**Status**: ✅ **NEWLY IMPLEMENTED**
+
+**What Was Missing**: FlashCpp could not parse member type access (e.g., `::type`) after template arguments when the base class was specified as a simple identifier (not qualified with namespaces).
+
+**The Problem**: Patterns like `struct negation : __not_<T>::type { };` would fail to parse because:
+- The parser handled `ns::Template<Args>::type` correctly (qualified case)
+- But failed on `Template<Args>::type` (simple identifier case)
+- After parsing `Template<Args>`, it never checked for `::type`
+
+**Implementation**: 
+- Modified `src/Parser.cpp` lines 3335-3369
+- Added check for `::` and member name after parsing template arguments
+- Mirrors the logic already present for qualified identifiers (lines 3286-3304)
+- Builds fully qualified member type name (e.g., `__not_<T>::type`)
+- Properly defers resolution when template arguments are dependent
+
+**Test Cases**:
+```cpp
+// Now parses successfully:
+template<typename T>
+struct wrapper {
+    using type = int;
+};
+
+template<typename T>
+struct negation : wrapper<T>::type { };  // ✅ Works!
+
+// From <type_traits>:
+template<typename _Pp>
+struct negation : __not_<_Pp>::type { };  // ✅ Now parses!
+```
+
+**Impact**: Allows more `<type_traits>` patterns to parse correctly. This complements the December 26 work on qualified base class names.
+
+**Files Modified:**
+- `src/Parser.cpp` - Base class template argument parsing
+- `tests/test_base_class_member_type_access_ret42.cpp` - Test case added
+
+**Next Blocker**: Multi-line template function declarations (type_traits line 296)
 
 #### 0. Qualified Base Class Names and Pack Expansion (December 26, 2024)
 **Status**: ✅ **NEWLY IMPLEMENTED**
@@ -304,78 +348,27 @@ bool b = integral_constant<int, 42>::value;  // May crash
 
 These features are fundamental blockers for most standard library headers:
 
-### 1. Conversion Operators
-**Status**: ✅ **IMPLEMENTED** (as of December 2024)  
-**Required by**: `<type_traits>`, `<limits>`, `<chrono>`, and many others
+### Recently Completed (December 2024) ✅
 
-```cpp
-// Example from std::integral_constant
-template<typename T, T v>
-struct integral_constant {
-    static constexpr T value = v;
-    constexpr operator T() const noexcept { return value; }  // ✅ Now supported
-};
-```
+The following critical features have been implemented:
 
-**Impact**: High - Enables `<type_traits>` functionality  
-**Files affected**: `test_std_type_traits.cpp`, `test_std_limits.cpp`, `test_std_chrono.cpp`  
-**Remaining work**: None - feature is fully implemented
+1. **Conversion Operators** ✅ - Fully implemented, enables `<type_traits>` functionality
+2. **Advanced constexpr Support** ✅ - C++14 control flow (loops, if/else, assignments) completed
+3. **Static Constexpr Member Functions** ✅ - Can now be called in constexpr context
+4. **Type Traits Intrinsics** ✅ - 30+ intrinsics verified working
+5. **Compiler Intrinsics** ✅ - `__builtin_addressof`, `__builtin_unreachable`, `__builtin_assume`, `__builtin_expect`, `__builtin_launder`
+6. **Implicit Conversion Sequences** ✅ - Working in all contexts
+7. **Operator Overload Resolution** ✅ - Unary and binary operators fully supported
+8. **Pack Expansion in decltype** ✅ - Enables complex template metaprogramming patterns
+9. **Qualified Base Class Names** ✅ - Support for `ns::Template<Args>::type` patterns
+10. **Member Type Access in Base Classes** ✅ - NEW (December 27) - Patterns like `__not_<T>::type` now parse correctly
 
-### 2. Advanced constexpr Support
-**Status**: ✅ **PARTIALLY COMPLETED** (December 23, 2024)  
-**Required by**: Most C++20 headers including `<array>`, `<string_view>`, `<span>`, `<algorithm>`
+See "Recent Progress (December 2024)" section below for detailed implementation notes.
 
-**Completed Features** (commit 6458c39):
-- ✅ For loops with init, condition, and update expressions
-- ✅ While loops
-- ✅ If/else statements (including C++17 if-with-init)
-- ✅ Assignment operators (=, +=, -=, *=, /=, %=)
-- ✅ Increment/decrement operators (++, --, both prefix and postfix)
-- ✅ Expression statements with side effects
-- ✅ Nested blocks and complex control flow
+### Remaining Critical Features
 
-**Tests**:
-- `test_constexpr_control_flow_ret30.cpp` ✅
-- `test_constexpr_loops.cpp` ✅ (updated to enable loop tests)
-
-**Still Missing features**:
-- Constexpr constructors and destructors in complex classes
-- Constexpr evaluation of placement new and complex expressions
-- Constexpr if with dependent conditions in some edge cases
-
-**Impact**: High - C++14 constexpr features now work, enables complex compile-time computations  
-**Files affected**: `test_std_array.cpp`, `test_std_string_view.cpp`, `test_std_span.cpp`
-
-### 2a. Static Constexpr Member Functions
-**Status**: ✅ **FIXED** (December 23, 2024)  
-**Required by**: `<type_traits>`, type trait patterns
-
-**Issue Fixed**: Static constexpr member functions can now be called in constexpr context
-
-**Example That Now Works:**
-```cpp
-struct Point {
-    static constexpr int static_sum(int a, int b) {
-        return a + b;
-    }
-};
-
-static_assert(Point::static_sum(5, 5) == 10);  // ✅ NOW WORKS
-```
-
-**Implementation** (commit 6bae992):
-- Modified `src/ConstExprEvaluator.h` to add fallback lookup in struct member functions
-- Searches `gTypeInfo` when simple name lookup fails
-- No performance impact (fallback only on lookup failures)
-
-**Tests**:
-- `test_static_constexpr_member_ret42.cpp` ✅
-
-**Impact**: High - Unblocks `std::integral_constant<T,V>::value` patterns  
-**Files affected**: `test_std_type_traits.cpp`
-
-### 3. Exception Handling Infrastructure
-**Status**: Basic support exists, but incomplete
+### 1. Exception Handling Infrastructure
+**Status**: ❌ Basic support exists, but incomplete  
 **Required by**: `<string>`, `<vector>`, `<iostream>`, `<memory>`, and most containers
 
 **Missing features**:
@@ -384,11 +377,11 @@ static_assert(Point::static_sum(5, 5) == 10);  // ✅ NOW WORKS
 - Stack unwinding mechanics
 - Exception-safe constructors/destructors
 
-**Impact**: Critical - Most standard library code uses exceptions
+**Impact**: Critical - Most standard library code uses exceptions  
 **Files affected**: `test_std_string.cpp`, `test_std_vector.cpp`, `test_std_iostream.cpp`, `test_std_memory.cpp`
 
-### 4. Allocator Support
-**Status**: Not implemented
+### 2. Allocator Support
+**Status**: ❌ Not implemented  
 **Required by**: All container headers (`<vector>`, `<string>`, `<map>`, `<set>`, etc.)
 
 **Missing features**:
@@ -397,21 +390,35 @@ static_assert(Point::static_sum(5, 5) == 10);  // ✅ NOW WORKS
 - Allocator-aware constructors and operations
 - Memory resource management
 
-**Impact**: Critical - All standard containers use allocators
+**Impact**: Critical - All standard containers use allocators  
 **Files affected**: `test_std_vector.cpp`, `test_std_string.cpp`, `test_std_map.cpp`, `test_std_set.cpp`
 
-### 5. Complex Template Instantiation
-**Status**: Causes timeouts and hangs
+### 3. Template Instantiation Performance
+**Status**: ⚠️ Causes timeouts and hangs  
 **Required by**: All standard library headers
 
 **Issues**:
 - Deep template instantiation depth causes performance issues
 - Recursive template instantiation not optimized
-- Template instantiation caching not implemented
+- Template instantiation caching partially implemented but needs improvement
 - SFINAE causes exponential compilation time
 
-**Impact**: Critical - Causes 10+ second timeouts
+**Impact**: Critical - Causes 10+ second timeouts  
 **Files affected**: All 16 timeout cases
+
+**Note**: Profiling infrastructure exists (`--timing` flag), individual instantiations are fast (20-50μs), but volume is the issue.
+
+### 4. Remaining constexpr Features
+**Status**: ⚠️ Partially implemented  
+**Required by**: Most C++20 headers including `<array>`, `<string_view>`, `<span>`, `<algorithm>`
+
+**Still Missing**:
+- Constexpr constructors and destructors in complex classes
+- Constexpr evaluation of placement new and complex expressions
+- Constexpr if with dependent conditions in some edge cases
+
+**Impact**: High - Blocks some advanced compile-time computations  
+**Files affected**: `test_std_array.cpp`, `test_std_string_view.cpp`, `test_std_span.cpp`
 
 ## Important Missing Features (Medium Priority)
 
