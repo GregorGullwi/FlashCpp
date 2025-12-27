@@ -3346,12 +3346,14 @@ ParseResult Parser::parse_struct_declaration()
 			
 			// Check for member type access (e.g., ::type) after template arguments
 			// This handles patterns like: __not_<T>::type
-			if (peek_token().has_value() && peek_token()->value() == "::") {
+			auto next_token = peek_token();
+			if (next_token.has_value() && next_token->value() == "::") {
 				consume_token(); // consume ::
-				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-					return ParseResult::error("Expected member name after ::", peek_token().value_or(Token()));
+				next_token = peek_token();
+				if (!next_token.has_value() || next_token->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected member name after ::", next_token.value_or(Token()));
 				}
-				StringHandle member_name = StringTable::getOrInternStringHandle(peek_token()->value());
+				StringHandle member_name = StringTable::getOrInternStringHandle(next_token->value());
 				consume_token(); // consume member name
 				
 				// Build the fully qualified member type name
