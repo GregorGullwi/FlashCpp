@@ -6502,7 +6502,17 @@ private:
 			// Reference parameters (both lvalue & and rvalue &&) hold an address, and we need to load the value from that address
 			// EXCEPT for array references, where the reference IS the array pointer
 			// IMPORTANT: When context is LValueAddress (e.g., LHS of assignment), DON'T dereference - return the parameter name directly
+			//
+			// NOTE: This handles both reference PARAMETERS and local reference VARIABLES (like structured binding references)
+			// The distinction is:
+			// - Reference parameters: stored in VariableDeclOp with is_reference=true during code generation
+			// - Local reference variables: created with DeclarationNode that has reference TypeSpecifierNode
 			if (type_node.is_reference()) {
+				// Check if this is actually a local reference variable (not a parameter)
+				// Local reference variables are stored on the stack and hold a pointer value
+				// We can detect this by checking if a VariableDeclOp was generated with is_reference=true
+				// For now, we'll treat all references as parameters unless they fail the parameter test
+				
 				// For references to arrays (e.g., int (&arr)[3]), the reference parameter
 				// already holds the array address directly. We don't dereference it.
 				// Just return it as a pointer (64 bits on x64 architecture).
@@ -6512,33 +6522,56 @@ private:
 					return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
 				}
 				
-				// For LValueAddress context (e.g., LHS of assignment), return the parameter name directly
-				// The parameter holds an address, and we want to assign to that address, not to a dereferenced temp
+				// For LValueAddress context (e.g., LHS of assignment)
+				// For reference parameters: return the parameter name directly (it's already an address)
+				// For local reference variables: load the pointer, then mark as Indirect LValue
 				if (context == ExpressionContext::LValueAddress) {
-					// Return the parameter name as the lvalue (it's a reference, so it's already an address)
-					// Use helper function to calculate size_bits with proper fallback handling
-					int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
+					// Check if this is a local reference variable by checking if it has a VariableDecl in IR
+					// For structured binding references, we created them with VariableDeclOp, so they're local
+					// For function parameters, they're passed as references and don't have VariableDeclOp
 					
-					// For enum references, return the underlying type (not the enum type)
-					// This ensures assignment operations work with the correct storage type
-					Type return_type = type_node.type();
-					if (type_node.type() == Type::Enum && type_node.type_index() < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-						const EnumTypeInfo* enum_info = type_info.getEnumInfo();
-						if (enum_info) {
-							return_type = enum_info->underlying_type;
-							size_bits = static_cast<int>(enum_info->underlying_size);
-						}
+					// HACK: Check if this identifier was created as a local reference variable
+					// by checking if it's not a function parameter
+					// Function parameters are in the current function's parameter list
+					bool is_parameter = false;
+					// TODO: Add proper check for parameter vs local variable
+					// For now, assume if we're NOT in global scope, it could be either
+					
+					// Actually, a better approach: structured bindings are always local variables
+					// So if we have a reference in DeclarationNode, check if it might be a binding
+					// For now, let's use the same logic as for VariableDeclarationNode
+					
+					// For auto types, default to int (32 bits)
+					Type pointee_type = type_node.type();
+					int pointee_size = static_cast<int>(type_node.size_in_bits());
+					if (pointee_type == Type::Auto || pointee_size == 0) {
+						pointee_type = Type::Int;
+						pointee_size = 32;
 					}
 					
-					// For the 4th element: include type_index for Struct and Enum types
-					unsigned long long fourth_element = 0ULL;
-					if (type_node.type() == Type::Struct || type_node.type() == Type::Enum) {
-						fourth_element = static_cast<unsigned long long>(type_node.type_index());
-					} else if (type_node.pointer_depth() > 0) {
-						fourth_element = static_cast<unsigned long long>(type_node.pointer_depth());
-					}
-					return { return_type, size_bits, StringTable::getOrInternStringHandle(identifierNode.name()), fourth_element };
+					// Try the local reference variable approach first
+					// Load the pointer from the reference variable into a temp
+					TempVar addr_temp = var_counter.next();
+					StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+					
+					// Use AssignmentOp to copy the pointer value to a temp
+					AssignmentOp assign_op;
+					assign_op.result = addr_temp;
+					assign_op.lhs = TypedValue{pointee_type, 64, addr_temp};  // 64-bit pointer dest
+					assign_op.rhs = TypedValue{pointee_type, 64, var_handle};  // 64-bit pointer source
+					assign_op.is_pointer_store = false;
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+					
+					// Mark the temp with Indirect LValue metadata
+					LValueInfo lvalue_info(
+						LValueInfo::Kind::Indirect,
+						addr_temp,  // The pointer temp var
+						0  // offset is 0 for dereference
+					);
+					setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
+					
+					TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
+					return { pointee_type, pointee_size, addr_temp, static_cast<unsigned long long>(type_index) };
 				}
 				
 				// For non-array references in Load context, we need to dereference to get the value
@@ -6657,7 +6690,44 @@ private:
 						return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
 					}
 					
-					// For non-array references, we need to dereference to get the value
+					// For LValueAddress context (assignment LHS), we need to treat the reference variable
+					// as an indirect lvalue (pointer that needs dereferencing for stores)
+					if (context == ExpressionContext::LValueAddress) {
+						// For auto types, default to int (32 bits)
+						Type pointee_type = type_node.type();
+						int pointee_size = static_cast<int>(type_node.size_in_bits());
+						if (pointee_type == Type::Auto || pointee_size == 0) {
+							pointee_type = Type::Int;
+							pointee_size = 32;
+						}
+						
+						// The reference variable holds a pointer address
+						// We need to load it into a temp and mark it with Indirect LValue metadata
+						TempVar addr_temp = var_counter.next();
+						StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+						
+						// Use AssignmentOp to copy the pointer value to a temp
+						AssignmentOp assign_op;
+						assign_op.result = addr_temp;
+						assign_op.lhs = TypedValue{pointee_type, 64, addr_temp};  // 64-bit pointer dest
+						assign_op.rhs = TypedValue{pointee_type, 64, var_handle};  // 64-bit pointer source
+						assign_op.is_pointer_store = false;
+						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+						
+						// Mark the temp with Indirect LValue metadata
+						// This tells the assignment handler to use DereferenceStore
+						LValueInfo lvalue_info(
+							LValueInfo::Kind::Indirect,
+							addr_temp,  // The pointer temp var
+							0  // offset is 0 for dereference
+						);
+						setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
+						
+						TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
+						return { pointee_type, pointee_size, addr_temp, static_cast<unsigned long long>(type_index) };
+					}
+					
+					// For Load context (reading the value), dereference to get the value
 					TempVar result_temp = var_counter.next();
 					DereferenceOp deref_op;
 					deref_op.result = result_temp;
