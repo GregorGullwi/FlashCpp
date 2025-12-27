@@ -236,9 +236,10 @@ struct BaseClassSpecifier {
 	AccessSpecifier access;     // Inheritance access (public/protected/private)
 	bool is_virtual;            // True for virtual inheritance (Phase 3)
 	size_t offset;              // Offset of base subobject in derived class
+	bool is_deferred;           // True for template parameters (resolved at instantiation)
 
-	BaseClassSpecifier(std::string_view n, TypeIndex tidx, AccessSpecifier acc, bool virt = false, size_t off = 0)
-		: name(n), type_index(tidx), access(acc), is_virtual(virt), offset(off) {}
+	BaseClassSpecifier(std::string_view n, TypeIndex tidx, AccessSpecifier acc, bool virt = false, size_t off = 0, bool deferred = false)
+		: name(n), type_index(tidx), access(acc), is_virtual(virt), offset(off), is_deferred(deferred) {}
 };
 
 // Deferred base class specifier for decltype bases in templates
@@ -618,8 +619,8 @@ struct StructTypeInfo {
 	void buildRTTI();
 
 	// Add a base class
-	void addBaseClass(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false) {
-		base_classes.emplace_back(base_name, base_type_index, access, is_virtual, 0);
+	void addBaseClass(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false, bool is_deferred = false) {
+		base_classes.emplace_back(base_name, base_type_index, access, is_virtual, 0, is_deferred);
 	}
 
 	// Find static member by name
@@ -2054,8 +2055,8 @@ public:
 		members_.emplace_back(member, access, std::move(default_initializer));
 	}
 
-	void add_base_class(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false) {
-		base_classes_.emplace_back(base_name, base_type_index, access, is_virtual, 0);
+	void add_base_class(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false, bool is_deferred = false) {
+		base_classes_.emplace_back(base_name, base_type_index, access, is_virtual, 0, is_deferred);
 	}
 
 	void add_deferred_base_class(ASTNode decltype_expr, AccessSpecifier access, bool is_virtual = false) {

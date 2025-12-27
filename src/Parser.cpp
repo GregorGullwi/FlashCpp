@@ -3368,25 +3368,11 @@ ParseResult Parser::parse_struct_declaration()
 			instantiated_base_name = instantiate_and_register_base_template(base_class_name, template_args);
 		}
 
-		// Look up base class type
-		auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
-		if (base_type_it == gTypesByName.end()) {
-			return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", base_name_token);
+		// Validate and add the base class
+		ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info.get(), base_access, is_virtual_base, base_name_token);
+		if (result.is_error()) {
+			return result;
 		}
-
-		const TypeInfo* base_type_info = base_type_it->second;
-		if (base_type_info->type_ != Type::Struct) {
-			return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", base_name_token);
-		}
-
-		// Check if base class is final
-		if (base_type_info->struct_info_ && base_type_info->struct_info_->is_final) {
-			return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", base_name_token);
-		}
-
-		// Add base class to struct node and type info
-		struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
-		struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
 	} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 	}
 
@@ -10929,6 +10915,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 	}
 
 	while (true) {
+		// Safety check: ensure we have a token to examine
+		if (!peek_token().has_value()) {
+			break;
+		}
+		
 		// Check if the current token is a binary operator or comma (which can be an operator)
 		bool is_operator = peek_token()->type() == Token::Type::Operator;
 		bool is_comma = peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",";
@@ -10946,6 +10937,18 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		if (is_operator && peek_token()->value() == "?") {
 			break;
 		}
+		
+		// In TemplateArgument context, stop at '>' and ',' as they delimit template arguments
+		// This allows parsing expressions like "T::value || X::value" while stopping at the
+		// template argument delimiter
+		if (context == ExpressionContext::TemplateArgument) {
+			if (peek_token()->value() == ">" || peek_token()->value() == ">>") {
+				break;  // Stop at template closing bracket
+			}
+			if (peek_token()->value() == ",") {
+				break;  // Stop at template argument separator
+			}
+		}
 
 		// Phase 1: C++20 Template Argument Disambiguation
 		// Phase 3: Enhanced with context-aware disambiguation
@@ -10961,9 +10964,43 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		if (is_operator && peek_token()->value() == "<" && result.node().has_value()) {
 			FLASH_LOG(Parser, Debug, "Binary operator loop: checking if '<' is template arguments, context=", static_cast<int>(context));
 			
+			// Check if the left side could be a template name
+			// Don't attempt template argument parsing if it's clearly a simple variable
+			bool could_be_template_name = false;
+			
+			if (result.node()->is<ExpressionNode>()) {
+				const auto& expr = result.node()->as<ExpressionNode>();
+				
+				// Check if it's an identifier that could be a template
+				if (std::holds_alternative<IdentifierNode>(expr)) {
+					const auto& ident = std::get<IdentifierNode>(expr);
+					std::string_view ident_name = ident.name();
+					
+					// Check if this identifier is in the symbol table as a regular variable
+					auto symbol_type = gSymbolTable.lookup(StringTable::getOrInternStringHandle(ident_name), 
+					                                       gSymbolTable.get_current_scope_handle());
+					
+					// If it's a variable, don't try template argument parsing
+					if (symbol_type && (symbol_type->is<VariableDeclarationNode>() || 
+					                   symbol_type->is<DeclarationNode>())) {
+						// This is a regular variable, treat < as comparison
+						could_be_template_name = false;
+					} else {
+						// Not a known variable, could be a template
+						could_be_template_name = true;
+					}
+				} else {
+					// Not a simple identifier, could be a complex expression that needs template args
+					could_be_template_name = true;
+				}
+			} else {
+				// Not an expression node, be conservative and allow template parsing
+				could_be_template_name = true;
+			}
+			
 			// Use lookahead to check if this could be template arguments
 			// In Decltype context, be more aggressive about treating < as template arguments
-			if (could_be_template_arguments()) {
+			if (could_be_template_name && could_be_template_arguments()) {
 				FLASH_LOG(Parser, Debug, "Confirmed: '<' starts template arguments, not comparison operator");
 				// Template arguments were successfully parsed by could_be_template_arguments()
 				// The parse_explicit_template_arguments() call inside it already consumed the tokens
@@ -10994,7 +11031,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		consume_token();
 
 		// Parse the right-hand side expression
-		ParseResult rhs_result = parse_expression(current_operator_precedence + 1);
+		ParseResult rhs_result = parse_expression(current_operator_precedence + 1, context);
 		if (rhs_result.is_error()) {
 			return rhs_result;
 		}
@@ -14346,7 +14383,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			else {
 				// Not a function call - could be a template with `<` or just missing identifier
 				// Check if this might be a template: identifier<...>
-				if (peek_token().has_value() && peek_token()->value() == "<") {
+				// BUT: Don't attempt for regular variables (< could be comparison)
+				bool should_try_template = true;  // Default: try template parsing
+				if (identifierType) {
+					// Check if it's a regular variable
+					bool is_regular_var = identifierType->is<VariableDeclarationNode>() || 
+					                     identifierType->is<DeclarationNode>();
+					should_try_template = !is_regular_var;  // Don't try for variables
+				}
+				// If identifierType is null (not found), default to true (might be a template)
+				
+				if (should_try_template && peek_token().has_value() && peek_token()->value() == "<") {
 					// Try to parse as template instantiation with member access
 					auto explicit_template_args = parse_explicit_template_arguments();
 					
@@ -14483,8 +14530,25 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Identifier already consumed at line 1621
 
 			// Check for explicit template arguments: identifier<type1, type2>(args)
+			// BUT: Don't attempt template argument parsing for regular variables (could be < comparison)
 			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
-			if (peek_token().has_value() && peek_token()->value() == "<") {
+			bool should_try_template_args = true;  // Default: try template parsing
+			
+			// Only skip template argument parsing if we KNOW it's a regular variable
+			if (identifierType) {
+				// Check if it's a regular variable
+				bool is_regular_var = identifierType->is<VariableDeclarationNode>() || 
+				                     identifierType->is<DeclarationNode>();
+				
+				if (is_regular_var) {
+					// It's definitely a variable, don't try template args
+					should_try_template_args = false;
+				}
+				// For all other cases (templates, functions, unknown), try template args
+			}
+			// If identifierType is null (not found), default to true (might be a template)
+			
+			if (should_try_template_args && peek_token().has_value() && peek_token()->value() == "<") {
 				explicit_template_args = parse_explicit_template_arguments();
 				// If parsing failed, it might be a less-than operator, so continue normally
 				
@@ -16728,6 +16792,60 @@ bool Parser::is_template_parameter(std::string_view name) const {
     return result;
 }
 
+// Helper: Check if a base class name is a template parameter
+// Returns true if the name matches any template parameter in the current template scope
+bool Parser::is_base_class_template_parameter(std::string_view base_class_name) const {
+	for (const auto& param_name : current_template_param_names_) {
+		if (StringTable::getStringView(param_name) == base_class_name) {
+			FLASH_LOG_FORMAT(Templates, Debug, 
+				"Base class '{}' is a template parameter - deferring resolution", 
+				base_class_name);
+			return true;
+		}
+	}
+	return false;
+}
+
+// Helper: Validate and add a base class (consolidates lookup, validation, and registration)
+ParseResult Parser::validate_and_add_base_class(
+	std::string_view base_class_name,
+	StructDeclarationNode& struct_ref,
+	StructTypeInfo* struct_info,
+	AccessSpecifier base_access,
+	bool is_virtual_base,
+	const Token& error_token)
+{
+	// Look up base class type
+	auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
+	if (base_type_it == gTypesByName.end()) {
+		return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", error_token);
+	}
+
+	const TypeInfo* base_type_info = base_type_it->second;
+	
+	// Check if base class is a template parameter
+	bool is_template_param = is_base_class_template_parameter(base_class_name);
+	
+	// Allow Type::Struct for concrete types OR template parameters
+	if (!is_template_param && base_type_info->type_ != Type::Struct) {
+		return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", error_token);
+	}
+
+	// For template parameters, skip 'final' check and other concrete type validations
+	if (!is_template_param) {
+		// Check if base class is final
+		if (base_type_info->struct_info_ && base_type_info->struct_info_->is_final) {
+			return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", error_token);
+		}
+	}
+
+	// Add base class to struct node and type info
+	struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_template_param);
+	struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base, is_template_param);
+	
+	return ParseResult::success();
+}
+
 // Substitute template parameter in a type specification
 // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
 std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
@@ -18120,20 +18238,11 @@ ParseResult Parser::parse_template_declaration() {
 						instantiate_and_register_base_template(base_class_name, template_args);
 					}
 
-					// Look up base class type
-					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
-					if (base_type_it == gTypesByName.end()) {
-						return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
+					// Validate and add the base class
+					ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info.get(), base_access, is_virtual_base, *base_name_token);
+					if (result.is_error()) {
+						return result;
 					}
-
-					const TypeInfo* base_type_info = base_type_it->second;
-					if (base_type_info->type_ != Type::Struct) {
-						return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", *base_name_token);
-					}
-
-					// Add base class to struct node and type info
-					struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
-					struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
 				} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 			}
 			
@@ -18917,20 +19026,11 @@ if (struct_type_info.getStructInfo()) {
 						instantiate_and_register_base_template(base_class_name, template_args);
 					}
 
-					// Look up base class type
-					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
-					if (base_type_it == gTypesByName.end()) {
-						return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", *base_name_token);
+					// Validate and add the base class
+					ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info.get(), base_access, is_virtual_base, *base_name_token);
+					if (result.is_error()) {
+						return result;
 					}
-
-					const TypeInfo* base_type_info = base_type_it->second;
-					if (base_type_info->type_ != Type::Struct) {
-						return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", *base_name_token);
-					}
-
-					// Add base class to struct node and type info
-					struct_ref.add_base_class(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
-					struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
 				} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 			}
 			
@@ -21087,12 +21187,12 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		SaveHandle arg_saved_pos = save_token_position();
 
 		// First, try to parse an expression (for non-type template parameters)
-		// Use parse_expression(14) instead of parse_primary_expression() to handle
-		// member access expressions like is_int<T>::value
-		// Precedence 14 ensures operators with precedence < 14 are not consumed, including:
-		// - Comparison operators like > (precedence 13) - prevents ambiguity with template closing bracket
-		// - Comma operators (precedence 1) - prevents consuming multiple template arguments as one
-		auto expr_result = parse_expression(14);
+		// Use parse_expression with ExpressionContext::TemplateArgument to handle
+		// member access expressions like is_int<T>::value and complex expressions
+		// like T::value || my_or<Rest...>::value
+		// Precedence 2 allows all binary operators except comma (precedence 1)
+		// The TemplateArgument context ensures we stop at '>' and ',' delimiters
+		auto expr_result = parse_expression(2, ExpressionContext::TemplateArgument);
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
 			// Successfully parsed an expression - check if it's a boolean or numeric literal
 			const ExpressionNode& expr = expr_result.node()->as<ExpressionNode>();
@@ -24160,14 +24260,74 @@ if (struct_type_info.getStructInfo()) {
 		std::string_view base_class_name = base.name;
 		FLASH_LOG(Templates, Debug, "Processing primary template base class: ", base_class_name);
 		
-		// Look up the base class type (may need to resolve type aliases)
-		auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
-		if (base_type_it != gTypesByName.end()) {
-			const TypeInfo* base_type_info = base_type_it->second;
-			struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base.access, base.is_virtual);
-			FLASH_LOG(Templates, Debug, "Added base class: ", base_class_name, " with type_index=", base_type_info->type_index_);
+		// Check if this base class is deferred (a template parameter)
+		if (base.is_deferred) {
+			FLASH_LOG(Templates, Debug, "Base class '", base_class_name, "' is a template parameter - resolving with concrete type");
+			
+			// Find the template parameter by name and substitute with the concrete type
+			size_t arg_index = 0;
+			bool found = false;
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				if (!template_params[i].is<TemplateParameterNode>()) continue;
+				
+				const auto& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.kind() != TemplateParameterKind::Type) continue;
+				
+				std::string_view param_name = tparam.name();
+				
+				if (param_name == base_class_name) {
+					// Found the template parameter - get the concrete type
+					if (arg_index < template_args_to_use.size()) {
+						const TemplateTypeArg& concrete_arg = template_args_to_use[arg_index];
+						
+						// Validate that the concrete type is a struct/class
+						if (concrete_arg.type_index >= gTypeInfo.size()) {
+							FLASH_LOG(Templates, Error, "Template argument for base class has invalid type_index: ", concrete_arg.type_index);
+							break;
+						}
+						
+						const TypeInfo& concrete_type = gTypeInfo[concrete_arg.type_index];
+						if (concrete_type.type_ != Type::Struct) {
+							FLASH_LOG(Templates, Error, "Template argument '", concrete_type.name_, "' for base class must be a struct/class type");
+							// Could return error here, but for now just log and skip
+							break;
+						}
+						
+						// Check if the concrete type is final
+						if (concrete_type.struct_info_ && concrete_type.struct_info_->is_final) {
+							FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type.name_, "'");
+							// Could return error here, but for now just log and skip
+							break;
+						}
+						
+						// Add the resolved base class
+						struct_info->addBaseClass(StringTable::getStringView(concrete_type.name_), concrete_arg.type_index, base.access, base.is_virtual);
+						FLASH_LOG(Templates, Debug, "Resolved template parameter base '", base_class_name, "' to concrete type '", StringTable::getStringView(concrete_type.name_), "' with type_index=", concrete_arg.type_index);
+						found = true;
+					}
+					break;
+				}
+				
+				// Track regular parameters to match indices
+				if (!tparam.is_variadic()) {
+					arg_index++;
+				}
+			}
+			
+			if (!found) {
+				FLASH_LOG(Templates, Warning, "Could not resolve template parameter base class: ", base_class_name);
+			}
 		} else {
-			FLASH_LOG(Templates, Warning, "Base class ", base_class_name, " not found in gTypesByName");
+			// Regular (non-deferred) base class
+			// Look up the base class type (may need to resolve type aliases)
+			auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
+			if (base_type_it != gTypesByName.end()) {
+				const TypeInfo* base_type_info = base_type_it->second;
+				struct_info->addBaseClass(base_class_name, base_type_info->type_index_, base.access, base.is_virtual);
+				FLASH_LOG(Templates, Debug, "Added base class: ", base_class_name, " with type_index=", base_type_info->type_index_);
+			} else {
+				FLASH_LOG(Templates, Warning, "Base class ", base_class_name, " not found in gTypesByName");
+			}
 		}
 	}
 
@@ -24638,7 +24798,7 @@ if (struct_type_info.getStructInfo()) {
 	}
 
 	// Finalize the struct layout
-	if (!class_decl.base_classes().empty()) {
+	if (!struct_info->base_classes.empty()) {
 		struct_info->finalizeWithBases();
 	} else {
 		struct_info->finalize();
