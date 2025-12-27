@@ -694,6 +694,9 @@ public:  // Public methods for template instantiation
 
         // Check if an identifier name is a template parameter in current scope
         bool is_template_parameter(std::string_view name) const;
+        
+        // Check if a base class name is a template parameter (used for template parameter inheritance)
+        bool is_base_class_template_parameter(std::string_view base_class_name) const;
 
         // Substitute template parameter in a type specification
         // Handles complex transformations like const T& -> const int&, T* -> int*, etc.

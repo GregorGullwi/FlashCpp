@@ -18168,7 +18168,18 @@ ParseResult Parser::parse_template_declaration() {
 					const TypeInfo* base_type_info = base_type_it->second;
 					
 					// Check if base class is a template parameter
-					bool is_template_param = is_base_class_template_parameter(base_class_name);
+					bool is_template_param = false;
+					if (!current_template_param_names_.empty()) {
+						for (const auto& param_name : current_template_param_names_) {
+							if (StringTable::getStringView(param_name) == base_class_name) {
+								is_template_param = true;
+								FLASH_LOG_FORMAT(Templates, Debug, 
+									"Base class '{}' is a template parameter - deferring resolution", 
+									base_class_name);
+								break;
+							}
+						}
+					}
 					
 					// Allow Type::Struct for concrete types OR template parameters
 					if (!is_template_param && base_type_info->type_ != Type::Struct) {
@@ -18970,7 +18981,18 @@ if (struct_type_info.getStructInfo()) {
 					const TypeInfo* base_type_info = base_type_it->second;
 					
 					// Check if base class is a template parameter
-					bool is_template_param = is_base_class_template_parameter(base_class_name);
+					bool is_template_param = false;
+					if (!current_template_param_names_.empty()) {
+						for (const auto& param_name : current_template_param_names_) {
+							if (StringTable::getStringView(param_name) == base_class_name) {
+								is_template_param = true;
+								FLASH_LOG_FORMAT(Templates, Debug, 
+									"Base class '{}' is a template parameter - deferring resolution", 
+									base_class_name);
+								break;
+							}
+						}
+					}
 					
 					// Allow Type::Struct for concrete types OR template parameters
 					if (!is_template_param && base_type_info->type_ != Type::Struct) {
