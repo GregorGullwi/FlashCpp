@@ -4,7 +4,12 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
-**UPDATE (December 27, 2024)**: Additional parsing fix for base class member type access implemented. Continue making progress toward `<type_traits>` compilation.
+**UPDATE (December 27, 2024 - Evening)**: Critical parsing fixes implemented!
+- ✅ **constexpr typename** in return types now works (e.g., `constexpr typename my_or<...>::type func()`)
+- ✅ **sizeof in template parameter defaults** now works (e.g., `template<typename T, size_t N = sizeof(T)>`)
+- 🎯 These fixes unblock `<type_traits>` lines 295-306 which were major parsing blockers
+
+**UPDATE (December 27, 2024 - Morning)**: Additional parsing fix for base class member type access implemented. Continue making progress toward `<type_traits>` compilation.
 
 ### Successfully Compiling Headers ✅
 
@@ -128,7 +133,104 @@ struct negation : __not_<_Pp>::type { };  // ✅ Now parses!
 - `src/Parser.cpp` - Base class template argument parsing
 - `tests/test_base_class_member_type_access_ret42.cpp` - Test case added
 
-**Next Blocker**: Multi-line template function declarations (type_traits line 296)
+#### 0b. constexpr typename in Return Types (December 27, 2024 - Evening)
+**Status**: ✅ **NEWLY IMPLEMENTED**
+
+**What Was Missing**: FlashCpp could not parse `constexpr typename` when both keywords appeared together in function return types. This pattern is common in standard library metaprogramming.
+
+**The Problem**: In `parse_type_specifier()`, the typename check occurred before the function specifier loop:
+- Parser saw `constexpr`, entered loop to skip function specifiers
+- After consuming `constexpr`, saw `typename` but was past the typename check
+- Resulted in error: "Unexpected token in type specifier: 'typename'"
+
+**Example from `<type_traits>` (lines 299-306)**:
+```cpp
+template <typename _TypeIdentity,
+    typename _NestedType = typename _TypeIdentity::type>
+  constexpr typename __or_<
+    is_reference<_NestedType>,
+    is_function<_NestedType>,
+    is_void<_NestedType>,
+    __is_array_unknown_bounds<_NestedType>
+  >::type __is_complete_or_unbounded(_TypeIdentity)
+  { return {}; }
+```
+
+**Implementation**:
+- Modified `src/Parser.cpp` lines 6842-6885
+- Moved typename keyword check to AFTER the function specifier loop
+- Now handles both `typename` alone and `constexpr typename` patterns
+- Added comprehensive comment explaining the ordering requirement
+
+**Test Cases**:
+```cpp
+// Now parses successfully:
+template<bool... Bs>
+struct my_or {
+    using type = int;
+};
+
+template<typename T1, typename T2>
+    constexpr typename my_or<true, false>::type
+    test_func(T1 a, T2 b) {  // ✅ Works!
+    return 42;
+}
+```
+
+**Impact**: Unblocks multi-line template function declarations in `<type_traits>` where return types span multiple lines with `constexpr typename` patterns.
+
+**Files Modified:**
+- `src/Parser.cpp` - Reordered typename check in parse_type_specifier()
+- `tests/test_constexpr_multiline_ret42.cpp` - Test case (returns 42) ✅
+- `tests/test_multiline_template_function_ret42.cpp` - Additional test
+
+#### 0c. sizeof in Template Parameter Defaults (December 27, 2024 - Evening)
+**Status**: ✅ **NEWLY IMPLEMENTED**
+
+**What Was Missing**: FlashCpp could not parse expressions like `sizeof(T)` in non-type template parameter defaults. The parser consumed too many tokens, including the `>` that terminates the template parameter list.
+
+**The Problem**: When parsing default values for non-type template parameters:
+- `parse_expression()` was called without context about being inside `< >`
+- Expression parser would consume `>` as part of a comparison operator
+- Led to error: "Expected expression after '=' in template parameter default"
+
+**Example from `<type_traits>` (line 295)**:
+```cpp
+template <typename _Tp, size_t = sizeof(_Tp)>
+  constexpr true_type __is_complete_or_unbounded(__type_identity<_Tp>)
+  { return {}; }
+```
+
+**Implementation**:
+- Modified `src/Parser.cpp` line 20568
+- Changed `parse_expression()` call to include `ExpressionContext::TemplateArgument`
+- This context tells the parser to stop at `>` and `,` delimiters
+- Prevents over-consumption of tokens
+
+**Test Cases**:
+```cpp
+// Now parses successfully:
+template<typename T, int N = sizeof(T)>
+struct test {
+    int value;
+};
+
+int main() {
+    test<int> t;  // N = sizeof(int) = 4
+    t.value = 4;
+    return t.value;  // ✅ Returns 4
+}
+```
+
+**Impact**: Enables standard library pattern of using sizeof in template parameter defaults, common in metaprogramming and type computations.
+
+**Files Modified:**
+- `src/Parser.cpp` - Added TemplateArgument context to parse_expression call
+- `tests/test_sizeof_default_simple_ret4.cpp` - Test case (returns 4) ✅
+- `tests/test_sizeof_template_param_default_ret4.cpp` - Additional test case
+
+**Next Blocker**: Type alias resolution in some template contexts (e.g., "Missing identifier: false_type")
+
 
 #### 0. Qualified Base Class Names and Pack Expansion (December 26, 2024)
 **Status**: ✅ **NEWLY IMPLEMENTED**
