@@ -13710,6 +13710,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		
 		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}'", idenfifier_token.value(), identifierType.has_value() ? "found" : "not found", peek_token().has_value() ? peek_token()->value() : "N/A");
 		
+		// BUGFIX: If identifier not found in symbol table, check if it's a type alias in gTypesByName
+		// This allows type aliases like false_type, true_type, enable_if_t to be used in expression contexts
+		// (e.g., for constructor calls like `false_type()`, or in template metaprogramming patterns)
+		bool found_as_type_alias = false;
+		if (!identifierType) {
+			StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+			auto type_it = gTypesByName.find(identifier_handle);
+			if (type_it != gTypesByName.end()) {
+				FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName", idenfifier_token.value());
+				found_as_type_alias = true;
+				// Mark that we found it as a type so it can be used for constructor calls, etc.
+				// The actual type info will be retrieved later when needed
+			}
+		}
+		
 		// If identifier is followed by ::, it might be a namespace-qualified identifier
 		// This handles both: 
 		// 1. Identifier not found (might be namespace name)
@@ -14753,12 +14768,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// For now, create a placeholder node and let the template instantiation logic handle it
 						FLASH_LOG(Parser, Debug, "Found alias template '", idenfifier_token.value(), "' in expression context");
 						// Don't return yet - let it fall through to template argument parsing below
-					} else {
+					} else if (!found_as_type_alias) {
 						// Not an alias template and not found anywhere
 						FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
 						return ParseResult::error("Missing identifier", idenfifier_token);
 					}
-				} else if (!identifierType) {
+				} else if (!identifierType && !found_as_type_alias) {
 					// Not a function call, template member access, template parameter reference, pack expansion, or alias template - this is an error
 					FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
 					return ParseResult::error("Missing identifier", idenfifier_token);
