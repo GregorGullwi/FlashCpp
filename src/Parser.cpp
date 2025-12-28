@@ -13711,17 +13711,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}'", idenfifier_token.value(), identifierType.has_value() ? "found" : "not found", peek_token().has_value() ? peek_token()->value() : "N/A");
 		
 		// BUGFIX: If identifier not found in symbol table, check if it's a type alias in gTypesByName
-		// This allows type aliases like false_type, true_type, enable_if_t to be used in expression contexts
-		// (e.g., for constructor calls like `false_type()`, or in template metaprogramming patterns)
+		// This allows type aliases like false_type, true_type, enable_if_t to be used in specific contexts
+		// Only apply this fallback when the identifier is followed by '::' or '(' to ensure
+		// we don't break legitimate cases where an identifier should be an error
 		bool found_as_type_alias = false;
-		if (!identifierType) {
-			StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
-			auto type_it = gTypesByName.find(identifier_handle);
-			if (type_it != gTypesByName.end()) {
-				FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName", idenfifier_token.value());
-				found_as_type_alias = true;
-				// Mark that we found it as a type so it can be used for constructor calls, etc.
-				// The actual type info will be retrieved later when needed
+		if (!identifierType && peek_token().has_value()) {
+			std::string_view peek = peek_token()->value();
+			// Check gTypesByName if identifier is followed by :: (qualified name) or ( (constructor call)
+			if (peek == "::" || peek == "(") {
+				StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+				auto type_it = gTypesByName.find(identifier_handle);
+				if (type_it != gTypesByName.end()) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName (peek='{}')", 
+						idenfifier_token.value(), peek);
+					found_as_type_alias = true;
+					// Mark that we found it as a type so it can be used for type references
+					// The actual type info will be retrieved later when needed
+				}
 			}
 		}
 		
