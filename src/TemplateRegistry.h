@@ -46,7 +46,7 @@ struct TemplateTypeArg {
 	
 	// For dependent types (types that depend on template parameters)
 	bool is_dependent;  // true if this type depends on uninstantiated template parameters
-	StringHandle dependent_name;  // name of the dependent template parameter (if applicable)
+	StringHandle dependent_name;  // name of the dependent template parameter or type name (set when is_dependent is true)
 	
 	TemplateTypeArg()
 		: base_type(Type::Invalid)
@@ -1681,4 +1681,3 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	// This allows templates to compile even with complex constraints
 	return ConstraintEvaluationResult::success();
 }
-

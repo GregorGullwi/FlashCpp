@@ -13,6 +13,7 @@
 #include <ranges> // Include ranges for std::ranges::find
 #include <array> // Include array for std::array
 #include <charconv> // Include charconv for std::from_chars
+#include <cctype>
 #include "ChunkedString.h"
 #include "Log.h"
 
@@ -3568,9 +3569,9 @@ ParseResult Parser::parse_struct_declaration()
 			// Resolve member type alias if present (e.g., Base<T>::type)
 			if (member_type_name.has_value()) {
 				StringBuilder qualified_builder;
-				qualified_builder += base_class_name;
-				qualified_builder += "::";
-				qualified_builder.append(*member_type_name);
+				qualified_builder.append(base_class_name);
+				qualified_builder.append("::"sv);
+				qualified_builder.append(StringTable::getStringView(*member_type_name));
 				std::string_view alias_name = qualified_builder.commit();
 				
 				auto alias_it = gTypesByName.find(StringTable::getOrInternStringHandle(alias_name));
@@ -21815,6 +21816,22 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Type name: {}", type_name);
 				
+				auto matches_identifier = [](std::string_view haystack, std::string_view needle) {
+					size_t pos = haystack.find(needle);
+					auto is_ident_char = [](char ch) {
+						return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
+					};
+					while (pos != std::string_view::npos) {
+						bool start_ok = (pos == 0) || !is_ident_char(haystack[pos - 1]);
+						bool end_ok = (pos + needle.size() >= haystack.size()) || !is_ident_char(haystack[pos + needle.size()]);
+						if (start_ok && end_ok) {
+							return true;
+						}
+						pos = haystack.find(needle, pos + 1);
+					}
+					return false;
+				};
+				
 				// Check if this is a template parameter name
 				// During SFINAE context (re-parsing), template parameters are substituted with concrete types
 				// so we should NOT mark them as dependent
@@ -21822,7 +21839,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				if (!in_sfinae_context_) {
 					for (const auto& param_name : current_template_param_names_) {
 						std::string_view param_sv = StringTable::getStringView(param_name);
-						if (type_name == param_sv || type_name.find(param_sv) != std::string_view::npos) {
+						if (type_name == param_sv || matches_identifier(type_name, param_sv)) {
 							is_template_param = true;
 							break;
 						}
@@ -21833,14 +21850,22 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					arg.is_dependent = true;
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
-				} else if (!current_template_param_names_.empty() && type_name.find("_T") != std::string_view::npos) {
-					arg.is_dependent = true;
-					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
-					FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent by heuristic (type name: {})", type_name);
-				} else if (type_name.find("::type") != std::string_view::npos && !in_sfinae_context_) {
-					arg.is_dependent = true;
-					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
-					FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", type_name);
+				} else if (!in_sfinae_context_) {
+					for (const auto& param_name : current_template_param_names_) {
+						std::string_view param_sv = StringTable::getStringView(param_name);
+						if (matches_identifier(type_name, param_sv) && type_name.find("::type") != std::string_view::npos) {
+							arg.is_dependent = true;
+							arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
+							FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", type_name);
+							break;
+						}
+					}
+					
+					if (!arg.is_dependent && type_name.find("::type") != std::string_view::npos) {
+						arg.is_dependent = true;
+						arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
+						FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", type_name);
+					}
 				}
 			} else if (idx == 0) {
 				arg.is_dependent = true;
@@ -24696,9 +24721,25 @@ if (struct_type_info.getStructInfo()) {
 	// Handle deferred template base classes (with dependent template arguments)
 	if (!class_decl.deferred_template_base_classes().empty()) {
 		ensure_substitution_maps();
+		auto identifier_matches = [](std::string_view haystack, std::string_view needle) {
+			size_t pos = haystack.find(needle);
+			auto is_ident_char = [](char ch) {
+				return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
+			};
+			while (pos != std::string_view::npos) {
+				bool start_ok = (pos == 0) || !is_ident_char(haystack[pos - 1]);
+				bool end_ok = (pos + needle.size() >= haystack.size()) || !is_ident_char(haystack[pos + needle.size()]);
+				if (start_ok && end_ok) {
+					return true;
+				}
+				pos = haystack.find(needle, pos + 1);
+			}
+			return false;
+		};
 		
 		for (const auto& deferred_base : class_decl.deferred_template_base_classes()) {
 			std::vector<TemplateTypeArg> resolved_args;
+			bool unresolved_arg = false;
 			for (const auto& arg_info : deferred_base.template_arguments) {
 				// Pack expansion handling
 				if (arg_info.is_pack) {
@@ -24732,6 +24773,7 @@ if (struct_type_info.getStructInfo()) {
 					const TypeSpecifierNode& type_spec = arg_info.node.as<TypeSpecifierNode>();
 					Type resolved_type = type_spec.type();
 					TypeIndex resolved_index = type_spec.type_index();
+					bool resolved = false;
 					
 					if (resolved_type == Type::UserDefined && resolved_index < gTypeInfo.size()) {
 						std::string_view type_name = StringTable::getStringView(gTypeInfo[resolved_index].name());
@@ -24743,26 +24785,28 @@ if (struct_type_info.getStructInfo()) {
 							subst.is_rvalue_reference = type_spec.is_rvalue_reference();
 							subst.cv_qualifier = type_spec.cv_qualifier();
 							resolved_args.push_back(subst);
-							continue;
-						}
-						
-						for (const auto& subst_entry : name_substitution_map) {
-							if (type_name.find(subst_entry.first) != std::string_view::npos) {
-								TemplateTypeArg subst = subst_entry.second;
-								subst.pointer_depth = type_spec.pointer_depth();
-								subst.is_reference = type_spec.is_reference();
-								subst.is_rvalue_reference = type_spec.is_rvalue_reference();
-								subst.cv_qualifier = type_spec.cv_qualifier();
-								resolved_args.push_back(subst);
-								goto resolved_type_arg;
+							resolved = true;
+						} else {
+							for (const auto& subst_entry : name_substitution_map) {
+								if (identifier_matches(type_name, subst_entry.first)) {
+									TemplateTypeArg subst = subst_entry.second;
+									subst.pointer_depth = type_spec.pointer_depth();
+									subst.is_reference = type_spec.is_reference();
+									subst.is_rvalue_reference = type_spec.is_rvalue_reference();
+									subst.cv_qualifier = type_spec.cv_qualifier();
+									resolved_args.push_back(subst);
+									resolved = true;
+									break;
+								}
 							}
 						}
 					}
 					
 					// Fallback: use the type specifier as-is
-					resolved_args.emplace_back(type_spec);
-					resolved_args.back().is_pack = arg_info.is_pack;
-resolved_type_arg:
+					if (!resolved) {
+						resolved_args.emplace_back(type_spec);
+						resolved_args.back().is_pack = arg_info.is_pack;
+					}
 					continue;
 				}
 				
@@ -24776,8 +24820,13 @@ resolved_type_arg:
 					}
 				}
 				
-				FLASH_LOG(Templates, Warning, "Could not resolve deferred template base argument; using placeholder");
-				resolved_args.emplace_back();
+				FLASH_LOG(Templates, Warning, "Could not resolve deferred template base argument; skipping base instantiation");
+				unresolved_arg = true;
+				break;
+			}
+			
+			if (unresolved_arg) {
+				continue;
 			}
 			
 			std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
@@ -24790,13 +24839,14 @@ resolved_type_arg:
 			if (deferred_base.member_type.has_value()) {
 				StringBuilder alias_builder;
 				alias_builder.append(base_template_name);
-				alias_builder.append("::"sv);
+				static constexpr std::string_view kScopeSeparator = "::"sv;
+				alias_builder.append(kScopeSeparator);
 				alias_builder.append(StringTable::getStringView(*deferred_base.member_type));
 				std::string_view alias_name = alias_builder.commit();
 				
 				auto alias_it = gTypesByName.find(StringTable::getOrInternStringHandle(alias_name));
 				if (alias_it == gTypesByName.end()) {
-					FLASH_LOG(Templates, Warning, "Deferred template base alias not found: ", alias_name);
+					FLASH_LOG(Templates, Error, "Deferred template base alias not found: ", alias_name);
 					continue;
 				}
 				
