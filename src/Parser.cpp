@@ -19302,11 +19302,10 @@ if (struct_type_info.getStructInfo()) {
 						pattern_name += "[" + std::to_string(*arg.array_size) + "]";
 					}
 				}
-				if (arg.is_member_pointer) {
-					pattern_name += "MP";
-					if (arg.is_member_function_pointer) {
-						pattern_name += "F";
-					}
+				if (arg.member_pointer_kind == MemberPointerKind::Object) {
+					pattern_name += "MPO";
+				} else if (arg.member_pointer_kind == MemberPointerKind::Function) {
+					pattern_name += "MPF";
 				}
 				// Add reference markers
 				if (arg.is_rvalue_reference) {
@@ -21874,8 +21873,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// Successfully parsed a type
 		TypeSpecifierNode& type_node = type_result.node()->as<TypeSpecifierNode>();
 		
-		bool is_member_pointer = false;
-		bool is_member_function_pointer = false;
+		MemberPointerKind member_pointer_kind = MemberPointerKind::None;
 
 		// Detect pointer-to-member declarator: ClassType::*
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
@@ -21885,7 +21883,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				consume_token(); // consume '::'
 				if (peek_token().has_value() && peek_token()->value() == "*") {
 					consume_token(); // consume '*'
-					is_member_pointer = true;
+					member_pointer_kind = MemberPointerKind::Object;
 					type_node.add_pointer_level(CVQualifier::None);
 				} else {
 					restore_token_position(member_saved_pos);
@@ -21962,8 +21960,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// Create TemplateTypeArg from the fully parsed type
 		TemplateTypeArg arg(type_node);
 		arg.is_pack = is_pack_expansion;
-		arg.is_member_pointer = is_member_pointer;
-		arg.is_member_function_pointer = is_member_function_pointer;
+		arg.member_pointer_kind = member_pointer_kind;
 		
 		// Check if this type is dependent (contains template parameters)
 		// A type is dependent if:

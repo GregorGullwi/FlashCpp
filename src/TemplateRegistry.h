@@ -26,6 +26,13 @@ struct TransparentStringHash {
 	size_t operator()(StringHandle sh) const { return std::hash<uint32_t>{}(sh.handle); }
 };
 
+// Member pointer classification for template arguments
+enum class MemberPointerKind : uint8_t {
+	None = 0,
+	Object,
+	Function
+};
+
 // Full type representation for template arguments
 // Captures base type, references, pointers, cv-qualifiers, etc.
 // Can also represent non-type template parameters (values)
@@ -38,8 +45,7 @@ struct TemplateTypeArg {
 	CVQualifier cv_qualifier;  // const/volatile qualifiers
 	bool is_array;
 	std::optional<size_t> array_size;  // Known array size if available
-	bool is_member_pointer;
-	bool is_member_function_pointer;
+	MemberPointerKind member_pointer_kind;
 
 	// For non-type template parameters
 	bool is_value;  // true if this represents a value instead of a type
@@ -61,8 +67,7 @@ struct TemplateTypeArg {
 		, cv_qualifier(CVQualifier::None)
 		, is_array(false)
 		, array_size(std::nullopt)
-		, is_member_pointer(false)
-		, is_member_function_pointer(false)
+		, member_pointer_kind(MemberPointerKind::None)
 		, is_value(false)
 		, value(0)
 		, is_pack(false)
@@ -78,8 +83,7 @@ struct TemplateTypeArg {
 		, cv_qualifier(type_spec.cv_qualifier())
 		, is_array(type_spec.is_array())
 		, array_size(type_spec.array_size())
-		, is_member_pointer(false)
-		, is_member_function_pointer(false)
+		, member_pointer_kind(MemberPointerKind::None)
 		, is_value(false)
 		, value(0)
 		, is_pack(false)
@@ -95,8 +99,7 @@ struct TemplateTypeArg {
 		, cv_qualifier(CVQualifier::None)
 		, is_array(false)
 		, array_size(std::nullopt)
-		, is_member_pointer(false)
-		, is_member_function_pointer(false)
+		, member_pointer_kind(MemberPointerKind::None)
 		, is_value(true)
 		, value(val)
 		, is_pack(false)
@@ -112,8 +115,7 @@ struct TemplateTypeArg {
 		, cv_qualifier(CVQualifier::None)
 		, is_array(false)
 		, array_size(std::nullopt)
-		, is_member_pointer(false)
-		, is_member_function_pointer(false)
+		, member_pointer_kind(MemberPointerKind::None)
 		, is_value(true)
 		, value(val)
 		, is_pack(false)
@@ -128,8 +130,7 @@ struct TemplateTypeArg {
 		       cv_qualifier == other.cv_qualifier &&
 		       is_array == other.is_array &&
 		       array_size == other.array_size &&
-		       is_member_pointer == other.is_member_pointer &&
-		       is_member_function_pointer == other.is_member_function_pointer &&
+		       member_pointer_kind == other.member_pointer_kind &&
 		       is_value == other.is_value &&
 		       (!is_value || value == other.value) &&  // Only compare value if it's a value
 		       is_pack == other.is_pack;
@@ -204,11 +205,10 @@ struct TemplateTypeArg {
 			}
 		}
 
-		if (is_member_pointer) {
-			result += "MP";
-			if (is_member_function_pointer) {
-				result += "F";
-			}
+		if (member_pointer_kind == MemberPointerKind::Object) {
+			result += "MPO";
+		} else if (member_pointer_kind == MemberPointerKind::Function) {
+			result += "MPF";
 		}
 
 		// Add reference markers
@@ -235,8 +235,7 @@ struct TemplateTypeArgHash {
 		if (arg.array_size.has_value()) {
 			hash ^= std::hash<size_t>{}(*arg.array_size) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
-		hash ^= std::hash<bool>{}(arg.is_member_pointer) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		hash ^= std::hash<bool>{}(arg.is_member_function_pointer) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.member_pointer_kind)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<bool>{}(arg.is_value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		if (arg.is_value) {
 			hash ^= std::hash<int64_t>{}(arg.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
@@ -455,12 +454,8 @@ struct TemplatePattern {
 				FLASH_LOG(Templates, Trace, "  FAILED: array size mismatch");
 				return false;
 			}
-			if (pattern_arg.is_member_pointer != concrete_arg.is_member_pointer) {
-				FLASH_LOG(Templates, Trace, "  FAILED: member pointer mismatch");
-				return false;
-			}
-			if (pattern_arg.is_member_function_pointer != concrete_arg.is_member_function_pointer) {
-				FLASH_LOG(Templates, Trace, "  FAILED: member function pointer mismatch");
+			if (pattern_arg.member_pointer_kind != concrete_arg.member_pointer_kind) {
+				FLASH_LOG(Templates, Trace, "  FAILED: member pointer kind mismatch");
 				return false;
 			}
 		
