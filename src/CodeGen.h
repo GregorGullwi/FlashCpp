@@ -393,7 +393,7 @@ public:
 			}
 			if (std::holds_alternative<double>(eval_result.value)) {
 				double d = std::get<double>(eval_result.value);
-				std::memcpy(&out_value, &d, sizeof(double));
+				out_value = static_cast<unsigned long long>(d);
 				return true;
 			}
 			
@@ -691,7 +691,7 @@ public:
 										FLASH_LOG(Codegen, Debug, "Found numeric literal value: ", inferred_value);
 									} else if (init_operands.size() >= 3 && std::holds_alternative<double>(init_operands[2])) {
 										double d = std::get<double>(init_operands[2]);
-										std::memcpy(&inferred_value, &d, sizeof(double));
+										inferred_value = static_cast<unsigned long long>(d);
 										found_base_value = true;
 										FLASH_LOG(Codegen, Debug, "Found double literal value: ", d);
 									}
