@@ -3501,12 +3501,15 @@ ParseResult Parser::parse_struct_declaration()
 		std::string_view instantiated_base_name;
 		if (peek_token().has_value() && peek_token()->value() == "<") {
 			// Parse template arguments
-			auto template_args_opt = parse_explicit_template_arguments();
+			std::vector<ASTNode> template_arg_nodes;
+			auto template_args_opt = parse_explicit_template_arguments(&template_arg_nodes);
 			if (!template_args_opt.has_value()) {
 				return ParseResult::error("Failed to parse template arguments for base class", *peek_token());
 			}
 			
 			std::vector<TemplateTypeArg> template_args = *template_args_opt;
+			std::optional<StringHandle> member_type_name;
+			std::optional<Token> member_name_token;
 			
 			// Check for member type access (e.g., ::type) after template arguments
 			// This handles patterns like: __not_<T>::type
@@ -3520,14 +3523,9 @@ ParseResult Parser::parse_struct_declaration()
 				StringHandle member_name = StringTable::getOrInternStringHandle(next_token->value());
 				consume_token(); // consume member name
 				
-				// Build the fully qualified member type name
-				StringBuilder qualified_builder;
-				qualified_builder += base_class_name;
-				qualified_builder += "::";
-				qualified_builder.append(member_name);
-				base_class_name = qualified_builder.commit();
-				
-				FLASH_LOG_FORMAT(Templates, Debug, "Found member type access: {}", base_class_name);
+				member_type_name = member_name;
+				member_name_token = *next_token;
+				FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}::{}", base_class_name, next_token->value());
 			}
 			
 			// Check if any template arguments are dependent
@@ -3543,8 +3541,22 @@ ParseResult Parser::parse_struct_declaration()
 			// Don't try to instantiate or resolve the base class yet
 			if (has_dependent_args) {
 				FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
-				// Skip base class resolution for now
-				// The base class will be resolved when this template is instantiated
+				
+				std::vector<TemplateArgumentNodeInfo> arg_infos;
+				arg_infos.reserve(template_args.size());
+				for (size_t i = 0; i < template_args.size(); ++i) {
+					TemplateArgumentNodeInfo info;
+					info.is_pack = template_args[i].is_pack;
+					info.is_dependent = template_args[i].is_dependent;
+					if (i < template_arg_nodes.size()) {
+						info.node = template_arg_nodes[i];
+					}
+					arg_infos.push_back(std::move(info));
+				}
+				
+				StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
+				struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), member_type_name, base_access, is_virtual_base);
+				
 				continue;  // Skip to next base class or exit loop
 			}
 			
@@ -3552,6 +3564,26 @@ ParseResult Parser::parse_struct_declaration()
 			// Note: try_instantiate_class_template returns nullopt on success 
 			// (type is registered in gTypesByName)
 			instantiated_base_name = instantiate_and_register_base_template(base_class_name, template_args);
+			
+			// Resolve member type alias if present (e.g., Base<T>::type)
+			if (member_type_name.has_value()) {
+				StringBuilder qualified_builder;
+				qualified_builder += base_class_name;
+				qualified_builder += "::";
+				qualified_builder.append(*member_type_name);
+				std::string_view alias_name = qualified_builder.commit();
+				
+				auto alias_it = gTypesByName.find(StringTable::getOrInternStringHandle(alias_name));
+				if (alias_it == gTypesByName.end()) {
+					return ParseResult::error("Base class '" + std::string(alias_name) + "' not found", member_name_token.value_or(Token()));
+				}
+				
+				base_class_name = alias_name;
+				if (member_name_token.has_value()) {
+					base_name_token = *member_name_token;
+				}
+				FLASH_LOG_FORMAT(Templates, Debug, "Resolved member alias base to {}", base_class_name);
+			}
 		}
 
 		// Validate and add the base class
@@ -21480,6 +21512,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				}
 				
 				template_args.push_back(bool_arg);
+				if (out_type_nodes && expr_result.node().has_value()) {
+					out_type_nodes->push_back(*expr_result.node());
+				}
 				discard_saved_token(arg_saved_pos);
 				
 				// Check for ',' or '>' after the boolean literal (or after pack expansion)
@@ -21540,6 +21575,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				}
 				
 				template_args.push_back(num_arg);
+				if (out_type_nodes && expr_result.node().has_value()) {
+					out_type_nodes->push_back(*expr_result.node());
+				}
 				
 				// Check for ',' or '>' after the numeric literal (or after pack expansion)
 				if (!peek_token().has_value()) {
@@ -21783,7 +21821,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				bool is_template_param = false;
 				if (!in_sfinae_context_) {
 					for (const auto& param_name : current_template_param_names_) {
-						if (type_name == param_name) {
+						std::string_view param_sv = StringTable::getStringView(param_name);
+						if (type_name == param_sv || type_name.find(param_sv) != std::string_view::npos) {
 							is_template_param = true;
 							break;
 						}
@@ -21792,7 +21831,16 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				
 				if (is_template_param || type_name.find("_unknown") != std::string_view::npos) {
 					arg.is_dependent = true;
+					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
+				} else if (!current_template_param_names_.empty() && type_name.find("_T") != std::string_view::npos) {
+					arg.is_dependent = true;
+					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
+					FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent by heuristic (type name: {})", type_name);
+				} else if (type_name.find("::type") != std::string_view::npos && !in_sfinae_context_) {
+					arg.is_dependent = true;
+					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
+					FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", type_name);
 				}
 			} else if (idx == 0) {
 				arg.is_dependent = true;
@@ -24504,6 +24552,50 @@ if (struct_type_info.getStructInfo()) {
 	// Use the filled template args for the rest of the function
 	const std::vector<TemplateTypeArg>& template_args_to_use = filled_template_args;
 
+	// Build substitution maps for dependent template entities (used by deferred bases and decltype bases)
+	std::unordered_map<std::string_view, TemplateTypeArg> name_substitution_map;
+	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_substitution_map;
+	bool substitution_maps_initialized = false;
+	auto ensure_substitution_maps = [&]() {
+		if (substitution_maps_initialized) {
+			return;
+		}
+		
+		size_t arg_index = 0;
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) continue;
+			
+			const auto& tparam = template_params[i].as<TemplateParameterNode>();
+			if (tparam.kind() != TemplateParameterKind::Type) continue;
+			
+			std::string_view param_name = tparam.name();
+			
+			// Check if this is a variadic pack parameter
+			if (tparam.is_variadic()) {
+				// Collect remaining arguments as a pack
+				std::vector<TemplateTypeArg> pack_args;
+				for (size_t j = arg_index; j < template_args_to_use.size(); ++j) {
+					pack_args.push_back(template_args_to_use[j]);
+				}
+				// Intern the pack name as StringHandle
+				StringHandle pack_handle = StringTable::getOrInternStringHandle(param_name);
+				pack_substitution_map[pack_handle] = pack_args;
+				FLASH_LOG(Templates, Debug, "Added pack substitution: ", param_name, " -> ", pack_args.size(), " arguments");
+				// All remaining args consumed
+				break;
+			} else {
+				// Regular scalar parameter
+				if (arg_index < template_args_to_use.size()) {
+					name_substitution_map[param_name] = template_args_to_use[arg_index];
+					FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", (int)template_args_to_use[arg_index].base_type, " type_index=", template_args_to_use[arg_index].type_index);
+					arg_index++;
+				}
+			}
+		}
+		
+		substitution_maps_initialized = true;
+	};
+
 	// Generate the instantiated class name (again, with filled args)
 	instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args_to_use));
 
@@ -24601,6 +24693,127 @@ if (struct_type_info.getStructInfo()) {
 		}
 	}
 
+	// Handle deferred template base classes (with dependent template arguments)
+	if (!class_decl.deferred_template_base_classes().empty()) {
+		ensure_substitution_maps();
+		
+		for (const auto& deferred_base : class_decl.deferred_template_base_classes()) {
+			std::vector<TemplateTypeArg> resolved_args;
+			for (const auto& arg_info : deferred_base.template_arguments) {
+				// Pack expansion handling
+				if (arg_info.is_pack) {
+					// If the argument node references a template parameter pack, expand it
+					if (arg_info.node.is<ExpressionNode>()) {
+						const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
+						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+							StringHandle pack_name = std::get<TemplateParameterReferenceNode>(expr).param_name();
+							auto pack_it = pack_substitution_map.find(pack_name);
+							if (pack_it != pack_substitution_map.end()) {
+								resolved_args.insert(resolved_args.end(), pack_it->second.begin(), pack_it->second.end());
+								continue;
+							}
+						}
+					} else if (arg_info.node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& type_spec = arg_info.node.as<TypeSpecifierNode>();
+						TypeIndex idx = type_spec.type_index();
+						if (idx < gTypeInfo.size()) {
+							StringHandle pack_name = gTypeInfo[idx].name_;
+							auto pack_it = pack_substitution_map.find(pack_name);
+							if (pack_it != pack_substitution_map.end()) {
+								resolved_args.insert(resolved_args.end(), pack_it->second.begin(), pack_it->second.end());
+								continue;
+							}
+						}
+					}
+				}
+				
+				// Resolve dependent type arguments
+				if (arg_info.node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type_spec = arg_info.node.as<TypeSpecifierNode>();
+					Type resolved_type = type_spec.type();
+					TypeIndex resolved_index = type_spec.type_index();
+					
+					if (resolved_type == Type::UserDefined && resolved_index < gTypeInfo.size()) {
+						std::string_view type_name = StringTable::getStringView(gTypeInfo[resolved_index].name());
+						auto subst_it = name_substitution_map.find(type_name);
+						if (subst_it != name_substitution_map.end()) {
+							TemplateTypeArg subst = subst_it->second;
+							subst.pointer_depth = type_spec.pointer_depth();
+							subst.is_reference = type_spec.is_reference();
+							subst.is_rvalue_reference = type_spec.is_rvalue_reference();
+							subst.cv_qualifier = type_spec.cv_qualifier();
+							resolved_args.push_back(subst);
+							continue;
+						}
+						
+						for (const auto& subst_entry : name_substitution_map) {
+							if (type_name.find(subst_entry.first) != std::string_view::npos) {
+								TemplateTypeArg subst = subst_entry.second;
+								subst.pointer_depth = type_spec.pointer_depth();
+								subst.is_reference = type_spec.is_reference();
+								subst.is_rvalue_reference = type_spec.is_rvalue_reference();
+								subst.cv_qualifier = type_spec.cv_qualifier();
+								resolved_args.push_back(subst);
+								goto resolved_type_arg;
+							}
+						}
+					}
+					
+					// Fallback: use the type specifier as-is
+					resolved_args.emplace_back(type_spec);
+					resolved_args.back().is_pack = arg_info.is_pack;
+resolved_type_arg:
+					continue;
+				}
+				
+				if (arg_info.node.is<ExpressionNode>()) {
+					// Try to evaluate non-type template argument after substitution
+					if (auto value = try_evaluate_constant_expression(arg_info.node)) {
+						TemplateTypeArg val_arg(value->value, value->type);
+						val_arg.is_pack = arg_info.is_pack;
+						resolved_args.push_back(val_arg);
+						continue;
+					}
+				}
+				
+				FLASH_LOG(Templates, Warning, "Could not resolve deferred template base argument; using placeholder");
+				resolved_args.emplace_back();
+			}
+			
+			std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
+			std::string_view instantiated_name = instantiate_and_register_base_template(base_template_name, resolved_args);
+			if (!instantiated_name.empty()) {
+				base_template_name = instantiated_name;
+			}
+			
+			std::string_view final_base_name = base_template_name;
+			if (deferred_base.member_type.has_value()) {
+				StringBuilder alias_builder;
+				alias_builder.append(base_template_name);
+				alias_builder.append("::"sv);
+				alias_builder.append(StringTable::getStringView(*deferred_base.member_type));
+				std::string_view alias_name = alias_builder.commit();
+				
+				auto alias_it = gTypesByName.find(StringTable::getOrInternStringHandle(alias_name));
+				if (alias_it == gTypesByName.end()) {
+					FLASH_LOG(Templates, Warning, "Deferred template base alias not found: ", alias_name);
+					continue;
+				}
+				
+				final_base_name = alias_name;
+				struct_info->addBaseClass(final_base_name, alias_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
+				continue;
+			}
+			
+			auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(final_base_name));
+			if (base_type_it != gTypesByName.end()) {
+				struct_info->addBaseClass(final_base_name, base_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
+			} else {
+				FLASH_LOG(Templates, Warning, "Deferred template base type not found: ", final_base_name);
+			}
+		}
+	}
+
 	// Handle deferred base classes (decltype bases) from the primary template
 	// These need to be evaluated with concrete template arguments
 	FLASH_LOG(Templates, Debug, "Primary template has ", class_decl.deferred_base_classes().size(), " deferred base classes");
@@ -24612,40 +24825,7 @@ if (struct_type_info.getStructInfo()) {
 		if (!deferred_base.decltype_expression.is<TypeSpecifierNode>()) {
 			// Build maps from template parameter NAME to concrete type for substitution
 			// Note: We can't use type_index because template parameters are cleaned up after parsing
-			std::unordered_map<std::string_view, TemplateTypeArg> name_substitution_map;
-			std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_substitution_map;
-			
-			size_t arg_index = 0;
-			for (size_t i = 0; i < template_params.size(); ++i) {
-				if (!template_params[i].is<TemplateParameterNode>()) continue;
-				
-				const auto& tparam = template_params[i].as<TemplateParameterNode>();
-				if (tparam.kind() != TemplateParameterKind::Type) continue;
-				
-				std::string_view param_name = tparam.name();
-				
-				// Check if this is a variadic pack parameter
-				if (tparam.is_variadic()) {
-					// Collect remaining arguments as a pack
-					std::vector<TemplateTypeArg> pack_args;
-					for (size_t j = arg_index; j < template_args_to_use.size(); ++j) {
-						pack_args.push_back(template_args_to_use[j]);
-					}
-					// Intern the pack name as StringHandle
-					StringHandle pack_handle = StringTable::getOrInternStringHandle(param_name);
-					pack_substitution_map[pack_handle] = pack_args;
-					FLASH_LOG(Templates, Debug, "Added pack substitution: ", param_name, " -> ", pack_args.size(), " arguments");
-					// All remaining args consumed
-					break;
-				} else {
-					// Regular scalar parameter
-					if (arg_index < template_args_to_use.size()) {
-						name_substitution_map[param_name] = template_args_to_use[arg_index];
-						FLASH_LOG(Templates, Debug, "Added substitution: ", param_name, " -> base_type=", (int)template_args_to_use[arg_index].base_type, " type_index=", template_args_to_use[arg_index].type_index);
-						arg_index++;
-					}
-				}
-			}
+			ensure_substitution_maps();
 			
 			// Use ExpressionSubstitutor to perform template parameter substitution
 			FLASH_LOG(Templates, Debug, "Using ExpressionSubstitutor to substitute template parameters in decltype expression");
@@ -27672,4 +27852,3 @@ ASTNode Parser::substituteTemplateParameters(
 	// For other node types, return as-is (simplified implementation)
 	return node;
 }
-
