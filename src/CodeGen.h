@@ -371,11 +371,10 @@ public:
 		};
 		
 		auto evaluate_static_initializer = [&](const ExpressionNode& expr, unsigned long long& out_value) -> bool {
-			ConstExpr::EvaluationContext ctx;
-			ctx.symbols = global_symbol_table_;
+			ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 			ctx.storage_duration = ConstExpr::StorageDuration::Static;
 			
-			auto eval_result = ConstExpr::evaluate(expr, ctx);
+			auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
 			if (!eval_result.success) {
 				return false;
 			}
