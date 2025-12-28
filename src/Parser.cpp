@@ -18501,21 +18501,57 @@ ParseResult Parser::parse_template_declaration() {
 					}
 
 					// Parse base class name
-					auto base_name_token = consume_token();
-					if (!base_name_token.has_value() || base_name_token->type() != Token::Type::Identifier) {
-						return ParseResult::error("Expected base class name", base_name_token.value_or(Token()));
+					auto base_name_token_opt = consume_token();
+					if (!base_name_token_opt.has_value() || base_name_token_opt->type() != Token::Type::Identifier) {
+						return ParseResult::error("Expected base class name", base_name_token_opt.value_or(Token()));
 					}
 
-					std::string_view base_class_name = base_name_token->value();
+					Token base_name_token = *base_name_token_opt;
+					std::string_view base_class_name = base_name_token_opt->value();
+					std::vector<ASTNode> template_arg_nodes;
+					std::optional<std::vector<TemplateTypeArg>> template_args_opt;
+					std::optional<StringHandle> member_type_name;
+					std::optional<Token> member_name_token;
 					
 					// Check if this is a template base class (e.g., Base<T>)
-					if (peek_token().has_value() && peek_token()->value() == "<") {
-						// Parse template arguments
-						auto template_args_opt = parse_explicit_template_arguments();
-						if (!template_args_opt.has_value()) {
-							return ParseResult::error("Failed to parse template arguments for base class", *peek_token());
-						}
+						if (peek_token().has_value() && peek_token()->value() == "<") {
+							// Parse template arguments
+							template_args_opt = parse_explicit_template_arguments(&template_arg_nodes);
+							if (!template_args_opt.has_value()) {
+								return ParseResult::error("Failed to parse template arguments for base class", *peek_token());
+							}
 						
+							// Handle member access when current_token_ already points to '::'
+							if (current_token_.has_value() && current_token_->value() == "::" && !member_type_name.has_value()) {
+								if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+									return ParseResult::error("Expected member name after ::", peek_token().value_or(Token()));
+								}
+								member_type_name = StringTable::getOrInternStringHandle(peek_token()->value());
+								member_name_token = *peek_token();
+								consume_token(); // consume member name
+							}
+
+							// Check for member type access after template arguments (e.g., Base<T>::type)
+							if (peek_token().has_value() && peek_token()->value() == "::") {
+								consume_token(); // consume ::
+								if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+									return ParseResult::error("Expected member name after ::", peek_token().value_or(Token()));
+							}
+							member_type_name = StringTable::getOrInternStringHandle(peek_token()->value());
+							member_name_token = *peek_token();
+							consume_token(); // consume member name
+						}
+						// Fallback: consume member access if still present (ensures ::type is handled for dependent bases)
+						if (!member_type_name.has_value() && peek_token().has_value() && peek_token()->value() == "::") {
+							consume_token();
+							if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+								return ParseResult::error("Expected member name after ::", peek_token().value_or(Token()));
+							}
+							member_type_name = StringTable::getOrInternStringHandle(peek_token()->value());
+							member_name_token = *peek_token();
+							consume_token();
+						}
+
 						std::vector<TemplateTypeArg> template_args = *template_args_opt;
 						
 						// Check if any template arguments are dependent
@@ -18528,20 +18564,54 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						
 						// If template arguments are dependent, we're inside a template declaration
-						// Don't try to instantiate or resolve the base class yet
 						if (has_dependent_args) {
 							FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
-							// Skip base class resolution for now
-							// The base class will be resolved when this template is instantiated
+
+							std::vector<TemplateArgumentNodeInfo> arg_infos;
+							arg_infos.reserve(template_args.size());
+							for (size_t i = 0; i < template_args.size(); ++i) {
+								TemplateArgumentNodeInfo info;
+								info.is_pack = template_args[i].is_pack;
+								info.is_dependent = template_args[i].is_dependent;
+								if (i < template_arg_nodes.size()) {
+									info.node = template_arg_nodes[i];
+								}
+								arg_infos.push_back(std::move(info));
+							}
+
+							StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
+							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), member_type_name, base_access, is_virtual_base);
 							continue;  // Skip to next base class or exit loop
 						}
 						
 						// Instantiate base class template if needed and register in AST
-						instantiate_and_register_base_template(base_class_name, template_args);
+						std::optional<std::string_view> instantiated_base_name = instantiate_and_register_base_template(base_class_name, template_args);
+						if (instantiated_base_name.has_value()) {
+							base_class_name = *instantiated_base_name;
+						}
+
+						// Resolve member type alias if present (e.g., Base<T>::type)
+						if (member_type_name.has_value()) {
+							StringBuilder qualified_builder;
+							qualified_builder.append(base_class_name);
+							qualified_builder.append("::"sv);
+							qualified_builder.append(StringTable::getStringView(*member_type_name));
+							std::string_view alias_name = qualified_builder.commit();
+							
+							auto alias_it = gTypesByName.find(StringTable::getOrInternStringHandle(alias_name));
+							if (alias_it == gTypesByName.end()) {
+								return ParseResult::error("Base class '" + std::string(alias_name) + "' not found", member_name_token.value_or(base_name_token));
+							}
+							
+							base_class_name = alias_name;
+							if (member_name_token.has_value()) {
+								base_name_token = *member_name_token;
+							}
+						}
 					}
 
 					// Validate and add the base class
-					ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info.get(), base_access, is_virtual_base, *base_name_token);
+					ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info.get(), base_access, is_virtual_base, base_name_token);
 					if (result.is_error()) {
 						return result;
 					}
@@ -19225,6 +19295,19 @@ if (struct_type_info.getStructInfo()) {
 				for (size_t i = 0; i < arg.pointer_depth; ++i) {
 					pattern_name += "P";
 				}
+				// Add array marker
+				if (arg.is_array) {
+					pattern_name += "A";
+					if (arg.array_size.has_value()) {
+						pattern_name += "[" + std::to_string(*arg.array_size) + "]";
+					}
+				}
+				if (arg.is_member_pointer) {
+					pattern_name += "MP";
+					if (arg.is_member_function_pointer) {
+						pattern_name += "F";
+					}
+				}
 				// Add reference markers
 				if (arg.is_rvalue_reference) {
 					pattern_name += "RR";
@@ -19336,6 +19419,31 @@ if (struct_type_info.getStructInfo()) {
 				} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
 			}
 			
+			// Handle stray member access tokens (e.g., ::type) that weren't consumed earlier
+			while ((current_token_.has_value() && current_token_->value() == "::") ||
+			       (peek_token().has_value() && peek_token()->value() == "::")) {
+				if (current_token_.has_value() && current_token_->value() == "::") {
+					// Current token is '::' - consume following identifier
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+						consume_token(); // consume identifier
+					} else {
+						break;
+					}
+				} else {
+					consume_token(); // consume '::'
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+						consume_token(); // consume identifier
+					} else {
+						break;
+					}
+				}
+			}
+
+			// Ensure we're positioned at the specialization body even if complex base parsing left extra tokens
+			while (peek_token().has_value() && peek_token()->value() != "{") {
+				consume_token();
+			}
+
 			// Expect opening brace
 			if (!consume_punctuator("{")) {
 				return ParseResult::error("Expected '{' after partial specialization header", *peek_token());
@@ -21766,6 +21874,27 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// Successfully parsed a type
 		TypeSpecifierNode& type_node = type_result.node()->as<TypeSpecifierNode>();
 		
+		bool is_member_pointer = false;
+		bool is_member_function_pointer = false;
+
+		// Detect pointer-to-member declarator: ClassType::*
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+			SaveHandle member_saved_pos = save_token_position();
+			consume_token(); // consume class/struct identifier
+			if (peek_token().has_value() && peek_token()->value() == "::") {
+				consume_token(); // consume '::'
+				if (peek_token().has_value() && peek_token()->value() == "*") {
+					consume_token(); // consume '*'
+					is_member_pointer = true;
+					type_node.add_pointer_level(CVQualifier::None);
+				} else {
+					restore_token_position(member_saved_pos);
+				}
+			} else {
+				restore_token_position(member_saved_pos);
+			}
+		}
+
 		// Check for pointer modifiers (*) - for patterns like T*, T**, etc.
 		while (peek_token().has_value() && peek_token()->value() == "*") {
 			consume_token(); // consume '*'
@@ -21789,6 +21918,40 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			}
 		}
 
+		// Check for array declarators (e.g., T[], T[N])
+		bool is_array_type = false;
+		std::optional<size_t> parsed_array_size;
+		while (peek_token().has_value() && peek_token()->value() == "[") {
+			is_array_type = true;
+			consume_token(); // consume '['
+
+			// Optional size expression
+			if (peek_token().has_value() && peek_token()->value() != "]") {
+				auto size_result = parse_expression(0, ExpressionContext::TemplateArgument);
+				if (size_result.is_error() || !size_result.node().has_value()) {
+					restore_token_position(saved_pos);
+					last_failed_template_arg_parse_handle_ = saved_pos;
+					return std::nullopt;
+				}
+
+				if (auto const_size = try_evaluate_constant_expression(*size_result.node())) {
+					if (const_size->value >= 0) {
+						parsed_array_size = static_cast<size_t>(const_size->value);
+					}
+				}
+			}
+
+			if (!consume_punctuator("]")) {
+				restore_token_position(saved_pos);
+				last_failed_template_arg_parse_handle_ = saved_pos;
+				return std::nullopt;
+			}
+		}
+
+		if (is_array_type) {
+			type_node.set_array(true, parsed_array_size);
+		}
+
 		// Check for pack expansion (...)
 		bool is_pack_expansion = false;
 		if (peek_token().has_value() && peek_token()->value() == "...") {
@@ -21799,6 +21962,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// Create TemplateTypeArg from the fully parsed type
 		TemplateTypeArg arg(type_node);
 		arg.is_pack = is_pack_expansion;
+		arg.is_member_pointer = is_member_pointer;
+		arg.is_member_function_pointer = is_member_function_pointer;
 		
 		// Check if this type is dependent (contains template parameters)
 		// A type is dependent if:
