@@ -4,6 +4,8 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (December 28, 2024)**: Inline namespaces now inject their members into the enclosing namespace scope (e.g., `namespace std { inline namespace __1 { ... } }` works without qualifying `__1`).
+
 **UPDATE (December 27, 2024 - Evening)**: Critical parsing fixes implemented!
 - ✅ **constexpr typename** in return types now works (e.g., `constexpr typename my_or<...>::type func()`)
 - ✅ **sizeof in template parameter defaults** now works (e.g., `template<typename T, size_t N = sizeof(T)>`)
@@ -89,7 +91,7 @@ int main() {
 
 **Remaining Standard Library Blockers:**
 - **Full standard library headers still timeout** due to complex template instantiation volume
-- **Namespace-qualified template lookup in some contexts** (e.g., `__detail::__or_fn` not found)
+- **Namespace-qualified template lookup in some contexts** (e.g., `__detail::__or_fn` not found) – **Improved:** inline namespaces now inject into the parent namespace, reducing `std::__1` lookup errors
 - Most blockers for core patterns have been resolved, remaining issues are scale and optimization
 
 **Other Headers Still Have Issues:**

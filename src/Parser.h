@@ -368,11 +368,13 @@ private:
                 FunctionDeclarationNode* template_func_node;        // The original template function node
         };
         // Map from template function to its body info
-        std::unordered_map<FunctionDeclarationNode*, TemplateMemberFunctionBody> template_member_function_bodies_;
+	std::unordered_map<FunctionDeclarationNode*, TemplateMemberFunctionBody> template_member_function_bodies_;
 
-        // Track if we're currently parsing a template class (to skip delayed body parsing)
-        bool parsing_template_class_ = false;
-        std::vector<StringHandle> current_template_param_names_;  // Names of current template parameters - from Token storage
+	// Track if we're currently parsing a template class (to skip delayed body parsing)
+	bool parsing_template_class_ = false;
+	// Track when an inline namespace declaration was prefixed with 'inline'
+	bool pending_inline_namespace_ = false;
+	std::vector<StringHandle> current_template_param_names_;  // Names of current template parameters - from Token storage
 
         // Template parameter substitution for deferred template body parsing
         // Maps template parameter names to their substituted values (for non-type parameters)
@@ -394,6 +396,9 @@ private:
         // Track if we're in SFINAE context (template argument substitution)
         // When true, type resolution errors should be treated as substitution failures instead of hard errors
         bool in_sfinae_context_ = false;
+
+        // Track nesting of inline namespaces (parallel to parse_namespace recursion)
+        std::vector<bool> inline_namespace_stack_;
         
         // Track if current scope has parameter packs (enables fold expression parsing)
         bool has_parameter_packs_ = false;

@@ -957,6 +957,24 @@ ParseResult Parser::parse_top_level_node()
 		return saved_position.propagate(std::move(result));
 	}
 
+	// Check for inline namespace declaration (inline namespace foo { ... })
+	if (peek_token()->type() == Token::Type::Keyword &&
+		peek_token()->value() == "inline") {
+		auto next = peek_token(1);
+		if (next.has_value() && next->type() == Token::Type::Keyword && next->value() == "namespace") {
+			pending_inline_namespace_ = true;
+			consume_token(); // consume 'inline'
+			auto result = parse_namespace();
+			if (!result.is_error()) {
+				if (auto node = result.node()) {
+					ast_nodes_.push_back(*node);
+				}
+				return saved_position.success();
+			}
+			return saved_position.propagate(std::move(result));
+		}
+	}
+
 	// Check if it's a namespace declaration
 	if (peek_token()->type() == Token::Type::Keyword &&
 		peek_token()->value() == "namespace") {
@@ -3278,6 +3296,27 @@ ParseResult Parser::parse_struct_declaration()
 	// from within the nested class itself (e.g., in constructors)
 	if (is_nested_class) {
 		gTypesByName.emplace(struct_name, &struct_type_info);
+	}
+
+	// If inside an inline namespace, register the parent-qualified name (e.g., outer::Foo)
+	auto current_namespace_path = gSymbolTable.build_current_namespace_path();
+	if (!current_namespace_path.empty() && !inline_namespace_stack_.empty() && inline_namespace_stack_.back() && !parsing_template_class_) {
+		auto parent_path = current_namespace_path;
+		parent_path.pop_back();
+		StringBuilder sb;
+		for (size_t i = 0; i < parent_path.size(); ++i) {
+#if USE_OLD_STRING_APPROACH
+			sb.append(parent_path[i]);
+#else
+			sb.append(parent_path[i].view());
+#endif
+			sb.append("::");
+		}
+		sb.append(StringTable::getStringView(struct_name));
+		auto parent_handle = StringTable::getOrInternStringHandle(sb.commit());
+		if (gTypesByName.find(parent_handle) == gTypesByName.end()) {
+			gTypesByName.emplace(parent_handle, &struct_type_info);
+		}
 	}
 
 	// Check for alignas specifier after struct name (if not already specified)
@@ -6295,6 +6334,12 @@ ParseResult Parser::parse_friend_declaration()
 ParseResult Parser::parse_namespace() {
 	ScopedTokenPosition saved_position(*this);
 
+	// Detect if this namespace was prefixed with 'inline'
+	bool is_inline_namespace = pending_inline_namespace_;
+	pending_inline_namespace_ = false;
+	NamespacePath parent_namespace_path;
+	NamespacePath inline_namespace_path;
+
 	// Consume 'namespace' keyword
 	if (!consume_keyword("namespace")) {
 		return ParseResult::error("Expected 'namespace' keyword", *peek_token());
@@ -6358,6 +6403,18 @@ ParseResult Parser::parse_namespace() {
 		}
 	}
 
+	// Inline namespaces inject their members into the enclosing namespace scope
+	if (is_inline_namespace) {
+		if (is_anonymous) {
+			return ParseResult::error("Anonymous namespaces cannot be inline", current_token_.value_or(Token()));
+		}
+
+		parent_namespace_path = gSymbolTable.build_current_namespace_path();
+		inline_namespace_path = parent_namespace_path;
+		inline_namespace_path.push_back(StringType<>(namespace_name));
+		gSymbolTable.add_using_directive(inline_namespace_path);
+	}
+
 	// Expect opening brace
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' after namespace name", *peek_token());
@@ -6375,6 +6432,9 @@ ParseResult Parser::parse_namespace() {
 	if (!is_anonymous) {
 		gSymbolTable.enter_namespace(namespace_name);
 	}
+
+	// Track inline namespace nesting
+	inline_namespace_stack_.push_back(is_inline_namespace);
 	// For anonymous namespaces, track the namespace in the AST but not in symbol lookup
 	// Symbols will be added to current scope during declaration parsing
 
@@ -6395,6 +6455,7 @@ ParseResult Parser::parse_namespace() {
 			auto next = peek_token(1);
 			if (next.has_value() && next->type() == Token::Type::Keyword && next->value() == "namespace") {
 				consume_token(); // consume 'inline'
+				pending_inline_namespace_ = true;
 				decl_result = parse_namespace(); // parse_namespace handles the rest
 			} else {
 				// Just a regular inline declaration
@@ -6486,12 +6547,19 @@ ParseResult Parser::parse_namespace() {
 		if (!is_anonymous) {
 			gSymbolTable.exit_scope();
 		}
+		inline_namespace_stack_.pop_back();
 		return ParseResult::error("Expected '}' after namespace body", *peek_token());
 	}
 
 	// Exit namespace scope (only for named namespaces, not anonymous)
 	if (!is_anonymous) {
 		gSymbolTable.exit_scope();
+	}
+	inline_namespace_stack_.pop_back();
+
+	// Merge inline namespace symbols into parent namespace for qualified lookup
+	if (is_inline_namespace && !is_anonymous) {
+		gSymbolTable.merge_inline_namespace(inline_namespace_path, parent_namespace_path);
 	}
 
 	return saved_position.success(namespace_node);
