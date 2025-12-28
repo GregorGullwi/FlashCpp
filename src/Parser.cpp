@@ -3510,6 +3510,57 @@ ParseResult Parser::parse_struct_declaration()
 					// If template arguments are dependent, defer resolution
 					if (has_dependent_args) {
 						FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", full_name);
+						
+						std::vector<TemplateArgumentNodeInfo> arg_infos;
+						arg_infos.reserve(template_args.size());
+						
+						for (size_t arg_idx = 0; arg_idx < template_args.size(); ++arg_idx) {
+							const auto& targ = template_args[arg_idx];
+							TemplateArgumentNodeInfo info;
+							info.is_pack = targ.is_pack;
+							info.is_dependent = targ.is_dependent;
+							
+							StringHandle dep_name = targ.dependent_name;
+							if (!dep_name.isValid() && targ.type_index < gTypeInfo.size()) {
+								dep_name = gTypeInfo[targ.type_index].name_;
+							}
+							if (!dep_name.isValid() && arg_idx < current_template_param_names_.size()) {
+								dep_name = current_template_param_names_[arg_idx];
+							}
+							
+							if ((targ.is_pack || targ.is_dependent) && dep_name.isValid()) {
+								TemplateParameterReferenceNode tparam_ref(dep_name, Token());
+								info.node = emplace_node<ExpressionNode>(tparam_ref);
+							} else {
+								TypeSpecifierNode type_node(
+									targ.base_type,
+									targ.type_index,
+									64,
+									Token{},
+									targ.cv_qualifier
+								);
+								
+								for (size_t i = 0; i < targ.pointer_depth; ++i) {
+									type_node.add_pointer_level();
+								}
+								if (targ.is_rvalue_reference) {
+									type_node.set_reference(true);
+								} else if (targ.is_reference) {
+									type_node.set_reference(false);
+								}
+								if (targ.is_array) {
+									type_node.set_array(true, targ.array_size);
+								}
+								
+								info.node = emplace_node<TypeSpecifierNode>(type_node);
+							}
+							
+							arg_infos.push_back(std::move(info));
+						}
+						
+						StringHandle template_name_handle = StringTable::getOrInternStringHandle(full_name);
+						struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::nullopt, base_access, is_virtual_base);
+						
 						continue;  // Skip to next base class or exit loop
 					}
 					
@@ -24982,6 +25033,9 @@ if (struct_type_info.getStructInfo()) {
 							if (pack_it != pack_substitution_map.end()) {
 								resolved_args.insert(resolved_args.end(), pack_it->second.begin(), pack_it->second.end());
 								continue;
+							} else if (!template_args_to_use.empty()) {
+								resolved_args.insert(resolved_args.end(), template_args_to_use.begin(), template_args_to_use.end());
+								continue;
 							}
 						}
 					} else if (arg_info.node.is<TypeSpecifierNode>()) {
@@ -24992,6 +25046,9 @@ if (struct_type_info.getStructInfo()) {
 							auto pack_it = pack_substitution_map.find(pack_name);
 							if (pack_it != pack_substitution_map.end()) {
 								resolved_args.insert(resolved_args.end(), pack_it->second.begin(), pack_it->second.end());
+								continue;
+							} else if (!template_args_to_use.empty()) {
+								resolved_args.insert(resolved_args.end(), template_args_to_use.begin(), template_args_to_use.end());
 								continue;
 							}
 						}
@@ -25056,6 +25113,19 @@ if (struct_type_info.getStructInfo()) {
 			}
 			
 			if (unresolved_arg) {
+				// Fallback: if we have concrete template arguments available, try instantiating directly
+				if (!template_args_to_use.empty()) {
+					std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
+					std::string_view instantiated_name = instantiate_and_register_base_template(base_template_name, template_args_to_use);
+					if (!instantiated_name.empty()) {
+						base_template_name = instantiated_name;
+					}
+					
+					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_template_name));
+					if (base_type_it != gTypesByName.end()) {
+						struct_info->addBaseClass(base_template_name, base_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
+					}
+				}
 				continue;
 			}
 			
