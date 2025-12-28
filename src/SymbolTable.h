@@ -608,6 +608,20 @@ public:
 		}
 	}
 
+	// Merge all symbols from an inline namespace into its parent namespace map
+	void merge_inline_namespace(const NamespacePath& inline_path, const NamespacePath& parent_path) {
+		auto inline_it = namespace_symbols_.find(inline_path);
+		if (inline_it == namespace_symbols_.end()) {
+			return;
+		}
+
+		auto& parent_symbols = namespace_symbols_[parent_path];
+		for (const auto& [key, vec] : inline_it->second) {
+			auto& dest_vec = parent_symbols[key];
+			dest_vec.insert(dest_vec.end(), vec.begin(), vec.end());
+		}
+	}
+
 	// Resolve a namespace alias (returns the target namespace path if alias exists)
 	std::optional<NamespacePath> resolve_namespace_alias(std::string_view alias) const {
 		// Search from current scope backwards
@@ -777,7 +791,7 @@ private:
 	
 	// Set to track all interned strings for fast O(1) deduplication
 	std::unordered_set<std::string_view> interned_strings_;
-	
+
 	// Intern a string_view by checking if it already exists, or allocate it
 	// Returns a string_view that is guaranteed to remain valid
 	std::string_view intern_string(std::string_view str) {
