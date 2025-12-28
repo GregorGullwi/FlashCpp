@@ -13718,6 +13718,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		if (!identifierType && peek_token().has_value()) {
 			std::string_view peek = peek_token()->value();
 			// Check gTypesByName if identifier is followed by :: (qualified name) or ( (constructor call)
+			// NOTE: We intentionally do NOT check for '>' or ',' even in TemplateArgument context,
+			// because the existing code in parse_explicit_template_arguments (lines 21684-21692)
+			// already handles type alias lookup correctly for template arguments.
 			if (peek == "::" || peek == "(") {
 				StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
 				auto type_it = gTypesByName.find(identifier_handle);
