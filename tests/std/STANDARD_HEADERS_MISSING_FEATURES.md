@@ -288,63 +288,6 @@ bool b = true_type::value;  // ✅ Works!
 
 **Current Status**: Type alias resolution now works. Headers transition from parsing errors to template instantiation timeouts, confirming that parsing correctness is resolved and performance optimization is the remaining blocker.
 
-#### 0e. Template Alias Registration Issue Discovered (December 28, 2024)
-**Status**: ❌ **BUG DISCOVERED - NOT YET FIXED**
-
-**What Doesn't Work**: Template aliases (e.g., `template<typename T> using identity_t = typename identity<T>::type;`) are not being registered in `gTemplateRegistry` during parsing, making them unusable later in template argument contexts.
-
-**The Problem**: Standard library headers like `<type_traits>` extensively use template aliases:
-```cpp
-template<typename _Tp>
-using __remove_cv_t = typename remove_cv<_Tp>::type;
-
-template<typename _Tp>
-struct is_integral : __is_integral_helper<__remove_cv_t<_Tp>>::type { };
-```
-
-When parsing `__remove_cv_t<int>` in a template argument:
-- Template alias `__remove_cv_t` is declared but not registered
-- Later use in `wrapper<__remove_cv_t<int>>` fails with "Missing identifier: __remove_cv_t"
-- Code path through `parse_template_declaration` exists but isn't being executed correctly
-- Registration at line 18278 (`gTemplateRegistry.register_alias_template`) is never called
-
-**Root Cause Analysis**:
-1. Template alias declarations `template<typename T> using identity_t = ...` should trigger `is_alias_template` flag at line 18001-18003
-2. This should call template alias registration code at line 18278
-3. However, parsing creates a "dependent type placeholder" instead (line logged as "Creating dependent type placeholder for identity_T::type")
-4. No registration log message appears (should see "Creating deferred TemplateAliasNode")
-5. The template declaration parsing path is not reaching the alias template registration code
-
-**Difference from 0d**: Section 0d fixed **simple type aliases** (non-template), this issue is about **template aliases** (with template parameters).
-
-**Test Cases That Fail**:
-```cpp
-// Test case: test_template_alias_simple_use_ret42.cpp
-template<typename T>
-struct identity { using type = T; };
-
-template<typename T>
-using identity_t = typename identity<T>::type;  // NOT REGISTERED
-
-template<typename T>
-struct wrapper {};
-
-int main() {
-    wrapper<identity_t<int>> w;  // ❌ ERROR: Missing identifier: identity_t
-    return 42;
-}
-```
-
-**Impact**: Blocks `<type_traits>` compilation at patterns like `__is_integral_helper<__remove_cv_t<_Tp>>` which are pervasive throughout the header. This is a more fundamental issue than simple type alias resolution.
-
-**Next Steps**: Requires deep debugging of `parse_template_declaration` to understand why the alias template registration path isn't being taken. This is beyond scope of minimal parser fixes and requires understanding the full template parsing state machine.
-
-**Files to Investigate**:
-- `src/Parser.cpp` lines 17822-18280 (`parse_template_declaration` function)
-- `src/TemplateRegistry.h` - Template alias registration and lookup
-- Template instantiation logic that should trigger alias expansion
-
-
 
 #### 0e. Structured Bindings (December 27, 2024)
 **Status**: ✅ **NEWLY IMPLEMENTED**
