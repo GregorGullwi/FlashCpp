@@ -370,11 +370,11 @@ public:
 			}
 		};
 		
-		auto evaluate_static_initializer = [&](const ExpressionNode& expr, unsigned long long& out_value) -> bool {
+		auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value) -> bool {
 			ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 			ctx.storage_duration = ConstExpr::StorageDuration::Static;
 			
-			auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
+			auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 			if (!eval_result.success) {
 				return false;
 			}
@@ -581,7 +581,7 @@ public:
 						}
 					} else {
 						unsigned long long evaluated_value = 0;
-						if (evaluate_static_initializer(init_expr, evaluated_value)) {
+						if (evaluate_static_initializer(*static_member.initializer, evaluated_value)) {
 							FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for static member '", 
 							          qualified_name, "'");
 							append_bytes(evaluated_value, op.size_in_bits, op.init_data);
@@ -695,7 +695,7 @@ public:
 										found_base_value = true;
 										FLASH_LOG(Codegen, Debug, "Found double literal value: ", d);
 									}
-								} else if (evaluate_static_initializer(init_expr, inferred_value)) {
+								} else if (evaluate_static_initializer(*static_member_ptr->initializer, inferred_value)) {
 									found_base_value = true;
 									FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for inherited static member '", member_name, "'");
 								}
