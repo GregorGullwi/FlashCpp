@@ -10873,7 +10873,11 @@ private:
 		int result_size = (return_type.pointer_depth() > 0 || return_type.is_reference())
 			? 64
 			: static_cast<int>(return_type.size_in_bits());
-		return { return_type.type(), result_size, ret_var, 0ULL };
+		// Return type_index for struct types so structured bindings can decompose the result
+		unsigned long long type_index_result = (return_type.type() == Type::Struct) 
+			? static_cast<unsigned long long>(return_type.type_index())
+			: 0ULL;
+		return { return_type.type(), result_size, ret_var, type_index_result };
 	}
 
 	std::vector<IrOperand> generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
