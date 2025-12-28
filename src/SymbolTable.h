@@ -247,7 +247,6 @@ public:
 			} else {
 				ns_it->second.push_back(node);
 			}
-
 		}
 
 		return true;
