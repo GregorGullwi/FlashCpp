@@ -253,6 +253,31 @@ struct DeferredBaseClassSpecifier {
 		: decltype_expression(expr), access(acc), is_virtual(virt) {}
 };
 
+struct TemplateArgumentNodeInfo {
+	ASTNode node;
+	bool is_pack = false;
+	bool is_dependent = false;
+};
+
+struct DeferredTemplateBaseClassSpecifier {
+	StringHandle base_template_name;
+	std::vector<TemplateArgumentNodeInfo> template_arguments;
+	std::optional<StringHandle> member_type; // e.g., ::type
+	AccessSpecifier access;
+	bool is_virtual;
+
+	DeferredTemplateBaseClassSpecifier(StringHandle name,
+	                                   std::vector<TemplateArgumentNodeInfo> args,
+	                                   std::optional<StringHandle> member,
+	                                   AccessSpecifier acc,
+	                                   bool virt)
+		: base_template_name(name),
+		  template_arguments(std::move(args)),
+		  member_type(member),
+		  access(acc),
+		  is_virtual(virt) {}
+};
+
 // Function signature for function pointers
 struct FunctionSignature {
 	Type return_type;
@@ -2086,6 +2111,7 @@ public:
 	const std::vector<BaseClassSpecifier>& base_classes() const { return base_classes_; }
 	const std::vector<DeferredBaseClassSpecifier>& deferred_base_classes() const { return deferred_base_classes_; }
 	std::vector<DeferredBaseClassSpecifier>& deferred_base_classes() { return deferred_base_classes_; }
+	const std::vector<DeferredTemplateBaseClassSpecifier>& deferred_template_base_classes() const { return deferred_template_base_classes_; }
 	bool is_class() const { return is_class_; }
 	bool is_final() const { return is_final_; }
 	void set_is_final(bool final) { is_final_ = final; }
@@ -2103,6 +2129,14 @@ public:
 
 	void add_deferred_base_class(ASTNode decltype_expr, AccessSpecifier access, bool is_virtual = false) {
 		deferred_base_classes_.emplace_back(decltype_expr, access, is_virtual);
+	}
+
+	void add_deferred_template_base_class(StringHandle base_template_name,
+	                                      std::vector<TemplateArgumentNodeInfo> args,
+	                                      std::optional<StringHandle> member_type,
+	                                      AccessSpecifier access,
+	                                      bool is_virtual = false) {
+		deferred_template_base_classes_.emplace_back(base_template_name, std::move(args), member_type, access, is_virtual);
 	}
 
 	void add_member_function(ASTNode function_decl, AccessSpecifier access,
@@ -2193,6 +2227,7 @@ private:
 	std::vector<StructMemberFunctionDecl> member_functions_;
 	std::vector<BaseClassSpecifier> base_classes_;  // Base classes for inheritance
 	std::vector<DeferredBaseClassSpecifier> deferred_base_classes_;  // Decltype base classes (for templates)
+	std::vector<DeferredTemplateBaseClassSpecifier> deferred_template_base_classes_;  // Template-dependent base classes
 	std::vector<ASTNode> friend_declarations_;  // Friend declarations
 	std::vector<ASTNode> nested_classes_;  // Nested classes
 	std::vector<TypeAliasDecl> type_aliases_;  // Type aliases (using X = Y;)
