@@ -395,6 +395,7 @@ public:
 			// Generate static members that this struct directly owns
 			if (!struct_info->static_members.empty()) {
 				for (const auto& static_member : struct_info->static_members) {
+					bool unresolved_identifier_initializer = false;
 					// Skip static members with unsubstituted template parameters, identifiers, or sizeof...
 					// These are in pattern templates and should only generate code when instantiated
 					if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
@@ -427,7 +428,7 @@ public:
 								FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(), 
 								          "' with identifier initializer '", id.name(), 
 								          "' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
-								continue;
+								unresolved_identifier_initializer = true;
 							}
 						}
 					}
@@ -450,8 +451,14 @@ public:
 					op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
 
 					// Check if static member has an initializer
-					op.is_initialized = static_member.initializer.has_value();
-					if (op.is_initialized) {
+					op.is_initialized = static_member.initializer.has_value() || unresolved_identifier_initializer;
+					if (unresolved_identifier_initializer) {
+						FLASH_LOG(Codegen, Debug, "Initializer unresolved; zero-initializing static member '", qualified_name, "'");
+						size_t byte_count = op.size_in_bits / 8;
+						for (size_t i = 0; i < byte_count; ++i) {
+							op.init_data.push_back(0);
+						}
+					} else if (op.is_initialized) {
 					const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
 					
 					// Check for ConstructorCallNode (e.g., T() which becomes int() after substitution)
