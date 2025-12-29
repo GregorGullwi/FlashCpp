@@ -4510,8 +4510,8 @@ private:
 		};
 		std::vector<VarDecl> local_vars;
 
-		// Track TempVar sizes from instructions that produce them
-		std::unordered_map<StringHandle, int> temp_var_sizes;  // Phase 5: StringHandle for integer-based lookups
+		// Clear temp_var_sizes for this function
+		temp_var_sizes_.clear();
 		
 		// Track maximum outgoing call argument space needed
 		size_t max_outgoing_arg_bytes = 0;
@@ -4590,26 +4590,26 @@ private:
 							if (std::holds_alternative<TempVar>(bin_op->result)) {
 								auto temp_var = std::get<TempVar>(bin_op->result);
 								// Phase 5: Convert temp var name to StringHandle
-								temp_var_sizes[StringTable::getOrInternStringHandle(temp_var.name())] = bin_op->lhs.size_in_bits;
+								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = bin_op->lhs.size_in_bits;
 								handled_by_typed_payload = true;
 							}
 						}
 						// Try CallOp (function calls)
 						else if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
-							temp_var_sizes[StringTable::getOrInternStringHandle(call_op->result.name())] = call_op->return_size_in_bits;
+							temp_var_sizes_[StringTable::getOrInternStringHandle(call_op->result.name())] = call_op->return_size_in_bits;
 							handled_by_typed_payload = true;
 						}
 						// Try ArrayAccessOp (array element load)
 						else if (const ArrayAccessOp* array_op = std::any_cast<ArrayAccessOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
-							temp_var_sizes[StringTable::getOrInternStringHandle(array_op->result.name())] = array_op->element_size_in_bits;
+							temp_var_sizes_[StringTable::getOrInternStringHandle(array_op->result.name())] = array_op->element_size_in_bits;
 							handled_by_typed_payload = true;
 						}
 						// Try ArrayElementAddressOp (get address of array element)
 						else if (const ArrayElementAddressOp* addr_op = std::any_cast<ArrayElementAddressOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
-							temp_var_sizes[StringTable::getOrInternStringHandle(addr_op->result.name())] = 64; // Pointer is always 64-bit
+							temp_var_sizes_[StringTable::getOrInternStringHandle(addr_op->result.name())] = 64; // Pointer is always 64-bit
 							handled_by_typed_payload = true;
 						}
 						// Try DereferenceOp (for dereferencing pointers/references)
@@ -4617,7 +4617,7 @@ private:
 							// Phase 5: Convert temp var name to StringHandle
 							// Determine size based on pointer depth: if depth > 1, result is a pointer (64 bits)
 							int result_size = (deref_op->pointer.pointer_depth > 1) ? 64 : deref_op->pointer.size_in_bits;
-							temp_var_sizes[StringTable::getOrInternStringHandle(deref_op->result.name())] = result_size;
+							temp_var_sizes_[StringTable::getOrInternStringHandle(deref_op->result.name())] = result_size;
 							handled_by_typed_payload = true;
 						}
 						// Try AssignmentOp (for materializing literals to temporaries)
@@ -4626,15 +4626,23 @@ private:
 							if (std::holds_alternative<TempVar>(assign_op->lhs.value)) {
 								auto temp_var = std::get<TempVar>(assign_op->lhs.value);
 								// Phase 5: Convert temp var name to StringHandle
-								temp_var_sizes[StringTable::getOrInternStringHandle(temp_var.name())] = assign_op->lhs.size_in_bits;
+								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = assign_op->lhs.size_in_bits;
 								handled_by_typed_payload = true;
 							}
 						}
 						// Try AddressOfOp (for taking address of temporaries)
 						else if (const AddressOfOp* addr_of_op = std::any_cast<AddressOfOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
-							temp_var_sizes[StringTable::getOrInternStringHandle(addr_of_op->result.name())] = 64; // Pointer is always 64-bit
+							temp_var_sizes_[StringTable::getOrInternStringHandle(addr_of_op->result.name())] = 64; // Pointer is always 64-bit
 							handled_by_typed_payload = true;
+						}
+						// Try GlobalLoadOp (for loading global variables)
+						else if (const GlobalLoadOp* global_load_op = std::any_cast<GlobalLoadOp>(&instruction.getTypedPayload())) {
+							if (std::holds_alternative<TempVar>(global_load_op->result.value)) {
+								auto temp_var = std::get<TempVar>(global_load_op->result.value);
+								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = global_load_op->result.size_in_bits;
+								handled_by_typed_payload = true;
+							}
 						}
 						// Add more payload types here as they produce TempVars
 					} catch (const std::exception& e) {
@@ -4655,7 +4663,7 @@ private:
 				    instruction.isOperandType<int>(2)) {
 					auto temp_var = instruction.getOperandAs<TempVar>(0);
 					int size_in_bits = instruction.getOperandAs<int>(2);
-					temp_var_sizes[StringTable::getOrInternStringHandle(temp_var.name())] = size_in_bits;
+					temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = size_in_bits;
 				}
 			}
 		}
@@ -4691,14 +4699,14 @@ private:
 
 		// Calculate space needed for TempVars
 		// Each TempVar uses 8 bytes (64-bit alignment)
-		int temp_var_space = static_cast<int>(temp_var_sizes.size()) * 8;
+		int temp_var_space = static_cast<int>(temp_var_sizes_.size()) * 8;
 
 		// Don't subtract from stack_offset - TempVars are allocated separately via getStackOffsetFromTempVar
 
 		// Store TempVar sizes for later use during code generation
 		// TempVars will have their offsets set when actually allocated via getStackOffsetFromTempVar
 		// Use INT_MIN as a sentinel value to indicate "not yet allocated"
-		for (const auto& [temp_var_name, size_bits] : temp_var_sizes) {
+		for (const auto& [temp_var_name, size_bits] : temp_var_sizes_) {
 			// Initialize with sentinel offset (INT_MIN), actual offset set later
 			var_scope.variables.insert_or_assign(temp_var_name, VariableInfo{INT_MIN, size_bits});
 		}
@@ -5334,8 +5342,41 @@ private:
 	uint32_t emitMovRipRelative(X64Register dest, int size_in_bits) {
 		// For 64-bit: MOV RAX, [RIP + disp32] - 48 8B 05 [disp32]
 		// For 32-bit: MOV EAX, [RIP + disp32] - 8B 05 [disp32]
+		// For 16-bit: MOVZX EAX, word [RIP + disp32] - 0F B7 05 [disp32]
+		// For 8-bit:  MOVZX EAX, byte [RIP + disp32] - 0F B6 05 [disp32]
 		uint8_t dest_val = static_cast<uint8_t>(dest);
 		uint8_t dest_bits = dest_val & 0x07;
+		
+		// Handle small sizes with MOVZX to zero-extend
+		if (size_in_bits <= 8) {
+			// MOVZX EAX, byte ptr [RIP + disp32]: 0F B6 05 [disp32]
+			size_t base = textSectionData.size();
+			textSectionData.resize(base + 7);
+			char* p = textSectionData.data() + base;
+			p[0] = 0x0F;
+			p[1] = static_cast<char>(0xB6); // MOVZX r32, r/m8
+			p[2] = 0x05 | (dest_bits << 3); // ModR/M: reg, [RIP + disp32]
+			p[3] = 0x00; // disp32 placeholder
+			p[4] = 0x00;
+			p[5] = 0x00;
+			p[6] = 0x00;
+			return static_cast<uint32_t>(base + 3);
+		} else if (size_in_bits == 16) {
+			// MOVZX EAX, word ptr [RIP + disp32]: 0F B7 05 [disp32]
+			size_t base = textSectionData.size();
+			textSectionData.resize(base + 7);
+			char* p = textSectionData.data() + base;
+			p[0] = 0x0F;
+			p[1] = static_cast<char>(0xB7); // MOVZX r32, r/m16
+			p[2] = 0x05 | (dest_bits << 3); // ModR/M: reg, [RIP + disp32]
+			p[3] = 0x00; // disp32 placeholder
+			p[4] = 0x00;
+			p[5] = 0x00;
+			p[6] = 0x00;
+			return static_cast<uint32_t>(base + 3);
+		}
+		
+		// For 32-bit and 64-bit, use regular MOV
 		// Branchless: compute REX prefix (0x48 for 64-bit, 0x40 for 32-bit with high reg, 0 otherwise)
 		// REX.W bit is 0x08, so 0x48 = 0x40 | 0x08
 		uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
@@ -12944,12 +12985,19 @@ private:
 			auto temp_var = std::get<TempVar>(condition_value);
 			int var_offset = getStackOffsetFromTempVar(temp_var);
 			
+			// Look up the actual size of this temp var (default to 32 if not found)
+			int load_size = 32;
+			auto size_it = temp_var_sizes_.find(StringTable::getOrInternStringHandle(temp_var.name()));
+			if (size_it != temp_var_sizes_.end()) {
+				load_size = size_it->second;
+			}
+			
 			// Check if temp var is already in a register
 			if (auto reg = regAlloc.tryGetStackVariableRegister(var_offset); reg.has_value()) {
 				condition_reg = reg.value();
 			} else {
-				// Load from memory
-				emitMovFromFrameBySize(X64Register::RAX, var_offset, 32); // Assume 32-bit for boolean
+				// Load from memory with correct size
+				emitMovFromFrameBySize(X64Register::RAX, var_offset, load_size);
 				condition_reg = X64Register::RAX;
 			}
 		} else if (std::holds_alternative<StringHandle>(condition_value)) {
@@ -12957,11 +13005,14 @@ private:
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(var_name);
 			if (it != current_scope.variables.end()) {
+				// Use the size stored in the variable info, default to 32 if 0 (shouldn't happen)
+				int load_size = it->second.size_in_bits > 0 ? it->second.size_in_bits : 32;
+				
 				// Check if variable is already in a register
 				if (auto reg = regAlloc.tryGetStackVariableRegister(it->second.offset); reg.has_value()) {
 					condition_reg = reg.value();
 				} else {
-					emitMovFromFrameBySize(X64Register::RAX, it->second.offset, 32);
+					emitMovFromFrameBySize(X64Register::RAX, it->second.offset, load_size);
 					condition_reg = X64Register::RAX;
 				}
 			}
@@ -14022,6 +14073,8 @@ private:
 	std::unordered_map<int32_t, ReferenceInfo> reference_stack_info_;
 	// Map from variable names to their offsets (for reference lookup by name)
 	std::unordered_map<std::string, int32_t> variable_name_to_offset_;
+	// Track TempVar sizes from instructions that produce them (for correct loads in conditionals)
+	std::unordered_map<StringHandle, int> temp_var_sizes_;
 
 	// Track if dynamic_cast runtime helpers need to be emitted
 	bool needs_dynamic_cast_runtime_ = false;

@@ -165,6 +165,7 @@ struct TemplateTypeArg {
 
 		// Add base type name
 		switch (base_type) {
+			case Type::Void: result += "void"; break;
 			case Type::Int: result += "int"; break;
 			case Type::Float: result += "float"; break;
 			case Type::Double: result += "double"; break;

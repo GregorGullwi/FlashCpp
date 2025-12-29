@@ -716,17 +716,52 @@ See "Recent Progress (December 2024)" section below for detailed implementation 
 **Files affected**: `test_std_utility.cpp`, `test_std_memory.cpp`, all containers
 
 ### 10. Advanced SFINAE and Template Metaprogramming
-**Status**: Basic SFINAE works, but complex patterns fail
+**Status**: ❌ Basic SFINAE works, but complex patterns fail (SFINAE bug discovered December 2024)
 **Required by**: `<type_traits>`, `<functional>`, `<tuple>`, `<variant>`
 
 **Missing features**:
 - std::enable_if in complex contexts
-- Void_t pattern support
+- **Void_t pattern SFINAE** ⚠️ **KNOWN BUG** - See below
 - Detection idiom support
 - Tag dispatch patterns
 
-**Impact**: Medium - Needed for library implementation patterns
+**Impact**: Medium-High - Critical for library implementation patterns
 **Files affected**: `test_std_type_traits.cpp`, `test_std_functional.cpp`, `test_std_tuple.cpp`
+
+#### Void_t SFINAE Bug (Discovered December 2025)
+**Status**: ❌ **KNOWN BUG - Not Yet Fixed**
+
+**Problem**: FlashCpp incorrectly matches partial specializations that use `void_t<typename T::type>` even when `T::type` doesn't exist.
+
+**Example**:
+```cpp
+template<typename...> using void_t = void;
+
+template<typename T, typename = void>
+struct has_type : false_type {};
+
+template<typename T>
+struct has_type<T, void_t<typename T::type>> : true_type {};
+
+struct WithoutType { int value; };  // Has no 'type' member
+
+// Expected: has_type<WithoutType> should inherit from false_type
+// Actual (FlashCpp bug): inherits from true_type
+```
+
+**Root Cause**: Template pattern matching in `TemplateRegistry.h` doesn't evaluate dependent type expressions during pattern matching. When matching `<T, void_t<typename T::type>>` against concrete arguments:
+1. Pattern is registered with `void` as second argument (after alias expansion)
+2. During matching, only the result type `void` is compared, not whether the dependent expression is valid
+3. The check for `typename T::type` validity is never performed
+
+**Expected Fix**: 
+1. Record dependent expressions when registering partial specialization patterns
+2. During pattern matching, after binding template parameters, resolve dependent expressions in SFINAE context
+3. If resolution fails (e.g., `typename WithoutType::type` doesn't exist), reject the match
+
+**Test Files**:
+- `tests/test_void_t_detection_ret42.cpp` - Tests working case (type WITH `type` member)
+- `tests/test_void_t_sfinae_known_bug.cpp` - Documents the bug (no main(), not run as test)
 
 ## Advanced Missing Features (Lower Priority)
 
