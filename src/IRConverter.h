@@ -13005,12 +13005,8 @@ private:
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(var_name);
 			if (it != current_scope.variables.end()) {
-				// Look up the actual size (default to 32 if not found)
-				int load_size = 32;
-				auto size_it = temp_var_sizes_.find(var_name);
-				if (size_it != temp_var_sizes_.end()) {
-					load_size = size_it->second;
-				}
+				// Use the size stored in the variable info, default to 32 if 0 (shouldn't happen)
+				int load_size = it->second.size_in_bits > 0 ? it->second.size_in_bits : 32;
 				
 				// Check if variable is already in a register
 				if (auto reg = regAlloc.tryGetStackVariableRegister(it->second.offset); reg.has_value()) {
