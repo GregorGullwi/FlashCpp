@@ -35,7 +35,9 @@ int main() {
     auto [x, y] = p;  // Structured bindings
     result += x + y;
     
-    // This check FAILS incorrectly
+    // BUG: is_same<int,int>::value should be true, but the generated code
+    // tests RAX (which has a stale value) instead of R8 (which has the
+    // correct logical NOT result). This causes the wrong branch to execute.
     if (!is_same<int, int>::value) {
         return 1;  // Bug: this executes when it shouldn't
     }
@@ -44,8 +46,8 @@ int main() {
 }
 ```
 
-Expected: Returns 42
-Actual: Returns 1
+Expected: Returns 42 (is_same<int,int>::value is true, so !value is false, branch not taken)
+Actual: Returns 1 (wrong register tested, branch incorrectly taken)
 
 ## Root Cause Analysis
 
@@ -77,16 +79,37 @@ When `handleConditionalBranch` runs:
 - This SHOULD return R8 (since mapping still exists)
 - But `var_offset` computed here differs from what `handleLogicalNot` used!
 
-### 3. The Offset Mismatch
+### 3. The Offset Mismatch (Detailed Explanation)
 
 The bug involves a mismatch between:
 1. The offset used by `handleLogicalNot` when setting `regAlloc.set_stack_variable_offset(result_physical_reg, result_offset, size_in_bits)`
 2. The offset returned by `getStackOffsetFromTempVar(temp_var)` in `handleConditionalBranch`
 
-This can happen when:
-- Variable offsets are not 8-byte aligned (structured bindings create non-aligned offsets like -76, -92)
-- The `getTempVarFromOffset` check `(stackVariableOffset % 8) == 0` fails for non-aligned offsets
-- This causes `flushAllDirtyRegisters` to skip flushing certain variables
+**Why the offsets can differ:**
+
+When structured bindings decompose a struct, they create variables at non-8-byte-aligned offsets:
+- `x` might be at offset `-76` (not divisible by 8)
+- `y` might be at offset `-92` (not divisible by 8)
+
+The `getTempVarFromOffset` function has this check:
+```cpp
+if (stackVariableOffset < 0 && (stackVariableOffset % 8) == 0) {
+    // Only returns TempVar for 8-byte-aligned offsets
+    return TempVar(var_number);
+}
+return std::nullopt;  // Returns nothing for non-aligned offsets!
+```
+
+When `flushAllDirtyRegisters` calls `getTempVarFromOffset` for a non-aligned offset like `-76`:
+- The check `(-76 % 8) == 0` evaluates to `false` (since -76 % 8 = -4)
+- `getTempVarFromOffset` returns `std::nullopt`
+- The flush callback's `if (tempVarIndex.has_value())` check fails
+- **The register is NOT flushed to stack!**
+
+Later, when `handleConditionalBranch` calls `tryGetStackVariableRegister(var_offset)`:
+- If the offset doesn't match what the register allocator stored, no register is found
+- It falls back to using RAX and loading from memory
+- But RAX still has a stale value from an earlier operation
 
 ### 4. IR Instruction Ordering Issue
 
@@ -98,14 +121,34 @@ There's also evidence of an IR instruction ordering issue where:
 
 ### Short-term Fix: Always Flush Dirty Registers
 
-Remove the conditional check in `flushAllDirtyRegisters` that requires `getTempVarFromOffset` to succeed:
+The current code in `flushAllDirtyRegisters` (IRConverter.h ~line 4796):
 
 ```cpp
+// CURRENT CODE (BUGGY)
 void flushAllDirtyRegisters()
 {
     regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset, int size_in_bits)
         {
-            // Always flush - don't skip based on offset alignment
+            auto tempVarIndex = getTempVarFromOffset(stackVariableOffset);
+
+            if (tempVarIndex.has_value()) {  // <-- BUG: This check fails for non-aligned offsets!
+                // ... flush logic ...
+                emitMovToFrameSized(...);
+            }
+            // If tempVarIndex is nullopt, the register is NOT flushed!
+        });
+}
+```
+
+**Proposed fix** - Remove the conditional check and always flush:
+
+```cpp
+// FIXED CODE
+void flushAllDirtyRegisters()
+{
+    regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset, int size_in_bits)
+        {
+            // Always flush dirty registers to stack, regardless of offset alignment
             if (stackVariableOffset < variable_scopes.back().scope_stack_space) {
                 variable_scopes.back().scope_stack_space = stackVariableOffset;
             }
@@ -137,14 +180,14 @@ std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) {
 }
 ```
 
-3. **Clear register mappings after flush**: Optionally clear `stackVariableOffset` mappings in `flushAllDirtyRegisters` to force reloading from memory:
+3. **Clear register mappings after flush**: Optionally clear `stackVariableOffset` mappings in `flushAllDirtyRegisters` to force reloading from memory. This uses `INT_MIN` as the sentinel value because that's the existing convention in the codebase (see `AllocatedRegister::stackVariableOffset = INT_MIN` initialization):
 ```cpp
 void flushAllDirtyRegisters(Func func) {
     for (auto& reg : registers) {
         if (reg.isDirty) {
             func(reg.reg, reg.stackVariableOffset, reg.size_in_bits);
             reg.isDirty = false;
-            reg.stackVariableOffset = INT_MIN;  // Clear mapping to force reload
+            reg.stackVariableOffset = INT_MIN;  // Clear mapping (INT_MIN is the existing sentinel)
         }
     }
 }
