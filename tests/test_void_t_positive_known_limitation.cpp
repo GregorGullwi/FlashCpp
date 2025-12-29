@@ -1,6 +1,6 @@
 // Test void_t SFINAE pattern - POSITIVE case (type WITH 'type' member)
 // 
-// KNOWN LIMITATION (as of December 2024):
+// KNOWN LIMITATION (as of December 2025):
 // This test documents a known limitation in FlashCpp's void_t SFINAE implementation.
 // 
 // The issue: FlashCpp correctly handles the NEGATIVE case (type WITHOUT 'type' member)
