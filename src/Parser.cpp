@@ -25193,7 +25193,6 @@ if (struct_type_info.getStructInfo()) {
 			ExpressionSubstitutor substitutor(name_substitution_map, pack_substitution_map, *this);
 			ASTNode substituted_expr = substitutor.substitute(deferred_base.decltype_expression);
 			
-			// Get the type of the substituted expression
 			auto type_spec_opt = get_expression_type(substituted_expr);
 			if (type_spec_opt.has_value()) {
 				const TypeSpecifierNode& base_type_spec = *type_spec_opt;

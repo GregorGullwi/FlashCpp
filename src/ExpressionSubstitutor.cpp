@@ -123,19 +123,23 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 	FLASH_LOG(Templates, Debug, "  has_mangled_name: ", call.has_mangled_name());
 	FLASH_LOG(Templates, Debug, "  has_template_arguments: ", call.has_template_arguments());
 	
+	const DeclarationNode& decl_node = call.function_declaration();
+	std::string_view func_name = call.called_from().value();
+	if (func_name.empty()) {
+		func_name = decl_node.identifier_token().value();
+	}
+	std::vector<ASTNode> explicit_template_arg_nodes;
+	
 	// Check if this function call has explicit template arguments (e.g., base_trait<T>())
 	if (call.has_template_arguments()) {
-		const std::vector<ASTNode>& template_arg_nodes = call.template_arguments();
-		FLASH_LOG(Templates, Debug, "  Found ", template_arg_nodes.size(), " template argument nodes");
+		explicit_template_arg_nodes = call.template_arguments();
+		FLASH_LOG(Templates, Debug, "  Found ", explicit_template_arg_nodes.size(), " template argument nodes");
 		
-		// Get the function/template name from the declaration
-		const DeclarationNode& decl_node = call.function_declaration();
-		std::string_view func_name = decl_node.identifier_token().value();
 		FLASH_LOG(Templates, Debug, "  Function name: ", func_name);
 		
 		// Check if any arguments are pack expansions
 		bool has_pack_expansion = false;
-		for (const ASTNode& arg_node : template_arg_nodes) {
+		for (const ASTNode& arg_node : explicit_template_arg_nodes) {
 			std::string_view pack_name;
 			if (isPackExpansion(arg_node, pack_name)) {
 				has_pack_expansion = true;
@@ -148,12 +152,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 		if (has_pack_expansion) {
 			// Use pack expansion logic
 			FLASH_LOG(Templates, Debug, "  Template arguments contain pack expansion, expanding...");
-			substituted_template_args = expandPacksInArguments(template_arg_nodes);
+			substituted_template_args = expandPacksInArguments(explicit_template_arg_nodes);
 			FLASH_LOG(Templates, Debug, "  After pack expansion: ", substituted_template_args.size(), " arguments");
 		} else {
 			// Original logic for non-pack arguments
 			// Substitute template parameters in the template arguments
-			for (const ASTNode& arg_node : template_arg_nodes) {
+			for (const ASTNode& arg_node : explicit_template_arg_nodes) {
 				FLASH_LOG(Templates, Debug, "  Checking template argument node, has_value: ", arg_node.has_value(), " type: ", arg_node.type_name());
 			
 			// Template arguments can be stored as TypeSpecifierNode for type arguments
@@ -244,9 +248,45 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 		}
 		} // End of else block for non-pack arguments
 		
+		// If no arguments were collected but we have pack substitutions available, use them
+		if (substituted_template_args.empty() && !pack_map_.empty() && !call.has_template_arguments()) {
+			FLASH_LOG(Templates, Debug, "  Using pack substitution map to recover template arguments for function call");
+			for (const auto& pack_entry : pack_map_) {
+				substituted_template_args.insert(substituted_template_args.end(), pack_entry.second.begin(), pack_entry.second.end());
+				break; // Use the first available pack substitution
+			}
+		}
+
 		// Now we have substituted template arguments - instantiate the template
 		if (!substituted_template_args.empty()) {
 			FLASH_LOG(Templates, Debug, "  Attempting to instantiate template: ", func_name, " with ", substituted_template_args.size(), " arguments");
+
+			// First try function template instantiation to obtain accurate return type
+			if (auto instantiated_template = parser_.try_instantiate_template_explicit(func_name, substituted_template_args)) {
+				if (instantiated_template->is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& func_decl = instantiated_template->as<FunctionDeclarationNode>();
+
+					ChunkedVector<ASTNode> substituted_args_nodes;
+					for (size_t i = 0; i < call.arguments().size(); ++i) {
+						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
+					}
+
+					FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
+						const_cast<DeclarationNode&>(func_decl.decl_node()),
+						std::move(substituted_args_nodes),
+						call.called_from()
+					);
+					std::vector<ASTNode> substituted_template_arg_nodes;
+					substituted_template_arg_nodes.reserve(explicit_template_arg_nodes.size());
+					for (const auto& arg_node : explicit_template_arg_nodes) {
+						substituted_template_arg_nodes.push_back(substitute(arg_node));
+					}
+					new_call.set_template_arguments(std::move(substituted_template_arg_nodes));
+
+					ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
+					return ASTNode(&new_expr);
+				}
+			}
 			
 			auto instantiated_node = parser_.try_instantiate_class_template(func_name, substituted_template_args, true);
 			if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
@@ -288,10 +328,40 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			}
 		}
 	}
+
+	// Handle calls without stored template arguments by using pack substitutions when available
+	if (!call.has_template_arguments() && !pack_map_.empty()) {
+		std::vector<TemplateTypeArg> substituted_template_args;
+		for (const auto& pack_entry : pack_map_) {
+			substituted_template_args.insert(substituted_template_args.end(), pack_entry.second.begin(), pack_entry.second.end());
+			break; // Use the first available pack substitution
+		}
+
+		if (!substituted_template_args.empty()) {
+			FLASH_LOG(Templates, Debug, "  Attempting to instantiate template (pack-only): ", func_name, " with ", substituted_template_args.size(), " arguments");
+			if (auto instantiated_template = parser_.try_instantiate_template_explicit(func_name, substituted_template_args)) {
+				if (instantiated_template->is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& func_decl = instantiated_template->as<FunctionDeclarationNode>();
+
+					ChunkedVector<ASTNode> substituted_args_nodes;
+					for (size_t i = 0; i < call.arguments().size(); ++i) {
+						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
+					}
+
+					FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
+						const_cast<DeclarationNode&>(func_decl.decl_node()),
+						std::move(substituted_args_nodes),
+						call.called_from()
+					);
+					ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
+					return ASTNode(&new_expr);
+				}
+			}
+		}
+	}
 	
 	// Check if this is actually a template constructor call like base_trait<T>()
 	// In this case, the function_declaration might have template information
-	const DeclarationNode& decl_node = call.function_declaration();
 	FLASH_LOG(Templates, Debug, "  DeclarationNode identifier: ", decl_node.identifier_token().value());
 	
 	// Check the type_node - it might contain template information
