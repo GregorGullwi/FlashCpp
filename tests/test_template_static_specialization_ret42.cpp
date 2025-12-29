@@ -17,6 +17,7 @@ struct chooser<int> {
 
 int main() {
 	// Ensure both the primary template and the full specialization parse correctly.
+	// The primary template contributes 0 and the specialization contributes 42.
 	// Accessing the static data members avoids linker failures from missing symbols
 	// while still exercising static member parsing in specializations.
 	int primary_value = chooser<float>::value;

@@ -18821,7 +18821,7 @@ ParseResult Parser::parse_template_declaration() {
 						
 						auto static_result = parse_static_member_block(instantiated_name, struct_ref, 
 						                                                 struct_info.get(), current_access, 
-						                                                 current_template_param_names_, false);
+						                                                 current_template_param_names_, /*use_struct_type_info=*/false);
 						if (static_result.is_error()) {
 							return static_result;
 						}
@@ -19193,6 +19193,8 @@ ParseResult Parser::parse_template_declaration() {
 			// struct_type_info and struct_info were already created above
 			// Attach struct_info to type info if not already done
 			if (!struct_type_info.getStructInfo()) {
+				// Attach here (after member parsing) so static member helpers above can use
+				// the original struct_info pointer without hitting moved-from state.
 				struct_type_info.setStructInfo(std::move(struct_info));
 				if (struct_type_info.getStructInfo()) {
 					struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
@@ -19202,7 +19204,11 @@ ParseResult Parser::parse_template_declaration() {
 			// Get pointer to the struct info to add member information
 			StructTypeInfo* struct_info_ptr = struct_type_info.getStructInfo();
 			if (!struct_info_ptr) {
-				return ParseResult::error("Internal error: missing struct info for specialization", *peek_token());
+				// Defensive guard: if attachment above failed for any reason, bail out
+				return ParseResult::error(
+					"Internal error: missing struct info for specialization '" +
+					std::string(StringTable::getStringView(instantiated_name)) + "'",
+					*peek_token());
 			}
 
 			// Add members to struct info
@@ -19622,7 +19628,7 @@ ParseResult Parser::parse_template_declaration() {
 						
 						auto static_result = parse_static_member_block(instantiated_name, struct_ref, 
 						                                                 struct_info.get(), current_access, 
-						                                                 current_template_param_names_, false);
+						                                                 current_template_param_names_, /*use_struct_type_info=*/false);
 						if (static_result.is_error()) {
 							return static_result;
 						}
