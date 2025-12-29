@@ -282,7 +282,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						substituted_template_arg_nodes.push_back(substitute(arg_node));
 					}
 					new_call.set_template_arguments(std::move(substituted_template_arg_nodes));
-					new_call.set_template_arguments(std::move(substituted_template_arg_nodes));
 
 					ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
 					return ASTNode(&new_expr);
