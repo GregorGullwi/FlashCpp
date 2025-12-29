@@ -5334,8 +5334,41 @@ private:
 	uint32_t emitMovRipRelative(X64Register dest, int size_in_bits) {
 		// For 64-bit: MOV RAX, [RIP + disp32] - 48 8B 05 [disp32]
 		// For 32-bit: MOV EAX, [RIP + disp32] - 8B 05 [disp32]
+		// For 16-bit: MOVZX EAX, word [RIP + disp32] - 0F B7 05 [disp32]
+		// For 8-bit:  MOVZX EAX, byte [RIP + disp32] - 0F B6 05 [disp32]
 		uint8_t dest_val = static_cast<uint8_t>(dest);
 		uint8_t dest_bits = dest_val & 0x07;
+		
+		// Handle small sizes with MOVZX to zero-extend
+		if (size_in_bits <= 8) {
+			// MOVZX EAX, byte ptr [RIP + disp32]: 0F B6 05 [disp32]
+			size_t base = textSectionData.size();
+			textSectionData.resize(base + 7);
+			char* p = textSectionData.data() + base;
+			p[0] = 0x0F;
+			p[1] = static_cast<char>(0xB6); // MOVZX r32, r/m8
+			p[2] = 0x05 | (dest_bits << 3); // ModR/M: reg, [RIP + disp32]
+			p[3] = 0x00; // disp32 placeholder
+			p[4] = 0x00;
+			p[5] = 0x00;
+			p[6] = 0x00;
+			return static_cast<uint32_t>(base + 3);
+		} else if (size_in_bits == 16) {
+			// MOVZX EAX, word ptr [RIP + disp32]: 0F B7 05 [disp32]
+			size_t base = textSectionData.size();
+			textSectionData.resize(base + 7);
+			char* p = textSectionData.data() + base;
+			p[0] = 0x0F;
+			p[1] = static_cast<char>(0xB7); // MOVZX r32, r/m16
+			p[2] = 0x05 | (dest_bits << 3); // ModR/M: reg, [RIP + disp32]
+			p[3] = 0x00; // disp32 placeholder
+			p[4] = 0x00;
+			p[5] = 0x00;
+			p[6] = 0x00;
+			return static_cast<uint32_t>(base + 3);
+		}
+		
+		// For 32-bit and 64-bit, use regular MOV
 		// Branchless: compute REX prefix (0x48 for 64-bit, 0x40 for 32-bit with high reg, 0 otherwise)
 		// REX.W bit is 0x08, so 0x48 = 0x40 | 0x08
 		uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;

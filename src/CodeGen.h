@@ -6878,6 +6878,17 @@ private:
 			// Check if this is a static member access (e.g., StructName::static_member or ns::StructName::static_member)
 			auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
 			FLASH_LOG(Codegen, Debug, "generateQualifiedIdentifierIr: struct_or_enum_name='", struct_or_enum_name, "', found=", (struct_type_it != gTypesByName.end()));
+			
+			// If not found directly, try with default template argument suffix "_void"
+			// This handles cases like has_type<T>::value where T has a default = void argument
+			if (struct_type_it == gTypesByName.end()) {
+				std::string struct_name_with_void = std::string(struct_or_enum_name) + "_void";
+				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_with_void));
+				if (struct_type_it != gTypesByName.end()) {
+					FLASH_LOG(Codegen, Debug, "Found struct with _void suffix: ", struct_name_with_void);
+				}
+			}
+			
 			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				// If struct_info is null, this might be a type alias - resolve it via type_index
