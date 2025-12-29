@@ -363,6 +363,43 @@ public:
 	// This is called at the beginning of IR generation to ensure all template
 	// instantiation static members are emitted
 	void generateStaticMemberDeclarations() {
+		auto append_bytes = [](unsigned long long value, int size_in_bits, std::vector<char>& target) {
+			size_t byte_count = size_in_bits / 8;
+			for (size_t i = 0; i < byte_count; ++i) {
+				target.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+			}
+		};
+		
+		auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value) -> bool {
+			ConstExpr::EvaluationContext ctx(*global_symbol_table_);
+			ctx.storage_duration = ConstExpr::StorageDuration::Static;
+			
+			auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
+			if (!eval_result.success) {
+				return false;
+			}
+			
+			if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+				out_value = std::get<unsigned long long>(eval_result.value);
+				return true;
+			}
+			if (std::holds_alternative<long long>(eval_result.value)) {
+				out_value = static_cast<unsigned long long>(std::get<long long>(eval_result.value));
+				return true;
+			}
+			if (std::holds_alternative<bool>(eval_result.value)) {
+				out_value = std::get<bool>(eval_result.value) ? 1ULL : 0ULL;
+				return true;
+			}
+			if (std::holds_alternative<double>(eval_result.value)) {
+				double d = std::get<double>(eval_result.value);
+				out_value = static_cast<unsigned long long>(d);
+				return true;
+			}
+			
+			return false;
+		};
+		
 		for (const auto& [type_name, type_info] : gTypesByName) {
 			if (!type_info->isStruct()) {
 				continue;
@@ -543,13 +580,17 @@ public:
 							}
 						}
 					} else {
-						FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '", 
-						          qualified_name, "' - skipping evaluation");
-						// For unknown expression types, skip evaluation to avoid crashes
-						// Initialize to zero as a safe default
-						size_t byte_count = op.size_in_bits / 8;
-						for (size_t i = 0; i < byte_count; ++i) {
-							op.init_data.push_back(0);
+						unsigned long long evaluated_value = 0;
+						if (evaluate_static_initializer(*static_member.initializer, evaluated_value)) {
+							FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for static member '", 
+							          qualified_name, "'");
+							append_bytes(evaluated_value, op.size_in_bits, op.init_data);
+						} else {
+							FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '", 
+							          qualified_name, "' - skipping evaluation");
+							// For unknown expression types, skip evaluation to avoid crashes
+							// Initialize to zero as a safe default
+							append_bytes(0, op.size_in_bits, op.init_data);
 						}
 					}
 				}
@@ -648,15 +689,20 @@ public:
 										inferred_value = std::get<unsigned long long>(init_operands[2]);
 										found_base_value = true;
 										FLASH_LOG(Codegen, Debug, "Found numeric literal value: ", inferred_value);
+									} else if (init_operands.size() >= 3 && std::holds_alternative<double>(init_operands[2])) {
+										double d = std::get<double>(init_operands[2]);
+										inferred_value = static_cast<unsigned long long>(d);
+										found_base_value = true;
+										FLASH_LOG(Codegen, Debug, "Found double literal value: ", d);
 									}
+								} else if (evaluate_static_initializer(*static_member_ptr->initializer, inferred_value)) {
+									found_base_value = true;
+									FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for inherited static member '", member_name, "'");
 								}
 							}
 							
 							// Write the value to init_data
-							size_t byte_count = alias_op.size_in_bits / 8;
-							for (size_t i = 0; i < byte_count; ++i) {
-								alias_op.init_data.push_back(static_cast<char>((inferred_value >> (i * 8)) & 0xFF));
-							}
+							append_bytes(inferred_value, alias_op.size_in_bits, alias_op.init_data);
 							
 							if (!found_base_value) {
 								FLASH_LOG(Codegen, Debug, "Using default zero value (no initializer found)");
