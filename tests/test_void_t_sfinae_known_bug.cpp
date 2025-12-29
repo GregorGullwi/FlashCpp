@@ -33,17 +33,14 @@
 //    all dependent expressions in SFINAE context
 // 3. If resolution fails, reject the pattern match
 
-// This file compiles and runs, but demonstrates incorrect behavior.
-// DO NOT include this in normal test runs - it's documentation only.
+// This file compiles but has no main() - it's documentation/reference code only.
+// DO NOT include this in normal test runs.
 
-// To verify the bug:
-// 1. Compile with FlashCpp: FlashCpp tests/test_void_t_sfinae_known_bug.cpp -o test.o
-// 2. Link: clang++ test.o -o test
-// 3. Run: ./test
-// 4. Expected exit code: 42 (if SFINAE worked correctly)
-// 5. Actual exit code: 0 (bug - SFINAE didn't work)
-//
-// Clang/GCC will correctly return 42.
+// To verify the bug manually, use test_void_t_detection_ret42.cpp and
+// modify it to test the WithoutType case:
+// 1. Change main() to test has_type_member<WithoutType> instead of WithType
+// 2. Compile with FlashCpp and clang
+// 3. FlashCpp will return wrong result (42 instead of 0), clang will be correct
 
 template<typename...>
 using void_t = void;

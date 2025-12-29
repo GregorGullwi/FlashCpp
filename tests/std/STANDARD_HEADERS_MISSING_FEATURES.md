@@ -728,7 +728,7 @@ See "Recent Progress (December 2024)" section below for detailed implementation 
 **Impact**: Medium-High - Critical for library implementation patterns
 **Files affected**: `test_std_type_traits.cpp`, `test_std_functional.cpp`, `test_std_tuple.cpp`
 
-#### Void_t SFINAE Bug (Discovered December 29, 2024)
+#### Void_t SFINAE Bug (Discovered December 2025)
 **Status**: ❌ **KNOWN BUG - Not Yet Fixed**
 
 **Problem**: FlashCpp incorrectly matches partial specializations that use `void_t<typename T::type>` even when `T::type` doesn't exist.
