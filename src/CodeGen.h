@@ -6882,7 +6882,7 @@ private:
 			// If not found directly, try with default template argument suffix "_void"
 			// This handles cases like has_type<T>::value where T has a default = void argument
 			if (struct_type_it == gTypesByName.end()) {
-				std::string struct_name_with_void = std::string(struct_or_enum_name) + "_void";
+				std::string_view struct_name_with_void = StringBuilder().append(struct_or_enum_name).append("_void"sv).commit();
 				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_with_void));
 				if (struct_type_it != gTypesByName.end()) {
 					FLASH_LOG(Codegen, Debug, "Found struct with _void suffix: ", struct_name_with_void);
