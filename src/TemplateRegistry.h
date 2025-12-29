@@ -58,11 +58,6 @@ struct TemplateTypeArg {
 	bool is_dependent;  // true if this type depends on uninstantiated template parameters
 	StringHandle dependent_name;  // name of the dependent template parameter or type name (set when is_dependent is true)
 	
-	// For SFINAE constraints: stores nested type requirements like "T::type"
-	// When this pattern arg is matched, these constraints must be validated
-	// Format: "ParamName::member" (e.g., "T::type")
-	std::vector<StringHandle> sfinae_constraints;
-	
 	TemplateTypeArg()
 		: base_type(Type::Invalid)
 		, type_index(0)
@@ -351,10 +346,6 @@ struct TemplatePattern {
 	std::vector<ASTNode> template_params;  // Template parameters (e.g., typename T)
 	std::vector<TemplateTypeArg> pattern_args;  // Pattern like T&, T*, etc.
 	ASTNode specialized_node;  // The AST node for the specialized template
-	
-	// SFINAE constraints: nested type requirements that must be validated during matching
-	// Each entry is a pair of (template_param_name, member_name) like ("T", "type") for "typename T::type"
-	std::vector<std::pair<StringHandle, StringHandle>> sfinae_nested_type_constraints;
 	
 	// Check if this pattern matches the given concrete arguments
 	// For example, pattern T& matches int&, float&, etc.

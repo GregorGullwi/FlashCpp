@@ -17,7 +17,10 @@
 // - pattern = [T, void] (2 args after alias expansion)
 // - Size mismatch → no pattern match → primary template used
 //
-// This test validates the negative case which is now working correctly.
+// BUG FIXED: Previously, the negative case (WithoutType) was broken because:
+// 1. void_t was mangled as "unknown" instead of "void" in template names
+// 2. GlobalLoad was using 32-bit MOV for 8-bit bool values, loading garbage
+// 3. Conditional branches were loading 32 bits when checking 8-bit bool conditions
 
 template<typename...>
 using void_t = void;
