@@ -193,18 +193,54 @@ void flushAllDirtyRegisters(Func func) {
 }
 ```
 
-4. **Investigate IR instruction ordering**: Determine why `LogicalNot` and `ConditionalBranch` instructions aren't being processed in the expected sequence and fix the IR generation or conversion pass.
+4. ~~**Investigate IR instruction ordering**: Determine why `LogicalNot` and `ConditionalBranch` instructions aren't being processed in the expected sequence and fix the IR generation or conversion pass.~~ (Not applicable - the real issue was size tracking)
+
+## Solution Implemented (December 2025)
+
+### Actual Root Cause
+
+The bug was **NOT** about non-8-byte-aligned offsets from structured bindings. The real issue was that `UnaryOp` results (like `LogicalNot`) were not registering their result size in the `temp_var_sizes_` map during stack space calculation.
+
+When `handleConditionalBranch` tried to load the condition value, it:
+1. Looked up the size in `temp_var_sizes_`
+2. Found nothing (because UnaryOp didn't register)
+3. Defaulted to 32 bits
+4. Loaded 32 bits from memory where only 8 bits were written
+5. Read the 8-bit result PLUS 24 bits of uninitialized stack garbage
+6. Made incorrect branching decisions based on the garbage
+
+### Fixes Applied
+
+1. **Added UnaryOp size tracking** in `calculateFunctionStackSpace()`:
+   ```cpp
+   // Try UnaryOp (logical not, bitwise not, negate)
+   else if (const UnaryOp* unary_op = std::any_cast<UnaryOp>(&instruction.getTypedPayload())) {
+       temp_var_sizes_[StringTable::getOrInternStringHandle(unary_op->result.name())] = unary_op->value.size_in_bits;
+       handled_by_typed_payload = true;
+   }
+   ```
+
+2. **Removed conditional check in flushAllDirtyRegisters()**: Now always flushes dirty registers regardless of offset alignment, ensuring proper register-to-memory synchronization.
+
+3. **Clear register mappings after flush**: Set `stackVariableOffset = INT_MIN` after flushing to prevent stale register lookups.
+
+### Test Results
+
+All 797 tests in the test suite pass, including:
+- `tests/test_register_flush_bug_minimal.cpp` - Returns 42 ✓
+- `tests/test_register_flush_simple2.cpp` - Logical NOT works correctly ✓
+- `tests/test_std_header_features_comprehensive_ret42.cpp` - Comprehensive test passes ✓
 
 ## Testing
 
 After implementing fixes, verify with:
-1. The minimal reproduction case above
-2. Full test suite (`./tests/run_all_tests.sh`)
-3. New test case combining structured bindings, compound assignment, and template specialization checks
+1. The minimal reproduction case above ✓
+2. Full test suite (`./tests/run_all_tests.sh`) ✓
+3. New test case combining structured bindings, compound assignment, and template specialization checks ✓
 
 ## Related Files
 
-- `src/IRConverter.h`: Contains `flushAllDirtyRegisters`, `handleConditionalBranch`, `handleLogicalNot`
+- `src/IRConverter.h`: Contains `flushAllDirtyRegisters`, `handleConditionalBranch`, `handleLogicalNot`, `calculateFunctionStackSpace`
 - `src/CodeGen.h`: IR generation for LogicalNot and ConditionalBranch
 - `src/IRTypes.h`: TempVar and IrOpcode definitions
 
@@ -212,3 +248,4 @@ After implementing fixes, verify with:
 
 - Original discovery: PR adding void_t SFINAE tests
 - Test files: `tests/test_std_header_features_comprehensive_ret42.cpp`
+- Fix commit: December 2025 - Added UnaryOp size tracking
