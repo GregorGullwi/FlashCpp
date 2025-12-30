@@ -1,10 +1,12 @@
 # Test Return Value Analysis
 
-## Current Status (2025-12-22)
+## Current Status (2025-12-30)
 
-**684/705 tests passing (97.0%)**
-- 21 failures: 11 runtime crashes, 2 compilation failures, 3 link failures, 5 without main()
-- Test suite now has 705 executable tests (31 main() functions added)
+**773/795 tests passing (97.2%)**
+- Comparison result size bug fix improved pass rate significantly (+28 tests)
+- All compilation and link failures resolved
+- Test suite has 795 tests total
+- Remaining issues: 20 runtime crashes (complex C++ features)
 - 396 test files renamed with `_retXX` suffix to document expected return values
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
@@ -42,6 +44,23 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Recent Progress Summary
 
+**2025-12-30 (Session 2):** Comparison result size bug fix - Major improvement! (773/795 passing)
+- 🎯 **Fixed critical comparison bug**: Bool results were tracked as 32-bit instead of 8-bit
+- 📈 **+28 tests now passing**: While loops and conditional tests that were timing out now work
+- ✅ **Before fix**: 745/795 passing (93.7%), 48 crashes/timeouts
+- ✅ **After fix**: 773/795 passing (97.2%), 20 crashes
+- Fixed tests include: while loop tests, if statement tests, bool conditional tests
+- Root cause: Conditional branches were reading uninitialized stack memory
+
+**2025-12-30 (Session 1):** Fixed all compilation and link failures (745/795 passing)
+- ✅ Fixed test_switch_10.cpp - Switch statements with enums now compile correctly
+- ✅ Fixed test_c_style_casts.cpp - C-style casts compile without crashes
+- ✅ Fixed test_using_enhanced_30.cpp - Namespace using directives work properly
+- ✅ Fixed test_nested_classes.cpp - Nested class declarations link successfully
+- ✅ Fixed test_class_access_42.cpp - Class access control compiles and links
+- Test suite expanded from 705 to 795 tests
+- All previous compilation and link failures are now resolved
+
 **2025-12-22:** Test file organization and naming standardization (684/705 passing)
 - Added main() functions to 31 test files lacking entry points
 - Renamed 396 test files with non-zero returns using `_retXX` suffix pattern
@@ -75,17 +94,17 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 **Float-to-Int Conversion:** Tests may return incorrect results but don't crash. Low priority.
 
-**Current Failures (21 total):**
-- 11 runtime crashes (C++ runtime/ABI compatibility)
-- 2 compilation failures (parser/compiler issues)
-- 3 link failures (missing symbols)
-- 5 files without main() (helper files, stubs - intentionally excluded)
+**Current Failures (50 total):**
+- 48 runtime crashes/timeouts (C++ runtime/ABI compatibility, loop issues)
+- 0 compilation failures ✅ (all fixed!)
+- 0 link failures ✅ (all fixed!)
+- ~2 files without main() (helper files, stubs - intentionally excluded)
 
-## Remaining Crashes (11 files)
+## Remaining Runtime Issues (20 files - down from 48!)
 
-**11 runtime crashes (C++ runtime/ABI compatibility - cannot be fixed at compiler level)**
+**20 runtime crashes** - Complex C++ features requiring significant implementation work
 
-### Crash Categories
+### Issue Categories
 
 1. **Exceptions** (2 files) - Incomplete Linux exception handling support
    - `test_exceptions_basic.cpp`
@@ -99,28 +118,36 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
    - `test_covariant_return.cpp` (covariant return types)
    - `test_virtual_inheritance.cpp` (virtual inheritance diamond problem)
 
-4. **C++ Runtime Initialization** (2 files) - Code generation correct, but crashes during C++ runtime init
-   - `test_addressof_int_index_ret83.cpp` (renamed from test_addressof_int_index.cpp)
-   - `test_arrays_comprehensive_ret16.cpp` (renamed from test_arrays_comprehensive.cpp)
-   - ✅ Generated assembly is correct (verified via objdump)
-   - ⚠️ Crashes with SIGSEGV before entering `main()`
-   - **Root cause**: C++ runtime/startup code incompatibility, not compiler code generation
+4. **Static Local Variables** (1 file) - Static storage duration not fully supported
+   - `test_return_pointer_ret100.cpp` (uses static local variable)
 
-5. **Other** (3 files) - Complex C++ features
+5. **Advanced C++ Features** (remaining 13 files) - Complex features
    - `test_rvo_very_large_struct.cpp` (large struct RVO/NRVO)
    - `test_lambda_cpp20_comprehensive.cpp` (advanced C++20 lambda features)
+   - `test_lambda_this_capture.cpp` (lambda capturing 'this')
    - `test_xvalue_all_casts.cpp` (xvalue handling across all cast types)
+   - `test_xvalue_move.cpp` (std::move and xvalues)
+   - `test_std_move_support.cpp` (std::move support)
+   - `test_forward_overload_resolution.cpp` (std::forward)
+   - `spaceship_default.cpp` (defaulted spaceship operator)
+   - `test_operator_addressof_overload_baseline.cpp` (overloaded operator&)
+   - `test_operator_addressof_resolved_ret100.cpp` (overloaded operator& resolution)
+   - `test_no_access_control_flag.cpp` (access control flags)
+   - `test_positional_init_only.cpp` (aggregate initialization)
+   - `test_structured_binding_lvalue_ref_ret52.cpp` (structured bindings with references)
 
-## Compilation Failures (2 files)
+## Previously Failing - Now Fixed! ✅
 
-1. **test_switch.cpp** - Parser/compilation error with switch statements
-2. **test_c_style_casts.cpp** - Compiler crash (signal 134) during compilation
+### Compilation Failures - RESOLVED
 
-## Link Failures (3 files)
+1. ✅ **test_switch_10.cpp** - Switch statements now compile and work correctly
+2. ✅ **test_c_style_casts.cpp** - C-style casts compile without crashes
 
-1. **test_using_enhanced.cpp** - Missing symbols (namespace/using directive issues)
-2. **test_nested_classes.cpp** - Missing symbols (nested class linkage)
-3. **test_class_access.cpp** - Missing symbols (class access control)
+### Link Failures - RESOLVED
+
+1. ✅ **test_using_enhanced_30.cpp** - Namespace using directives link and work
+2. ✅ **test_nested_classes.cpp** - Nested class linkage resolved
+3. ✅ **test_class_access_42.cpp** - Class access control works properly
 
 ## Files Without Main (5 files)
 
@@ -133,7 +160,7 @@ Intentionally excluded helper files and stubs:
 
 ---
 
-*Last Updated: 2025-12-22 (Test file organization and naming standardization)*  
-*Status: 684/705 tests passing (97.0%), 31 main() functions added, 396 files renamed*  
+*Last Updated: 2025-12-30 (Comparison bug fix - major improvement!)*  
+*Status: 773/795 tests passing (97.2%), comparison bug fixed, 28 more tests passing*  
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
 
