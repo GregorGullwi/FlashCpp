@@ -25,8 +25,10 @@ This document consolidates the exception handling implementation plans for Flash
 | __cxa_throw call generation | N/A | ✅ | Works in IRConverter |
 | External type_info symbols | N/A | ✅ | References runtime (_ZTIi, etc.) |
 | is_catch_all flag in IR | N/A | ✅ | Explicit flag, not derived from type_index |
-| Type table relocations (pcrel) | N/A | ✅ | R_X86_64_PC32 for type_info |
+| Type table relocations (udata4) | N/A | ✅ | R_X86_64_32 for type_info |
 | FDE LSDA pointers | N/A | ✅ | All FDEs have LSDA field when CIE has 'L' |
+| Literal exception values | N/A | ✅ | `throw 42` generates correct immediate |
+| Catch handler dereferencing | N/A | ✅ | Properly loads value from exception pointer |
 
 ### ⚠️ Fixed Issues (2025-12-30)
 
@@ -34,19 +36,23 @@ This document consolidates the exception handling implementation plans for Flash
 2. **✅ FIXED**: Personality routine encoding changed from indirect to direct for non-PIE executables  
 3. **✅ FIXED**: Type info now correctly uses actual Type enum (`_ZTIi` for int instead of `_ZTIv`)
 4. **✅ FIXED**: is_catch_all detection now uses explicit IR flag instead of type_index==0
-5. **✅ FIXED**: TType encoding changed to pcrel|sdata4 (0x1b) with R_X86_64_PC32 relocations
-6. **✅ FIXED**: Type table entries now 4 bytes (sdata4) instead of 8 bytes (absptr)
+5. **✅ FIXED**: TType encoding changed to udata4 (0x03) with R_X86_64_32 relocations (matches GCC)
+6. **✅ FIXED**: Type filter uses positive values for catch clauses (1, 2, etc. not -1, -2)
 7. **✅ FIXED**: All FDEs include LSDA pointer when CIE has 'L' augmentation
 8. **✅ FIXED**: Built-in type_info symbols are external references to C++ runtime
 9. **✅ FIXED**: Catch handler stack offset pre-computed during IR processing (crash fix)
+10. **✅ FIXED**: Symbol parameter order in add_symbol calls (other, shndx were swapped)
+11. **✅ FIXED**: .gcc_except_table symbol points to correct section (was pointing to .text)
+12. **✅ FIXED**: Literal exception values stored correctly (`throw 42` now stores 42, not 0)
+13. **✅ FIXED**: Type size lookup uses explicit switch for built-in types instead of gTypeInfo
 
 ### ❌ Known Issues
 
-1. **Linux**: Runtime abort when executing - personality routine can't find landing pad
-   - LSDA structure appears correct (call site table, action table, type table)
-   - Call site offsets match function disassembly
-   - Type table relocation is correct
-   - **Next investigation**: Check if issue is in call site length or type matching
+1. **Linux**: Runtime segfault when executing exception code
+   - Linker warning: "error in simple_throw.o(.eh_frame); no .eh_frame_hdr table will be created"
+   - Code generation is correct (verified via disassembly)
+   - LSDA structure matches GCC output format
+   - **Next investigation**: Debug .eh_frame section format
    
 2. **Windows**: Code generation for SEH not implemented
 
