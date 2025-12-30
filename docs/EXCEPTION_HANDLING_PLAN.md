@@ -49,10 +49,14 @@ This document consolidates the exception handling implementation plans for Flash
 ### ❌ Known Issues
 
 1. **Linux**: Runtime segfault when executing exception code
-   - Linker warning: "error in simple_throw.o(.eh_frame); no .eh_frame_hdr table will be created"
+   - Linker warning: "error in test_exc.o(.eh_frame); no .eh_frame_hdr table will be created"
    - Code generation is correct (verified via disassembly)
-   - LSDA structure matches GCC output format
-   - **Next investigation**: Debug .eh_frame section format
+   - .eh_frame structure appears correct, LSDA-to-FDE mapping is now correct
+   - **Root cause investigation**:
+     - GCC uses `DW_EH_PE_indirect` (0x9b) for personality encoding, we use direct (0x1b)
+     - GCC creates `DW.ref.__gxx_personality_v0` indirect reference
+     - GCC generates separate CIE for non-exception-handling functions ("zR" vs "zPLR")
+   - **Next steps**: Try indirect personality encoding or generate multiple CIEs
    
 2. **Windows**: Code generation for SEH not implemented
 
@@ -61,6 +65,12 @@ This document consolidates the exception handling implementation plans for Flash
    - **For user-defined types**: Need to generate complete type_info structures
    - **Solution path**: See Phase 2 below for RTTI integration details
    - **Priority**: MEDIUM - built-in exception types work, user-defined types are the next step
+
+### Fixed in Latest Commits
+
+14. **✅ FIXED**: LSDA-to-FDE ordering - LSDAa now generated in FDE order (was using unordered_map iteration)
+15. **✅ FIXED**: Switched to PC-relative encoding (0x1b) for personality and LSDA pointers in .eh_frame
+16. **✅ FIXED**: Changed .eh_frame relocations from R_X86_64_32 to R_X86_64_PC32
 
 ### Next Steps to Fix Linux Runtime Issue
 
