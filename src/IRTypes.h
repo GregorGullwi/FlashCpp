@@ -2771,7 +2771,8 @@ public:
 			} else if (std::holds_alternative<double>(op.exception_value)) {
 				oss << std::get<double>(op.exception_value);
 			} else if (std::holds_alternative<StringHandle>(op.exception_value)) {
-				oss << "%" << StringTable::getStringView(std::get<StringHandle>(op.exception_value));
+				// StringHandle represents a string constant - print as quoted string
+				oss << "\"" << StringTable::getStringView(std::get<StringHandle>(op.exception_value)) << "\"";
 			}
 			oss << " : type_" << op.type_index << " (" << op.size_in_bytes << " bytes)";
 			if (op.is_rvalue) oss << " rvalue";

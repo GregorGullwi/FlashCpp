@@ -13567,7 +13567,9 @@ private:
 						emitMovImm64(X64Register::RCX, 0);
 					}
 				} else {
-					// StringHandle or other - default to zero
+					// StringHandle is not a valid exception value type - IrValue includes it for
+					// other contexts (like variable names), but throw expressions only use TempVar
+					// or immediate values. Default to zero as a safety fallback.
 					emitMovImm64(X64Register::RCX, 0);
 				}
 				// Store exception value to allocated memory [R15 + 0]
@@ -13583,6 +13585,7 @@ private:
 						emitXorRegReg(X64Register::RSI);
 					}
 				} else {
+					// Large objects can only be TempVars - immediates and StringHandles are not valid here
 					emitXorRegReg(X64Register::RSI);
 				}
 				// RDI = destination (allocated memory in R15)
@@ -13682,6 +13685,7 @@ private:
 						emitXorRegReg(X64Register::RSI);
 					}
 				} else {
+					// Large objects can only be TempVars - immediates and StringHandles are not valid here
 					emitXorRegReg(X64Register::RSI);
 				}
 				emitLeaFromRSPDisp8(X64Register::RDI, 32);
