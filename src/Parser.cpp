@@ -11124,10 +11124,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 	}
 
-	// Check for '__builtin_constant_p' intrinsic
+	// Check for '__builtin_constant_p' intrinsic (GCC/Clang extension - not available in MSVC mode)
 	// Returns 1 if the argument can be evaluated at compile time, 0 otherwise
 	// Syntax: __builtin_constant_p(expr)
-	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "__builtin_constant_p"sv) {
+	if (NameMangling::g_mangling_style != NameMangling::ManglingStyle::MSVC &&
+	    current_token_->type() == Token::Type::Identifier && current_token_->value() == "__builtin_constant_p"sv) {
 		Token builtin_token = *current_token_;
 		consume_token(); // consume '__builtin_constant_p'
 
