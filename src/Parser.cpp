@@ -2742,9 +2742,20 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			struct_ref->add_type_alias(alias_name, *type_result.node(), current_access);
 		}
 		
-		// Also register it globally
+		// Also register it globally with qualified name (e.g., WithType::type)
 		const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-		auto& alias_type_info = gTypeInfo.emplace_back(alias_name, type_spec.type(), gTypeInfo.size());
+		
+		// Build qualified name if we're inside a struct
+		StringHandle qualified_alias_name = alias_name;
+		if (struct_ref) {
+			StringBuilder qualified_builder;
+			qualified_builder.append(struct_ref->name());
+			qualified_builder.append("::");
+			qualified_builder.append(alias_name);
+			qualified_alias_name = StringTable::getOrInternStringHandle(qualified_builder.commit());
+		}
+		
+		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, type_spec.type(), gTypeInfo.size());
 		alias_type_info.type_index_ = type_spec.type_index();
 		alias_type_info.type_size_ = type_spec.size_in_bits();
 		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
@@ -24091,13 +24102,86 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 	PROFILE_TEMPLATE_CACHE_MISS(std::string(template_name));
 	
+	// Fill in default template arguments BEFORE pattern matching (void_t SFINAE fix)
+	// This is critical for patterns like: template<typename T, typename = void> struct has_type;
+	// with specialization: template<typename T> struct has_type<T, void_t<typename T::type>>;
+	// When has_type<WithType> is instantiated, we need to fill in the default (void) before pattern matching.
+	std::vector<TemplateTypeArg> filled_args_for_pattern_match = template_args;
+	{
+		auto primary_template_opt = gTemplateRegistry.lookupTemplate(template_name);
+		if (primary_template_opt.has_value() && primary_template_opt->is<TemplateClassDeclarationNode>()) {
+			const TemplateClassDeclarationNode& primary_template = primary_template_opt->as<TemplateClassDeclarationNode>();
+			const std::vector<ASTNode>& primary_params = primary_template.template_parameters();
+			
+			// Fill in defaults for missing arguments
+			for (size_t i = filled_args_for_pattern_match.size(); i < primary_params.size(); ++i) {
+				if (!primary_params[i].is<TemplateParameterNode>()) continue;
+				
+				const TemplateParameterNode& param = primary_params[i].as<TemplateParameterNode>();
+				
+				// Skip variadic parameters
+				if (param.is_variadic()) continue;
+				
+				// Check if parameter has a default
+				if (!param.has_default()) break;  // No default = can't fill in
+				
+				// Get the default value
+				const ASTNode& default_node = param.default_value();
+				
+				if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+					
+					// Simple case: default is void
+					if (default_type.type() == Type::Void) {
+						TemplateTypeArg void_arg;
+						void_arg.base_type = Type::Void;
+						void_arg.type_index = 0;
+						filled_args_for_pattern_match.push_back(void_arg);
+						FLASH_LOG(Templates, Debug, "Filled in default argument for param ", i, ": void");
+						continue;
+					}
+					
+					// Check if default is an alias template like void_t
+					// by looking at the token value
+					Token default_token = default_type.token();
+					std::string_view alias_name = default_token.value();
+					
+					// Look up if this is an alias template
+					auto alias_opt = gTemplateRegistry.lookup_alias_template(alias_name);
+					if (alias_opt.has_value()) {
+						const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
+						
+						// Check if the alias target type is void (like void_t)
+						const ASTNode& target_type = alias_node.target_type();
+						if (target_type.is<TypeSpecifierNode>()) {
+							const TypeSpecifierNode& alias_type_spec = target_type.as<TypeSpecifierNode>();
+							if (alias_type_spec.type() == Type::Void) {
+								// void_t-like alias: fill in void here, SFINAE check happens in pattern matching
+								TemplateTypeArg void_arg;
+								void_arg.base_type = Type::Void;
+								void_arg.type_index = 0;
+								filled_args_for_pattern_match.push_back(void_arg);
+								FLASH_LOG(Templates, Debug, "Filled in void_t alias default for param ", i, ": void");
+								continue;
+							}
+						}
+					}
+					
+					// For other default types, use the type as-is
+					filled_args_for_pattern_match.push_back(TemplateTypeArg(default_type));
+					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
+				}
+			}
+		}
+	}
+	
 	// First, check if there's an exact specialization match
 	// Try to match a specialization pattern and get the substitution mapping
 	{
 		PROFILE_TEMPLATE_SPECIALIZATION_MATCH();
 		std::unordered_map<std::string, TemplateTypeArg> param_substitutions;
-		FLASH_LOG(Templates, Debug, "Looking for pattern match for ", template_name, " with ", template_args.size(), " args");
-		auto pattern_match_opt = gTemplateRegistry.matchSpecializationPattern(template_name, template_args);
+		FLASH_LOG(Templates, Debug, "Looking for pattern match for ", template_name, " with ", filled_args_for_pattern_match.size(), " args (after default fill-in)");
+		auto pattern_match_opt = gTemplateRegistry.matchSpecializationPattern(template_name, filled_args_for_pattern_match);
 		if (pattern_match_opt.has_value()) {
 			FLASH_LOG(Templates, Debug, "Found pattern match!");
 			// Found a matching pattern - we need to instantiate it with concrete types
