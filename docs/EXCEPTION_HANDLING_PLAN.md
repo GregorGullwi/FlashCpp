@@ -23,24 +23,31 @@ This document consolidates the exception handling implementation plans for Flash
 | .gcc_except_table section | N/A | ✅ | LSDA structure |
 | __cxa_throw call generation | N/A | ✅ | Works in IRConverter |
 | Type info generation for built-in types | N/A | ✅ | _ZTIi, etc. |
-
-### ❌ Known Issues
+| is_catch_all flag in IR | N/A | ✅ | Explicit flag, not derived from type_index |
+| Type table relocations | N/A | ✅ | R_X86_64_64 for type_info pointers |
 
 ### ⚠️ Fixed Issues (2025-12-30)
 
 1. **✅ FIXED**: Last function in file (e.g., main) now properly gets try_blocks passed to exception info
 2. **✅ FIXED**: Personality routine encoding changed from indirect to direct for non-PIE executables  
 3. **✅ FIXED**: Type info now correctly uses actual Type enum (`_ZTIi` for int instead of `_ZTIv`)
+4. **✅ FIXED**: is_catch_all detection now uses explicit IR flag instead of type_index==0
+5. **✅ FIXED**: LSDA type table now generates proper R_X86_64_64 relocations
+6. **✅ FIXED**: TType base offset calculation uses actual action table size
 
-### ❌ Remaining Issues
+### ❌ Known Issues
 
-1. **Linux**: Runtime abort when executing - personality routine can't find landing pad
-   - **CFI Instructions Missing**: FDEs only contain NOPs, not actual CFI instructions
-   - The unwinder needs CFI instructions (DW_CFA_advance_loc, DW_CFA_def_cfa_offset, etc.) to track stack frame state
-   - Without CFI, stack unwinding fails and landing pads cannot be reached
-   - **Solution**: Track CFI state in IRConverter during prologue/epilogue generation, pass to ElfFileWriter
-2. **Windows**: Code generation for SEH not implemented
-3. **Both**: RTTI integration incomplete for complex exception type matching
+1. **Linux**: Compilation hangs when last function in file has try/catch
+   - Workaround: Ensure a function without try/catch is defined after functions with exception handling
+   - Investigation needed: Likely infinite loop in IR processing or LSDA generation
+   
+2. **Linux**: Runtime abort when executing - personality routine can't find landing pad
+   - **CFI Instructions**: FDEs now have basic CFI, but may need refinement
+   - May require debugging with actual test execution
+
+3. **Windows**: Code generation for SEH not implemented
+
+4. **Both**: RTTI integration incomplete for complex exception type matching
 
 ## Architecture Overview
 
