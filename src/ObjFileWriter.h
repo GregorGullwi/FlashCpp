@@ -1017,56 +1017,67 @@ public:
 			//   DWORD addressOfHandler (RVA of catch handler code)
 			
 			// First, generate type descriptors for all unique exception types
-			std::unordered_map<std::string, uint32_t> type_descriptor_offsets;
+			// Use class member to track across multiple function calls
 			
 			for (const auto& try_block : try_blocks) {
 				for (const auto& handler : try_block.catch_handlers) {
 					if (!handler.is_catch_all && !handler.type_name.empty()) {
+						// Mangle the type name to get the symbol name
+						std::string mangled_type_name = mangleTypeName(handler.type_name);
+						std::string type_desc_symbol = "??_R0" + mangled_type_name;
+						
 						// Check if we've already created a descriptor for this type
-						if (type_descriptor_offsets.find(handler.type_name) == type_descriptor_offsets.end()) {
-							// Validate that RDATA section exists
-							auto rdata_section_it = sectiontype_to_index.find(SectionType::RDATA);
-							if (rdata_section_it == sectiontype_to_index.end()) {
-								if (g_enable_debug_output) std::cerr << "ERROR: RDATA section not found for type descriptor generation" << std::endl;
-								continue;
+						// by checking both the class member map and if the symbol already exists
+						if (type_descriptor_offsets_.find(handler.type_name) == type_descriptor_offsets_.end()) {
+							// Check if the symbol already exists (could have been created elsewhere)
+							auto* existing_symbol = coffi_.get_symbol(type_desc_symbol);
+							if (existing_symbol) {
+								// Symbol already exists, just record its offset for later use
+								type_descriptor_offsets_[handler.type_name] = existing_symbol->get_value();
+								if (g_enable_debug_output) std::cerr << "  Type descriptor '" << type_desc_symbol 
+								          << "' already exists for exception type '" << handler.type_name << "'" << std::endl;
+							} else {
+								// Symbol doesn't exist, create it
+								// Validate that RDATA section exists
+								auto rdata_section_it = sectiontype_to_index.find(SectionType::RDATA);
+								if (rdata_section_it == sectiontype_to_index.end()) {
+									if (g_enable_debug_output) std::cerr << "ERROR: RDATA section not found for type descriptor generation" << std::endl;
+									continue;
+								}
+								
+								// Generate type descriptor in .rdata section
+								auto rdata_section = coffi_.get_sections()[rdata_section_it->second];
+								uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
+								
+								// Create type descriptor data
+								// Format: vtable_ptr (8 bytes) + spare (8 bytes) + mangled_name (null-terminated)
+								std::vector<char> type_desc_data;
+								
+								// vtable pointer (POINTER_SIZE bytes) - null for exception types
+								for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
+								
+								// spare pointer (POINTER_SIZE bytes) - null
+								for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
+								
+								// mangled name (null-terminated)
+								for (char c : mangled_type_name) type_desc_data.push_back(c);
+								type_desc_data.push_back(0);
+								
+								// Add to .rdata section
+								add_data(type_desc_data, SectionType::RDATA);
+								
+								// Create symbol for the type descriptor
+								auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
+								type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+								type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+								type_desc_sym->set_section_number(rdata_section->get_index() + 1);
+								type_desc_sym->set_value(type_desc_offset);
+								
+								if (g_enable_debug_output) std::cerr << "  Created type descriptor '" << type_desc_symbol << "' for exception type '" 
+								          << handler.type_name << "' at offset " << type_desc_offset << std::endl;
+								
+								type_descriptor_offsets_[handler.type_name] = type_desc_offset;
 							}
-							
-							// Generate type descriptor in .rdata section
-							auto rdata_section = coffi_.get_sections()[rdata_section_it->second];
-							uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-							
-							// Mangle the type name for the type descriptor symbol
-							std::string mangled_type_name = mangleTypeName(handler.type_name);
-							std::string type_desc_symbol = "??_R0" + mangled_type_name;
-							
-							// Create type descriptor data
-							// Format: vtable_ptr (8 bytes) + spare (8 bytes) + mangled_name (null-terminated)
-							std::vector<char> type_desc_data;
-							
-							// vtable pointer (POINTER_SIZE bytes) - null for exception types
-							for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
-							
-							// spare pointer (POINTER_SIZE bytes) - null
-							for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
-							
-							// mangled name (null-terminated)
-							for (char c : mangled_type_name) type_desc_data.push_back(c);
-							type_desc_data.push_back(0);
-							
-							// Add to .rdata section
-							add_data(type_desc_data, SectionType::RDATA);
-							
-							// Create symbol for the type descriptor
-							auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
-							type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
-							type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-							type_desc_sym->set_section_number(rdata_section->get_index() + 1);
-							type_desc_sym->set_value(type_desc_offset);
-							
-							if (g_enable_debug_output) std::cerr << "  Created type descriptor '" << type_desc_symbol << "' for exception type '" 
-							          << handler.type_name << "' at offset " << type_desc_offset << std::endl;
-							
-							type_descriptor_offsets[handler.type_name] = type_desc_offset;
 						}
 					}
 				}
@@ -1644,6 +1655,10 @@ protected:
 
 	// Track functions that already have exception info to avoid duplicates
 	std::vector<std::string> added_exception_functions_;
+
+	// Track type descriptors that have been created to avoid duplicates across functions
+	// Maps type name to its offset in .rdata section
+	std::unordered_map<std::string, uint32_t> type_descriptor_offsets_;
 
 	// Counter for generating unique string literal symbols
 	uint64_t string_literal_counter_ = 0;
