@@ -68,7 +68,7 @@ This document consolidates the exception handling implementation plans for Flash
 
 ### Fixed in Latest Commits
 
-14. **✅ FIXED**: LSDA-to-FDE ordering - LSDAa now generated in FDE order (was using unordered_map iteration)
+14. **✅ FIXED**: LSDA-to-FDE ordering - LSDAs now generated in FDE order (was using unordered_map iteration)
 15. **✅ FIXED**: Switched to PC-relative encoding (0x1b) for personality and LSDA pointers in .eh_frame
 16. **✅ FIXED**: Changed .eh_frame relocations from R_X86_64_32 to R_X86_64_PC32
 
