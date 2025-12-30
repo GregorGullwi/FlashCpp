@@ -2,11 +2,11 @@
 
 ## Current Status (2025-12-30)
 
-**773/795 tests passing (97.2%)**
-- Comparison result size bug fix improved pass rate significantly (+28 tests)
+**777/795 tests passing (97.7%)**
+- Fixed 4 more tests today (static local addressof, move semantics, structured bindings)
 - All compilation and link failures resolved
 - Test suite has 795 tests total
-- Remaining issues: 20 runtime crashes (complex C++ features)
+- Remaining issues: 16 runtime crashes (complex C++ features)
 - 396 test files renamed with `_retXX` suffix to document expected return values
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
@@ -43,6 +43,12 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 - **This is expected OS behavior, not a compiler bug**
 
 ## Recent Progress Summary
+
+**2025-12-30 (Session 3):** Static local, move semantics, structured bindings - 777/795 passing
+- ✅ **Fixed static local addressof**: `return &static_var` now returns correct address
+- ✅ **Fixed move template inlining**: Reference-returning templates generate addressof  
+- ✅ **Fixed structured binding lvalue ref**: `auto& [a,b] = x` modifies original correctly
+- 📈 **+4 tests fixed**: test_return_pointer, test_varargs, test_xvalue_move, test_structured_binding_lvalue_ref
 
 **2025-12-30 (Session 2):** Comparison result size bug fix - Major improvement! (773/795 passing)
 - 🎯 **Fixed critical comparison bug**: Bool results were tracked as 32-bit instead of 8-bit
@@ -94,15 +100,15 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 **Float-to-Int Conversion:** Tests may return incorrect results but don't crash. Low priority.
 
-**Current Failures (50 total):**
-- 48 runtime crashes/timeouts (C++ runtime/ABI compatibility, loop issues)
+**Current Failures (16 total):**
+- 16 runtime crashes (C++ runtime/ABI compatibility)
 - 0 compilation failures ✅ (all fixed!)
 - 0 link failures ✅ (all fixed!)
-- ~2 files without main() (helper files, stubs - intentionally excluded)
+- ~5 files without main() (helper files, stubs - intentionally excluded)
 
-## Remaining Runtime Issues (20 files - down from 48!)
+## Remaining Runtime Issues (16 files - down from 20!)
 
-**20 runtime crashes** - Complex C++ features requiring significant implementation work
+**16 runtime crashes** - Complex C++ features requiring significant implementation work
 
 ### Issue Categories
 
@@ -110,31 +116,27 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
    - `test_exceptions_basic.cpp`
    - `test_exceptions_nested.cpp`
 
-2. **Variadic Arguments** (2 files) - va_list/va_arg implementation gaps  
+2. **Variadic Arguments** (1 file) - va_list/va_arg implementation gaps  
    - `test_va_implementation.cpp`
-   - `test_varargs.cpp`
 
 3. **Virtual Functions / RTTI** (2 files) - Complex vtable/inheritance scenarios
    - `test_covariant_return.cpp` (covariant return types)
    - `test_virtual_inheritance.cpp` (virtual inheritance diamond problem)
 
-4. **Static Local Variables** (1 file) - Static storage duration not fully supported
-   - `test_return_pointer_ret100.cpp` (uses static local variable)
-
-5. **Advanced C++ Features** (remaining 13 files) - Complex features
-   - `test_rvo_very_large_struct.cpp` (large struct RVO/NRVO)
+4. **Lambda Features** (2 files) - Lambda code generation issues
    - `test_lambda_cpp20_comprehensive.cpp` (advanced C++20 lambda features)
-   - `test_lambda_this_capture.cpp` (lambda capturing 'this')
+   - `test_lambda_this_capture.cpp` (lambda body not generated correctly)
+
+5. **Advanced C++ Features** (remaining 9 files) - Complex features
+   - `test_rvo_very_large_struct.cpp` (large struct RVO/NRVO)
    - `test_xvalue_all_casts.cpp` (xvalue handling across all cast types)
-   - `test_xvalue_move.cpp` (std::move and xvalues)
-   - `test_std_move_support.cpp` (std::move support)
+   - `test_std_move_support.cpp` (complex std::move with template specialization)
    - `test_forward_overload_resolution.cpp` (std::forward)
    - `spaceship_default.cpp` (defaulted spaceship operator)
    - `test_operator_addressof_overload_baseline.cpp` (overloaded operator&)
    - `test_operator_addressof_resolved_ret100.cpp` (overloaded operator& resolution)
    - `test_no_access_control_flag.cpp` (access control flags)
-   - `test_positional_init_only.cpp` (aggregate initialization)
-   - `test_structured_binding_lvalue_ref_ret52.cpp` (structured bindings with references)
+   - `test_positional_init_only.cpp` (aggregate initialization with partial init)
 
 ## Previously Failing - Now Fixed! ✅
 
@@ -160,7 +162,7 @@ Intentionally excluded helper files and stubs:
 
 ---
 
-*Last Updated: 2025-12-30 (Comparison bug fix - major improvement!)*  
-*Status: 773/795 tests passing (97.2%), comparison bug fixed, 28 more tests passing*  
+*Last Updated: 2025-12-30 (Session 3 - Static local, move semantics, structured bindings fixes)*  
+*Status: 777/795 tests passing (97.7%), 4 more tests fixed*  
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
 
