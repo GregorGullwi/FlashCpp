@@ -7839,7 +7839,11 @@ private:
 
 			// Add exception handling information (required for x64) - uses mangled name
 			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
-			writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map);
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
+			} else {
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map);
+			}
 		
 			// Clean up the previous function's variable scope
 			// This happens when we start a NEW function, ensuring the previous function's scope is removed
@@ -7855,6 +7859,9 @@ private:
 			current_function_local_objects_.clear();  // Clear local object tracking
 			current_function_unwind_map_.clear();  // Clear unwind map
 			current_exception_state_ = -1;  // Reset state counter
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				current_function_cfi_.clear();  // Clear CFI tracking for next function
+			}
 		}
 
 		// align the function to 16 bytes
@@ -8054,7 +8061,26 @@ private:
 		// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, total_stack_space
 		// Always generate prologue - even if total_stack_space is 0, we need RBP for parameter access
 		textSectionData.push_back(0x55); // push rbp
+		
+		// Track CFI: After push rbp, CFA = RSP+16, RBP at CFA-16
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			current_function_cfi_.push_back({
+				ElfFileWriter::CFIInstruction::PUSH_RBP,
+				static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
+				0
+			});
+		}
+		
 		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
+		
+		// Track CFI: After mov rbp, rsp, CFA = RBP+16
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			current_function_cfi_.push_back({
+				ElfFileWriter::CFIInstruction::MOV_RSP_RBP,
+				static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
+				0
+			});
+		}
 
 		// Always emit SUB RSP with 32-bit immediate (7 bytes total) for patching flexibility
 		// We'll patch the actual value at function end after we know max_temp_var_index
@@ -13661,7 +13687,11 @@ private:
 
 			// Add exception handling information (required for x64) - uses mangled name
 			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
-			writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map);
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
+			} else {
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map);
+			}
 
 			// Clear the current function state
 			current_function_name_ = StringHandle();
@@ -14029,6 +14059,9 @@ private:
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter (RVO)
 	bool current_function_returns_reference_ = false;  // True if function returns a reference (lvalue or rvalue)
 	int32_t current_function_varargs_reg_save_offset_ = 0;  // Offset of varargs register save area (Linux only)
+	
+	// CFI instruction tracking for exception handling
+	std::vector<ElfFileWriter::CFIInstruction> current_function_cfi_;
 
 	// Pending function info for exception handling
 	struct PendingFunctionInfo {

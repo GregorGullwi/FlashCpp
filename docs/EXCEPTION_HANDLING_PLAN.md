@@ -35,8 +35,10 @@ This document consolidates the exception handling implementation plans for Flash
 ### ❌ Remaining Issues
 
 1. **Linux**: Runtime abort when executing - personality routine can't find landing pad
-   - LSDA call site table or type table encoding likely incorrect
-   - Needs debugging with gdb to trace personality routine execution
+   - **CFI Instructions Missing**: FDEs only contain NOPs, not actual CFI instructions
+   - The unwinder needs CFI instructions (DW_CFA_advance_loc, DW_CFA_def_cfa_offset, etc.) to track stack frame state
+   - Without CFI, stack unwinding fails and landing pads cannot be reached
+   - **Solution**: Track CFI state in IRConverter during prologue/epilogue generation, pass to ElfFileWriter
 2. **Windows**: Code generation for SEH not implemented
 3. **Both**: RTTI integration incomplete for complex exception type matching
 

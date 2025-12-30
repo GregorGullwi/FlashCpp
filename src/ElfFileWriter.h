@@ -708,19 +708,32 @@ public:
 		}
 	}
 
+	// CFI instruction tracking for a single function (defined here for use in add_function_exception_info)
+	struct CFIInstruction {
+		enum Type {
+			PUSH_RBP,       // push rbp
+			MOV_RSP_RBP,    // mov rbp, rsp
+			SUB_RSP,        // sub rsp, imm
+			ADD_RSP,        // add rsp, imm
+			POP_RBP,        // pop rbp
+		};
+		Type type;
+		uint32_t offset;  // Offset in function where this occurs
+		uint32_t value;   // Immediate value (for SUB_RSP/ADD_RSP)
+	};
+
 	// Exception handling (placeholders - not implemented for Linux MVP)
 	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start,
 	                                 uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {},
-	                                 const std::vector<UnwindMapEntryInfo>& unwind_map = {}) {
+	                                 const std::vector<UnwindMapEntryInfo>& unwind_map = {},
+	                                 const std::vector<CFIInstruction>& cfi_instructions = {}) {
 		// Add FDE for this function (all functions get an FDE for proper unwinding)
 		FDEInfo fde_info;
 		fde_info.function_start_offset = function_start;
 		fde_info.function_length = function_size;
 		fde_info.function_symbol.assign(mangled_name.begin(), mangled_name.end());
 		fde_info.has_exception_handling = !try_blocks.empty();
-		
-		// TODO: Track CFI instructions during code generation
-		// For now, we'll generate basic CFI for standard function prologue/epilogue
+		fde_info.cfi_instructions = cfi_instructions;  // Store CFI instructions
 		
 		functions_with_fdes_.push_back(fde_info);
 		
@@ -825,20 +838,7 @@ public:
 	}
 
 	// Exception handling - .eh_frame generation
-	
-	// CFI instruction tracking for a single function
-	struct CFIInstruction {
-		enum Type {
-			PUSH_RBP,       // push rbp
-			MOV_RSP_RBP,    // mov rbp, rsp
-			SUB_RSP,        // sub rsp, imm
-			ADD_RSP,        // add rsp, imm
-			POP_RBP,        // pop rbp
-		};
-		Type type;
-		uint32_t offset;  // Offset in function where this occurs
-		uint32_t value;   // Immediate value (for SUB_RSP/ADD_RSP)
-	};
+	// (CFIInstruction defined above, before add_function_exception_info)
 	
 	// FDE (Frame Description Entry) information for a function
 	struct FDEInfo {
@@ -1006,8 +1006,69 @@ public:
 			DwarfCFI::appendULEB128(eh_frame_data, 0);
 		}
 		
-		// CFI instructions (to be implemented based on fde_info.cfi_instructions)
-		// For now, leave empty
+		// Generate CFI instructions based on tracked prologue state
+		// The initial state from CIE is: CFA = RSP+8, RIP at CFA-8
+		// After push rbp: CFA = RSP+16, RBP at CFA-16
+		// After mov rbp, rsp: CFA = RBP+16
+		// After sub rsp, N: CFA still = RBP+16 (RBP-based frame)
+		
+		uint32_t last_offset = 0;
+		for (const auto& cfi : fde_info.cfi_instructions) {
+			// Emit DW_CFA_advance_loc if offset changed
+			if (cfi.offset > last_offset) {
+				uint32_t delta = cfi.offset - last_offset;
+				if (delta < 64) {
+					// DW_CFA_advance_loc: low 6 bits encode delta
+					eh_frame_data.push_back(DwarfCFI::DW_CFA_advance_loc | (delta & 0x3f));
+				} else if (delta < 256) {
+					// DW_CFA_advance_loc1: 1-byte delta
+					eh_frame_data.push_back(DwarfCFI::DW_CFA_advance_loc1);
+					eh_frame_data.push_back(static_cast<uint8_t>(delta));
+				} else {
+					// DW_CFA_advance_loc2: 2-byte delta
+					eh_frame_data.push_back(DwarfCFI::DW_CFA_advance_loc2);
+					eh_frame_data.push_back((delta >> 0) & 0xff);
+					eh_frame_data.push_back((delta >> 8) & 0xff);
+				}
+				last_offset = cfi.offset;
+			}
+			
+			switch (cfi.type) {
+			case CFIInstruction::PUSH_RBP:
+				// After push rbp: CFA = RSP+16, RBP saved at CFA-16
+				// DW_CFA_def_cfa_offset: 16
+				eh_frame_data.push_back(DwarfCFI::DW_CFA_def_cfa_offset);
+				DwarfCFI::appendULEB128(eh_frame_data, 16);
+				// DW_CFA_offset: rbp at CFA-16 (factored by data_align=-8, so offset=2)
+				eh_frame_data.push_back(DwarfCFI::DW_CFA_offset | 6);  // RBP = register 6
+				DwarfCFI::appendULEB128(eh_frame_data, 2);  // 2 * 8 = 16
+				break;
+				
+			case CFIInstruction::MOV_RSP_RBP:
+				// After mov rbp, rsp: CFA = RBP+16 (use frame pointer)
+				// DW_CFA_def_cfa_register: rbp
+				eh_frame_data.push_back(DwarfCFI::DW_CFA_def_cfa_register);
+				DwarfCFI::appendULEB128(eh_frame_data, 6);  // RBP = register 6
+				break;
+				
+			case CFIInstruction::SUB_RSP:
+				// After sub rsp, N: CFA still RBP+16 (no change needed when using frame pointer)
+				// CFA remains based on RBP, not RSP
+				break;
+				
+			case CFIInstruction::ADD_RSP:
+				// Epilogue starts - no CFI change needed until pop rbp
+				break;
+				
+			case CFIInstruction::POP_RBP:
+				// After pop rbp: CFA = RSP+8 (back to call site state)
+				// DW_CFA_def_cfa: rsp, 8
+				eh_frame_data.push_back(DwarfCFI::DW_CFA_def_cfa);
+				DwarfCFI::appendULEB128(eh_frame_data, 7);  // RSP = register 7
+				DwarfCFI::appendULEB128(eh_frame_data, 8);  // offset 8
+				break;
+			}
+		}
 		
 		// Pad to 8-byte alignment
 		while ((eh_frame_data.size() - fde_start + 4) % 8 != 0) {
