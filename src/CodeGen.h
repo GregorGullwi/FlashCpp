@@ -1586,11 +1586,22 @@ private:
 						
 						// If the return type is UserDefined (a type alias), try to resolve it to the actual underlying type
 						// This handles cases like `operator value_type()` where `using value_type = T;`
+						// Use recursive resolution to handle chains of type aliases
 						if (resolved_type == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
-							const TypeInfo& alias_type_info = gTypeInfo[type_spec.type_index()];
-							if (alias_type_info.type_ != Type::Void) {
-								resolved_type = alias_type_info.type_;
-								FLASH_LOG(Codegen, Debug, "Resolved type alias in conversion operator return type: UserDefined -> ", static_cast<int>(resolved_type));
+							TypeIndex current_type_index = type_spec.type_index();
+							int max_depth = 10;  // Prevent infinite loops from circular aliases
+							while (resolved_type == Type::UserDefined && current_type_index < gTypeInfo.size() && max_depth-- > 0) {
+								const TypeInfo& alias_type_info = gTypeInfo[current_type_index];
+								if (alias_type_info.type_ != Type::Void && alias_type_info.type_ != Type::UserDefined) {
+									resolved_type = alias_type_info.type_;
+									FLASH_LOG(Codegen, Debug, "Resolved type alias in conversion operator return type: UserDefined -> ", static_cast<int>(resolved_type));
+									break;
+								} else if (alias_type_info.type_ == Type::UserDefined && alias_type_info.type_index_ != current_type_index) {
+									// Follow the chain of aliases
+									current_type_index = alias_type_info.type_index_;
+								} else {
+									break;
+								}
 							}
 						}
 						
@@ -1607,7 +1618,7 @@ private:
 						if (resolved_type == Type::UserDefined && target_type != Type::Struct && target_type != Type::Enum) {
 							int expected_size = 0;
 							switch (target_type) {
-								case Type::Bool: expected_size = 8; break;
+								case Type::Bool: expected_size = 8; break;  // bool is 1 byte in C++
 								case Type::Char: case Type::UnsignedChar: expected_size = 8; break;
 								case Type::Short: case Type::UnsignedShort: expected_size = 16; break;
 								case Type::Int: case Type::UnsignedInt: expected_size = 32; break;
@@ -1630,9 +1641,11 @@ private:
 							// convert appropriately at runtime.
 							// This is necessary because template parameter substitution may not update the
 							// size_in_bits of the return type when T is a smaller type like bool.
+							// NOTE: This is a permissive fallback that may need stricter validation in the future.
 							if (expected_size > 0) {
-								FLASH_LOG(Codegen, Debug, "Found conversion operator via permissive matching for primitive target type ",
-								          static_cast<int>(target_type), " (operator return_size=", type_spec.size_in_bits(), ")");
+								FLASH_LOG(Codegen, Warning, "Using permissive conversion operator matching for primitive target type ",
+								          static_cast<int>(target_type), " - operator return_size=", type_spec.size_in_bits(), 
+								          " does not match expected_size=", expected_size);
 								return &member_func;
 							}
 						}
