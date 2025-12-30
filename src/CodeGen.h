@@ -4419,10 +4419,12 @@ private:
 				CatchBeginOp catch_op;
 				catch_op.exception_temp = exception_temp;
 				catch_op.type_index = type_index;
+				catch_op.exception_type = type_node.type();  // Store the Type enum for built-in types
 				catch_op.catch_end_label = catch_end_label;
 				catch_op.is_const = type_node.is_const();
 				catch_op.is_reference = type_node.is_lvalue_reference();
 				catch_op.is_rvalue_reference = type_node.is_rvalue_reference();
+				catch_op.is_catch_all = false;  // This is a typed catch, not catch(...)
 				ir_.addInstruction(IrInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token()));
 
 				// Add the exception variable to the symbol table for the catch block scope
@@ -4460,10 +4462,12 @@ private:
 				CatchBeginOp catch_op;
 				catch_op.exception_temp = TempVar(0);
 				catch_op.type_index = TypeIndex(0);
+				catch_op.exception_type = Type::Void;  // No specific type for catch(...)
 				catch_op.catch_end_label = catch_end_label;
 				catch_op.is_const = false;
 				catch_op.is_reference = false;
 				catch_op.is_rvalue_reference = false;
+				catch_op.is_catch_all = true;  // This IS catch(...)
 				ir_.addInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token());
 				symbol_table.enter_scope(ScopeType::Block);
 			}

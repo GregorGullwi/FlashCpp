@@ -1263,21 +1263,30 @@ public:
 		}
 		
 		std::vector<uint8_t> gcc_except_table_data;
+		std::vector<std::pair<uint32_t, std::string>> all_type_table_relocations;
 		LSDAGenerator generator;
 		
 		// Generate LSDA for each function and track offsets
 		for (const auto& [func_name, lsda_info] : function_lsda_map_) {
+			uint32_t lsda_offset = static_cast<uint32_t>(gcc_except_table_data.size());
+			
 			// Find the corresponding FDE to update its LSDA offset
 			for (auto& fde_info : functions_with_fdes_) {
 				if (fde_info.function_symbol == func_name) {
-					fde_info.lsda_offset = static_cast<uint32_t>(gcc_except_table_data.size());
+					fde_info.lsda_offset = lsda_offset;
 					break;
 				}
 			}
 			
-			auto lsda_data = generator.generate(lsda_info);
+			auto result = generator.generate(lsda_info);
+			
+			// Adjust relocation offsets to be relative to .gcc_except_table start
+			for (const auto& [offset, symbol] : result.type_table_relocations) {
+				all_type_table_relocations.push_back({lsda_offset + offset, symbol});
+			}
+			
 			gcc_except_table_data.insert(gcc_except_table_data.end(), 
-			                            lsda_data.begin(), lsda_data.end());
+			                            result.data.begin(), result.data.end());
 		}
 		
 		// Create .gcc_except_table section
@@ -1299,12 +1308,70 @@ public:
 			                    except_section->get_index(), ELFIO::STV_HIDDEN);
 		}
 		
-		// TODO: Create .rela.gcc_except_table for type_info relocations
+		// Create .rela.gcc_except_table for type_info relocations if needed
+		if (!all_type_table_relocations.empty()) {
+			auto* rela_except_table = elf_writer_.sections.add(".rela.gcc_except_table");
+			rela_except_table->set_type(ELFIO::SHT_RELA);
+			rela_except_table->set_flags(ELFIO::SHF_INFO_LINK);
+			rela_except_table->set_info(except_section->get_index());
+			rela_except_table->set_link(symtab_section_->get_index());
+			rela_except_table->set_addr_align(8);
+			rela_except_table->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+			
+			auto rela_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
+				elf_writer_, rela_except_table
+			);
+			
+			for (const auto& [offset, symbol] : all_type_table_relocations) {
+				// Add the type_info symbol if it doesn't exist (undefined external)
+				// First check if it already exists
+				bool found = false;
+				ELFIO::Elf_Xword sym_index = 0;
+				
+				auto* sym_accessor = getSymbolAccessor();
+				if (sym_accessor) {
+					ELFIO::Elf_Xword sym_count = sym_accessor->get_symbols_num();
+					for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
+						std::string sym_name;
+						ELFIO::Elf64_Addr sym_value;
+						ELFIO::Elf_Xword sym_size;
+						unsigned char sym_bind, sym_type;
+						ELFIO::Elf_Half sym_section;
+						unsigned char sym_other;
+						
+						sym_accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind,
+						                        sym_type, sym_section, sym_other);
+						
+						if (sym_name == symbol) {
+							sym_index = i;
+							found = true;
+							break;
+						}
+					}
+					
+					if (!found) {
+						// Add as undefined external symbol
+						// Order: string_accessor, name, value, size, bind, type, other, section_index
+						sym_accessor->add_symbol(*string_accessor_, symbol.c_str(),
+						                        0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE,
+						                        ELFIO::STV_DEFAULT, 0);
+						sym_index = sym_accessor->get_symbols_num() - 1;
+					}
+					
+					// Add R_X86_64_64 relocation (absolute 64-bit)
+					rela_accessor->add_entry(offset,
+					                        static_cast<ELFIO::Elf_Word>(sym_index),
+					                        ELFIO::R_X86_64_64,
+					                        0);
+				}
+			}
+		}
 		
 		if (g_enable_debug_output) {
 			std::cerr << "Generated .gcc_except_table section with " 
 			         << function_lsda_map_.size() << " LSDAs (" 
-			         << gcc_except_table_data.size() << " bytes)" << std::endl;
+			         << gcc_except_table_data.size() << " bytes), "
+			         << all_type_table_relocations.size() << " type_info relocations" << std::endl;
 		}
 	}
 

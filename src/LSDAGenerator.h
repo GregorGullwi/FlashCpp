@@ -42,13 +42,22 @@ public:
 		std::vector<std::string> type_table;  // Ordered list of type_info symbols
 	};
 	
+	// Result of LSDA generation - includes data and relocation info
+	struct LSDAGenerationResult {
+		std::vector<uint8_t> data;
+		// Type table relocations: offset (within LSDA) and symbol name
+		std::vector<std::pair<uint32_t, std::string>> type_table_relocations;
+	};
+	
 	// Generate LSDA binary data for a function
-	std::vector<uint8_t> generate(const FunctionLSDAInfo& info) {
-		std::vector<uint8_t> lsda_data;
+	LSDAGenerationResult generate(const FunctionLSDAInfo& info) {
+		LSDAGenerationResult result;
+		std::vector<uint8_t>& lsda_data = result.data;
 		
 		// Build type table first (to know offsets)
 		std::vector<uint8_t> type_table_data;
-		encode_type_table(type_table_data, info);
+		std::vector<std::pair<uint32_t, std::string>> type_table_relocs;
+		encode_type_table(type_table_data, info, type_table_relocs);
 		
 		// Build action table
 		std::vector<uint8_t> action_table_data;
@@ -58,8 +67,8 @@ public:
 		std::vector<uint8_t> call_site_table_data;
 		encode_call_site_table(call_site_table_data, info);
 		
-		// Now assemble the LSDA header
-		encode_header(lsda_data, type_table_data.size(), call_site_table_data.size());
+		// Now assemble the LSDA header with actual sizes
+		encode_header(lsda_data, type_table_data.size(), call_site_table_data.size(), action_table_data.size());
 		
 		// Append call site table
 		DwarfCFI::appendVector(lsda_data, call_site_table_data);
@@ -67,16 +76,24 @@ public:
 		// Append action table
 		DwarfCFI::appendVector(lsda_data, action_table_data);
 		
+		// Compute type table start offset
+		uint32_t type_table_start = static_cast<uint32_t>(lsda_data.size());
+		
 		// Append type table
 		DwarfCFI::appendVector(lsda_data, type_table_data);
 		
-		return lsda_data;
+		// Adjust relocation offsets to be relative to LSDA start
+		for (const auto& [offset, symbol] : type_table_relocs) {
+			result.type_table_relocations.push_back({type_table_start + offset, symbol});
+		}
+		
+		return result;
 	}
 
 private:
 	// Encode LSDA header
 	void encode_header(std::vector<uint8_t>& data, size_t type_table_size, 
-	                  size_t call_site_table_size) {
+	                  size_t call_site_table_size, size_t action_table_size) {
 		// LPStart encoding (landing pad base)
 		// 0xff = omitted (we use function-relative offsets)
 		data.push_back(DwarfCFI::DW_EH_PE_omit);
@@ -85,11 +102,12 @@ private:
 		// For now, use absolute pointers (will need relocations)
 		data.push_back(DwarfCFI::DW_EH_PE_absptr);
 		
-		// TType base offset (offset from here to type table)
-		// This is the size of: call_site_encoding + call_site_table_size + call_site_table + action_table
+		// TType base offset (offset from here to end of type table)
+		// This is the size of: call_site_encoding + call_site_table_size_uleb + call_site_table + action_table + type_table
 		uint64_t ttype_base = 1 + DwarfCFI::encodeULEB128(call_site_table_size).size() + 
 		                      call_site_table_size + 
-		                      calculate_action_table_size();
+		                      action_table_size +
+		                      type_table_size;
 		DwarfCFI::appendULEB128(data, ttype_base);
 		
 		// Call site table encoding
@@ -153,16 +171,21 @@ private:
 		}
 	}
 	
-	// Encode type table
-	void encode_type_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info) {
+	// Encode type table with relocation tracking
+	void encode_type_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info,
+	                      std::vector<std::pair<uint32_t, std::string>>& relocations) {
 		// Type table contains type_info pointers in reverse order
 		// (so type filter -1 refers to last entry, -2 to second-to-last, etc.)
 		
 		for (const auto& typeinfo_symbol : info.type_table) {
+			// Record relocation for this type_info pointer
+			uint32_t offset = static_cast<uint32_t>(data.size());
+			relocations.push_back({offset, typeinfo_symbol});
+			
 			// Each entry is a pointer (8 bytes on x86-64)
-			// These will need relocations to the type_info symbols
+			// Placeholder - will be filled by linker via relocation
 			for (int i = 0; i < 8; ++i) {
-				data.push_back(0);  // Placeholder for relocation
+				data.push_back(0);
 			}
 		}
 	}
@@ -179,9 +202,4 @@ private:
 	}
 	
 	// Calculate action table size (approximate)
-	size_t calculate_action_table_size() const {
-		// Each action entry is approximately 2-4 bytes
-		// For now, return a conservative estimate
-		return 16;  // Will be refined when we have actual try regions
-	}
 };

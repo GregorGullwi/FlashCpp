@@ -1409,11 +1409,13 @@ struct IndirectCallOp {
 // Catch block begin marker
 struct CatchBeginOp {
 	TempVar exception_temp;       // Temporary holding the exception object
-	TypeIndex type_index;         // Type to catch (0 for catch-all)
+	TypeIndex type_index;         // Type index for user-defined types
+	Type exception_type;          // Type enum for built-in types (Int, Double, etc.)
 	std::string_view catch_end_label;  // Label to jump to if not matched
 	bool is_const;                // True if caught by const
 	bool is_reference;            // True if caught by lvalue reference  
 	bool is_rvalue_reference;     // True if caught by rvalue reference
+	bool is_catch_all;            // True for catch(...) - catches all exceptions
 };
 
 // Throw exception operation

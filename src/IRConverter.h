@@ -3644,9 +3644,16 @@ private:
 					handler_info.catch_obj_offset = 0;  // No exception object for catch(...)
 				}
 				
-				// Get type name from gTypeInfo for type descriptor generation
-				if (!handler.is_catch_all && handler.type_index < gTypeInfo.size()) {
-					handler_info.type_name = StringTable::getStringView(gTypeInfo[handler.type_index].name());
+				// Get type name for type descriptor generation
+				if (!handler.is_catch_all) {
+					// For built-in types, use the Type enum; for user-defined types, use gTypeInfo
+					if (handler.exception_type != Type::Void && handler.exception_type != Type::UserDefined && handler.exception_type != Type::Struct) {
+						// Built-in type - get name from Type enum
+						handler_info.type_name = getTypeName(handler.exception_type);
+					} else if (handler.type_index < gTypeInfo.size()) {
+						// User-defined type - get name from gTypeInfo
+						handler_info.type_name = StringTable::getStringView(gTypeInfo[handler.type_index].name());
+					}
 				}
 				
 				block_info.catch_handlers.push_back(handler_info);
@@ -13343,10 +13350,11 @@ private:
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
 			handler.exception_temp = catch_op.exception_temp;
 			handler.type_index = catch_op.type_index;
+			handler.exception_type = catch_op.exception_type;  // Copy the Type enum
 			handler.is_const = catch_op.is_const;
 			handler.is_reference = catch_op.is_reference;
 			handler.is_rvalue_reference = catch_op.is_rvalue_reference;
-			handler.is_catch_all = (catch_op.type_index == 0);
+			handler.is_catch_all = catch_op.is_catch_all;  // Use the flag from IR, not derive from type_index
 			
 			try_block.catch_handlers.push_back(handler);
 		}
@@ -14139,7 +14147,8 @@ private:
 
 	// Exception handling tracking
 	struct CatchHandler {
-		TypeIndex type_index;  // Type to catch (0 for catch-all)
+		TypeIndex type_index;  // Type index for user-defined types
+		Type exception_type;   // Type enum for built-in types (Int, Double, etc.)
 		uint32_t handler_offset;  // Code offset of catch handler
 		TempVar exception_temp;  // Temporary holding the exception object
 		bool is_catch_all;  // True for catch(...)
