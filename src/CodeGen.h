@@ -5846,6 +5846,38 @@ private:
 			hidden_decl_op.array_element_size = array_element_size;
 			hidden_decl_op.array_count = array_size;
 			// Don't set initializer here for arrays - we'll copy element by element
+		} else if (is_reference_binding) {
+			// For reference bindings (auto& [a,b] = x), the hidden variable is a reference
+			// to the original object, not a copy
+			hidden_decl_op.type = init_type;
+			hidden_decl_op.size_in_bits = 64;  // Reference is always 64-bit pointer
+			hidden_decl_op.is_reference = true;
+			hidden_decl_op.is_rvalue_reference = node.is_rvalue_reference();
+			
+			// Generate addressof for the initializer to get reference
+			if (initializer.is<ExpressionNode>()) {
+				const ExpressionNode& expr_node = initializer.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(expr_node)) {
+					const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
+					
+					// Generate AddressOf for the identifier
+					TempVar addr_temp = var_counter.next();
+					AddressOfOp addr_op;
+					addr_op.result = addr_temp;
+					addr_op.operand.type = init_type;
+					addr_op.operand.size_in_bits = init_size;
+					addr_op.operand.pointer_depth = 0;
+					addr_op.operand.value = StringTable::getOrInternStringHandle(id_node.name());
+					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, addr_op, Token()));
+					
+					hidden_decl_op.initializer = TypedValue{init_type, 64, addr_temp};
+				} else {
+					// For other expressions, just use the value and hope for the best
+					hidden_decl_op.initializer = toTypedValue(init_operands);
+				}
+			} else {
+				hidden_decl_op.initializer = toTypedValue(init_operands);
+			}
 		} else {
 			hidden_decl_op.type = init_type;
 			hidden_decl_op.size_in_bits = init_size;

@@ -12689,6 +12689,7 @@ private:
 		
 		// Step 1: Load base address into RAX
 		int64_t base_offset = 0;
+		bool base_is_reference = false;
 		if (std::holds_alternative<StringHandle>(op.base)) {
 			// Variable name - look up its stack offset
 			StringHandle base_name = std::get<StringHandle>(op.base);
@@ -12699,14 +12700,28 @@ private:
 				return;
 			}
 			base_offset = it->second.offset;
+			
+			// Check if base is a reference - if so, we need to load the address it contains
+			// instead of computing the address of the variable itself
+			auto ref_it = reference_stack_info_.find(static_cast<int32_t>(base_offset));
+			base_is_reference = (ref_it != reference_stack_info_.end());
 		} else {
 			// TempVar - get its stack offset
 			TempVar base_temp = std::get<TempVar>(op.base);
 			base_offset = getStackOffsetFromTempVar(base_temp);
+			
+			// Check if TempVar is a reference
+			auto ref_it = reference_stack_info_.find(static_cast<int32_t>(base_offset));
+			base_is_reference = (ref_it != reference_stack_info_.end());
 		}
 		
-		// LEA RAX, [RBP + base_offset]
-		emitLeaFromFrame(X64Register::RAX, base_offset);
+		if (base_is_reference) {
+			// Base is a reference - load the address it contains (MOV, not LEA)
+			emitMovFromFrame(X64Register::RAX, base_offset);
+		} else {
+			// Base is a regular variable - compute its address (LEA)
+			emitLeaFromFrame(X64Register::RAX, base_offset);
+		}
 		
 		// Step 2: Process each array index
 		for (const auto& arr_idx : op.array_indices) {
