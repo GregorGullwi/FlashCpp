@@ -1423,8 +1423,12 @@ struct ThrowOp {
 	TypeIndex type_index;         // Type of exception being thrown
 	Type exception_type;          // Actual Type enum for built-in types
 	size_t size_in_bytes;         // Size of exception object in bytes
-	TempVar value;                // Temporary or value to throw
+	TempVar value;                // Temporary or value to throw (if is_immediate is false)
+	unsigned long long immediate_value = 0; // Immediate value for literals (if is_immediate is true)
+	double float_immediate_value = 0.0;     // Immediate value for float literals
 	bool is_rvalue;               // True if throwing an rvalue (can be moved)
+	bool is_immediate = false;    // True if throwing an immediate value instead of a temp
+	bool is_float_immediate = false; // True if throwing a float immediate
 };
 
 // Helper function to format conversion operations for IR output

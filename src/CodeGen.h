@@ -4512,11 +4512,6 @@ private:
 			
 			Type expr_type = std::get<Type>(expr_operands[0]);
 			size_t type_size = std::get<int>(expr_operands[1]);
-			TempVar value_temp = TempVar(0);
-			
-			if (std::holds_alternative<TempVar>(expr_operands[2])) {
-				value_temp = std::get<TempVar>(expr_operands[2]);
-			}
 			
 			// Extract TypeIndex from expression operands (now at position 3 since all operands have 4 elements)
 			TypeIndex exception_type_index = 0;
@@ -4529,8 +4524,23 @@ private:
 			throw_op.type_index = exception_type_index;
 			throw_op.exception_type = expr_type;  // Store the actual Type enum
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
-			throw_op.value = value_temp;
 			throw_op.is_rvalue = true;  // Default to rvalue for now
+			
+			// Handle the value - it can be a TempVar, immediate int, or immediate float
+			if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				throw_op.value = std::get<TempVar>(expr_operands[2]);
+				throw_op.is_immediate = false;
+			} else if (std::holds_alternative<unsigned long long>(expr_operands[2])) {
+				// Integer literal - store as immediate
+				throw_op.immediate_value = std::get<unsigned long long>(expr_operands[2]);
+				throw_op.is_immediate = true;
+				throw_op.is_float_immediate = false;
+			} else if (std::holds_alternative<double>(expr_operands[2])) {
+				// Float literal - store as float immediate
+				throw_op.float_immediate_value = std::get<double>(expr_operands[2]);
+				throw_op.is_immediate = true;
+				throw_op.is_float_immediate = true;
+			}
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::Throw, std::move(throw_op), node.throw_token()));
 		}

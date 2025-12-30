@@ -13404,20 +13404,25 @@ private:
 					emitMovToFrame(X64Register::RAX, stack_offset);
 				} else {
 					// Get type size for dereferencing
-					// Use exception_type (Type enum) instead of type_index since type_index 
-					// may be 0 for catch(int) when the parameter type wasn't resolved to a TypeIndex
-					TypeIndex type_idx = catch_op.type_index;
-					if (type_idx == 0 && catch_op.exception_type != Type::Void) {
-						// Fall back to exception_type enum value
-						type_idx = static_cast<TypeIndex>(catch_op.exception_type);
+					// For built-in types, use get_type_size_bits directly
+					// For user-defined types, look up in gTypeInfo
+					int type_size_bits = 0;
+					if (catch_op.exception_type != Type::Void && 
+					    catch_op.exception_type != Type::UserDefined &&
+					    catch_op.exception_type != Type::Invalid) {
+						// Built-in type - use direct lookup
+						type_size_bits = get_type_size_bits(catch_op.exception_type);
+					} else if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
+						// User-defined type - look up in gTypeInfo
+						const TypeInfo& type_info = gTypeInfo[catch_op.type_index];
+						type_size_bits = type_info.type_size_;
 					}
-					const TypeInfo& type_info = gTypeInfo[type_idx];
-					size_t type_size = type_info.type_size_ / 8;  // Convert bits to bytes
+					size_t type_size = type_size_bits / 8;  // Convert bits to bytes
 					
 					if (g_enable_debug_output) {
-						std::cerr << "[DEBUG][Codegen] CatchBegin: type_idx=" << type_idx
-						          << " type_size=" << type_size
-						          << " bits=" << type_info.type_size_ << std::endl;
+						std::cerr << "[DEBUG][Codegen] CatchBegin: exception_type=" << static_cast<int>(catch_op.exception_type)
+						          << " type_size_bits=" << type_size_bits
+						          << " type_size=" << type_size << std::endl;
 					}
 					
 					// Load value from exception object and store to catch variable
@@ -13428,7 +13433,7 @@ private:
 							std::cerr << "[DEBUG][Codegen] CatchBegin: dereferencing exception value" << std::endl;
 						}
 						emitMovFromMemory(X64Register::RCX, X64Register::RAX, 0, type_size);
-						emitMovToFrameBySize(X64Register::RCX, stack_offset, type_info.type_size_);
+						emitMovToFrameBySize(X64Register::RCX, stack_offset, type_size_bits);
 					} else {
 						// Large type or unknown size: just store pointer
 						if (g_enable_debug_output) {
@@ -13507,13 +13512,32 @@ private:
 			
 			// Step 2: Copy exception object to allocated memory
 			if (exception_size <= 8) {
-				// Small object: load into RCX and store to [R15]
-				TempVar temp = throw_op.value;
-				if (temp.var_number != 0) {
-					int32_t stack_offset = getStackOffsetFromTempVar(temp);
-					emitMovFromFrameBySize(X64Register::RCX, stack_offset, static_cast<int>(exception_size * 8));
+				// Small object: load value into RCX and store to [R15]
+				if (throw_op.is_immediate) {
+					// Immediate value - load directly
+					if (throw_op.is_float_immediate) {
+						// For float, we need to store the bits representation
+						uint64_t bits;
+						if (exception_size == 4) {
+							float f = static_cast<float>(throw_op.float_immediate_value);
+							std::memcpy(&bits, &f, sizeof(float));
+							bits &= 0xFFFFFFFF; // Clear upper bits
+						} else {
+							std::memcpy(&bits, &throw_op.float_immediate_value, sizeof(double));
+						}
+						emitMovImm64(X64Register::RCX, bits);
+					} else {
+						emitMovImm64(X64Register::RCX, throw_op.immediate_value);
+					}
 				} else {
-					emitMovImm64(X64Register::RCX, 0);
+					// TempVar - load from stack
+					TempVar temp = throw_op.value;
+					if (temp.var_number != 0) {
+						int32_t stack_offset = getStackOffsetFromTempVar(temp);
+						emitMovFromFrameBySize(X64Register::RCX, stack_offset, static_cast<int>(exception_size * 8));
+					} else {
+						emitMovImm64(X64Register::RCX, 0);
+					}
 				}
 				// Store exception value to allocated memory [R15 + 0]
 				emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::R15, 0, static_cast<int>(exception_size));
