@@ -10396,12 +10396,68 @@ private:
 				if (overload_decl == &decl_node) {
 					// Found the matching function - check if it should be inlined
 					if (overload_func_decl->is_inline_always() && functionCallNode.arguments().size() == 1) {
-						// Inline by returning the argument directly
+						// Check if function returns a reference - if so, we need special handling
+						const TypeSpecifierNode& return_type_spec = overload_decl->type_node().as<TypeSpecifierNode>();
+						bool returns_reference = return_type_spec.is_reference() || return_type_spec.is_rvalue_reference();
+						
 						auto arg_node = functionCallNode.arguments()[0];
 						if (arg_node.is<ExpressionNode>()) {
-							auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
 							FLASH_LOG(Codegen, Debug, "Inlining pure expression function (inline_always): ", func_name_view);
-							return arg_ir;
+							
+							if (returns_reference) {
+								// For functions returning references (like std::move, std::forward),
+								// we need to generate an addressof the argument, not just return it
+								const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+								
+								// Check if the argument is an identifier (common case for move(x))
+								if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+									const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
+									
+									// Generate addressof for the identifier
+									TempVar result_var = var_counter.next();
+									AddressOfOp op;
+									op.result = result_var;
+									
+									// Get type info from the identifier
+									StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
+									std::optional<ASTNode> symbol = symbol_table.lookup(id_handle);
+									if (!symbol.has_value() && global_symbol_table_) {
+										symbol = global_symbol_table_->lookup(id_handle);
+									}
+									
+									Type operand_type = Type::Int;  // Default
+									int operand_size = 32;
+									if (symbol.has_value()) {
+										if (symbol->is<DeclarationNode>()) {
+											const TypeSpecifierNode& type = symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+											operand_type = type.type();
+											operand_size = static_cast<int>(type.size_in_bits());
+											if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
+										} else if (symbol->is<VariableDeclarationNode>()) {
+											const TypeSpecifierNode& type = symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+											operand_type = type.type();
+											operand_size = static_cast<int>(type.size_in_bits());
+											if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
+										}
+									}
+									
+									op.operand.type = operand_type;
+									op.operand.size_in_bits = operand_size;
+									op.operand.pointer_depth = 0;
+									op.operand.value = id_handle;
+									
+									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
+									
+									// Return pointer type (64-bit address) with pointer depth 1
+									return { operand_type, 64, result_var, 1ULL };
+								}
+								// For non-identifier expressions, fall through to generate a regular call
+								// (we can't inline complex expressions that need reference semantics)
+							} else {
+								// Non-reference return - can inline directly by returning argument
+								auto arg_ir = visitExpressionNode(arg_node.as<ExpressionNode>());
+								return arg_ir;
+							}
 						}
 					}
 					break;  // Found the matching function, stop searching
