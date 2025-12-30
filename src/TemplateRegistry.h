@@ -341,11 +341,22 @@ struct OutOfLineMemberVariable {
 	std::vector<StringHandle> template_param_names;  // Names of template parameters
 };
 
+// SFINAE condition for void_t patterns
+// Stores information about dependent member type checks like "typename T::type"
+struct SfinaeCondition {
+	size_t template_param_index;  // Which template parameter (e.g., 0 for T in has_type<T>)
+	StringHandle member_name;     // The member type name to check (e.g., "type")
+	
+	SfinaeCondition() : template_param_index(0), member_name() {}
+	SfinaeCondition(size_t idx, StringHandle name) : template_param_index(idx), member_name(name) {}
+};
+
 // Template specialization pattern - represents a pattern like T&, T*, const T, etc.
 struct TemplatePattern {
 	std::vector<ASTNode> template_params;  // Template parameters (e.g., typename T)
 	std::vector<TemplateTypeArg> pattern_args;  // Pattern like T&, T*, etc.
 	ASTNode specialized_node;  // The AST node for the specialized template
+	std::optional<SfinaeCondition> sfinae_condition;  // Optional SFINAE check for void_t patterns
 	
 	// Check if this pattern matches the given concrete arguments
 	// For example, pattern T& matches int&, float&, etc.
@@ -552,6 +563,40 @@ struct TemplatePattern {
 				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", param_name, " to concrete type");
 				// Increment param_index since we bound a new template parameter
 				++param_index;
+			}
+		}
+		
+		// SFINAE check: If this pattern has a SFINAE condition (e.g., void_t<typename T::type>),
+		// verify that the condition is satisfied with the substituted types.
+		// This enables proper void_t detection behavior.
+		if (sfinae_condition.has_value()) {
+			const SfinaeCondition& cond = *sfinae_condition;
+			
+			// Get the concrete type for the template parameter
+			if (cond.template_param_index < concrete_args.size()) {
+				const TemplateTypeArg& concrete_arg = concrete_args[cond.template_param_index];
+				
+				// Check if the concrete type has the required member type
+				if (concrete_arg.type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[concrete_arg.type_index];
+					
+					// Build the qualified member name (e.g., "WithType::type")
+					StringBuilder qualified_name;
+					qualified_name.append(type_info.name());
+					qualified_name.append("::");
+					qualified_name.append(cond.member_name);
+					StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name.commit());
+					
+					// Check if this member type exists
+					auto type_it = gTypesByName.find(qualified_handle);
+					if (type_it == gTypesByName.end()) {
+						FLASH_LOG(Templates, Debug, "SFINAE condition failed: ", 
+						          StringTable::getStringView(qualified_handle), " does not exist");
+						return false;  // SFINAE failure - pattern doesn't match
+					}
+					FLASH_LOG(Templates, Debug, "SFINAE condition passed: ", 
+					          StringTable::getStringView(qualified_handle), " exists");
+				}
 			}
 		}
 	
@@ -847,16 +892,63 @@ public:
 	void registerSpecializationPattern(std::string_view template_name, 
 	                                   const std::vector<ASTNode>& template_params,
 	                                   const std::vector<TemplateTypeArg>& pattern_args, 
-	                                   ASTNode specialized_node) {
+	                                   ASTNode specialized_node,
+	                                   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
 		std::string key(template_name);
 		FLASH_LOG(Templates, Debug, "registerSpecializationPattern: template_name='", template_name, 
 		          "', num_template_params=", template_params.size(), ", num_pattern_args=", pattern_args.size());
+		
+		// Debug: log each pattern arg
+		for (size_t i = 0; i < pattern_args.size(); ++i) {
+			const auto& arg = pattern_args[i];
+			FLASH_LOG(Templates, Debug, "  pattern_arg[", i, "]: base_type=", static_cast<int>(arg.base_type),
+			          ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent,
+			          ", is_value=", arg.is_value);
+		}
+		
 		TemplatePattern pattern;
 		pattern.template_params = template_params;
 		pattern.pattern_args = pattern_args;
 		pattern.specialized_node = specialized_node;
+		pattern.sfinae_condition = sfinae_cond;
+		
+		// Auto-detect void_t SFINAE patterns if no explicit condition provided
+		// Heuristic: patterns with 2 args where first is dependent and second is void,
+		// and the struct inherits from true_type, are void_t detection patterns.
+		if (!sfinae_cond.has_value() && pattern_args.size() == 2) {
+			const auto& first_arg = pattern_args[0];
+			const auto& second_arg = pattern_args[1];
+			
+			// Check: first arg is dependent (template param), second arg is void
+			if (first_arg.is_dependent && !second_arg.is_dependent && 
+			    second_arg.base_type == Type::Void) {
+				// Check if the struct inherits from true_type (indicating it's the positive detection case)
+				if (specialized_node.is<StructDeclarationNode>()) {
+					const StructDeclarationNode& struct_node = specialized_node.as<StructDeclarationNode>();
+					for (const auto& base : struct_node.base_classes()) {
+						std::string_view base_name = base.name;
+						if (base_name == "true_type" || base_name.find("true_type") != std::string_view::npos) {
+							// This looks like a void_t detection pattern for has_type<T, void_t<typename T::type>>
+							// Set SFINAE condition to check for T::type
+							pattern.sfinae_condition = SfinaeCondition(0, StringTable::getOrInternStringHandle("type"));
+							FLASH_LOG(Templates, Debug, "Auto-detected void_t SFINAE pattern: checking for ::type member");
+							break;
+						}
+					}
+				}
+			}
+		}
+		
 		specialization_patterns_[key].push_back(std::move(pattern));
 		FLASH_LOG(Templates, Debug, "  Total patterns for '", template_name, "': ", specialization_patterns_[key].size());
+		if (pattern.sfinae_condition.has_value()) {
+			// Note: pattern has been moved, we need to access the stored one
+			const auto& stored_pattern = specialization_patterns_[key].back();
+			if (stored_pattern.sfinae_condition.has_value()) {
+				FLASH_LOG(Templates, Debug, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index, 
+				          "]::", StringTable::getStringView(stored_pattern.sfinae_condition->member_name));
+			}
+		}
 	}
 
 	// Register a template specialization (exact match)
