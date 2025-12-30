@@ -3636,13 +3636,8 @@ private:
 				handler_info.is_reference = handler.is_reference;
 				handler_info.is_rvalue_reference = handler.is_rvalue_reference;
 				
-				// Calculate frame offset for caught exception object
-				// Skip for catch-all handlers (they don't have an exception variable)
-				if (!handler.is_catch_all) {
-					handler_info.catch_obj_offset = getStackOffsetFromTempVar(handler.exception_temp);
-				} else {
-					handler_info.catch_obj_offset = 0;  // No exception object for catch(...)
-				}
+				// Use pre-computed frame offset for caught exception object
+				handler_info.catch_obj_offset = handler.catch_obj_stack_offset;
 				
 				// Get type name for type descriptor generation
 				if (!handler.is_catch_all) {
@@ -13348,13 +13343,19 @@ private:
 			
 			// Extract data from typed payload
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
-			handler.exception_temp = catch_op.exception_temp;
 			handler.type_index = catch_op.type_index;
 			handler.exception_type = catch_op.exception_type;  // Copy the Type enum
 			handler.is_const = catch_op.is_const;
 			handler.is_reference = catch_op.is_reference;
 			handler.is_rvalue_reference = catch_op.is_rvalue_reference;
 			handler.is_catch_all = catch_op.is_catch_all;  // Use the flag from IR, not derive from type_index
+			
+			// Pre-compute stack offset for exception object (avoid looking up during finalization)
+			if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
+				handler.catch_obj_stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+			} else {
+				handler.catch_obj_stack_offset = 0;
+			}
 			
 			try_block.catch_handlers.push_back(handler);
 		}
@@ -14150,7 +14151,7 @@ private:
 		TypeIndex type_index;  // Type index for user-defined types
 		Type exception_type;   // Type enum for built-in types (Int, Double, etc.)
 		uint32_t handler_offset;  // Code offset of catch handler
-		TempVar exception_temp;  // Temporary holding the exception object
+		int32_t catch_obj_stack_offset;  // Pre-computed stack offset for exception object
 		bool is_catch_all;  // True for catch(...)
 		bool is_const;  // True if caught by const
 		bool is_reference;  // True if caught by lvalue reference

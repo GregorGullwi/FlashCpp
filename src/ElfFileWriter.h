@@ -324,9 +324,13 @@ public:
 	}
 
 	/**
-	 * @brief Get or create type_info symbol for a built-in type
+	 * @brief Get type_info symbol name for a built-in type
 	 * @param type The type to get type_info for
 	 * @return Symbol name for the type_info (e.g., "_ZTIi" for int)
+	 * 
+	 * For built-in types, the type_info is provided by the C++ runtime library (libstdc++/libc++).
+	 * We only need to generate references to these external symbols - the actual type_info
+	 * structures are defined in the runtime.
 	 */
 	std::string get_or_create_builtin_typeinfo(Type type) {
 		// Map types to Itanium C++ ABI mangled type codes
@@ -358,46 +362,9 @@ public:
 		              static_cast<int>(type_code.length()), type_code.data());
 		std::string typeinfo_symbol(typeinfo_symbol_buf);
 		
-		// Check if we've already created this symbol
-		static std::set<std::string> created_typeinfos;
-		if (created_typeinfos.find(typeinfo_symbol) != created_typeinfos.end()) {
-			return typeinfo_symbol;
-		}
-		
-		// For built-in types, we need to create a minimal type_info structure
-		// Itanium C++ ABI: type_info for fundamental types is just vtable pointer + name
-		struct FundamentalTypeInfo {
-			const void* vtable;  // Pointer to __fundamental_type_info vtable (external)
-			const char* name;    // Mangled type name
-		};
-		
-		// We'll emit a reference to an external vtable symbol
-		// The actual vtable will be provided by the C++ runtime library
-		static constexpr std::string_view vtable_symbol = "_ZTVN10__cxxabiv123__fundamental_type_infoE";
-		
-		// For now, we'll create a placeholder that references the external vtable
-		// In a full implementation, we'd emit proper type_info data
-		// For the minimal case, we just need the symbol to exist
-		
-		// Create a minimal type_info: just 16 bytes (vtable ptr + name ptr)
-		std::vector<char> typeinfo_data(16, 0);
-		
-		// Add typeinfo data to .rodata
-		auto* rodata = getSectionByName(".rodata");
-		if (!rodata) {
-			throw std::runtime_error(".rodata section not found");
-		}
-		
-		uint32_t typeinfo_offset = rodata->get_size();
-		rodata->append_data(typeinfo_data.data(), typeinfo_data.size());
-		
-		// Add typeinfo symbol
-		getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
-		                  rodata->get_index(), typeinfo_offset, typeinfo_data.size());
-		
-		created_typeinfos.insert(typeinfo_symbol);
-		
-		FLASH_LOG_FORMAT(Codegen, Debug, "Created built-in typeinfo '{}' for type code '{}'", 
+		// Built-in type_info symbols are external (provided by C++ runtime)
+		// Just return the symbol name - the linker will resolve it
+		FLASH_LOG_FORMAT(Codegen, Debug, "Using external typeinfo '{}' for type code '{}'", 
 		                 typeinfo_symbol, type_code);
 		
 		return typeinfo_symbol;
@@ -963,7 +930,8 @@ public:
 	// Generate Frame Description Entry (FDE) for a function
 	void generate_eh_frame_fde(std::vector<uint8_t>& eh_frame_data, 
 	                           uint32_t cie_offset,
-	                           FDEInfo& fde_info) {  // Non-const so we can update pc_begin_offset
+	                           FDEInfo& fde_info,
+	                           bool cie_has_lsda) {  // Non-const so we can update pc_begin_offset
 		// FDE structure
 		
 		size_t length_offset = eh_frame_data.size();
@@ -992,17 +960,21 @@ public:
 		eh_frame_data.push_back((fde_info.function_length >> 24) & 0xff);
 		
 		// Augmentation data
-		if (fde_info.has_exception_handling) {
+		// When CIE has 'L' (LSDA pointer format), every FDE must include an LSDA pointer
+		if (cie_has_lsda) {
 			// Augmentation data length (4 bytes for LSDA pointer)
 			DwarfCFI::appendULEB128(eh_frame_data, 4);
 			
-			// LSDA pointer (PC-relative to .gcc_except_table)
-			// Record offset for relocation
-			fde_info.lsda_pointer_offset = static_cast<uint32_t>(eh_frame_data.size());
-			fde_info.lsda_symbol = ".gcc_except_table";
-			for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);  // Placeholder for relocation
+			if (fde_info.has_exception_handling) {
+				// LSDA pointer (PC-relative to .gcc_except_table)
+				// Record offset for relocation
+				fde_info.lsda_pointer_offset = static_cast<uint32_t>(eh_frame_data.size());
+				fde_info.lsda_symbol = ".gcc_except_table";
+			}
+			// Always emit 4 bytes (0 if no exception handling, will be relocated if needed)
+			for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
 		} else {
-			// No exception handling - augmentation data length is 0
+			// No LSDA in CIE - augmentation data length is 0
 			DwarfCFI::appendULEB128(eh_frame_data, 0);
 		}
 		
@@ -1107,7 +1079,7 @@ public:
 		
 		// Generate FDEs for each function
 		for (auto& fde_info : functions_with_fdes_) {  // Non-const to update pc_begin_offset
-			generate_eh_frame_fde(eh_frame_data, cie_offset, fde_info);
+			generate_eh_frame_fde(eh_frame_data, cie_offset, fde_info, has_exception_handlers);
 		}
 		
 		// Create .eh_frame section
