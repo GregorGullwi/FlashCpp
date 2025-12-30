@@ -4419,10 +4419,12 @@ private:
 				CatchBeginOp catch_op;
 				catch_op.exception_temp = exception_temp;
 				catch_op.type_index = type_index;
+				catch_op.exception_type = type_node.type();  // Store the Type enum for built-in types
 				catch_op.catch_end_label = catch_end_label;
 				catch_op.is_const = type_node.is_const();
 				catch_op.is_reference = type_node.is_lvalue_reference();
 				catch_op.is_rvalue_reference = type_node.is_rvalue_reference();
+				catch_op.is_catch_all = false;  // This is a typed catch, not catch(...)
 				ir_.addInstruction(IrInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token()));
 
 				// Add the exception variable to the symbol table for the catch block scope
@@ -4460,10 +4462,12 @@ private:
 				CatchBeginOp catch_op;
 				catch_op.exception_temp = TempVar(0);
 				catch_op.type_index = TypeIndex(0);
+				catch_op.exception_type = Type::Void;  // No specific type for catch(...)
 				catch_op.catch_end_label = catch_end_label;
 				catch_op.is_const = false;
 				catch_op.is_reference = false;
 				catch_op.is_rvalue_reference = false;
+				catch_op.is_catch_all = true;  // This IS catch(...)
 				ir_.addInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token());
 				symbol_table.enter_scope(ScopeType::Block);
 			}
@@ -4508,11 +4512,6 @@ private:
 			
 			Type expr_type = std::get<Type>(expr_operands[0]);
 			size_t type_size = std::get<int>(expr_operands[1]);
-			TempVar value_temp = TempVar(0);
-			
-			if (std::holds_alternative<TempVar>(expr_operands[2])) {
-				value_temp = std::get<TempVar>(expr_operands[2]);
-			}
 			
 			// Extract TypeIndex from expression operands (now at position 3 since all operands have 4 elements)
 			TypeIndex exception_type_index = 0;
@@ -4523,9 +4522,23 @@ private:
 			// Create ThrowOp with typed data
 			ThrowOp throw_op;
 			throw_op.type_index = exception_type_index;
+			throw_op.exception_type = expr_type;  // Store the actual Type enum
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
-			throw_op.value = value_temp;
 			throw_op.is_rvalue = true;  // Default to rvalue for now
+			
+			// Handle the value - it can be a TempVar, immediate int, or immediate float
+			// All these types are compatible with IrValue variant
+			if (std::holds_alternative<TempVar>(expr_operands[2])) {
+				throw_op.exception_value = std::get<TempVar>(expr_operands[2]);
+			} else if (std::holds_alternative<unsigned long long>(expr_operands[2])) {
+				throw_op.exception_value = std::get<unsigned long long>(expr_operands[2]);
+			} else if (std::holds_alternative<double>(expr_operands[2])) {
+				throw_op.exception_value = std::get<double>(expr_operands[2]);
+			} else {
+				// Unknown operand type - log warning and default to zero value
+				FLASH_LOG(Codegen, Warning, "Unknown operand type in throw expression, defaulting to zero");
+				throw_op.exception_value = static_cast<unsigned long long>(0);
+			}
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::Throw, std::move(throw_op), node.throw_token()));
 		}

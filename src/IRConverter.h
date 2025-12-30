@@ -3618,6 +3618,55 @@ public:
 	}
 
 private:
+	// Helper to convert internal try blocks to ObjectFileWriter format
+	// Used during function finalization to prepare exception handling information
+	std::pair<std::vector<ObjectFileWriter::TryBlockInfo>, std::vector<ObjectFileWriter::UnwindMapEntryInfo>>
+	convertExceptionInfoToWriterFormat() {
+		std::vector<ObjectFileWriter::TryBlockInfo> try_blocks;
+		for (const auto& try_block : current_function_try_blocks_) {
+			ObjectFileWriter::TryBlockInfo block_info;
+			block_info.try_start_offset = try_block.try_start_offset;
+			block_info.try_end_offset = try_block.try_end_offset;
+			for (const auto& handler : try_block.catch_handlers) {
+				ObjectFileWriter::CatchHandlerInfo handler_info;
+				handler_info.type_index = static_cast<uint32_t>(handler.type_index);
+				handler_info.handler_offset = handler.handler_offset;
+				handler_info.is_catch_all = handler.is_catch_all;
+				handler_info.is_const = handler.is_const;
+				handler_info.is_reference = handler.is_reference;
+				handler_info.is_rvalue_reference = handler.is_rvalue_reference;
+				
+				// Use pre-computed frame offset for caught exception object
+				handler_info.catch_obj_offset = handler.catch_obj_stack_offset;
+				
+				// Get type name for type descriptor generation
+				if (!handler.is_catch_all) {
+					// For built-in types, use the Type enum; for user-defined types, use gTypeInfo
+					if (handler.exception_type != Type::Void && handler.exception_type != Type::UserDefined && handler.exception_type != Type::Struct) {
+						// Built-in type - get name from Type enum
+						handler_info.type_name = getTypeName(handler.exception_type);
+					} else if (handler.type_index < gTypeInfo.size()) {
+						// User-defined type - get name from gTypeInfo
+						handler_info.type_name = StringTable::getStringView(gTypeInfo[handler.type_index].name());
+					}
+				}
+				
+				block_info.catch_handlers.push_back(handler_info);
+			}
+			try_blocks.push_back(block_info);
+		}
+		
+		std::vector<ObjectFileWriter::UnwindMapEntryInfo> unwind_map;
+		for (const auto& unwind_entry : current_function_unwind_map_) {
+			ObjectFileWriter::UnwindMapEntryInfo entry_info;
+			entry_info.to_state = unwind_entry.to_state;
+			entry_info.action = unwind_entry.action.isValid() ? std::string(StringTable::getStringView(unwind_entry.action)) : std::string();
+			unwind_map.push_back(entry_info);
+		}
+		
+		return {std::move(try_blocks), std::move(unwind_map)};
+	}
+
 	// Shared arithmetic operation context
 	struct ArithmeticOperationContext {
 		TypedValue result_value;
@@ -7791,49 +7840,12 @@ private:
 			writer.set_function_debug_range(mangled, 0, 0);	// doesn't seem needed
 
 			// Add exception handling information (required for x64) - uses mangled name
-			// Convert try blocks to ObjectFileWriter format
-			std::vector<ObjectFileWriter::TryBlockInfo> try_blocks;
-			for (const auto& try_block : current_function_try_blocks_) {
-				ObjectFileWriter::TryBlockInfo block_info;
-				block_info.try_start_offset = try_block.try_start_offset;
-				block_info.try_end_offset = try_block.try_end_offset;
-				for (const auto& handler : try_block.catch_handlers) {
-					ObjectFileWriter::CatchHandlerInfo handler_info;
-					handler_info.type_index = static_cast<uint32_t>(handler.type_index);
-					handler_info.handler_offset = handler.handler_offset;
-					handler_info.is_catch_all = handler.is_catch_all;
-					handler_info.is_const = handler.is_const;
-					handler_info.is_reference = handler.is_reference;
-					handler_info.is_rvalue_reference = handler.is_rvalue_reference;
-					
-					// Calculate frame offset for caught exception object
-					// Skip for catch-all handlers (they don't have an exception variable)
-					if (!handler.is_catch_all) {
-						handler_info.catch_obj_offset = getStackOffsetFromTempVar(handler.exception_temp);
-					} else {
-						handler_info.catch_obj_offset = 0;  // No exception object for catch(...)
-					}
-					
-					// Get type name from gTypeInfo for type descriptor generation
-					if (!handler.is_catch_all && handler.type_index < gTypeInfo.size()) {
-						handler_info.type_name = StringTable::getStringView(gTypeInfo[handler.type_index].name());
-					}
-					
-					block_info.catch_handlers.push_back(handler_info);
-				}
-				try_blocks.push_back(block_info);
+			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
+			} else {
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map);
 			}
-			
-			// Convert unwind map to ObjectFileWriter format
-			std::vector<ObjectFileWriter::UnwindMapEntryInfo> unwind_map;
-			for (const auto& unwind_entry : current_function_unwind_map_) {
-				ObjectFileWriter::UnwindMapEntryInfo entry_info;
-				entry_info.to_state = unwind_entry.to_state;
-				entry_info.action = unwind_entry.action.isValid() ? std::string(StringTable::getStringView(unwind_entry.action)) : std::string();
-				unwind_map.push_back(entry_info);
-			}
-			
-			writer.add_function_exception_info(std::string(StringTable::getStringView(current_function_mangled_name_)), current_function_offset_, function_length, try_blocks, unwind_map);
 		
 			// Clean up the previous function's variable scope
 			// This happens when we start a NEW function, ensuring the previous function's scope is removed
@@ -7849,6 +7861,9 @@ private:
 			current_function_local_objects_.clear();  // Clear local object tracking
 			current_function_unwind_map_.clear();  // Clear unwind map
 			current_exception_state_ = -1;  // Reset state counter
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				current_function_cfi_.clear();  // Clear CFI tracking for next function
+			}
 		}
 
 		// align the function to 16 bytes
@@ -8048,7 +8063,26 @@ private:
 		// MSVC-style prologue: push rbp; mov rbp, rsp; sub rsp, total_stack_space
 		// Always generate prologue - even if total_stack_space is 0, we need RBP for parameter access
 		textSectionData.push_back(0x55); // push rbp
+		
+		// Track CFI: After push rbp, CFA = RSP+16, RBP at CFA-16
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			current_function_cfi_.push_back({
+				ElfFileWriter::CFIInstruction::PUSH_RBP,
+				static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
+				0
+			});
+		}
+		
 		textSectionData.push_back(0x48); textSectionData.push_back(0x8B); textSectionData.push_back(0xEC); // mov rbp, rsp
+		
+		// Track CFI: After mov rbp, rsp, CFA = RBP+16
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			current_function_cfi_.push_back({
+				ElfFileWriter::CFIInstruction::MOV_RSP_RBP,
+				static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
+				0
+			});
+		}
 
 		// Always emit SUB RSP with 32-bit immediate (7 bytes total) for patching flexibility
 		// We'll patch the actual value at function end after we know max_temp_var_index
@@ -13309,12 +13343,23 @@ private:
 			
 			// Extract data from typed payload
 			const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
-			handler.exception_temp = catch_op.exception_temp;
 			handler.type_index = catch_op.type_index;
+			handler.exception_type = catch_op.exception_type;  // Copy the Type enum
 			handler.is_const = catch_op.is_const;
 			handler.is_reference = catch_op.is_reference;
 			handler.is_rvalue_reference = catch_op.is_rvalue_reference;
-			handler.is_catch_all = (catch_op.type_index == 0);
+			handler.is_catch_all = catch_op.is_catch_all;  // Use the flag from IR, not derive from type_index
+			
+			// Pre-compute stack offset for exception object during IR processing.
+			// This is necessary because variable_scopes may be cleared by the time
+			// we call convertExceptionInfoToWriterFormat() during finalization.
+			// var_number == 0 indicates catch(...) which has no exception variable,
+			// or an unnamed catch parameter like catch(int) without a variable name.
+			if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
+				handler.catch_obj_stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
+			} else {
+				handler.catch_obj_stack_offset = 0;
+			}
 			
 			try_block.catch_handlers.push_back(handler);
 		}
@@ -13342,24 +13387,86 @@ private:
 			if (catch_op.exception_temp.var_number != 0) {
 				int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
 				
+				if (g_enable_debug_output) {
+					std::cerr << "[DEBUG][Codegen] CatchBegin: is_ref=" << catch_op.is_reference
+					          << " is_rvalue_ref=" << catch_op.is_rvalue_reference
+					          << " type_index=" << catch_op.type_index
+					          << " stack_offset=" << stack_offset << std::endl;
+				}
+				
 				// For POD types, dereference and copy the value
 				// For references, store the pointer itself
 				if (catch_op.is_reference || catch_op.is_rvalue_reference) {
 					// Store the pointer (RAX) directly
+					if (g_enable_debug_output) {
+						std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (reference type)" << std::endl;
+					}
 					emitMovToFrame(X64Register::RAX, stack_offset);
 				} else {
 					// Get type size for dereferencing
-					const TypeInfo& type_info = gTypeInfo[catch_op.type_index];
-					size_t type_size = type_info.type_size_ / 8;  // Convert bits to bytes
+					// For built-in types, use get_type_size_bits directly
+					// For user-defined types, look up in gTypeInfo
+					int type_size_bits = 0;
+					
+					// Check if this is a built-in type that get_type_size_bits can handle
+					// These are types where the Type enum directly maps to a size
+					bool is_builtin = false;
+					switch (catch_op.exception_type) {
+						case Type::Bool:
+						case Type::Char:
+						case Type::UnsignedChar:
+						case Type::Short:
+						case Type::UnsignedShort:
+						case Type::Int:
+						case Type::UnsignedInt:
+						case Type::Long:
+						case Type::UnsignedLong:
+						case Type::LongLong:
+						case Type::UnsignedLongLong:
+						case Type::Float:
+						case Type::Double:
+						case Type::LongDouble:
+						case Type::FunctionPointer:
+						case Type::MemberFunctionPointer:
+						case Type::MemberObjectPointer:
+						case Type::Nullptr:
+							is_builtin = true;
+							break;
+						default:
+							is_builtin = false;
+							break;
+					}
+					
+					if (is_builtin) {
+						// Built-in type - use direct lookup
+						type_size_bits = get_type_size_bits(catch_op.exception_type);
+					} else if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {
+						// User-defined type - look up in gTypeInfo
+						const TypeInfo& type_info = gTypeInfo[catch_op.type_index];
+						type_size_bits = type_info.type_size_;
+					}
+					size_t type_size = type_size_bits / 8;  // Convert bits to bytes
+					
+					if (g_enable_debug_output) {
+						std::cerr << "[DEBUG][Codegen] CatchBegin: exception_type=" << static_cast<int>(catch_op.exception_type)
+						          << " type_size_bits=" << type_size_bits
+						          << " type_size=" << type_size << std::endl;
+					}
 					
 					// Load value from exception object and store to catch variable
 					if (type_size <= 8 && type_size > 0) {
 						// Small POD: load from [RAX] and store to frame
 						// Move value from [RAX] to RCX
+						if (g_enable_debug_output) {
+							std::cerr << "[DEBUG][Codegen] CatchBegin: dereferencing exception value" << std::endl;
+						}
 						emitMovFromMemory(X64Register::RCX, X64Register::RAX, 0, type_size);
-						emitMovToFrameBySize(X64Register::RCX, stack_offset, type_info.type_size_);
+						emitMovToFrameBySize(X64Register::RCX, stack_offset, type_size_bits);
 					} else {
 						// Large type or unknown size: just store pointer
+						if (g_enable_debug_output) {
+							std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (large or unknown type)" << std::endl;
+						}
 						emitMovToFrame(X64Register::RAX, stack_offset);
 					}
 				}
@@ -13433,23 +13540,52 @@ private:
 			
 			// Step 2: Copy exception object to allocated memory
 			if (exception_size <= 8) {
-				// Small object: load into RCX and store to [R15]
-				TempVar temp = throw_op.value;
-				if (temp.var_number != 0) {
-					int32_t stack_offset = getStackOffsetFromTempVar(temp);
-					emitMovFromFrameBySize(X64Register::RCX, stack_offset, static_cast<int>(exception_size * 8));
+				// Small object: load value into RCX and store to [R15]
+				// Use IrValue variant to handle TempVar, integer literal, or float literal
+				if (std::holds_alternative<double>(throw_op.exception_value)) {
+					// Float immediate - convert to bit representation
+					double float_val = std::get<double>(throw_op.exception_value);
+					uint64_t bits;
+					if (exception_size == 4) {
+						float f = static_cast<float>(float_val);
+						std::memcpy(&bits, &f, sizeof(float));
+						bits &= 0xFFFFFFFF; // Clear upper bits
+					} else {
+						std::memcpy(&bits, &float_val, sizeof(double));
+					}
+					emitMovImm64(X64Register::RCX, bits);
+				} else if (std::holds_alternative<unsigned long long>(throw_op.exception_value)) {
+					// Integer immediate - load directly
+					emitMovImm64(X64Register::RCX, std::get<unsigned long long>(throw_op.exception_value));
+				} else if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
+					// TempVar - load from stack
+					TempVar temp = std::get<TempVar>(throw_op.exception_value);
+					if (temp.var_number != 0) {
+						int32_t stack_offset = getStackOffsetFromTempVar(temp);
+						emitMovFromFrameBySize(X64Register::RCX, stack_offset, static_cast<int>(exception_size * 8));
+					} else {
+						emitMovImm64(X64Register::RCX, 0);
+					}
 				} else {
+					// StringHandle is not a valid exception value type - IrValue includes it for
+					// other contexts (like variable names), but throw expressions only use TempVar
+					// or immediate values. Default to zero as a safety fallback.
 					emitMovImm64(X64Register::RCX, 0);
 				}
 				// Store exception value to allocated memory [R15 + 0]
 				emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::R15, 0, static_cast<int>(exception_size));
 			} else {
-				// Large object: memory-to-memory copy
-				TempVar temp = throw_op.value;
-				if (temp.var_number != 0) {
-					int32_t stack_offset = getStackOffsetFromTempVar(temp);
-					emitLeaFromFrame(X64Register::RSI, stack_offset);
+				// Large object: memory-to-memory copy (must be TempVar)
+				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
+					TempVar temp = std::get<TempVar>(throw_op.exception_value);
+					if (temp.var_number != 0) {
+						int32_t stack_offset = getStackOffsetFromTempVar(temp);
+						emitLeaFromFrame(X64Register::RSI, stack_offset);
+					} else {
+						emitXorRegReg(X64Register::RSI);
+					}
 				} else {
+					// Large objects can only be TempVars - immediates and StringHandles are not valid here
 					emitXorRegReg(X64Register::RSI);
 				}
 				// RDI = destination (allocated memory in R15)
@@ -13466,29 +13602,24 @@ private:
 			
 			// RSI = type_info* - generate type_info for the thrown type
 			std::string typeinfo_symbol;
-			if (throw_op.type_index < gTypeInfo.size()) {
+			Type exception_type = throw_op.exception_type;
+			
+			// Check if it's a built-in type or user-defined type
+			if (exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
+				// User-defined class type - look up struct info from type_index
 				const TypeInfo& type_info = gTypeInfo[throw_op.type_index];
-				Type exception_type = type_info.type_;
-				
-				// Check if it's a built-in type or user-defined type
-				if (exception_type == Type::Struct) {
-					// User-defined class type
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
-					if (struct_info) {
-						typeinfo_symbol = writer.get_or_create_class_typeinfo(StringTable::getStringView(struct_info->getName()));
-					}
-				} else {
-					// Built-in type
-					typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
+				const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (struct_info) {
+					typeinfo_symbol = writer.get_or_create_class_typeinfo(StringTable::getStringView(struct_info->getName()));
 				}
-				
-				if (!typeinfo_symbol.empty()) {
-					// Load address of type_info into RSI using RIP-relative LEA
-					emitLeaRipRelativeWithRelocation(X64Register::RSI, typeinfo_symbol);
-				} else {
-					// Unknown type, use NULL
-					emitXorRegReg(X64Register::RSI);
-				}
+			} else if (exception_type != Type::Void) {
+				// Built-in type (int, float, etc.) - use the Type enum directly
+				typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
+			}
+			
+			if (!typeinfo_symbol.empty()) {
+				// Load address of type_info into RSI using RIP-relative LEA
+				emitLeaRipRelativeWithRelocation(X64Register::RSI, typeinfo_symbol);
 			} else {
 				// Unknown type, use NULL
 				emitXorRegReg(X64Register::RSI);
@@ -13517,21 +13648,44 @@ private:
 			// Copy exception object to stack at [RSP+32]
 			if (exception_size <= 8) {
 				// Small object: load into RAX and store
-				TempVar temp = throw_op.value;
-				if (temp.var_number != 0) {
-					int32_t stack_offset = getStackOffsetFromTempVar(temp);
-					emitMovFromFrameBySize(X64Register::RAX, stack_offset, static_cast<int>(exception_size * 8));
+				// Use IrValue variant to handle TempVar or immediate
+				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
+					TempVar temp = std::get<TempVar>(throw_op.exception_value);
+					if (temp.var_number != 0) {
+						int32_t stack_offset = getStackOffsetFromTempVar(temp);
+						emitMovFromFrameBySize(X64Register::RAX, stack_offset, static_cast<int>(exception_size * 8));
+					} else {
+						emitMovImm64(X64Register::RAX, 0);
+					}
+				} else if (std::holds_alternative<unsigned long long>(throw_op.exception_value)) {
+					emitMovImm64(X64Register::RAX, std::get<unsigned long long>(throw_op.exception_value));
+				} else if (std::holds_alternative<double>(throw_op.exception_value)) {
+					double float_val = std::get<double>(throw_op.exception_value);
+					uint64_t bits;
+					if (exception_size == 4) {
+						float f = static_cast<float>(float_val);
+						std::memcpy(&bits, &f, sizeof(float));
+						bits &= 0xFFFFFFFF;
+					} else {
+						std::memcpy(&bits, &float_val, sizeof(double));
+					}
+					emitMovImm64(X64Register::RAX, bits);
 				} else {
 					emitMovImm64(X64Register::RAX, 0);
 				}
 				emitMovToRSPDisp8(X64Register::RAX, 32);
 			} else {
-				// Large object: use memory-to-memory copy
-				TempVar temp = throw_op.value;
-				if (temp.var_number != 0) {
-					int32_t stack_offset = getStackOffsetFromTempVar(temp);
-					emitLeaFromFrame(X64Register::RSI, stack_offset);
+				// Large object: use memory-to-memory copy (must be TempVar)
+				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
+					TempVar temp = std::get<TempVar>(throw_op.exception_value);
+					if (temp.var_number != 0) {
+						int32_t stack_offset = getStackOffsetFromTempVar(temp);
+						emitLeaFromFrame(X64Register::RSI, stack_offset);
+					} else {
+						emitXorRegReg(X64Register::RSI);
+					}
 				} else {
+					// Large objects can only be TempVars - immediates and StringHandles are not valid here
 					emitXorRegReg(X64Register::RSI);
 				}
 				emitLeaFromRSPDisp8(X64Register::RDI, 32);
@@ -13658,8 +13812,13 @@ private:
 				//writer.set_function_debug_range(current_function_name_, 8, 5); // prologue=8, epilogue=3
 			}
 
-			// Add exception handling information (required for x64) - once per function
-			writer.add_function_exception_info(std::string(StringTable::getStringView(current_function_mangled_name_)), current_function_offset_, function_length);
+			// Add exception handling information (required for x64) - uses mangled name
+			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
+			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
+			} else {
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map);
+			}
 
 			// Clear the current function state
 			current_function_name_ = StringHandle();
@@ -14027,6 +14186,9 @@ private:
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter (RVO)
 	bool current_function_returns_reference_ = false;  // True if function returns a reference (lvalue or rvalue)
 	int32_t current_function_varargs_reg_save_offset_ = 0;  // Offset of varargs register save area (Linux only)
+	
+	// CFI instruction tracking for exception handling
+	std::vector<ElfFileWriter::CFIInstruction> current_function_cfi_;
 
 	// Pending function info for exception handling
 	struct PendingFunctionInfo {
@@ -14104,9 +14266,10 @@ private:
 
 	// Exception handling tracking
 	struct CatchHandler {
-		TypeIndex type_index;  // Type to catch (0 for catch-all)
+		TypeIndex type_index;  // Type index for user-defined types
+		Type exception_type;   // Type enum for built-in types (Int, Double, etc.)
 		uint32_t handler_offset;  // Code offset of catch handler
-		TempVar exception_temp;  // Temporary holding the exception object
+		int32_t catch_obj_stack_offset;  // Pre-computed stack offset for exception object
 		bool is_catch_all;  // True for catch(...)
 		bool is_const;  // True if caught by const
 		bool is_reference;  // True if caught by lvalue reference

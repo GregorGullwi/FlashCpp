@@ -324,9 +324,13 @@ public:
 	}
 
 	/**
-	 * @brief Get or create type_info symbol for a built-in type
+	 * @brief Get type_info symbol name for a built-in type
 	 * @param type The type to get type_info for
 	 * @return Symbol name for the type_info (e.g., "_ZTIi" for int)
+	 * 
+	 * For built-in types, the type_info is provided by the C++ runtime library (libstdc++/libc++).
+	 * We only need to generate references to these external symbols - the actual type_info
+	 * structures are defined in the runtime.
 	 */
 	std::string get_or_create_builtin_typeinfo(Type type) {
 		// Map types to Itanium C++ ABI mangled type codes
@@ -358,46 +362,9 @@ public:
 		              static_cast<int>(type_code.length()), type_code.data());
 		std::string typeinfo_symbol(typeinfo_symbol_buf);
 		
-		// Check if we've already created this symbol
-		static std::set<std::string> created_typeinfos;
-		if (created_typeinfos.find(typeinfo_symbol) != created_typeinfos.end()) {
-			return typeinfo_symbol;
-		}
-		
-		// For built-in types, we need to create a minimal type_info structure
-		// Itanium C++ ABI: type_info for fundamental types is just vtable pointer + name
-		struct FundamentalTypeInfo {
-			const void* vtable;  // Pointer to __fundamental_type_info vtable (external)
-			const char* name;    // Mangled type name
-		};
-		
-		// We'll emit a reference to an external vtable symbol
-		// The actual vtable will be provided by the C++ runtime library
-		static constexpr std::string_view vtable_symbol = "_ZTVN10__cxxabiv123__fundamental_type_infoE";
-		
-		// For now, we'll create a placeholder that references the external vtable
-		// In a full implementation, we'd emit proper type_info data
-		// For the minimal case, we just need the symbol to exist
-		
-		// Create a minimal type_info: just 16 bytes (vtable ptr + name ptr)
-		std::vector<char> typeinfo_data(16, 0);
-		
-		// Add typeinfo data to .rodata
-		auto* rodata = getSectionByName(".rodata");
-		if (!rodata) {
-			throw std::runtime_error(".rodata section not found");
-		}
-		
-		uint32_t typeinfo_offset = rodata->get_size();
-		rodata->append_data(typeinfo_data.data(), typeinfo_data.size());
-		
-		// Add typeinfo symbol
-		getOrCreateSymbol(typeinfo_symbol, ELFIO::STT_OBJECT, ELFIO::STB_WEAK,
-		                  rodata->get_index(), typeinfo_offset, typeinfo_data.size());
-		
-		created_typeinfos.insert(typeinfo_symbol);
-		
-		FLASH_LOG_FORMAT(Codegen, Debug, "Created built-in typeinfo '{}' for type code '{}'", 
+		// Built-in type_info symbols are external (provided by C++ runtime)
+		// Just return the symbol name - the linker will resolve it
+		FLASH_LOG_FORMAT(Codegen, Debug, "Using external typeinfo '{}' for type code '{}'", 
 		                 typeinfo_symbol, type_code);
 		
 		return typeinfo_symbol;
@@ -708,19 +675,32 @@ public:
 		}
 	}
 
+	// CFI instruction tracking for a single function (defined here for use in add_function_exception_info)
+	struct CFIInstruction {
+		enum Type {
+			PUSH_RBP,       // push rbp
+			MOV_RSP_RBP,    // mov rbp, rsp
+			SUB_RSP,        // sub rsp, imm
+			ADD_RSP,        // add rsp, imm
+			POP_RBP,        // pop rbp
+		};
+		Type type;
+		uint32_t offset;  // Offset in function where this occurs
+		uint32_t value;   // Immediate value (for SUB_RSP/ADD_RSP)
+	};
+
 	// Exception handling (placeholders - not implemented for Linux MVP)
 	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start,
 	                                 uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {},
-	                                 const std::vector<UnwindMapEntryInfo>& unwind_map = {}) {
+	                                 const std::vector<UnwindMapEntryInfo>& unwind_map = {},
+	                                 const std::vector<CFIInstruction>& cfi_instructions = {}) {
 		// Add FDE for this function (all functions get an FDE for proper unwinding)
 		FDEInfo fde_info;
 		fde_info.function_start_offset = function_start;
 		fde_info.function_length = function_size;
 		fde_info.function_symbol.assign(mangled_name.begin(), mangled_name.end());
 		fde_info.has_exception_handling = !try_blocks.empty();
-		
-		// TODO: Track CFI instructions during code generation
-		// For now, we'll generate basic CFI for standard function prologue/epilogue
+		fde_info.cfi_instructions = cfi_instructions;  // Store CFI instructions
 		
 		functions_with_fdes_.push_back(fde_info);
 		
@@ -825,20 +805,7 @@ public:
 	}
 
 	// Exception handling - .eh_frame generation
-	
-	// CFI instruction tracking for a single function
-	struct CFIInstruction {
-		enum Type {
-			PUSH_RBP,       // push rbp
-			MOV_RSP_RBP,    // mov rbp, rsp
-			SUB_RSP,        // sub rsp, imm
-			ADD_RSP,        // add rsp, imm
-			POP_RBP,        // pop rbp
-		};
-		Type type;
-		uint32_t offset;  // Offset in function where this occurs
-		uint32_t value;   // Immediate value (for SUB_RSP/ADD_RSP)
-	};
+	// (CFIInstruction defined above, before add_function_exception_info)
 	
 	// FDE (Frame Description Entry) information for a function
 	struct FDEInfo {
@@ -917,14 +884,17 @@ public:
 		
 		if (has_exception_handlers) {
 			// P: Personality routine encoding and pointer
-			// Encoding: PC-relative indirect signed 4-byte (like GCC)
-			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_indirect | DwarfCFI::DW_EH_PE_sdata4);
+			// Use pcrel|sdata4 (0x1b = PC-relative signed 4-byte) with R_X86_64_PC32 relocation
+			// This is required for the linker to create .eh_frame_hdr
+			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
 			// Personality routine pointer (will need relocation to __gxx_personality_v0)
 			// Store offset for relocation tracking
 			personality_routine_offset_ = static_cast<uint32_t>(eh_frame_data.size());
 			for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);  // Placeholder
 			
 			// L: LSDA encoding
+			// Use pcrel|sdata4 (0x1b = PC-relative signed 4-byte) with R_X86_64_PC32 relocation
+			// This is required for the linker to create .eh_frame_hdr
 			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
 		}
 		
@@ -961,7 +931,8 @@ public:
 	// Generate Frame Description Entry (FDE) for a function
 	void generate_eh_frame_fde(std::vector<uint8_t>& eh_frame_data, 
 	                           uint32_t cie_offset,
-	                           FDEInfo& fde_info) {  // Non-const so we can update pc_begin_offset
+	                           FDEInfo& fde_info,
+	                           bool cie_has_lsda) {  // Non-const so we can update pc_begin_offset
 		// FDE structure
 		
 		size_t length_offset = eh_frame_data.size();
@@ -990,22 +961,89 @@ public:
 		eh_frame_data.push_back((fde_info.function_length >> 24) & 0xff);
 		
 		// Augmentation data
-		if (fde_info.has_exception_handling) {
+		// When CIE has 'L' (LSDA pointer format), every FDE must include an LSDA pointer field.
+		// For functions without exception handling, emit a null pointer (4 zero bytes, no relocation).
+		if (cie_has_lsda) {
 			// Augmentation data length (4 bytes for LSDA pointer)
 			DwarfCFI::appendULEB128(eh_frame_data, 4);
 			
-			// LSDA pointer (PC-relative to .gcc_except_table)
-			// Record offset for relocation
-			fde_info.lsda_pointer_offset = static_cast<uint32_t>(eh_frame_data.size());
-			fde_info.lsda_symbol = ".gcc_except_table";
-			for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);  // Placeholder for relocation
+			if (fde_info.has_exception_handling) {
+				// LSDA pointer (PC-relative to .gcc_except_table)
+				// Record offset for relocation
+				fde_info.lsda_pointer_offset = static_cast<uint32_t>(eh_frame_data.size());
+				fde_info.lsda_symbol = ".gcc_except_table";
+			}
+			// Emit 4 bytes: null for non-exception functions, placeholder for exception functions
+			// (the placeholder will be patched by R_X86_64_PC32 relocation)
+			for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
 		} else {
-			// No exception handling - augmentation data length is 0
+			// No LSDA in CIE - augmentation data length is 0
 			DwarfCFI::appendULEB128(eh_frame_data, 0);
 		}
 		
-		// CFI instructions (to be implemented based on fde_info.cfi_instructions)
-		// For now, leave empty
+		// Generate CFI instructions based on tracked prologue state
+		// The initial state from CIE is: CFA = RSP+8, RIP at CFA-8
+		// After push rbp: CFA = RSP+16, RBP at CFA-16
+		// After mov rbp, rsp: CFA = RBP+16
+		// After sub rsp, N: CFA still = RBP+16 (RBP-based frame)
+		
+		uint32_t last_offset = 0;
+		for (const auto& cfi : fde_info.cfi_instructions) {
+			// Emit DW_CFA_advance_loc if offset changed
+			if (cfi.offset > last_offset) {
+				uint32_t delta = cfi.offset - last_offset;
+				if (delta < 64) {
+					// DW_CFA_advance_loc: low 6 bits encode delta
+					eh_frame_data.push_back(DwarfCFI::DW_CFA_advance_loc | (delta & 0x3f));
+				} else if (delta < 256) {
+					// DW_CFA_advance_loc1: 1-byte delta
+					eh_frame_data.push_back(DwarfCFI::DW_CFA_advance_loc1);
+					eh_frame_data.push_back(static_cast<uint8_t>(delta));
+				} else {
+					// DW_CFA_advance_loc2: 2-byte delta
+					eh_frame_data.push_back(DwarfCFI::DW_CFA_advance_loc2);
+					eh_frame_data.push_back((delta >> 0) & 0xff);
+					eh_frame_data.push_back((delta >> 8) & 0xff);
+				}
+				last_offset = cfi.offset;
+			}
+			
+			switch (cfi.type) {
+			case CFIInstruction::PUSH_RBP:
+				// After push rbp: CFA = RSP+16, RBP saved at CFA-16
+				// DW_CFA_def_cfa_offset: 16
+				eh_frame_data.push_back(DwarfCFI::DW_CFA_def_cfa_offset);
+				DwarfCFI::appendULEB128(eh_frame_data, 16);
+				// DW_CFA_offset: rbp at CFA-16 (factored by data_align=-8, so offset=2)
+				eh_frame_data.push_back(DwarfCFI::DW_CFA_offset | 6);  // RBP = register 6
+				DwarfCFI::appendULEB128(eh_frame_data, 2);  // 2 * 8 = 16
+				break;
+				
+			case CFIInstruction::MOV_RSP_RBP:
+				// After mov rbp, rsp: CFA = RBP+16 (use frame pointer)
+				// DW_CFA_def_cfa_register: rbp
+				eh_frame_data.push_back(DwarfCFI::DW_CFA_def_cfa_register);
+				DwarfCFI::appendULEB128(eh_frame_data, 6);  // RBP = register 6
+				break;
+				
+			case CFIInstruction::SUB_RSP:
+				// After sub rsp, N: CFA still RBP+16 (no change needed when using frame pointer)
+				// CFA remains based on RBP, not RSP
+				break;
+				
+			case CFIInstruction::ADD_RSP:
+				// Epilogue starts - no CFI change needed until pop rbp
+				break;
+				
+			case CFIInstruction::POP_RBP:
+				// After pop rbp: CFA = RSP+8 (back to call site state)
+				// DW_CFA_def_cfa: rsp, 8
+				eh_frame_data.push_back(DwarfCFI::DW_CFA_def_cfa);
+				DwarfCFI::appendULEB128(eh_frame_data, 7);  // RSP = register 7
+				DwarfCFI::appendULEB128(eh_frame_data, 8);  // offset 8
+				break;
+			}
+		}
 		
 		// Pad to 8-byte alignment
 		while ((eh_frame_data.size() - fde_start + 4) % 8 != 0) {
@@ -1044,7 +1082,7 @@ public:
 		
 		// Generate FDEs for each function
 		for (auto& fde_info : functions_with_fdes_) {  // Non-const to update pc_begin_offset
-			generate_eh_frame_fde(eh_frame_data, cie_offset, fde_info);
+			generate_eh_frame_fde(eh_frame_data, cie_offset, fde_info, has_exception_handlers);
 		}
 		
 		// Create .eh_frame section
@@ -1146,14 +1184,15 @@ public:
 					// Add section symbol for .gcc_except_table
 					auto* except_section = getSectionByName(".gcc_except_table");
 					if (except_section) {
+						// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
 						accessor->add_symbol(*string_accessor_, ".gcc_except_table",
 						                    0, 0, ELFIO::STB_LOCAL, ELFIO::STT_SECTION,
-						                    except_section->get_index(), ELFIO::STV_DEFAULT);
+						                    ELFIO::STV_DEFAULT, except_section->get_index());
 						gcc_except_table_sym_index = accessor->get_symbols_num() - 1;
 					}
 				}
 				
-				// Add relocation for LSDA pointer with addend = lsda_offset
+				// Add R_X86_64_PC32 relocation for LSDA pointer (pcrel|sdata4 encoding)
 				rela_accessor->add_entry(fde_info.lsda_pointer_offset,
 				                        static_cast<ELFIO::Elf_Word>(gcc_except_table_sym_index),
 				                        ELFIO::R_X86_64_PC32,
@@ -1167,15 +1206,16 @@ public:
 			auto* accessor = getSymbolAccessor();
 			if (accessor) {
 				// Add as undefined external symbol
+				// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
 				accessor->add_symbol(*string_accessor_, "__gxx_personality_v0", 
 				                    0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE, 
-				                    0, ELFIO::STV_DEFAULT);
+				                    ELFIO::STV_DEFAULT, 0);
 				
 				// Find the symbol index we just added
 				ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
 				ELFIO::Elf_Xword personality_sym_index = sym_count - 1;
 				
-				// Add relocation for personality routine
+				// Add R_X86_64_PC32 relocation for pcrel|sdata4 encoding
 				rela_accessor->add_entry(personality_routine_offset_,
 				                        static_cast<ELFIO::Elf_Word>(personality_sym_index),
 				                        ELFIO::R_X86_64_PC32,
@@ -1200,21 +1240,31 @@ public:
 		}
 		
 		std::vector<uint8_t> gcc_except_table_data;
+		std::vector<std::pair<uint32_t, std::string>> all_type_table_relocations;
 		LSDAGenerator generator;
 		
-		// Generate LSDA for each function and track offsets
-		for (const auto& [func_name, lsda_info] : function_lsda_map_) {
-			// Find the corresponding FDE to update its LSDA offset
-			for (auto& fde_info : functions_with_fdes_) {
-				if (fde_info.function_symbol == func_name) {
-					fde_info.lsda_offset = static_cast<uint32_t>(gcc_except_table_data.size());
-					break;
-				}
+		// Generate LSDA for each function IN THE ORDER THEY APPEAR IN functions_with_fdes_
+		// This ensures the LSDA offsets match the FDE order (critical for correct .eh_frame relocations)
+		// Using unordered_map iteration order would break the LSDA-to-FDE mapping!
+		for (auto& fde_info : functions_with_fdes_) {
+			auto it = function_lsda_map_.find(fde_info.function_symbol);
+			if (it == function_lsda_map_.end()) {
+				// Function has no exception handling - no LSDA needed
+				continue;
 			}
 			
-			auto lsda_data = generator.generate(lsda_info);
+			uint32_t lsda_offset = static_cast<uint32_t>(gcc_except_table_data.size());
+			fde_info.lsda_offset = lsda_offset;
+			
+			auto result = generator.generate(it->second);
+			
+			// Adjust relocation offsets to be relative to .gcc_except_table start
+			for (const auto& [offset, symbol] : result.type_table_relocations) {
+				all_type_table_relocations.push_back({lsda_offset + offset, symbol});
+			}
+			
 			gcc_except_table_data.insert(gcc_except_table_data.end(), 
-			                            lsda_data.begin(), lsda_data.end());
+			                            result.data.begin(), result.data.end());
 		}
 		
 		// Create .gcc_except_table section
@@ -1230,18 +1280,77 @@ public:
 		// (WEAK symbols are treated like GLOBAL for ordering purposes)
 		auto* accessor = getSymbolAccessor();
 		if (accessor && string_accessor_) {
+			// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
 			accessor->add_symbol(*string_accessor_, ".gcc_except_table",
 			                    0, gcc_except_table_data.size(), 
 			                    ELFIO::STB_WEAK, ELFIO::STT_OBJECT,
-			                    except_section->get_index(), ELFIO::STV_HIDDEN);
+			                    ELFIO::STV_HIDDEN, except_section->get_index());
 		}
 		
-		// TODO: Create .rela.gcc_except_table for type_info relocations
+		// Create .rela.gcc_except_table for type_info relocations if needed
+		if (!all_type_table_relocations.empty()) {
+			auto* rela_except_table = elf_writer_.sections.add(".rela.gcc_except_table");
+			rela_except_table->set_type(ELFIO::SHT_RELA);
+			rela_except_table->set_flags(ELFIO::SHF_INFO_LINK);
+			rela_except_table->set_info(except_section->get_index());
+			rela_except_table->set_link(symtab_section_->get_index());
+			rela_except_table->set_addr_align(8);
+			rela_except_table->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+			
+			auto rela_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
+				elf_writer_, rela_except_table
+			);
+			
+			for (const auto& [offset, symbol] : all_type_table_relocations) {
+				// Add the type_info symbol if it doesn't exist (undefined external)
+				// First check if it already exists
+				bool found = false;
+				ELFIO::Elf_Xword sym_index = 0;
+				
+				auto* sym_accessor = getSymbolAccessor();
+				if (sym_accessor) {
+					ELFIO::Elf_Xword sym_count = sym_accessor->get_symbols_num();
+					for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
+						std::string sym_name;
+						ELFIO::Elf64_Addr sym_value;
+						ELFIO::Elf_Xword sym_size;
+						unsigned char sym_bind, sym_type;
+						ELFIO::Elf_Half sym_section;
+						unsigned char sym_other;
+						
+						sym_accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind,
+						                        sym_type, sym_section, sym_other);
+						
+						if (sym_name == symbol) {
+							sym_index = i;
+							found = true;
+							break;
+						}
+					}
+					
+					if (!found) {
+						// Add as undefined external symbol
+						// Order: string_accessor, name, value, size, bind, type, other, section_index
+						sym_accessor->add_symbol(*string_accessor_, symbol.c_str(),
+						                        0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE,
+						                        ELFIO::STV_DEFAULT, 0);
+						sym_index = sym_accessor->get_symbols_num() - 1;
+					}
+					
+					// Add R_X86_64_32 relocation for udata4 (absolute) encoding
+					rela_accessor->add_entry(offset,
+					                        static_cast<ELFIO::Elf_Word>(sym_index),
+					                        ELFIO::R_X86_64_32,
+					                        0);
+				}
+			}
+		}
 		
 		if (g_enable_debug_output) {
 			std::cerr << "Generated .gcc_except_table section with " 
 			         << function_lsda_map_.size() << " LSDAs (" 
-			         << gcc_except_table_data.size() << " bytes)" << std::endl;
+			         << gcc_except_table_data.size() << " bytes), "
+			         << all_type_table_relocations.size() << " type_info relocations" << std::endl;
 		}
 	}
 

@@ -1409,18 +1409,21 @@ struct IndirectCallOp {
 // Catch block begin marker
 struct CatchBeginOp {
 	TempVar exception_temp;       // Temporary holding the exception object
-	TypeIndex type_index;         // Type to catch (0 for catch-all)
+	TypeIndex type_index;         // Type index for user-defined types
+	Type exception_type;          // Type enum for built-in types (Int, Double, etc.)
 	std::string_view catch_end_label;  // Label to jump to if not matched
 	bool is_const;                // True if caught by const
 	bool is_reference;            // True if caught by lvalue reference  
 	bool is_rvalue_reference;     // True if caught by rvalue reference
+	bool is_catch_all;            // True for catch(...) - catches all exceptions
 };
 
 // Throw exception operation
 struct ThrowOp {
 	TypeIndex type_index;         // Type of exception being thrown
+	Type exception_type;          // Actual Type enum for built-in types
 	size_t size_in_bytes;         // Size of exception object in bytes
-	TempVar value;                // Temporary or value to throw
+	IrValue exception_value;      // Value to throw (TempVar, unsigned long long, double, or StringHandle)
 	bool is_rvalue;               // True if throwing an rvalue (can be moved)
 };
 
@@ -2759,7 +2762,19 @@ public:
 		case IrOpcode::Throw:
 		{
 			const auto& op = getTypedPayload<ThrowOp>();
-			oss << "throw %" << op.value.var_number << " : type_" << op.type_index << " (" << op.size_in_bytes << " bytes)";
+			oss << "throw ";
+			// Print the exception value based on IrValue variant type
+			if (std::holds_alternative<TempVar>(op.exception_value)) {
+				oss << "%" << std::get<TempVar>(op.exception_value).var_number;
+			} else if (std::holds_alternative<unsigned long long>(op.exception_value)) {
+				oss << std::get<unsigned long long>(op.exception_value);
+			} else if (std::holds_alternative<double>(op.exception_value)) {
+				oss << std::get<double>(op.exception_value);
+			} else if (std::holds_alternative<StringHandle>(op.exception_value)) {
+				// StringHandle represents a string constant - print as quoted string
+				oss << "\"" << StringTable::getStringView(std::get<StringHandle>(op.exception_value)) << "\"";
+			}
+			oss << " : type_" << op.type_index << " (" << op.size_in_bytes << " bytes)";
 			if (op.is_rvalue) oss << " rvalue";
 		}
 		break;

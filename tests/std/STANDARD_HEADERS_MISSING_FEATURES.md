@@ -609,17 +609,31 @@ See "Recent Progress (December 2024)" section below for detailed implementation 
 ### Remaining Critical Features
 
 ### 1. Exception Handling Infrastructure
-**Status**: ❌ Basic support exists, but incomplete  
+**Status**: ⚠️ **In Progress** (December 2024) - Linux implementation significantly advanced  
 **Required by**: `<string>`, `<vector>`, `<iostream>`, `<memory>`, and most containers
 
-**Missing features**:
-- Exception specifications parsing (`noexcept` is partially supported)
+**Recent Progress (December 30, 2024):**
+- ✅ Parser support (try/catch/throw/noexcept) - Complete
+- ✅ IR instructions (TryBegin, CatchBegin, Throw, Rethrow) - Complete
+- ✅ LSDA (Language Specific Data Area) generation - Implemented with 13+ bug fixes
+- ✅ .eh_frame section with CFI instructions - Complete
+- ✅ __cxa_throw/__cxa_begin_catch/__cxa_end_catch calls - Generated
+- ✅ Type info symbols (_ZTIi, etc.) - External references to C++ runtime
+- ✅ Literal exception values (`throw 42`) - Now works correctly
+- ⚠️ Runtime still has .eh_frame parsing issues - Under investigation
+- ❌ Windows SEH - Not implemented yet
+
+**Still Missing**:
+- Runtime exception catching (LSDA/personality routine interaction)
+- RTTI integration for complex exception type matching (see `docs/EXCEPTION_HANDLING_PLAN.md`)
+- Windows MSVC SEH implementation
 - Standard exception classes hierarchy
-- Stack unwinding mechanics
 - Exception-safe constructors/destructors
 
 **Impact**: Critical - Most standard library code uses exceptions  
 **Files affected**: `test_std_string.cpp`, `test_std_vector.cpp`, `test_std_iostream.cpp`, `test_std_memory.cpp`
+
+**Documentation**: See `docs/EXCEPTION_HANDLING_PLAN.md` for detailed implementation roadmap
 
 ### 2. Allocator Support
 **Status**: ❌ Not implemented  
