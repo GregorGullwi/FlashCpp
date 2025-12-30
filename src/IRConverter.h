@@ -7839,7 +7839,7 @@ private:
 
 			// Add exception handling information (required for x64) - uses mangled name
 			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
-			writer.add_function_exception_info(std::string(StringTable::getStringView(current_function_mangled_name_)), current_function_offset_, function_length, try_blocks, unwind_map);
+			writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map);
 		
 			// Clean up the previous function's variable scope
 			// This happens when we start a NEW function, ensuring the previous function's scope is removed
@@ -13661,7 +13661,7 @@ private:
 
 			// Add exception handling information (required for x64) - uses mangled name
 			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
-			writer.add_function_exception_info(std::string(StringTable::getStringView(current_function_mangled_name_)), current_function_offset_, function_length, try_blocks, unwind_map);
+			writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map);
 
 			// Clear the current function state
 			current_function_name_ = StringHandle();
