@@ -7663,9 +7663,14 @@ private:
 							CallOp call_op;
 							call_op.result = ret_var;
 							call_op.return_type = return_type.type();
-							call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
-							if (call_op.return_size_in_bits == 0) {
-								call_op.return_size_in_bits = get_type_size_bits(return_type.type());
+							// For pointer return types, use 64-bit size (pointer size on x64)
+							if (return_type.pointer_depth() > 0) {
+								call_op.return_size_in_bits = 64;
+							} else {
+								call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+								if (call_op.return_size_in_bits == 0) {
+									call_op.return_size_in_bits = get_type_size_bits(return_type.type());
+								}
 							}
 							call_op.function_name = mangled_name;  // MangledName implicitly converts to StringHandle
 							call_op.is_variadic = false;
