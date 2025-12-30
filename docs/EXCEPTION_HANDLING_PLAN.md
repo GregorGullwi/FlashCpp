@@ -1,6 +1,7 @@
 # Exception Handling Implementation Plan for FlashCpp
 
 **Created**: 2025-12-30  
+**Updated**: 2025-12-30  
 **Status**: Phase-Based Implementation in Progress  
 **Platform Targets**: Windows (MSVC SEH) and Linux (Itanium ABI)
 
@@ -19,12 +20,13 @@ This document consolidates the exception handling implementation plans for Flash
 | CodeGen visitors for exception nodes | ✅ | ✅ | Generates IR |
 | DWARF CFI encoding utilities | N/A | ✅ | DwarfCFI.h |
 | LSDA generator structure | N/A | ✅ | LSDAGenerator.h |
-| .eh_frame section generation | N/A | ✅ | Basic CIE/FDE |
+| .eh_frame section generation | N/A | ✅ | CIE/FDE with CFI |
 | .gcc_except_table section | N/A | ✅ | LSDA structure |
 | __cxa_throw call generation | N/A | ✅ | Works in IRConverter |
-| Type info generation for built-in types | N/A | ✅ | _ZTIi, etc. |
+| External type_info symbols | N/A | ✅ | References runtime (_ZTIi, etc.) |
 | is_catch_all flag in IR | N/A | ✅ | Explicit flag, not derived from type_index |
-| Type table relocations | N/A | ✅ | R_X86_64_64 for type_info pointers |
+| Type table relocations (pcrel) | N/A | ✅ | R_X86_64_PC32 for type_info |
+| FDE LSDA pointers | N/A | ✅ | All FDEs have LSDA field when CIE has 'L' |
 
 ### ⚠️ Fixed Issues (2025-12-30)
 
@@ -32,22 +34,23 @@ This document consolidates the exception handling implementation plans for Flash
 2. **✅ FIXED**: Personality routine encoding changed from indirect to direct for non-PIE executables  
 3. **✅ FIXED**: Type info now correctly uses actual Type enum (`_ZTIi` for int instead of `_ZTIv`)
 4. **✅ FIXED**: is_catch_all detection now uses explicit IR flag instead of type_index==0
-5. **✅ FIXED**: LSDA type table now generates proper R_X86_64_64 relocations
-6. **✅ FIXED**: TType base offset calculation uses actual action table size
+5. **✅ FIXED**: TType encoding changed to pcrel|sdata4 (0x1b) with R_X86_64_PC32 relocations
+6. **✅ FIXED**: Type table entries now 4 bytes (sdata4) instead of 8 bytes (absptr)
+7. **✅ FIXED**: All FDEs include LSDA pointer when CIE has 'L' augmentation
+8. **✅ FIXED**: Built-in type_info symbols are external references to C++ runtime
+9. **✅ FIXED**: Catch handler stack offset pre-computed during IR processing (crash fix)
 
 ### ❌ Known Issues
 
-1. **Linux**: Compilation hangs when last function in file has try/catch
-   - Workaround: Ensure a function without try/catch is defined after functions with exception handling
-   - Investigation needed: Likely infinite loop in IR processing or LSDA generation
+1. **Linux**: Runtime abort when executing - personality routine can't find landing pad
+   - LSDA structure appears correct (call site table, action table, type table)
+   - Call site offsets match function disassembly
+   - Type table relocation is correct
+   - **Next investigation**: Check if issue is in call site length or type matching
    
-2. **Linux**: Runtime abort when executing - personality routine can't find landing pad
-   - **CFI Instructions**: FDEs now have basic CFI, but may need refinement
-   - May require debugging with actual test execution
+2. **Windows**: Code generation for SEH not implemented
 
-3. **Windows**: Code generation for SEH not implemented
-
-4. **Both**: RTTI integration incomplete for complex exception type matching
+3. **Both**: RTTI integration incomplete for complex exception type matching
 
 ## Architecture Overview
 
