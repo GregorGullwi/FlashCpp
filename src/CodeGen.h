@@ -4527,24 +4527,17 @@ private:
 			throw_op.is_rvalue = true;  // Default to rvalue for now
 			
 			// Handle the value - it can be a TempVar, immediate int, or immediate float
+			// All these types are compatible with IrValue variant
 			if (std::holds_alternative<TempVar>(expr_operands[2])) {
-				throw_op.value = std::get<TempVar>(expr_operands[2]);
-				throw_op.is_immediate = false;
+				throw_op.exception_value = std::get<TempVar>(expr_operands[2]);
 			} else if (std::holds_alternative<unsigned long long>(expr_operands[2])) {
-				// Integer literal - store as immediate
-				throw_op.immediate_value = std::get<unsigned long long>(expr_operands[2]);
-				throw_op.is_immediate = true;
-				throw_op.is_float_immediate = false;
+				throw_op.exception_value = std::get<unsigned long long>(expr_operands[2]);
 			} else if (std::holds_alternative<double>(expr_operands[2])) {
-				// Float literal - store as float immediate
-				throw_op.float_immediate_value = std::get<double>(expr_operands[2]);
-				throw_op.is_immediate = true;
-				throw_op.is_float_immediate = true;
+				throw_op.exception_value = std::get<double>(expr_operands[2]);
 			} else {
 				// Unknown operand type - log warning and default to zero value
 				FLASH_LOG(Codegen, Warning, "Unknown operand type in throw expression, defaulting to zero");
-				throw_op.immediate_value = 0;
-				throw_op.is_immediate = true;
+				throw_op.exception_value = static_cast<unsigned long long>(0);
 			}
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::Throw, std::move(throw_op), node.throw_token()));

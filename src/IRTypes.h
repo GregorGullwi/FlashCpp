@@ -1423,12 +1423,8 @@ struct ThrowOp {
 	TypeIndex type_index;         // Type of exception being thrown
 	Type exception_type;          // Actual Type enum for built-in types
 	size_t size_in_bytes;         // Size of exception object in bytes
-	TempVar value;                // Temporary or value to throw (if is_immediate is false)
-	unsigned long long immediate_value = 0; // Immediate value for literals (if is_immediate is true)
-	double float_immediate_value = 0.0;     // Immediate value for float literals
+	IrValue exception_value;      // Value to throw (TempVar, unsigned long long, double, or StringHandle)
 	bool is_rvalue;               // True if throwing an rvalue (can be moved)
-	bool is_immediate = false;    // True if throwing an immediate value instead of a temp
-	bool is_float_immediate = false; // True if throwing a float immediate
 };
 
 // Helper function to format conversion operations for IR output
@@ -2766,7 +2762,18 @@ public:
 		case IrOpcode::Throw:
 		{
 			const auto& op = getTypedPayload<ThrowOp>();
-			oss << "throw %" << op.value.var_number << " : type_" << op.type_index << " (" << op.size_in_bytes << " bytes)";
+			oss << "throw ";
+			// Print the exception value based on IrValue variant type
+			if (std::holds_alternative<TempVar>(op.exception_value)) {
+				oss << "%" << std::get<TempVar>(op.exception_value).var_number;
+			} else if (std::holds_alternative<unsigned long long>(op.exception_value)) {
+				oss << std::get<unsigned long long>(op.exception_value);
+			} else if (std::holds_alternative<double>(op.exception_value)) {
+				oss << std::get<double>(op.exception_value);
+			} else if (std::holds_alternative<StringHandle>(op.exception_value)) {
+				oss << "%" << StringTable::getStringView(std::get<StringHandle>(op.exception_value));
+			}
+			oss << " : type_" << op.type_index << " (" << op.size_in_bytes << " bytes)";
 			if (op.is_rvalue) oss << " rvalue";
 		}
 		break;

@@ -13541,40 +13541,47 @@ private:
 			// Step 2: Copy exception object to allocated memory
 			if (exception_size <= 8) {
 				// Small object: load value into RCX and store to [R15]
-				if (throw_op.is_immediate) {
-					// Immediate value - load directly
-					if (throw_op.is_float_immediate) {
-						// For float, we need to store the bits representation
-						uint64_t bits;
-						if (exception_size == 4) {
-							float f = static_cast<float>(throw_op.float_immediate_value);
-							std::memcpy(&bits, &f, sizeof(float));
-							bits &= 0xFFFFFFFF; // Clear upper bits
-						} else {
-							std::memcpy(&bits, &throw_op.float_immediate_value, sizeof(double));
-						}
-						emitMovImm64(X64Register::RCX, bits);
+				// Use IrValue variant to handle TempVar, integer literal, or float literal
+				if (std::holds_alternative<double>(throw_op.exception_value)) {
+					// Float immediate - convert to bit representation
+					double float_val = std::get<double>(throw_op.exception_value);
+					uint64_t bits;
+					if (exception_size == 4) {
+						float f = static_cast<float>(float_val);
+						std::memcpy(&bits, &f, sizeof(float));
+						bits &= 0xFFFFFFFF; // Clear upper bits
 					} else {
-						emitMovImm64(X64Register::RCX, throw_op.immediate_value);
+						std::memcpy(&bits, &float_val, sizeof(double));
 					}
-				} else {
+					emitMovImm64(X64Register::RCX, bits);
+				} else if (std::holds_alternative<unsigned long long>(throw_op.exception_value)) {
+					// Integer immediate - load directly
+					emitMovImm64(X64Register::RCX, std::get<unsigned long long>(throw_op.exception_value));
+				} else if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
 					// TempVar - load from stack
-					TempVar temp = throw_op.value;
+					TempVar temp = std::get<TempVar>(throw_op.exception_value);
 					if (temp.var_number != 0) {
 						int32_t stack_offset = getStackOffsetFromTempVar(temp);
 						emitMovFromFrameBySize(X64Register::RCX, stack_offset, static_cast<int>(exception_size * 8));
 					} else {
 						emitMovImm64(X64Register::RCX, 0);
 					}
+				} else {
+					// StringHandle or other - default to zero
+					emitMovImm64(X64Register::RCX, 0);
 				}
 				// Store exception value to allocated memory [R15 + 0]
 				emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::R15, 0, static_cast<int>(exception_size));
 			} else {
-				// Large object: memory-to-memory copy
-				TempVar temp = throw_op.value;
-				if (temp.var_number != 0) {
-					int32_t stack_offset = getStackOffsetFromTempVar(temp);
-					emitLeaFromFrame(X64Register::RSI, stack_offset);
+				// Large object: memory-to-memory copy (must be TempVar)
+				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
+					TempVar temp = std::get<TempVar>(throw_op.exception_value);
+					if (temp.var_number != 0) {
+						int32_t stack_offset = getStackOffsetFromTempVar(temp);
+						emitLeaFromFrame(X64Register::RSI, stack_offset);
+					} else {
+						emitXorRegReg(X64Register::RSI);
+					}
 				} else {
 					emitXorRegReg(X64Register::RSI);
 				}
@@ -13638,20 +13645,42 @@ private:
 			// Copy exception object to stack at [RSP+32]
 			if (exception_size <= 8) {
 				// Small object: load into RAX and store
-				TempVar temp = throw_op.value;
-				if (temp.var_number != 0) {
-					int32_t stack_offset = getStackOffsetFromTempVar(temp);
-					emitMovFromFrameBySize(X64Register::RAX, stack_offset, static_cast<int>(exception_size * 8));
+				// Use IrValue variant to handle TempVar or immediate
+				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
+					TempVar temp = std::get<TempVar>(throw_op.exception_value);
+					if (temp.var_number != 0) {
+						int32_t stack_offset = getStackOffsetFromTempVar(temp);
+						emitMovFromFrameBySize(X64Register::RAX, stack_offset, static_cast<int>(exception_size * 8));
+					} else {
+						emitMovImm64(X64Register::RAX, 0);
+					}
+				} else if (std::holds_alternative<unsigned long long>(throw_op.exception_value)) {
+					emitMovImm64(X64Register::RAX, std::get<unsigned long long>(throw_op.exception_value));
+				} else if (std::holds_alternative<double>(throw_op.exception_value)) {
+					double float_val = std::get<double>(throw_op.exception_value);
+					uint64_t bits;
+					if (exception_size == 4) {
+						float f = static_cast<float>(float_val);
+						std::memcpy(&bits, &f, sizeof(float));
+						bits &= 0xFFFFFFFF;
+					} else {
+						std::memcpy(&bits, &float_val, sizeof(double));
+					}
+					emitMovImm64(X64Register::RAX, bits);
 				} else {
 					emitMovImm64(X64Register::RAX, 0);
 				}
 				emitMovToRSPDisp8(X64Register::RAX, 32);
 			} else {
-				// Large object: use memory-to-memory copy
-				TempVar temp = throw_op.value;
-				if (temp.var_number != 0) {
-					int32_t stack_offset = getStackOffsetFromTempVar(temp);
-					emitLeaFromFrame(X64Register::RSI, stack_offset);
+				// Large object: use memory-to-memory copy (must be TempVar)
+				if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
+					TempVar temp = std::get<TempVar>(throw_op.exception_value);
+					if (temp.var_number != 0) {
+						int32_t stack_offset = getStackOffsetFromTempVar(temp);
+						emitLeaFromFrame(X64Register::RSI, stack_offset);
+					} else {
+						emitXorRegReg(X64Register::RSI);
+					}
 				} else {
 					emitXorRegReg(X64Register::RSI);
 				}

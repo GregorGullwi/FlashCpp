@@ -57,8 +57,47 @@ This document consolidates the exception handling implementation plans for Flash
 2. **Windows**: Code generation for SEH not implemented
 
 3. **Both**: RTTI integration incomplete for complex exception type matching
+   - **Current limitation**: Only built-in types (int, float, etc.) are supported via external type_info symbols
+   - **For user-defined types**: Need to generate complete type_info structures
+   - **Solution path**: See Phase 2 below for RTTI integration details
+   - **Priority**: MEDIUM - built-in exception types work, user-defined types are the next step
 
-## Architecture Overview
+### Next Steps to Fix Linux Runtime Issue
+
+The personality routine (`__gxx_personality_v0`) is failing to find the landing pad. Based on debugging:
+
+1. **Call site table verification** - Need to verify call site offsets match actual code offsets
+2. **LSDA format verification** - Compare byte-by-byte with GCC-generated LSDA
+3. **FDE/CIE verification** - Ensure .eh_frame format is correct for dynamic lookup
+4. **Test with simpler case** - Create minimal test case without type matching (catch(...))
+
+### RTTI Integration Path (Phase 2)
+
+For exception type matching beyond built-in types, implement RTTI structures:
+
+```cpp
+// Built-in type (current - uses external reference)
+extern "C" const std::type_info _ZTIi;  // int
+
+// User-defined class (needs to generate)
+struct __class_type_info {
+    void* __vtable;           // Points to __class_type_info vtable
+    const char* __type_name;  // "_ZTS" + mangled name
+};
+
+// For classes with single inheritance
+struct __si_class_type_info : __class_type_info {
+    const __class_type_info* __base_type;  // Base class type_info
+};
+```
+
+Tasks to implement:
+1. Generate `_ZTS*` (type name string) symbols for user-defined types
+2. Generate `_ZTI*` (type_info) symbols pointing to type name
+3. Handle inheritance by creating proper `__si_class_type_info` for derived classes
+4. Add `.rodata` entries for type_info structures with correct vtable pointers
+
+
 
 ### Exception Handling Flow
 
@@ -425,23 +464,25 @@ enum class IrOpcode {
     TryEnd,         // End try block
     CatchBegin,     // Begin catch handler: [exception_var_temp, type_index, catch_end_label]
     CatchEnd,       // End catch handler
-    Throw,          // Throw exception: [exception_temp, type_index]
+    Throw,          // Throw exception: [exception_value, type_index]
     Rethrow,        // Rethrow current exception (throw; with no argument)
 };
 
 struct CatchBeginOp {
     TempVar exception_temp;
     TypeIndex type_index;
+    Type exception_type;        // Type enum for built-in types
     bool is_reference;
     bool is_rvalue_reference;
-    bool is_catch_all;  // For catch(...)
+    bool is_catch_all;          // For catch(...)
     StringHandle catch_end_label;
 };
 
 struct ThrowOp {
-    TempVar exception_temp;
-    TypeIndex type_index;
-    size_t type_size;
-    bool is_rvalue;
+    TypeIndex type_index;         // Type of exception being thrown
+    Type exception_type;          // Actual Type enum for built-in types
+    size_t size_in_bytes;         // Size of exception object in bytes
+    IrValue exception_value;      // Value to throw (TempVar, immediate, or StringHandle)
+    bool is_rvalue;               // True if throwing an rvalue (can be moved)
 };
 ```
