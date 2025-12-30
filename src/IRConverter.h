@@ -3618,6 +3618,53 @@ public:
 	}
 
 private:
+	// Helper to convert internal try blocks to ObjectFileWriter format
+	// Used during function finalization to prepare exception handling information
+	std::pair<std::vector<ObjectFileWriter::TryBlockInfo>, std::vector<ObjectFileWriter::UnwindMapEntryInfo>>
+	convertExceptionInfoToWriterFormat() {
+		std::vector<ObjectFileWriter::TryBlockInfo> try_blocks;
+		for (const auto& try_block : current_function_try_blocks_) {
+			ObjectFileWriter::TryBlockInfo block_info;
+			block_info.try_start_offset = try_block.try_start_offset;
+			block_info.try_end_offset = try_block.try_end_offset;
+			for (const auto& handler : try_block.catch_handlers) {
+				ObjectFileWriter::CatchHandlerInfo handler_info;
+				handler_info.type_index = static_cast<uint32_t>(handler.type_index);
+				handler_info.handler_offset = handler.handler_offset;
+				handler_info.is_catch_all = handler.is_catch_all;
+				handler_info.is_const = handler.is_const;
+				handler_info.is_reference = handler.is_reference;
+				handler_info.is_rvalue_reference = handler.is_rvalue_reference;
+				
+				// Calculate frame offset for caught exception object
+				// Skip for catch-all handlers (they don't have an exception variable)
+				if (!handler.is_catch_all) {
+					handler_info.catch_obj_offset = getStackOffsetFromTempVar(handler.exception_temp);
+				} else {
+					handler_info.catch_obj_offset = 0;  // No exception object for catch(...)
+				}
+				
+				// Get type name from gTypeInfo for type descriptor generation
+				if (!handler.is_catch_all && handler.type_index < gTypeInfo.size()) {
+					handler_info.type_name = StringTable::getStringView(gTypeInfo[handler.type_index].name());
+				}
+				
+				block_info.catch_handlers.push_back(handler_info);
+			}
+			try_blocks.push_back(block_info);
+		}
+		
+		std::vector<ObjectFileWriter::UnwindMapEntryInfo> unwind_map;
+		for (const auto& unwind_entry : current_function_unwind_map_) {
+			ObjectFileWriter::UnwindMapEntryInfo entry_info;
+			entry_info.to_state = unwind_entry.to_state;
+			entry_info.action = unwind_entry.action.isValid() ? std::string(StringTable::getStringView(unwind_entry.action)) : std::string();
+			unwind_map.push_back(entry_info);
+		}
+		
+		return {std::move(try_blocks), std::move(unwind_map)};
+	}
+
 	// Shared arithmetic operation context
 	struct ArithmeticOperationContext {
 		TypedValue result_value;
@@ -7791,48 +7838,7 @@ private:
 			writer.set_function_debug_range(mangled, 0, 0);	// doesn't seem needed
 
 			// Add exception handling information (required for x64) - uses mangled name
-			// Convert try blocks to ObjectFileWriter format
-			std::vector<ObjectFileWriter::TryBlockInfo> try_blocks;
-			for (const auto& try_block : current_function_try_blocks_) {
-				ObjectFileWriter::TryBlockInfo block_info;
-				block_info.try_start_offset = try_block.try_start_offset;
-				block_info.try_end_offset = try_block.try_end_offset;
-				for (const auto& handler : try_block.catch_handlers) {
-					ObjectFileWriter::CatchHandlerInfo handler_info;
-					handler_info.type_index = static_cast<uint32_t>(handler.type_index);
-					handler_info.handler_offset = handler.handler_offset;
-					handler_info.is_catch_all = handler.is_catch_all;
-					handler_info.is_const = handler.is_const;
-					handler_info.is_reference = handler.is_reference;
-					handler_info.is_rvalue_reference = handler.is_rvalue_reference;
-					
-					// Calculate frame offset for caught exception object
-					// Skip for catch-all handlers (they don't have an exception variable)
-					if (!handler.is_catch_all) {
-						handler_info.catch_obj_offset = getStackOffsetFromTempVar(handler.exception_temp);
-					} else {
-						handler_info.catch_obj_offset = 0;  // No exception object for catch(...)
-					}
-					
-					// Get type name from gTypeInfo for type descriptor generation
-					if (!handler.is_catch_all && handler.type_index < gTypeInfo.size()) {
-						handler_info.type_name = StringTable::getStringView(gTypeInfo[handler.type_index].name());
-					}
-					
-					block_info.catch_handlers.push_back(handler_info);
-				}
-				try_blocks.push_back(block_info);
-			}
-			
-			// Convert unwind map to ObjectFileWriter format
-			std::vector<ObjectFileWriter::UnwindMapEntryInfo> unwind_map;
-			for (const auto& unwind_entry : current_function_unwind_map_) {
-				ObjectFileWriter::UnwindMapEntryInfo entry_info;
-				entry_info.to_state = unwind_entry.to_state;
-				entry_info.action = unwind_entry.action.isValid() ? std::string(StringTable::getStringView(unwind_entry.action)) : std::string();
-				unwind_map.push_back(entry_info);
-			}
-			
+			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
 			writer.add_function_exception_info(std::string(StringTable::getStringView(current_function_mangled_name_)), current_function_offset_, function_length, try_blocks, unwind_map);
 		
 			// Clean up the previous function's variable scope
@@ -13654,49 +13660,7 @@ private:
 			}
 
 			// Add exception handling information (required for x64) - uses mangled name
-			// Convert try blocks to ObjectFileWriter format
-			std::vector<ObjectFileWriter::TryBlockInfo> try_blocks;
-			for (const auto& try_block : current_function_try_blocks_) {
-				ObjectFileWriter::TryBlockInfo block_info;
-				block_info.try_start_offset = try_block.try_start_offset;
-				block_info.try_end_offset = try_block.try_end_offset;
-				for (const auto& handler : try_block.catch_handlers) {
-					ObjectFileWriter::CatchHandlerInfo handler_info;
-					handler_info.type_index = static_cast<uint32_t>(handler.type_index);
-					handler_info.handler_offset = handler.handler_offset;
-					handler_info.is_catch_all = handler.is_catch_all;
-					handler_info.is_const = handler.is_const;
-					handler_info.is_reference = handler.is_reference;
-					handler_info.is_rvalue_reference = handler.is_rvalue_reference;
-					
-					// Calculate frame offset for caught exception object
-					// Skip for catch-all handlers (they don't have an exception variable)
-					if (!handler.is_catch_all) {
-						handler_info.catch_obj_offset = getStackOffsetFromTempVar(handler.exception_temp);
-					} else {
-						handler_info.catch_obj_offset = 0;  // No exception object for catch(...)
-					}
-					
-					// Get type name from gTypeInfo for type descriptor generation
-					if (!handler.is_catch_all && handler.type_index < gTypeInfo.size()) {
-						handler_info.type_name = StringTable::getStringView(gTypeInfo[handler.type_index].name());
-					}
-					
-					block_info.catch_handlers.push_back(handler_info);
-				}
-				try_blocks.push_back(block_info);
-			}
-			
-			// Convert unwind map to ObjectFileWriter format
-			std::vector<ObjectFileWriter::UnwindMapEntryInfo> unwind_map;
-			for (const auto& unwind_entry : current_function_unwind_map_) {
-				ObjectFileWriter::UnwindMapEntryInfo entry_info;
-				entry_info.to_state = unwind_entry.to_state;
-				entry_info.action = unwind_entry.action.isValid() ? std::string(StringTable::getStringView(unwind_entry.action)) : std::string();
-				unwind_map.push_back(entry_info);
-			}
-			
-			// Add exception handling information with try blocks
+			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
 			writer.add_function_exception_info(std::string(StringTable::getStringView(current_function_mangled_name_)), current_function_offset_, function_length, try_blocks, unwind_map);
 
 			// Clear the current function state

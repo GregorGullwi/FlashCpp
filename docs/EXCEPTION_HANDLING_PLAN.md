@@ -81,7 +81,7 @@ Transfer to landing pad          Transfer to landing pad
 
 #### 1.1 Debug Current .eh_frame Issues
 
-**Problem**: Some FDEs lack LSDA pointer, causing segfaults at runtime.
+**Problem**: Some FDEs lack LSDA pointer, causing segmentation faults at runtime.
 
 **Tasks**:
 1. Analyze why `main()` function's FDE doesn't have augmentation data
