@@ -901,9 +901,10 @@ public:
 		// Debug: log each pattern arg
 		for (size_t i = 0; i < pattern_args.size(); ++i) {
 			const auto& arg = pattern_args[i];
+			std::string_view dep_name_view = arg.dependent_name.isValid() ? StringTable::getStringView(arg.dependent_name) : "";
 			FLASH_LOG(Templates, Debug, "  pattern_arg[", i, "]: base_type=", static_cast<int>(arg.base_type),
 			          ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent,
-			          ", is_value=", arg.is_value);
+			          ", is_value=", arg.is_value, ", dependent_name='", dep_name_view, "'");
 		}
 		
 		TemplatePattern pattern;
@@ -912,10 +913,10 @@ public:
 		pattern.specialized_node = specialized_node;
 		pattern.sfinae_condition = sfinae_cond;
 		
-		// Auto-detect void_t SFINAE patterns if no explicit condition provided
+		// Auto-detect void_t SFINAE patterns if no explicit condition provided.
 		// Heuristic: patterns with 2 args where first is dependent and second is void
-		// are void_t detection patterns (e.g., has_type<T, void_t<typename T::type>>).
-		// The base class (true_type, false_type, or custom) doesn't affect SFINAE applicability.
+		// indicate void_t<...> usage. The member name to check is extracted from the
+		// first arg's dependent_name if available, otherwise defaults to "type".
 		if (!sfinae_cond.has_value() && pattern_args.size() == 2) {
 			const auto& first_arg = pattern_args[0];
 			const auto& second_arg = pattern_args[1];
@@ -923,12 +924,43 @@ public:
 			// Check: first arg is dependent (template param), second arg is void (from void_t expansion)
 			if (first_arg.is_dependent && !second_arg.is_dependent && 
 			    second_arg.base_type == Type::Void) {
-				// This looks like void_t<typename T::type> detection pattern.
-				// Set SFINAE condition to check for T::type member.
-				// Note: Currently hard-coded to check "type" member since this is the standard pattern.
-				// Future enhancement: Could extract actual member name from pattern args if needed.
-				pattern.sfinae_condition = SfinaeCondition(0, StringTable::getOrInternStringHandle("type"));
-				FLASH_LOG(Templates, Debug, "Auto-detected void_t SFINAE pattern: checking for ::type member");
+				// This looks like a void_t SFINAE pattern.
+				// Try to extract the member name from available information.
+				StringHandle member_name;
+				
+				// Check if the first arg's dependent_name contains a qualified name like "T::type"
+				if (first_arg.dependent_name.isValid()) {
+					std::string_view dep_name = StringTable::getStringView(first_arg.dependent_name);
+					size_t scope_pos = dep_name.rfind("::");
+					if (scope_pos != std::string_view::npos && scope_pos + 2 < dep_name.size()) {
+						// Extract the member name after "::"
+						std::string_view extracted_member = dep_name.substr(scope_pos + 2);
+						member_name = StringTable::getOrInternStringHandle(extracted_member);
+						FLASH_LOG(Templates, Debug, "Extracted SFINAE member name '", extracted_member, "' from dependent_name '", dep_name, "'");
+					}
+				}
+				
+				// If no member name was extracted, check the type name via type_index
+				if (!member_name.isValid() && first_arg.type_index > 0 && first_arg.type_index < gTypeInfo.size()) {
+					std::string_view type_name = StringTable::getStringView(gTypeInfo[first_arg.type_index].name());
+					size_t scope_pos = type_name.rfind("::");
+					if (scope_pos != std::string_view::npos && scope_pos + 2 < type_name.size()) {
+						std::string_view extracted_member = type_name.substr(scope_pos + 2);
+						member_name = StringTable::getOrInternStringHandle(extracted_member);
+						FLASH_LOG(Templates, Debug, "Extracted SFINAE member name '", extracted_member, "' from type_name '", type_name, "'");
+					}
+				}
+				
+				// Default to "type" if no member name could be extracted
+				// This is the most common pattern (e.g., void_t<typename T::type>)
+				if (!member_name.isValid()) {
+					member_name = StringTable::getOrInternStringHandle("type");
+					FLASH_LOG(Templates, Debug, "Using default SFINAE member name 'type'");
+				}
+				
+				pattern.sfinae_condition = SfinaeCondition(0, member_name);
+				FLASH_LOG(Templates, Debug, "Auto-detected void_t SFINAE pattern: checking for ::", 
+				          StringTable::getStringView(member_name), " member");
 			}
 		}
 		
