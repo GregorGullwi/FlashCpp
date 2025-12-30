@@ -884,17 +884,17 @@ public:
 		
 		if (has_exception_handlers) {
 			// P: Personality routine encoding and pointer
-			// Encoding: PC-relative signed 4-byte (direct, not indirect for non-PIE)
-			// Note: GCC uses indirect (DW_EH_PE_indirect) for PIE/shared libraries,
-			// but for static/non-PIE executables, direct addressing is more appropriate
-			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
+			// Use udata4 (0x03 = absolute 4-byte) with R_X86_64_32 relocation
+			// This matches GCC's encoding for non-PIE executables
+			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_udata4);
 			// Personality routine pointer (will need relocation to __gxx_personality_v0)
 			// Store offset for relocation tracking
 			personality_routine_offset_ = static_cast<uint32_t>(eh_frame_data.size());
 			for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);  // Placeholder
 			
 			// L: LSDA encoding
-			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
+			// Use udata4 (0x03) to match LSDA TType encoding
+			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_udata4);
 		}
 		
 		// R: FDE encoding (PC-relative signed 4-byte) - always present with 'z'
@@ -1183,17 +1183,18 @@ public:
 					// Add section symbol for .gcc_except_table
 					auto* except_section = getSectionByName(".gcc_except_table");
 					if (except_section) {
+						// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
 						accessor->add_symbol(*string_accessor_, ".gcc_except_table",
 						                    0, 0, ELFIO::STB_LOCAL, ELFIO::STT_SECTION,
-						                    except_section->get_index(), ELFIO::STV_DEFAULT);
+						                    ELFIO::STV_DEFAULT, except_section->get_index());
 						gcc_except_table_sym_index = accessor->get_symbols_num() - 1;
 					}
 				}
 				
-				// Add relocation for LSDA pointer with addend = lsda_offset
+				// Add R_X86_64_32 relocation for LSDA pointer (udata4 encoding)
 				rela_accessor->add_entry(fde_info.lsda_pointer_offset,
 				                        static_cast<ELFIO::Elf_Word>(gcc_except_table_sym_index),
-				                        ELFIO::R_X86_64_PC32,
+				                        ELFIO::R_X86_64_32,
 				                        static_cast<ELFIO::Elf_Sxword>(fde_info.lsda_offset));
 			}
 		}
@@ -1204,18 +1205,19 @@ public:
 			auto* accessor = getSymbolAccessor();
 			if (accessor) {
 				// Add as undefined external symbol
+				// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
 				accessor->add_symbol(*string_accessor_, "__gxx_personality_v0", 
 				                    0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE, 
-				                    0, ELFIO::STV_DEFAULT);
+				                    ELFIO::STV_DEFAULT, 0);
 				
 				// Find the symbol index we just added
 				ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
 				ELFIO::Elf_Xword personality_sym_index = sym_count - 1;
 				
-				// Add relocation for personality routine
+				// Add R_X86_64_32 relocation for udata4 encoding
 				rela_accessor->add_entry(personality_routine_offset_,
 				                        static_cast<ELFIO::Elf_Word>(personality_sym_index),
-				                        ELFIO::R_X86_64_PC32,
+				                        ELFIO::R_X86_64_32,
 				                        0);
 			}
 		}
@@ -1276,10 +1278,11 @@ public:
 		// (WEAK symbols are treated like GLOBAL for ordering purposes)
 		auto* accessor = getSymbolAccessor();
 		if (accessor && string_accessor_) {
+			// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
 			accessor->add_symbol(*string_accessor_, ".gcc_except_table",
 			                    0, gcc_except_table_data.size(), 
 			                    ELFIO::STB_WEAK, ELFIO::STT_OBJECT,
-			                    except_section->get_index(), ELFIO::STV_HIDDEN);
+			                    ELFIO::STV_HIDDEN, except_section->get_index());
 		}
 		
 		// Create .rela.gcc_except_table for type_info relocations if needed
@@ -1332,10 +1335,10 @@ public:
 						sym_index = sym_accessor->get_symbols_num() - 1;
 					}
 					
-					// Add R_X86_64_PC32 relocation for pcrel sdata4 encoding
+					// Add R_X86_64_32 relocation for udata4 (absolute) encoding
 					rela_accessor->add_entry(offset,
 					                        static_cast<ELFIO::Elf_Word>(sym_index),
-					                        ELFIO::R_X86_64_PC32,
+					                        ELFIO::R_X86_64_32,
 					                        0);
 				}
 			}

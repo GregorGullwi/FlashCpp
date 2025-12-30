@@ -13387,24 +13387,53 @@ private:
 			if (catch_op.exception_temp.var_number != 0) {
 				int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
 				
+				if (g_enable_debug_output) {
+					std::cerr << "[DEBUG][Codegen] CatchBegin: is_ref=" << catch_op.is_reference
+					          << " is_rvalue_ref=" << catch_op.is_rvalue_reference
+					          << " type_index=" << catch_op.type_index
+					          << " stack_offset=" << stack_offset << std::endl;
+				}
+				
 				// For POD types, dereference and copy the value
 				// For references, store the pointer itself
 				if (catch_op.is_reference || catch_op.is_rvalue_reference) {
 					// Store the pointer (RAX) directly
+					if (g_enable_debug_output) {
+						std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (reference type)" << std::endl;
+					}
 					emitMovToFrame(X64Register::RAX, stack_offset);
 				} else {
 					// Get type size for dereferencing
-					const TypeInfo& type_info = gTypeInfo[catch_op.type_index];
+					// Use exception_type (Type enum) instead of type_index since type_index 
+					// may be 0 for catch(int) when the parameter type wasn't resolved to a TypeIndex
+					TypeIndex type_idx = catch_op.type_index;
+					if (type_idx == 0 && catch_op.exception_type != Type::Void) {
+						// Fall back to exception_type enum value
+						type_idx = static_cast<TypeIndex>(catch_op.exception_type);
+					}
+					const TypeInfo& type_info = gTypeInfo[type_idx];
 					size_t type_size = type_info.type_size_ / 8;  // Convert bits to bytes
+					
+					if (g_enable_debug_output) {
+						std::cerr << "[DEBUG][Codegen] CatchBegin: type_idx=" << type_idx
+						          << " type_size=" << type_size
+						          << " bits=" << type_info.type_size_ << std::endl;
+					}
 					
 					// Load value from exception object and store to catch variable
 					if (type_size <= 8 && type_size > 0) {
 						// Small POD: load from [RAX] and store to frame
 						// Move value from [RAX] to RCX
+						if (g_enable_debug_output) {
+							std::cerr << "[DEBUG][Codegen] CatchBegin: dereferencing exception value" << std::endl;
+						}
 						emitMovFromMemory(X64Register::RCX, X64Register::RAX, 0, type_size);
 						emitMovToFrameBySize(X64Register::RCX, stack_offset, type_info.type_size_);
 					} else {
 						// Large type or unknown size: just store pointer
+						if (g_enable_debug_output) {
+							std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (large or unknown type)" << std::endl;
+						}
 						emitMovToFrame(X64Register::RAX, stack_offset);
 					}
 				}
