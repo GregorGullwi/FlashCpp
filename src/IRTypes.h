@@ -1419,6 +1419,7 @@ struct CatchBeginOp {
 // Throw exception operation
 struct ThrowOp {
 	TypeIndex type_index;         // Type of exception being thrown
+	Type exception_type;          // Actual Type enum for built-in types
 	size_t size_in_bytes;         // Size of exception object in bytes
 	TempVar value;                // Temporary or value to throw
 	bool is_rvalue;               // True if throwing an rvalue (can be moved)

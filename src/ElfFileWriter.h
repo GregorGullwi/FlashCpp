@@ -917,8 +917,10 @@ public:
 		
 		if (has_exception_handlers) {
 			// P: Personality routine encoding and pointer
-			// Encoding: PC-relative indirect signed 4-byte (like GCC)
-			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_indirect | DwarfCFI::DW_EH_PE_sdata4);
+			// Encoding: PC-relative signed 4-byte (direct, not indirect for non-PIE)
+			// Note: GCC uses indirect (DW_EH_PE_indirect) for PIE/shared libraries,
+			// but for static/non-PIE executables, direct addressing is more appropriate
+			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
 			// Personality routine pointer (will need relocation to __gxx_personality_v0)
 			// Store offset for relocation tracking
 			personality_routine_offset_ = static_cast<uint32_t>(eh_frame_data.size());

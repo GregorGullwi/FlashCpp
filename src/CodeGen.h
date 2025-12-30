@@ -4523,6 +4523,7 @@ private:
 			// Create ThrowOp with typed data
 			ThrowOp throw_op;
 			throw_op.type_index = exception_type_index;
+			throw_op.exception_type = expr_type;  // Store the actual Type enum
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
 			throw_op.value = value_temp;
 			throw_op.is_rvalue = true;  // Default to rvalue for now

@@ -13466,29 +13466,24 @@ private:
 			
 			// RSI = type_info* - generate type_info for the thrown type
 			std::string typeinfo_symbol;
-			if (throw_op.type_index < gTypeInfo.size()) {
+			Type exception_type = throw_op.exception_type;
+			
+			// Check if it's a built-in type or user-defined type
+			if (exception_type == Type::Struct && throw_op.type_index < gTypeInfo.size()) {
+				// User-defined class type - look up struct info from type_index
 				const TypeInfo& type_info = gTypeInfo[throw_op.type_index];
-				Type exception_type = type_info.type_;
-				
-				// Check if it's a built-in type or user-defined type
-				if (exception_type == Type::Struct) {
-					// User-defined class type
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
-					if (struct_info) {
-						typeinfo_symbol = writer.get_or_create_class_typeinfo(StringTable::getStringView(struct_info->getName()));
-					}
-				} else {
-					// Built-in type
-					typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
+				const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (struct_info) {
+					typeinfo_symbol = writer.get_or_create_class_typeinfo(StringTable::getStringView(struct_info->getName()));
 				}
-				
-				if (!typeinfo_symbol.empty()) {
-					// Load address of type_info into RSI using RIP-relative LEA
-					emitLeaRipRelativeWithRelocation(X64Register::RSI, typeinfo_symbol);
-				} else {
-					// Unknown type, use NULL
-					emitXorRegReg(X64Register::RSI);
-				}
+			} else if (exception_type != Type::Void) {
+				// Built-in type (int, float, etc.) - use the Type enum directly
+				typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
+			}
+			
+			if (!typeinfo_symbol.empty()) {
+				// Load address of type_info into RSI using RIP-relative LEA
+				emitLeaRipRelativeWithRelocation(X64Register::RSI, typeinfo_symbol);
 			} else {
 				// Unknown type, use NULL
 				emitXorRegReg(X64Register::RSI);
@@ -13658,8 +13653,51 @@ private:
 				//writer.set_function_debug_range(current_function_name_, 8, 5); // prologue=8, epilogue=3
 			}
 
-			// Add exception handling information (required for x64) - once per function
-			writer.add_function_exception_info(std::string(StringTable::getStringView(current_function_mangled_name_)), current_function_offset_, function_length);
+			// Add exception handling information (required for x64) - uses mangled name
+			// Convert try blocks to ObjectFileWriter format
+			std::vector<ObjectFileWriter::TryBlockInfo> try_blocks;
+			for (const auto& try_block : current_function_try_blocks_) {
+				ObjectFileWriter::TryBlockInfo block_info;
+				block_info.try_start_offset = try_block.try_start_offset;
+				block_info.try_end_offset = try_block.try_end_offset;
+				for (const auto& handler : try_block.catch_handlers) {
+					ObjectFileWriter::CatchHandlerInfo handler_info;
+					handler_info.type_index = static_cast<uint32_t>(handler.type_index);
+					handler_info.handler_offset = handler.handler_offset;
+					handler_info.is_catch_all = handler.is_catch_all;
+					handler_info.is_const = handler.is_const;
+					handler_info.is_reference = handler.is_reference;
+					handler_info.is_rvalue_reference = handler.is_rvalue_reference;
+					
+					// Calculate frame offset for caught exception object
+					// Skip for catch-all handlers (they don't have an exception variable)
+					if (!handler.is_catch_all) {
+						handler_info.catch_obj_offset = getStackOffsetFromTempVar(handler.exception_temp);
+					} else {
+						handler_info.catch_obj_offset = 0;  // No exception object for catch(...)
+					}
+					
+					// Get type name from gTypeInfo for type descriptor generation
+					if (!handler.is_catch_all && handler.type_index < gTypeInfo.size()) {
+						handler_info.type_name = StringTable::getStringView(gTypeInfo[handler.type_index].name());
+					}
+					
+					block_info.catch_handlers.push_back(handler_info);
+				}
+				try_blocks.push_back(block_info);
+			}
+			
+			// Convert unwind map to ObjectFileWriter format
+			std::vector<ObjectFileWriter::UnwindMapEntryInfo> unwind_map;
+			for (const auto& unwind_entry : current_function_unwind_map_) {
+				ObjectFileWriter::UnwindMapEntryInfo entry_info;
+				entry_info.to_state = unwind_entry.to_state;
+				entry_info.action = unwind_entry.action.isValid() ? std::string(StringTable::getStringView(unwind_entry.action)) : std::string();
+				unwind_map.push_back(entry_info);
+			}
+			
+			// Add exception handling information with try blocks
+			writer.add_function_exception_info(std::string(StringTable::getStringView(current_function_mangled_name_)), current_function_offset_, function_length, try_blocks, unwind_map);
 
 			// Clear the current function state
 			current_function_name_ = StringHandle();
