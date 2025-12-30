@@ -26,10 +26,19 @@ This document consolidates the exception handling implementation plans for Flash
 
 ### ❌ Known Issues
 
-1. **Linux**: Exception tables generated but have FDE issues (missing augmentation data for some FDEs)
-2. **Linux**: Runtime segfault when executing - personality routine integration incomplete
-3. **Windows**: Code generation for SEH not implemented
-4. **Both**: RTTI integration incomplete for complex exception type matching
+### ⚠️ Fixed Issues (2025-12-30)
+
+1. **✅ FIXED**: Last function in file (e.g., main) now properly gets try_blocks passed to exception info
+2. **✅ FIXED**: Personality routine encoding changed from indirect to direct for non-PIE executables  
+3. **✅ FIXED**: Type info now correctly uses actual Type enum (`_ZTIi` for int instead of `_ZTIv`)
+
+### ❌ Remaining Issues
+
+1. **Linux**: Runtime abort when executing - personality routine can't find landing pad
+   - LSDA call site table or type table encoding likely incorrect
+   - Needs debugging with gdb to trace personality routine execution
+2. **Windows**: Code generation for SEH not implemented
+3. **Both**: RTTI integration incomplete for complex exception type matching
 
 ## Architecture Overview
 
