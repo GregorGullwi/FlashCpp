@@ -1616,38 +1616,16 @@ private:
 						// This handles template type aliases like `using value_type = T;` where T is substituted
 						// but the return type wasn't fully updated in the AST.
 						if (resolved_type == Type::UserDefined && target_type != Type::Struct && target_type != Type::Enum) {
-							int expected_size = 0;
-							switch (target_type) {
-								case Type::Bool: expected_size = 8; break;  // bool is 1 byte in C++
-								case Type::Char: case Type::UnsignedChar: expected_size = 8; break;
-								case Type::Short: case Type::UnsignedShort: expected_size = 16; break;
-								case Type::Int: case Type::UnsignedInt: expected_size = 32; break;
-								case Type::Long: case Type::UnsignedLong: expected_size = 64; break;
-								case Type::LongLong: case Type::UnsignedLongLong: expected_size = 64; break;
-								case Type::Float: expected_size = 32; break;
-								case Type::Double: expected_size = 64; break;
-								default: break;
-							}
+							int expected_size = get_type_size_bits(target_type);
 							
 							if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=", 
 								          type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type), " (size=", expected_size, ")");
 								return &member_func;
 							}
-							
-							// FINAL FALLBACK: For template-instantiated conversion operators where the return type
-							// is UserDefined but the size wasn't properly substituted (common with `using value_type = T;`),
-							// accept it for any primitive target type. The actual return value handling will
-							// convert appropriately at runtime.
-							// This is necessary because template parameter substitution may not update the
-							// size_in_bits of the return type when T is a smaller type like bool.
-							// NOTE: This is a permissive fallback that may need stricter validation in the future.
-							if (expected_size > 0) {
-								FLASH_LOG(Codegen, Warning, "Using permissive conversion operator matching for primitive target type ",
-								          static_cast<int>(target_type), " - operator return_size=", type_spec.size_in_bits(), 
-								          " does not match expected_size=", expected_size);
-								return &member_func;
-							}
+							// Note: We intentionally don't have a permissive fallback here because it would match
+							// conversion operators from pattern templates that don't have generated code, leading
+							// to linker errors (undefined reference to operator user_defined).
 						}
 					}
 				}
