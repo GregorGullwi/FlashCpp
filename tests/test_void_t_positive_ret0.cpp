@@ -8,6 +8,9 @@
 // - 0 if behavior is correct (specialization matches for type with ::type member)
 // - 42 if behavior is incorrect (primary template used)
 
+// void_t is a SFINAE utility alias that maps any well-formed type to void.
+// It enables detection of valid expressions - if the type argument is ill-formed,
+// SFINAE removes the specialization from consideration.
 template<typename...>
 using void_t = void;
 

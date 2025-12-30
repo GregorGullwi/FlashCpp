@@ -24156,19 +24156,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (target_type.is<TypeSpecifierNode>()) {
 							const TypeSpecifierNode& alias_type_spec = target_type.as<TypeSpecifierNode>();
 							if (alias_type_spec.type() == Type::Void) {
-								// This is a void_t-like alias that resolves to void.
-								// For SFINAE to work correctly with void_t<typename T::type>:
-								// - If T::type exists, void_t evaluates to void -> pattern matches
-								// - If T::type doesn't exist, SFINAE -> pattern doesn't apply
-								//
-								// Since we can't easily check if T::type exists at this point,
-								// we'll fill in void and let pattern matching proceed.
-								// The specialization pattern <T, void_t<typename T::type>> becomes <T, void>
-								// which matches <WithType, void> when filled correctly.
-								//
-								// For the SFINAE case (T::type doesn't exist), the pattern's void_t<typename T::type>
-								// won't expand properly during pattern registration, so the pattern_args
-								// should reflect this. Let's just fill void for now.
+								// void_t-like alias: fill in void here, SFINAE check happens in pattern matching
 								TemplateTypeArg void_arg;
 								void_arg.base_type = Type::Void;
 								void_arg.type_index = 0;

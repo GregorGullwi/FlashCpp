@@ -928,8 +928,9 @@ public:
 					for (const auto& base : struct_node.base_classes()) {
 						std::string_view base_name = base.name;
 						if (base_name == "true_type" || base_name.find("true_type") != std::string_view::npos) {
-							// This looks like a void_t detection pattern for has_type<T, void_t<typename T::type>>
-							// Set SFINAE condition to check for T::type
+							// Heuristic: This looks like void_t<typename T::type> detection pattern.
+							// Hard-coded to check param[0]::type since this is the standard pattern.
+							// Future: Could be generalized to extract member name from pattern args.
 							pattern.sfinae_condition = SfinaeCondition(0, StringTable::getOrInternStringHandle("type"));
 							FLASH_LOG(Templates, Debug, "Auto-detected void_t SFINAE pattern: checking for ::type member");
 							break;
