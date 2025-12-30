@@ -12542,12 +12542,7 @@ private:
 				}
 
 				// First, check if this is a global/static local variable
-				for (const auto& global : global_variables_) {
-					if (global.name == global_name_handle) {
-						is_global = true;
-						break;
-					}
-				}
+				is_global = isGlobalVariable(global_name_handle);
 				
 				if (!is_global) {
 					auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(operand_str));
@@ -12612,12 +12607,7 @@ private:
 			global_name_handle = instruction.getOperandAs<StringHandle>(3);
 			
 			// First, check if this is a global/static local variable
-			for (const auto& global : global_variables_) {
-				if (global.name == global_name_handle) {
-					is_global = true;
-					break;
-				}
-			}
+			is_global = isGlobalVariable(global_name_handle);
 			
 			if (!is_global) {
 				const StackVariableScope& current_scope = variable_scopes.back();
@@ -14290,6 +14280,16 @@ private:
 		std::vector<char> init_data;  // Raw bytes for initialized data
 	};
 	std::vector<GlobalVariableInfo> global_variables_;
+	
+	// Helper function to check if a variable is a global/static local variable
+	bool isGlobalVariable(StringHandle name) const {
+		for (const auto& global : global_variables_) {
+			if (global.name == name) {
+				return true;
+			}
+		}
+		return false;
+	}
 
 	// VTable tracking
 	struct VTableInfo {
