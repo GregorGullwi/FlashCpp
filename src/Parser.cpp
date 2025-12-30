@@ -11124,6 +11124,45 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 	}
 
+	// Check for '__builtin_constant_p' intrinsic
+	// Returns 1 if the argument can be evaluated at compile time, 0 otherwise
+	// Syntax: __builtin_constant_p(expr)
+	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "__builtin_constant_p"sv) {
+		Token builtin_token = *current_token_;
+		consume_token(); // consume '__builtin_constant_p'
+
+		if (!consume_punctuator("("sv)) {
+			return ParseResult::error("Expected '(' after '__builtin_constant_p'", *current_token_);
+		}
+
+		// Parse argument: any expression
+		ParseResult arg_result = parse_expression();
+		if (arg_result.is_error()) {
+			return ParseResult::error("Expected expression as argument to __builtin_constant_p", *current_token_);
+		}
+
+		if (!consume_punctuator(")"sv)) {
+			return ParseResult::error("Expected ')' after __builtin_constant_p argument", *current_token_);
+		}
+
+		// Try to evaluate the expression at compile time
+		// If it succeeds, __builtin_constant_p returns 1, otherwise 0
+		int result = 0;
+		if (arg_result.node().has_value()) {
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			auto eval_result = ConstExpr::Evaluator::evaluate(*arg_result.node(), eval_ctx);
+			if (eval_result.success) {
+				result = 1;
+			}
+		}
+
+		// Return a numeric literal with the result (1 or 0)
+		auto result_node = emplace_node<ExpressionNode>(
+			NumericLiteralNode(builtin_token, static_cast<unsigned long long>(result), Type::Int, TypeQualifier::None, 32));
+
+		return ParseResult::success(result_node);
+	}
+
 	// Check for '__builtin_va_arg' intrinsic
 	// Special handling needed because second argument is a type, not an expression
 	// Syntax: __builtin_va_arg(va_list_var, type)
