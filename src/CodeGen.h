@@ -8097,7 +8097,10 @@ private:
 		
 		std::vector<IrOperand> operandIrOperands;
 		bool operandHandledAsIdentifier = false;
-		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+		// For ++, --, and & operators on identifiers, use tryBuildIdentifierOperand
+		// This ensures we get the variable name (or static local's mangled name) directly
+		// rather than generating a load that would lose the variable identity
+		if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--" || unaryOperatorNode.op() == "&") && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 				const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);

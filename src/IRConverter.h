@@ -12521,6 +12521,9 @@ private:
 			
 			int32_t var_offset;
 			const StackVariableScope& current_scope = variable_scopes.back();
+			X64Register target_reg = X64Register::RAX;
+			bool is_global = false;
+			StringHandle global_name_handle;
 			
 			// Get operand (variable to take address of) from TypedValue
 			if (std::holds_alternative<TempVar>(op.operand.value)) {
@@ -12532,30 +12535,46 @@ private:
 				std::string_view operand_str;
 				if (std::holds_alternative<StringHandle>(op.operand.value)) {
 					operand_str = StringTable::getStringView(std::get<StringHandle>(op.operand.value));
+					global_name_handle = std::get<StringHandle>(op.operand.value);
 				} else {
 					assert(std::holds_alternative<TempVar>(op.operand.value) && "AddressOf operand must be StringHandle or TempVar");
 					return;
 				}
 
-				auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(operand_str));
-				if (it == current_scope.variables.end()) {
-					assert(false && "Variable not found in scope");
-					return;
+				// First, check if this is a global/static local variable
+				for (const auto& global : global_variables_) {
+					if (global.name == global_name_handle) {
+						is_global = true;
+						break;
+					}
 				}
-				var_offset = it->second.offset;
+				
+				if (!is_global) {
+					auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(operand_str));
+					if (it == current_scope.variables.end()) {
+						assert(false && "Variable not found in scope");
+						return;
+					}
+					var_offset = it->second.offset;
+				}
 			}
 
 			// Calculate the address
-			// If the variable is a reference, it already holds an address - use MOV to load it
-			// Otherwise, use LEA to compute the address of the variable
-			X64Register target_reg = X64Register::RAX;
-			auto ref_it = reference_stack_info_.find(var_offset);
-			if (ref_it != reference_stack_info_.end()) {
-				// Variable is a reference - load the address it contains
-				emitMovFromFrame(target_reg, var_offset);
+			if (is_global) {
+				// Global/static local variable - use LEA with RIP-relative addressing
+				uint32_t reloc_offset = emitLeaRipRelative(target_reg);
+				pending_global_relocations_.push_back({reloc_offset, global_name_handle, IMAGE_REL_AMD64_REL32});
 			} else {
-				// Regular variable - compute its address
-				emitLeaFromFrame(target_reg, var_offset);
+				// If the variable is a reference, it already holds an address - use MOV to load it
+				// Otherwise, use LEA to compute the address of the variable
+				auto ref_it = reference_stack_info_.find(var_offset);
+				if (ref_it != reference_stack_info_.end()) {
+					// Variable is a reference - load the address it contains
+					emitMovFromFrame(target_reg, var_offset);
+				} else {
+					// Regular variable - compute its address
+					emitLeaFromFrame(target_reg, var_offset);
+				}
 			}
 
 			// Store the address to result_var (pointer is always 64-bit)
@@ -12565,10 +12584,11 @@ private:
 				SizedStackSlot{result_offset, 64, false}  // dest: 64-bit for pointer
 			);
 			
-			// Mark the result as holding a pointer (so it's treated like a reference)
-			// This ensures that when passed to reference parameters, we MOV (load the pointer)
-			// instead of LEA (taking address of the temp variable holding the pointer)
-			setReferenceInfo(result_offset, op.operand.type, op.operand.size_in_bits, false, op.result);
+			// NOTE: Do NOT mark the result as a reference here.
+			// The result of addressof is a POINTER value, not a reference.
+			// References need to be dereferenced to get their target value,
+			// but pointers ARE the value (they should not be dereferenced on return).
+			// This fixes the bug where returning &x would dereference the pointer.
 			
 			return;
 		}
@@ -12576,7 +12596,10 @@ private:
 		// Legacy format: Operands: [result_var, type, size, operand]
 		assert(instruction.getOperandCount() == 4 && "AddressOf must have 4 operands");
 
-		int32_t var_offset;
+		int32_t var_offset = 0;
+		X64Register target_reg = X64Register::RAX;
+		bool is_global = false;
+		StringHandle global_name_handle;
 		
 		// Get operand (variable to take address of) - can be string_view, string, or TempVar
 		if (instruction.isOperandType<TempVar>(3)) {
@@ -12586,19 +12609,36 @@ private:
 		} else {
 			// Taking address of a named variable
 			assert(instruction.isOperandType<StringHandle>(3) && "AddressOf operand must be string_view, string, or TempVar");
-			StringHandle operand_str = instruction.getOperandAs<StringHandle>(3);
-			const StackVariableScope& current_scope = variable_scopes.back();
-			auto it = current_scope.variables.find(operand_str);
-			if (it == current_scope.variables.end()) {
-				assert(false && "Variable not found in scope");
-				return;
+			global_name_handle = instruction.getOperandAs<StringHandle>(3);
+			
+			// First, check if this is a global/static local variable
+			for (const auto& global : global_variables_) {
+				if (global.name == global_name_handle) {
+					is_global = true;
+					break;
+				}
 			}
-			var_offset = it->second.offset;
+			
+			if (!is_global) {
+				const StackVariableScope& current_scope = variable_scopes.back();
+				auto it = current_scope.variables.find(global_name_handle);
+				if (it == current_scope.variables.end()) {
+					assert(false && "Variable not found in scope");
+					return;
+				}
+				var_offset = it->second.offset;
+			}
 		}
 
-		// Calculate the address: LEA RAX, [RBP + offset]
-		X64Register target_reg = X64Register::RAX;
-		emitLeaFromFrame(target_reg, var_offset);
+		// Calculate the address
+		if (is_global) {
+			// Global/static local variable - use LEA with RIP-relative addressing
+			uint32_t reloc_offset = emitLeaRipRelative(target_reg);
+			pending_global_relocations_.push_back({reloc_offset, global_name_handle, IMAGE_REL_AMD64_REL32});
+		} else {
+			// Regular local variable - LEA RAX, [RBP + offset]
+			emitLeaFromFrame(target_reg, var_offset);
+		}
 		
 		// Store the address to result_var (pointer is always 64-bit)
 		auto result_var = instruction.getOperandAs<TempVar>(0);
