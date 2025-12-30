@@ -913,30 +913,22 @@ public:
 		pattern.sfinae_condition = sfinae_cond;
 		
 		// Auto-detect void_t SFINAE patterns if no explicit condition provided
-		// Heuristic: patterns with 2 args where first is dependent and second is void,
-		// and the struct inherits from true_type, are void_t detection patterns.
+		// Heuristic: patterns with 2 args where first is dependent and second is void
+		// are void_t detection patterns (e.g., has_type<T, void_t<typename T::type>>).
+		// The base class (true_type, false_type, or custom) doesn't affect SFINAE applicability.
 		if (!sfinae_cond.has_value() && pattern_args.size() == 2) {
 			const auto& first_arg = pattern_args[0];
 			const auto& second_arg = pattern_args[1];
 			
-			// Check: first arg is dependent (template param), second arg is void
+			// Check: first arg is dependent (template param), second arg is void (from void_t expansion)
 			if (first_arg.is_dependent && !second_arg.is_dependent && 
 			    second_arg.base_type == Type::Void) {
-				// Check if the struct inherits from true_type (indicating it's the positive detection case)
-				if (specialized_node.is<StructDeclarationNode>()) {
-					const StructDeclarationNode& struct_node = specialized_node.as<StructDeclarationNode>();
-					for (const auto& base : struct_node.base_classes()) {
-						std::string_view base_name = base.name;
-						if (base_name == "true_type" || base_name.find("true_type") != std::string_view::npos) {
-							// Heuristic: This looks like void_t<typename T::type> detection pattern.
-							// Hard-coded to check param[0]::type since this is the standard pattern.
-							// Future: Could be generalized to extract member name from pattern args.
-							pattern.sfinae_condition = SfinaeCondition(0, StringTable::getOrInternStringHandle("type"));
-							FLASH_LOG(Templates, Debug, "Auto-detected void_t SFINAE pattern: checking for ::type member");
-							break;
-						}
-					}
-				}
+				// This looks like void_t<typename T::type> detection pattern.
+				// Set SFINAE condition to check for T::type member.
+				// Note: Currently hard-coded to check "type" member since this is the standard pattern.
+				// Future enhancement: Could extract actual member name from pattern args if needed.
+				pattern.sfinae_condition = SfinaeCondition(0, StringTable::getOrInternStringHandle("type"));
+				FLASH_LOG(Templates, Debug, "Auto-detected void_t SFINAE pattern: checking for ::type member");
 			}
 		}
 		
