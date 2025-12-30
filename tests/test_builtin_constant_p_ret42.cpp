@@ -18,7 +18,7 @@ int main() {
     int const_zero = __builtin_constant_p(0);
     
     // Sum: 1 + 0 + 1 + 1 = 3, but we want to return 42 for the test
-    // So we use a ternary to validate the behavior:
+    // So we use an if statement to validate the behavior:
     // If all constant checks work correctly, return 42
     // const_literal should be 1
     // var_result should be 0
