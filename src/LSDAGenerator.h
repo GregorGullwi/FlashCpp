@@ -99,8 +99,9 @@ private:
 		data.push_back(DwarfCFI::DW_EH_PE_omit);
 		
 		// TType encoding (type table encoding)
-		// For now, use absolute pointers (will need relocations)
-		data.push_back(DwarfCFI::DW_EH_PE_absptr);
+		// Use pcrel sdata4 for better compatibility with C++ runtime
+		// Note: This requires 4-byte PC-relative entries in type table
+		data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
 		
 		// TType base offset (offset from here to end of type table)
 		// This is the size of: call_site_encoding + call_site_table_size_uleb + call_site_table + action_table + type_table
@@ -176,15 +177,16 @@ private:
 	                      std::vector<std::pair<uint32_t, std::string>>& relocations) {
 		// Type table contains type_info pointers in reverse order
 		// (so type filter -1 refers to last entry, -2 to second-to-last, etc.)
+		// Using pcrel sdata4 encoding: each entry is a 4-byte PC-relative offset
 		
 		for (const auto& typeinfo_symbol : info.type_table) {
 			// Record relocation for this type_info pointer
 			uint32_t offset = static_cast<uint32_t>(data.size());
 			relocations.push_back({offset, typeinfo_symbol});
 			
-			// Each entry is a pointer (8 bytes on x86-64)
-			// Placeholder - will be filled by linker via relocation
-			for (int i = 0; i < 8; ++i) {
+			// Each entry is a 4-byte PC-relative offset (sdata4)
+			// Placeholder - will be filled by linker via R_X86_64_PC32 relocation
+			for (int i = 0; i < 4; ++i) {
 				data.push_back(0);
 			}
 		}

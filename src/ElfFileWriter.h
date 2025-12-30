@@ -1330,10 +1330,10 @@ public:
 						sym_index = sym_accessor->get_symbols_num() - 1;
 					}
 					
-					// Add R_X86_64_64 relocation (absolute 64-bit)
+					// Add R_X86_64_PC32 relocation for pcrel sdata4 encoding
 					rela_accessor->add_entry(offset,
 					                        static_cast<ELFIO::Elf_Word>(sym_index),
-					                        ELFIO::R_X86_64_64,
+					                        ELFIO::R_X86_64_PC32,
 					                        0);
 				}
 			}
