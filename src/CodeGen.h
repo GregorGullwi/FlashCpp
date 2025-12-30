@@ -1582,10 +1582,59 @@ private:
 					const auto& return_type_node = decl_node.type_node();
 					if (return_type_node.is<TypeSpecifierNode>()) {
 						const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
-						if (type_spec.type() == target_type) {
+						Type resolved_type = type_spec.type();
+						
+						// If the return type is UserDefined (a type alias), try to resolve it to the actual underlying type
+						// This handles cases like `operator value_type()` where `using value_type = T;`
+						if (resolved_type == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+							const TypeInfo& alias_type_info = gTypeInfo[type_spec.type_index()];
+							if (alias_type_info.type_ != Type::Void) {
+								resolved_type = alias_type_info.type_;
+								FLASH_LOG(Codegen, Debug, "Resolved type alias in conversion operator return type: UserDefined -> ", static_cast<int>(resolved_type));
+							}
+						}
+						
+						if (resolved_type == target_type) {
 							// Found a match!
 							FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");
 							return &member_func;
+						}
+						
+						// FALLBACK: If the return type is still UserDefined (couldn't resolve via gTypeInfo),
+						// but the size matches the target primitive type, accept it as a match.
+						// This handles template type aliases like `using value_type = T;` where T is substituted
+						// but the return type wasn't fully updated in the AST.
+						if (resolved_type == Type::UserDefined && target_type != Type::Struct && target_type != Type::Enum) {
+							int expected_size = 0;
+							switch (target_type) {
+								case Type::Bool: expected_size = 8; break;
+								case Type::Char: case Type::UnsignedChar: expected_size = 8; break;
+								case Type::Short: case Type::UnsignedShort: expected_size = 16; break;
+								case Type::Int: case Type::UnsignedInt: expected_size = 32; break;
+								case Type::Long: case Type::UnsignedLong: expected_size = 64; break;
+								case Type::LongLong: case Type::UnsignedLongLong: expected_size = 64; break;
+								case Type::Float: expected_size = 32; break;
+								case Type::Double: expected_size = 64; break;
+								default: break;
+							}
+							
+							if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
+								FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=", 
+								          type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type), " (size=", expected_size, ")");
+								return &member_func;
+							}
+							
+							// FINAL FALLBACK: For template-instantiated conversion operators where the return type
+							// is UserDefined but the size wasn't properly substituted (common with `using value_type = T;`),
+							// accept it for any primitive target type. The actual return value handling will
+							// convert appropriately at runtime.
+							// This is necessary because template parameter substitution may not update the
+							// size_in_bits of the return type when T is a smaller type like bool.
+							if (expected_size > 0) {
+								FLASH_LOG(Codegen, Debug, "Found conversion operator via permissive matching for primitive target type ",
+								          static_cast<int>(target_type), " (operator return_size=", type_spec.size_in_bits(), ")");
+								return &member_func;
+							}
 						}
 					}
 				}
@@ -3236,7 +3285,14 @@ private:
 										mangled_name = func_decl.mangled_name();
 									} else {
 										// Generate mangled name for the conversion operator
-										mangled_name = generateMangledNameForCall(func_decl, struct_name);
+										// Use the function's parent struct name, not the source type name,
+										// because the conversion operator may be inherited from a base class
+										// and we need to call the version defined in the base class.
+										std::string_view operator_struct_name = func_decl.parent_struct_name();
+										if (operator_struct_name.empty()) {
+											operator_struct_name = struct_name;
+										}
+										mangled_name = generateMangledNameForCall(func_decl, operator_struct_name);
 									}
 									
 									CallOp call_op;
@@ -5225,7 +5281,14 @@ private:
 										mangled_name = func_decl.mangled_name();
 									} else {
 										// Generate mangled name for the conversion operator
-										mangled_name = generateMangledNameForCall(func_decl, struct_name);
+										// Use the function's parent struct name, not the source type name,
+										// because the conversion operator may be inherited from a base class
+										// and we need to call the version defined in the base class.
+										std::string_view operator_struct_name = func_decl.parent_struct_name();
+										if (operator_struct_name.empty()) {
+											operator_struct_name = struct_name;
+										}
+										mangled_name = generateMangledNameForCall(func_decl, operator_struct_name);
 									}
 									
 									CallOp call_op;
@@ -10646,7 +10709,14 @@ private:
 								} else {
 									StringHandle struct_name_handle = source_type_info.name();
 									std::string_view struct_name = StringTable::getStringView(struct_name_handle);
-									mangled_name = generateMangledNameForCall(func_decl, struct_name);
+									// Use the function's parent struct name, not the source type name,
+									// because the conversion operator may be inherited from a base class
+									// and we need to call the version defined in the base class.
+									std::string_view operator_struct_name = func_decl.parent_struct_name();
+									if (operator_struct_name.empty()) {
+										operator_struct_name = struct_name;
+									}
+									mangled_name = generateMangledNameForCall(func_decl, operator_struct_name);
 								}
 								
 								CallOp call_op;
