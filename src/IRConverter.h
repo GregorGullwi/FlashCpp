@@ -13350,7 +13350,11 @@ private:
 			handler.is_rvalue_reference = catch_op.is_rvalue_reference;
 			handler.is_catch_all = catch_op.is_catch_all;  // Use the flag from IR, not derive from type_index
 			
-			// Pre-compute stack offset for exception object (avoid looking up during finalization)
+			// Pre-compute stack offset for exception object during IR processing.
+			// This is necessary because variable_scopes may be cleared by the time
+			// we call convertExceptionInfoToWriterFormat() during finalization.
+			// var_number == 0 indicates catch(...) which has no exception variable,
+			// or an unnamed catch parameter like catch(int) without a variable name.
 			if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
 				handler.catch_obj_stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
 			} else {

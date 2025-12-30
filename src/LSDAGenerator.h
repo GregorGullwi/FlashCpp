@@ -99,8 +99,10 @@ private:
 		data.push_back(DwarfCFI::DW_EH_PE_omit);
 		
 		// TType encoding (type table encoding)
-		// Use pcrel sdata4 for better compatibility with C++ runtime
-		// Note: This requires 4-byte PC-relative entries in type table
+		// Use pcrel|sdata4 (0x1b) for compatibility with C++ runtime:
+		// - pcrel: Type table entries are PC-relative offsets
+		// - sdata4: 4-byte signed entries (matches R_X86_64_PC32 relocation)
+		// This is the standard encoding used by GCC and matches what __gxx_personality_v0 expects.
 		data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
 		
 		// TType base offset (offset from here to end of type table)

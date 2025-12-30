@@ -960,7 +960,8 @@ public:
 		eh_frame_data.push_back((fde_info.function_length >> 24) & 0xff);
 		
 		// Augmentation data
-		// When CIE has 'L' (LSDA pointer format), every FDE must include an LSDA pointer
+		// When CIE has 'L' (LSDA pointer format), every FDE must include an LSDA pointer field.
+		// For functions without exception handling, emit a null pointer (4 zero bytes, no relocation).
 		if (cie_has_lsda) {
 			// Augmentation data length (4 bytes for LSDA pointer)
 			DwarfCFI::appendULEB128(eh_frame_data, 4);
@@ -971,7 +972,8 @@ public:
 				fde_info.lsda_pointer_offset = static_cast<uint32_t>(eh_frame_data.size());
 				fde_info.lsda_symbol = ".gcc_except_table";
 			}
-			// Always emit 4 bytes (0 if no exception handling, will be relocated if needed)
+			// Emit 4 bytes: null for non-exception functions, placeholder for exception functions
+			// (the placeholder will be patched by R_X86_64_PC32 relocation)
 			for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
 		} else {
 			// No LSDA in CIE - augmentation data length is 0
