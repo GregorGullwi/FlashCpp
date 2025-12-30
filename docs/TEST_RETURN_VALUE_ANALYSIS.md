@@ -2,10 +2,11 @@
 
 ## Current Status (2025-12-30)
 
-**745/795 tests passing (93.7%)**
-- All previously documented compilation and link failures are now resolved
-- Test suite has grown to 795 tests
-- Runtime issues remain (crashes and timeouts from loops/C++ runtime)
+**773/795 tests passing (97.2%)**
+- Comparison result size bug fix improved pass rate significantly (+28 tests)
+- All compilation and link failures resolved
+- Test suite has 795 tests total
+- Remaining issues: 20 runtime crashes (complex C++ features)
 - 396 test files renamed with `_retXX` suffix to document expected return values
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
@@ -43,7 +44,15 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 
 ## Recent Progress Summary
 
-**2025-12-30:** Fixed all compilation and link failures (745/795 passing)
+**2025-12-30 (Session 2):** Comparison result size bug fix - Major improvement! (773/795 passing)
+- 🎯 **Fixed critical comparison bug**: Bool results were tracked as 32-bit instead of 8-bit
+- 📈 **+28 tests now passing**: While loops and conditional tests that were timing out now work
+- ✅ **Before fix**: 745/795 passing (93.7%), 48 crashes/timeouts
+- ✅ **After fix**: 773/795 passing (97.2%), 20 crashes
+- Fixed tests include: while loop tests, if statement tests, bool conditional tests
+- Root cause: Conditional branches were reading uninitialized stack memory
+
+**2025-12-30 (Session 1):** Fixed all compilation and link failures (745/795 passing)
 - ✅ Fixed test_switch_10.cpp - Switch statements with enums now compile correctly
 - ✅ Fixed test_c_style_casts.cpp - C-style casts compile without crashes
 - ✅ Fixed test_using_enhanced_30.cpp - Namespace using directives work properly
@@ -91,9 +100,9 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 - 0 link failures ✅ (all fixed!)
 - ~2 files without main() (helper files, stubs - intentionally excluded)
 
-## Remaining Runtime Issues (48 files)
+## Remaining Runtime Issues (20 files - down from 48!)
 
-**48 runtime crashes/timeouts** - Mix of C++ runtime/ABI compatibility and loop implementation issues
+**20 runtime crashes** - Complex C++ features requiring significant implementation work
 
 ### Issue Categories
 
@@ -109,19 +118,23 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
    - `test_covariant_return.cpp` (covariant return types)
    - `test_virtual_inheritance.cpp` (virtual inheritance diamond problem)
 
-4. **Loop Timeouts** (~20 files) - Possible infinite loops or hangs in loop implementations
-   - Various while, for, and do-while loop tests timing out
-   - May indicate loop codegen issues that need investigation
+4. **Static Local Variables** (1 file) - Static storage duration not fully supported
+   - `test_return_pointer_ret100.cpp` (uses static local variable)
 
-5. **Range-for / Iterator Issues** (~10 files) - Range-based for loops and iterators
-   - Multiple test_range_for_*.cpp files crashing
-   - Custom container iteration issues
-
-6. **Complex C++ Features** (remaining ~12 files) - Advanced features
+5. **Advanced C++ Features** (remaining 13 files) - Complex features
    - `test_rvo_very_large_struct.cpp` (large struct RVO/NRVO)
    - `test_lambda_cpp20_comprehensive.cpp` (advanced C++20 lambda features)
+   - `test_lambda_this_capture.cpp` (lambda capturing 'this')
    - `test_xvalue_all_casts.cpp` (xvalue handling across all cast types)
-   - Various addressof, structured binding, and other advanced tests
+   - `test_xvalue_move.cpp` (std::move and xvalues)
+   - `test_std_move_support.cpp` (std::move support)
+   - `test_forward_overload_resolution.cpp` (std::forward)
+   - `spaceship_default.cpp` (defaulted spaceship operator)
+   - `test_operator_addressof_overload_baseline.cpp` (overloaded operator&)
+   - `test_operator_addressof_resolved_ret100.cpp` (overloaded operator& resolution)
+   - `test_no_access_control_flag.cpp` (access control flags)
+   - `test_positional_init_only.cpp` (aggregate initialization)
+   - `test_structured_binding_lvalue_ref_ret52.cpp` (structured bindings with references)
 
 ## Previously Failing - Now Fixed! ✅
 
@@ -147,7 +160,7 @@ Intentionally excluded helper files and stubs:
 
 ---
 
-*Last Updated: 2025-12-30 (Fixed all compilation and link failures)*  
-*Status: 745/795 tests passing (93.7%), all compilation/link errors resolved*  
+*Last Updated: 2025-12-30 (Comparison bug fix - major improvement!)*  
+*Status: 773/795 tests passing (97.2%), comparison bug fixed, 28 more tests passing*  
 *Run validation: `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`*
 
