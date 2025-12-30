@@ -4643,7 +4643,19 @@ private:
 							if (std::holds_alternative<TempVar>(bin_op->result)) {
 								auto temp_var = std::get<TempVar>(bin_op->result);
 								// Phase 5: Convert temp var name to StringHandle
-								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = bin_op->lhs.size_in_bits;
+								// For comparison operations, result is always bool (8 bits)
+								// For arithmetic/logical operations, result size matches operand size
+								auto opcode = instruction.getOpcode();
+								bool is_comparison = (opcode == IrOpcode::Equal || opcode == IrOpcode::NotEqual ||
+								                      opcode == IrOpcode::LessThan || opcode == IrOpcode::LessEqual ||
+								                      opcode == IrOpcode::GreaterThan || opcode == IrOpcode::GreaterEqual ||
+								                      opcode == IrOpcode::UnsignedLessThan || opcode == IrOpcode::UnsignedLessEqual ||
+								                      opcode == IrOpcode::UnsignedGreaterThan || opcode == IrOpcode::UnsignedGreaterEqual ||
+								                      opcode == IrOpcode::FloatEqual || opcode == IrOpcode::FloatNotEqual ||
+								                      opcode == IrOpcode::FloatLessThan || opcode == IrOpcode::FloatLessEqual ||
+								                      opcode == IrOpcode::FloatGreaterThan || opcode == IrOpcode::FloatGreaterEqual);
+								int result_size = is_comparison ? 8 : bin_op->lhs.size_in_bits;
+								temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = result_size;
 								handled_by_typed_payload = true;
 							}
 						}
