@@ -166,9 +166,15 @@ private:
 				} else {
 					// Find type index in type table (0-based)
 					int type_index = find_type_index(info.type_table, handler.typeinfo_symbol);
-					// Type filter is POSITIVE and 1-based for catch clauses
-					// So index 0 in type table -> filter 1, index 1 -> filter 2, etc.
-					DwarfCFI::appendSLEB128(data, type_index + 1);
+					if (type_index < 0) {
+						// Type not found in type table - treat as catch-all
+						// This shouldn't happen but handle gracefully
+						DwarfCFI::appendSLEB128(data, 0);
+					} else {
+						// Type filter is POSITIVE and 1-based for catch clauses
+						// So index 0 in type table -> filter 1, index 1 -> filter 2, etc.
+						DwarfCFI::appendSLEB128(data, type_index + 1);
+					}
 				}
 				
 				// Next action: 0 for last handler, else offset to next

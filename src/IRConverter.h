@@ -13407,9 +13407,37 @@ private:
 					// For built-in types, use get_type_size_bits directly
 					// For user-defined types, look up in gTypeInfo
 					int type_size_bits = 0;
-					if (catch_op.exception_type != Type::Void && 
-					    catch_op.exception_type != Type::UserDefined &&
-					    catch_op.exception_type != Type::Invalid) {
+					
+					// Check if this is a built-in type that get_type_size_bits can handle
+					// These are types where the Type enum directly maps to a size
+					bool is_builtin = false;
+					switch (catch_op.exception_type) {
+						case Type::Bool:
+						case Type::Char:
+						case Type::UnsignedChar:
+						case Type::Short:
+						case Type::UnsignedShort:
+						case Type::Int:
+						case Type::UnsignedInt:
+						case Type::Long:
+						case Type::UnsignedLong:
+						case Type::LongLong:
+						case Type::UnsignedLongLong:
+						case Type::Float:
+						case Type::Double:
+						case Type::LongDouble:
+						case Type::FunctionPointer:
+						case Type::MemberFunctionPointer:
+						case Type::MemberObjectPointer:
+						case Type::Nullptr:
+							is_builtin = true;
+							break;
+						default:
+							is_builtin = false;
+							break;
+					}
+					
+					if (is_builtin) {
 						// Built-in type - use direct lookup
 						type_size_bits = get_type_size_bits(catch_op.exception_type);
 					} else if (catch_op.type_index != 0 && catch_op.type_index < gTypeInfo.size()) {

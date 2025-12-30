@@ -4540,6 +4540,11 @@ private:
 				throw_op.float_immediate_value = std::get<double>(expr_operands[2]);
 				throw_op.is_immediate = true;
 				throw_op.is_float_immediate = true;
+			} else {
+				// Unknown operand type - log warning and default to zero value
+				FLASH_LOG(Codegen, Warning, "Unknown operand type in throw expression, defaulting to zero");
+				throw_op.immediate_value = 0;
+				throw_op.is_immediate = true;
 			}
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::Throw, std::move(throw_op), node.throw_token()));
