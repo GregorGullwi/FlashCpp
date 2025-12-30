@@ -884,17 +884,18 @@ public:
 		
 		if (has_exception_handlers) {
 			// P: Personality routine encoding and pointer
-			// Use udata4 (0x03 = absolute 4-byte) with R_X86_64_32 relocation
-			// This matches GCC's encoding for non-PIE executables
-			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_udata4);
+			// Use pcrel|sdata4 (0x1b = PC-relative signed 4-byte) with R_X86_64_PC32 relocation
+			// This is required for the linker to create .eh_frame_hdr
+			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
 			// Personality routine pointer (will need relocation to __gxx_personality_v0)
 			// Store offset for relocation tracking
 			personality_routine_offset_ = static_cast<uint32_t>(eh_frame_data.size());
 			for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);  // Placeholder
 			
 			// L: LSDA encoding
-			// Use udata4 (0x03) to match LSDA TType encoding
-			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_udata4);
+			// Use pcrel|sdata4 (0x1b = PC-relative signed 4-byte) with R_X86_64_PC32 relocation
+			// This is required for the linker to create .eh_frame_hdr
+			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
 		}
 		
 		// R: FDE encoding (PC-relative signed 4-byte) - always present with 'z'
@@ -1191,10 +1192,10 @@ public:
 					}
 				}
 				
-				// Add R_X86_64_32 relocation for LSDA pointer (udata4 encoding)
+				// Add R_X86_64_PC32 relocation for LSDA pointer (pcrel|sdata4 encoding)
 				rela_accessor->add_entry(fde_info.lsda_pointer_offset,
 				                        static_cast<ELFIO::Elf_Word>(gcc_except_table_sym_index),
-				                        ELFIO::R_X86_64_32,
+				                        ELFIO::R_X86_64_PC32,
 				                        static_cast<ELFIO::Elf_Sxword>(fde_info.lsda_offset));
 			}
 		}
@@ -1214,10 +1215,10 @@ public:
 				ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
 				ELFIO::Elf_Xword personality_sym_index = sym_count - 1;
 				
-				// Add R_X86_64_32 relocation for udata4 encoding
+				// Add R_X86_64_PC32 relocation for pcrel|sdata4 encoding
 				rela_accessor->add_entry(personality_routine_offset_,
 				                        static_cast<ELFIO::Elf_Word>(personality_sym_index),
-				                        ELFIO::R_X86_64_32,
+				                        ELFIO::R_X86_64_PC32,
 				                        0);
 			}
 		}
@@ -1242,19 +1243,20 @@ public:
 		std::vector<std::pair<uint32_t, std::string>> all_type_table_relocations;
 		LSDAGenerator generator;
 		
-		// Generate LSDA for each function and track offsets
-		for (const auto& [func_name, lsda_info] : function_lsda_map_) {
-			uint32_t lsda_offset = static_cast<uint32_t>(gcc_except_table_data.size());
-			
-			// Find the corresponding FDE to update its LSDA offset
-			for (auto& fde_info : functions_with_fdes_) {
-				if (fde_info.function_symbol == func_name) {
-					fde_info.lsda_offset = lsda_offset;
-					break;
-				}
+		// Generate LSDA for each function IN THE ORDER THEY APPEAR IN functions_with_fdes_
+		// This ensures the LSDA offsets match the FDE order (critical for correct .eh_frame relocations)
+		// Using unordered_map iteration order would break the LSDA-to-FDE mapping!
+		for (auto& fde_info : functions_with_fdes_) {
+			auto it = function_lsda_map_.find(fde_info.function_symbol);
+			if (it == function_lsda_map_.end()) {
+				// Function has no exception handling - no LSDA needed
+				continue;
 			}
 			
-			auto result = generator.generate(lsda_info);
+			uint32_t lsda_offset = static_cast<uint32_t>(gcc_except_table_data.size());
+			fde_info.lsda_offset = lsda_offset;
+			
+			auto result = generator.generate(it->second);
 			
 			// Adjust relocation offsets to be relative to .gcc_except_table start
 			for (const auto& [offset, symbol] : result.type_table_relocations) {
