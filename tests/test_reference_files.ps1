@@ -108,7 +108,8 @@ $allTestFiles = Get-ChildItem -Path "tests" -Filter "*.cpp" | Sort-Object Name
 
 # Linux-specific test files that should not run on Windows
 $linuxOnlyTests = @(
-    "test_dwarf_cfi.cpp"  # Uses Linux-specific DWARF/ELF headers
+    "test_dwarf_cfi.cpp",              # Uses Linux-specific DWARF/ELF headers
+    "test_builtin_constant_p_ret42.cpp"  # Uses GCC/Clang __builtin_constant_p (not available in MSVC)
 )
 
 # Filter to only files that have a main function and separate _fail files
