@@ -17290,12 +17290,28 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 
 	// Only substitute UserDefined types (which might be template parameters)
 	if (result_type == Type::UserDefined) {
-		// Look up the type name using type_index
-		if (result_type_index < gTypeInfo.size()) {
+		// First try to get the type name from the token (useful for type aliases parsed inside templates
+		// where the type_index might be 0/placeholder because the alias wasn't fully registered yet)
+		std::string_view type_name;
+		if (original_type.token().type() != Token::Type::Uninitialized && !original_type.token().value().empty()) {
+			type_name = original_type.token().value();
+		}
+		
+		// If we have a valid type_index, prefer the name from gTypeInfo
+		if (result_type_index < gTypeInfo.size() && result_type_index > 0) {
 			const TypeInfo& type_info = gTypeInfo[result_type_index];
-			std::string_view type_name = StringTable::getStringView(type_info.name());
+			type_name = StringTable::getStringView(type_info.name());
+			
+			FLASH_LOG(Templates, Debug, "substitute_template_parameter: type_index=", result_type_index, 
+				", type_name='", type_name, "', underlying_type=", static_cast<int>(type_info.type_), 
+				", underlying_type_index=", type_info.type_index_);
+		} else if (!type_name.empty()) {
+			FLASH_LOG(Templates, Debug, "substitute_template_parameter: using token name '", type_name, "' (type_index=", result_type_index, " is placeholder)");
+		}
 
-			// Try to find which template parameter this is
+		// Try to find which template parameter this is
+		bool found_match = false;
+		if (!type_name.empty()) {
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 				if (template_params[i].is<TemplateParameterNode>()) {
 					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
@@ -17320,7 +17336,39 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 						// that will be created using this base type. The caller is responsible for
 						// constructing a new TypeSpecifierNode with the appropriate qualifiers.
 						
+						found_match = true;
 						break;
+					}
+				}
+			}
+			
+			// If not found as a direct template parameter, check if this is a type alias
+			// that resolves to a template parameter (e.g., "using value_type = T;")
+			// This requires a valid type_index to look up the alias info
+			if (!found_match && result_type_index > 0 && result_type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[result_type_index];
+				if (type_info.type_ == Type::UserDefined && type_info.type_index_ != result_type_index) {
+					// This is a type alias - recursively check what it resolves to
+					if (type_info.type_index_ < gTypeInfo.size()) {
+						const TypeInfo& alias_target_info = gTypeInfo[type_info.type_index_];
+						std::string_view alias_target_name = StringTable::getStringView(alias_target_info.name());
+						
+						// Check if the alias target is a template parameter
+						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+							if (template_params[i].is<TemplateParameterNode>()) {
+								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+								if (tparam.name() == alias_target_name) {
+									// The type alias resolves to a template parameter - substitute!
+									const TemplateTypeArg& arg = template_args[i];
+									result_type = arg.base_type;
+									result_type_index = arg.type_index;
+									FLASH_LOG(Templates, Debug, "Substituted type alias '", type_name, 
+										"' (which refers to template param '", alias_target_name, "') with type=", static_cast<int>(result_type));
+									found_match = true;
+									break;
+								}
+							}
+						}
 					}
 				}
 			}
@@ -24452,10 +24500,43 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Check if return type needs substitution (same logic as struct members)
 				bool needs_substitution = (substituted_return_type == Type::UserDefined);
 				if (needs_substitution && !template_args.empty()) {
-					// Substitute with concrete type from template_args
-					// For now, assume single template parameter (T)
-					substituted_return_type = template_args[0].base_type;
-					substituted_return_type_index = template_args[0].type_index;
+					// First, check if this return type refers to a type alias defined in this struct
+					// (e.g., for conversion operators like "operator value_type()" where "using value_type = T;")
+					bool found_type_alias = false;
+					std::string_view return_type_name = orig_return_type.token().value();
+					
+					for (const auto& type_alias : pattern_struct.type_aliases()) {
+						StringHandle alias_name = type_alias.alias_name;
+						if (StringTable::getStringView(alias_name) == return_type_name) {
+							// Found a type alias that matches the return type name
+							// Get what the alias resolves to
+							const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
+							
+							// If the alias resolves to UserDefined (a template parameter), substitute with concrete type
+							if (alias_type_spec.type() == Type::UserDefined && !template_args.empty()) {
+								// The alias refers to a template parameter - substitute with the first template arg
+								// (This handles cases like "using value_type = T;" where T is template param 0)
+								substituted_return_type = template_args[0].base_type;
+								substituted_return_type_index = template_args[0].type_index;
+								found_type_alias = true;
+								FLASH_LOG(Templates, Debug, "Resolved type alias '", return_type_name, 
+									"' in return type to type=", static_cast<int>(substituted_return_type));
+							} else {
+								// The alias resolves to a concrete type
+								substituted_return_type = alias_type_spec.type();
+								substituted_return_type_index = alias_type_spec.type_index();
+								found_type_alias = true;
+							}
+							break;
+						}
+					}
+					
+					// If not a type alias, fall back to substituting with template_args[0]
+					// (for direct template parameter return types like "T")
+					if (!found_type_alias) {
+						substituted_return_type = template_args[0].base_type;
+						substituted_return_type_index = template_args[0].type_index;
+					}
 					
 					// Calculate return type size for the substituted type
 					// Pointers and references are always 64 bits
@@ -25798,9 +25879,50 @@ if (struct_type_info.getStructInfo()) {
 				
 				// Substitute return type
 				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
-				auto [return_type, return_type_index] = substitute_template_parameter(
-					return_type_spec, template_params, template_args_to_use
-				);
+				Type return_type = return_type_spec.type();
+				TypeIndex return_type_index = return_type_spec.type_index();
+				
+				// First, check if the return type is a type alias defined in this template class
+				// (e.g., "operator value_type()" where "using value_type = T;")
+				// This is needed because substitute_template_parameter doesn't have access to type aliases
+				if (return_type == Type::UserDefined && return_type_index == 0) {
+					// type_index=0 means this is a placeholder (type parsed inside template before registration)
+					// Try to find the type name from the token
+					std::string_view return_type_name = return_type_spec.token().value();
+					if (!return_type_name.empty()) {
+						// Look up in the template class's type aliases
+						for (const auto& type_alias : class_decl.type_aliases()) {
+							if (StringTable::getStringView(type_alias.alias_name) == return_type_name) {
+								// Found the type alias - check what it resolves to
+								const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
+								
+								// If the alias resolves to a template parameter, substitute it
+								if (alias_type_spec.type() == Type::UserDefined) {
+									// Try to substitute the alias target
+									auto [subst_type, subst_index] = substitute_template_parameter(
+										alias_type_spec, template_params, template_args_to_use
+									);
+									if (subst_type != Type::UserDefined || subst_index != 0) {
+										return_type = subst_type;
+										return_type_index = subst_index;
+										FLASH_LOG(Templates, Debug, "Resolved return type alias '", return_type_name, 
+											"' to type=", static_cast<int>(return_type));
+									}
+								}
+								break;
+							}
+						}
+					}
+				}
+				
+				// If not resolved via type alias, try normal substitution
+				if (return_type == Type::UserDefined) {
+					auto [subst_type, subst_index] = substitute_template_parameter(
+						return_type_spec, template_params, template_args_to_use
+					);
+					return_type = subst_type;
+					return_type_index = subst_index;
+				}
 
 				// Create substituted return type node
 				TypeSpecifierNode substituted_return_type(
@@ -26029,9 +26151,47 @@ if (struct_type_info.getStructInfo()) {
 				
 				// Substitute return type
 				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
-				auto [return_type, return_type_index] = substitute_template_parameter(
-					return_type_spec, template_params, template_args_to_use
-				);
+				Type return_type = return_type_spec.type();
+				TypeIndex return_type_index = return_type_spec.type_index();
+				
+				// First, check if the return type is a type alias defined in this template class
+				// (e.g., "operator value_type()" where "using value_type = T;")
+				if (return_type == Type::UserDefined && return_type_index == 0) {
+					// type_index=0 means this is a placeholder (type parsed inside template before registration)
+					std::string_view return_type_name = return_type_spec.token().value();
+					if (!return_type_name.empty()) {
+						// Look up in the template class's type aliases
+						for (const auto& type_alias : class_decl.type_aliases()) {
+							if (StringTable::getStringView(type_alias.alias_name) == return_type_name) {
+								// Found the type alias - check what it resolves to
+								const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
+								
+								// If the alias resolves to a template parameter, substitute it
+								if (alias_type_spec.type() == Type::UserDefined) {
+									auto [subst_type, subst_index] = substitute_template_parameter(
+										alias_type_spec, template_params, template_args_to_use
+									);
+									if (subst_type != Type::UserDefined || subst_index != 0) {
+										return_type = subst_type;
+										return_type_index = subst_index;
+										FLASH_LOG(Templates, Debug, "Resolved return type alias '", return_type_name, 
+											"' to type=", static_cast<int>(return_type), " (no-definition path)");
+									}
+								}
+								break;
+							}
+						}
+					}
+				}
+				
+				// If not resolved via type alias, try normal substitution
+				if (return_type == Type::UserDefined) {
+					auto [subst_type, subst_index] = substitute_template_parameter(
+						return_type_spec, template_params, template_args_to_use
+					);
+					return_type = subst_type;
+					return_type_index = subst_index;
+				}
 
 				// Create substituted return type node
 				TypeSpecifierNode substituted_return_type(
