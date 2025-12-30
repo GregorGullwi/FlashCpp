@@ -729,39 +729,40 @@ See "Recent Progress (December 2024)" section below for detailed implementation 
 **Files affected**: `test_std_type_traits.cpp`, `test_std_functional.cpp`, `test_std_tuple.cpp`
 
 #### Void_t SFINAE Bug (Discovered December 2025)
-**Status**: ❌ **KNOWN BUG - Not Yet Fixed**
+**Status**: ⚠️ **PARTIAL - Negative case works, positive case does not**
 
-**Problem**: FlashCpp incorrectly matches partial specializations that use `void_t<typename T::type>` even when `T::type` doesn't exist.
+**Problem**: FlashCpp has a limitation in void_t SFINAE pattern matching for detecting member types.
 
-**Example**:
+**Negative Case (WORKS):**
 ```cpp
-template<typename...> using void_t = void;
-
-template<typename T, typename = void>
-struct has_type : false_type {};
-
-template<typename T>
-struct has_type<T, void_t<typename T::type>> : true_type {};
-
 struct WithoutType { int value; };  // Has no 'type' member
-
-// Expected: has_type<WithoutType> should inherit from false_type
-// Actual (FlashCpp bug): inherits from true_type
+// has_type<WithoutType>::value correctly returns false ✅
 ```
 
-**Root Cause**: Template pattern matching in `TemplateRegistry.h` doesn't evaluate dependent type expressions during pattern matching. When matching `<T, void_t<typename T::type>>` against concrete arguments:
-1. Pattern is registered with `void` as second argument (after alias expansion)
-2. During matching, only the result type `void` is compared, not whether the dependent expression is valid
-3. The check for `typename T::type` validity is never performed
+**Positive Case (DOES NOT WORK):**
+```cpp
+struct WithType { using type = int; };  // Has 'type' member
+// Expected: has_type<WithType>::value should return true
+// Actual: has_type<WithType>::value returns false ❌
+```
 
-**Expected Fix**: 
-1. Record dependent expressions when registering partial specialization patterns
-2. During pattern matching, after binding template parameters, resolve dependent expressions in SFINAE context
-3. If resolution fails (e.g., `typename WithoutType::type` doesn't exist), reject the match
+**Root Cause**: Template pattern matching happens BEFORE default arguments are filled in:
+1. `has_type<WithType>` is instantiated with only 1 argument
+2. The specialization pattern `<T, void_t<typename T::type>>` has 2 arguments (after alias expansion to `void`)
+3. Size mismatch (1 vs 2) causes pattern matching to fail
+4. Primary template is always used, inheriting from `false_type`
+
+**Why It's Complex to Fix**:
+- Simply filling in default arguments would make both positive AND negative cases match the specialization
+- Proper fix requires SFINAE evaluation during pattern matching:
+  1. Fill in default arguments
+  2. When matching `void_t<typename T::type>` pattern, evaluate if `T::type` exists
+  3. Reject match if evaluation fails (type doesn't have `::type`)
+- This requires storing original dependent expressions alongside patterns and evaluating them with concrete types
 
 **Test Files**:
-- `tests/test_void_t_detection_ret42.cpp` - Tests working case (type WITH `type` member)
-- `tests/test_void_t_sfinae_known_bug.cpp` - Documents the bug (no main(), not run as test)
+- `tests/test_void_t_detection_ret42.cpp` - Tests negative case (type WITHOUT `type` member) - PASSES ✅
+- `tests/test_void_t_positive_known_limitation.cpp` - Documents positive case limitation - returns 42 with current behavior
 
 ## Advanced Missing Features (Lower Priority)
 
