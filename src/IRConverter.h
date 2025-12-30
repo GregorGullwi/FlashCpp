@@ -1931,6 +1931,10 @@ struct RegisterAllocator
 			if (reg.isDirty) {
 				func(reg.reg, reg.stackVariableOffset, reg.size_in_bits);
 				reg.isDirty = false;
+				// Clear the stack variable mapping after flushing to prevent stale register lookups.
+				// This ensures that subsequent code will reload from memory rather than using
+				// a potentially stale register value. INT_MIN is the sentinel value (see AllocatedRegister init).
+				reg.stackVariableOffset = INT_MIN;
 			}
 		}
 	}
@@ -4594,6 +4598,14 @@ private:
 								handled_by_typed_payload = true;
 							}
 						}
+						// Try UnaryOp (logical not, bitwise not, negate)
+						else if (const UnaryOp* unary_op = std::any_cast<UnaryOp>(&instruction.getTypedPayload())) {
+							// Phase 5: Convert temp var name to StringHandle
+							// For logical not, result is always bool (8 bits)
+							// For bitwise not and negate, result size matches operand size
+							temp_var_sizes_[StringTable::getOrInternStringHandle(unary_op->result.name())] = unary_op->value.size_in_bits;
+							handled_by_typed_payload = true;
+						}
 						// Try CallOp (function calls)
 						else if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
 							// Phase 5: Convert temp var name to StringHandle
@@ -4797,23 +4809,24 @@ private:
 	{
 		regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset, int size_in_bits)
 			{
-				auto tempVarIndex = getTempVarFromOffset(stackVariableOffset);
-
-				if (tempVarIndex.has_value()) {
-					// Note: stackVariableOffset should be within allocated space (scope_stack_space <= stackVariableOffset <= 0)
-					// However, during code generation, constructors may create additional TempVars beyond pre-calculated space.
-					// Extend scope_stack_space dynamically if needed.
-					if (stackVariableOffset < variable_scopes.back().scope_stack_space) {
-						variable_scopes.back().scope_stack_space = stackVariableOffset;
-					}
-					assert(variable_scopes.back().scope_stack_space <= stackVariableOffset && stackVariableOffset <= 0);
-
-					// Store the computed result from register to stack using size-appropriate MOV
-					emitMovToFrameSized(
-						SizedRegister{reg, 64, false},  // source: 64-bit register
-						SizedStackSlot{stackVariableOffset, size_in_bits, false}  // dest: sized stack slot
-					);
+				// Always flush dirty registers to stack, regardless of offset alignment.
+				// This fixes the register flush bug where non-8-byte-aligned offsets
+				// (from structured bindings) would cause getTempVarFromOffset to return
+				// nullopt, preventing the register from being flushed.
+				
+				// Note: stackVariableOffset should be within allocated space (scope_stack_space <= stackVariableOffset <= 0)
+				// However, during code generation, constructors may create additional TempVars beyond pre-calculated space.
+				// Extend scope_stack_space dynamically if needed.
+				if (stackVariableOffset < variable_scopes.back().scope_stack_space) {
+					variable_scopes.back().scope_stack_space = stackVariableOffset;
 				}
+				assert(variable_scopes.back().scope_stack_space <= stackVariableOffset && stackVariableOffset <= 0);
+
+				// Store the computed result from register to stack using size-appropriate MOV
+				emitMovToFrameSized(
+					SizedRegister{reg, 64, false},  // source: 64-bit register
+					SizedStackSlot{stackVariableOffset, size_in_bits, false}  // dest: sized stack slot
+				);
 			});
 	}
 
