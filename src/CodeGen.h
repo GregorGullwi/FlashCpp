@@ -3203,7 +3203,16 @@ private:
 			
 			// Original handling for ExpressionNode
 			assert(expr_opt->is<ExpressionNode>());
+			
+			// Set flag if we should use RVO (returning struct by value with hidden return param)
+			if (current_function_has_hidden_return_param_) {
+				in_return_statement_with_rvo_ = true;
+			}
+			
 			auto operands = visitExpressionNode(expr_opt->as<ExpressionNode>());
+			
+			// Clear the RVO flag after evaluation
+			in_return_statement_with_rvo_ = false;
 			
 			// Check if this is a void return with a void expression (e.g., return void_func();)
 			if (!operands.empty() && operands.size() >= 1) {
@@ -16159,6 +16168,7 @@ private:
 	TypeIndex current_function_return_type_index_ = 0;  // Type index for struct/class return types
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter
 	bool current_function_returns_reference_ = false;  // True if function returns a reference type (T& or T&&)
+	bool in_return_statement_with_rvo_ = false;  // True when evaluating return expr that should use RVO
 	
 	// Current namespace path stack (for proper name mangling of namespace-scoped functions)
 	std::vector<std::string> current_namespace_stack_;
@@ -16663,6 +16673,17 @@ private:
 					}
 				}
 			}
+		}
+
+		// Check if we should use RVO (Return Value Optimization)
+		// If we're in a return statement and the function has a hidden return parameter,
+		// construct directly into the return slot instead of into a temporary
+		if (in_return_statement_with_rvo_) {
+			ctor_op.use_return_slot = true;
+			// The return slot offset will be set by IRConverter when it processes the return
+			// For now, we just mark that RVO should be used
+			FLASH_LOG(Codegen, Debug,
+				"Constructor call will use RVO (construct directly in return slot)");
 		}
 
 		// Add the constructor call instruction (use ConstructorCall opcode)
