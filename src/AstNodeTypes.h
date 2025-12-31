@@ -2867,13 +2867,15 @@ public:
 		std::vector<ASTNode> parameters,
 		ASTNode body,
 		std::optional<ASTNode> return_type = std::nullopt,
-		Token lambda_token = Token())
+		Token lambda_token = Token(),
+		bool is_mutable = false)
 		: captures_(std::move(captures)),
 		  parameters_(std::move(parameters)),
 		  body_(body),
 		  return_type_(return_type),
 		  lambda_token_(lambda_token),
-		  lambda_id_(next_lambda_id_++) {}
+		  lambda_id_(next_lambda_id_++),
+		  is_mutable_(is_mutable) {}
 
 	const std::vector<LambdaCaptureNode>& captures() const { return captures_; }
 	const std::vector<ASTNode>& parameters() const { return parameters_; }
@@ -2881,6 +2883,7 @@ public:
 	const std::optional<ASTNode>& return_type() const { return return_type_; }
 	const Token& lambda_token() const { return lambda_token_; }
 	size_t lambda_id() const { return lambda_id_; }
+	bool is_mutable() const { return is_mutable_; }
 
 	// Generate a unique name for the lambda's generated function
 	StringHandle generate_lambda_name() const {
@@ -2894,6 +2897,7 @@ private:
 	std::optional<ASTNode> return_type_;  // Optional return type (e.g., -> int)
 	Token lambda_token_;  // For error reporting
 	size_t lambda_id_;    // Unique ID for this lambda
+	bool is_mutable_;     // Whether the lambda is marked as mutable
 
 	static inline size_t next_lambda_id_ = 0;  // Counter for generating unique IDs
 };

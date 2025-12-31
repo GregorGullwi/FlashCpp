@@ -96,6 +96,7 @@ struct LambdaInfo {
 	Token lambda_token;
 	std::string_view enclosing_struct_name;  // Name of enclosing struct if lambda is in a member function
 	TypeIndex enclosing_struct_type_index = 0;  // Type index of enclosing struct for [this] capture
+	bool is_mutable = false;            // Whether the lambda is mutable (allows modifying captures)
 	
 	// Generic lambda support (lambdas with auto parameters)
 	bool is_generic = false;                     // True if lambda has any auto parameters
@@ -1762,6 +1763,7 @@ private:
 		current_lambda_context_.enclosing_struct_type_index = lambda_info.enclosing_struct_type_index;
 		current_lambda_context_.has_copy_this = lambda_info.enclosing_struct_type_index > 0;
 		current_lambda_context_.has_this_pointer = false;
+		current_lambda_context_.is_mutable = lambda_info.is_mutable;
 
 		size_t capture_index = 0;
 		for (const auto& capture : lambda_info.captures) {
@@ -6522,6 +6524,21 @@ private:
 							member_load.struct_type_info = nullptr;
 
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+							
+							// For mutable lambdas, set LValue metadata so assignments write back to the member
+							if (current_lambda_context_.is_mutable) {
+								// Use 'this' as the base object (StringHandle version)
+								// The assignment handler will emit MemberStore using this info
+								LValueInfo lvalue_info(
+									LValueInfo::Kind::Member,
+									StringTable::getOrInternStringHandle("this"),  // object name (this pointer)
+									static_cast<int>(member->offset)
+								);
+								lvalue_info.member_name = member->getName();
+								lvalue_info.is_pointer_to_member = true;  // 'this' is a pointer, need to dereference
+								setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+							}
+							
 							TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
 							return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
 						}
@@ -15354,6 +15371,7 @@ private:
 		// Copy lambda body and captures (we need them later)
 		info.lambda_body = lambda.body();
 		info.captures = lambda.captures();
+		info.is_mutable = lambda.is_mutable();
 
 		// Collect captured variable declarations from current scope
 		for (const auto& capture : lambda.captures()) {
@@ -16271,6 +16289,7 @@ private:
 		TypeIndex enclosing_struct_type_index = 0;  // For [this] capture type resolution
 		bool has_copy_this = false;
 		bool has_this_pointer = false;
+		bool is_mutable = false;  // Whether the lambda is mutable (allows modifying captures)
 		bool isActive() const { return closure_type.isValid(); }
 	};
 	LambdaContext current_lambda_context_;
