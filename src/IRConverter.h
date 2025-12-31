@@ -11052,74 +11052,105 @@ private:
 			}
 		}
 		
-		FLASH_LOG(Codegen, Debug, "Assignment: lhs_offset=", lhs_offset, ", is_reference=", (lhs_ref_it != reference_stack_info_.end()));
-		if (lhs_ref_it != reference_stack_info_.end()) {
-			// LHS is a reference - we need to store the ADDRESS of RHS, not its value
-			// Exception: if RHS is already a pointer/reference, we want the pointer value itself
-			X64Register addr_reg = X64Register::RAX;
+		FLASH_LOG(Codegen, Debug, "Assignment: lhs_offset=", lhs_offset, ", is_reference=", (lhs_ref_it != reference_stack_info_.end()), ", lhs.is_reference=", op.lhs.is_reference);
+		
+		// Check if LHS is a reference - either from reference_stack_info_ or from the TypedValue metadata
+		bool lhs_is_reference = (lhs_ref_it != reference_stack_info_.end()) || op.lhs.is_reference;
+		
+		if (lhs_is_reference) {
+			// LHS is a reference variable
+			// In C++, references cannot be rebound after initialization
+			// Any assignment to a reference should modify the object it refers to (dereference semantics)
+			// Example: int x = 10; int& ref = x; ref = 20; // This modifies x, not ref
 			
-			// Get address of RHS or pointer value
-			if (std::holds_alternative<StringHandle>(op.rhs.value)) {
+			// Step 1: Load the address stored in the reference variable (LHS)
+			X64Register ref_addr_reg = allocateRegisterWithSpilling();
+			emitMovFromFrame(ref_addr_reg, lhs_offset);
+			FLASH_LOG(Codegen, Debug, "Reference assignment: Loaded address from reference variable at offset ", lhs_offset);
+			
+			// Step 2: Load or compute the value to store (RHS)
+			X64Register value_reg = allocateRegisterWithSpilling();
+			
+			// Get reference value type and size
+			Type value_type;
+			int value_size_bits;
+			if (lhs_ref_it != reference_stack_info_.end()) {
+				value_type = lhs_ref_it->second.value_type;
+				value_size_bits = lhs_ref_it->second.value_size_bits;
+			} else {
+				// Use TypedValue metadata
+				value_type = op.lhs.type;
+				value_size_bits = op.lhs.size_in_bits;
+			}
+			int value_size_bytes = value_size_bits / 8;
+			
+			if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
+				// RHS is an immediate value
+				uint64_t imm_value = std::get<unsigned long long>(op.rhs.value);
+				FLASH_LOG(Codegen, Debug, "Reference assignment: RHS is immediate value: ", imm_value);
+				moveImmediateToRegister(value_reg, imm_value);
+			} else if (std::holds_alternative<StringHandle>(op.rhs.value)) {
+				// RHS is a variable name
 				StringHandle rhs_var_name_handle = std::get<StringHandle>(op.rhs.value);
-			std::string_view rhs_var_name = StringTable::getStringView(rhs_var_name_handle);
-				FLASH_LOG(Codegen, Debug, "Reference assignment: LHS is ref, RHS is string_view: '", rhs_var_name, "'");
+				std::string_view rhs_var_name = StringTable::getStringView(rhs_var_name_handle);
+				FLASH_LOG(Codegen, Debug, "Reference assignment: RHS is variable: '", rhs_var_name, "'");
 				auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(rhs_var_name));
 				if (it != variable_scopes.back().variables.end()) {
 					int32_t rhs_offset = it->second.offset;
-					// Check if RHS is itself a pointer or reference
-					// For pointers and references, we want the VALUE (the pointer), not the address of the variable
-					// For regular values, we want the ADDRESS
-					// Special case: __range_begin_ and __range_end_ are always pointers
-					bool is_range_iterator = false;
-					if (rhs_var_name.size() >= 15 && rhs_var_name.substr(0, 15) == "__range_begin_") {
-						is_range_iterator = true;
-					} else if (rhs_var_name.size() >= 13 && rhs_var_name.substr(0, 13) == "__range_end_") {
-						is_range_iterator = true;
-					}
-					// Pointers are typically stored as 64-bit values (Type::Long or Type::Int with 64 bits)
-					if (is_range_iterator || (op.rhs.size_in_bits == 64 && (op.rhs.type == Type::Int || op.rhs.type == Type::Long || 
-					    op.rhs.type == Type::UnsignedLong || op.rhs.type == Type::LongLong || op.rhs.type == Type::UnsignedLongLong))) {
-						// This is a 64-bit integer type or known pointer - likely a pointer value, load it
-						emitMovFromFrame(addr_reg, rhs_offset);
+					// Check if RHS is also a reference
+					auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
+					if (rhs_ref_it != reference_stack_info_.end()) {
+						// RHS is a reference - dereference it to get the value
+						X64Register rhs_addr_reg = allocateRegisterWithSpilling();
+						emitMovFromFrame(rhs_addr_reg, rhs_offset);  // Load pointer from reference
+						emitMovFromMemory(value_reg, rhs_addr_reg, 0, value_size_bytes);  // Dereference
+						regAlloc.release(rhs_addr_reg);
 					} else {
-						// Regular value - take its address
-						emitLeaFromFrame(addr_reg, rhs_offset);
+						// RHS is a regular variable - load its value
+						emitMovFromFrameSized(
+							SizedRegister{value_reg, value_size_bits, isSignedType(value_type)},
+							SizedStackSlot{rhs_offset, value_size_bits, isSignedType(value_type)}
+						);
 					}
 				} else {
-					FLASH_LOG(Codegen, Error, "RHS variable '", rhs_var_name, "' not found for reference initialization");
+					FLASH_LOG(Codegen, Error, "RHS variable '", rhs_var_name, "' not found for reference assignment");
+					regAlloc.release(ref_addr_reg);
+					regAlloc.release(value_reg);
 					return;
 				}
 			} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
+				// RHS is a TempVar
 				TempVar rhs_var = std::get<TempVar>(op.rhs.value);
-				FLASH_LOG(Codegen, Debug, "Reference assignment: LHS is ref, RHS is TempVar: '", rhs_var.name(), "'");
+				FLASH_LOG(Codegen, Debug, "Reference assignment: RHS is TempVar: '", rhs_var.name(), "'");
 				int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
-				// Check if RHS itself is a reference - if so, load the pointer value
+				// Check if RHS is a reference
 				auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
 				if (rhs_ref_it != reference_stack_info_.end()) {
-					// RHS is also a reference - just copy the pointer value
-					emitMovFromFrame(addr_reg, rhs_offset);
-				} else if (op.rhs.size_in_bits == 64 && (op.rhs.type == Type::Int || op.rhs.type == Type::Long || 
-				           op.rhs.type == Type::UnsignedLong || op.rhs.type == Type::LongLong || op.rhs.type == Type::UnsignedLongLong)) {
-					// This is a 64-bit integer type - likely a pointer value, load it
-					emitMovFromFrame(addr_reg, rhs_offset);
+					// RHS is a reference - dereference it
+					X64Register rhs_addr_reg = allocateRegisterWithSpilling();
+					emitMovFromFrame(rhs_addr_reg, rhs_offset);
+					emitMovFromMemory(value_reg, rhs_addr_reg, 0, value_size_bytes);
+					regAlloc.release(rhs_addr_reg);
 				} else {
-					// RHS is a regular value - get its address
-					emitLeaFromFrame(addr_reg, rhs_offset);
+					// Load value from TempVar
+					emitMovFromFrameSized(
+						SizedRegister{value_reg, value_size_bits, isSignedType(value_type)},
+						SizedStackSlot{rhs_offset, value_size_bits, isSignedType(value_type)}
+					);
 				}
-			} else if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
-				// Immediate value can't be bound to a reference (except for const ref to temporary, which we don't support here)
-				FLASH_LOG(Codegen, Error, "Cannot bind reference to immediate value in this context");
-				return;
 			} else {
-				FLASH_LOG(Codegen, Error, "Unsupported RHS type for reference initialization");
+				FLASH_LOG(Codegen, Error, "Unsupported RHS type for reference assignment");
+				regAlloc.release(ref_addr_reg);
+				regAlloc.release(value_reg);
 				return;
 			}
 			
-			// Store the address to the reference (LHS)
-			emitMovToFrameSized(
-				SizedRegister{addr_reg, 64, false},  // source: 64-bit register (pointer)
-				SizedStackSlot{lhs_offset, 64, false}  // dest: 64-bit reference (pointer)
-			);
+			// Step 3: Store the value to the address pointed to by the reference (dereference and store)
+			emitStoreToMemory(textSectionData, value_reg, ref_addr_reg, 0, value_size_bytes);
+			FLASH_LOG(Codegen, Debug, "Reference assignment: Stored value to dereferenced address");
+			
+			regAlloc.release(ref_addr_reg);
+			regAlloc.release(value_reg);
 			
 			return;  // Done with reference assignment
 		}
