@@ -6777,8 +6777,10 @@ private:
 					}
 					
 					TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
-					// Return reference name directly with pointer size (64 bits), not dereferenced
-					return { pointee_type, 64, StringTable::getOrInternStringHandle(identifierNode.name()), static_cast<unsigned long long>(type_index) };
+					// Return reference name directly with POINTEE type and size (not pointer size)
+					// This is important for handleLValueAssignment which uses lhs_operands[0] and [1] as pointee type/size
+					// The reference variable will hold the pointer, but we return the pointee info
+					return { pointee_type, pointee_size, StringTable::getOrInternStringHandle(identifierNode.name()), static_cast<unsigned long long>(type_index) };
 				}
 				
 				// For non-array references in Load context, we need to dereference to get the value
