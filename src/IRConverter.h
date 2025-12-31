@@ -6058,20 +6058,25 @@ private:
 				
 				// Handle TempVar arguments that should pass an address (e.g., constructor calls passed to rvalue reference params)
 				if (should_pass_address && std::holds_alternative<TempVar>(arg.value)) {
-					// TempVar can be either:
-					// 1. A value that needs its address taken (like a constructed object) - use LEA
-					// 2. An address that should be passed directly (like AddressOf result) - use MOV
+					// When should_pass_address is true, the TempVar can be either:
+					// 1. An object value that needs its address taken (like Widget(42)) - use LEA
+					// 2. A pointer value from AddressOf or cast (like result of (Widget&&)w1) - use MOV
+					//
+					// To distinguish:
+					// - Case 2: The TempVar was written by AddressOf/cast and holds a pointer
+					// - Case 1: The TempVar holds the actual object
+					//
+					// Since we can't easily tell from the IR alone, use a simple heuristic:
+					// Check reference_stack_info_ to see if this variable is marked as holding a reference/pointer
 					const auto& temp_var = std::get<TempVar>(arg.value);
 					int var_offset = getStackOffsetFromTempVar(temp_var);
 					
-					// If the arg size is 64 bits (pointer size), it's likely an address already (from AddressOf)
-					// Otherwise, it's a value that needs its address taken
-					if (arg.size_in_bits == 64 && arg.type != Type::Double && arg.type != Type::LongLong && arg.type != Type::UnsignedLongLong) {
-						// This TempVar holds an address - pass it directly with MOV
+					auto ref_it = reference_stack_info_.find(var_offset);
+					if (ref_it != reference_stack_info_.end()) {
+						// Variable is marked as holding a pointer/reference - load it with MOV
 						emitMovFromFrame(target_reg, var_offset);
 					} else {
-						// This TempVar holds a value - take its address with LEA
-						// (e.g., constructor call result like Widget(42))
+						// Variable holds an object value - take its address with LEA
 						emitLeaFromFrame(target_reg, var_offset);
 					}
 					continue;
@@ -12641,11 +12646,15 @@ private:
 				SizedStackSlot{result_offset, 64, false}  // dest: 64-bit for pointer
 			);
 			
-			// NOTE: Do NOT mark the result as a reference here.
-			// The result of addressof is a POINTER value, not a reference.
-			// References need to be dereferenced to get their target value,
-			// but pointers ARE the value (they should not be dereferenced on return).
-			// This fixes the bug where returning &x would dereference the pointer.
+			// NOTE: The result of addressof is a POINTER value, not a reference.
+			// However, we mark it in reference_stack_info_ so that subsequent operations
+			// know this TempVar holds a pointer and should be loaded with MOV, not LEA.
+			// This is needed for proper handling when passing AddressOf results to functions.
+			reference_stack_info_[result_offset] = ReferenceInfo{
+				.value_type = op.operand.type,
+				.value_size_bits = op.operand.size_in_bits,
+				.is_rvalue_reference = false  // AddressOf result is a pointer, not a reference
+			};
 			
 			return;
 		}

@@ -11131,24 +11131,35 @@ private:
 						irOperands.emplace_back(64);  // Pointer size
 						irOperands.emplace_back(addr_var);
 					} else {
-						// Not a literal (expression result in a TempVar) - take its address
+						// Not a literal (expression result in a TempVar) - check if it needs address taken
 						if (argumentIrOperands.size() >= 3 && std::holds_alternative<TempVar>(argumentIrOperands[2])) {
 							Type expr_type = std::get<Type>(argumentIrOperands[0]);
 							int expr_size = std::get<int>(argumentIrOperands[1]);
 							TempVar expr_var = std::get<TempVar>(argumentIrOperands[2]);
 							
-							TempVar addr_var = var_counter.next();
-							AddressOfOp addr_op;
-							addr_op.result = addr_var;
-							addr_op.operand.type = expr_type;
-							addr_op.operand.size_in_bits = expr_size;
-							addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
-							addr_op.operand.value = expr_var;
-							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+							// If expr_size is 64 bits and it's a struct type, it's likely already an address
+							// (e.g., from a cast to rvalue reference like static_cast<Widget&&>(w1))
+							// In this case, just pass it through without taking another address
+							bool is_already_address = (expr_size == 64 && expr_type == Type::Struct);
 							
-							irOperands.emplace_back(expr_type);
-							irOperands.emplace_back(64);  // Pointer size
-							irOperands.emplace_back(addr_var);
+							if (is_already_address) {
+								// Already an address - pass through
+								irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+							} else {
+								// Need to take address of the value
+								TempVar addr_var = var_counter.next();
+								AddressOfOp addr_op;
+								addr_op.result = addr_var;
+								addr_op.operand.type = expr_type;
+								addr_op.operand.size_in_bits = expr_size;
+								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+								addr_op.operand.value = expr_var;
+								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+								
+								irOperands.emplace_back(expr_type);
+								irOperands.emplace_back(64);  // Pointer size
+								irOperands.emplace_back(addr_var);
+							}
 						} else {
 							// Fallback - just pass through
 							irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
