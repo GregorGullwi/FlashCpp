@@ -11131,8 +11131,28 @@ private:
 						irOperands.emplace_back(64);  // Pointer size
 						irOperands.emplace_back(addr_var);
 					} else {
-						// Not a literal - just pass through
-						irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+						// Not a literal (expression result in a TempVar) - take its address
+						if (argumentIrOperands.size() >= 3 && std::holds_alternative<TempVar>(argumentIrOperands[2])) {
+							Type expr_type = std::get<Type>(argumentIrOperands[0]);
+							int expr_size = std::get<int>(argumentIrOperands[1]);
+							TempVar expr_var = std::get<TempVar>(argumentIrOperands[2]);
+							
+							TempVar addr_var = var_counter.next();
+							AddressOfOp addr_op;
+							addr_op.result = addr_var;
+							addr_op.operand.type = expr_type;
+							addr_op.operand.size_in_bits = expr_size;
+							addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+							addr_op.operand.value = expr_var;
+							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+							
+							irOperands.emplace_back(expr_type);
+							irOperands.emplace_back(64);  // Pointer size
+							irOperands.emplace_back(addr_var);
+						} else {
+							// Fallback - just pass through
+							irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+						}
 					}
 				} else {
 					// Parameter doesn't expect a reference - pass through as-is

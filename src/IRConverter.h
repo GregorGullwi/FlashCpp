@@ -6056,6 +6056,27 @@ private:
 					continue;
 				}
 				
+				// Handle TempVar arguments that should pass an address (e.g., constructor calls passed to rvalue reference params)
+				if (should_pass_address && std::holds_alternative<TempVar>(arg.value)) {
+					// TempVar can be either:
+					// 1. A value that needs its address taken (like a constructed object) - use LEA
+					// 2. An address that should be passed directly (like AddressOf result) - use MOV
+					const auto& temp_var = std::get<TempVar>(arg.value);
+					int var_offset = getStackOffsetFromTempVar(temp_var);
+					
+					// If the arg size is 64 bits (pointer size), it's likely an address already (from AddressOf)
+					// Otherwise, it's a value that needs its address taken
+					if (arg.size_in_bits == 64 && arg.type != Type::Double && arg.type != Type::LongLong && arg.type != Type::UnsignedLongLong) {
+						// This TempVar holds an address - pass it directly with MOV
+						emitMovFromFrame(target_reg, var_offset);
+					} else {
+						// This TempVar holds a value - take its address with LEA
+						// (e.g., constructor call result like Widget(42))
+						emitLeaFromFrame(target_reg, var_offset);
+					}
+					continue;
+				}
+				
 				// Handle floating-point immediate values (double literals)
 				if (is_float_arg && std::holds_alternative<double>(arg.value)) {
 					// Load floating-point literal into XMM register
