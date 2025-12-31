@@ -1,13 +1,15 @@
 # Remaining Test Failures Plan
 
-## Current Status (2025-12-30)
-**781/795 tests passing (98.2%)**
+## Current Status (2025-12-31)
+**780/795 tests passing (98.1%)**
 - Fixed: test_positional_init_only.cpp (brace initialization)
 - Fixed: test_lambda_this_capture.cpp (lambda [this] capture)
 - Fixed: test_operator_addressof_resolved_ret100.cpp (operator& return type)
 - Fixed: test_operator_addressof_overload_baseline.cpp (operator& return type)
+- Fixed: test_std_move_support.cpp (std::move with template specialization) ✅
+- **New failures**: test_constructor_expressions.cpp and test_copy.cpp (rvalue reference semantics)
 
-## Remaining 12 Failures Analysis
+## Remaining 13 Failures Analysis
 
 ### 1. Exception Handling (2 files) - **Not Implemented**
 - `test_exceptions_basic.cpp` - Incomplete Linux exception handling support
@@ -16,13 +18,14 @@
 **Issue**: Exception handling requires complex runtime support (unwinding, LSDA, personality functions)
 **Effort**: Large - requires implementing DWARF exception tables and runtime hooks
 
-### 2. Reference Semantics Issues (3 files) - **Medium Priority**
+### 2. Reference Semantics Issues (4 files) - **Medium Priority**
 - `test_forward_overload_resolution.cpp` - rvalue reference variable passed to function
-- `test_std_move_support.cpp` - std::move with template specialization
 - `test_xvalue_all_casts.cpp` - xvalue handling across cast types
+- `test_constructor_expressions.cpp` - constructor calls with rvalue references
+- `test_copy.cpp` - copy/move constructor with rvalue references
 
-**Issue**: When an rvalue reference variable (which is itself an lvalue) is passed to a function, the code incorrectly dereferences it twice.
-**Effort**: Medium - need to fix reference parameter passing logic
+**Issue**: When passing temporary objects constructed as function arguments that take rvalue references, the code generates incorrect pointer handling, leading to segmentation faults.
+**Effort**: Medium - need to fix temporary object lifetime and reference parameter passing logic
 
 ### 3. Virtual Functions/RTTI (2 files) - **Medium Priority**
 - `test_covariant_return.cpp` - covariant return types
@@ -84,11 +87,12 @@
 
 ## Implementation Notes
 
-### Reference Parameter Passing Fix (test_forward_overload_resolution)
-When passing an rvalue reference variable to a function:
-- The variable `int&& rref = x;` is stored as a pointer on the stack
-- When used as an argument, it should be treated as an lvalue (named reference)
-- Current bug: code dereferences the stored pointer, then tries to pass by reference
+### Reference Parameter Passing Fix (test_forward_overload_resolution, test_constructor_expressions, test_copy)
+When passing temporary objects or rvalue reference variables to functions:
+- Temporary objects like `Widget(42)` are constructed on the stack
+- When passed to `void func(Widget&& w)`, the temporary's address should be passed
+- Current bug: incorrect pointer handling for temporaries passed to rvalue reference parameters
+- This affects constructor expressions used as function arguments
 
 ### Large Struct RVO Fix (test_rvo_very_large_struct)
 For structs > 16 bytes:
@@ -98,4 +102,5 @@ For structs > 16 bytes:
 
 ---
 *Created: 2025-12-30*
-*Last Updated: 2025-12-30 (Session Progress: 777→781 tests passing)*
+*Last Updated: 2025-12-31 (Session Progress: 781→780 tests passing)*
+*Note: test_std_move_support.cpp now passes, but test_constructor_expressions.cpp and test_copy.cpp now fail*
