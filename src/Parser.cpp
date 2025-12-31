@@ -87,11 +87,11 @@ static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifie
 // Used for runtime type size queries when TypeInfo is already populated
 // Helper function to safely get type size - handles both basic types and UserDefined types
 // For UserDefined types, tries to look up size from type registry via type_index
-static unsigned char getTypeSizeForTemplateParameter(Type type, size_t type_index) {
+static unsigned short getTypeSizeForTemplateParameter(Type type, size_t type_index) {
 	// Check if this is a basic type that get_type_size_bits can handle
 	// Basic types range from Void to MemberObjectPointer in the Type enum
 	if (type >= Type::Void && type <= Type::MemberObjectPointer) {
-		return static_cast<unsigned char>(get_type_size_bits(type));
+		return static_cast<unsigned short>(get_type_size_bits(type));
 	}
 	// For UserDefined and other types (Template, etc), look up size from type registry
 	if (type_index > 0 && type_index < gTypeInfo.size()) {
@@ -101,11 +101,11 @@ static unsigned char getTypeSizeForTemplateParameter(Type type, size_t type_inde
 }
 
 // Helper function to safely get type size from TemplateArgument
-static unsigned char getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
+static unsigned short getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
 	// Check if this is a basic type that get_type_size_bits can handle
 	// Basic types range from Void to MemberObjectPointer in the Type enum
 	if (arg.type_value >= Type::Void && arg.type_value <= Type::MemberObjectPointer) {
-		return static_cast<unsigned char>(get_type_size_bits(arg.type_value));
+		return static_cast<unsigned short>(get_type_size_bits(arg.type_value));
 	}
 	// For UserDefined and other types (Template, etc), try to extract size from type_specifier
 	if (arg.type_specifier.has_value()) {
@@ -113,7 +113,7 @@ static unsigned char getTypeSizeFromTemplateArgument(const TemplateArgument& arg
 		// Try type_index first
 		size_t type_index = type_spec.type_index();
 		if (type_index > 0 && type_index < gTypeInfo.size()) {
-			unsigned char size = gTypeInfo[type_index].type_size_;
+			unsigned short size = gTypeInfo[type_index].type_size_;
 			if (size > 0) {
 				return size;
 			}
@@ -2986,7 +2986,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			TypeSpecifierNode type_spec(
 				Type::Struct,
 				struct_type_index,
-				static_cast<unsigned char>(struct_type_info.getStructInfo()->total_size * 8),
+				static_cast<unsigned short>(struct_info->total_size * 8),
 				*alias_token
 			);
 			ASTNode type_node = emplace_node<TypeSpecifierNode>(type_spec);
@@ -3052,7 +3052,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			
 			// Determine underlying type
 			Type underlying_type = Type::Int;
-			unsigned char underlying_size = 32;
+			unsigned short underlying_size = 32;
 			if (enum_ref.has_underlying_type()) {
 				const auto& type_spec_node = enum_ref.underlying_type()->as<TypeSpecifierNode>();
 				underlying_type = type_spec_node.type();
@@ -4985,7 +4985,7 @@ ParseResult Parser::parse_struct_declaration()
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
 			Type::Struct,
 			struct_type_index,
-			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+			static_cast<unsigned short>(struct_info->total_size * 8),  // size in bits
 			*name_token,
 			CVQualifier::Const  // const qualifier
 		);
@@ -5032,7 +5032,7 @@ ParseResult Parser::parse_struct_declaration()
 		auto return_type_node = emplace_node<TypeSpecifierNode>(
 			Type::Struct,
 			struct_type_index,
-			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+			static_cast<unsigned short>(struct_info->total_size * 8),  // size in bits
 			*name_token,
 			CVQualifier::None
 		);
@@ -5055,7 +5055,7 @@ ParseResult Parser::parse_struct_declaration()
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
 			Type::Struct,
 			struct_type_index,
-			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+			static_cast<unsigned short>(struct_info->total_size * 8),  // size in bits
 			*name_token,
 			CVQualifier::Const  // const qualifier
 		);
@@ -5107,7 +5107,7 @@ ParseResult Parser::parse_struct_declaration()
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
 			Type::Struct,
 			struct_type_index,
-			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+			static_cast<unsigned short>(struct_info->total_size * 8),  // size in bits
 			*name_token,
 			CVQualifier::None
 		);
@@ -5150,7 +5150,7 @@ ParseResult Parser::parse_struct_declaration()
 		auto return_type_node = emplace_node<TypeSpecifierNode>(
 			Type::Struct,
 			struct_type_index,
-			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+			static_cast<unsigned short>(struct_info->total_size * 8),  // size in bits
 			*name_token,
 			CVQualifier::None
 		);
@@ -5173,7 +5173,7 @@ ParseResult Parser::parse_struct_declaration()
 		auto move_param_type_node = emplace_node<TypeSpecifierNode>(
 			Type::Struct,
 			struct_type_index,
-			static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+			static_cast<unsigned short>(struct_info->total_size * 8),  // size in bits
 			*name_token,
 			CVQualifier::None
 		);
@@ -5251,7 +5251,7 @@ ParseResult Parser::parse_struct_declaration()
 			auto param_type_node = emplace_node<TypeSpecifierNode>(
 				Type::Struct,
 				struct_type_index,
-				static_cast<unsigned char>(struct_info->total_size * 8),  // size in bits
+				static_cast<unsigned short>(struct_info->total_size * 8),  // size in bits
 				*name_token,
 				CVQualifier::Const  // const qualifier
 			);
@@ -5535,7 +5535,7 @@ ParseResult Parser::parse_enum_declaration()
 
 	// Determine underlying type (default is int)
 	Type underlying_type = Type::Int;
-	unsigned char underlying_size = 32;
+	unsigned short underlying_size = 32;
 	if (enum_ref.has_underlying_type()) {
 		const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
 		underlying_type = type_spec.type();
@@ -5856,7 +5856,7 @@ ParseResult Parser::parse_typedef_declaration()
 
 		// Determine underlying type (default is int)
 		Type underlying_type = Type::Int;
-		unsigned char underlying_size = 32;
+		unsigned short underlying_size = 32;
 		if (enum_ref.has_underlying_type()) {
 			const auto& type_spec_node = enum_ref.underlying_type()->as<TypeSpecifierNode>();
 			underlying_type = type_spec_node.type();
@@ -6189,7 +6189,7 @@ ParseResult Parser::parse_typedef_declaration()
 		type_spec = TypeSpecifierNode(
 			Type::Struct,
 			struct_type_index,
-			static_cast<unsigned char>(struct_type_info.getStructInfo()->total_size * 8),
+			static_cast<unsigned short>(struct_info->total_size * 8),
 			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0)
 		);
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
@@ -7127,7 +7127,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	// Create a type specifier for the cast using the helper function
 	Type cast_type = Type::Int; // default
 	TypeQualifier qualifier = TypeQualifier::None;
-	unsigned char type_size = 32;
+	unsigned short type_size = 32;
 	
 	auto type_info = get_builtin_type_info(type_name);
 	if (type_info.has_value()) {
@@ -7289,7 +7289,7 @@ ParseResult Parser::parse_type_specifier()
 	};
 
 	Type type = Type::UserDefined;
-	unsigned char type_size = 0;
+	unsigned short type_size = 0;
 
 	// Check if we have a type keyword, or if we only have qualifiers (e.g., "long", "unsigned")
 	bool has_explicit_type = false;
@@ -7455,7 +7455,7 @@ ParseResult Parser::parse_type_specifier()
 			}
 
 			if (struct_info) {
-				type_size = static_cast<unsigned char>(struct_info->total_size * 8);  // Convert bytes to bits
+				type_size = static_cast<unsigned short>(struct_info->total_size * 8);  // Convert bytes to bits
 			} else {
 				// Struct is being defined but not yet finalized (e.g., in member function parameters)
 				// Use a placeholder size of 0 - it will be updated when the struct is finalized
@@ -7661,7 +7661,7 @@ ParseResult Parser::parse_type_specifier()
 							CVQualifier cv = instantiated_type.cv_qualifier();
 							
 							// Get the size in bits for the argument type
-							unsigned char size_bits = 0;
+							unsigned short size_bits = 0;
 							if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
 								// Look up the struct size from type_index
 								if (arg.type_index < gTypeInfo.size()) {
@@ -7855,7 +7855,7 @@ ParseResult Parser::parse_type_specifier()
 							const StructTypeInfo* struct_info = type_info->getStructInfo();
 
 							if (struct_info) {
-								type_size = static_cast<unsigned char>(struct_info->total_size * 8);
+								type_size = static_cast<unsigned short>(struct_info->total_size * 8);
 							} else {
 								type_size = 0;
 							}
@@ -7962,7 +7962,7 @@ ParseResult Parser::parse_type_specifier()
 									
 									
 									// Get the size in bits for the argument type
-									unsigned char size_bits = 0;
+									unsigned short size_bits = 0;
 									if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
 										// Look up the struct size from type_index
 										if (arg.type_index < gTypeInfo.size()) {
@@ -8030,7 +8030,7 @@ ParseResult Parser::parse_type_specifier()
 					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 					if (struct_info) {
-						type_size = static_cast<unsigned char>(struct_info->total_size * 8);
+						type_size = static_cast<unsigned short>(struct_info->total_size * 8);
 					} else {
 						type_size = 0;
 					}
@@ -8085,7 +8085,7 @@ ParseResult Parser::parse_type_specifier()
 					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 					if (struct_info) {
-						type_size = static_cast<unsigned char>(struct_info->total_size * 8);
+						type_size = static_cast<unsigned short>(struct_info->total_size * 8);
 					} else {
 						type_size = 0;
 					}
@@ -8113,7 +8113,7 @@ ParseResult Parser::parse_type_specifier()
 			}
 
 			if (struct_info) {
-				type_size = static_cast<unsigned char>(struct_info->total_size * 8);  // Convert bytes to bits
+				type_size = static_cast<unsigned short>(struct_info->total_size * 8);  // Convert bytes to bits
 			} else {
 				// Struct is being defined but not yet finalized (e.g., in member function parameters)
 				// Use a placeholder size of 0 - it will be updated when the struct is finalized
@@ -8172,7 +8172,7 @@ ParseResult Parser::parse_type_specifier()
 				if (actual_type_info.isStruct()) {
 					const StructTypeInfo* struct_info = actual_type_info.getStructInfo();
 					if (struct_info) {
-						type_size = static_cast<unsigned char>(struct_info->total_size * 8);
+						type_size = static_cast<unsigned short>(struct_info->total_size * 8);
 					}
 				}
 			}
@@ -10283,9 +10283,9 @@ bool Parser::instantiate_deduced_template(std::string_view class_name,
 	}
 
 	const TypeInfo* struct_type_info = type_it->second;
-	unsigned char size_bits = 0;
+	unsigned short size_bits = 0;
 	if (const StructTypeInfo* struct_info = struct_type_info->getStructInfo()) {
-		size_bits = static_cast<unsigned char>(struct_info->total_size * 8);
+		size_bits = static_cast<unsigned short>(struct_info->total_size * 8);
 	}
 
 	TypeSpecifierNode resolved(Type::Struct, struct_type_info->type_index_, size_bits, type_specifier.token(), type_specifier.cv_qualifier());
@@ -14207,7 +14207,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 				// Create TypeSpecifierNode for the class
 				TypeIndex type_index = type_it->second->type_index_;
-				unsigned char type_size = 0;
+				unsigned short type_size = 0;
 				if (type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[type_index];
 					if (type_info.struct_info_) {
@@ -14599,7 +14599,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 					// Create TypeSpecifierNode for the constructor call
 					TypeIndex type_index = type_it->second->type_index_;
-					unsigned char type_size = 0;
+					unsigned short type_size = 0;
 					// Look up the size
 					if (type_index < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_index];
