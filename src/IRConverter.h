@@ -5881,7 +5881,7 @@ private:
 			
 			// Get result offset - use actual return size for proper stack allocation
 			FLASH_LOG_FORMAT(Codegen, Debug,
-				"handleFunctionCall: allocating result temp_{}  with return_size_in_bits={}",
+				"handleFunctionCall: allocating result temp_{} with return_size_in_bits={}",
 				call_op.result.var_number, call_op.return_size_in_bits);
 			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number, call_op.return_size_in_bits);
 			FLASH_LOG_FORMAT(Codegen, Debug,
