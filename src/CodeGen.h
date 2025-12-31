@@ -6921,6 +6921,7 @@ private:
 						assign_op.lhs = TypedValue{pointee_type, 64, addr_temp};  // 64-bit pointer dest
 						assign_op.rhs = TypedValue{pointee_type, 64, var_handle};  // 64-bit pointer source
 						assign_op.is_pointer_store = false;
+						assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 						
 						// Mark the temp with Indirect LValue metadata

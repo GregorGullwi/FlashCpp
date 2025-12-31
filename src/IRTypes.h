@@ -1178,6 +1178,7 @@ struct AssignmentOp {
 	TypedValue lhs;                                   // Left-hand side (destination)
 	TypedValue rhs;                                   // Right-hand side (source)
 	bool is_pointer_store = false;                    // True if lhs is a pointer and we should store through it
+	bool dereference_rhs_references = true;           // True if RHS references should be dereferenced (default), false to just copy the pointer
 };
 
 // Loop begin (marks loop start with labels for break/continue)

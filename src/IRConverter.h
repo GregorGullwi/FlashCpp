@@ -11168,9 +11168,9 @@ private:
 			if (it != variable_scopes.back().variables.end()) {
 				int32_t rhs_offset = it->second.offset;
 				
-				// Check if RHS is a reference - if so, dereference it
+				// Check if RHS is a reference - if so, dereference it (unless explicitly disabled)
 				auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
-				if (rhs_ref_it != reference_stack_info_.end()) {
+				if (rhs_ref_it != reference_stack_info_.end() && op.dereference_rhs_references) {
 					// RHS is a reference - load pointer and dereference
 					X64Register ptr_reg = allocateRegisterWithSpilling();
 					emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
@@ -11220,7 +11220,7 @@ private:
 				}
 			}
 			
-			if (rhs_ref_it != reference_stack_info_.end()) {
+			if (rhs_ref_it != reference_stack_info_.end() && op.dereference_rhs_references) {
 				// RHS is a reference - load pointer and dereference
 				X64Register ptr_reg = allocateRegisterWithSpilling();
 				emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
