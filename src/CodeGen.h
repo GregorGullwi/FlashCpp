@@ -1696,6 +1696,17 @@ private:
 		return current_lambda_context_.isActive() && current_lambda_context_.has_this_pointer;
 	}
 
+	// Get the offset of a member in the current lambda closure struct
+	// Returns 0 if not found or not in a lambda context
+	int getClosureMemberOffset(std::string_view member_name) const {
+		if (const StructTypeInfo* closure = getCurrentClosureStruct()) {
+			if (const StructMember* member = closure->findMember(member_name)) {
+				return static_cast<int>(member->offset);
+			}
+		}
+		return 0;
+	}
+
 	// Emit IR to load __copy_this from current lambda closure into a TempVar.
 	// Returns the TempVar holding the copied object, or std::nullopt if not applicable.
 	// The Token parameter is used for source location in the IR instruction.
@@ -1789,13 +1800,7 @@ private:
 			return std::nullopt;
 		}
 
-		// Get the closure struct info to find the actual offset of __this
-		int this_member_offset = 0;
-		if (const StructTypeInfo* closure = getCurrentClosureStruct()) {
-			if (const StructMember* member = closure->findMember("__this")) {
-				this_member_offset = static_cast<int>(member->offset);
-			}
-		}
+		int this_member_offset = getClosureMemberOffset("__this");
 
 		TempVar this_ptr = var_counter.next();
 		MemberLoadOp load_op;
@@ -4968,15 +4973,12 @@ private:
 																const auto& ident = std::get<IdentifierNode>(expr);
 																std::optional<ASTNode> symbol = symbol_table.lookup(ident.name());
 																if (symbol.has_value()) {
-																	const TypeSpecifierNode* init_type = nullptr;
-																	if (symbol->is<DeclarationNode>()) {
-																		init_type = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-																	} else if (symbol->is<VariableDeclarationNode>()) {
-																		init_type = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-																	}
-																	if (init_type && init_type->type() == Type::Struct && 
-																		init_type->type_index() == param_type.type_index()) {
-																		init_is_struct_of_same_type = true;
+																	if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+																		const TypeSpecifierNode& init_type = decl->type_node().as<TypeSpecifierNode>();
+																		if (init_type.type() == Type::Struct && 
+																			init_type.type_index() == param_type.type_index()) {
+																			init_is_struct_of_same_type = true;
+																		}
 																	}
 																}
 															}
@@ -12932,13 +12934,7 @@ private:
 						if (capture_kind_it != current_lambda_context_.capture_kinds.end() && 
 						    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
 							// [*this] capture: load from the copied object in __copy_this
-							// Get the closure struct info to find the actual offset
-							int copy_this_offset = 0;
-							if (const StructTypeInfo* closure = getCurrentClosureStruct()) {
-								if (const StructMember* member = closure->findMember("__copy_this")) {
-									copy_this_offset = static_cast<int>(member->offset);
-								}
-							}
+							int copy_this_offset = getClosureMemberOffset("__copy_this");
 							
 							TempVar copy_this_ref = var_counter.next();
 							MemberLoadOp load_copy_this;
@@ -12959,13 +12955,7 @@ private:
 							base_type_index = current_lambda_context_.enclosing_struct_type_index;
 						} else {
 							// [this] capture: load the pointer from __this
-							// Get the closure struct info to find the actual offset
-							int this_member_offset = 0;
-							if (const StructTypeInfo* closure = getCurrentClosureStruct()) {
-								if (const StructMember* member = closure->findMember("__this")) {
-									this_member_offset = static_cast<int>(member->offset);
-								}
-							}
+							int this_member_offset = getClosureMemberOffset("__this");
 							
 							TempVar this_ptr = var_counter.next();
 							MemberLoadOp load_this;
