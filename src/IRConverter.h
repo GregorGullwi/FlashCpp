@@ -8693,6 +8693,10 @@ private:
 					const StackVariableScope& current_scope = variable_scopes.back();
 					auto it = current_scope.variables.find(temp_var_name);
 					
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"handleReturn TempVar path: return_var={}, found_in_scope={}",
+						return_var.name(), (it != current_scope.variables.end()));
+					
 					// Check if return type is float/double
 					bool is_float_return = ret_op.return_type.has_value() && 
 					                        is_floating_point_type(ret_op.return_type.value());
@@ -8732,7 +8736,12 @@ private:
 							
 							// Check if function uses hidden return parameter (RVO/NRVO)
 							// Only skip copy if this specific return value is RVO-eligible (was constructed via RVO)
-							if (current_function_has_hidden_return_param_ && isTempVarRVOEligible(return_var)) {
+							bool is_rvo_eligible = isTempVarRVOEligible(return_var);
+							FLASH_LOG_FORMAT(Codegen, Debug,
+								"Return statement check: hidden_param={}, rvo_eligible={}, return_var={}",
+								current_function_has_hidden_return_param_, is_rvo_eligible, return_var.name());
+							
+							if (current_function_has_hidden_return_param_ && is_rvo_eligible) {
 								FLASH_LOG_FORMAT(Codegen, Debug,
 									"Return statement in function with hidden return parameter - RVO-eligible struct already in return slot at offset {}",
 									var_offset);
