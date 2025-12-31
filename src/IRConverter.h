@@ -4772,7 +4772,13 @@ private:
 
 		// Calculate space needed for TempVars
 		// Each TempVar uses 8 bytes (64-bit alignment)
-		int temp_var_space = static_cast<int>(temp_var_sizes_.size()) * 8;
+		// Calculate space for temp vars using actual sizes, not just count * 8
+		int temp_var_space = 0;
+		for (const auto& [temp_var_name, size_bits] : temp_var_sizes_) {
+			int size_in_bytes = (size_bits + 7) / 8;
+			size_in_bytes = (size_in_bytes + 7) & ~7;  // 8-byte alignment
+			temp_var_space += size_in_bytes;
+		}
 
 		// Don't subtract from stack_offset - TempVars are allocated separately via getStackOffsetFromTempVar
 
@@ -4857,11 +4863,24 @@ private:
 		// Allocate TempVars sequentially after named_vars + shadow space
 		// Use next_temp_var_offset_ to track the next available slot
 		// Each TempVar gets size_in_bits bytes (rounded up to 8-byte alignment)
-		int size_in_bytes = (size_in_bits + 7) / 8;  // Round up to nearest byte
+		// Check temp_var_sizes_ for pre-calculated size (from calculateFunctionStackSpace)
+		// This ensures large struct returns are allocated with correct size from the start
+		StringHandle temp_var_handle = StringTable::getOrInternStringHandle(tempVar.name());
+		auto size_it = temp_var_sizes_.find(temp_var_handle);
+		int actual_size_in_bits = size_in_bits;
+		if (size_it != temp_var_sizes_.end() && size_it->second > size_in_bits) {
+			actual_size_in_bits = size_it->second;  // Use pre-calculated size if larger
+		}
+		
+		int size_in_bytes = (actual_size_in_bits + 7) / 8;  // Round up to nearest byte
 		size_in_bytes = (size_in_bytes + 7) & ~7;    // Round up to 8-byte alignment
 		
-		int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
+		// Advance next_temp_var_offset_ FIRST to reserve space for this allocation
+		// This ensures large structs don't overlap with previously allocated variables
+		// The offset points to the BASE of the struct (lowest address), and the struct
+		// extends UPWARD in memory by size_in_bytes
 		next_temp_var_offset_ += size_in_bytes;
+		int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
 		
 		// Track the maximum TempVar index for stack size calculation
 		if (tempVar.var_number > max_temp_var_index_) {
@@ -4882,7 +4901,7 @@ private:
 		
 		// Register the TempVar's offset in variables map so subsequent lookups
 		// return the same offset even if scope_stack_space changes
-		StringHandle temp_var_handle = StringTable::getOrInternStringHandle(tempVar.name());
+		// Note: temp_var_handle was already created above for the size lookup
 		variable_scopes.back().variables[temp_var_handle].offset = offset;
 		
 		return offset;
@@ -5861,7 +5880,13 @@ private:
 			flushAllDirtyRegisters();
 			
 			// Get result offset - use actual return size for proper stack allocation
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"handleFunctionCall: allocating result temp_{}  with return_size_in_bits={}",
+				call_op.result.var_number, call_op.return_size_in_bits);
 			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number, call_op.return_size_in_bits);
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"handleFunctionCall: result_offset={} for temp_{}",
+				result_offset, call_op.result.var_number);
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle(call_op.result.name())].offset = result_offset;
 			
 			// For functions returning struct by value, prepare hidden return parameter
@@ -8869,7 +8894,13 @@ private:
 								FLASH_LOG_FORMAT(Codegen, Debug,
 									"Return statement in function with hidden return parameter - RVO-eligible struct already in return slot at offset {}",
 									var_offset);
-								// Struct already constructed in return slot via RVO - just emit epilogue below
+								// Struct already constructed in return slot via RVO
+								// For System V ABI: must return the hidden parameter (return slot address) in RAX
+								auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+								if (return_slot_it != variable_scopes.back().variables.end()) {
+									int return_slot_param_offset = return_slot_it->second.offset;
+									emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
+								}
 							} else if (current_function_has_hidden_return_param_) {
 								// Function uses hidden return param but this value is NOT RVO-eligible
 								// Need to copy the struct to the return slot
@@ -8952,7 +8983,17 @@ private:
 						// Get the actual size of the variable being returned
 						int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
 						
-						if (is_float_return) {
+						// Check if function uses hidden return parameter (RVO/NRVO)
+						// For System V ABI: must return the hidden parameter (return slot address) in RAX
+						if (current_function_has_hidden_return_param_) {
+							FLASH_LOG(Codegen, Debug,
+								"Return statement (fallback): function has hidden return parameter, loading return slot address into RAX");
+							auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+							if (return_slot_it != variable_scopes.back().variables.end()) {
+								int return_slot_param_offset = return_slot_it->second.offset;
+								emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
+							}
+						} else if (is_float_return) {
 							// Load floating-point value into XMM0
 							bool is_float = (ret_op.return_size == 32);
 							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
@@ -11715,6 +11756,9 @@ private:
 		std::string_view member_name;
 		int64_t member_offset = op.member_offset;  // Get from payload
 			
+		// Check if the object (not the array) is a pointer (like 'this' or a reference)
+		bool is_object_pointer = false;
+		
 		if (!array_name_view.empty()) {
 			is_member_array = array_name_view.find('.') != std::string::npos;
 			if (is_member_array) {
@@ -11725,6 +11769,11 @@ private:
 				// Update array_base_offset to point to the object
 				StringHandle object_name_handle = StringTable::getOrInternStringHandle(object_name);
 				array_base_offset = variable_scopes.back().variables[object_name_handle].offset;
+				
+				// Check if object is 'this' or a reference parameter (both need pointer dereferencing)
+				if (object_name == "this"sv || reference_stack_info_.count(array_base_offset) > 0) {
+					is_object_pointer = true;
+				}
 			} else {
 				// Regular array/pointer - get offset directly
 				array_base_offset = variable_scopes.back().variables[array_name_handle].offset;
@@ -11739,15 +11788,20 @@ private:
 			// Constant index
 			uint64_t index_value = std::get<unsigned long long>(op.index.value);
 
-			if (is_array_pointer) {
-				// Array is a pointer/temp var - load pointer and compute address
+			if (is_array_pointer || is_object_pointer) {
+				// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
+				// Load pointer and compute address
 				auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 					                    load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
-				// Add offset to pointer
-				int64_t offset_bytes = index_value * element_size_bytes;
-				emitAddImmToReg(textSectionData, base_reg, offset_bytes);
+				// Add member offset + index offset to pointer
+				// For is_object_pointer: total offset = member_offset + (index * element_size)
+				// For is_array_pointer: total offset = index * element_size (member_offset is 0)
+				int64_t offset_bytes = member_offset + (index_value * element_size_bytes);
+				if (offset_bytes != 0) {
+					emitAddImmToReg(textSectionData, base_reg, offset_bytes);
+				}
 
 				// Phase 5: Use optimize_lea for LEA vs MOV decision
 				// For struct types or lvalues, keep the address in base_reg
@@ -11791,11 +11845,16 @@ private:
 			// Calculate index size in bytes from size_in_bits
 			int index_size_bytes = op.index.size_in_bits / 8;
 
-			if (is_array_pointer) {
-				// Array is a pointer/temp var
+			if (is_array_pointer || is_object_pointer) {
+				// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
 				auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 					                    load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+
+				// Add member offset for pointer objects (e.g., this->member)
+				if (is_object_pointer && member_offset != 0) {
+					emitAddImmToReg(textSectionData, base_reg, member_offset);
+				}
 
 				// Load index with proper sign extension based on index type
 				bool is_signed = isSignedType(op.index.type);
@@ -11857,10 +11916,16 @@ private:
 			// Calculate index size in bytes from size_in_bits
 			int index_size_bytes = op.index.size_in_bits / 8;
 
-			if (is_array_pointer) {
+			if (is_array_pointer || is_object_pointer) {
+				// Array is a pointer/temp var, or member array of a pointer object
 				auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 					                    load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+				
+				// Add member offset for pointer objects (e.g., this->member)
+				if (is_object_pointer && member_offset != 0) {
+					emitAddImmToReg(textSectionData, base_reg, member_offset);
+				}
 			} else {
 				int64_t combined_offset = array_base_offset + member_offset;
 				emitLEAFromFrame(textSectionData, base_reg, combined_offset);
