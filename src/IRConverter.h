@@ -6039,10 +6039,20 @@ private:
 				}
 				
 				if (should_pass_address && std::holds_alternative<StringHandle>(arg.value)) {
-					// Load ADDRESS of object using LEA instead of value
+					// Load ADDRESS of object using LEA or MOV depending on whether it's a reference
 					StringHandle object_name_handle = std::get<StringHandle>(arg.value);
 					int object_offset = variable_scopes.back().variables[object_name_handle].offset;
-					emitLEAFromFrame(textSectionData, target_reg, object_offset);
+					
+					// Check if this variable is itself a reference (e.g., rvalue reference variable)
+					// If so, it already holds a pointer, so load it with MOV instead of LEA
+					auto ref_it = reference_stack_info_.find(object_offset);
+					if (ref_it != reference_stack_info_.end()) {
+						// Variable is a reference - it already holds a pointer, load it
+						emitMovFromFrame(target_reg, object_offset);
+					} else {
+						// Variable is not a reference - take its address with LEA
+						emitLEAFromFrame(textSectionData, target_reg, object_offset);
+					}
 					continue;
 				}
 				

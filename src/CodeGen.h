@@ -6749,15 +6749,10 @@ private:
 					return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
 				}
 				
-				// For LValueAddress context (e.g., LHS of assignment)
-				// For reference parameters: return the parameter name directly (it's already an address)
-				// For local reference variables: load the pointer, then mark as Indirect LValue
+				// For LValueAddress context (e.g., LHS of assignment, function call with reference parameter)
+				// Return the reference variable name directly as a pointer (64 bits) - don't dereference
+				// This is critical for passing reference variables to reference parameters
 				if (context == ExpressionContext::LValueAddress) {
-					// Check if this identifier is a function parameter
-					// Function parameters are handled differently - they don't have VariableDeclOp
-					// For now, assume all references in DeclarationNode are local variables
-					// (function parameters would come through a different code path)
-					
 					// For auto types, default to int (32 bits)
 					Type pointee_type = type_node.type();
 					int pointee_size = static_cast<int>(type_node.size_in_bits());
@@ -6766,28 +6761,9 @@ private:
 						pointee_size = 32;
 					}
 					
-					// Local reference variable: load the pointer from the variable into a temp
-					TempVar addr_temp = var_counter.next();
-					StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
-					
-					// Use AssignmentOp to copy the pointer value to a temp
-					AssignmentOp assign_op;
-					assign_op.result = addr_temp;
-					assign_op.lhs = TypedValue{pointee_type, 64, addr_temp};  // 64-bit pointer dest
-					assign_op.rhs = TypedValue{pointee_type, 64, var_handle};  // 64-bit pointer source
-					assign_op.is_pointer_store = false;
-					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
-					
-					// Mark the temp with Indirect LValue metadata
-					LValueInfo lvalue_info(
-						LValueInfo::Kind::Indirect,
-						addr_temp,  // The pointer temp var
-						0  // offset is 0 for dereference
-					);
-					setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
-					
 					TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
-					return { pointee_type, pointee_size, addr_temp, static_cast<unsigned long long>(type_index) };
+					// Return reference name directly with pointer size (64 bits), not dereferenced
+					return { pointee_type, 64, StringTable::getOrInternStringHandle(identifierNode.name()), static_cast<unsigned long long>(type_index) };
 				}
 				
 				// For non-array references in Load context, we need to dereference to get the value
@@ -10822,13 +10798,20 @@ private:
 		}
 		
 		functionCallNode.arguments().visit([&](ASTNode argument) {
-			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-			
 			// Get the parameter type for this argument (if it exists)
 			const TypeSpecifierNode* param_type = nullptr;
 			if (arg_index < param_nodes.size() && param_nodes[arg_index].is<DeclarationNode>()) {
 				param_type = &param_nodes[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 			}
+			
+			// If the parameter expects a reference, use LValueAddress context to avoid dereferencing reference variables
+			// This is critical for passing reference variables (like int&& rref) to reference parameters
+			ExpressionContext arg_context = ExpressionContext::Load;
+			if (param_type && param_type->is_reference()) {
+				arg_context = ExpressionContext::LValueAddress;
+			}
+			
+			auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 			arg_index++;
 			
 			// Check if we need to call a conversion operator for this argument
@@ -11000,8 +10983,9 @@ private:
 					// Parameter expects a reference - pass the address of the argument
 					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 						// Argument is already a reference - just pass it through
+						// References are stored as pointers (64 bits), not the pointee size
 						irOperands.emplace_back(type_node.type());
-						irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
+						irOperands.emplace_back(64);  // Pointer size, not pointee size
 						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 					} else {
 						// Argument is a value - take its address
