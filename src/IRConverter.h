@@ -4819,7 +4819,26 @@ private:
 			auto& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(lookup_handle);
 			if (it != current_scope.variables.end() && it->second.offset != INT_MIN) {
-				return it->second.offset;  // Use pre-allocated offset (if it's been properly set)
+				int existing_offset = it->second.offset;
+				
+				// Check if we need to extend the allocation for a larger size
+				// This can happen when a TempVar is first allocated with default size,
+				// then later used for a large struct (e.g., constructor call result)
+				int size_in_bytes = (size_in_bits + 7) / 8;
+				size_in_bytes = (size_in_bytes + 7) & ~7;  // 8-byte alignment
+				
+				int32_t end_offset = existing_offset - size_in_bytes;
+				if (end_offset < variable_scopes.back().scope_stack_space) {
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"Extending scope_stack_space from {} to {} for pre-allocated {} (offset={}, size={})",
+						variable_scopes.back().scope_stack_space, end_offset, tempVar.name(), existing_offset, size_in_bytes);
+					variable_scopes.back().scope_stack_space = end_offset;
+				}
+				
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"TempVar {} already allocated at offset {}, size={} bytes", 
+					tempVar.name(), existing_offset, size_in_bytes);
+				return existing_offset;  // Use pre-allocated offset (if it's been properly set)
 			}
 			
 			// CRITICAL FIX: If TempVar entry has INT_MIN, check if it corresponds to the most recently
@@ -4851,10 +4870,13 @@ private:
 
 		// Extend scope_stack_space if the computed offset exceeds current allocation
 		// This ensures assertions checking scope_stack_space <= offset remain valid
-		// NOTE: offset is the START of the allocation, but large structs extend downward
-		// So we need to account for the full size when updating scope_stack_space
-		int32_t end_offset = offset - size_in_bytes + 8;  // Struct extends from offset down size_in_bytes
+		// NOTE: offset is the START of the allocation (highest address), but large structs extend downward
+		// A struct at offset -40 with size 120 bytes occupies addresses from -40 down to -160
+		int32_t end_offset = offset - size_in_bytes;  // Struct extends from offset down by size_in_bytes
 		if (end_offset < variable_scopes.back().scope_stack_space) {
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Extending scope_stack_space from {} to {} for {} (offset={}, size={})",
+				variable_scopes.back().scope_stack_space, end_offset, tempVar.name(), offset, size_in_bytes);
 			variable_scopes.back().scope_stack_space = end_offset;
 		}
 		
@@ -6319,7 +6341,18 @@ private:
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				if (struct_info) {
 					struct_size_bits = static_cast<int>(struct_info->total_size * 8);  // Convert bytes to bits
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"Constructor for {} found struct_info with size {} bits",
+						struct_name, struct_size_bits);
+				} else {
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"Constructor for {} found in gTypesByName but no struct_info",
+						struct_name);
 				}
+			} else {
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Constructor for {} NOT found in gTypesByName",
+					struct_name);
 			}
 			
 			// TempVars can be either stack-allocated or heap-allocated
@@ -8641,6 +8674,13 @@ private:
 					
 					if (it != current_scope.variables.end()) {
 						int var_offset = it->second.offset;
+						
+						// Ensure stack space is allocated for large structs being returned
+						// The TempVar might have been pre-allocated with default size, so re-check with actual size
+						if (ret_op.return_size > 64) {
+							// Call getStackOffsetFromTempVar with the correct size to extend scope if needed
+							getStackOffsetFromTempVar(return_var, ret_op.return_size);
+						}
 						
 						// Check if this is a reference variable - if so, dereference it
 						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
