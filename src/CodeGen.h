@@ -11152,7 +11152,9 @@ private:
 								addr_op.result = addr_var;
 								addr_op.operand.type = expr_type;
 								addr_op.operand.size_in_bits = expr_size;
-								addr_op.operand.pointer_depth = 0;  // TODO: Verify pointer depth
+								// pointer_depth is 0 because we're taking the address of a value (not a pointer)
+								// The TempVar holds a direct value (e.g., constructed object), not a pointer
+								addr_op.operand.pointer_depth = 0;
 								addr_op.operand.value = expr_var;
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 								
