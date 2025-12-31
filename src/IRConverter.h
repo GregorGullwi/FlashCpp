@@ -13462,6 +13462,11 @@ private:
 		assert(instruction.hasTypedPayload() && "DereferenceStore instruction must use typed payload");
 		const auto& op = instruction.getTypedPayload<DereferenceStoreOp>();
 		
+		// Flush all dirty registers before loading values from stack
+		// This ensures that any values computed in previous instructions (like ADD) 
+		// are written to their stack locations before we try to load them
+		flushAllDirtyRegisters();
+		
 		int value_size = op.value.size_in_bits;
 		int value_size_bytes = value_size / 8;
 		

@@ -16661,7 +16661,8 @@ ParseResult Parser::parse_lambda_expression() {
         std::move(parameters),
         *body_result.node(),
         return_type,
-        lambda_token
+        lambda_token,
+        is_mutable
     );
 
     // Register the lambda closure type in the type system immediately
