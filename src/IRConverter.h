@@ -11920,30 +11920,71 @@ private:
 				member_name = array_name_view.substr(dot_pos + 1);
 			}
 			
-			// Get the value to store into RDX (we use RCX for index, RAX for address)
+			// Get the value to store into RDX or XMM0 (we use RCX for index, RAX for address)
+			bool is_float_store = is_floating_point_type(op.element_type);
+			
 			if (std::holds_alternative<unsigned long long>(op.value.value)) {
-				// Constant value into RDX
+				// Constant value
 				uint64_t value = std::get<unsigned long long>(op.value.value);
-				emitMovImm64(X64Register::RDX, value);
+				if (is_float_store) {
+					// For float constants, we need to load into XMM0
+					// First load the bit pattern into RDX, then move to XMM0
+					emitMovImm64(X64Register::RDX, value);
+					// MOVD XMM0, RDX (0x66 0x48 0x0F 0x6E 0xC2)
+					textSectionData.push_back(0x66);
+					textSectionData.push_back(0x48);
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0x6E);
+					textSectionData.push_back(0xC2);
+				} else {
+					emitMovImm64(X64Register::RDX, value);
+				}
 			} else if (std::holds_alternative<TempVar>(op.value.value)) {
 				// Value from temp var: check if already in register, otherwise load from stack
 				TempVar value_var = std::get<TempVar>(op.value.value);
 				int64_t value_offset = getStackOffsetFromTempVar(value_var, op.value.size_in_bits);
 				
-				// Check if value is already in a register
-				if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
-					// Value is already in a register - move it to RDX if not already there
-					if (value_reg.value() != X64Register::RDX) {
-						auto move_op = regAlloc.get_reg_reg_move_op_code(X64Register::RDX, value_reg.value(), op.value.size_in_bits / 8);
-						textSectionData.insert(textSectionData.end(), move_op.op_codes.begin(), move_op.op_codes.begin() + move_op.size_in_bytes);
+				if (is_float_store) {
+					// For floats, check if already in XMM register, otherwise load from stack
+					if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
+						// Value is already in a register
+						// If it's an XMM register and not XMM0, move it
+						if (value_reg.value() != X64Register::XMM0) {
+							// MOVSS XMM0, source_xmm
+							bool is_double = (op.value.size_in_bits == 64);
+							if (is_double) {
+								textSectionData.push_back(0xF2);  // MOVSD prefix
+							} else {
+								textSectionData.push_back(0xF3);  // MOVSS prefix
+							}
+							textSectionData.push_back(0x0F);
+							textSectionData.push_back(0x10);
+							// ModR/M for XMM0 <- source_xmm
+							uint8_t src_xmm_num = static_cast<uint8_t>(value_reg.value()) - static_cast<uint8_t>(X64Register::XMM0);
+							textSectionData.push_back(0xC0 | src_xmm_num);
+						}
+					} else {
+						// Load float from stack into XMM0
+						bool is_double = (op.value.size_in_bits == 64);
+						emitFloatMovFromFrame(X64Register::XMM0, value_offset, !is_double);
 					}
-					// If already in RDX, no move needed
 				} else {
-					// Not in register - load from stack
-					emitMovFromFrameSized(
-						SizedRegister{X64Register::RDX, 64, false},  // dest: 64-bit register
-						SizedStackSlot{static_cast<int32_t>(value_offset), op.value.size_in_bits, isSignedType(op.value.type)}  // source: value from stack
-					);
+					// Integer/pointer value
+					// Check if value is already in a register
+					if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
+						// Value is already in a register - move it to RDX if not already there
+						if (value_reg.value() != X64Register::RDX) {
+							auto move_op = regAlloc.get_reg_reg_move_op_code(X64Register::RDX, value_reg.value(), op.value.size_in_bits / 8);
+							textSectionData.insert(textSectionData.end(), move_op.op_codes.begin(), move_op.op_codes.begin() + move_op.size_in_bytes);
+						}
+						// If already in RDX, no move needed
+					} else {
+						// Not in register - load from stack
+						emitMovFromFrameSized(
+							SizedRegister{X64Register::RDX, 64, false},  // dest: 64-bit register
+							SizedStackSlot{static_cast<int32_t>(value_offset), op.value.size_in_bits, isSignedType(op.value.type)}  // source: value from stack
+						);
+					}
 				}
 			}
 			
@@ -11960,6 +12001,10 @@ private:
 				}
 			}
 			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"ArrayStore: is_member_array={}, object_name='{}', is_object_pointer={}, is_pointer_to_array={}, array_base_offset={}, member_offset={}",
+				is_member_array, (is_member_array ? object_name : "N/A"), is_object_pointer, is_pointer_to_array, array_base_offset, member_offset);
+			
 			// Handle constant vs variable index
 			if (std::holds_alternative<unsigned long long>(op.index.value)) {
 				// Constant index
@@ -11973,8 +12018,21 @@ private:
 					int64_t offset_bytes = index_value * element_size_bytes;
 					emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
 					
-					// Store RDX to [RAX] with appropriate size
-					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+					// Store to [RAX] with appropriate size
+					if (is_float_store) {
+						// MOVSS/MOVSD [RAX], XMM0
+						bool is_double = (element_size_bits == 64);
+						if (is_double) {
+							textSectionData.push_back(0xF2);  // MOVSD prefix
+						} else {
+							textSectionData.push_back(0xF3);  // MOVSS prefix
+						}
+						textSectionData.push_back(0x0F);
+						textSectionData.push_back(0x11);  // Store opcode
+						textSectionData.push_back(0x00);  // ModR/M: [RAX]
+					} else {
+						emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+					}
 				} else if (is_object_pointer) {
 					// Member array of a pointer object (like this.values[i])
 					// Load the object pointer first
@@ -11982,10 +12040,28 @@ private:
 					
 					// Add member offset + index offset: ADD RAX, (member_offset + index * element_size)
 					int64_t total_offset = member_offset + (index_value * element_size_bytes);
+					
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"ArrayStore (const index): object_pointer path, base_offset={}, member_offset={}, index={}, elem_size={}, total_offset={}",
+						array_base_offset, member_offset, index_value, element_size_bytes, total_offset);
+					
 					emitAddImmToReg(textSectionData, X64Register::RAX, total_offset);
 					
-					// Store RDX to [RAX] with appropriate size
-					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+					// Store to [RAX] with appropriate size
+					if (is_float_store) {
+						// MOVSS/MOVSD [RAX], XMM0
+						bool is_double = (element_size_bits == 64);
+						if (is_double) {
+							textSectionData.push_back(0xF2);  // MOVSD prefix
+						} else {
+							textSectionData.push_back(0xF3);  // MOVSS prefix
+						}
+						textSectionData.push_back(0x0F);
+						textSectionData.push_back(0x11);  // Store opcode
+						textSectionData.push_back(0x00);  // ModR/M: [RAX]
+					} else {
+						emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+					}
 				} else {
 					// Regular array - direct stack access
 					int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
@@ -12013,6 +12089,9 @@ private:
 					emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 					// Add member offset: ADD RAX, member_offset
 					if (member_offset != 0) {
+						FLASH_LOG_FORMAT(Codegen, Debug,
+							"ArrayStore (var index): object_pointer path, base_offset={}, member_offset={}, elem_size={}",
+							array_base_offset, member_offset, element_size_bytes);
 						emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
 					}
 					// RAX += RCX (add index offset)
@@ -12025,8 +12104,21 @@ private:
 					emitAddRAXRCX(textSectionData);
 				}
 				
-				// Store RDX to [RAX]
-				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+				// Store to [RAX]
+				if (is_float_store) {
+					// MOVSS/MOVSD [RAX], XMM0
+					bool is_double = (element_size_bits == 64);
+					if (is_double) {
+						textSectionData.push_back(0xF2);  // MOVSD prefix
+					} else {
+						textSectionData.push_back(0xF3);  // MOVSS prefix
+					}
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0x11);  // Store opcode
+					textSectionData.push_back(0x00);  // ModR/M: [RAX]
+				} else {
+					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+				}
 			} else if (std::holds_alternative<StringHandle>(op.index.value)) {
 				// Index is a named variable - get its stack offset
 				StringHandle index_handle = std::get<StringHandle>(op.index.value);
@@ -12065,8 +12157,21 @@ private:
 					emitAddRAXRCX(textSectionData);
 				}
 				
-				// Store RDX to [RAX]
-				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+				// Store to [RAX]
+				if (is_float_store) {
+					// MOVSS/MOVSD [RAX], XMM0
+					bool is_double = (element_size_bits == 64);
+					if (is_double) {
+						textSectionData.push_back(0xF2);  // MOVSD prefix
+					} else {
+						textSectionData.push_back(0xF3);  // MOVSS prefix
+					}
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0x11);  // Store opcode
+					textSectionData.push_back(0x00);  // ModR/M: [RAX]
+				} else {
+					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+				}
 			} else {
 				assert(false && "ArrayStore index must be constant, TempVar, or StringHandle");
 			}
