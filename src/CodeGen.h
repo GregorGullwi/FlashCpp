@@ -15865,6 +15865,20 @@ private:
 		func_decl_op.return_pointer_depth = 0;  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
 		func_decl_op.is_variadic = false;
+		
+		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
+		// Only non-pointer, non-reference struct returns need this
+		bool returns_struct_by_value = (lambda_info.return_type == Type::Struct && !lambda_info.returns_reference);
+		func_decl_op.has_hidden_return_param = returns_struct_by_value;
+		
+		// Track hidden return parameter flag for current function context
+		current_function_has_hidden_return_param_ = returns_struct_by_value;
+		
+		if (returns_struct_by_value) {
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Lambda operator() {} returns struct by value - will use hidden return parameter (RVO/NRVO)",
+				StringTable::getStringView(StringTable::getOrInternStringHandle(lambda_info.closure_type_name)));
+		}
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
 		TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);
@@ -16017,6 +16031,13 @@ private:
 		func_decl_op.return_pointer_depth = 0;  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
 		func_decl_op.is_variadic = false;
+		
+		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
+		bool returns_struct_by_value = (lambda_info.return_type == Type::Struct && !lambda_info.returns_reference);
+		func_decl_op.has_hidden_return_param = returns_struct_by_value;
+		
+		// Track hidden return parameter flag for current function context
+		current_function_has_hidden_return_param_ = returns_struct_by_value;
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
 		TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);

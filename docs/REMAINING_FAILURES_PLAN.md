@@ -6,6 +6,7 @@
 - Some runtime issues remain in specific test files
 
 ### Recent Fixes
+- **Fixed**: Lambda returning lambda - was missing hidden return parameter for struct returns
 - **Fixed**: Mutable lambda captures - by-value captures can now be modified
 - **Fixed**: By-reference capture assignment through pointer (DereferenceStore flush bug)
 - **Fixed**: test_rvo_very_large_struct.cpp - NOW FULLY PASSING ✅
@@ -39,19 +40,21 @@
 **Issue**: Complex vtable handling and virtual inheritance offset calculations
 **Effort**: Medium-Large - requires vtable thunk generation
 
-### 4. Lambda Features (1 file) - **Partially Fixed** ⚠️
+### 4. Lambda Features (1 file) - **Mostly Fixed** ✅
 - `test_lambda_cpp20_comprehensive.cpp` - advanced C++20 lambda features
 
 **Fixed Issues**:
 - ✅ Mutable lambda captures (`[x]() mutable { x += 2; }`)
 - ✅ By-reference capture assignment (`[&y]() { y = x + 2; }`)
 - ✅ Mixed captures work correctly
+- ✅ Lambda returning lambda (was returning wrong value due to missing hidden return parameter)
+- ✅ Nested lambdas work correctly
+- ✅ Generic lambdas with auto parameters
 
 **Remaining Issues**:
-- ⚠️ Lambda returning lambda returns wrong value (3 instead of 5)
-- ⚠️ Recursive lambda (auto&& self) segfaults
+- ⚠️ Recursive lambda (auto&& self) segfaults - complex issue with auto&& parameter being treated as function pointer instead of lambda object
 
-**Effort**: Medium - nested lambda return value semantics need investigation
+**Effort**: Large - recursive lambdas require proper callable detection vs function pointer
 
 ### 5. Spaceship Operator (1 file) - **Large Effort**
 - `spaceship_default.cpp` - defaulted spaceship operator (segfaults at runtime)
