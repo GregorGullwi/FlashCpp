@@ -12642,6 +12642,21 @@ private:
 				}
 			}
 		}
+		
+		// Fix element size for array members accessed through TempVar (e.g., vls.values[i])
+		// When array comes from member_access, element_size_bits is the TOTAL array size (e.g., 640 bits for int[20])
+		// We need to derive the actual element size from the element type
+		if (std::holds_alternative<TempVar>(array_operands[2]) && !is_pointer_to_array) {
+			// Check if element_size_bits is much larger than expected for element_type
+			int base_element_size = get_type_size_bits(element_type);
+			if (base_element_size > 0 && element_size_bits > base_element_size) {
+				// This is likely an array where we got the total size instead of element size
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Array subscript on TempVar: fixing element_size from {} bits (total) to {} bits (element)",
+					element_size_bits, base_element_size);
+				element_size_bits = base_element_size;
+			}
+		}
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
