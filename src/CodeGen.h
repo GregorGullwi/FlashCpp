@@ -12522,7 +12522,7 @@ private:
 										LValueInfo lvalue_info(
 											LValueInfo::Kind::ArrayElement,
 											qualified_name,
-											0  // offset computed dynamically by index
+											static_cast<int64_t>(member->offset)  // member offset in struct
 										);
 										// Store index information for unified assignment handler
 										lvalue_info.array_index = toIrValue(index_operands[2]);
