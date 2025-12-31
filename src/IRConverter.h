@@ -7729,9 +7729,17 @@ private:
 				// For non-literal initialization, we don't allocate a register
 				// We just copy the value from source to destination on the stack
 				int src_offset = 0;
+				bool src_is_pointer = false;  // Track if source is a pointer to the actual data
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
 					src_offset = getStackOffsetFromTempVar(temp_var);
+					// Check if this temp_var is a reference/pointer to the actual struct
+					// For RVO struct returns, temp_var holds the address of the constructed struct
+					auto ref_it = reference_stack_info_.find(src_offset);
+					if (ref_it != reference_stack_info_.end()) {
+						// This is a reference - need to dereference it
+						src_is_pointer = true;
+					}
 				} else if (std::holds_alternative<StringHandle>(init.value)) {
 					StringHandle rvalue_var_name_handle = std::get<StringHandle>(init.value);
 					auto src_it = current_scope.variables.find(rvalue_var_name_handle);
@@ -7765,7 +7773,123 @@ private:
 					}
 				} else {
 					// Source is on the stack, load it to a temporary register and store to destination
-					if (is_floating_point_type(var_type)) {
+					if (var_type == Type::Struct) {
+						// For struct types, copy entire struct using 8-byte chunks
+						int struct_size_bytes = (op.size_in_bits + 7) / 8;
+						
+						FLASH_LOG(Codegen, Info, "==================== STRUCT COPY IN HANDLEVARIABLE ====================");
+						FLASH_LOG(Codegen, Info, "size_bytes=", struct_size_bytes, ", src_offset=", src_offset, ", dst_offset=", dst_offset, ", src_is_pointer=", src_is_pointer);
+						
+						// Determine actual source address
+						int32_t actual_src_offset;
+						if (src_is_pointer) {
+							// Source is a pointer to the struct - dereference it
+							// Load the pointer value into a register
+							X64Register ptr_reg = allocateRegisterWithSpilling();
+							emitMovFromFrame(ptr_reg, src_offset);
+							FLASH_LOG(Codegen, Debug, "Struct copy (via pointer): size_in_bits=", op.size_in_bits, ", size_bytes=", struct_size_bytes, ", ptr_at_offset=", src_offset, ", dst_offset=", dst_offset);
+							
+							// Now copy from the address in ptr_reg to dst_offset
+							// We need to use memory-to-memory copy via a temporary register
+							for (int offset = 0; offset < struct_size_bytes; ) {
+								if (offset + 8 <= struct_size_bytes) {
+									// Copy 8 bytes: load from [ptr_reg + offset], store to [rbp + dst_offset + offset]
+									X64Register temp_reg = allocateRegisterWithSpilling();
+									// MOV temp_reg, [ptr_reg + offset]
+									emitMovFromMemory(temp_reg, ptr_reg, offset, 8);
+									// MOV [rbp + dst_offset + offset], temp_reg
+									emitMovToFrameSized(
+										SizedRegister{temp_reg, 64, false},
+										SizedStackSlot{dst_offset + offset, 64, false}
+									);
+									regAlloc.release(temp_reg);
+									offset += 8;
+								} else if (offset + 4 <= struct_size_bytes) {
+									X64Register temp_reg = allocateRegisterWithSpilling();
+									emitMovFromMemory(temp_reg, ptr_reg, offset, 4);
+									emitMovToFrameSized(
+										SizedRegister{temp_reg, 64, false},
+										SizedStackSlot{dst_offset + offset, 32, false}
+									);
+									regAlloc.release(temp_reg);
+									offset += 4;
+								} else if (offset + 2 <= struct_size_bytes) {
+									X64Register temp_reg = allocateRegisterWithSpilling();
+									emitMovFromMemory(temp_reg, ptr_reg, offset, 2);
+									emitMovToFrameSized(
+										SizedRegister{temp_reg, 64, false},
+										SizedStackSlot{dst_offset + offset, 16, false}
+									);
+									regAlloc.release(temp_reg);
+									offset += 2;
+								} else if (offset + 1 <= struct_size_bytes) {
+									X64Register temp_reg = allocateRegisterWithSpilling();
+									emitMovFromMemory(temp_reg, ptr_reg, offset, 1);
+									emitMovToFrameSized(
+										SizedRegister{temp_reg, 64, false},
+										SizedStackSlot{dst_offset + offset, 8, false}
+									);
+									regAlloc.release(temp_reg);
+									offset += 1;
+								}
+							}
+							regAlloc.release(ptr_reg);
+						} else {
+							// Source is the struct itself on the stack
+							actual_src_offset = src_offset;
+							FLASH_LOG(Codegen, Debug, "Struct copy (direct): size_in_bits=", op.size_in_bits, ", size_bytes=", struct_size_bytes, ", src_offset=", src_offset, ", dst_offset=", dst_offset);
+							
+							// Copy struct using 8-byte chunks, then handle remaining bytes
+							int offset = 0;
+							while (offset + 8 <= struct_size_bytes) {
+								// Load 8 bytes from source
+								emitMovFromFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{actual_src_offset + offset, 64, false}
+								);
+								// Store 8 bytes to destination
+								emitMovToFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{dst_offset + offset, 64, false}
+								);
+								offset += 8;
+							}
+							
+							// Handle remaining bytes (4, 2, 1)
+							if (offset + 4 <= struct_size_bytes) {
+								emitMovFromFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{actual_src_offset + offset, 32, false}
+								);
+								emitMovToFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{dst_offset + offset, 32, false}
+								);
+								offset += 4;
+							}
+							if (offset + 2 <= struct_size_bytes) {
+								emitMovFromFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{actual_src_offset + offset, 16, false}
+								);
+								emitMovToFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{dst_offset + offset, 16, false}
+								);
+								offset += 2;
+							}
+							if (offset + 1 <= struct_size_bytes) {
+								emitMovFromFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{actual_src_offset + offset, 8, false}
+								);
+								emitMovToFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{dst_offset + offset, 8, false}
+								);
+							}
+						}
+					} else if (is_floating_point_type(var_type)) {
 						// For floating-point types, use XMM register and float moves
 						allocated_reg_val = allocateXMMRegisterWithSpilling();
 						bool is_float = (var_type == Type::Float);
