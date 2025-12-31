@@ -6,6 +6,7 @@
 - Some runtime issues remain in specific test files
 
 ### Recent Fixes
+- **Fixed**: Recursive lambda (`auto&& self` pattern) - generates operator() call instead of indirect call
 - **Fixed**: Lambda returning lambda - was missing hidden return parameter for struct returns
 - **Fixed**: Mutable lambda captures - by-value captures can now be modified
 - **Fixed**: By-reference capture assignment through pointer (DereferenceStore flush bug)
@@ -40,7 +41,7 @@
 **Issue**: Complex vtable handling and virtual inheritance offset calculations
 **Effort**: Medium-Large - requires vtable thunk generation
 
-### 4. Lambda Features (1 file) - **Mostly Fixed** ✅
+### 4. Lambda Features (1 file) - **Fully Fixed** ✅
 - `test_lambda_cpp20_comprehensive.cpp` - advanced C++20 lambda features
 
 **Fixed Issues**:
@@ -50,11 +51,13 @@
 - ✅ Lambda returning lambda (was returning wrong value due to missing hidden return parameter)
 - ✅ Nested lambdas work correctly
 - ✅ Generic lambdas with auto parameters
+- ✅ Recursive lambda (`auto&& self` pattern) - NOW FIXED!
 
-**Remaining Issues**:
-- ⚠️ Recursive lambda (auto&& self) segfaults - complex issue with auto&& parameter being treated as function pointer instead of lambda object
-
-**Effort**: Large - recursive lambdas require proper callable detection vs function pointer
+**Implementation Details for Recursive Lambda Fix**:
+- Detect auto-typed callable in function call when inside a lambda context
+- Generate member function call to `operator()` instead of indirect call
+- Pass `self` argument directly without dereferencing (preserve reference semantics)
+- Also enabled lambda context in `__invoke` function for consistent handling
 
 ### 5. Spaceship Operator (1 file) - **Large Effort**
 - `spaceship_default.cpp` - defaulted spaceship operator (segfaults at runtime)

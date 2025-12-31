@@ -10645,7 +10645,7 @@ private:
 
 			// Check if this is a function pointer or auto type (which could be a callable)
 			// auto&& parameters in recursive lambdas need to be treated as callables
-			if (func_type.is_function_pointer() || func_type.type() == Type::Auto) {
+			if (func_type.is_function_pointer()) {
 				// This is an indirect call through a function pointer
 				// Generate IndirectCall IR: [result_var, func_ptr_var, arg1, arg2, ...]
 				TempVar ret_var = var_counter.next();
@@ -10686,6 +10686,114 @@ private:
 					return { sig.return_type, 64, ret_var, 0ULL };  // 64 bits for return value
 				} else {
 					// For auto types or missing signature, default to int
+					return { Type::Int, 32, ret_var, 0ULL };
+				}
+			}
+			
+			// Handle auto-typed callable (e.g., recursive lambda pattern: self(self, n-1))
+			// When an auto&& parameter is called like a function, it's a callable object
+			// We need to generate a member function call to its operator()
+			if (func_type.type() == Type::Auto) {
+				// This is likely a recursive lambda call pattern where 'self' is a lambda passed as auto&&
+				// We need to find the lambda's closure type and call its operator()
+				
+				// Look up the deduced type for this auto parameter
+				// First, check if we're inside a lambda context
+				if (current_lambda_context_.isActive()) {
+					// We're inside a lambda - this could be a recursive call through an auto&& parameter
+					// The pattern is: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
+					
+					// Get the current lambda's closure type name to construct the operator() call
+					std::string_view closure_type_name = StringTable::getStringView(current_lambda_context_.closure_type);
+					
+					// Generate a member function call to operator()
+					TempVar ret_var = var_counter.next();
+					setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
+					
+					// Build the call operands
+					CallOp call_op;
+					call_op.result = ret_var;
+					call_op.return_type = Type::Int;  // Default, will be refined
+					call_op.return_size_in_bits = 32;
+					call_op.is_variadic = false;
+					
+					// Add the object (self) as the first argument (this pointer)
+					call_op.args.push_back(TypedValue{
+						.type = Type::Struct,
+						.size_in_bits = 64,  // Pointer size
+						.value = IrValue(StringTable::getOrInternStringHandle(func_name_view))
+					});
+					
+					// Generate IR for the remaining arguments and collect types for mangling
+					std::vector<TypeSpecifierNode> arg_types;
+					
+					// Look up the closure type to get the proper type_index
+					TypeIndex closure_type_index = 0;
+					auto it = gTypesByName.find(current_lambda_context_.closure_type);
+					if (it != gTypesByName.end()) {
+						closure_type_index = it->second->type_index_;
+					}
+					
+					functionCallNode.arguments().visit([&](ASTNode argument) {
+						// Check if this argument is the same as the callee (recursive lambda pattern)
+						// In that case, we should pass the reference directly without dereferencing
+						bool is_self_arg = false;
+						const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
+						if (std::holds_alternative<IdentifierNode>(arg_expr)) {
+							const auto& id = std::get<IdentifierNode>(arg_expr);
+							if (id.name() == func_name_view) {
+								is_self_arg = true;
+							}
+						}
+						
+						if (is_self_arg) {
+							// For the self argument in recursive lambda calls, pass the reference directly
+							// Don't call visitExpressionNode which would dereference it
+							call_op.args.push_back(TypedValue{
+								.type = Type::Struct,
+								.size_in_bits = 64,  // Reference/pointer size
+								.value = IrValue(StringTable::getOrInternStringHandle(func_name_view))
+							});
+							
+							// Type for mangling is rvalue reference to closure type
+							TypeSpecifierNode self_type(Type::Struct, closure_type_index, 8, Token());
+							self_type.set_reference(true);
+							arg_types.push_back(self_type);
+						} else {
+							// Normal argument - visit the expression
+							auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+							Type arg_type = std::get<Type>(argumentIrOperands[0]);
+							int arg_size = std::get<int>(argumentIrOperands[1]);
+							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
+								using T = std::decay_t<decltype(arg)>;
+								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, std::string_view> ||
+								              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+									return arg;
+								} else {
+									return 0ULL;
+								}
+							}, argumentIrOperands[2]);
+							call_op.args.push_back(TypedValue{arg_type, arg_size, arg_value});
+							
+							// Type for mangling
+							TypeSpecifierNode type_node(arg_type, 0, arg_size, Token());
+							arg_types.push_back(type_node);
+						}
+					});
+					
+					// Generate mangled name for operator() call
+					TypeSpecifierNode return_type_node(Type::Int, 0, 32, Token());
+					std::string_view mangled_name = generateMangledNameForCall(
+						"operator()",
+						return_type_node,
+						arg_types,
+						false,
+						closure_type_name
+					);
+					call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+					
+					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
+					
 					return { Type::Int, 32, ret_var, 0ULL };
 				}
 			}
@@ -16142,6 +16250,11 @@ private:
 		// Add captured variables to symbol table
 		addCapturedVariablesToSymbolTable(lambda_info.captures, lambda_info.captured_var_decls);
 
+		// Push lambda context so that recursive calls via auto&& parameters work correctly
+		// This allows the auto-typed callable handling in generateFunctionCallIr to detect
+		// that we're inside a lambda and generate the correct operator() call
+		pushLambdaContext(lambda_info);
+
 		// Generate the lambda body
 		bool has_return_statement = false;
 		if (lambda_info.lambda_body.is<BlockNode>()) {
@@ -16159,6 +16272,9 @@ private:
 			ReturnOp ret_op;  // No return value for void
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
 		}
+
+		// Restore outer lambda context
+		popLambdaContext();
 
 		symbol_table.exit_scope();
 	}
