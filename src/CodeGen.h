@@ -3203,7 +3203,16 @@ private:
 			
 			// Original handling for ExpressionNode
 			assert(expr_opt->is<ExpressionNode>());
+			
+			// Set flag if we should use RVO (returning struct by value with hidden return param)
+			if (current_function_has_hidden_return_param_) {
+				in_return_statement_with_rvo_ = true;
+			}
+			
 			auto operands = visitExpressionNode(expr_opt->as<ExpressionNode>());
+			
+			// Clear the RVO flag after evaluation
+			in_return_statement_with_rvo_ = false;
 			
 			// Check if this is a void return with a void expression (e.g., return void_func();)
 			if (!operands.empty() && operands.size() >= 1) {
@@ -11131,8 +11140,41 @@ private:
 						irOperands.emplace_back(64);  // Pointer size
 						irOperands.emplace_back(addr_var);
 					} else {
-						// Not a literal - just pass through
-						irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+						// Not a literal (expression result in a TempVar) - check if it needs address taken
+						if (argumentIrOperands.size() >= 3 && std::holds_alternative<TempVar>(argumentIrOperands[2])) {
+							Type expr_type = std::get<Type>(argumentIrOperands[0]);
+							int expr_size = std::get<int>(argumentIrOperands[1]);
+							TempVar expr_var = std::get<TempVar>(argumentIrOperands[2]);
+							
+							// If expr_size is 64 bits and it's a struct type, it's likely already an address
+							// (e.g., from a cast to rvalue reference like static_cast<Widget&&>(w1))
+							// In this case, just pass it through without taking another address
+							bool is_already_address = (expr_size == 64 && expr_type == Type::Struct);
+							
+							if (is_already_address) {
+								// Already an address - pass through
+								irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+							} else {
+								// Need to take address of the value
+								TempVar addr_var = var_counter.next();
+								AddressOfOp addr_op;
+								addr_op.result = addr_var;
+								addr_op.operand.type = expr_type;
+								addr_op.operand.size_in_bits = expr_size;
+								// pointer_depth is 0 because we're taking the address of a value (not a pointer)
+								// The TempVar holds a direct value (e.g., constructed object), not a pointer
+								addr_op.operand.pointer_depth = 0;
+								addr_op.operand.value = expr_var;
+								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+								
+								irOperands.emplace_back(expr_type);
+								irOperands.emplace_back(64);  // Pointer size
+								irOperands.emplace_back(addr_var);
+							}
+						} else {
+							// Fallback - just pass through
+							irOperands.insert(irOperands.end(), argumentIrOperands.begin(), argumentIrOperands.end());
+						}
 					}
 				} else {
 					// Parameter doesn't expect a reference - pass through as-is
@@ -12480,7 +12522,7 @@ private:
 										LValueInfo lvalue_info(
 											LValueInfo::Kind::ArrayElement,
 											qualified_name,
-											0  // offset computed dynamically by index
+											static_cast<int64_t>(member->offset)  // member offset in struct
 										);
 										// Store index information for unified assignment handler
 										lvalue_info.array_index = toIrValue(index_operands[2]);
@@ -12598,6 +12640,21 @@ private:
 						is_pointer_to_array = true;  // This is a pointer, not an actual array
 					}
 				}
+			}
+		}
+		
+		// Fix element size for array members accessed through TempVar (e.g., vls.values[i])
+		// When array comes from member_access, element_size_bits is the TOTAL array size (e.g., 640 bits for int[20])
+		// We need to derive the actual element size from the element type
+		if (std::holds_alternative<TempVar>(array_operands[2]) && !is_pointer_to_array) {
+			// Check if element_size_bits is much larger than expected for element_type
+			int base_element_size = get_type_size_bits(element_type);
+			if (base_element_size > 0 && element_size_bits > base_element_size) {
+				// This is likely an array where we got the total size instead of element size
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Array subscript on TempVar: fixing element_size from {} bits (total) to {} bits (element)",
+					element_size_bits, base_element_size);
+				element_size_bits = base_element_size;
 			}
 		}
 
@@ -16126,6 +16183,7 @@ private:
 	TypeIndex current_function_return_type_index_ = 0;  // Type index for struct/class return types
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter
 	bool current_function_returns_reference_ = false;  // True if function returns a reference type (T& or T&&)
+	bool in_return_statement_with_rvo_ = false;  // True when evaluating return expr that should use RVO
 	
 	// Current namespace path stack (for proper name mangling of namespace-scoped functions)
 	std::vector<std::string> current_namespace_stack_;
@@ -16630,6 +16688,17 @@ private:
 					}
 				}
 			}
+		}
+
+		// Check if we should use RVO (Return Value Optimization)
+		// If we're in a return statement and the function has a hidden return parameter,
+		// construct directly into the return slot instead of into a temporary
+		if (in_return_statement_with_rvo_) {
+			ctor_op.use_return_slot = true;
+			// The return slot offset will be set by IRConverter when it processes the return
+			// For now, we just mark that RVO should be used
+			FLASH_LOG(Codegen, Debug,
+				"Constructor call will use RVO (construct directly in return slot)");
 		}
 
 		// Add the constructor call instruction (use ConstructorCall opcode)

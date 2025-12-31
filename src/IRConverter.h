@@ -4819,7 +4819,26 @@ private:
 			auto& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(lookup_handle);
 			if (it != current_scope.variables.end() && it->second.offset != INT_MIN) {
-				return it->second.offset;  // Use pre-allocated offset (if it's been properly set)
+				int existing_offset = it->second.offset;
+				
+				// Check if we need to extend the allocation for a larger size
+				// This can happen when a TempVar is first allocated with default size,
+				// then later used for a large struct (e.g., constructor call result)
+				int size_in_bytes = (size_in_bits + 7) / 8;
+				size_in_bytes = (size_in_bytes + 7) & ~7;  // 8-byte alignment
+				
+				int32_t end_offset = existing_offset - size_in_bytes;
+				if (end_offset < variable_scopes.back().scope_stack_space) {
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"Extending scope_stack_space from {} to {} for pre-allocated {} (offset={}, size={})",
+						variable_scopes.back().scope_stack_space, end_offset, tempVar.name(), existing_offset, size_in_bytes);
+					variable_scopes.back().scope_stack_space = end_offset;
+				}
+				
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"TempVar {} already allocated at offset {}, size={} bytes", 
+					tempVar.name(), existing_offset, size_in_bytes);
+				return existing_offset;  // Use pre-allocated offset (if it's been properly set)
 			}
 			
 			// CRITICAL FIX: If TempVar entry has INT_MIN, check if it corresponds to the most recently
@@ -4851,10 +4870,13 @@ private:
 
 		// Extend scope_stack_space if the computed offset exceeds current allocation
 		// This ensures assertions checking scope_stack_space <= offset remain valid
-		// NOTE: offset is the START of the allocation, but large structs extend downward
-		// So we need to account for the full size when updating scope_stack_space
-		int32_t end_offset = offset - size_in_bytes + 8;  // Struct extends from offset down size_in_bytes
+		// NOTE: offset is the START of the allocation (highest address), but large structs extend downward
+		// A struct at offset -40 with size 120 bytes occupies addresses from -40 down to -160
+		int32_t end_offset = offset - size_in_bytes;  // Struct extends from offset down by size_in_bytes
 		if (end_offset < variable_scopes.back().scope_stack_space) {
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Extending scope_stack_space from {} to {} for {} (offset={}, size={})",
+				variable_scopes.back().scope_stack_space, end_offset, tempVar.name(), offset, size_in_bytes);
 			variable_scopes.back().scope_stack_space = end_offset;
 		}
 		
@@ -6056,6 +6078,32 @@ private:
 					continue;
 				}
 				
+				// Handle TempVar arguments that should pass an address (e.g., constructor calls passed to rvalue reference params)
+				if (should_pass_address && std::holds_alternative<TempVar>(arg.value)) {
+					// When should_pass_address is true, the TempVar can be either:
+					// 1. An object value that needs its address taken (like Widget(42)) - use LEA
+					// 2. A pointer value from AddressOf or cast (like result of (Widget&&)w1) - use MOV
+					//
+					// To distinguish:
+					// - Case 2: The TempVar was written by AddressOf/cast and holds a pointer
+					// - Case 1: The TempVar holds the actual object
+					//
+					// Since we can't easily tell from the IR alone, use a simple heuristic:
+					// Check reference_stack_info_ to see if this variable is marked as holding a reference/pointer
+					const auto& temp_var = std::get<TempVar>(arg.value);
+					int var_offset = getStackOffsetFromTempVar(temp_var);
+					
+					auto ref_it = reference_stack_info_.find(var_offset);
+					if (ref_it != reference_stack_info_.end()) {
+						// Variable is marked as holding a pointer/reference - load it with MOV
+						emitMovFromFrame(target_reg, var_offset);
+					} else {
+						// Variable holds an object value - take its address with LEA
+						emitLeaFromFrame(target_reg, var_offset);
+					}
+					continue;
+				}
+				
 				// Handle floating-point immediate values (double literals)
 				if (is_float_arg && std::holds_alternative<double>(arg.value)) {
 					// Load floating-point literal into XMM register
@@ -6276,9 +6324,34 @@ private:
 		int object_offset = 0;
 		bool object_is_pointer = false;  // Declare early so RVO branch can set it
 		
-		// If using return slot (RVO), get offset from return_slot_offset instead
-		if (ctor_op.use_return_slot && ctor_op.return_slot_offset.has_value()) {
-			object_offset = ctor_op.return_slot_offset.value();
+		// If using return slot (RVO), get offset from return_slot_offset or look up __return_slot
+		if (ctor_op.use_return_slot) {
+			if (ctor_op.return_slot_offset.has_value()) {
+				object_offset = ctor_op.return_slot_offset.value();
+			} else {
+				// Look up __return_slot in the variables map
+				auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
+				if (return_slot_it != variable_scopes.back().variables.end()) {
+					// __return_slot holds the address where we should construct
+					// Load this address into RDI for the constructor call
+					int return_slot_param_offset = return_slot_it->second.offset;
+					X64Register dest_reg = X64Register::RDI;
+					emitMovFromFrame(dest_reg, return_slot_param_offset);
+					
+					// Store the address in a temp location so we can use it as object_offset
+					// Actually, we'll pass it differently - set object_is_pointer flag
+					object_offset = return_slot_param_offset;
+					object_is_pointer = true;  // The offset holds a pointer to where object should be
+					
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"Constructor using RVO: loading return slot address from __return_slot at offset {}",
+						return_slot_param_offset);
+				} else {
+					FLASH_LOG(Codegen, Error,
+						"Constructor marked for RVO but __return_slot not found in variables");
+					// Fall through to regular handling
+				}
+			}
 			
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"Constructor using return slot (RVO) at offset {}",
@@ -6293,7 +6366,18 @@ private:
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				if (struct_info) {
 					struct_size_bits = static_cast<int>(struct_info->total_size * 8);  // Convert bytes to bits
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"Constructor for {} found struct_info with size {} bits",
+						struct_name, struct_size_bits);
+				} else {
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"Constructor for {} found in gTypesByName but no struct_info",
+						struct_name);
 				}
+			} else {
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Constructor for {} NOT found in gTypesByName",
+					struct_name);
 			}
 			
 			// TempVars can be either stack-allocated or heap-allocated
@@ -7645,9 +7729,17 @@ private:
 				// For non-literal initialization, we don't allocate a register
 				// We just copy the value from source to destination on the stack
 				int src_offset = 0;
+				bool src_is_pointer = false;  // Track if source is a pointer to the actual data
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
 					src_offset = getStackOffsetFromTempVar(temp_var);
+					// Check if this temp_var is a reference/pointer to the actual struct
+					// For RVO struct returns, temp_var holds the address of the constructed struct
+					auto ref_it = reference_stack_info_.find(src_offset);
+					if (ref_it != reference_stack_info_.end()) {
+						// This is a reference - need to dereference it
+						src_is_pointer = true;
+					}
 				} else if (std::holds_alternative<StringHandle>(init.value)) {
 					StringHandle rvalue_var_name_handle = std::get<StringHandle>(init.value);
 					auto src_it = current_scope.variables.find(rvalue_var_name_handle);
@@ -7681,7 +7773,123 @@ private:
 					}
 				} else {
 					// Source is on the stack, load it to a temporary register and store to destination
-					if (is_floating_point_type(var_type)) {
+					if (var_type == Type::Struct) {
+						// For struct types, copy entire struct using 8-byte chunks
+						int struct_size_bytes = (op.size_in_bits + 7) / 8;
+						
+						FLASH_LOG(Codegen, Info, "==================== STRUCT COPY IN HANDLEVARIABLE ====================");
+						FLASH_LOG(Codegen, Info, "size_bytes=", struct_size_bytes, ", src_offset=", src_offset, ", dst_offset=", dst_offset, ", src_is_pointer=", src_is_pointer);
+						
+						// Determine actual source address
+						int32_t actual_src_offset;
+						if (src_is_pointer) {
+							// Source is a pointer to the struct - dereference it
+							// Load the pointer value into a register
+							X64Register ptr_reg = allocateRegisterWithSpilling();
+							emitMovFromFrame(ptr_reg, src_offset);
+							FLASH_LOG(Codegen, Debug, "Struct copy (via pointer): size_in_bits=", op.size_in_bits, ", size_bytes=", struct_size_bytes, ", ptr_at_offset=", src_offset, ", dst_offset=", dst_offset);
+							
+							// Now copy from the address in ptr_reg to dst_offset
+							// We need to use memory-to-memory copy via a temporary register
+							for (int offset = 0; offset < struct_size_bytes; ) {
+								if (offset + 8 <= struct_size_bytes) {
+									// Copy 8 bytes: load from [ptr_reg + offset], store to [rbp + dst_offset + offset]
+									X64Register temp_reg = allocateRegisterWithSpilling();
+									// MOV temp_reg, [ptr_reg + offset]
+									emitMovFromMemory(temp_reg, ptr_reg, offset, 8);
+									// MOV [rbp + dst_offset + offset], temp_reg
+									emitMovToFrameSized(
+										SizedRegister{temp_reg, 64, false},
+										SizedStackSlot{dst_offset + offset, 64, false}
+									);
+									regAlloc.release(temp_reg);
+									offset += 8;
+								} else if (offset + 4 <= struct_size_bytes) {
+									X64Register temp_reg = allocateRegisterWithSpilling();
+									emitMovFromMemory(temp_reg, ptr_reg, offset, 4);
+									emitMovToFrameSized(
+										SizedRegister{temp_reg, 64, false},
+										SizedStackSlot{dst_offset + offset, 32, false}
+									);
+									regAlloc.release(temp_reg);
+									offset += 4;
+								} else if (offset + 2 <= struct_size_bytes) {
+									X64Register temp_reg = allocateRegisterWithSpilling();
+									emitMovFromMemory(temp_reg, ptr_reg, offset, 2);
+									emitMovToFrameSized(
+										SizedRegister{temp_reg, 64, false},
+										SizedStackSlot{dst_offset + offset, 16, false}
+									);
+									regAlloc.release(temp_reg);
+									offset += 2;
+								} else if (offset + 1 <= struct_size_bytes) {
+									X64Register temp_reg = allocateRegisterWithSpilling();
+									emitMovFromMemory(temp_reg, ptr_reg, offset, 1);
+									emitMovToFrameSized(
+										SizedRegister{temp_reg, 64, false},
+										SizedStackSlot{dst_offset + offset, 8, false}
+									);
+									regAlloc.release(temp_reg);
+									offset += 1;
+								}
+							}
+							regAlloc.release(ptr_reg);
+						} else {
+							// Source is the struct itself on the stack
+							actual_src_offset = src_offset;
+							FLASH_LOG(Codegen, Debug, "Struct copy (direct): size_in_bits=", op.size_in_bits, ", size_bytes=", struct_size_bytes, ", src_offset=", src_offset, ", dst_offset=", dst_offset);
+							
+							// Copy struct using 8-byte chunks, then handle remaining bytes
+							int offset = 0;
+							while (offset + 8 <= struct_size_bytes) {
+								// Load 8 bytes from source
+								emitMovFromFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{actual_src_offset + offset, 64, false}
+								);
+								// Store 8 bytes to destination
+								emitMovToFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{dst_offset + offset, 64, false}
+								);
+								offset += 8;
+							}
+							
+							// Handle remaining bytes (4, 2, 1)
+							if (offset + 4 <= struct_size_bytes) {
+								emitMovFromFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{actual_src_offset + offset, 32, false}
+								);
+								emitMovToFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{dst_offset + offset, 32, false}
+								);
+								offset += 4;
+							}
+							if (offset + 2 <= struct_size_bytes) {
+								emitMovFromFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{actual_src_offset + offset, 16, false}
+								);
+								emitMovToFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{dst_offset + offset, 16, false}
+								);
+								offset += 2;
+							}
+							if (offset + 1 <= struct_size_bytes) {
+								emitMovFromFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{actual_src_offset + offset, 8, false}
+								);
+								emitMovToFrameSized(
+									SizedRegister{X64Register::RAX, 64, false},
+									SizedStackSlot{dst_offset + offset, 8, false}
+								);
+							}
+						}
+					} else if (is_floating_point_type(var_type)) {
 						// For floating-point types, use XMM register and float moves
 						allocated_reg_val = allocateXMMRegisterWithSpilling();
 						bool is_float = (var_type == Type::Float);
@@ -8609,12 +8817,23 @@ private:
 					const StackVariableScope& current_scope = variable_scopes.back();
 					auto it = current_scope.variables.find(temp_var_name);
 					
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"handleReturn TempVar path: return_var={}, found_in_scope={}",
+						return_var.name(), (it != current_scope.variables.end()));
+					
 					// Check if return type is float/double
 					bool is_float_return = ret_op.return_type.has_value() && 
 					                        is_floating_point_type(ret_op.return_type.value());
 					
 					if (it != current_scope.variables.end()) {
 						int var_offset = it->second.offset;
+						
+						// Ensure stack space is allocated for large structs being returned
+						// The TempVar might have been pre-allocated with default size, so re-check with actual size
+						if (ret_op.return_size > 64) {
+							// Call getStackOffsetFromTempVar with the correct size to extend scope if needed
+							getStackOffsetFromTempVar(return_var, ret_op.return_size);
+						}
 						
 						// Check if this is a reference variable - if so, dereference it
 						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
@@ -8641,7 +8860,12 @@ private:
 							
 							// Check if function uses hidden return parameter (RVO/NRVO)
 							// Only skip copy if this specific return value is RVO-eligible (was constructed via RVO)
-							if (current_function_has_hidden_return_param_ && isTempVarRVOEligible(return_var)) {
+							bool is_rvo_eligible = isTempVarRVOEligible(return_var);
+							FLASH_LOG_FORMAT(Codegen, Debug,
+								"Return statement check: hidden_param={}, rvo_eligible={}, return_var={}",
+								current_function_has_hidden_return_param_, is_rvo_eligible, return_var.name());
+							
+							if (current_function_has_hidden_return_param_ && is_rvo_eligible) {
 								FLASH_LOG_FORMAT(Codegen, Debug,
 									"Return statement in function with hidden return parameter - RVO-eligible struct already in return slot at offset {}",
 									var_offset);
@@ -11820,30 +12044,71 @@ private:
 				member_name = array_name_view.substr(dot_pos + 1);
 			}
 			
-			// Get the value to store into RDX (we use RCX for index, RAX for address)
+			// Get the value to store into RDX or XMM0 (we use RCX for index, RAX for address)
+			bool is_float_store = is_floating_point_type(op.element_type);
+			
 			if (std::holds_alternative<unsigned long long>(op.value.value)) {
-				// Constant value into RDX
+				// Constant value
 				uint64_t value = std::get<unsigned long long>(op.value.value);
-				emitMovImm64(X64Register::RDX, value);
+				if (is_float_store) {
+					// For float constants, we need to load into XMM0
+					// First load the bit pattern into RDX, then move to XMM0
+					emitMovImm64(X64Register::RDX, value);
+					// MOVD XMM0, RDX (0x66 0x48 0x0F 0x6E 0xC2)
+					textSectionData.push_back(0x66);
+					textSectionData.push_back(0x48);
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0x6E);
+					textSectionData.push_back(0xC2);
+				} else {
+					emitMovImm64(X64Register::RDX, value);
+				}
 			} else if (std::holds_alternative<TempVar>(op.value.value)) {
 				// Value from temp var: check if already in register, otherwise load from stack
 				TempVar value_var = std::get<TempVar>(op.value.value);
 				int64_t value_offset = getStackOffsetFromTempVar(value_var, op.value.size_in_bits);
 				
-				// Check if value is already in a register
-				if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
-					// Value is already in a register - move it to RDX if not already there
-					if (value_reg.value() != X64Register::RDX) {
-						auto move_op = regAlloc.get_reg_reg_move_op_code(X64Register::RDX, value_reg.value(), op.value.size_in_bits / 8);
-						textSectionData.insert(textSectionData.end(), move_op.op_codes.begin(), move_op.op_codes.begin() + move_op.size_in_bytes);
+				if (is_float_store) {
+					// For floats, check if already in XMM register, otherwise load from stack
+					if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
+						// Value is already in a register
+						// If it's an XMM register and not XMM0, move it
+						if (value_reg.value() != X64Register::XMM0) {
+							// MOVSS XMM0, source_xmm
+							bool is_double = (op.value.size_in_bits == 64);
+							if (is_double) {
+								textSectionData.push_back(0xF2);  // MOVSD prefix
+							} else {
+								textSectionData.push_back(0xF3);  // MOVSS prefix
+							}
+							textSectionData.push_back(0x0F);
+							textSectionData.push_back(0x10);
+							// ModR/M for XMM0 <- source_xmm
+							uint8_t src_xmm_num = static_cast<uint8_t>(value_reg.value()) - static_cast<uint8_t>(X64Register::XMM0);
+							textSectionData.push_back(0xC0 | src_xmm_num);
+						}
+					} else {
+						// Load float from stack into XMM0
+						bool is_double = (op.value.size_in_bits == 64);
+						emitFloatMovFromFrame(X64Register::XMM0, value_offset, !is_double);
 					}
-					// If already in RDX, no move needed
 				} else {
-					// Not in register - load from stack
-					emitMovFromFrameSized(
-						SizedRegister{X64Register::RDX, 64, false},  // dest: 64-bit register
-						SizedStackSlot{static_cast<int32_t>(value_offset), op.value.size_in_bits, isSignedType(op.value.type)}  // source: value from stack
-					);
+					// Integer/pointer value
+					// Check if value is already in a register
+					if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
+						// Value is already in a register - move it to RDX if not already there
+						if (value_reg.value() != X64Register::RDX) {
+							auto move_op = regAlloc.get_reg_reg_move_op_code(X64Register::RDX, value_reg.value(), op.value.size_in_bits / 8);
+							textSectionData.insert(textSectionData.end(), move_op.op_codes.begin(), move_op.op_codes.begin() + move_op.size_in_bytes);
+						}
+						// If already in RDX, no move needed
+					} else {
+						// Not in register - load from stack
+						emitMovFromFrameSized(
+							SizedRegister{X64Register::RDX, 64, false},  // dest: 64-bit register
+							SizedStackSlot{static_cast<int32_t>(value_offset), op.value.size_in_bits, isSignedType(op.value.type)}  // source: value from stack
+						);
+					}
 				}
 			}
 			
@@ -11860,6 +12125,10 @@ private:
 				}
 			}
 			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"ArrayStore: is_member_array={}, object_name='{}', is_object_pointer={}, is_pointer_to_array={}, array_base_offset={}, member_offset={}",
+				is_member_array, (is_member_array ? object_name : "N/A"), is_object_pointer, is_pointer_to_array, array_base_offset, member_offset);
+			
 			// Handle constant vs variable index
 			if (std::holds_alternative<unsigned long long>(op.index.value)) {
 				// Constant index
@@ -11873,8 +12142,21 @@ private:
 					int64_t offset_bytes = index_value * element_size_bytes;
 					emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
 					
-					// Store RDX to [RAX] with appropriate size
-					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+					// Store to [RAX] with appropriate size
+					if (is_float_store) {
+						// MOVSS/MOVSD [RAX], XMM0
+						bool is_double = (element_size_bits == 64);
+						if (is_double) {
+							textSectionData.push_back(0xF2);  // MOVSD prefix
+						} else {
+							textSectionData.push_back(0xF3);  // MOVSS prefix
+						}
+						textSectionData.push_back(0x0F);
+						textSectionData.push_back(0x11);  // Store opcode
+						textSectionData.push_back(0x00);  // ModR/M: [RAX]
+					} else {
+						emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+					}
 				} else if (is_object_pointer) {
 					// Member array of a pointer object (like this.values[i])
 					// Load the object pointer first
@@ -11882,10 +12164,28 @@ private:
 					
 					// Add member offset + index offset: ADD RAX, (member_offset + index * element_size)
 					int64_t total_offset = member_offset + (index_value * element_size_bytes);
+					
+					FLASH_LOG_FORMAT(Codegen, Debug,
+						"ArrayStore (const index): object_pointer path, base_offset={}, member_offset={}, index={}, elem_size={}, total_offset={}",
+						array_base_offset, member_offset, index_value, element_size_bytes, total_offset);
+					
 					emitAddImmToReg(textSectionData, X64Register::RAX, total_offset);
 					
-					// Store RDX to [RAX] with appropriate size
-					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+					// Store to [RAX] with appropriate size
+					if (is_float_store) {
+						// MOVSS/MOVSD [RAX], XMM0
+						bool is_double = (element_size_bits == 64);
+						if (is_double) {
+							textSectionData.push_back(0xF2);  // MOVSD prefix
+						} else {
+							textSectionData.push_back(0xF3);  // MOVSS prefix
+						}
+						textSectionData.push_back(0x0F);
+						textSectionData.push_back(0x11);  // Store opcode
+						textSectionData.push_back(0x00);  // ModR/M: [RAX]
+					} else {
+						emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+					}
 				} else {
 					// Regular array - direct stack access
 					int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
@@ -11913,6 +12213,9 @@ private:
 					emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 					// Add member offset: ADD RAX, member_offset
 					if (member_offset != 0) {
+						FLASH_LOG_FORMAT(Codegen, Debug,
+							"ArrayStore (var index): object_pointer path, base_offset={}, member_offset={}, elem_size={}",
+							array_base_offset, member_offset, element_size_bytes);
 						emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
 					}
 					// RAX += RCX (add index offset)
@@ -11925,8 +12228,21 @@ private:
 					emitAddRAXRCX(textSectionData);
 				}
 				
-				// Store RDX to [RAX]
-				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+				// Store to [RAX]
+				if (is_float_store) {
+					// MOVSS/MOVSD [RAX], XMM0
+					bool is_double = (element_size_bits == 64);
+					if (is_double) {
+						textSectionData.push_back(0xF2);  // MOVSD prefix
+					} else {
+						textSectionData.push_back(0xF3);  // MOVSS prefix
+					}
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0x11);  // Store opcode
+					textSectionData.push_back(0x00);  // ModR/M: [RAX]
+				} else {
+					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+				}
 			} else if (std::holds_alternative<StringHandle>(op.index.value)) {
 				// Index is a named variable - get its stack offset
 				StringHandle index_handle = std::get<StringHandle>(op.index.value);
@@ -11965,8 +12281,21 @@ private:
 					emitAddRAXRCX(textSectionData);
 				}
 				
-				// Store RDX to [RAX]
-				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+				// Store to [RAX]
+				if (is_float_store) {
+					// MOVSS/MOVSD [RAX], XMM0
+					bool is_double = (element_size_bits == 64);
+					if (is_double) {
+						textSectionData.push_back(0xF2);  // MOVSD prefix
+					} else {
+						textSectionData.push_back(0xF3);  // MOVSS prefix
+					}
+					textSectionData.push_back(0x0F);
+					textSectionData.push_back(0x11);  // Store opcode
+					textSectionData.push_back(0x00);  // ModR/M: [RAX]
+				} else {
+					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
+				}
 			} else {
 				assert(false && "ArrayStore index must be constant, TempVar, or StringHandle");
 			}
@@ -12620,11 +12949,15 @@ private:
 				SizedStackSlot{result_offset, 64, false}  // dest: 64-bit for pointer
 			);
 			
-			// NOTE: Do NOT mark the result as a reference here.
-			// The result of addressof is a POINTER value, not a reference.
-			// References need to be dereferenced to get their target value,
-			// but pointers ARE the value (they should not be dereferenced on return).
-			// This fixes the bug where returning &x would dereference the pointer.
+			// NOTE: The result of addressof is a POINTER value, not a reference.
+			// However, we mark it in reference_stack_info_ so that subsequent operations
+			// know this TempVar holds a pointer and should be loaded with MOV, not LEA.
+			// This is needed for proper handling when passing AddressOf results to functions.
+			reference_stack_info_[result_offset] = ReferenceInfo{
+				.value_type = op.operand.type,
+				.value_size_bits = op.operand.size_in_bits,
+				.is_rvalue_reference = false  // AddressOf result is a pointer, not a reference
+			};
 			
 			return;
 		}
