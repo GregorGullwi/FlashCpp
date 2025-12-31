@@ -6186,10 +6186,11 @@ ParseResult Parser::parse_typedef_declaration()
 		}
 
 		// Create type specifier for the struct
+		// Note: Use struct_type_info.getStructInfo() since struct_info was moved above
 		type_spec = TypeSpecifierNode(
 			Type::Struct,
 			struct_type_index,
-			static_cast<int>(struct_info->total_size * 8),
+			static_cast<int>(struct_type_info.getStructInfo()->total_size * 8),
 			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0)
 		);
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
