@@ -965,7 +965,7 @@ struct TypeInfo
 	std::unique_ptr<EnumTypeInfo> enum_info_;
 
 	// For typedef, store the size in bits (for primitive types)
-	unsigned short type_size_ = 0;  // Changed from unsigned char to support large types
+	int type_size_ = 0;  // Changed from unsigned char to int for large types
 
 	// For typedef of pointer types, store the pointer depth
 	size_t pointer_depth_ = 0;
@@ -1106,12 +1106,12 @@ struct PointerLevel {
 class TypeSpecifierNode {
 public:
 	TypeSpecifierNode() = default;
-	TypeSpecifierNode(Type type, TypeQualifier qualifier, unsigned short sizeInBits,
+	TypeSpecifierNode(Type type, TypeQualifier qualifier, int sizeInBits,
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
 		: type_(type), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(0) {}
 
 	// Constructor for struct types
-	TypeSpecifierNode(Type type, TypeIndex type_index, unsigned short sizeInBits,
+	TypeSpecifierNode(Type type, TypeIndex type_index, int sizeInBits,
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
 		: type_(type), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index) {}
 
@@ -1215,7 +1215,7 @@ public:
 
 private:
 	Type type_;
-	unsigned short size_;  // Changed from unsigned char to support large structs (max 65535 bits = 8191 bytes)
+	int size_;  // Size in bits - changed from unsigned char to int to support large structs
 	TypeQualifier qualifier_;
 	CVQualifier cv_qualifier_;  // CV-qualifier for the base type
 	Token token_;
