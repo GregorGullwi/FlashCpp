@@ -1117,6 +1117,21 @@ private:
 		return false;
 	}
 
+	// Helper function to check if a variable is a reference by looking it up in the symbol table
+	// Returns true if the variable is declared as a reference (&  or &&)
+	bool isVariableReference(std::string_view var_name) const {
+		StringHandle var_handle = StringTable::getOrInternStringHandle(var_name);
+		const std::optional<ASTNode> symbol = symbol_table.lookup(var_name);
+		
+		if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+			const auto& decl = symbol->as<DeclarationNode>();
+			const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
+			return type_spec.is_lvalue_reference() || type_spec.is_rvalue_reference();
+		}
+		
+		return false;
+	}
+
 	// Helper function to handle assignment using lvalue metadata
 	// Queries LValueInfo::Kind and routes to appropriate store instruction
 	// Returns true if assignment was handled via lvalue metadata, false otherwise
@@ -9437,12 +9452,28 @@ private:
 				AssignmentOp assign_op;
 				assign_op.result = std::get<StringHandle>(lhsIrOperands[2]);
 				assign_op.lhs = { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands[2]) };
+				
+				// Check if LHS is a reference variable
+				StringHandle lhs_handle = std::get<StringHandle>(lhsIrOperands[2]);
+				std::string_view lhs_name = StringTable::getStringView(lhs_handle);
+				assign_op.lhs.is_reference = isVariableReference(lhs_name);
+				
 				assign_op.rhs = { lhsType, lhsSize, result_var };
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
 				AssignmentOp assign_op;
 				assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
 				assign_op.lhs = { lhsType, lhsSize, std::get<TempVar>(lhsIrOperands[2]) };
+				
+				// Check if LHS TempVar corresponds to a reference variable
+				TempVar lhs_temp = std::get<TempVar>(lhsIrOperands[2]);
+				std::string_view temp_name = lhs_temp.name();
+				// Remove '%' prefix if present
+				if (!temp_name.empty() && temp_name[0] == '%') {
+					temp_name = temp_name.substr(1);
+				}
+				assign_op.lhs.is_reference = isVariableReference(temp_name);
+				
 				assign_op.rhs = { lhsType, lhsSize, result_var };
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 			}
@@ -9465,6 +9496,12 @@ private:
 				AssignmentOp assign_op;
 				assign_op.result = std::get<StringHandle>(lhsIrOperands[2]);
 				assign_op.lhs = { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands[2]) };
+				
+				// Check if LHS is a reference variable
+				StringHandle lhs_handle = std::get<StringHandle>(lhsIrOperands[2]);
+				std::string_view lhs_name = StringTable::getStringView(lhs_handle);
+				assign_op.lhs.is_reference = isVariableReference(lhs_name);
+				
 				assign_op.rhs = toTypedValue(rhsIrOperands);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 				// Return the assigned value
@@ -9474,6 +9511,16 @@ private:
 				AssignmentOp assign_op;
 				assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
 				assign_op.lhs = { lhsType, lhsSize, std::get<TempVar>(lhsIrOperands[2]) };
+				
+				// Check if LHS TempVar corresponds to a reference variable
+				TempVar lhs_temp = std::get<TempVar>(lhsIrOperands[2]);
+				std::string_view temp_name = lhs_temp.name();
+				// Remove '%' prefix if present
+				if (!temp_name.empty() && temp_name[0] == '%') {
+					temp_name = temp_name.substr(1);
+				}
+				assign_op.lhs.is_reference = isVariableReference(temp_name);
+				
 				assign_op.rhs = toTypedValue(rhsIrOperands);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 				// Return the assigned value
