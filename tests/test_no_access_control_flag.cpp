@@ -1,4 +1,7 @@
 // Test that -fno-access-control flag disables access control checking
+// NOTE: This test must be compiled with -fno-access-control flag
+// Without the flag, it will fail with "Cannot access private member" error
+// The validation script doesn't pass this flag, so this test will fail in CI
 
 class PrivateClass {
     int private_val;  // Private by default

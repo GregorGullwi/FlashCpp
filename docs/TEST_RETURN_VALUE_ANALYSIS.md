@@ -2,11 +2,11 @@
 
 ## Current Status (2025-12-30)
 
-**777/795 tests passing (97.7%)**
-- Fixed 4 more tests today (static local addressof, move semantics, structured bindings)
+**781/795 tests passing (98.2%)**
+- Fixed 4 more tests this session (brace init, lambda this capture, operator& return type)
 - All compilation and link failures resolved
 - Test suite has 795 tests total
-- Remaining issues: 16 runtime crashes (complex C++ features)
+- Remaining issues: 12 runtime crashes (complex C++ features)
 - 396 test files renamed with `_retXX` suffix to document expected return values
 
 **Run validation:** `cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh`
@@ -43,6 +43,12 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
 - **This is expected OS behavior, not a compiler bug**
 
 ## Recent Progress Summary
+
+**2025-12-30 (Session 4):** Brace init, lambda this, operator& - 781/795 passing
+- ✅ **Fixed brace initialization**: Skip copy/move constructors for aggregate init with non-struct values
+- ✅ **Fixed lambda [this] capture**: Properly resolve closure member offsets  
+- ✅ **Fixed operator& return type**: Use 64-bit for pointer return types
+- 📈 **+4 tests fixed**: test_positional_init_only, test_lambda_this_capture, test_operator_addressof_*
 
 **2025-12-30 (Session 3):** Static local, move semantics, structured bindings - 777/795 passing
 - ✅ **Fixed static local addressof**: `return &static_var` now returns correct address

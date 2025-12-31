@@ -1696,6 +1696,17 @@ private:
 		return current_lambda_context_.isActive() && current_lambda_context_.has_this_pointer;
 	}
 
+	// Get the offset of a member in the current lambda closure struct
+	// Returns 0 if not found or not in a lambda context
+	int getClosureMemberOffset(std::string_view member_name) const {
+		if (const StructTypeInfo* closure = getCurrentClosureStruct()) {
+			if (const StructMember* member = closure->findMember(member_name)) {
+				return static_cast<int>(member->offset);
+			}
+		}
+		return 0;
+	}
+
 	// Emit IR to load __copy_this from current lambda closure into a TempVar.
 	// Returns the TempVar holding the copied object, or std::nullopt if not applicable.
 	// The Token parameter is used for source location in the IR instruction.
@@ -1789,6 +1800,8 @@ private:
 			return std::nullopt;
 		}
 
+		int this_member_offset = getClosureMemberOffset("__this");
+
 		TempVar this_ptr = var_counter.next();
 		MemberLoadOp load_op;
 		load_op.result.value = this_ptr;
@@ -1796,7 +1809,7 @@ private:
 		load_op.result.size_in_bits = 64;
 		load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
 		load_op.member_name = StringTable::getOrInternStringHandle("__this");
-		load_op.offset = -1;  // Will be resolved during IR conversion
+		load_op.offset = this_member_offset;
 		load_op.is_reference = false;
 		load_op.is_rvalue_reference = false;
 		load_op.struct_type_info = nullptr;
@@ -4941,6 +4954,65 @@ private:
 											const auto& params = ctor_decl.parameter_nodes();
 											size_t param_count = params.size();
 											
+											// Skip copy constructor and move constructor for brace initialization
+											// Copy/move constructors should only be used when the initializer is of the same struct type
+											if (param_count == 1 && params.size() == 1 && params[0].is<DeclarationNode>()) {
+												const auto& param_decl = params[0].as<DeclarationNode>();
+												const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+												
+												// Skip if this is a copy constructor (reference to same struct type)
+												if (param_type.is_reference() && param_type.type() == Type::Struct) {
+													// Check if the initializer is actually of this struct type
+													bool init_is_struct_of_same_type = false;
+													if (num_initializers == 1) {
+														const ASTNode& init_expr = initializers[0];
+														if (init_expr.is<ExpressionNode>()) {
+															const auto& expr = init_expr.as<ExpressionNode>();
+															// Get the type of the initializer expression
+															if (std::holds_alternative<IdentifierNode>(expr)) {
+																const auto& ident = std::get<IdentifierNode>(expr);
+																std::optional<ASTNode> symbol = symbol_table.lookup(ident.name());
+																if (symbol.has_value()) {
+																	if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+																		const TypeSpecifierNode& init_type = decl->type_node().as<TypeSpecifierNode>();
+																		if (init_type.type() == Type::Struct && 
+																			init_type.type_index() == param_type.type_index()) {
+																			init_is_struct_of_same_type = true;
+																		}
+																	}
+																}
+															}
+														}
+													}
+													if (!init_is_struct_of_same_type) {
+														// Skip copy constructor - initializer is not of the same struct type
+														continue;
+													}
+												}
+												
+												// Skip if this is a move constructor (rvalue reference to same struct type)
+												if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+													// Check if the initializer is actually of this struct type
+													bool init_is_struct_of_same_type = false;
+													if (num_initializers == 1) {
+														const ASTNode& init_expr = initializers[0];
+														if (init_expr.is<ExpressionNode>()) {
+															const auto& expr = init_expr.as<ExpressionNode>();
+															// For move constructor, we only use it for rvalue expressions of same type
+															// For now, skip it for brace initialization unless it's explicitly a move
+															if (std::holds_alternative<IdentifierNode>(expr)) {
+																// Simple identifier - not an rvalue, don't match move constructor
+																continue;
+															}
+														}
+													}
+													if (!init_is_struct_of_same_type) {
+														// Skip move constructor for non-matching types
+														continue;
+													}
+												}
+											}
+											
 											// Exact match
 											if (param_count == num_initializers) {
 												has_matching_constructor = true;
@@ -7593,9 +7665,14 @@ private:
 							CallOp call_op;
 							call_op.result = ret_var;
 							call_op.return_type = return_type.type();
-							call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
-							if (call_op.return_size_in_bits == 0) {
-								call_op.return_size_in_bits = get_type_size_bits(return_type.type());
+							// For pointer return types, use 64-bit size (pointer size on x64)
+							if (return_type.pointer_depth() > 0) {
+								call_op.return_size_in_bits = 64;
+							} else {
+								call_op.return_size_in_bits = static_cast<int>(return_type.size_in_bits());
+								if (call_op.return_size_in_bits == 0) {
+									call_op.return_size_in_bits = get_type_size_bits(return_type.type());
+								}
 							}
 							call_op.function_name = mangled_name;  // MangledName implicitly converts to StringHandle
 							call_op.is_variadic = false;
@@ -12758,12 +12835,21 @@ private:
 				
 				bool handled = false;
 				
-				// Special handling for 'this' in lambdas with [*this] capture
+				// Special handling for 'this' in lambdas with [*this] or [this] capture
 				if (object_name == "this") {
+					// First try [*this] capture - returns copy of the object
 					if (auto copy_this_temp = emitLoadCopyThis(memberAccessNode.member_token())) {
 						base_object = *copy_this_temp;
 						base_type = Type::Struct;
 						base_type_index = current_lambda_context_.enclosing_struct_type_index;
+						handled = true;
+					}
+					// Then try [this] capture - returns pointer to the object
+					else if (auto this_ptr_temp = emitLoadThisPointer(memberAccessNode.member_token())) {
+						base_object = *this_ptr_temp;
+						base_type = Type::Struct;
+						base_type_index = current_lambda_context_.enclosing_struct_type_index;
+						is_pointer_dereference = true;  // Need to dereference the pointer
 						handled = true;
 					}
 				}
@@ -12848,6 +12934,8 @@ private:
 						if (capture_kind_it != current_lambda_context_.capture_kinds.end() && 
 						    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
 							// [*this] capture: load from the copied object in __copy_this
+							int copy_this_offset = getClosureMemberOffset("__copy_this");
+							
 							TempVar copy_this_ref = var_counter.next();
 							MemberLoadOp load_copy_this;
 							load_copy_this.result.value = copy_this_ref;
@@ -12855,7 +12943,7 @@ private:
 							load_copy_this.result.size_in_bits = 64;  // Pointer size
 							load_copy_this.object = StringTable::getOrInternStringHandle("this"sv);  // Lambda's this (the closure)
 							load_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
-							load_copy_this.offset = -1;
+							load_copy_this.offset = copy_this_offset;
 							load_copy_this.is_reference = false;
 							load_copy_this.is_rvalue_reference = false;
 							load_copy_this.struct_type_info = nullptr;
@@ -12867,6 +12955,8 @@ private:
 							base_type_index = current_lambda_context_.enclosing_struct_type_index;
 						} else {
 							// [this] capture: load the pointer from __this
+							int this_member_offset = getClosureMemberOffset("__this");
+							
 							TempVar this_ptr = var_counter.next();
 							MemberLoadOp load_this;
 							load_this.result.value = this_ptr;
@@ -12874,7 +12964,7 @@ private:
 							load_this.result.size_in_bits = 64;
 							load_this.object = StringTable::getOrInternStringHandle("this"sv);  // Lambda's this (the closure)
 							load_this.member_name = StringTable::getOrInternStringHandle("__this");
-							load_this.offset = -1;
+							load_this.offset = this_member_offset;
 							load_this.is_reference = false;
 							load_this.is_rvalue_reference = false;
 							load_this.struct_type_info = nullptr;
@@ -15314,11 +15404,11 @@ private:
 						const StructMember* member = struct_info->findMember("__this");
 						if (member) {
 							// Store the enclosing 'this' pointer in the closure
-							// In a member function, 'this' is TempVar(1)
+							// Use the 'this' variable name to properly resolve to the member function's this parameter
 							MemberStoreOp store_this;
 							store_this.value.type = Type::Void;
 							store_this.value.size_in_bits = 64;
-							store_this.value.value = TempVar(1);
+							store_this.value.value = StringTable::getOrInternStringHandle("this");
 							store_this.object = StringTable::getOrInternStringHandle(closure_var_name);
 							store_this.member_name = StringTable::getOrInternStringHandle("__this");
 							store_this.offset = static_cast<int>(member->offset);
