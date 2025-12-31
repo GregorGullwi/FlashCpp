@@ -10988,9 +10988,47 @@ private:
 				param_type = &param_nodes[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 			}
 			
-			// If the parameter expects a reference, use LValueAddress context to avoid dereferencing reference variables
-			// This is critical for passing reference variables (like int&& rref) to reference parameters
+			// Special case: if argument is a reference identifier being passed to a reference parameter,
+			// handle it directly without visiting the expression. This prevents the Load context from
+			// generating a Dereference operation (which would give us the value, not the address).
+			// For reference-to-reference passing, we just want to pass the variable name directly,
+			// and let the IRConverter use MOV to load the address stored in the reference.
+			if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
+			    std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
+				std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+				if (!symbol.has_value() && global_symbol_table_) {
+					symbol = global_symbol_table_->lookup(identifier.name());
+				}
+				if (symbol.has_value()) {
+					const DeclarationNode* decl_ptr = nullptr;
+					if (symbol->is<DeclarationNode>()) {
+						decl_ptr = &symbol->as<DeclarationNode>();
+					} else if (symbol->is<VariableDeclarationNode>()) {
+						decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
+					}
+					if (decl_ptr) {
+						const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+							// Argument is a reference variable being passed to a reference parameter
+							// Pass the identifier name directly - the IRConverter will use MOV to
+							// load the address stored in the reference variable
+							irOperands.emplace_back(type_node.type());
+							irOperands.emplace_back(64);  // References are stored as 64-bit pointers
+							irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
+							arg_index++;
+							return;  // Skip the rest of the processing
+						}
+					}
+				}
+			}
+			
+			// Determine expression context for the argument
+			// Default to Load context, which reads values
 			ExpressionContext arg_context = ExpressionContext::Load;
+			
+			// If the parameter expects a reference, use LValueAddress context to avoid dereferencing
+			// This is needed for non-reference arguments being passed to reference parameters
 			if (param_type && param_type->is_reference()) {
 				arg_context = ExpressionContext::LValueAddress;
 			}
