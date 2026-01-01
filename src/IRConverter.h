@@ -12136,10 +12136,17 @@ private:
 			StringHandle array_name_handle;
 			std::string_view array_name_view;
 			int64_t array_base_offset = 0;
+			bool array_is_tempvar = false;
 			
 			if (std::holds_alternative<StringHandle>(op.array)) {
 				array_name_handle = std::get<StringHandle>(op.array);
 				array_name_view = StringTable::getStringView(array_name_handle);
+			} else if (std::holds_alternative<TempVar>(op.array)) {
+				// Array is a TempVar (e.g., from member_access for struct.array_member)
+				// The TempVar holds a pointer to the array base
+				TempVar array_temp = std::get<TempVar>(op.array);
+				array_base_offset = getStackOffsetFromTempVar(array_temp);
+				array_is_tempvar = true;
 			}
 			
 			// Check if this is a member array access (object.member format)
@@ -12223,9 +12230,11 @@ private:
 				}
 			}
 			
-			// Get array base offset
-			StringHandle lookup_name_handle = is_member_array ? StringTable::getOrInternStringHandle(object_name) : array_name_handle;
-			array_base_offset = variable_scopes.back().variables[lookup_name_handle].offset;
+			// Get array base offset (only needed if array is StringHandle, not TempVar)
+			if (!array_is_tempvar) {
+				StringHandle lookup_name_handle = is_member_array ? StringTable::getOrInternStringHandle(object_name) : array_name_handle;
+				array_base_offset = variable_scopes.back().variables[lookup_name_handle].offset;
+			}
 			
 			// Check if the object (not the array) is a pointer (like 'this' or a reference)
 			bool is_object_pointer = false;
@@ -12236,9 +12245,15 @@ private:
 				}
 			}
 			
+			// When array is from a TempVar (member_access result), it holds a pointer to the array
+			// We need to treat it like is_pointer_to_array case
+			if (array_is_tempvar) {
+				is_pointer_to_array = true;
+			}
+			
 			FLASH_LOG_FORMAT(Codegen, Debug,
-				"ArrayStore: is_member_array={}, object_name='{}', is_object_pointer={}, is_pointer_to_array={}, array_base_offset={}, member_offset={}",
-				is_member_array, (is_member_array ? object_name : "N/A"), is_object_pointer, is_pointer_to_array, array_base_offset, member_offset);
+				"ArrayStore: is_member_array={}, object_name='{}', is_object_pointer={}, is_pointer_to_array={}, array_is_tempvar={}, array_base_offset={}, member_offset={}",
+				is_member_array, (is_member_array ? object_name : "N/A"), is_object_pointer, is_pointer_to_array, array_is_tempvar, array_base_offset, member_offset);
 			
 			// Handle constant vs variable index
 			if (std::holds_alternative<unsigned long long>(op.index.value)) {

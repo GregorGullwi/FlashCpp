@@ -8707,31 +8707,18 @@ private:
 					if (std::holds_alternative<IdentifierNode>(operandExpr)) {
 						const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
 						auto symbol = symbol_table.lookup(identifier.name());
-						if (symbol.has_value()) {
-							const TypeSpecifierNode* type_node = nullptr;
-							if (symbol->is<DeclarationNode>()) {
-								type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-							} else if (symbol->is<VariableDeclarationNode>()) {
-								type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-							}
-							if (type_node) {
-								pointer_depth = type_node->pointer_depth();
-							}
+						const DeclarationNode* decl = getDeclarationFromSymbol(symbol);
+						if (decl) {
+							pointer_depth = decl->type_node().as<TypeSpecifierNode>().pointer_depth();
 						}
 					}
 				}
 				
 				// Calculate element size after dereference
 				if (pointer_depth <= 1) {
-					switch (operandType) {
-						case Type::Bool: element_size = 8; break;
-						case Type::Char: element_size = 8; break;
-						case Type::Short: element_size = 16; break;
-						case Type::Int: element_size = 32; break;
-						case Type::Long: element_size = 64; break;
-						case Type::Float: element_size = 32; break;
-						case Type::Double: element_size = 64; break;
-						default: element_size = 64; break;
+					element_size = get_type_size_bits(operandType);
+					if (element_size == 0) {
+						element_size = 64;  // Default to pointer size for unknown types
 					}
 				}
 				
