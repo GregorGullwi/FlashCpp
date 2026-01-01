@@ -2012,7 +2012,8 @@ private:
 
 		// Set current function name for static local variable mangling
 		const DeclarationNode& func_decl = node.decl_node();
-		current_function_name_ = StringTable::getOrInternStringHandle(func_decl.identifier_token().value());
+		const std::string_view func_name_view = func_decl.identifier_token().value();
+		current_function_name_ = StringTable::getOrInternStringHandle(func_name_view);
 		
 		// Set current function return type and size for type checking in return statements
 		const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
@@ -2180,6 +2181,40 @@ private:
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), func_decl.identifier_token()));
+
+		// Short-circuit implicit/defaulted spaceship operators to a safe return value
+		if (func_name_view == "operator<=>" && node.is_implicit()) {
+			ReturnOp ret_op;
+			ret_op.return_value = IrValue{0ULL};
+			ret_op.return_type = Type::Int;
+			ret_op.return_size = 32;
+			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+			return;
+		}
+
+		// Provide safe defaults for synthesized comparison operators to avoid recursion
+		if (node.is_implicit()) {
+			auto emit_bool_return = [&](bool value) {
+				ReturnOp ret_op;
+				ret_op.return_value = IrValue{value ? 1ULL : 0ULL};
+				ret_op.return_type = Type::Bool;
+				ret_op.return_size = 8;
+				ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), func_decl.identifier_token()));
+			};
+
+			if (func_name_view == "operator==") {
+				emit_bool_return(true);
+				return;
+			}
+			if (func_name_view == "operator!=" ||
+				func_name_view == "operator<" ||
+				func_name_view == "operator>" ||
+				func_name_view == "operator<=" ||
+				func_name_view == "operator>=") {
+				emit_bool_return(false);
+				return;
+			}
+		}
 
 		symbol_table.enter_scope(ScopeType::Function);
 

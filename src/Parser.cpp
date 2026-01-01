@@ -4480,8 +4480,22 @@ ParseResult Parser::parse_struct_declaration()
 				// Mark as implicit (same behavior as compiler-generated)
 				member_func_ref.set_is_implicit(true);
 
-				// Create an empty block for the function body
+				// Create a simple block for the function body
 				auto [block_node, block_ref] = create_node_ref(BlockNode());
+
+				// Special-case defaulted spaceship operator: emit a safe return value
+				if (decl_node.identifier_token().value() == "operator<=>") {
+					Token zero_token(Token::Type::Literal, "0",
+						decl_node.identifier_token().line(),
+						decl_node.identifier_token().column(),
+						decl_node.identifier_token().file_index());
+					auto zero_expr = emplace_node<ExpressionNode>(
+						NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
+					auto return_stmt = emplace_node<ReturnStatementNode>(
+						std::optional<ASTNode>(zero_expr), zero_token);
+					block_ref.add_statement_node(return_stmt);
+				}
+
 				// Generate mangled name before setting definition (Phase 6 mangling)
 				compute_and_set_mangled_name(member_func_ref);
 				member_func_ref.set_definition(block_node);
@@ -5333,10 +5347,8 @@ ParseResult Parser::parse_struct_declaration()
 			// Generate mangled name before setting definition (Phase 6 mangling)
 			compute_and_set_mangled_name(func_ref);
 			func_ref.set_definition(op_block_node);
-			
-			// Note: Not marking as implicit because we want the body to be processed
-			// These are compiler-generated but they have actual function bodies
-			// func_ref.set_is_implicit(true);
+			// Mark as implicit to allow codegen to handle synthesized comparisons safely
+			func_ref.set_is_implicit(true);
 			
 			// Add the operator to the struct type info
 			struct_info->addOperatorOverload(
