@@ -1,7 +1,14 @@
 # Remaining Test Failures Plan
 
 ## Current Status (2026-01-01)
-**796/796 tests passing compilation (100%)**
+**797/797 tests passing compilation (100%)**
+
+## Recently Fixed
+
+### ~~4. Virtual Function via Reference~~ - **FIXED (2026-01-01)**
+- ~~Calling virtual functions through a reference (`base_ref.method()` where `base_ref` is `Base&` bound to `Derived`) crashed~~
+- **Fix**: Updated `VirtualCallOp::is_pointer_access` in CodeGen.h to also check for reference types (`is_reference()` and `is_rvalue_reference()`), since references are implemented as pointers internally
+- Added test: `test_virtual_via_reference_ret0.cpp`
 
 ## Remaining Runtime Issues
 
@@ -21,11 +28,7 @@
 
 **Effort**: Large - requires proper System V ABI va_list handling
 
-### 4. Virtual Function via Reference - **Known Issue**
-- Calling virtual functions through a reference (`base_ref.method()` where `base_ref` is `Base&` bound to `Derived`) crashes
-- This is different from pointer dispatch which works correctly
-
-### 5. Access Control Flag (1 file) - **Requires Special Flag**
+### 4. Access Control Flag (1 file) - **Requires Special Flag**
 - `test_no_access_control_flag.cpp` - Works when compiled with `-fno-access-control` flag
 
 ---

@@ -12277,8 +12277,9 @@ private:
 			vcall_op.object = StringTable::getOrInternStringHandle(object_name);
 			vcall_op.vtable_index = vtable_index;
 			// Set is_pointer_access based on whether the object is accessed through a pointer (ptr->method)
-			// This is true if the object type has pointer depth > 0
-			vcall_op.is_pointer_access = (object_type.pointer_depth() > 0);
+			// or through a reference (ref.method()). References are implemented as pointers internally,
+			// so they need the same treatment as pointer access for virtual dispatch.
+			vcall_op.is_pointer_access = (object_type.pointer_depth() > 0) || object_type.is_reference() || object_type.is_rvalue_reference();
 
 			// Generate IR for function arguments
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
