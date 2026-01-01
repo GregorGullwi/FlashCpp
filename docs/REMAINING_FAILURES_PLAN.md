@@ -31,5 +31,12 @@
 ### 4. Access Control Flag (1 file) - **Requires Special Flag**
 - `test_no_access_control_flag.cpp` - Works when compiled with `-fno-access-control` flag
 
+### 5. Virtual Destructor Symbol on MSVC (1 file) - **Link Failure on Windows**
+- `test_xvalue_all_casts.cpp` - Missing virtual destructor symbol (`??1Base@@QAE@XZ`) when linked with MSVC
+- Works on Linux/ELF but fails on Windows/COFF
+- Added to expected link failures in `test_reference_files.ps1`
+
+**Effort**: Medium - requires fixing COFF virtual destructor symbol generation
+
 ---
 *Last Updated: 2026-01-01*
