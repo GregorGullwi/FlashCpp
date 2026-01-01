@@ -19,6 +19,10 @@
 ### 1. Exception Handling (2 files) - **Link Failure**
 - `test_exceptions_basic.cpp` - Missing typeinfo symbols (_ZTIi)
 - `test_exceptions_nested.cpp` - Missing typeinfo symbols (_ZTIi)
+- Progress (2026-01-01):
+  - Fixed LSDA type table base offset calculation so type tables no longer overlap action data
+  - Fixed function prologue stack alignment (rsp now 16-byte aligned before calls)
+  - Runtime still crashes during `__cxa_throw` (ld warns about `.eh_frame`); needs further unwinder validation
 
 **Effort**: Large - requires implementing DWARF exception tables and runtime hooks
 

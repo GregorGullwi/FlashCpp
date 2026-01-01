@@ -8078,13 +8078,12 @@ private:
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
 			
-			// Stack alignment depends on target platform ABI
-			// System V AMD64 (Linux): After PUSH RBP, RSP is 16-aligned. 
-			// SUB RSP, N must keep it 16-aligned so subsequent CALLs work correctly.
-			// MS x64 (Windows): Same requirement - RSP must stay 16-aligned.
-			// Both platforms: Align total_stack to 16n (multiple of 16)
-			if (total_stack % 16 != 0) {
-				total_stack = (total_stack + 15) & ~15;  // Round up to next 16n
+			// Align stack so that after `push rbp; sub rsp, total_stack` the stack is 16-byte aligned
+			// System V AMD64: RSP is 8 bytes off alignment after PUSH RBP, so we need
+			// (total_stack + 8) % 16 == 0. Same requirement holds for MS x64.
+			size_t misalign = (total_stack + 8) % 16;
+			if (misalign != 0) {
+				total_stack += (16 - misalign);
 			}
 			
 			// Patch the SUB RSP immediate at prologue offset + 3 (skip REX.W, opcode, ModR/M)
@@ -8824,6 +8823,13 @@ private:
 			std::abort();
 		}
 		
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (inside_catch_handler_) {
+				emitCall("__cxa_end_catch");
+				inside_catch_handler_ = false;
+			}
+		}
+
 		// Add line mapping for the return statement itself (only for functions without function calls)
 		// For functions with function calls (like main), the closing brace is already mapped in handleFunctionCall
 		if (instruction.getLineNumber() > 0 && current_function_name_ != StringTable::getOrInternStringHandle("main")) {	// TODO: Is main special case still needed here?
@@ -13916,6 +13922,7 @@ private:
 		
 		// Platform-specific landing pad code generation
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			inside_catch_handler_ = true;
 			// ========== Linux/ELF (Itanium C++ ABI) ==========
 			// Landing pad: call __cxa_begin_catch to get the exception object
 			//
@@ -14043,6 +14050,7 @@ private:
 			// This cleans up the exception object if needed
 			
 			emitCall("__cxa_end_catch");
+			inside_catch_handler_ = false;
 			
 		} else {
 			// ========== Windows/COFF (MSVC ABI) ==========
@@ -14857,10 +14865,8 @@ private:
 
 	std::vector<TryBlock> current_function_try_blocks_;  // Try blocks in current function
 	TryBlock* current_try_block_ = nullptr;  // Currently active try block being processed
+	bool inside_catch_handler_ = false;  // Tracks whether we're emitting code inside a catch handler (ELF)
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number
 }; // End of IrToObjConverter class
-
-
-
