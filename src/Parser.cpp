@@ -13962,16 +13962,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// This allows type aliases like false_type, true_type, enable_if_t to be used in specific contexts
 		// Only apply this fallback when the identifier is followed by '::' or '(' to ensure
 		// we don't break legitimate cases where an identifier should be an error
+		// Also check for ',' and '>' in template argument contexts (e.g., __first_t<false_type, ...>)
+		// NOTE: We do NOT check for '<' here because gTypesByName contains all types (including templates),
+		// not just type aliases. Template aliases followed by '<' are handled separately via gTemplateRegistry.
 		bool found_as_type_alias = false;
 		if (!identifierType && peek_token().has_value()) {
 			std::string_view peek = peek_token()->value();
-			// Check gTypesByName if identifier is followed by :: (qualified name) or ( (constructor call)
-			if (peek == "::" || peek == "(") {
+			// Check gTypesByName if identifier is followed by:
+			// - :: (qualified name like false_type::value)
+			// - ( (constructor call)
+			// - , or > (in template argument context, e.g., Template<false_type, ...> or Template<false_type>)
+			bool should_check_type_alias = (peek == "::" || peek == "(");
+			// In template argument context, also accept , and > as valid terminators for type aliases
+			if (!should_check_type_alias && context == ExpressionContext::TemplateArgument) {
+				should_check_type_alias = (peek == "," || peek == ">");
+			}
+			if (should_check_type_alias) {
 				StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
 				auto type_it = gTypesByName.find(identifier_handle);
 				if (type_it != gTypesByName.end()) {
-					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName (peek='{}')", 
-						idenfifier_token.value(), peek);
+					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName (peek='{}', context={})", 
+						idenfifier_token.value(), peek, context == ExpressionContext::TemplateArgument ? "TemplateArgument" : "other");
 					found_as_type_alias = true;
 					// Mark that we found it as a type so it can be used for type references
 					// The actual type info will be retrieved later when needed
@@ -14937,6 +14948,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							const auto& qualified_node = qualified_node_ast.as<QualifiedIdentifierNode>();
 							result = emplace_node<ExpressionNode>(qualified_node);
 							return ParseResult::success(*result);
+						}
+						
+						// Template arguments parsed but NOT followed by ::
+						// Check if this is an alias template - if so, treat as dependent expression
+						// This handles patterns like: __enable_if_t<...> in template argument contexts
+						if (!identifierType) {
+							auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
+							if (alias_opt.has_value()) {
+								FLASH_LOG_FORMAT(Parser, Debug, "Found alias template '{}' with template arguments (no ::)", idenfifier_token.value());
+								// For alias templates used in expression/template contexts, create a simple identifier
+								// The template instantiation will be handled during type resolution
+								result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+								return ParseResult::success(*result);
+							}
 						}
 					}
 				}

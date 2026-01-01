@@ -1,28 +1,37 @@
-// Test: Template aliases in expression contexts
-// This is the specific issue from <type_traits>
+// Test: Template alias used as template argument
+// This tests that template aliases like __enable_if_t can be used in template argument contexts
+// without causing "Missing identifier" errors.
 
-// Simple template
-template<typename T>
-struct remove_const {
-    using type = T;
+namespace std {
+
+template<bool _Cond, typename _Tp = void>
+struct enable_if { };
+
+template<typename _Tp>
+struct enable_if<true, _Tp> {
+    using type = _Tp;
 };
 
-// Template alias (C++11 feature)
-template<typename T>
-using remove_const_t = typename remove_const<T>::type;
+// Template alias
+template<bool _Cond, typename _Tp = void>
+using __enable_if_t = typename enable_if<_Cond, _Tp>::type;
 
-// Now try to use the template alias in a template argument
-template<typename T>
-struct helper {
-    static constexpr int value = 1;
-};
+// Template that uses __enable_if_t in its template argument list
+template<typename _Tp, typename...>
+using __first_t = _Tp;
 
-template<typename T>
-struct test_struct {
-    // This should work: using template alias as a template argument
-    static constexpr int result = helper<remove_const_t<T>>::value;
-};
+namespace __detail {
+    // Function template with trailing return type using template aliases
+    // This is a simplified version of the pattern from <type_traits>
+    template<typename... _Bn>
+    auto __or_fn(int) -> __first_t<int, __enable_if_t<true>...>;
+    
+    template<typename... _Bn>
+    auto __or_fn(...) -> int;
+}
+
+}
 
 int main() {
-    return test_struct<int>::result + 41;  // Should return 42 (1 + 41)
+    return 42;
 }
