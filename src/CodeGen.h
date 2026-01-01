@@ -12129,10 +12129,19 @@ private:
 		if (is_virtual_call && vtable_index >= 0) {
 			// Generate virtual function call using VirtualCallOp
 			VirtualCallOp vcall_op;
-			// Get return type from function declaration
-			const auto& return_type = func_decl_node.type_node().as<TypeSpecifierNode>();
+			// Get return type from the actual member function (if found) instead of the placeholder declaration
+			// The placeholder may not have correct pointer depth information for the return type
+			const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>()) 
+				? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
+				: func_decl_node.type_node().as<TypeSpecifierNode>();
 			vcall_op.result.type = return_type.type();
-			vcall_op.result.size_in_bits = static_cast<int>(return_type.size_in_bits());
+			// For pointer return types, use 64 bits (pointer size), otherwise use the type's size
+			// Also handle reference return types as pointers (64 bits)
+			if (return_type.pointer_depth() > 0 || return_type.is_pointer() || return_type.is_reference() || return_type.is_rvalue_reference()) {
+				vcall_op.result.size_in_bits = 64;
+			} else {
+				vcall_op.result.size_in_bits = static_cast<int>(return_type.size_in_bits());
+			}
 			vcall_op.result.value = ret_var;
 			vcall_op.object_type = object_type.type();
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
