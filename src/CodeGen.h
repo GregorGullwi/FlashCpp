@@ -10048,13 +10048,23 @@ private:
 
 	// Helper function to generate Microsoft Visual C++ mangled name for function calls
 	// Delegates to NameMangling::generateMangledName to keep all mangling logic in one place
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}) {
-		return NameMangling::generateMangledName(name, return_type, param_types, is_variadic, struct_name, namespace_path).view();
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}, bool is_virtual = false) {
+		std::vector<std::string_view> ns_views;
+		ns_views.reserve(namespace_path.size());
+		for (const auto& ns : namespace_path) {
+			ns_views.push_back(ns);
+		}
+		return NameMangling::generateMangledName(name, return_type, param_types, is_variadic, struct_name, ns_views, Linkage::CPlusPlus, is_virtual).view();
 	}
 
 	// Overload that accepts parameter nodes directly to avoid creating a temporary vector
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}) {
-		return NameMangling::generateMangledName(name, return_type, param_nodes, is_variadic, struct_name, namespace_path).view();
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic = false, std::string_view struct_name = "", const std::vector<std::string>& namespace_path = {}, bool is_virtual = false) {
+		std::vector<std::string_view> ns_views;
+		ns_views.reserve(namespace_path.size());
+		for (const auto& ns : namespace_path) {
+			ns_views.push_back(ns);
+		}
+		return NameMangling::generateMangledName(name, return_type, param_nodes, is_variadic, struct_name, ns_views, Linkage::CPlusPlus, is_virtual).view();
 	}
 
 	// Overload that accepts a FunctionDeclarationNode directly
@@ -10068,9 +10078,15 @@ private:
 		std::string_view struct_name = !struct_name_override.empty() ? struct_name_override
 			: (func_node.is_member_function() ? func_node.parent_struct_name() : std::string_view{});
 		
+		std::vector<std::string_view> ns_views;
+		ns_views.reserve(namespace_path.size());
+		for (const auto& ns : namespace_path) {
+			ns_views.push_back(ns);
+		}
+
 		// Pass linkage from the function node to ensure extern "C" functions aren't mangled
 		return NameMangling::generateMangledName(func_name, return_type, func_node.parameter_nodes(),
-			func_node.is_variadic(), struct_name, namespace_path, func_node.linkage()).view();
+			func_node.is_variadic(), struct_name, ns_views, func_node.linkage(), func_node.is_virtual()).view();
 	}
 	
 	// Helper function to handle compiler intrinsics
