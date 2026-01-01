@@ -715,6 +715,10 @@ public:  // Public methods for template instantiation
             bool is_virtual_base,
             const Token& error_token);
 
+        // Helper: Look up a type alias including inherited ones from base classes
+        // Returns the TypeInfo pointer if found, nullptr otherwise
+        const TypeInfo* lookup_inherited_type_alias(std::string_view struct_name, std::string_view member_name);
+
         // Substitute template parameter in a type specification
         // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
         std::pair<Type, TypeIndex> substitute_template_parameter(
