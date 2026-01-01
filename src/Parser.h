@@ -324,6 +324,7 @@ private:
                 StringHandle struct_name;  // Points directly into source text from lexer token
                 size_t struct_type_index;
                 StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
+                StructTypeInfo* local_struct_info;   // Pointer to local struct_info being built (for static member lookup)
         };
         std::vector<MemberFunctionContext> member_function_context_stack_;
 

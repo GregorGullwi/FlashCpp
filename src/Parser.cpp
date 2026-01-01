@@ -2168,7 +2168,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		member_function_context_stack_.push_back({
 			class_name,
 			type_info->type_index_,
-			nullptr  // struct_node - we don't have access to it here, but struct_type_index should be enough
+			nullptr,  // struct_node - we don't have access to it here, but struct_type_index should be enough
+			nullptr   // local_struct_info - not needed here since TypeInfo is already populated
 		});
 		
 		// Add 'this' pointer to symbol table
@@ -3882,8 +3883,22 @@ ParseResult Parser::parse_struct_declaration()
 				std::optional<ASTNode> init_expr_opt;
 				if (peek_token().has_value() && peek_token()->value() == "=") {
 					consume_token(); // consume '='
+					
+					// Push struct context so static member references can be resolved
+					// This enables expressions like `!is_signed` to find `is_signed` as a static member
+					size_t struct_type_index = 0;
+					auto type_it = gTypesByName.find(qualified_struct_name);
+					if (type_it != gTypesByName.end()) {
+						struct_type_index = type_it->second->type_index_;
+					}
+					member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info.get()});
+					
 					// Parse the initializer expression
 					auto init_result = parse_expression();
+					
+					// Pop context after parsing
+					member_function_context_stack_.pop_back();
+					
 					if (init_result.is_error()) {
 						return init_result;
 					}
@@ -8869,7 +8884,8 @@ void Parser::setup_member_function_context(StructDeclarationNode* struct_node, S
 	member_function_context_stack_.push_back({
 		struct_name,
 		struct_type_index,
-		struct_node
+		struct_node,
+		nullptr  // local_struct_info - not needed here since TypeInfo should be available
 	});
 
 	// Register member functions in symbol table for complete-class context
@@ -12011,8 +12027,24 @@ ParseResult Parser::parse_static_member_block(
 		&& peek_token()->value() == "=") {
 		consume_token(); // consume "="
 
+		// Push struct context so static member references can be resolved
+		// This enables expressions like `!is_signed` to find `is_signed` as a static member
+		size_t struct_type_index = 0;
+		auto type_it = gTypesByName.find(struct_name_handle);
+		if (type_it != gTypesByName.end()) {
+			struct_type_index = type_it->second->type_index_;
+		}
+		
+		// Push context (reusing MemberFunctionContext for static member lookup)
+		// Pass struct_info directly since TypeInfo::struct_info_ hasn't been populated yet
+		member_function_context_stack_.push_back({struct_name_handle, struct_type_index, &struct_ref, struct_info});
+		
 		// Parse initializer expression
 		auto init_result = parse_expression();
+		
+		// Pop context after parsing
+		member_function_context_stack_.pop_back();
+		
 		if (init_result.is_error()) {
 			return init_result;
 		}
@@ -14423,57 +14455,43 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 				}
 				
-				// If not found in AST and we have struct_type_index, try TypeInfo
-				// This handles template class instantiations where the AST node may have no members
-				if (!found_in_ast && context.struct_type_index != 0) {
-					// Look up the struct type from the type system
-					if (context.struct_type_index < gTypeInfo.size()) {
+				// If not found in AST, try TypeInfo (or local_struct_info for static member initializers)
+				// This handles template class instantiations and static member initializers
+				if (!found_in_ast) {
+					// First try local_struct_info (for static member initializers where TypeInfo::struct_info_ isn't populated yet)
+					const StructTypeInfo* struct_info = context.local_struct_info;
+					
+					// Fall back to TypeInfo lookup if no local_struct_info
+					if (!struct_info && context.struct_type_index != 0 && context.struct_type_index < gTypeInfo.size()) {
 						const TypeInfo& struct_type_info = gTypeInfo[context.struct_type_index];
-						const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
-						
-						if (struct_info) {
-							// FIRST check static members (these don't use this->)
-							// Use findStaticMemberRecursive to also search base classes
-							auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(idenfifier_token.value()));
-							if (static_member) {
-								// Found static member! Create a simple identifier node
-								// Static members are accessed directly, not via this->
-								result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
-								// Set identifierType to prevent "Missing identifier" error
-								identifierType = emplace_node<DeclarationNode>(
-									emplace_node<TypeSpecifierNode>(
-										static_member->type,
-										static_member->type_index,
-										static_cast<unsigned char>(static_member->size * 8),
-										idenfifier_token
-									),
+						struct_info = struct_type_info.getStructInfo();
+					}
+					
+					if (struct_info) {
+						// FIRST check static members (these don't use this->)
+						// Use findStaticMemberRecursive to also search base classes
+						auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(idenfifier_token.value()));
+						if (static_member) {
+							// Found static member! Create a simple identifier node
+							// Static members are accessed directly, not via this->
+							result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+							// Set identifierType to prevent "Missing identifier" error
+							identifierType = emplace_node<DeclarationNode>(
+								emplace_node<TypeSpecifierNode>(
+									static_member->type,
+									static_member->type_index,
+									static_cast<unsigned char>(static_member->size * 8),
 									idenfifier_token
-								);
-								goto found_member_variable;
-							}
-							
-							// Check instance members (these use this->)
-							for (const auto& member : struct_info->members) {
-								if (member.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
-									// This is a member variable! Transform it into this->member
-									Token this_token(Token::Type::Keyword, "this",
-									                 idenfifier_token.line(), idenfifier_token.column(),
-									                 idenfifier_token.file_index());
-									auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
-
-									// Create member access node: this->member
-									result = emplace_node<ExpressionNode>(
-										MemberAccessNode(this_ident, idenfifier_token));
-
-									// Don't return - let it fall through to postfix operator parsing
-									goto found_member_variable;
-								}
-							}
-							
-							// Also check base class members
-							const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
-							if (member) {
-								// This is an inherited member variable! Transform it into this->member
+								),
+								idenfifier_token
+							);
+							goto found_member_variable;
+						}
+						
+						// Check instance members (these use this->)
+						for (const auto& member : struct_info->members) {
+							if (member.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
+								// This is a member variable! Transform it into this->member
 								Token this_token(Token::Type::Keyword, "this",
 								                 idenfifier_token.line(), idenfifier_token.column(),
 								                 idenfifier_token.file_index());
@@ -14486,6 +14504,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// Don't return - let it fall through to postfix operator parsing
 								goto found_member_variable;
 							}
+						}
+						
+						// Also check base class members
+						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
+						if (member) {
+							// This is an inherited member variable! Transform it into this->member
+							Token this_token(Token::Type::Keyword, "this",
+							                 idenfifier_token.line(), idenfifier_token.column(),
+							                 idenfifier_token.file_index());
+							auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+
+							// Create member access node: this->member
+							result = emplace_node<ExpressionNode>(
+								MemberAccessNode(this_ident, idenfifier_token));
+
+							// Don't return - let it fall through to postfix operator parsing
+							goto found_member_variable;
 						}
 					}
 				}
@@ -18877,7 +18912,8 @@ ParseResult Parser::parse_template_declaration() {
 			member_function_context_stack_.push_back({
 				instantiated_name,
 				struct_type_info.type_index_,
-				&struct_ref
+				&struct_ref,
+				nullptr  // local_struct_info - not needed during template instantiation
 			});
 
 			while (peek_token().has_value() && peek_token()->value() != "}") {
@@ -19441,7 +19477,8 @@ ParseResult Parser::parse_template_declaration() {
 				member_function_context_stack_.push_back({
 					delayed.struct_name,
 					delayed.struct_type_index,
-					delayed.struct_node
+					delayed.struct_node,
+					nullptr  // local_struct_info - not needed for delayed function bodies
 				});
 
 				// Add function parameters to scope
@@ -19711,7 +19748,8 @@ ParseResult Parser::parse_template_declaration() {
 			member_function_context_stack_.push_back({
 				instantiated_name,
 				struct_type_info.type_index_,
-				&struct_ref
+				&struct_ref,
+				nullptr  // local_struct_info - not needed during template instantiation
 			});
 			
 			// Parse class body (same as full specialization)
@@ -20203,7 +20241,8 @@ if (struct_type_info.getStructInfo()) {
 				member_function_context_stack_.push_back({
 					delayed.struct_name,
 					delayed.struct_type_index,
-					delayed.struct_node
+					delayed.struct_node,
+					nullptr  // local_struct_info - not needed for delayed function bodies
 				});
 				
 				// Add 'this' pointer to symbol table
@@ -26571,7 +26610,8 @@ if (struct_type_info.getStructInfo()) {
 					member_function_context_stack_.push_back({
 						instantiated_name,
 						struct_type_info.type_index_,
-						&instantiated_struct_ref
+						&instantiated_struct_ref,
+						nullptr  // local_struct_info - not needed for out-of-line member functions
 					});
 					
 					// Restore to the out-of-line function body position
@@ -27265,7 +27305,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	member_function_context_stack_.push_back({
 		StringTable::getOrInternStringHandle(struct_name),
 		struct_type_index,
-		struct_node_ptr
+		struct_node_ptr,
+		nullptr  // local_struct_info - not needed for out-of-class member function definitions
 	});
 
 	// Add 'this' pointer to symbol table
@@ -27372,7 +27413,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				member_function_context_stack_.push_back({
 					StringTable::getOrInternStringHandle(struct_name),
 					struct_type_index,
-					struct_node_ptr
+					struct_node_ptr,
+					nullptr  // local_struct_info - not needed for specialization functions
 				});
 				
 				// Add parameters to symbol table
@@ -27618,7 +27660,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	member_function_context_stack_.push_back({
 		StringTable::getOrInternStringHandle(struct_name),
 		struct_type_index,
-		struct_node_ptr
+		struct_node_ptr,
+		nullptr  // local_struct_info - not needed for out-of-class member function definitions
 	});
 
 	// Add 'this' pointer to symbol table
@@ -28116,6 +28159,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 			ctx.struct_name = StringTable::getOrInternStringHandle(struct_name);
 			ctx.struct_type_index = struct_type_index;
 			ctx.struct_node = struct_node_ptr;
+			ctx.local_struct_info = nullptr;  // Not needed for template member function instantiation
 			member_function_context_stack_.push_back(ctx);
 		}
 	}
