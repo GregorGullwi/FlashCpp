@@ -4,6 +4,12 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 1, 2025)**: New features implemented!
+- ✅ **Functional value initialization** `Type()` syntax now works for all builtin types (e.g., `char()`, `int()`, `float()`, `char16_t()`)
+- ✅ **All C++ char types** (`char8_t`, `char16_t`, `char32_t`, `wchar_t`) supported in functional cast/init syntax
+- ✅ **Floating-point limit macros** added (`__FLT_*`, `__DBL_*`, `__LDBL_*`) for `<limits>` header support
+- 🎯 **`<limits>` header now compiles successfully!** (static member data access works; function calls need more work)
+
 **UPDATE (December 28, 2024)**: Inline namespaces now inject their members into the enclosing namespace scope (e.g., `namespace std { inline namespace __1 { ... } }` works without qualifying `__1`).
 
 **UPDATE (December 27, 2024 - Evening)**: Critical parsing fixes implemented!
@@ -19,6 +25,9 @@ This document lists the missing features in FlashCpp that prevent successful com
 - `<cstddef>` - ~790ms (provides `size_t`, `ptrdiff_t`, `nullptr_t`) ✅
 - `<cstdint>` - ~200ms (provides `int32_t`, `uint64_t`, etc.) ✅  
 - `<cstdio>` - ~770ms (provides `printf`, `scanf`, etc.) ✅
+
+**C++ Standard Library:**
+- **`<limits>`** - ~1.7s (compiles, static data members work) ✅ **NEW!**
 
 **Combined Test (December 27, 2024):**
 - `<cstddef>` + `<cstdint>` together: ~933ms ✅
