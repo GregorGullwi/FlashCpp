@@ -8747,6 +8747,8 @@ private:
 					base = std::get<TempVar>(operandIrOperands[2]);
 				} else {
 					// Fall back to old behavior if we can't extract base
+					// This can happen with complex expressions that don't have a simple base
+					FLASH_LOG(Codegen, Debug, "Dereference LValueAddress fallback: operand is not StringHandle or TempVar");
 					return operandIrOperands;
 				}
 				
