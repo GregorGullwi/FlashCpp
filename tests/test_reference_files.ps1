@@ -209,7 +209,11 @@ foreach ($file in $referenceFiles) {
     Write-Host "[$currentFile/$totalFiles] Testing $($file.Name)... " -NoNewline
 
     # Compile with FlashCpp
-    $compileOutput = & .\$flashCppPath --log-level=Codegen:error $file.FullName 2>&1 | Out-String
+    $flashCppArgs = @("--log-level=Codegen:error", $file.FullName)
+    if ($file.Name -eq "test_no_access_control_flag.cpp") {
+        $flashCppArgs = @("-fno-access-control") + $flashCppArgs
+    }
+    $compileOutput = & .\$flashCppPath @flashCppArgs 2>&1 | Out-String
 
     # Check if compilation succeeded by verifying obj file was created
     if (Test-Path $objFile) {
