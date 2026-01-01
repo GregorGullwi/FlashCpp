@@ -13962,6 +13962,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// This allows type aliases like false_type, true_type, enable_if_t to be used in specific contexts
 		// Only apply this fallback when the identifier is followed by '::' or '(' to ensure
 		// we don't break legitimate cases where an identifier should be an error
+		// NOTE: We do NOT check for ',' or '>' here because gTypesByName contains ALL types (including structs),
+		// not just type aliases. Struct types like WithoutType need the normal type parsing fallback path.
 		bool found_as_type_alias = false;
 		if (!identifierType && peek_token().has_value()) {
 			std::string_view peek = peek_token()->value();
@@ -14937,6 +14939,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							const auto& qualified_node = qualified_node_ast.as<QualifiedIdentifierNode>();
 							result = emplace_node<ExpressionNode>(qualified_node);
 							return ParseResult::success(*result);
+						}
+						
+						// Template arguments parsed but NOT followed by ::
+						// Check if this is a template alias - if so, treat as valid dependent expression
+						// This handles patterns like: __enable_if_t<...> in template argument contexts
+						if (!identifierType) {
+							auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
+							if (alias_opt.has_value()) {
+								FLASH_LOG_FORMAT(Parser, Debug, "Found template alias '{}' with template arguments (no ::)", idenfifier_token.value());
+								// For template aliases used in expression/template contexts, create a simple identifier
+								// The template instantiation will be handled during type resolution
+								result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+								return ParseResult::success(*result);
+							}
 						}
 					}
 				}
