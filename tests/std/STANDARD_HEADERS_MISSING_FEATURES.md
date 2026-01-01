@@ -4,6 +4,12 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 1, 2026)**: Template argument type alias resolution improved!
+- ✅ **Type alias resolution in template argument contexts** - Type aliases like `false_type`, `true_type` can now be used as template arguments (e.g., `first_t<false_type, ...>`)
+- ✅ **Template parameter substitution for base classes** - Patterns like `template<typename T1, typename T2> struct __or_<T1, T2> : T1 {}` now work correctly
+- ✅ **Improved dependent template argument detection** - Base classes with nested template arguments (e.g., `__or_<is_integral<T>, is_floating_point<T>>`) are now properly deferred
+- ⚠️ **Remaining issue**: Inherited type alias lookup (e.g., `wrapper<T>::type` where `type` comes from a base class) is not yet implemented
+
 **UPDATE (January 1, 2025)**: New features implemented!
 - ✅ **Functional value initialization** `Type()` syntax now works for all builtin types (e.g., `char()`, `int()`, `float()`, `char16_t()`)
 - ✅ **All C++ char types** (`char8_t`, `char16_t`, `char32_t`, `wchar_t`) supported in functional cast/init syntax
