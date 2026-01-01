@@ -13984,18 +13984,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// This allows type aliases like false_type, true_type, enable_if_t to be used in specific contexts
 		// Only apply this fallback when the identifier is followed by '::' or '(' to ensure
 		// we don't break legitimate cases where an identifier should be an error
-		// NOTE: We do NOT check for ',' or '>' here because gTypesByName contains ALL types (including structs),
-		// not just type aliases. Struct types like WithoutType need the normal type parsing fallback path.
+		// ENHANCED: In TemplateArgument context, also check for ',' or '>' or '<' because type aliases
+		// and template class names are commonly used as template arguments in <type_traits>
 		bool found_as_type_alias = false;
 		if (!identifierType && peek_token().has_value()) {
 			std::string_view peek = peek_token()->value();
 			// Check gTypesByName if identifier is followed by :: (qualified name) or ( (constructor call)
-			if (peek == "::" || peek == "(") {
+			bool should_check_types = (peek == "::" || peek == "(");
+			
+			// In template argument context, also check for ',' or '>' or '<' since type aliases
+			// and template class names are commonly used as template arguments
+			// (e.g., first_t<false_type, ...>, __or_<is_reference<T>, is_function<T>>)
+			if (!should_check_types && context == ExpressionContext::TemplateArgument) {
+				should_check_types = (peek == "," || peek == ">" || peek == ">>" || peek == "<");
+			}
+			
+			if (should_check_types) {
 				StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
 				auto type_it = gTypesByName.find(identifier_handle);
 				if (type_it != gTypesByName.end()) {
-					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName (peek='{}')", 
-						idenfifier_token.value(), peek);
+					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName (peek='{}', context={})", 
+						idenfifier_token.value(), peek, context == ExpressionContext::TemplateArgument ? "TemplateArgument" : "other");
 					found_as_type_alias = true;
 					// Mark that we found it as a type so it can be used for type references
 					// The actual type info will be retrieved later when needed
@@ -24458,6 +24467,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			
 			FLASH_LOG(Templates, Debug, "Processing base class: ", base_name_str);
+			
+			// NEW: Check if the base class IS a template parameter name (like T1, T2)
+			// If so, substitute it with the corresponding template argument
+			// This handles patterns like: template<typename T1, typename T2> struct __or_<T1, T2> : T1 { };
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				if (template_params[i].is<TemplateParameterNode>()) {
+					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+					if (param.name() == base_name_str) {
+						// The base class is a template parameter - substitute with the corresponding argument
+						const TemplateTypeArg& arg = template_args[i];
+						
+						// Get the concrete type name for this argument
+						std::string substituted_name = arg.toString();
+						FLASH_LOG(Templates, Debug, "Substituting base class template parameter '", base_name_str, 
+						          "' with '", substituted_name, "'");
+						base_name_str = substituted_name;
+						break;
+					}
+				}
+			}
 			
 			// WORKAROUND: If the base class name ends with "_unknown", it was instantiated
 			// during pattern parsing with template parameters. We need to re-instantiate
