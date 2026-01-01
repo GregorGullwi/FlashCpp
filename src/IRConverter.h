@@ -8824,7 +8824,7 @@ private:
 		}
 		
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-			if (inside_catch_handler_) {
+			if (inside_catch_handler_ && g_enable_exceptions) {
 				emitCall("__cxa_end_catch");
 				inside_catch_handler_ = false;
 			}

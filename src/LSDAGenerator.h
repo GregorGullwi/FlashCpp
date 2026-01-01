@@ -111,7 +111,7 @@ private:
 		                             call_site_table_size + action_table_size;
 		uint64_t ttype_base = base_without_self + DwarfCFI::encodeULEB128(base_without_self).size();
 		// If the encoded size changes after adding itself, recompute until stable (for larger tables)
-		while (true) {
+		for (int i = 0; i < 4; ++i) {
 			auto encoded = DwarfCFI::encodeULEB128(ttype_base);
 			uint64_t candidate = base_without_self + encoded.size();
 			if (candidate == ttype_base) break;
