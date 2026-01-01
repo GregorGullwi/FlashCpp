@@ -1151,6 +1151,7 @@ struct VirtualCallOp {
 	std::variant<StringHandle, TempVar> object;  // Object instance ('this')
 	int vtable_index;                                // Index into vtable
 	std::vector<TypedValue> arguments;               // Call arguments
+	bool is_pointer_access = false;                  // True if object is a pointer (ptr->method)
 };
 
 // String literal

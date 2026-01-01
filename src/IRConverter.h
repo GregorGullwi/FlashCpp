@@ -6804,15 +6804,16 @@ private:
 		}
 
 		// Virtual call sequence varies based on whether object is a pointer or direct:
-		// For pointers (object_size == 64):
+		// For pointers (is_pointer_access == true, e.g., ptr->method()):
 		//   1. Load object pointer value → 2. Load vptr from [pointer] → 3. Load func from [vptr + index*8] → 4. Call
-		// For direct objects (object_size > 64):
+		// For direct objects (is_pointer_access == false, e.g., obj.method()):
 		//   1. Get object address → 2. Load vptr from [address] → 3. Load func from [vptr + index*8] → 4. Call
 
 		const X64Register this_reg = getIntParamReg<TWriterClass>(0); // First parameter register
 
-		// Determine if object is a pointer or direct object
-		bool is_pointer_object = (op.object_size == 64);
+		// Use is_pointer_access flag to determine if object is a pointer or direct object
+		// Previously we used (op.object_size == 64) but that's wrong for small structs (like those with only vptr)
+		bool is_pointer_object = op.is_pointer_access;
 
 		if (is_pointer_object) {
 			// Step 1a: Load pointer value from stack into this_reg
@@ -12660,7 +12661,9 @@ private:
 			}
 			
 			// Load vtable address using LEA with relocation
-			// LEA RAX, [RIP + vtable_symbol]
+			// The vtable symbol (_ZTV...) already points to the function pointer array
+			// (the ElfFileWriter's add_vtable creates the symbol at offset +16 past the RTTI header)
+			// So we just need a standard PC-relative relocation with the default addend
 			uint32_t relocation_offset = emitLeaRipRelative(X64Register::RAX);
 			
 			// Add a relocation for the vtable symbol
