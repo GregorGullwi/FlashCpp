@@ -12138,6 +12138,9 @@ private:
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
 			vcall_op.object = StringTable::getOrInternStringHandle(object_name);
 			vcall_op.vtable_index = vtable_index;
+			// Set is_pointer_access based on whether the object is accessed through a pointer (ptr->method)
+			// This is true if the object type has pointer depth > 0
+			vcall_op.is_pointer_access = (object_type.pointer_depth() > 0);
 
 			// Generate IR for function arguments
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
