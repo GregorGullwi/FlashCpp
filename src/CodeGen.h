@@ -3319,7 +3319,12 @@ private:
 				in_return_statement_with_rvo_ = true;
 			}
 			
-			auto operands = visitExpressionNode(expr_opt->as<ExpressionNode>());
+			// For reference return types, use LValueAddress context to get the address instead of the value
+			// This ensures "return *this" returns the address (this pointer), not the dereferenced value
+			ExpressionContext return_context = current_function_returns_reference_ 
+				? ExpressionContext::LValueAddress 
+				: ExpressionContext::Load;
+			auto operands = visitExpressionNode(expr_opt->as<ExpressionNode>(), return_context);
 			
 			// Clear the RVO flag after evaluation
 			in_return_statement_with_rvo_ = false;
@@ -6411,7 +6416,7 @@ private:
 		}
 		else if (std::holds_alternative<UnaryOperatorNode>(exprNode)) {
 			const auto& expr = std::get<UnaryOperatorNode>(exprNode);
-			return generateUnaryOperatorIr(expr);
+			return generateUnaryOperatorIr(expr, context);
 		}
 		else if (std::holds_alternative<TernaryOperatorNode>(exprNode)) {
 			const auto& expr = std::get<TernaryOperatorNode>(exprNode);
@@ -7725,7 +7730,8 @@ private:
 		return std::nullopt;
 	}
 
-	std::vector<IrOperand> generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode) {
+	std::vector<IrOperand> generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode, 
+	                                                 ExpressionContext context = ExpressionContext::Load) {
 		std::vector<IrOperand> irOperands;
 
 		// OPERATOR OVERLOAD RESOLUTION
@@ -8649,6 +8655,15 @@ private:
 			// When dereferencing a pointer, the result size depends on the pointer depth:
 			// - For single pointer (int*), result is the base type size (e.g., 32 for int)
 			// - For multi-level pointer (int**), result is still a pointer (64 bits)
+			
+			// For LValueAddress context (e.g., return statement in a function returning reference),
+			// we want the address (the pointer), not the dereferenced value.
+			// Example: "return *this" in a function returning Base& should return 'this' (the address)
+			if (context == ExpressionContext::LValueAddress) {
+				// Don't dereference - just return the pointer operand as-is
+				// The pointer IS the address we want
+				return operandIrOperands;
+			}
 			
 			int element_size = 64; // Default to pointer size
 			int pointer_depth = 0;
@@ -12245,11 +12260,17 @@ private:
 			vcall_op.result.type = return_type.type();
 			// For pointer return types, use 64 bits (pointer size), otherwise use the type's size
 			// Also handle reference return types as pointers (64 bits)
+			FLASH_LOG(Codegen, Debug, "VirtualCall return_type: ptr_depth=", return_type.pointer_depth(),
+			          " is_ptr=", return_type.is_pointer(),
+			          " is_ref=", return_type.is_reference(),
+			          " is_rref=", return_type.is_rvalue_reference(),
+			          " size_bits=", return_type.size_in_bits());
 			if (return_type.pointer_depth() > 0 || return_type.is_pointer() || return_type.is_reference() || return_type.is_rvalue_reference()) {
 				vcall_op.result.size_in_bits = 64;
 			} else {
 				vcall_op.result.size_in_bits = static_cast<int>(return_type.size_in_bits());
 			}
+			FLASH_LOG(Codegen, Debug, "VirtualCall result.size_in_bits=", vcall_op.result.size_in_bits);
 			vcall_op.result.value = ret_var;
 			vcall_op.object_type = object_type.type();
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
@@ -12739,7 +12760,13 @@ private:
 			? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 			: func_decl_node.type_node().as<TypeSpecifierNode>();
 		
-		return { return_type.type(), static_cast<int>(return_type.size_in_bits()), ret_var, static_cast<unsigned long long>(return_type.type_index()) };
+		// For pointer/reference return types, use 64 bits (pointer size on x64)
+		// Otherwise, use the type's natural size
+		int return_size_bits = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
+			? 64
+			: static_cast<int>(return_type.size_in_bits());
+		
+		return { return_type.type(), return_size_bits, ret_var, static_cast<unsigned long long>(return_type.type_index()) };
 	}
 
 	std::vector<IrOperand> generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,

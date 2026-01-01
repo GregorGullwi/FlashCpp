@@ -7619,18 +7619,25 @@ private:
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
 					int src_offset = getStackOffsetFromTempVar(temp_var);
+					FLASH_LOG(Codegen, Debug, "Reference init from TempVar: src_offset=", src_offset, 
+					          " init.type=", static_cast<int>(init.type), 
+					          " init.size_in_bits=", init.size_in_bits);
 					// Check if source is itself a pointer/reference - if so, load the value
 					// Otherwise, take the address
 					auto src_ref_it = reference_stack_info_.find(src_offset);
 					if (src_ref_it != reference_stack_info_.end()) {
 						// Source is a reference - copy the pointer value
+						FLASH_LOG(Codegen, Debug, "Source is in reference_stack_info, using MOV");
 						emitMovFromFrame(pointer_reg, src_offset);
 					} else {
 						// Check if it's a 64-bit value (likely a pointer)
 						// For __range_begin_ and similar, which are int64 pointers
+						// Also check for struct types that returned as pointers (reference returns)
 						bool is_likely_pointer = (init.size_in_bits == 64 && 
 						                          (init.type == Type::Long || init.type == Type::Int || 
-						                           init.type == Type::UnsignedLong || init.type == Type::LongLong));
+						                           init.type == Type::UnsignedLong || init.type == Type::LongLong ||
+						                           init.type == Type::Struct));  // Struct references return 64-bit pointers
+						FLASH_LOG(Codegen, Debug, "is_likely_pointer=", is_likely_pointer);
 						if (is_likely_pointer) {
 							// Load the pointer value
 							emitMovFromFrame(pointer_reg, src_offset);
@@ -8233,10 +8240,10 @@ private:
 						// Reserve space for vtable entries
 						vtable_info.function_symbols.resize(struct_info->vtable.size());
 						
-						// Initialize pure virtual function entries to __cxa_pure_virtual / _pure_virtual
-						// Note: This only affects pure virtual functions in THIS class's vtable.
-						// Derived classes that override these functions will have their own vtables
-						// with the actual implementation function pointers.
+						// Initialize vtable entries with appropriate function symbols:
+						// - Pure virtual functions: __cxa_pure_virtual / _purecall
+						// - Inherited functions (from base classes): base class's mangled function name
+						// - Overridden functions: will be updated when we process the derived class's function definition
 						const std::string_view pure_virtual_symbol = []()
 						{
 							if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -8245,8 +8252,40 @@ private:
 							return "_purecall"sv;
 						}();
 						for (size_t i = 0; const auto* vfunc : struct_info->vtable) {
-							if (vfunc && vfunc->is_pure_virtual) {
-								vtable_info.function_symbols[i] = pure_virtual_symbol;
+							if (vfunc) {
+								if (vfunc->is_pure_virtual) {
+									vtable_info.function_symbols[i] = pure_virtual_symbol;
+								} else {
+									// Generate mangled name for this function
+									// The function_decl contains information about which class owns this function
+									std::string_view owning_struct_name;
+									std::string_view func_name;
+									
+									if (vfunc->is_destructor) {
+										// Destructor - get struct name from DestructorDeclarationNode
+										const auto& dtor_node = vfunc->function_decl.as<DestructorDeclarationNode>();
+										owning_struct_name = StringTable::getStringView(dtor_node.struct_name());
+										
+										// Generate mangled destructor name
+										auto mangled = NameMangling::generateMangledNameFromNode(dtor_node);
+										vtable_info.function_symbols[i] = mangled.view();
+									} else if (!vfunc->is_constructor) {
+										// Regular virtual function - get struct name from FunctionDeclarationNode
+										const auto& func_node = vfunc->function_decl.as<FunctionDeclarationNode>();
+										owning_struct_name = func_node.parent_struct_name();
+										func_name = StringTable::getStringView(vfunc->getName());
+										
+										// Generate mangled function name using the function's owning struct
+										const auto& return_type = func_node.decl_node().type_node().as<TypeSpecifierNode>();
+										const auto& params = func_node.parameter_nodes();
+										std::vector<std::string_view> empty_ns_path;
+										auto mangled = NameMangling::generateMangledName(
+											func_name, return_type, params, false, 
+											owning_struct_name, empty_ns_path, Linkage::CPlusPlus
+										);
+										vtable_info.function_symbols[i] = mangled.view();
+									}
+								}
 							}
 							++i;
 						}
@@ -12427,7 +12466,14 @@ private:
 				object_base_offset = it->second.offset;
 
 				// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
-				if (StringTable::getStringView(object_name_handle) == "this"sv || reference_stack_info_.count(object_base_offset) > 0 || op.is_pointer_to_member) {
+				bool is_this = (StringTable::getStringView(object_name_handle) == "this"sv);
+				bool in_ref_stack_info = (reference_stack_info_.count(object_base_offset) > 0);
+				FLASH_LOG(Codegen, Debug, "MemberAccess check: object='", StringTable::getStringView(object_name_handle),
+				          "' offset=", object_base_offset,
+				          " is_this=", is_this,
+				          " in_ref_stack_info=", in_ref_stack_info,
+				          " is_pointer_to_member=", op.is_pointer_to_member);
+				if (is_this || in_ref_stack_info || op.is_pointer_to_member) {
 					is_pointer_access = true;
 				}
 			}
