@@ -1499,6 +1499,10 @@ public:
 	void set_linkage(Linkage linkage) { linkage_ = linkage; }
 	Linkage linkage() const { return linkage_; }
 
+	// Virtual function support
+	void set_virtual(bool v) { is_virtual_ = v; }
+	bool is_virtual() const { return is_virtual_; }
+
 	// Calling convention support (for Windows ABI and variadic validation)
 	void set_calling_convention(CallingConvention cc) { calling_convention_ = cc; }
 	CallingConvention calling_convention() const { return calling_convention_; }
@@ -1560,6 +1564,7 @@ private:
 	std::string_view parent_struct_name_;  // Points directly into source text from lexer token or ChunkedStringAllocator
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
+	bool is_virtual_ = false;
 	bool has_template_body_ = false;
 	bool has_template_declaration_ = false;  // True if template declaration position is saved (for SFINAE re-parsing)
 	bool is_variadic_ = false;  // True if this function has ... ellipsis parameter
@@ -2005,6 +2010,9 @@ public:
 	StringHandle name() const { return name_; }
 	Token name_token() const { return Token(Token::Type::Identifier, StringTable::getStringView(name_), 0, 0, 0); }  // Create token on demand
 
+	bool is_virtual() const { return is_virtual_; }
+	void set_virtual(bool v) { is_virtual_ = v; }
+
 	const std::optional<ASTNode>& get_definition() const {
 		return definition_block_;
 	}
@@ -2024,6 +2032,7 @@ public:
 private:
 	StringHandle struct_name_;  // Points directly into source text from lexer token
 	StringHandle name_;         // Points directly into source text from lexer token
+	bool is_virtual_ = false;
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	StringHandle mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 };

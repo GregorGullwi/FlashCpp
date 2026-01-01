@@ -4291,6 +4291,7 @@ ParseResult Parser::parse_struct_declaration()
 			if (is_override || is_final) {
 				is_virtual = true;
 			}
+			dtor_ref.set_virtual(is_virtual);
 
 			// Check for = default or = delete
 			bool is_defaulted = false;
@@ -4574,6 +4575,7 @@ ParseResult Parser::parse_struct_declaration()
 			if (is_override || is_final) {
 				is_virtual = true;
 			}
+			member_func_node.as<FunctionDeclarationNode>().set_virtual(is_virtual);
 
 			// Check if this is an operator overload
 			std::string_view func_name = decl_node.identifier_token().value();

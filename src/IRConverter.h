@@ -8280,7 +8280,8 @@ private:
 										std::vector<std::string_view> empty_ns_path;
 										auto mangled = NameMangling::generateMangledName(
 											func_name, return_type, params, false, 
-											owning_struct_name, empty_ns_path, Linkage::CPlusPlus
+											owning_struct_name, empty_ns_path, Linkage::CPlusPlus,
+											true // is_virtual
 										);
 										vtable_info.function_symbols[i] = mangled.view();
 									}

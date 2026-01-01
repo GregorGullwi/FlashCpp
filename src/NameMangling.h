@@ -475,7 +475,8 @@ inline MangledName generateMangledName(
 	bool is_variadic = false,
 	std::string_view struct_name = "",
 	const std::vector<std::string_view>& namespace_path = {},
-	Linkage linkage = Linkage::CPlusPlus
+	Linkage linkage = Linkage::CPlusPlus,
+	bool is_virtual = false
 ) {
 	StringBuilder builder;
 	
@@ -525,7 +526,11 @@ inline MangledName generateMangledName(
 		}
 		builder.append(remaining);  // Append the first (outermost) part
 		
-		builder.append("@@QA");  // @@ + calling convention for member functions (Q = __thiscall-like)
+		if (is_virtual) {
+			builder.append("@@UEAA");
+		} else {
+			builder.append("@@QEAA");
+		}
 	} else if (!namespace_path.empty()) {
 		// Namespace-scoped free function: ?name@Namespace@@YA...
 		builder.append(func_name);
@@ -534,9 +539,7 @@ inline MangledName generateMangledName(
 		// Append namespace parts in reverse order with @ separators
 		for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
 			builder.append(*it);
-			if (std::next(it) != namespace_path.rend()) {
-				builder.append('@');
-			}
+			builder.append('@');
 		}
 		
 		builder.append("@@YA");  // @@ + calling convention (__cdecl)
@@ -572,7 +575,8 @@ inline MangledName generateMangledName(
 	bool is_variadic = false,
 	std::string_view struct_name = "",
 	const std::vector<std::string_view>& namespace_path = {},
-	Linkage linkage = Linkage::CPlusPlus
+	Linkage linkage = Linkage::CPlusPlus,
+	bool is_virtual = false
 ) {
 	StringBuilder builder;
 	
@@ -619,15 +623,17 @@ inline MangledName generateMangledName(
 		}
 		builder.append(remaining);
 		
-		builder.append("@@QA");
+		if (is_virtual) {
+			builder.append("@@UEAA");
+		} else {
+			builder.append("@@QEAA");
+		}
 	} else if (!namespace_path.empty()) {
 		builder.append(func_name);
 		builder.append('@');
 		for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
 			builder.append(*it);
-			if (std::next(it) != namespace_path.rend()) {
-				builder.append('@');
-			}
+			builder.append('@');
 		}
 		builder.append("@@YA");
 	} else {
@@ -706,7 +712,8 @@ inline MangledName generateMangledNameFromNode(
 	// Use the overload that accepts parameter nodes directly
 	// Pass linkage from the function node
 	return generateMangledName(func_name, return_type, func_node.parameter_nodes(), 
-	                           func_node.is_variadic(), struct_name, namespace_path, func_node.linkage());
+	                           func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
+	                           func_node.is_virtual());
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -741,7 +748,16 @@ inline MangledName generateMangledNameForConstructor(
 	StringBuilder builder;
 	
 	builder.append("??0");  // Constructor marker in MSVC mangling
-	builder.append(struct_name);
+	
+	// Handle nested classes
+	std::string_view remaining = struct_name;
+	size_t sep_pos;
+	while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
+		builder.append(remaining.substr(sep_pos + 2));
+		builder.append('@');
+		remaining = remaining.substr(0, sep_pos);
+	}
+	builder.append(remaining);
 	
 	// Add namespace path if present
 	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
@@ -749,14 +765,17 @@ inline MangledName generateMangledNameForConstructor(
 		builder.append(*it);
 	}
 	
-	builder.append("@@QAE");  // @@ + __thiscall calling convention
+	builder.append("@@QEAA@");  // @@ + public __cdecl (x64) + empty return type
 	
-	// Add parameter type codes
-	for (const auto& param_type : param_types) {
-		appendTypeCode(builder, param_type);
+	if (param_types.empty()) {
+		builder.append("XZ");
+	} else {
+		// Add parameter type codes
+		for (const auto& param_type : param_types) {
+			appendTypeCode(builder, param_type);
+		}
+		builder.append("@Z");  // End marker
 	}
-	
-	builder.append("@Z");  // End marker
 	
 	return MangledName(builder.commit());
 }
@@ -770,7 +789,16 @@ inline MangledName generateMangledNameForConstructor(
 	StringBuilder builder;
 	
 	builder.append("??0");  // Constructor marker in MSVC mangling
-	builder.append(struct_name);
+	
+	// Handle nested classes
+	std::string_view remaining = struct_name;
+	size_t sep_pos;
+	while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
+		builder.append(remaining.substr(sep_pos + 2));
+		builder.append('@');
+		remaining = remaining.substr(0, sep_pos);
+	}
+	builder.append(remaining);
 	
 	// Add namespace path if present
 	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
@@ -778,15 +806,18 @@ inline MangledName generateMangledNameForConstructor(
 		builder.append(*it);
 	}
 	
-	builder.append("@@QAE");  // @@ + __thiscall calling convention
+	builder.append("@@QEAA@");  // @@ + public __cdecl (x64) + empty return type
 	
-	// Add parameter type codes directly from param nodes
-	for (const auto& param : param_nodes) {
-		const DeclarationNode& param_decl = param.as<DeclarationNode>();
-		appendTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
+	if (param_nodes.empty()) {
+		builder.append("XZ");
+	} else {
+		// Add parameter type codes directly from param nodes
+		for (const auto& param : param_nodes) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			appendTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
+		}
+		builder.append("@Z");  // End marker
 	}
-	
-	builder.append("@Z");  // End marker
 	
 	return MangledName(builder.commit());
 }
@@ -796,13 +827,24 @@ inline MangledName generateMangledNameForConstructor(
 // This is called internally by generateMangledNameFromNode(DestructorDeclarationNode) when
 // g_mangling_style == ManglingStyle::MSVC
 inline MangledName generateMangledNameForDestructor(
-	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path = {}
+	StringHandle struct_name_handle,
+	const std::vector<std::string_view>& namespace_path = {},
+	bool is_virtual = true
 ) {
 	StringBuilder builder;
+	std::string_view struct_name = StringTable::getStringView(struct_name_handle);
 	
 	builder.append("??1");  // Destructor marker in MSVC mangling
-	builder.append(struct_name);
+	
+	// Handle nested classes
+	std::string_view remaining = struct_name;
+	size_t sep_pos;
+	while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
+		builder.append(remaining.substr(sep_pos + 2));
+		builder.append('@');
+		remaining = remaining.substr(0, sep_pos);
+	}
+	builder.append(remaining);
 	
 	// Add namespace path if present
 	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
@@ -810,9 +852,16 @@ inline MangledName generateMangledNameForDestructor(
 		builder.append(*it);
 	}
 	
-	// @@ = scope terminator, QAE = __thiscall calling convention,
-	// @X = void parameters (no params), Z = end marker
-	builder.append("@@QAE@XZ");
+	// @@ = scope terminator
+	// UEAA = public virtual __cdecl (x64)
+	// QEAA = public __cdecl (x64)
+	// @ = empty return type
+	// XZ = void parameters (no params)
+	if (is_virtual) {
+		builder.append("@@UEAA@XZ");
+	} else {
+		builder.append("@@QEAA@XZ");
+	}
 	
 	return MangledName(builder.commit());
 }
@@ -848,6 +897,20 @@ inline MangledName generateMangledNameFromNode(
 	}
 }
 
+// Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
+inline MangledName generateMangledNameFromNode(
+	const ConstructorDeclarationNode& ctor_node,
+	const std::vector<std::string>& namespace_path
+) {
+	// Convert to string_view vector and delegate
+	std::vector<std::string_view> ns_views;
+	ns_views.reserve(namespace_path.size());
+	for (const auto& ns : namespace_path) {
+		ns_views.push_back(ns);
+	}
+	return generateMangledNameFromNode(ctor_node, ns_views);
+}
+
 // Generate mangled name from a DestructorDeclarationNode
 inline MangledName generateMangledNameFromNode(
 	const DestructorDeclarationNode& dtor_node,
@@ -878,8 +941,22 @@ inline MangledName generateMangledNameFromNode(
 		                           false, struct_name_sv, namespace_path, Linkage::CPlusPlus);
 	} else {
 		// Use MSVC-style destructor mangling
-		return generateMangledNameForDestructor(dtor_node.struct_name(), namespace_path);
+		return generateMangledNameForDestructor(dtor_node.struct_name(), namespace_path, dtor_node.is_virtual());
 	}
+}
+
+// Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
+inline MangledName generateMangledNameFromNode(
+	const DestructorDeclarationNode& dtor_node,
+	const std::vector<std::string>& namespace_path
+) {
+	// Convert to string_view vector and delegate
+	std::vector<std::string_view> ns_views;
+	ns_views.reserve(namespace_path.size());
+	for (const auto& ns : namespace_path) {
+		ns_views.push_back(ns);
+	}
+	return generateMangledNameFromNode(dtor_node, ns_views);
 }
 
 } // namespace NameMangling

@@ -2601,16 +2601,8 @@ private:
 		// Mark them as inline so they get weak linkage in the object file
 		ctor_decl_op.is_inline = true;
 
-		// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
-		// For nested classes, use the full struct name for mangling
-		TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
-		ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(generateMangledNameForCall(
-			ctor_function_name,
-			void_type,
-			node.parameter_nodes(),  // Use parameter nodes directly
-			false,  // not variadic
-			struct_name_for_ctor  // Use full struct name for mangling (e.g., "Outer::Inner")
-		));
+		// Generate mangled name for constructor
+		ctor_decl_op.mangled_name = NameMangling::generateMangledNameFromNode(node, current_namespace_stack_);
 		
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
@@ -3111,18 +3103,8 @@ private:
 	dtor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for destructors
 	dtor_decl_op.is_variadic = false;  // Destructors are never variadic
 
-	// Generate mangled name for destructor (MSVC format: ?~ClassName@ClassName@@...)
-	// Destructors have no parameters (except implicit 'this')
-	std::vector<TypeSpecifierNode> empty_params;
-	std::string_view dtor_name = StringBuilder().append("~").append(node.struct_name()).commit();
-	TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
-	dtor_decl_op.mangled_name = StringTable::getOrInternStringHandle(generateMangledNameForCall(
-		dtor_name,
-		void_type,
-		empty_params,
-		false,  // not variadic
-		node.struct_name().view()  // struct name for member function mangling
-	));
+	// Generate mangled name for destructor
+	dtor_decl_op.mangled_name = NameMangling::generateMangledNameFromNode(node, current_namespace_stack_);
 
 	// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 	// We don't add it here to avoid duplication

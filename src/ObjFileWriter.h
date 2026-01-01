@@ -416,6 +416,25 @@ public:
 			return std::string(name);
 		}
 
+		// Check if this is a constructor or destructor
+		bool is_constructor = false;
+		bool is_destructor = false;
+		
+		if (!sig.class_name.empty()) {
+			// Extract class name only (last part of sig.class_name)
+			std::string_view class_name_only = sig.class_name;
+			size_t last_colon = class_name_only.rfind("::");
+			if (last_colon != std::string_view::npos) {
+				class_name_only = class_name_only.substr(last_colon + 2);
+			}
+			
+			if (name == class_name_only) {
+				is_constructor = true;
+			} else if (name.size() == class_name_only.size() + 1 && name[0] == '~' && name.substr(1) == class_name_only) {
+				is_destructor = true;
+			}
+		}
+
 		// Calculate approximate size and reserve to avoid reallocations
 		size_t estimated_size = 1 + name.size() + 2 + 2 + 2;  // '?' + name + "@@" + calling_conv + return_type
 		if (!sig.class_name.empty()) {
@@ -427,8 +446,14 @@ public:
 		std::string mangled;
 		mangled.reserve(estimated_size);
 
-		mangled += '?';
-		mangled += name;
+		if (is_constructor) {
+			mangled += "??0";
+		} else if (is_destructor) {
+			mangled += "??1";
+		} else {
+			mangled += '?';
+			mangled += name;
+		}
 
 		// Add class name if this is a member function
 		// For nested classes (e.g., "Outer::Inner"), reverse the order and use @ separators
@@ -447,7 +472,13 @@ public:
 			
 			// Reverse and append with @ separators (innermost to outermost)
 			for (auto it = class_parts.rbegin(); it != class_parts.rend(); ++it) {
-				mangled += '@';
+				if (it == class_parts.rbegin()) {
+					if (!is_constructor && !is_destructor) {
+						mangled += '@';
+					}
+				} else {
+					mangled += '@';
+				}
 				mangled += *it;
 			}
 		}
@@ -458,26 +489,34 @@ public:
 		if (!sig.class_name.empty()) {
 			mangled += "Q";  // Member function
 			if (sig.is_const) {
-				mangled += "E";  // const member function
+				mangled += "EBA";  // const member function (x64)
 			} else {
-				mangled += "A";  // non-const member function
+				mangled += "EAA";  // non-const member function (x64)
 			}
 		} else {
 			mangled += "YA";  // Non-member function with __cdecl
 		}
 
 		// Return type
-		mangled += getTypeCode(sig.return_type);
-
-		// Parameter types
-		for (const auto& param : sig.parameter_types) {
-			mangled += getTypeCode(param);
+		if (is_constructor || is_destructor) {
+			mangled += "@"; // Empty return type for constructors/destructors
+		} else {
+			mangled += getTypeCode(sig.return_type);
 		}
 
-		if (sig.is_variadic) {
-			mangled += "Z";  // ... ellipsis parameter
+		// Parameter types
+		if (sig.parameter_types.empty()) {
+			mangled += "XZ"; // void parameters
 		} else {
-			mangled += "@Z";  // End of parameter list (no ellipsis)
+			for (const auto& param : sig.parameter_types) {
+				mangled += getTypeCode(param);
+			}
+
+			if (sig.is_variadic) {
+				mangled += "Z";  // ... ellipsis parameter
+			} else {
+				mangled += "@Z";  // End of parameter list (no ellipsis)
+			}
 		}
 
 		if (g_enable_debug_output) std::cerr << "DEBUG generateMangledName: " << name << " -> " << mangled << "\n";
