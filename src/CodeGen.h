@@ -15907,8 +15907,6 @@ private:
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 								
 								// Store the address in the closure member
-								
-								// Store the address in the closure member
 								MemberStoreOp member_store;
 								member_store.value.type = init_type;
 								member_store.value.size_in_bits = 64; // pointer size
