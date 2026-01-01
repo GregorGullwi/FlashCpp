@@ -104,12 +104,11 @@ private:
 		// GCC generates this encoding for static/non-PIE executables.
 		data.push_back(DwarfCFI::DW_EH_PE_udata4);
 		
-		// TType base offset (offset from here to end of type table)
-		// This is the size of: call_site_encoding + call_site_table_size_uleb + call_site_table + action_table + type_table
-		uint64_t ttype_base = 1 + DwarfCFI::encodeULEB128(call_site_table_size).size() + 
-		                      call_site_table_size + 
-		                      action_table_size +
-		                      type_table_size;
+		// TType base offset (offset from this field to the start of the type table)
+		// Includes: size of this ULEB itself + call_site_encoding + call_site_table_size_uleb +
+		//           call_site_table + action_table
+		uint64_t ttype_base = 1 + DwarfCFI::encodeULEB128(call_site_table_size).size() +
+		                      call_site_table_size + action_table_size;
 		DwarfCFI::appendULEB128(data, ttype_base);
 		
 		// Call site table encoding
