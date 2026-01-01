@@ -1241,14 +1241,12 @@ public:
 				rela_personality_ref->set_addr_align(8);
 				rela_personality_ref->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
 				
-				auto rela_ref_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
-					elf_writer_, rela_personality_ref
-				);
 				// Add R_X86_64_64 relocation from ref section to __gxx_personality_v0
-				rela_ref_accessor->add_entry(0,  // offset within the ref section
-				                            static_cast<ELFIO::Elf_Word>(personality_sym_index),
-				                            ELFIO::R_X86_64_64,
-				                            0);
+				ELFIO::relocation_section_accessor rela_ref_accessor(elf_writer_, rela_personality_ref);
+				rela_ref_accessor.add_entry(0,  // offset within the ref section
+				                           static_cast<ELFIO::Elf_Word>(personality_sym_index),
+				                           ELFIO::R_X86_64_64,
+				                           0);
 				
 				// Step 5: Add R_X86_64_PC32 relocation in .eh_frame to DW.ref.__gxx_personality_v0
 				rela_accessor->add_entry(personality_routine_offset_,
