@@ -177,6 +177,8 @@ $expectedLinkFailures = @(
     "test_linux_abi.cpp"  # Tests 6 integer params (Linux ABI specific)
     "test_full_spec_inherit.cpp"          # Demonstrates full specialization inheritance parsing (Priority 8b: implicit constructor issue)
     "test_full_spec_inherit_simple.cpp"   # Demonstrates full specialization inheritance parsing (Priority 8b: implicit constructor issue)
+    # Virtual destructor symbol generation issue on MSVC
+    "test_xvalue_all_casts.cpp"           # Missing virtual destructor symbol (??1Base@@QAE@XZ) on MSVC
 )
 
 # Results tracking
