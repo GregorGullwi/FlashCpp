@@ -8691,13 +8691,76 @@ private:
 			// - For single pointer (int*), result is the base type size (e.g., 32 for int)
 			// - For multi-level pointer (int**), result is still a pointer (64 bits)
 			
-			// For LValueAddress context (e.g., return statement in a function returning reference),
-			// we want the address (the pointer), not the dereferenced value.
-			// Example: "return *this" in a function returning Base& should return 'this' (the address)
+			// For LValueAddress context (e.g., assignment LHS like *ptr = value),
+			// we need to return operands with lvalue metadata so handleLValueAssignment
+			// can detect this is a dereference store.
 			if (context == ExpressionContext::LValueAddress) {
-				// Don't dereference - just return the pointer operand as-is
-				// The pointer IS the address we want
-				return operandIrOperands;
+				// Get the element size (what we're storing to)
+				int element_size = 64; // Default to pointer size
+				int pointer_depth = 0;
+				
+				// Get pointer depth
+				if (operandIrOperands.size() >= 4 && std::holds_alternative<unsigned long long>(operandIrOperands[3])) {
+					pointer_depth = static_cast<int>(std::get<unsigned long long>(operandIrOperands[3]));
+				} else if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+					const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(operandExpr)) {
+						const IdentifierNode& identifier = std::get<IdentifierNode>(operandExpr);
+						auto symbol = symbol_table.lookup(identifier.name());
+						if (symbol.has_value()) {
+							const TypeSpecifierNode* type_node = nullptr;
+							if (symbol->is<DeclarationNode>()) {
+								type_node = &symbol->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+							} else if (symbol->is<VariableDeclarationNode>()) {
+								type_node = &symbol->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+							}
+							if (type_node) {
+								pointer_depth = type_node->pointer_depth();
+							}
+						}
+					}
+				}
+				
+				// Calculate element size after dereference
+				if (pointer_depth <= 1) {
+					switch (operandType) {
+						case Type::Bool: element_size = 8; break;
+						case Type::Char: element_size = 8; break;
+						case Type::Short: element_size = 16; break;
+						case Type::Int: element_size = 32; break;
+						case Type::Long: element_size = 64; break;
+						case Type::Float: element_size = 32; break;
+						case Type::Double: element_size = 64; break;
+						default: element_size = 64; break;
+					}
+				}
+				
+				// Create a TempVar with Indirect lvalue metadata
+				// This allows handleLValueAssignment to recognize this as a dereference store
+				TempVar lvalue_temp = var_counter.next();
+				
+				// Extract the pointer base (StringHandle or TempVar)
+				std::variant<StringHandle, TempVar> base;
+				if (std::holds_alternative<StringHandle>(operandIrOperands[2])) {
+					base = std::get<StringHandle>(operandIrOperands[2]);
+				} else if (std::holds_alternative<TempVar>(operandIrOperands[2])) {
+					base = std::get<TempVar>(operandIrOperands[2]);
+				} else {
+					// Fall back to old behavior if we can't extract base
+					return operandIrOperands;
+				}
+				
+				// Set lvalue metadata with Indirect kind (dereference)
+				LValueInfo lvalue_info(
+					LValueInfo::Kind::Indirect,
+					base,
+					0  // offset is 0 for simple dereference
+				);
+				setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info));
+				
+				// Return with TempVar that has the lvalue metadata
+				unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
+				return { operandType, element_size, lvalue_temp, result_ptr_depth };
 			}
 			
 			int element_size = 64; // Default to pointer size
