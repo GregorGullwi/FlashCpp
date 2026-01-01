@@ -884,9 +884,10 @@ public:
 		
 		if (has_exception_handlers) {
 			// P: Personality routine encoding and pointer
-			// Use pcrel|sdata4 (0x1b = PC-relative signed 4-byte) with R_X86_64_PC32 relocation
-			// This is required for the linker to create .eh_frame_hdr
-			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
+			// Use indirect|pcrel|sdata4 (0x9b) - the indirect flag is required because the
+			// personality routine pointer goes through a GOT entry for position-independent code
+			// This encoding matches GCC/clang output and is required for proper exception unwinding
+			eh_frame_data.push_back(DwarfCFI::DW_EH_PE_indirect | DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
 			// Personality routine pointer (will need relocation to __gxx_personality_v0)
 			// Store offset for relocation tracking
 			personality_routine_offset_ = static_cast<uint32_t>(eh_frame_data.size());
@@ -1201,23 +1202,55 @@ public:
 		}
 		
 		// Add relocation for personality routine pointer in CIE
+		// The personality encoding is indirect (0x9b = indirect|pcrel|sdata4), which means:
+		// - The pointer in .eh_frame is NOT the address of __gxx_personality_v0
+		// - Instead, it's a PC-relative pointer to a GOT-like entry that CONTAINS the address
+		// - We create .data.DW.ref.__gxx_personality_v0 section for this purpose
 		if (personality_routine_offset_ > 0) {
-			// Add __gxx_personality_v0 symbol if it doesn't exist
 			auto* accessor = getSymbolAccessor();
 			if (accessor) {
-				// Add as undefined external symbol
-				// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
+				// Step 1: Create .data.DW.ref.__gxx_personality_v0 section
+				// This section holds 8 bytes that will contain the personality routine address
+				auto* personality_ref_section = elf_writer_.sections.add(".data.DW.ref.__gxx_personality_v0");
+				personality_ref_section->set_type(ELFIO::SHT_PROGBITS);
+				personality_ref_section->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
+				personality_ref_section->set_addr_align(8);
+				
+				// Section data: 8 zero bytes (will be filled by linker via R_X86_64_64 relocation)
+				std::vector<uint8_t> ref_data(8, 0);
+				personality_ref_section->set_data(reinterpret_cast<const char*>(ref_data.data()), ref_data.size());
+				
+				// Step 2: Add __gxx_personality_v0 as undefined external symbol
 				accessor->add_symbol(*string_accessor_, "__gxx_personality_v0", 
 				                    0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE, 
 				                    ELFIO::STV_DEFAULT, 0);
+				ELFIO::Elf_Xword personality_sym_index = accessor->get_symbols_num() - 1;
 				
-				// Find the symbol index we just added
-				ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
-				ELFIO::Elf_Xword personality_sym_index = sym_count - 1;
+				// Step 3: Add DW.ref.__gxx_personality_v0 symbol (weak, hidden) pointing to the ref section
+				accessor->add_symbol(*string_accessor_, "DW.ref.__gxx_personality_v0",
+				                    0, 8, ELFIO::STB_WEAK, ELFIO::STT_OBJECT,
+				                    ELFIO::STV_HIDDEN, personality_ref_section->get_index());
+				ELFIO::Elf_Xword dw_ref_sym_index = accessor->get_symbols_num() - 1;
 				
-				// Add R_X86_64_PC32 relocation for pcrel|sdata4 encoding
+				// Step 4: Create .rela.data.DW.ref.__gxx_personality_v0 for the R_X86_64_64 relocation
+				auto* rela_personality_ref = elf_writer_.sections.add(".rela.data.DW.ref.__gxx_personality_v0");
+				rela_personality_ref->set_type(ELFIO::SHT_RELA);
+				rela_personality_ref->set_flags(ELFIO::SHF_INFO_LINK);
+				rela_personality_ref->set_info(personality_ref_section->get_index());
+				rela_personality_ref->set_link(symtab_section_->get_index());
+				rela_personality_ref->set_addr_align(8);
+				rela_personality_ref->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+				
+				// Add R_X86_64_64 relocation from ref section to __gxx_personality_v0
+				ELFIO::relocation_section_accessor rela_ref_accessor(elf_writer_, rela_personality_ref);
+				rela_ref_accessor.add_entry(0,  // offset within the ref section
+				                           static_cast<ELFIO::Elf_Word>(personality_sym_index),
+				                           ELFIO::R_X86_64_64,
+				                           0);
+				
+				// Step 5: Add R_X86_64_PC32 relocation in .eh_frame to DW.ref.__gxx_personality_v0
 				rela_accessor->add_entry(personality_routine_offset_,
-				                        static_cast<ELFIO::Elf_Word>(personality_sym_index),
+				                        static_cast<ELFIO::Elf_Word>(dw_ref_sym_index),
 				                        ELFIO::R_X86_64_PC32,
 				                        0);
 			}
