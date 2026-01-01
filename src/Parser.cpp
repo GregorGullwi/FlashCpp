@@ -22293,21 +22293,42 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
 				    (peek_token()->value() == "," || peek_token()->value() == ">" || peek_token()->value() == "...")) {
-					FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
-					// Successfully parsed a dependent expression
-					// Create a dependent template argument
-					// IMPORTANT: For template parameter references (like T in is_same<T, T>),
-					// this should be a TYPE argument, not a VALUE argument!
-					// Try to get the type_index for the template parameter so pattern matching can detect reused parameters
-					TemplateTypeArg dependent_arg;
-					dependent_arg.base_type = Type::UserDefined;  // Template parameter is a user-defined type placeholder
-					dependent_arg.type_index = 0;  // Default, will try to look up
-					dependent_arg.is_value = false;  // This is a TYPE parameter, not a value
-					dependent_arg.is_dependent = true;
+					// Check if this is actually a concrete type (not a template parameter)
+					// If it's a concrete struct, we should fall through to type parsing instead
+					bool is_concrete_type = false;
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						const auto& id = std::get<IdentifierNode>(expr);
+						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(id.name()));
+						if (type_it != gTypesByName.end()) {
+							const TypeInfo* type_info = type_it->second;
+							// If it has struct_info_, it's a concrete struct, not a template parameter
+							if (type_info->struct_info_ != nullptr) {
+								is_concrete_type = true;
+								FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a concrete struct type, falling through to type parsing");
+							}
+						}
+					}
 					
-					// Try to get the type_index for template parameter references
-					// For TemplateParameterReferenceNode or IdentifierNode that refers to a template parameter
-					if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+					// If it's a concrete type, restore and let type parsing handle it
+					if (is_concrete_type) {
+						restore_token_position(arg_saved_pos);
+						// Fall through to type parsing below
+					} else {
+						FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
+						// Successfully parsed a dependent expression
+						// Create a dependent template argument
+						// IMPORTANT: For template parameter references (like T in is_same<T, T>),
+						// this should be a TYPE argument, not a VALUE argument!
+						// Try to get the type_index for the template parameter so pattern matching can detect reused parameters
+						TemplateTypeArg dependent_arg;
+						dependent_arg.base_type = Type::UserDefined;  // Template parameter is a user-defined type placeholder
+						dependent_arg.type_index = 0;  // Default, will try to look up
+						dependent_arg.is_value = false;  // This is a TYPE parameter, not a value
+						dependent_arg.is_dependent = true;
+						
+						// Try to get the type_index for template parameter references
+						// For TemplateParameterReferenceNode or IdentifierNode that refers to a template parameter
+						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 						const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 						StringHandle param_name = tparam_ref.param_name();
 						// Look up the template parameter type in gTypesByName
@@ -22328,30 +22349,31 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						}
 					}
 					
-					// Check for pack expansion (...)
-					if (peek_token().has_value() && peek_token()->value() == "...") {
-						consume_token(); // consume '...'
-						dependent_arg.is_pack = true;
-						FLASH_LOG(Templates, Debug, "Marked dependent expression as pack expansion");
-					}
-					
-					template_args.push_back(dependent_arg);
-					discard_saved_token(arg_saved_pos);
-					
-					// Check for ',' or '>' after the expression (or after pack expansion)
-					// Phase 5: Handle >> token splitting for nested templates
-					if (peek_token()->value() == ">>") {
-						split_right_shift_token();
-					}
-					
-					if (peek_token()->value() == ">") {
-						consume_token(); // consume '>'
-						break;
-					}
-					
-					if (peek_token()->value() == ",") {
-						consume_token(); // consume ','
-						continue;
+						// Check for pack expansion (...)
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							consume_token(); // consume '...'
+							dependent_arg.is_pack = true;
+							FLASH_LOG(Templates, Debug, "Marked dependent expression as pack expansion");
+						}
+						
+						template_args.push_back(dependent_arg);
+						discard_saved_token(arg_saved_pos);
+						
+						// Check for ',' or '>' after the expression (or after pack expansion)
+						// Phase 5: Handle >> token splitting for nested templates
+						if (peek_token()->value() == ">>") {
+							split_right_shift_token();
+						}
+						
+						if (peek_token()->value() == ">") {
+							consume_token(); // consume '>'
+							break;
+						}
+						
+						if (peek_token()->value() == ",") {
+							consume_token(); // consume ','
+							continue;
+						}
 					}
 				}
 			}
