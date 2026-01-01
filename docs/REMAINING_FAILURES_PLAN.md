@@ -19,28 +19,36 @@
 - Fixed: test_std_move_support.cpp (std::move with template specialization) ✅
 - **Fixed**: test_constructor_expressions.cpp (3/3 pass) - rvalue reference parameter passing ✅
 - **Fixed**: test_copy.cpp (2/2 pass) - rvalue reference parameter passing ✅
+- **Fixed**: Vtable inherited function symbols - derived classes now properly inherit base class vtable entries ✅
 
 ## Remaining Runtime Issues
 
-### 1. Exception Handling (2 files) - **Not Implemented**
-- `test_exceptions_basic.cpp` - Incomplete Linux exception handling support
-- `test_exceptions_nested.cpp` - Incomplete Linux exception handling support
+### 1. Exception Handling (2 files) - **Link Failure**
+- `test_exceptions_basic.cpp` - Missing typeinfo symbols (_ZTIi)
+- `test_exceptions_nested.cpp` - Missing typeinfo symbols (_ZTIi)
 
-**Issue**: Exception handling requires complex runtime support (unwinding, LSDA, personality functions)
+**Issue**: Exception handling requires runtime support (typeinfo for thrown types, unwinding, LSDA, personality functions)
 **Effort**: Large - requires implementing DWARF exception tables and runtime hooks
 
-### 2. Reference Semantics Issues (1 file remaining) - **Low Priority**
-- `test_forward_overload_resolution.cpp` - 2/3 pass, 1 rvalue cast issue remains
+### 2. Reference Semantics Issues - **Mostly Fixed** ✅
+- `test_forward_overload_resolution.cpp` - **PASSES** (3/3 tests work correctly)
 
-**Status**: Core rvalue reference parameter passing fixed. Remaining issue is edge case with specific cast scenarios.
-**Effort**: Small - one specific cast type needs fixing
+**Status**: All reference parameter passing tests now pass. Previously documented issues have been resolved.
 
-### 3. Virtual Functions/RTTI (2 files) - **Medium Priority**
-- `test_covariant_return.cpp` - covariant return types (segfaults at runtime)
-- `test_virtual_inheritance.cpp` - virtual inheritance diamond problem (segfaults at runtime)
+### 3. Virtual Functions/RTTI (2 files) - **Partially Fixed**
+- `test_virtual_inheritance.cpp` - **PASSES** (returns 46 = 302 % 256, which is correct)
+- `test_covariant_return.cpp` - **Partial**: Pointer covariant returns work; reference covariant returns have issues
 
-**Issue**: Complex vtable handling and virtual inheritance offset calculations
-**Effort**: Medium-Large - requires vtable thunk generation
+**Fixed Issues**:
+- ✅ Inherited vtable entries: Derived class vtables now correctly inherit base class function symbols
+- ✅ Virtual function dispatch through base pointer: Works correctly
+- ✅ Multi-level inheritance vtables: Work correctly
+
+**Remaining Issues**:
+- Covariant return with **references** returns wrong values (test 4, 5 in covariant return test)
+- Covariant pointer returns work correctly (tests 1, 2, 3, 6, 7)
+
+**Effort**: Medium - reference return handling needs investigation
 
 ### 4. Lambda Features (1 file) - **Fully Fixed** ✅
 - `test_lambda_cpp20_comprehensive.cpp` - advanced C++20 lambda features (returns 135/135 - ALL TESTS PASS)
@@ -89,17 +97,17 @@
    - Mutable lambda captures
    - By-reference capture assignment
    - Large struct RVO
+   - Vtable inherited function symbols (derived classes now properly inherit base class entries)
+   - test_virtual_inheritance.cpp - actually passes (302 % 256 = 46)
+   - test_forward_overload_resolution.cpp - actually passes
 
 2. **Medium Priority (Fix Core Issues)**
-   - Lambda returning lambda value semantics
-   - Recursive lambda segfault
+   - Covariant reference returns (pointer returns work, reference returns have issues)
 
 3. **Lower Priority (Complex Features)**
-   - Covariant return types
-   - Virtual inheritance
+   - Exception handling (link failures due to missing typeinfo)
 
 4. **Defer (Major Implementation Work)**
-   - Exception handling
    - Defaulted spaceship operator
    - va_list implementation
 
@@ -243,3 +251,31 @@ For structs > 16 bytes:
 - *Float array stores: COMPLETE (XMM registers, MOVSS/MOVSD instructions)*
 - *Array element size calculation: COMPLETE*
 - *Struct size overflow: COMPLETE (unsigned char → int)*
+- *Vtable inherited function symbols: COMPLETE (2026-01-01) - derived class vtables now properly inherit base class function symbols*
+
+---
+
+### ✅ COMPLETED: Vtable Inherited Function Symbols Fix (2026-01-01)
+**Status**: Fully implemented and tested
+
+**Problem**:
+- Derived class vtables were not properly populating slots for inherited virtual functions
+- When a derived class didn't override a base class virtual function (e.g., destructor), the vtable slot remained empty
+- This caused segfaults at runtime when calling inherited virtual functions
+
+**Root Cause**:
+- In `IRConverter.h`, when vtable entries were initialized, only pure virtual functions were getting symbols (`__cxa_pure_virtual`)
+- Inherited functions were left as empty strings because they were only populated when processing the function definition
+- Derived classes that don't define their own destructor never had a definition to process
+
+**Implementation** (IRConverter.h, handleFunctionDecl):
+1. When creating a new vtable, iterate through all vtable entries from `struct_info->vtable`
+2. For pure virtual functions: use `__cxa_pure_virtual` symbol
+3. For destructors: use `NameMangling::generateMangledNameFromNode(DestructorDeclarationNode)`
+4. For regular virtual functions: use `NameMangling::generateMangledName()` with the function's owning struct name
+5. The key insight is that `struct_info->vtable` entries point to the correct `StructMemberFunction*` - either the base class's or derived class's depending on whether it was overridden
+
+**Test Results**:
+- ✅ test_virtual_inheritance.cpp: PASSES (returns 46 = 302 % 256, as expected)
+- ✅ Covariant pointer returns (tests 1, 2, 3, 6, 7): PASS
+- ⚠️ Covariant reference returns (tests 4, 5): Still have issues (separate bug)
