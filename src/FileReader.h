@@ -2008,6 +2008,42 @@ private:
 			defines_["__CHAR32_TYPE__"] = DefineDirective{ "unsigned int", {} };
 		}
 
+		// Compiler builtin macros for numeric limits - required by <limits> header
+		// These are common to both MSVC and GCC/Clang modes on x86_64
+		defines_["__CHAR_BIT__"] = DefineDirective{ "8", {} };
+		defines_["__SCHAR_MAX__"] = DefineDirective{ "127", {} };
+		defines_["__SHRT_MAX__"] = DefineDirective{ "32767", {} };
+		defines_["__INT_MAX__"] = DefineDirective{ "2147483647", {} };
+		defines_["__LONG_LONG_MAX__"] = DefineDirective{ "9223372036854775807LL", {} };
+		defines_["__WCHAR_MAX__"] = DefineDirective{ "2147483647", {} };
+		defines_["__WINT_MAX__"] = DefineDirective{ "4294967295U", {} };
+
+		// Platform-specific __LONG_MAX__ (differs between Windows and Linux x64)
+		if (settings_.isMsvcMode()) {
+			defines_["__LONG_MAX__"] = DefineDirective{ "2147483647L", {} };  // 32-bit long on Windows
+		} else {
+			defines_["__LONG_MAX__"] = DefineDirective{ "9223372036854775807L", {} };  // 64-bit long on Linux
+		}
+
+		// Compiler builtin macros for sizeof types - required by <limits> header
+		defines_["__SIZEOF_SHORT__"] = DefineDirective{ "2", {} };
+		defines_["__SIZEOF_INT__"] = DefineDirective{ "4", {} };
+		defines_["__SIZEOF_LONG_LONG__"] = DefineDirective{ "8", {} };
+		defines_["__SIZEOF_FLOAT__"] = DefineDirective{ "4", {} };
+		defines_["__SIZEOF_DOUBLE__"] = DefineDirective{ "8", {} };
+		defines_["__SIZEOF_POINTER__"] = DefineDirective{ "8", {} };
+		defines_["__SIZEOF_SIZE_T__"] = DefineDirective{ "8", {} };
+		defines_["__SIZEOF_PTRDIFF_T__"] = DefineDirective{ "8", {} };
+		defines_["__SIZEOF_WCHAR_T__"] = DefineDirective{ "4", {} };
+		defines_["__SIZEOF_WINT_T__"] = DefineDirective{ "4", {} };
+
+		// Platform-specific __SIZEOF_LONG__ (differs between Windows and Linux x64)
+		if (settings_.isMsvcMode()) {
+			defines_["__SIZEOF_LONG__"] = DefineDirective{ "4", {} };  // 32-bit long on Windows
+		} else {
+			defines_["__SIZEOF_LONG__"] = DefineDirective{ "8", {} };  // 64-bit long on Linux
+		}
+
 		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string {
 			// Use std::filesystem to normalize path separators for cross-platform compatibility
 			// This converts backslashes to forward slashes on all platforms
