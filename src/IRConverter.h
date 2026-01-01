@@ -8081,7 +8081,8 @@ private:
 			// Align stack so that after `push rbp; sub rsp, total_stack` the stack is 16-byte aligned
 			// System V AMD64: RSP is 8 bytes off alignment after PUSH RBP, so we need
 			// (total_stack + 8) % 16 == 0. Same requirement holds for MS x64.
-			size_t misalign = (total_stack + 8) % 16;  // +8 accounts for the pushed RBP
+			constexpr size_t kFramePointerPushSize = 8;
+			size_t misalign = (total_stack + kFramePointerPushSize) % 16;  // +8 accounts for the pushed RBP
 			if (misalign != 0) {
 				total_stack += (16 - misalign);
 			}

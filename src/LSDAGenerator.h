@@ -110,13 +110,19 @@ private:
 		uint64_t base_without_self = 1 + DwarfCFI::encodeULEB128(call_site_table_size).size() +
 		                             call_site_table_size + action_table_size;
 		uint64_t ttype_base = base_without_self;
-		// ULEB128 for 64-bit values grows slowly; a handful of iterations (<=4) is plenty for convergence.
+		// ULEB128 for 64-bit values grows slowly; offsets here are small (call-site/action sizes),
+		// so a handful of iterations (<=4) is plenty for convergence.
 		constexpr int kMaxTTypeOffsetIterations = 4;
 		for (int i = 0; i < kMaxTTypeOffsetIterations; ++i) {
 			auto encoded = DwarfCFI::encodeULEB128(ttype_base);
 			uint64_t candidate = base_without_self + encoded.size();
 			if (candidate == ttype_base) break;
 			ttype_base = candidate;
+		}
+		auto final_encoded = DwarfCFI::encodeULEB128(ttype_base);
+		uint64_t final_candidate = base_without_self + final_encoded.size();
+		if (final_candidate != ttype_base) {
+			ttype_base = final_candidate;
 		}
 		DwarfCFI::appendULEB128(data, ttype_base);
 		
