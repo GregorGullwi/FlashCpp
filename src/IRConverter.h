@@ -8081,7 +8081,7 @@ private:
 			// Align stack so that after `push rbp; sub rsp, total_stack` the stack is 16-byte aligned
 			// System V AMD64: RSP is 8 bytes off alignment after PUSH RBP, so we need
 			// (total_stack + 8) % 16 == 0. Same requirement holds for MS x64.
-			size_t misalign = (total_stack + 8) % 16;
+			size_t misalign = (total_stack + 8) % 16;  // +8 accounts for the pushed RBP
 			if (misalign != 0) {
 				total_stack += (16 - misalign);
 			}
@@ -14865,7 +14865,7 @@ private:
 
 	std::vector<TryBlock> current_function_try_blocks_;  // Try blocks in current function
 	TryBlock* current_try_block_ = nullptr;  // Currently active try block being processed
-	bool inside_catch_handler_ = false;  // Tracks whether we're emitting code inside a catch handler (ELF)
+	bool inside_catch_handler_ = false;  // Tracks whether we're emitting code inside a catch handler (ELF). Converter runs single-threaded.
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number
