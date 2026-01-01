@@ -29,7 +29,7 @@ int main() {
     
     // Verify we got the correct address by checking the value
     if (*ptr != 60) {
-        return 1;  // Failed - wrong value
+        return 2;  // Failed - wrong value (2 indicates first check failure)
     }
     
     // Modify through pointer
@@ -37,8 +37,8 @@ int main() {
     
     // Verify modification worked
     if (arr[1].inner.values[2] != 999) {
-        return 2;  // Failed - modification didn't work
+        return 3;  // Failed - modification didn't work (3 indicates second check failure)
     }
     
-    return 0;  // Success
+    return 1;  // Success - matches _ret1 filename convention
 }
