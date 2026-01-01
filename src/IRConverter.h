@@ -7619,18 +7619,25 @@ private:
 				if (std::holds_alternative<TempVar>(init.value)) {
 					auto temp_var = std::get<TempVar>(init.value);
 					int src_offset = getStackOffsetFromTempVar(temp_var);
+					FLASH_LOG(Codegen, Debug, "Reference init from TempVar: src_offset=", src_offset, 
+					          " init.type=", static_cast<int>(init.type), 
+					          " init.size_in_bits=", init.size_in_bits);
 					// Check if source is itself a pointer/reference - if so, load the value
 					// Otherwise, take the address
 					auto src_ref_it = reference_stack_info_.find(src_offset);
 					if (src_ref_it != reference_stack_info_.end()) {
 						// Source is a reference - copy the pointer value
+						FLASH_LOG(Codegen, Debug, "Source is in reference_stack_info, using MOV");
 						emitMovFromFrame(pointer_reg, src_offset);
 					} else {
 						// Check if it's a 64-bit value (likely a pointer)
 						// For __range_begin_ and similar, which are int64 pointers
+						// Also check for struct types that returned as pointers (reference returns)
 						bool is_likely_pointer = (init.size_in_bits == 64 && 
 						                          (init.type == Type::Long || init.type == Type::Int || 
-						                           init.type == Type::UnsignedLong || init.type == Type::LongLong));
+						                           init.type == Type::UnsignedLong || init.type == Type::LongLong ||
+						                           init.type == Type::Struct));  // Struct references return 64-bit pointers
+						FLASH_LOG(Codegen, Debug, "is_likely_pointer=", is_likely_pointer);
 						if (is_likely_pointer) {
 							// Load the pointer value
 							emitMovFromFrame(pointer_reg, src_offset);
@@ -12459,7 +12466,14 @@ private:
 				object_base_offset = it->second.offset;
 
 				// Check if this is the 'this' pointer or a reference parameter (both need dereferencing)
-				if (StringTable::getStringView(object_name_handle) == "this"sv || reference_stack_info_.count(object_base_offset) > 0 || op.is_pointer_to_member) {
+				bool is_this = (StringTable::getStringView(object_name_handle) == "this"sv);
+				bool in_ref_stack_info = (reference_stack_info_.count(object_base_offset) > 0);
+				FLASH_LOG(Codegen, Debug, "MemberAccess check: object='", StringTable::getStringView(object_name_handle),
+				          "' offset=", object_base_offset,
+				          " is_this=", is_this,
+				          " in_ref_stack_info=", in_ref_stack_info,
+				          " is_pointer_to_member=", op.is_pointer_to_member);
+				if (is_this || in_ref_stack_info || op.is_pointer_to_member) {
 					is_pointer_access = true;
 				}
 			}
