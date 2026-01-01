@@ -1,11 +1,12 @@
 # Remaining Test Failures Plan
 
-## Current Status (2025-12-31 - Latest)
+## Current Status (2026-01-01 - Latest)
 **795/795 tests passing compilation (100%)**
 - All tests compile and link successfully
 - Some runtime issues remain in specific test files
 
 ### Recent Fixes
+- **Fixed**: Init-capture by reference (`[&y = x]` pattern) - NOW FULLY PASSING ✅
 - **Fixed**: Recursive lambda (`auto&& self` pattern) - generates operator() call instead of indirect call
 - **Fixed**: Lambda returning lambda - was missing hidden return parameter for struct returns
 - **Fixed**: Mutable lambda captures - by-value captures can now be modified
@@ -42,7 +43,7 @@
 **Effort**: Medium-Large - requires vtable thunk generation
 
 ### 4. Lambda Features (1 file) - **Fully Fixed** ✅
-- `test_lambda_cpp20_comprehensive.cpp` - advanced C++20 lambda features
+- `test_lambda_cpp20_comprehensive.cpp` - advanced C++20 lambda features (returns 135/135 - ALL TESTS PASS)
 
 **Fixed Issues**:
 - ✅ Mutable lambda captures (`[x]() mutable { x += 2; }`)
@@ -51,13 +52,15 @@
 - ✅ Lambda returning lambda (was returning wrong value due to missing hidden return parameter)
 - ✅ Nested lambdas work correctly
 - ✅ Generic lambdas with auto parameters
-- ✅ Recursive lambda (`auto&& self` pattern) - NOW FIXED!
+- ✅ Recursive lambda (`auto&& self` pattern)
+- ✅ Init-capture by reference (`[&y = x]` pattern) - NOW FIXED!
 
-**Implementation Details for Recursive Lambda Fix**:
-- Detect auto-typed callable in function call when inside a lambda context
-- Generate member function call to `operator()` instead of indirect call
-- Pass `self` argument directly without dereferencing (preserve reference semantics)
-- Also enabled lambda context in `__invoke` function for consistent handling
+**Implementation Details for Init-Capture By Reference Fix**:
+- For init-capture by reference `[&y = x]`, generate AddressOf operation for the initializer `x`
+- Store the address (not the value) in the closure struct member `y`
+- In `pushLambdaContext`, populate `capture_types` for init-captures by looking up the initializer's type
+- In `handleLValueCompoundAssignment`, add support for `Kind::Indirect` to handle `y += 2` where `y` is a dereferenced pointer
+- Generate proper Dereference/Add/DereferenceStore sequence for compound assignments through pointers
 
 ### 5. Spaceship Operator (1 file) - **Large Effort**
 - `spaceship_default.cpp` - defaulted spaceship operator (segfaults at runtime)
