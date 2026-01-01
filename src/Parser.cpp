@@ -3632,11 +3632,69 @@ ParseResult Parser::parse_struct_declaration()
 			}
 			
 			// Check if any template arguments are dependent
+			// This includes both explicit dependent flags AND types whose names contain template parameters
 			bool has_dependent_args = false;
+			auto contains_template_param = [this](std::string_view type_name) -> bool {
+				for (const auto& param_name : current_template_param_names_) {
+					std::string_view param_sv = StringTable::getStringView(param_name);
+					// Check if type_name contains param_name as an identifier
+					// (not just substring, to avoid false positives like "T" in "Template")
+					size_t pos = type_name.find(param_sv);
+					while (pos != std::string_view::npos) {
+						bool start_ok = (pos == 0) || (!std::isalnum(static_cast<unsigned char>(type_name[pos - 1])) && type_name[pos - 1] != '_');
+						bool end_ok = (pos + param_sv.size() >= type_name.size()) || (!std::isalnum(static_cast<unsigned char>(type_name[pos + param_sv.size()])) && type_name[pos + param_sv.size()] != '_');
+						if (start_ok && end_ok) {
+							return true;
+						}
+						pos = type_name.find(param_sv, pos + 1);
+					}
+				}
+				return false;
+			};
+			
 			for (const auto& arg : template_args) {
 				if (arg.is_dependent) {
 					has_dependent_args = true;
 					break;
+				}
+				// Also check if the type name contains any template parameter names
+				// This catches cases like is_integral<T> where is_dependent might not be set
+				// but the type name contains "T"
+				if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
+					if (arg.type_index < gTypeInfo.size()) {
+						std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+						FLASH_LOG_FORMAT(Templates, Debug, "Checking base class arg: type={}, type_index={}, name='{}'", 
+						                 static_cast<int>(arg.base_type), arg.type_index, type_name);
+						if (contains_template_param(type_name)) {
+							FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' contains template parameter - marking as dependent", type_name);
+							has_dependent_args = true;
+							break;
+						}
+					}
+				}
+			}
+			
+			// Also check the AST nodes for template arguments - they may contain
+			// TemplateParameterReferenceNode which indicates dependent types
+			if (!has_dependent_args && parsing_template_body_) {
+				for (const auto& arg_node : template_arg_nodes) {
+					if (arg_node.is<TypeSpecifierNode>()) {
+						const auto& type_spec = arg_node.as<TypeSpecifierNode>();
+						// Check if the type name contains template parameters
+						if (type_spec.type_index() < gTypeInfo.size()) {
+							std::string_view type_name = StringTable::getStringView(gTypeInfo[type_spec.type_index()].name());
+							// Check if this type is a template (has nested template args)
+							// If it's a template class and we're inside a template body, 
+							// and it was registered with the same name as the primary template,
+							// it might be a dependent instantiation that was skipped
+							auto template_entry = gTemplateRegistry.lookupTemplate(type_name);
+							if (template_entry.has_value()) {
+								FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' is a template class in template body - marking as dependent", type_name);
+								has_dependent_args = true;
+								break;
+							}
+						}
+					}
 				}
 			}
 			
