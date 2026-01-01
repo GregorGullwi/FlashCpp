@@ -109,8 +109,8 @@ private:
 		//           call_site_table + action_table
 		uint64_t base_without_self = 1 + DwarfCFI::encodeULEB128(call_site_table_size).size() +
 		                             call_site_table_size + action_table_size;
-		uint64_t ttype_base = base_without_self + DwarfCFI::encodeULEB128(base_without_self).size();
-		// If the encoded size changes after adding itself, recompute until stable (for larger tables)
+		uint64_t ttype_base = base_without_self;
+		// ULEB128 for 64-bit values grows slowly; a handful of iterations (<=4) is plenty for convergence.
 		constexpr int kMaxTTypeOffsetIterations = 4;
 		for (int i = 0; i < kMaxTTypeOffsetIterations; ++i) {
 			auto encoded = DwarfCFI::encodeULEB128(ttype_base);

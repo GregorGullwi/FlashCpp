@@ -14865,7 +14865,7 @@ private:
 
 	std::vector<TryBlock> current_function_try_blocks_;  // Try blocks in current function
 	TryBlock* current_try_block_ = nullptr;  // Currently active try block being processed
-	bool inside_catch_handler_ = false;  // Tracks whether we're emitting code inside a catch handler (ELF). Converter runs single-threaded.
+	bool inside_catch_handler_ = false;  // Tracks whether we're emitting code inside a catch handler (ELF).
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number
