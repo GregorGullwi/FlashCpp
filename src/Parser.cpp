@@ -17445,7 +17445,15 @@ bool Parser::is_base_class_template_parameter(std::string_view base_class_name) 
 
 // Helper: Look up a type alias including inherited ones from base classes
 // Searches struct_name::member_name first, then recursively searches base classes
-const TypeInfo* Parser::lookup_inherited_type_alias(std::string_view struct_name, std::string_view member_name) {
+// Uses depth limit to prevent infinite recursion in case of malformed input
+const TypeInfo* Parser::lookup_inherited_type_alias(std::string_view struct_name, std::string_view member_name, int depth) {
+	// Prevent infinite recursion with a reasonable depth limit
+	constexpr int kMaxInheritanceDepth = 100;
+	if (depth > kMaxInheritanceDepth) {
+		FLASH_LOG_FORMAT(Templates, Warning, "lookup_inherited_type_alias: max depth exceeded for '{}::{}'", struct_name, member_name);
+		return nullptr;
+	}
+	
 	FLASH_LOG_FORMAT(Templates, Debug, "lookup_inherited_type_alias: looking for '{}::{}' ", struct_name, member_name);
 	
 	// First try direct lookup with qualified name
@@ -17481,7 +17489,7 @@ const TypeInfo* Parser::lookup_inherited_type_alias(std::string_view struct_name
 			if (underlying_type.struct_info_) {
 				std::string_view underlying_name = StringTable::getStringView(underlying_type.name());
 				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias", struct_name, underlying_name);
-				return lookup_inherited_type_alias(underlying_name, member_name);
+				return lookup_inherited_type_alias(underlying_name, member_name, depth + 1);
 			}
 		}
 		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has no struct_info_ and couldn't resolve alias", struct_name);
@@ -17500,7 +17508,7 @@ const TypeInfo* Parser::lookup_inherited_type_alias(std::string_view struct_name
 		
 		FLASH_LOG_FORMAT(Templates, Debug, "Checking base class '{}'", base_class.name);
 		// Recursively look up in base class
-		const TypeInfo* base_result = lookup_inherited_type_alias(base_class.name, member_name);
+		const TypeInfo* base_result = lookup_inherited_type_alias(base_class.name, member_name, depth + 1);
 		if (base_result != nullptr) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Found inherited type alias '{}::{}' via base class '{}'",
 			                 struct_name, member_name, base_class.name);

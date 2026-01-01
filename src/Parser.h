@@ -717,7 +717,8 @@ public:  // Public methods for template instantiation
 
         // Helper: Look up a type alias including inherited ones from base classes
         // Returns the TypeInfo pointer if found, nullptr otherwise
-        const TypeInfo* lookup_inherited_type_alias(std::string_view struct_name, std::string_view member_name);
+        // Uses depth limit to prevent infinite recursion in malformed input
+        const TypeInfo* lookup_inherited_type_alias(std::string_view struct_name, std::string_view member_name, int depth = 0);
 
         // Substitute template parameter in a type specification
         // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
