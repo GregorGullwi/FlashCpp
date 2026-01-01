@@ -29,12 +29,13 @@ These files test FlashCpp's ability to compile and use various C++ standard libr
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | constexpr support |
 | `<concepts>` | `test_std_concepts.cpp` | ❌ Failed | Requires clauses |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Concepts, views |
-| `<limits>` | `test_std_limits.cpp` | ❌ Failed | numeric_limits specializations |
+| `<limits>` | `test_std_limits.cpp` | ⚠️ Partial | Compiles; static data works, functions need work |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Ratio templates, duration |
 
 **Legend:**
 - ❌ Failed: Compilation fails with errors
 - ⏱️ Timeout: Compilation takes >10 seconds (likely hangs)
+- ⚠️ Partial: Compiles but some features don't work correctly
 - ✅ Compiled: Successfully compiles (none currently)
 
 ## Running the Tests

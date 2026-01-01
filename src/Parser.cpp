@@ -7132,7 +7132,7 @@ std::optional<std::pair<Type, unsigned char>> Parser::get_builtin_type_info(std:
 	return std::nullopt;
 }
 
-// Helper function to parse functional-style cast: Type(expression)
+// Helper function to parse functional-style cast: Type(expression) or Type() for value initialization
 // This consolidates the logic for parsing functional casts from both keyword and identifier contexts
 ParseResult Parser::parse_functional_cast(std::string_view type_name, const Token& type_token) {
 	// Expect '(' after type name
@@ -7142,25 +7142,15 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	
 	consume_token(); // consume '('
 	
-	// Parse the expression inside the parentheses
-	ParseResult expr_result = parse_expression();
-	if (expr_result.is_error()) {
-		return expr_result;
-	}
-	
-	if (!consume_punctuator(")")) {
-		return ParseResult::error("Expected ')' after functional cast expression", *current_token_);
-	}
-	
-	// Create a type specifier for the cast using the helper function
+	// Get type information first (needed for both empty and non-empty cases)
 	Type cast_type = Type::Int; // default
 	TypeQualifier qualifier = TypeQualifier::None;
 	int type_size = 32;
 	
-	auto type_info = get_builtin_type_info(type_name);
-	if (type_info.has_value()) {
-		cast_type = type_info->first;
-		type_size = type_info->second;
+	auto builtin_type_info = get_builtin_type_info(type_name);
+	if (builtin_type_info.has_value()) {
+		cast_type = builtin_type_info->first;
+		type_size = builtin_type_info->second;
 		// Handle special case for unsigned qualifier
 		if (type_name == "unsigned") {
 			qualifier = TypeQualifier::Unsigned;
@@ -7177,6 +7167,37 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 				cast_type = Type::Struct;
 			}
 		}
+	}
+	
+	// Check for empty parentheses: Type() is value initialization (zero for scalar types)
+	if (current_token_.has_value() && current_token_->value() == ")") {
+		consume_token(); // consume ')'
+		
+		// Create a zero literal of the appropriate type (value initialization)
+		Token zero_token(Token::Type::Literal, "0", type_token.line(), type_token.column(), type_token.file_index());
+		
+		// Use 0.0 for floating point types, 0 for integral types
+		if (cast_type == Type::Double || cast_type == Type::Float) {
+			auto zero_expr = emplace_node<ExpressionNode>(
+				NumericLiteralNode(zero_token, 0.0, cast_type, qualifier, type_size)
+			);
+			return ParseResult::success(zero_expr);
+		} else {
+			auto zero_expr = emplace_node<ExpressionNode>(
+				NumericLiteralNode(zero_token, 0ULL, cast_type, qualifier, type_size)
+			);
+			return ParseResult::success(zero_expr);
+		}
+	}
+	
+	// Parse the expression inside the parentheses
+	ParseResult expr_result = parse_expression();
+	if (expr_result.is_error()) {
+		return expr_result;
+	}
+	
+	if (!consume_punctuator(")")) {
+		return ParseResult::error("Expected ')' after functional cast expression", *current_token_);
 	}
 	
 	auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token);
@@ -12887,6 +12908,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		bool is_builtin_type = (kw == "bool" || kw == "char" || kw == "int" || 
 		                        kw == "short" || kw == "long" || kw == "float" || 
 		                        kw == "double" || kw == "void" || kw == "wchar_t" ||
+		                        kw == "char8_t" || kw == "char16_t" || kw == "char32_t" ||
 		                        kw == "signed" || kw == "unsigned");
 		
 		if (is_builtin_type) {
