@@ -2135,6 +2135,18 @@ private:
 		std::string_view mangled_name;
 		if (node.has_mangled_name()) {
 			mangled_name = node.mangled_name();
+		} else if (node.has_non_type_template_args()) {
+			// Generate mangled name with template arguments for template specializations (e.g., get<0>)
+			const TypeSpecifierNode& return_type = func_decl.type_node().as<TypeSpecifierNode>();
+			std::vector<TypeSpecifierNode> param_types;
+			for (const auto& param : node.parameter_nodes()) {
+				param_types.push_back(param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+			}
+			auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
+				func_decl.identifier_token().value(), return_type, param_types, 
+				node.non_type_template_args(), node.is_variadic(), 
+				struct_name_for_function, current_namespace_stack_);
+			mangled_name = mangled.view();
 		} else {
 			// Generate mangled name using the FunctionDeclarationNode overload
 			mangled_name = generateMangledNameForCall(node, struct_name_for_function, current_namespace_stack_);
@@ -6275,8 +6287,9 @@ private:
 			return;
 		}
 		
-		// Step 5: Aggregate (struct) decomposition
-		// Get struct information
+		// Step 5: Check for tuple-like decomposition (C++17 protocol)
+		// If std::tuple_size<E> is specialized for the type, use tuple-like decomposition
+		// Otherwise, fall back to aggregate (struct) decomposition
 		if (init_type_index >= gTypeInfo.size()) {
 			FLASH_LOG(Codegen, Error, "Invalid type index for structured binding: ", init_type_index);
 			return;
@@ -6290,7 +6303,275 @@ private:
 			return;
 		}
 		
-		// Step 6: Validate that we have the correct number of identifiers
+		// Step 5a: Check for tuple-like decomposition protocol (C++17)
+		// If std::tuple_size<E> is specialized for the type E, use tuple-like decomposition
+		// The protocol requires: std::tuple_size<E>, std::tuple_element<N, E>, and get<N>(e)
+		std::string_view type_name_view = StringTable::getStringView(type_info.name());
+		
+		// Build the expected tuple_size specialization name: "tuple_size_TypeName" or "std::tuple_size_TypeName"
+		StringBuilder tuple_size_name_builder;
+		tuple_size_name_builder.append("tuple_size_").append(type_name_view);
+		std::string_view tuple_size_name = tuple_size_name_builder.commit();
+		StringHandle tuple_size_handle = StringTable::getOrInternStringHandle(tuple_size_name);
+		
+		// Also try with std:: prefix  
+		StringBuilder std_tuple_size_name_builder;
+		std_tuple_size_name_builder.append("std::tuple_size_").append(type_name_view);
+		std::string_view std_tuple_size_name = std_tuple_size_name_builder.commit();
+		StringHandle std_tuple_size_handle = StringTable::getOrInternStringHandle(std_tuple_size_name);
+		
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Checking for tuple_size<", type_name_view, 
+		          "> as '", tuple_size_name, "' or '", std_tuple_size_name, "'");
+		
+		// Look up the tuple_size specialization
+		auto tuple_size_it = gTypesByName.find(tuple_size_handle);
+		if (tuple_size_it == gTypesByName.end()) {
+			tuple_size_it = gTypesByName.find(std_tuple_size_handle);
+		}
+		
+		// If tuple_size is specialized for this type, use tuple-like decomposition
+		if (tuple_size_it != gTypesByName.end()) {
+			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Found tuple_size specialization, using tuple-like decomposition");
+			
+			const TypeInfo* tuple_size_type_info = tuple_size_it->second;
+			const StructTypeInfo* tuple_size_struct = tuple_size_type_info->getStructInfo();
+			
+			// Get the 'value' static member from tuple_size
+			size_t tuple_size_value = 0;
+			bool found_value = false;
+			
+			if (tuple_size_struct) {
+				for (const auto& static_member : tuple_size_struct->static_members) {
+					// Check for 'value' member (can be constexpr or const)
+					if (StringTable::getStringView(static_member.name) == "value") {
+						// Evaluate the static value
+						if (static_member.initializer.has_value()) {
+							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(*static_member.initializer, eval_ctx);
+							if (eval_result.success) {
+								tuple_size_value = static_cast<size_t>(eval_result.as_int());
+								found_value = true;
+								FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size::value = ", tuple_size_value);
+							}
+						}
+						break;
+					}
+				}
+			}
+			
+			if (!found_value) {
+				FLASH_LOG(Codegen, Warning, "visitStructuredBindingNode: Could not get tuple_size::value, falling back to aggregate decomposition");
+			} else {
+				// Validate that the number of identifiers matches tuple_size::value
+				if (node.identifiers().size() != tuple_size_value) {
+					FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(), 
+					          ") does not match tuple_size::value (", tuple_size_value, ")");
+					return;
+				}
+				
+				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size detected with ", tuple_size_value, " elements");
+				
+				// Try to find get<N>() functions for tuple-like decomposition
+				bool all_get_found = true;
+				std::vector<std::pair<StringHandle, Type>> binding_info;  // (mangled_name, return_type) for each get<N>
+				
+				// First, look up std::tuple_element<N, E>::type and get<N>() for each binding
+				for (size_t i = 0; i < tuple_size_value && all_get_found; ++i) {
+					// Build the tuple_element specialization name
+					StringBuilder tuple_element_name_builder;
+					tuple_element_name_builder.append("tuple_element_").append(static_cast<uint64_t>(i)).append("_").append(type_name_view);
+					std::string_view tuple_element_name = tuple_element_name_builder.commit();
+					
+					// Also try with std:: prefix
+					StringBuilder std_tuple_element_name_builder;
+					std_tuple_element_name_builder.append("std::tuple_element_").append(static_cast<uint64_t>(i)).append("_").append(type_name_view);
+					std::string_view std_tuple_element_name = std_tuple_element_name_builder.commit();
+					
+					// Look up the type alias
+					StringHandle type_alias_handle = StringTable::getOrInternStringHandle(
+						StringBuilder().append(tuple_element_name).append("::type").commit());
+					StringHandle std_type_alias_handle = StringTable::getOrInternStringHandle(
+						StringBuilder().append(std_tuple_element_name).append("::type").commit());
+					
+					auto type_alias_it = gTypesByName.find(type_alias_handle);
+					if (type_alias_it == gTypesByName.end()) {
+						type_alias_it = gTypesByName.find(std_type_alias_handle);
+					}
+					
+					Type element_type = Type::Int;  // Default
+					int element_size = 32;
+					TypeIndex element_type_index = 0;
+					
+					if (type_alias_it != gTypesByName.end()) {
+						const TypeInfo* type_alias_info = type_alias_it->second;
+						element_type = type_alias_info->type_;
+						element_type_index = type_alias_info->type_index_;
+						element_size = type_alias_info->type_size_;
+						if (element_size == 0) {
+							element_size = get_type_size_bits(element_type);
+						}
+						FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_element<", i, ">::type = ", (int)element_type, ", size=", element_size);
+					}
+					
+					// Now look for the get<N>() function
+					// First, try template registry with exact index
+					TemplateTypeArg index_arg;
+					index_arg.base_type = Type::UnsignedLong;
+					index_arg.is_value = true;
+					index_arg.value = static_cast<int64_t>(i);
+					std::vector<TemplateTypeArg> get_template_args = { index_arg };
+					
+					auto get_spec = gTemplateRegistry.lookupExactSpecialization("get", get_template_args);
+					
+					if (get_spec.has_value() && get_spec->is<FunctionDeclarationNode>()) {
+						const FunctionDeclarationNode& get_func = get_spec->as<FunctionDeclarationNode>();
+						
+						// Generate mangled name with template argument
+						const DeclarationNode& decl_node = get_func.decl_node();
+						const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+						
+						std::vector<TypeSpecifierNode> param_types;
+						for (const auto& param : get_func.parameter_nodes()) {
+							param_types.push_back(param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+						}
+						
+						std::vector<int64_t> template_args = { static_cast<int64_t>(i) };
+						auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
+							"get", return_type, param_types, template_args, 
+							get_func.is_variadic(), "", current_namespace_stack_);
+						
+						StringHandle mangled_handle = StringTable::getOrInternStringHandle(mangled.view());
+						binding_info.push_back({mangled_handle, element_type});
+						
+						FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Found get<", i, "> with mangled name: ", mangled.view());
+					} else {
+						// Try symbol table lookup for explicit specializations
+						extern SymbolTable gSymbolTable;
+						auto get_overloads = gSymbolTable.lookup_all("get");
+						
+						bool found_this_get = false;
+						size_t func_index = 0;
+						
+						for (const auto& overload : get_overloads) {
+							if (!overload.is<FunctionDeclarationNode>()) continue;
+							
+							const FunctionDeclarationNode& get_func = overload.as<FunctionDeclarationNode>();
+							const DeclarationNode& decl_node = get_func.decl_node();
+							const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+							
+							// Check if this overload's return type matches our element type
+							// or if it's the i-th function declaration (by order)
+							bool type_matches = (return_type.type() == element_type);
+							if (element_type == Type::Struct) {
+								type_matches = type_matches && (return_type.type_index() == element_type_index);
+							}
+							
+							if (type_matches || func_index == i) {
+								// Generate mangled name with template argument for this specialization
+								std::vector<TypeSpecifierNode> param_types;
+								for (const auto& param : get_func.parameter_nodes()) {
+									param_types.push_back(param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());
+								}
+								
+								std::vector<int64_t> template_args = { static_cast<int64_t>(i) };
+								auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
+									"get", return_type, param_types, template_args,
+									get_func.is_variadic(), "", current_namespace_stack_);
+								
+								StringHandle mangled_handle = StringTable::getOrInternStringHandle(mangled.view());
+								binding_info.push_back({mangled_handle, element_type});
+								
+								FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Found get<", i, "> (symbol table) with mangled name: ", mangled.view());
+								found_this_get = true;
+								break;
+							}
+							func_index++;
+						}
+						
+						if (!found_this_get) {
+							FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: get<", i, "> not found, falling back to aggregate");
+							all_get_found = false;
+						}
+					}
+				}
+				
+				// If we found all get<N>() functions, generate the tuple-like decomposition
+				if (all_get_found && binding_info.size() == tuple_size_value) {
+					FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: All get<> functions found, using tuple-like protocol");
+					
+					// Generate calls to get<N>(e) for each binding
+					for (size_t i = 0; i < tuple_size_value; ++i) {
+						StringHandle binding_id = node.identifiers()[i];
+						std::string_view binding_name = StringTable::getStringView(binding_id);
+						
+						auto [get_mangled_name, element_type] = binding_info[i];
+						
+						// Look up element size from tuple_element type alias
+						int element_size = get_type_size_bits(element_type);
+						TypeIndex element_type_index = 0;
+						
+						// Generate call to get<N>(hidden_var)
+						TempVar result_temp = var_counter.next();
+						
+						CallOp call_op;
+						call_op.result = result_temp;
+						call_op.return_type = element_type;
+						call_op.return_size_in_bits = element_size;
+						call_op.return_type_index = element_type_index;
+						call_op.function_name = get_mangled_name;
+						call_op.is_member_function = false;
+						call_op.uses_return_slot = false;
+						
+						// Pass the hidden variable as argument
+						TypedValue arg;
+						arg.type = init_type;
+						arg.size_in_bits = init_size;
+						arg.value = hidden_var_handle;
+						arg.type_index = init_type_index;
+						arg.is_reference = true;  // Pass by const reference
+						call_op.args.push_back(arg);
+						
+						Token binding_token(Token::Type::Identifier, binding_name, 0, 0, 0);
+						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binding_token));
+						
+						// Create the binding variable
+						VariableDeclOp binding_var_decl;
+						binding_var_decl.var_name = binding_id;
+						binding_var_decl.type = element_type;
+						binding_var_decl.size_in_bits = element_size;
+						binding_var_decl.initializer = TypedValue{element_type, element_size, result_temp, false, false, element_type_index};
+						
+						ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
+						
+						// Create synthetic declaration for symbol table
+						TypeSpecifierNode binding_type(element_type, TypeQualifier::None,
+						                               static_cast<unsigned char>(element_size > 255 ? 255 : element_size), Token());
+						binding_type.set_type_index(element_type_index);
+						
+						ASTNode binding_decl_node = ASTNode::emplace_node<DeclarationNode>(
+							ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
+							binding_token
+						);
+						symbol_table.insert(binding_name, binding_decl_node);
+						
+						FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Created tuple binding '", binding_name, 
+						          "' via get<", i, ">");
+					}
+					
+					FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", tuple_size_value, " bindings using tuple-like protocol");
+					return;  // Done - don't fall through to aggregate decomposition
+				}
+				
+				// Fall through to aggregate decomposition
+				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Falling through to aggregate decomposition");
+			}
+		}
+		
+		// Step 6: Aggregate (struct) decomposition
+		aggregate_decomposition:
+		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Using aggregate decomposition");
+		
+		// Step 6a: Validate that we have the correct number of identifiers
 		// Count non-static public members (all members in FlashCpp are non-static by default)
 		size_t public_member_count = 0;
 		for (const auto& member : struct_info->members) {

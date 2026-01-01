@@ -434,6 +434,113 @@ inline void generateItaniumMangledName(
 	}
 }
 
+// Encode non-type template arguments in Itanium C++ ABI format
+// Format: I<template-args>E where each arg is L<type><value>E
+// For unsigned long: Lm<value>E (m = unsigned long in Itanium encoding)
+template<typename OutputType>
+inline void appendItaniumTemplateArgs(
+	OutputType& output,
+	const std::vector<int64_t>& non_type_args
+) {
+	if (non_type_args.empty()) return;
+	
+	output += 'I';  // Start template args
+	for (int64_t arg : non_type_args) {
+		// Encode as literal: L<type><value>E
+		// Using 'm' for unsigned long (common for size_t indices)
+		output += 'L';
+		output += 'm';  // unsigned long
+		output += std::to_string(static_cast<unsigned long>(arg));
+		output += 'E';
+	}
+	output += 'E';  // End template args
+}
+
+// Generate Itanium mangled name with non-type template arguments
+// Used for template specializations like get<0>, get<1>
+template<typename OutputType>
+inline void generateItaniumMangledNameWithTemplateArgs(
+	OutputType& output,
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	const std::vector<int64_t>& non_type_template_args,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path
+) {
+	// Start with _Z prefix
+	output += "_Z";
+	
+	// Check if we have namespaces or struct (needs nested-name encoding)
+	bool has_nested_name = !struct_name.empty() || !namespace_path.empty();
+	bool is_std_only = namespace_path.size() == 1 && namespace_path[0] == "std" && struct_name.empty();
+	
+	if (has_nested_name && !is_std_only) {
+		// Use nested-name encoding: _ZN...E
+		output += 'N';
+		
+		// Add namespace parts
+		for (const auto& ns : namespace_path) {
+			if (ns.empty()) {
+				output += "12_GLOBAL__N_1";
+			} else if (ns == "std") {
+				output += "St";
+			} else {
+				output += std::to_string(ns.size());
+				output += ns;
+			}
+		}
+		
+		// Add struct name if present
+		if (!struct_name.empty()) {
+			size_t start = 0;
+			while (start < struct_name.size()) {
+				size_t end = struct_name.find("::", start);
+				if (end == std::string_view::npos) end = struct_name.size();
+				std::string_view component = struct_name.substr(start, end - start);
+				if (!component.empty()) {
+					output += std::to_string(component.size());
+					output += component;
+				}
+				start = (end == struct_name.size()) ? end : end + 2;
+			}
+		}
+		
+		// Add function name with template args
+		output += std::to_string(func_name.size());
+		output += func_name;
+		
+		// Add template arguments after function name
+		appendItaniumTemplateArgs(output, non_type_template_args);
+		
+		// End nested-name
+		output += 'E';
+	} else if (is_std_only) {
+		output += "St";
+		output += std::to_string(func_name.size());
+		output += func_name;
+		appendItaniumTemplateArgs(output, non_type_template_args);
+	} else {
+		// Simple function name with template args
+		output += std::to_string(func_name.size());
+		output += func_name;
+		appendItaniumTemplateArgs(output, non_type_template_args);
+	}
+	
+	// Add parameter types
+	if (param_types.empty() && !is_variadic) {
+		output += 'v';
+	} else {
+		for (const auto& param : param_types) {
+			appendItaniumTypeCode(output, param, true);
+		}
+		if (is_variadic) {
+			output += 'z';
+		}
+	}
+}
+
 // Overload for param_nodes (extracts types from DeclarationNodes)
 template<typename OutputType>
 inline void generateItaniumMangledName(
@@ -652,6 +759,68 @@ inline MangledName generateMangledName(
 	}
 
 	return MangledName(builder.commit());
+}
+
+// Generate mangled name with non-type template arguments
+// Used for template specializations like get<0>, get<1>
+inline MangledName generateMangledNameWithTemplateArgs(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	const std::vector<int64_t>& non_type_template_args,
+	bool is_variadic = false,
+	std::string_view struct_name = "",
+	const std::vector<std::string_view>& namespace_path = {}
+) {
+	StringBuilder builder;
+	
+	if (func_name == "main") {
+		builder.append("main");
+		return MangledName(builder.commit());
+	}
+	
+	// Use Itanium ABI for template specializations (most portable)
+	if (g_mangling_style == ManglingStyle::Itanium) {
+		generateItaniumMangledNameWithTemplateArgs(builder, func_name, return_type, param_types,
+		                                           non_type_template_args, is_variadic, struct_name, namespace_path);
+		return MangledName(builder.commit());
+	}
+	
+	// MSVC: Append template args to function name (simplified)
+	// Format: ?func_name<0>@...
+	StringBuilder name_with_args;
+	name_with_args.append(func_name);
+	if (!non_type_template_args.empty()) {
+		name_with_args.append("<");
+		for (size_t i = 0; i < non_type_template_args.size(); ++i) {
+			if (i > 0) name_with_args.append(",");
+			name_with_args.append(static_cast<uint64_t>(non_type_template_args[i]));
+		}
+		name_with_args.append(">");
+	}
+	
+	// Fall back to regular mangling with modified name
+	return generateMangledName(name_with_args.commit(), return_type, param_types, 
+	                           is_variadic, struct_name, namespace_path);
+}
+
+// Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
+inline MangledName generateMangledNameWithTemplateArgs(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	const std::vector<int64_t>& non_type_template_args,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string>& namespace_path
+) {
+	std::vector<std::string_view> ns_views;
+	ns_views.reserve(namespace_path.size());
+	for (const auto& ns : namespace_path) {
+		ns_views.push_back(ns);
+	}
+	return generateMangledNameWithTemplateArgs(func_name, return_type, param_types, 
+	                                           non_type_template_args, is_variadic, struct_name, ns_views);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)

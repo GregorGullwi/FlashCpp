@@ -1553,6 +1553,12 @@ public:
 	std::string_view mangled_name() const { return mangled_name_; }
 	bool has_mangled_name() const { return !mangled_name_.empty(); }
 
+	// Non-type template argument support for template specializations
+	// Used to generate correct mangled names for get<0>, get<1>, etc.
+	void set_non_type_template_args(std::vector<int64_t> args) { non_type_template_args_ = std::move(args); }
+	const std::vector<int64_t>& non_type_template_args() const { return non_type_template_args_; }
+	bool has_non_type_template_args() const { return !non_type_template_args_.empty(); }
+
 private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
@@ -1574,6 +1580,7 @@ private:
 	bool inline_always_ = false;  // True if function should always be inlined (e.g., template pure expressions)
 	std::optional<ASTNode> noexcept_expression_;  // Optional noexcept(expr) expression
 	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
+	std::vector<int64_t> non_type_template_args_;  // Non-type template arguments (e.g., 0 for get<0>)
 };
 
 class FunctionCallNode {

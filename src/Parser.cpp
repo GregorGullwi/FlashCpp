@@ -20561,6 +20561,18 @@ if (struct_type_info.getStructInfo()) {
 			
 			FunctionDeclarationNode& func_node = func_result.node()->as<FunctionDeclarationNode>();
 			
+			// Store non-type template arguments on the function node for use in codegen
+			// This enables generating correct mangled names for template specializations like get<0>
+			std::vector<int64_t> non_type_args;
+			for (const auto& arg : spec_template_args) {
+				if (arg.is_value) {
+					non_type_args.push_back(arg.value);
+				}
+			}
+			if (!non_type_args.empty()) {
+				func_node.set_non_type_template_args(std::move(non_type_args));
+			}
+			
 			// Parse the function body (specializations must be defined, not just declared)
 			if (!peek_token().has_value() || peek_token()->value() != "{") {
 				std::string error_msg = "Template specializations must have a definition (body)";
