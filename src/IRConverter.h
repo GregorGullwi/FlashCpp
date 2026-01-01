@@ -8079,12 +8079,11 @@ private:
 			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
 			
 			// Align stack so that after `push rbp; sub rsp, total_stack` the stack is 16-byte aligned
-			// System V AMD64: RSP is 8 bytes off alignment after PUSH RBP, so we need
-			// (total_stack + 8) % 16 == 0. Same requirement holds for MS x64.
-			constexpr size_t kFramePointerPushSize = 8;
-			size_t misalign = (total_stack + kFramePointerPushSize) % 16;  // +8 accounts for the pushed RBP
-			if (misalign != 0) {
-				total_stack += (16 - misalign);
+			// System V AMD64 / MS x64: after `push rbp`, RSP is misaligned by 8 bytes.
+			// Subtracting a 16-byte-aligned stack size keeps RSP % 16 == 8 at call sites,
+			// so align total_stack up to the next 16-byte boundary.
+			if (total_stack % 16 != 0) {
+				total_stack = (total_stack + 15) & ~static_cast<size_t>(15);
 			}
 			
 			// Patch the SUB RSP immediate at prologue offset + 3 (skip REX.W, opcode, ModR/M)
