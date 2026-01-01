@@ -1313,9 +1313,71 @@ private:
 		TempVar current_value_temp = var_counter.next();
 		
 		// Generate a Load instruction based on the lvalue kind
-		// For now, only support Member kind (used by test case)
+		// Support both Member kind and Indirect kind (for dereferenced pointers like &y in lambda captures)
+		if (lv_info.kind == LValueInfo::Kind::Indirect) {
+			// For Indirect kind (dereferenced pointer), the base is a TempVar holding the address
+			// Generate a Dereference instruction to load the current value
+			DereferenceOp deref_op;
+			deref_op.result = current_value_temp;
+			deref_op.pointer.type = std::get<Type>(lhs_operands[0]);
+			deref_op.pointer.size_in_bits = 64;  // pointer size
+			deref_op.pointer.pointer_depth = 1;
+			if (std::holds_alternative<TempVar>(lv_info.base)) {
+				deref_op.pointer.value = std::get<TempVar>(lv_info.base);
+			} else {
+				FLASH_LOG(Codegen, Debug, "     Indirect kind requires TempVar base");
+				return false;
+			}
+			
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), token));
+			
+			// Now perform the operation (e.g., Add for +=, Subtract for -=, etc.)
+			TempVar result_temp = var_counter.next();
+			
+			static const std::unordered_map<std::string_view, IrOpcode> compound_op_map = {
+				{"+=", IrOpcode::Add},
+				{"-=", IrOpcode::Subtract},
+				{"*=", IrOpcode::Multiply},
+				{"/=", IrOpcode::Divide},
+				{"%=", IrOpcode::Modulo},
+				{"&=", IrOpcode::BitwiseAnd},
+				{"|=", IrOpcode::BitwiseOr},
+				{"^=", IrOpcode::BitwiseXor},
+				{"<<=", IrOpcode::ShiftLeft},
+				{">>=", IrOpcode::ShiftRight}
+			};
+			
+			auto op_it = compound_op_map.find(op);
+			if (op_it == compound_op_map.end()) {
+				FLASH_LOG(Codegen, Debug, "     Unsupported compound assignment operator: ", op);
+				return false;
+			}
+			IrOpcode operation_opcode = op_it->second;
+			
+			// Create the binary operation
+			BinaryOp bin_op;
+			bin_op.lhs.type = std::get<Type>(lhs_operands[0]);
+			bin_op.lhs.size_in_bits = std::get<int>(lhs_operands[1]);
+			bin_op.lhs.value = current_value_temp;
+			bin_op.rhs = toTypedValue(rhs_operands);
+			bin_op.result = result_temp;
+			
+			ir_.addInstruction(IrInstruction(operation_opcode, std::move(bin_op), token));
+			
+			// Store result back through the pointer using DereferenceStore
+			TypedValue result_tv;
+			result_tv.type = std::get<Type>(lhs_operands[0]);
+			result_tv.size_in_bits = std::get<int>(lhs_operands[1]);
+			result_tv.value = result_temp;
+			
+			emitDereferenceStore(result_tv, std::get<Type>(lhs_operands[0]), std::get<int>(lhs_operands[1]),
+			                     std::get<TempVar>(lv_info.base), token);
+			
+			return true;
+		}
+		
 		if (lv_info.kind != LValueInfo::Kind::Member) {
-			FLASH_LOG(Codegen, Debug, "     Compound assignment only supports Member kind for now, got: ", static_cast<int>(lv_info.kind));
+			FLASH_LOG(Codegen, Debug, "     Compound assignment only supports Member or Indirect kind for now, got: ", static_cast<int>(lv_info.kind));
 			return false;
 		}
 		
@@ -1781,6 +1843,52 @@ private:
 					current_lambda_context_.has_copy_this = true;
 				} else if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
 					current_lambda_context_.has_this_pointer = true;
+				}
+			} else if (capture.has_initializer()) {
+				// Init-capture: infer type from initializer expression or closure struct member
+				// For init-capture by reference [&y = x], look up x's type
+				const ASTNode& init_node = *capture.initializer();
+				if (init_node.is<IdentifierNode>()) {
+					// Simple identifier like [&y = x] - look up x's type
+					const auto& init_id = init_node.as<IdentifierNode>();
+					std::optional<ASTNode> init_symbol = symbol_table.lookup(init_id.name());
+					if (init_symbol.has_value()) {
+						const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
+						if (init_decl) {
+							current_lambda_context_.capture_types[var_name] = init_decl->type_node().as<TypeSpecifierNode>();
+						}
+					}
+				} else if (init_node.is<ExpressionNode>()) {
+					const auto& expr_node = init_node.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(expr_node)) {
+						const auto& init_id = std::get<IdentifierNode>(expr_node);
+						std::optional<ASTNode> init_symbol = symbol_table.lookup(init_id.name());
+						if (init_symbol.has_value()) {
+							const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
+							if (init_decl) {
+								current_lambda_context_.capture_types[var_name] = init_decl->type_node().as<TypeSpecifierNode>();
+							}
+						}
+					}
+				}
+				// If type still not set, try to get it from closure struct member
+				if (current_lambda_context_.capture_types.find(var_name) == current_lambda_context_.capture_types.end()) {
+					auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
+					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+						if (struct_info) {
+							const StructMember* member = struct_info->findMember(std::string_view(StringTable::getStringView(var_name)));
+							if (member) {
+								// Create a TypeSpecifierNode from the member type
+								TypeSpecifierNode member_type(member->type, TypeQualifier::None, static_cast<int>(member->size * 8));
+								if (member->type == Type::Struct) {
+									// Need to set type_index for struct types
+									member_type = TypeSpecifierNode(member->type, member->type_index, static_cast<int>(member->size * 8), Token());
+								}
+								current_lambda_context_.capture_types[var_name] = member_type;
+							}
+						}
+					}
 				}
 			} else {
 				if (capture_index < lambda_info.captured_var_decls.size()) {
@@ -15762,37 +15870,88 @@ private:
 							// The actual value is at index 2
 							IrOperand init_value = init_operands[2];
 							
-							// Store the value in the closure member
-							// We need to convert IrOperand to IrValue
-							MemberStoreOp member_store;
-							member_store.value.type = member->type;
-							member_store.value.size_in_bits = static_cast<int>(member->size * 8);
-							
-							// Convert IrOperand to IrValue
-							// IrValue only supports: unsigned long long, double, TempVar, std::string_view
-							if (std::holds_alternative<TempVar>(init_value)) {
-								member_store.value.value = std::get<TempVar>(init_value);
-							} else if (std::holds_alternative<int>(init_value)) {
-								member_store.value.value = static_cast<unsigned long long>(std::get<int>(init_value));
-							} else if (std::holds_alternative<unsigned long long>(init_value)) {
-								member_store.value.value = std::get<unsigned long long>(init_value);
-							} else if (std::holds_alternative<double>(init_value)) {
-								member_store.value.value = std::get<double>(init_value);
-							} else if (std::holds_alternative<StringHandle>(init_value)) {
-								member_store.value.value = std::get<StringHandle>(init_value);
+							// For init-capture by reference [&y = x], we need to store the address of x
+							if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
+								// Get the type info from the init operands
+								Type init_type = Type::Int;
+								int init_size = 32;
+								if (init_operands.size() > 0 && std::holds_alternative<Type>(init_operands[0])) {
+									init_type = std::get<Type>(init_operands[0]);
+								}
+								if (init_operands.size() > 1) {
+									if (std::holds_alternative<int>(init_operands[1])) {
+										init_size = std::get<int>(init_operands[1]);
+									} else if (std::holds_alternative<unsigned long long>(init_operands[1])) {
+										init_size = static_cast<int>(std::get<unsigned long long>(init_operands[1]));
+									}
+								}
+								
+								// Generate AddressOf for the initializer
+								TempVar addr_temp = var_counter.next();
+								AddressOfOp addr_op;
+								addr_op.result = addr_temp;
+								addr_op.operand.type = init_type;
+								addr_op.operand.size_in_bits = init_size;
+								addr_op.operand.pointer_depth = 0;
+								
+								if (std::holds_alternative<StringHandle>(init_value)) {
+									addr_op.operand.value = std::get<StringHandle>(init_value);
+								} else if (std::holds_alternative<TempVar>(init_value)) {
+									addr_op.operand.value = std::get<TempVar>(init_value);
+								} else {
+									// For other types, skip
+									capture_index++;
+									continue;
+								}
+								
+								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
+								
+								// Store the address in the closure member
+								MemberStoreOp member_store;
+								member_store.value.type = init_type;
+								member_store.value.size_in_bits = 64; // pointer size
+								member_store.value.value = addr_temp;
+								member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
+								member_store.member_name = member->getName();
+								member_store.offset = static_cast<int>(member->offset);
+								member_store.is_reference = true;
+								member_store.is_rvalue_reference = false;
+								member_store.struct_type_info = nullptr;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 							} else {
-								// For other types, skip this capture
-								capture_index++;
-								continue;
+								// Init-capture by value [x = expr] - store the value directly
+								// Store the value in the closure member
+								// We need to convert IrOperand to IrValue
+								MemberStoreOp member_store;
+								member_store.value.type = member->type;
+								member_store.value.size_in_bits = static_cast<int>(member->size * 8);
+								
+								// Convert IrOperand to IrValue
+								// IrValue only supports: unsigned long long, double, TempVar, std::string_view
+								if (std::holds_alternative<TempVar>(init_value)) {
+									member_store.value.value = std::get<TempVar>(init_value);
+								} else if (std::holds_alternative<int>(init_value)) {
+									member_store.value.value = static_cast<unsigned long long>(std::get<int>(init_value));
+								} else if (std::holds_alternative<unsigned long long>(init_value)) {
+									member_store.value.value = std::get<unsigned long long>(init_value);
+								} else if (std::holds_alternative<double>(init_value)) {
+									member_store.value.value = std::get<double>(init_value);
+								} else if (std::holds_alternative<StringHandle>(init_value)) {
+									member_store.value.value = std::get<StringHandle>(init_value);
+								} else {
+									// For other types, skip this capture
+									capture_index++;
+									continue;
+								}
+								
+								member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
+								member_store.member_name = member->getName();
+								member_store.offset = static_cast<int>(member->offset);
+								member_store.is_reference = member->is_reference;
+								member_store.is_rvalue_reference = member->is_rvalue_reference;
+								member_store.struct_type_info = nullptr;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 							}
-							
-							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
-							member_store.member_name = member->getName();
-							member_store.offset = static_cast<int>(member->offset);
-							member_store.is_reference = member->is_reference;
-							member_store.is_rvalue_reference = member->is_rvalue_reference;
-							member_store.struct_type_info = nullptr;
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 						} else if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 							// By-reference: store the address of the variable
 							// Get the original variable type from captured_var_decls
