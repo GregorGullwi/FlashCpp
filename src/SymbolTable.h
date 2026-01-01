@@ -181,6 +181,16 @@ public:
 								}
 							}
 
+							// Also check return types for template specializations
+							// (e.g., get<0> returns int, get<1> returns double - different specializations)
+							if (all_match) {
+								const auto& new_return_type = new_func.decl_node().type_node().as<TypeSpecifierNode>();
+								const auto& existing_return_type = existing_func.decl_node().type_node().as<TypeSpecifierNode>();
+								if (!new_return_type.matches_signature(existing_return_type)) {
+									all_match = false;  // Different return types = different specializations
+								}
+							}
+
 							if (all_match) {
 								// Same signature found - replace forward declaration with definition if needed
 								// If the new one has a definition and the existing one doesn't, replace it
