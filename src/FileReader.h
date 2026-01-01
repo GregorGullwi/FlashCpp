@@ -2044,6 +2044,65 @@ private:
 			defines_["__SIZEOF_LONG__"] = DefineDirective{ "8", {} };  // 64-bit long on Linux
 		}
 
+		// Floating-point limit macros - required by <limits> and <cfloat> headers
+		// These values are for IEEE 754 floating-point (x86_64 architecture)
+		// Float (32-bit IEEE 754)
+		defines_["__FLT_RADIX__"] = DefineDirective{ "2", {} };
+		defines_["__FLT_MANT_DIG__"] = DefineDirective{ "24", {} };
+		defines_["__FLT_DIG__"] = DefineDirective{ "6", {} };
+		defines_["__FLT_DECIMAL_DIG__"] = DefineDirective{ "9", {} };
+		defines_["__FLT_MIN_EXP__"] = DefineDirective{ "(-125)", {} };
+		defines_["__FLT_MIN_10_EXP__"] = DefineDirective{ "(-37)", {} };
+		defines_["__FLT_MAX_EXP__"] = DefineDirective{ "128", {} };
+		defines_["__FLT_MAX_10_EXP__"] = DefineDirective{ "38", {} };
+		defines_["__FLT_MIN__"] = DefineDirective{ "1.17549435082228750796873653722224568e-38F", {} };
+		defines_["__FLT_MAX__"] = DefineDirective{ "3.40282346638528859811704183484516925e+38F", {} };
+		defines_["__FLT_EPSILON__"] = DefineDirective{ "1.19209289550781250000000000000000000e-7F", {} };
+		defines_["__FLT_DENORM_MIN__"] = DefineDirective{ "1.40129846432481707092372958328991613e-45F", {} };
+		defines_["__FLT_NORM_MAX__"] = DefineDirective{ "3.40282346638528859811704183484516925e+38F", {} };
+		defines_["__FLT_HAS_DENORM__"] = DefineDirective{ "1", {} };
+		defines_["__FLT_HAS_INFINITY__"] = DefineDirective{ "1", {} };
+		defines_["__FLT_HAS_QUIET_NAN__"] = DefineDirective{ "1", {} };
+		defines_["__FLT_IS_IEC_60559__"] = DefineDirective{ "1", {} };
+		defines_["__FLT_EVAL_METHOD__"] = DefineDirective{ "0", {} };
+		defines_["__FLT_EVAL_METHOD_TS_18661_3__"] = DefineDirective{ "0", {} };
+
+		// Double (64-bit IEEE 754)
+		defines_["__DBL_MANT_DIG__"] = DefineDirective{ "53", {} };
+		defines_["__DBL_DIG__"] = DefineDirective{ "15", {} };
+		defines_["__DBL_DECIMAL_DIG__"] = DefineDirective{ "17", {} };
+		defines_["__DBL_MIN_EXP__"] = DefineDirective{ "(-1021)", {} };
+		defines_["__DBL_MIN_10_EXP__"] = DefineDirective{ "(-307)", {} };
+		defines_["__DBL_MAX_EXP__"] = DefineDirective{ "1024", {} };
+		defines_["__DBL_MAX_10_EXP__"] = DefineDirective{ "308", {} };
+		defines_["__DBL_MIN__"] = DefineDirective{ "((double)2.22507385850720138309023271733240406e-308L)", {} };
+		defines_["__DBL_MAX__"] = DefineDirective{ "((double)1.79769313486231570814527423731704357e+308L)", {} };
+		defines_["__DBL_EPSILON__"] = DefineDirective{ "((double)2.22044604925031308084726333618164062e-16L)", {} };
+		defines_["__DBL_DENORM_MIN__"] = DefineDirective{ "((double)4.94065645841246544176568792868221372e-324L)", {} };
+		defines_["__DBL_NORM_MAX__"] = DefineDirective{ "((double)1.79769313486231570814527423731704357e+308L)", {} };
+		defines_["__DBL_HAS_DENORM__"] = DefineDirective{ "1", {} };
+		defines_["__DBL_HAS_INFINITY__"] = DefineDirective{ "1", {} };
+		defines_["__DBL_HAS_QUIET_NAN__"] = DefineDirective{ "1", {} };
+		defines_["__DBL_IS_IEC_60559__"] = DefineDirective{ "1", {} };
+
+		// Long Double (80-bit extended precision on x86_64)
+		defines_["__LDBL_MANT_DIG__"] = DefineDirective{ "64", {} };
+		defines_["__LDBL_DIG__"] = DefineDirective{ "18", {} };
+		defines_["__LDBL_DECIMAL_DIG__"] = DefineDirective{ "21", {} };
+		defines_["__LDBL_MIN_EXP__"] = DefineDirective{ "(-16381)", {} };
+		defines_["__LDBL_MIN_10_EXP__"] = DefineDirective{ "(-4931)", {} };
+		defines_["__LDBL_MAX_EXP__"] = DefineDirective{ "16384", {} };
+		defines_["__LDBL_MAX_10_EXP__"] = DefineDirective{ "4932", {} };
+		defines_["__LDBL_MIN__"] = DefineDirective{ "3.36210314311209350626267781732175260e-4932L", {} };
+		defines_["__LDBL_MAX__"] = DefineDirective{ "1.18973149535723176502126385303097021e+4932L", {} };
+		defines_["__LDBL_EPSILON__"] = DefineDirective{ "1.08420217248550443400745280086994171e-19L", {} };
+		defines_["__LDBL_DENORM_MIN__"] = DefineDirective{ "3.64519953188247460252840593361941982e-4951L", {} };
+		defines_["__LDBL_NORM_MAX__"] = DefineDirective{ "1.18973149535723176502126385303097021e+4932L", {} };
+		defines_["__LDBL_HAS_DENORM__"] = DefineDirective{ "1", {} };
+		defines_["__LDBL_HAS_INFINITY__"] = DefineDirective{ "1", {} };
+		defines_["__LDBL_HAS_QUIET_NAN__"] = DefineDirective{ "1", {} };
+		defines_["__LDBL_IS_IEC_60559__"] = DefineDirective{ "1", {} };
+
 		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string {
 			// Use std::filesystem to normalize path separators for cross-platform compatibility
 			// This converts backslashes to forward slashes on all platforms
