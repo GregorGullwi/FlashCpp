@@ -10,6 +10,10 @@
 - **Fix**: Updated `VirtualCallOp::is_pointer_access` in CodeGen.h to also check for reference types (`is_reference()` and `is_rvalue_reference()`), since references are implemented as pointers internally
 - Added test: `test_virtual_via_reference_ret0.cpp`
 
+### ~~4. Access Control Flag~~ - **FIXED (2026-01-01)**
+- ~~`test_no_access_control_flag.cpp` required `-fno-access-control` but the test runners didn’t pass it~~
+- **Fix**: Special-cased the test in `tests/run_all_tests.sh` and `tests/test_reference_files.ps1` to compile with `-fno-access-control`
+
 ## Remaining Runtime Issues
 
 ### 1. Exception Handling (2 files) - **Link Failure**
@@ -28,10 +32,7 @@
 
 **Effort**: Large - requires proper System V ABI va_list handling
 
-### 4. Access Control Flag (1 file) - **Requires Special Flag**
-- `test_no_access_control_flag.cpp` - Works when compiled with `-fno-access-control` flag
-
-### 5. Virtual Destructor Symbol on MSVC (1 file) - **Link Failure on Windows**
+### 4. Virtual Destructor Symbol on MSVC (1 file) - **Link Failure on Windows**
 - `test_xvalue_all_casts.cpp` - Missing virtual destructor symbol (`??1Base@@QAE@XZ`) when linked with MSVC
 - Works on Linux/ELF but fails on Windows/COFF
 - Added to expected link failures in `test_reference_files.ps1`

@@ -84,7 +84,11 @@ for base in "${TEST_FILES[@]}"; do
     rm -f flashcpp_crash_*.log
     
     # Compile (with 30 second timeout to avoid hangs)
-    compile_output=$(timeout 30 ./x64/Debug/FlashCpp "$f" 2>&1)
+    extra_flags=()
+    if [ "$base" == "test_no_access_control_flag.cpp" ]; then
+        extra_flags+=("-fno-access-control")
+    fi
+    compile_output=$(timeout 30 ./x64/Debug/FlashCpp "${extra_flags[@]}" "$f" 2>&1)
     compile_exit=$?
     
     # Check if compiler crashed (exit code 134 = SIGABRT, 136 = SIGFPE, 139 = SIGSEGV)
