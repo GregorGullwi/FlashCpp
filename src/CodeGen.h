@@ -6452,23 +6452,25 @@ private:
 							const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
 							
 							// Check if the return type matches the expected element type
-							bool type_matches = false;
-							if (return_type_spec.type() == element_type) {
-								type_matches = true;
-							}
-							// For struct types, also check type index
-							if (element_type == Type::Struct && return_type_spec.type_index() == element_type_index) {
-								type_matches = true;
+							// For primitive types, compare the Type enum
+							// For struct types, compare both Type enum and type_index
+							bool type_matches = (return_type_spec.type() == element_type);
+							if (element_type == Type::Struct) {
+								// For struct types, type indices must also match
+								type_matches = type_matches && (return_type_spec.type_index() == element_type_index);
 							}
 							
 							FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Checking func_decl ", func_decl_index, 
 							          " return_type=", (int)return_type_spec.type(), " vs element_type=", (int)element_type,
 							          " func_decl_index==i: ", (func_decl_index == i), " type_matches=", type_matches);
 							
-							// If the func_decl_index matches i or the types match, use this overload
-							// For template specializations registered in order (get<0>, get<1>, etc.),
-							// the func_decl_index corresponds to the template parameter
-							if (func_decl_index == i || type_matches) {
+							// Match the overload using one of these criteria:
+							// 1. Index-based: func_decl_index == i (assumes specializations are registered in order)
+							// 2. Type-based: return type matches the expected element type
+							// For robustness, we use type matching as the primary criterion
+							// and fall back to index matching if types can't be determined
+							bool should_use_this_overload = type_matches || (func_decl_index == i && element_type == Type::Int);
+							if (should_use_this_overload) {
 								// Generate a call to get(hidden_var)
 								TempVar result_temp = var_counter.next();
 								
