@@ -6347,28 +6347,28 @@ private:
 				}
 			}
 			
-if (!found_value) {
-FLASH_LOG(Codegen, Warning, "visitStructuredBindingNode: Could not get tuple_size::value, falling back to aggregate decomposition");
-} else {
-// Validate that the number of identifiers matches tuple_size::value
-if (node.identifiers().size() != tuple_size_value) {
-FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(), 
-          ") does not match tuple_size::value (", tuple_size_value, ")");
-return;
-}
-
-FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size detected with ", tuple_size_value, " elements");
-
-// NOTE: Full tuple-like get<>() protocol implementation requires:
-// 1. Properly tracking template arguments through codegen for unique mangled names
-// 2. Generating calls to get<N>(e) with correct template argument encoding
-// For now, fall through to aggregate decomposition which works for types
-// with public members matching the tuple_size count.
-FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Falling through to aggregate decomposition");
-}
-}
-
-// Step 6: Aggregate (struct) decomposition
+			if (!found_value) {
+				FLASH_LOG(Codegen, Warning, "visitStructuredBindingNode: Could not get tuple_size::value, falling back to aggregate decomposition");
+			} else {
+				// Validate that the number of identifiers matches tuple_size::value
+				if (node.identifiers().size() != tuple_size_value) {
+					FLASH_LOG(Codegen, Error, "Structured binding: number of identifiers (", node.identifiers().size(), 
+					          ") does not match tuple_size::value (", tuple_size_value, ")");
+					return;
+				}
+				
+				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size detected with ", tuple_size_value, " elements");
+				
+				// NOTE: Full tuple-like get<>() protocol implementation requires:
+				// 1. Properly tracking template arguments through codegen for unique mangled names
+				// 2. Generating calls to get<N>(e) with correct template argument encoding
+				// For now, fall through to aggregate decomposition which works for types
+				// with public members matching the tuple_size count.
+				FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Falling through to aggregate decomposition");
+			}
+		}
+		
+		// Step 6: Aggregate (struct) decomposition
 		aggregate_decomposition:
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Using aggregate decomposition");
 		
