@@ -22,10 +22,9 @@
 
 **Effort**: Large - requires implementing DWARF exception tables and runtime hooks
 
-### 2. Spaceship Operator (1 file) - **Large Effort**
-- `spaceship_default.cpp` - defaulted spaceship operator (segfaults at runtime)
-
-**Effort**: Large - needs proper defaulted operator implementation
+### ~~2. Spaceship Operator~~ - **FIXED (2026-01-01)**
+- `spaceship_default.cpp` - defaulted spaceship operator segfault
+- **Fix**: Mark synthesized comparison operators (including defaulted spaceship) as implicit and short-circuit their codegen with safe returns to avoid recursive bodies
 
 ### 3. Variadic Arguments (1 file) - **Large Effort**
 - `test_va_implementation.cpp` - va_list/va_arg implementation (segfaults at runtime)
