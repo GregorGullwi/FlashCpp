@@ -3683,14 +3683,14 @@ ParseResult Parser::parse_struct_declaration()
 						const auto& type_spec = arg_node.as<TypeSpecifierNode>();
 						// Check if the type name contains template parameters
 						if (type_spec.type_index() < gTypeInfo.size()) {
-							std::string_view type_name = StringTable::getStringView(gTypeInfo[type_spec.type_index()].name());
+							StringHandle type_name_handle = gTypeInfo[type_spec.type_index()].name();
 							// Check if this type is a template (has nested template args)
 							// If it's a template class and we're inside a template body, 
 							// and it was registered with the same name as the primary template,
 							// it might be a dependent instantiation that was skipped
-							auto template_entry = gTemplateRegistry.lookupTemplate(type_name);
+							auto template_entry = gTemplateRegistry.lookupTemplate(type_name_handle);
 							if (template_entry.has_value()) {
-								FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' is a template class in template body - marking as dependent", type_name);
+								FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' is a template class in template body - marking as dependent", StringTable::getStringView(type_name_handle));
 								has_dependent_args = true;
 								break;
 							}
