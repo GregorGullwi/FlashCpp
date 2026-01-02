@@ -664,7 +664,9 @@ public:
 				iss.seekg("#ifdef"sv.length());
 				std::string symbol;
 				iss >> symbol;
-				// __has_builtin is a compiler intrinsic that's always available but not in defines_
+				// __has_builtin is a compiler intrinsic - standard library uses "#ifdef __has_builtin"
+				// to check if the feature is available, then uses __has_builtin(x) with arguments.
+				// We return true for "#ifdef __has_builtin" so the library defines _GLIBCXX_HAS_BUILTIN.
 				bool is_defined = (symbol == "__has_builtin") || (defines_.count(symbol) > 0);
 				skipping_stack.push(!is_defined);
 				condition_was_true_stack.push(is_defined);
