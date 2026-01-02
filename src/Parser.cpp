@@ -17446,21 +17446,23 @@ bool Parser::is_base_class_template_parameter(std::string_view base_class_name) 
 // Helper: Look up a type alias including inherited ones from base classes
 // Searches struct_name::member_name first, then recursively searches base classes
 // Uses depth limit to prevent infinite recursion in case of malformed input
-const TypeInfo* Parser::lookup_inherited_type_alias(std::string_view struct_name, std::string_view member_name, int depth) {
+const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, StringHandle member_name, int depth) {
 	// Prevent infinite recursion with a reasonable depth limit
 	constexpr int kMaxInheritanceDepth = 100;
 	if (depth > kMaxInheritanceDepth) {
-		FLASH_LOG_FORMAT(Templates, Warning, "lookup_inherited_type_alias: max depth exceeded for '{}::{}'", struct_name, member_name);
+		FLASH_LOG_FORMAT(Templates, Warning, "lookup_inherited_type_alias: max depth exceeded for '{}::{}'", 
+		                 StringTable::getStringView(struct_name), StringTable::getStringView(member_name));
 		return nullptr;
 	}
 	
-	FLASH_LOG_FORMAT(Templates, Debug, "lookup_inherited_type_alias: looking for '{}::{}' ", struct_name, member_name);
+	FLASH_LOG_FORMAT(Templates, Debug, "lookup_inherited_type_alias: looking for '{}::{}' ", 
+	                 StringTable::getStringView(struct_name), StringTable::getStringView(member_name));
 	
 	// First try direct lookup with qualified name
 	StringBuilder qualified_name_builder;
-	qualified_name_builder.append(struct_name);
+	qualified_name_builder.append(StringTable::getStringView(struct_name));
 	qualified_name_builder.append("::"sv);
-	qualified_name_builder.append(member_name);
+	qualified_name_builder.append(StringTable::getStringView(member_name));
 	std::string_view qualified_name = qualified_name_builder.commit();
 	
 	auto direct_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
@@ -17470,9 +17472,9 @@ const TypeInfo* Parser::lookup_inherited_type_alias(std::string_view struct_name
 	}
 	
 	// Not found directly, look up the struct and search its base classes
-	auto struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+	auto struct_it = gTypesByName.find(struct_name);
 	if (struct_it == gTypesByName.end()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' not found in gTypesByName", struct_name);
+		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' not found in gTypesByName", StringTable::getStringView(struct_name));
 		return nullptr;
 	}
 	
@@ -17487,18 +17489,19 @@ const TypeInfo* Parser::lookup_inherited_type_alias(std::string_view struct_name
 			// The type_index points to a different type - follow the alias
 			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_];
 			if (underlying_type.struct_info_) {
-				std::string_view underlying_name = StringTable::getStringView(underlying_type.name());
-				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias", struct_name, underlying_name);
+				StringHandle underlying_name = underlying_type.name();
+				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias", 
+				                 StringTable::getStringView(struct_name), StringTable::getStringView(underlying_name));
 				return lookup_inherited_type_alias(underlying_name, member_name, depth + 1);
 			}
 		}
-		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has no struct_info_ and couldn't resolve alias", struct_name);
+		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has no struct_info_ and couldn't resolve alias", StringTable::getStringView(struct_name));
 		return nullptr;
 	}
 	
 	// Search base classes recursively
 	const StructTypeInfo* struct_info = struct_type_info->struct_info_.get();
-	FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has {} base classes", struct_name, struct_info->base_classes.size());
+	FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has {} base classes", StringTable::getStringView(struct_name), struct_info->base_classes.size());
 	for (const auto& base_class : struct_info->base_classes) {
 		// Skip deferred base classes (they haven't been resolved yet)
 		if (base_class.is_deferred) {
@@ -17508,10 +17511,11 @@ const TypeInfo* Parser::lookup_inherited_type_alias(std::string_view struct_name
 		
 		FLASH_LOG_FORMAT(Templates, Debug, "Checking base class '{}'", base_class.name);
 		// Recursively look up in base class
-		const TypeInfo* base_result = lookup_inherited_type_alias(base_class.name, member_name, depth + 1);
+		// base_class.name is std::string_view, so we use the convenience overload
+		const TypeInfo* base_result = lookup_inherited_type_alias(base_class.name, StringTable::getStringView(member_name), depth + 1);
 		if (base_result != nullptr) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Found inherited type alias '{}::{}' via base class '{}'",
-			                 struct_name, member_name, base_class.name);
+			                 StringTable::getStringView(struct_name), StringTable::getStringView(member_name), base_class.name);
 			return base_result;
 		}
 	}
