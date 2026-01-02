@@ -14973,6 +14973,30 @@ private:
 				}
 				break;
 
+			case TypeTraitKind::IsLiteralType:
+				// __is_literal_type - deprecated in C++17, removed in C++20
+				// A literal type is one that can be used in constexpr context:
+				// - Scalar types
+				// - References
+				// - Arrays of literal types
+				// - Class types that have all of:
+				//   - Trivial destructor
+				//   - Aggregate type OR has at least one constexpr constructor
+				//   - All non-static data members are literal types
+				if (isScalarType(type, is_reference, pointer_depth) || is_reference) {
+					result = true;
+				}
+				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				         pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info) {
+						// Simplified check: assume literal if trivially copyable
+						result = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
+					}
+				}
+				break;
+
 			case TypeTraitKind::IsConst:
 				// __is_const - checks if type has const qualifier
 				result = type_spec.is_const();

@@ -13124,6 +13124,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			{"__is_trivially_copyable", {TypeTraitKind::IsTriviallyCopyable, false, false, false}},
 			{"__is_trivial", {TypeTraitKind::IsTrivial, false, false, false}},
 			{"__is_pod", {TypeTraitKind::IsPod, false, false, false}},
+			{"__is_literal_type", {TypeTraitKind::IsLiteralType, false, false, false}},
 			{"__is_const", {TypeTraitKind::IsConst, false, false, false}},
 			{"__is_volatile", {TypeTraitKind::IsVolatile, false, false, false}},
 			{"__is_signed", {TypeTraitKind::IsSigned, false, false, false}},
@@ -23090,6 +23091,35 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 	// Look up ALL templates with this name (for SFINAE support with same-name overloads)
 	const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(template_name);
+	
+	// If not found, try namespace-qualified lookup.
+	// When inside a namespace (e.g., std) and looking up "__detail::__or_fn",
+	// we need to also try "std::__detail::__or_fn" since templates are registered
+	// with their fully-qualified names.
+	std::string qualified_name_storage;  // Storage for the qualified name string
+	if (!all_templates || all_templates->empty()) {
+		auto namespace_path = gSymbolTable.build_current_namespace_path();
+		if (!namespace_path.empty()) {
+			// Build the fully-qualified name by prepending the current namespace path
+			StringBuilder sb;
+			for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+				sb.append(ns).append("::");
+#else
+				sb.append(StringTable::getStringView(ns)).append("::");
+#endif
+			}
+			sb.append(template_name);
+			std::string_view qualified_name_view = sb.commit();
+			qualified_name_storage = std::string(qualified_name_view);
+			
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Template '{}' not found, trying qualified name '{}'",
+				recursion_depth, template_name, qualified_name_storage);
+			
+			all_templates = gTemplateRegistry.lookupAllTemplates(qualified_name_storage);
+		}
+	}
+	
 	if (!all_templates || all_templates->empty()) {
 		FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
 		recursion_depth--;
@@ -23289,8 +23319,17 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				}
 			}
 		} else {
-			// Non-type parameter - not yet supported in deduction
-			// TODO: Implement non-type parameter deduction
+			// Non-type parameter - check if it has a default value
+			if (param.has_default()) {
+				// Use the default value for non-type parameters
+				// The default value is an expression that will be evaluated during instantiation
+				// For now, we skip it in deduction and let the instantiation phase use the default
+				FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Non-type parameter '{}' has default, skipping deduction",
+					recursion_depth, param.name());
+				// Don't add anything to template_args - the instantiation will use the default
+				continue;
+			}
+			// No default value and can't deduce - fail
 			FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Non-type parameter not supported in deduction");
 
 			return std::nullopt;

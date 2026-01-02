@@ -2591,6 +2591,7 @@ enum class TypeTraitKind {
 	IsTriviallyCopyable,
 	IsTrivial,
 	IsPod,
+	IsLiteralType,       // __is_literal_type - deprecated in C++17, removed in C++20
 	// Constructibility traits (variadic - takes T + Args...)
 	IsConstructible,
 	IsTriviallyConstructible,
@@ -2696,6 +2697,7 @@ public:
 			case TypeTraitKind::IsTriviallyCopyable: return "__is_trivially_copyable";
 			case TypeTraitKind::IsTrivial: return "__is_trivial";
 			case TypeTraitKind::IsPod: return "__is_pod";
+			case TypeTraitKind::IsLiteralType: return "__is_literal_type";
 			case TypeTraitKind::IsConstructible: return "__is_constructible";
 			case TypeTraitKind::IsTriviallyConstructible: return "__is_trivially_constructible";
 			case TypeTraitKind::IsNothrowConstructible: return "__is_nothrow_constructible";
