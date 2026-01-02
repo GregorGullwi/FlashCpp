@@ -3634,7 +3634,8 @@ ParseResult Parser::parse_struct_declaration()
 			// Check if any template arguments are dependent
 			// This includes both explicit dependent flags AND types whose names contain template parameters
 			bool has_dependent_args = false;
-			auto contains_template_param = [this](std::string_view type_name) -> bool {
+			auto contains_template_param = [this](StringHandle type_name_handle) -> bool {
+				std::string_view type_name = StringTable::getStringView(type_name_handle);
 				for (const auto& param_name : current_template_param_names_) {
 					std::string_view param_sv = StringTable::getStringView(param_name);
 					// Check if type_name contains param_name as an identifier
@@ -3662,11 +3663,11 @@ ParseResult Parser::parse_struct_declaration()
 				// but the type name contains "T"
 				if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
 					if (arg.type_index < gTypeInfo.size()) {
-						std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+						StringHandle type_name_handle = gTypeInfo[arg.type_index].name();
 						FLASH_LOG_FORMAT(Templates, Debug, "Checking base class arg: type={}, type_index={}, name='{}'", 
-						                 static_cast<int>(arg.base_type), arg.type_index, type_name);
-						if (contains_template_param(type_name)) {
-							FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' contains template parameter - marking as dependent", type_name);
+						                 static_cast<int>(arg.base_type), arg.type_index, StringTable::getStringView(type_name_handle));
+						if (contains_template_param(type_name_handle)) {
+							FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' contains template parameter - marking as dependent", StringTable::getStringView(type_name_handle));
 							has_dependent_args = true;
 							break;
 						}
