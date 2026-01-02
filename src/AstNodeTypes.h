@@ -2448,6 +2448,32 @@ private:
 	Token called_from_;                  // Token for error reporting
 };
 
+// Pseudo-destructor call: obj.~Type() or ptr->~Type()
+// Used in patterns like: decltype(declval<T&>().~T())
+// The result type is always void
+class PseudoDestructorCallNode {
+public:
+	// Constructor for simple type names: obj.~Type()
+	explicit PseudoDestructorCallNode(ASTNode object, Token type_name_token, bool is_arrow)
+		: object_(object), type_name_token_(type_name_token), is_arrow_access_(is_arrow) {}
+	
+	// Constructor with qualified type: obj.~std::string()
+	explicit PseudoDestructorCallNode(ASTNode object, std::string_view qualified_type_name, Token type_name_token, bool is_arrow)
+		: object_(object), qualified_type_name_(qualified_type_name), type_name_token_(type_name_token), is_arrow_access_(is_arrow) {}
+
+	ASTNode object() const { return object_; }
+	std::string_view type_name() const { return type_name_token_.value(); }
+	std::string_view qualified_type_name() const { return qualified_type_name_.empty() ? type_name() : qualified_type_name_; }
+	const Token& type_name_token() const { return type_name_token_; }
+	bool is_arrow_access() const { return is_arrow_access_; }
+
+private:
+	ASTNode object_;                    // The object on which destructor is called
+	std::string qualified_type_name_;   // Full qualified name for types like std::string (empty if simple name)
+	Token type_name_token_;             // The type name token after ~
+	bool is_arrow_access_;              // true for ptr->~Type(), false for obj.~Type()
+};
+
 class ArraySubscriptNode {
 public:
 	explicit ArraySubscriptNode(ASTNode array_expr, ASTNode index_expr, Token bracket_token)
@@ -2933,7 +2959,7 @@ private:
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
-	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode>;
+	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PseudoDestructorCallNode>;
 
 /*class FunctionDefinitionNode {
 public:

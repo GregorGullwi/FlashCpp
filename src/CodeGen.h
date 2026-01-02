@@ -6840,6 +6840,15 @@ private:
 			FLASH_LOG(Codegen, Error, "Fold expression found during code generation - should have been expanded during template instantiation");
 			return {};
 		}
+		else if (std::holds_alternative<PseudoDestructorCallNode>(exprNode)) {
+			// Pseudo-destructor call: obj.~Type()
+			// For non-class types this is a no-op that returns void
+			// For class types in decltype context, it's used to check if destructor is callable
+			const auto& dtor = std::get<PseudoDestructorCallNode>(exprNode);
+			FLASH_LOG(Codegen, Debug, "Generating pseudo-destructor call for type: ", dtor.qualified_type_name());
+			// Pseudo-destructor returns void, no value to return
+			return {};
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}

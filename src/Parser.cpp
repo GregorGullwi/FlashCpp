@@ -11984,6 +11984,21 @@ void Parser::skip_function_trailing_specifiers()
 	}
 }
 
+// Apply reference qualifiers (& or &&) to a type specifier if present
+// This is used when parsing template parameter default types like: typename U = T&&
+void Parser::apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec) {
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+		std::string_view op_value = peek_token()->value();
+		if (op_value == "&&") {
+			consume_token();
+			type_spec.set_reference(true);  // true = rvalue reference
+		} else if (op_value == "&") {
+			consume_token();
+			type_spec.set_reference(false);  // false = lvalue reference
+		}
+	}
+}
+
 // Helper to parse static member functions - reduces code duplication across three call sites
 bool Parser::parse_static_member_function(
 	ParseResult& type_and_name_result,
@@ -12769,13 +12784,24 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			
 			// The destructor name follows the ~
 			// This can be a simple identifier (e.g., ~int) or a qualified name (e.g., ~std::string)
-			// For now, just handle simple identifiers (template parameters like _Tp)
 			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
 				return ParseResult::error("Expected type name after '~' in pseudo-destructor call", *current_token_);
 			}
 			
 			Token destructor_type_token = *peek_token();
 			consume_token(); // consume type name
+			
+			// Build qualified type name if present (e.g., std::string -> handle ~std::string)
+			std::string qualified_type_name(destructor_type_token.value());
+			while (peek_token().has_value() && peek_token()->value() == "::") {
+				consume_token(); // consume '::'
+				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected identifier after '::' in pseudo-destructor type", *current_token_);
+				}
+				qualified_type_name += "::";
+				qualified_type_name += peek_token()->value();
+				consume_token(); // consume identifier
+			}
 			
 			// Expect '(' for the destructor call
 			if (!peek_token().has_value() || peek_token()->value() != "(") {
@@ -12789,15 +12815,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			}
 			consume_token(); // consume ')'
 			
-			// For decltype purposes, the result of a pseudo-destructor call is void
-			// Create a placeholder expression that represents this
-			// In template context, we just need to parse it correctly; actual semantics handled at instantiation
-			FLASH_LOG(Parser, Debug, "Parsed pseudo-destructor call: ~", destructor_type_token.value());
+			FLASH_LOG(Parser, Debug, "Parsed pseudo-destructor call: ~", qualified_type_name);
 			
-			// Create a void-typed expression as the result of the destructor call
-			// Use NumericLiteralNode with proper constructor signature
-			NumericLiteralValue zero_val = static_cast<unsigned long long>(0);
-			result = emplace_node<ExpressionNode>(NumericLiteralNode(destructor_type_token, zero_val, Type::Void, TypeQualifier::None, 0));
+			// Create a PseudoDestructorCallNode to properly represent this expression
+			// The result type is always void
+			result = emplace_node<ExpressionNode>(
+				PseudoDestructorCallNode(*result, qualified_type_name, destructor_type_token, is_arrow_access));
 			continue;
 		}
 		
@@ -18138,6 +18161,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 		}
 	}
+	else if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
+		// Pseudo-destructor call (obj.~Type()) always returns void
+		const auto& dtor_call = std::get<PseudoDestructorCallNode>(expr);
+		return TypeSpecifierNode(Type::Void, TypeQualifier::None, 0, dtor_call.type_name_token());
+	}
 	// Add more cases as needed
 
 	return std::nullopt;
@@ -21502,18 +21530,8 @@ ParseResult Parser::parse_template_parameter() {
 				}
 				
 				if (default_type_result.node().has_value()) {
-					// Handle reference qualifiers after the base type (e.g., T& or T&&)
-					auto& type_spec = default_type_result.node()->as<TypeSpecifierNode>();
-					if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-						std::string_view op_value = peek_token()->value();
-						if (op_value == "&&") {
-							consume_token();
-							type_spec.set_reference(true);  // true = rvalue reference
-						} else if (op_value == "&") {
-							consume_token();
-							type_spec.set_reference(false);  // false = lvalue reference
-						}
-					}
+					// Apply reference qualifiers if present (e.g., T& or T&&)
+					apply_trailing_reference_qualifiers(default_type_result.node()->as<TypeSpecifierNode>());
 					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
 				}
 			}
@@ -21586,19 +21604,8 @@ ParseResult Parser::parse_template_parameter() {
 				}
 				
 				if (default_type_result.node().has_value()) {
-					// Handle reference qualifiers after the base type (e.g., T& or T&&)
-					// This is needed for patterns like: template<typename T, typename U = T&&>
-					auto& type_spec = default_type_result.node()->as<TypeSpecifierNode>();
-					if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-						std::string_view op_value = peek_token()->value();
-						if (op_value == "&&") {
-							consume_token();
-							type_spec.set_reference(true);  // true = rvalue reference
-						} else if (op_value == "&") {
-							consume_token();
-							type_spec.set_reference(false);  // false = lvalue reference
-						}
-					}
+					// Apply reference qualifiers if present (e.g., T& or T&&)
+					apply_trailing_reference_qualifiers(default_type_result.node()->as<TypeSpecifierNode>());
 					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
 				}
 			}
