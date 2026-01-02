@@ -3632,11 +3632,70 @@ ParseResult Parser::parse_struct_declaration()
 			}
 			
 			// Check if any template arguments are dependent
+			// This includes both explicit dependent flags AND types whose names contain template parameters
 			bool has_dependent_args = false;
+			auto contains_template_param = [this](StringHandle type_name_handle) -> bool {
+				std::string_view type_name = StringTable::getStringView(type_name_handle);
+				for (const auto& param_name : current_template_param_names_) {
+					std::string_view param_sv = StringTable::getStringView(param_name);
+					// Check if type_name contains param_name as an identifier
+					// (not just substring, to avoid false positives like "T" in "Template")
+					size_t pos = type_name.find(param_sv);
+					while (pos != std::string_view::npos) {
+						bool start_ok = (pos == 0) || (!std::isalnum(static_cast<unsigned char>(type_name[pos - 1])) && type_name[pos - 1] != '_');
+						bool end_ok = (pos + param_sv.size() >= type_name.size()) || (!std::isalnum(static_cast<unsigned char>(type_name[pos + param_sv.size()])) && type_name[pos + param_sv.size()] != '_');
+						if (start_ok && end_ok) {
+							return true;
+						}
+						pos = type_name.find(param_sv, pos + 1);
+					}
+				}
+				return false;
+			};
+			
 			for (const auto& arg : template_args) {
 				if (arg.is_dependent) {
 					has_dependent_args = true;
 					break;
+				}
+				// Also check if the type name contains any template parameter names
+				// This catches cases like is_integral<T> where is_dependent might not be set
+				// but the type name contains "T"
+				if (arg.base_type == Type::Struct || arg.base_type == Type::UserDefined) {
+					if (arg.type_index < gTypeInfo.size()) {
+						StringHandle type_name_handle = gTypeInfo[arg.type_index].name();
+						FLASH_LOG_FORMAT(Templates, Debug, "Checking base class arg: type={}, type_index={}, name='{}'", 
+						                 static_cast<int>(arg.base_type), arg.type_index, StringTable::getStringView(type_name_handle));
+						if (contains_template_param(type_name_handle)) {
+							FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' contains template parameter - marking as dependent", StringTable::getStringView(type_name_handle));
+							has_dependent_args = true;
+							break;
+						}
+					}
+				}
+			}
+			
+			// Also check the AST nodes for template arguments - they may contain
+			// TemplateParameterReferenceNode which indicates dependent types
+			if (!has_dependent_args && parsing_template_body_) {
+				for (const auto& arg_node : template_arg_nodes) {
+					if (arg_node.is<TypeSpecifierNode>()) {
+						const auto& type_spec = arg_node.as<TypeSpecifierNode>();
+						// Check if the type name contains template parameters
+						if (type_spec.type_index() < gTypeInfo.size()) {
+							StringHandle type_name_handle = gTypeInfo[type_spec.type_index()].name();
+							// Check if this type is a template (has nested template args)
+							// If it's a template class and we're inside a template body, 
+							// and it was registered with the same name as the primary template,
+							// it might be a dependent instantiation that was skipped
+							auto template_entry = gTemplateRegistry.lookupTemplate(type_name_handle);
+							if (template_entry.has_value()) {
+								FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' is a template class in template body - marking as dependent", StringTable::getStringView(type_name_handle));
+								has_dependent_args = true;
+								break;
+							}
+						}
+					}
 				}
 			}
 			
@@ -3670,22 +3729,33 @@ ParseResult Parser::parse_struct_declaration()
 			
 			// Resolve member type alias if present (e.g., Base<T>::type)
 			if (member_type_name.has_value()) {
+				std::string_view member_name = StringTable::getStringView(*member_type_name);
+				
+				// First try direct lookup
 				StringBuilder qualified_builder;
 				qualified_builder.append(base_class_name);
 				qualified_builder.append("::"sv);
-				qualified_builder.append(StringTable::getStringView(*member_type_name));
+				qualified_builder.append(member_name);
 				std::string_view alias_name = qualified_builder.commit();
 				
 				auto alias_it = gTypesByName.find(StringTable::getOrInternStringHandle(alias_name));
 				if (alias_it == gTypesByName.end()) {
-					return ParseResult::error("Base class '" + std::string(alias_name) + "' not found", member_name_token.value_or(Token()));
+					// Try looking up through inheritance (e.g., wrapper<true_type>::type where type is inherited)
+					const TypeInfo* inherited_alias = lookup_inherited_type_alias(base_class_name, member_name);
+					if (inherited_alias == nullptr) {
+						return ParseResult::error("Base class '" + std::string(alias_name) + "' not found", member_name_token.value_or(Token()));
+					}
+					// Use the inherited type alias - we need to get its qualified name
+					base_class_name = StringTable::getStringView(inherited_alias->name());
+					FLASH_LOG_FORMAT(Templates, Debug, "Resolved inherited member alias base to {}", base_class_name);
+				} else {
+					base_class_name = alias_name;
+					FLASH_LOG_FORMAT(Templates, Debug, "Resolved member alias base to {}", base_class_name);
 				}
 				
-				base_class_name = alias_name;
 				if (member_name_token.has_value()) {
 					base_name_token = *member_name_token;
 				}
-				FLASH_LOG_FORMAT(Templates, Debug, "Resolved member alias base to {}", base_class_name);
 			}
 		}
 
@@ -13984,18 +14054,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// This allows type aliases like false_type, true_type, enable_if_t to be used in specific contexts
 		// Only apply this fallback when the identifier is followed by '::' or '(' to ensure
 		// we don't break legitimate cases where an identifier should be an error
-		// NOTE: We do NOT check for ',' or '>' here because gTypesByName contains ALL types (including structs),
-		// not just type aliases. Struct types like WithoutType need the normal type parsing fallback path.
+		// ENHANCED: In TemplateArgument context, also check for ',' or '>' or '<' because type aliases
+		// and template class names are commonly used as template arguments in <type_traits>
 		bool found_as_type_alias = false;
 		if (!identifierType && peek_token().has_value()) {
 			std::string_view peek = peek_token()->value();
 			// Check gTypesByName if identifier is followed by :: (qualified name) or ( (constructor call)
-			if (peek == "::" || peek == "(") {
+			bool should_check_types = (peek == "::" || peek == "(");
+			
+			// In template argument context, also check for ',' or '>' or '<' since type aliases
+			// and template class names are commonly used as template arguments
+			// (e.g., first_t<false_type, ...>, __or_<is_reference<T>, is_function<T>>)
+			if (!should_check_types && context == ExpressionContext::TemplateArgument) {
+				should_check_types = (peek == "," || peek == ">" || peek == ">>" || peek == "<");
+			}
+			
+			if (should_check_types) {
 				StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
 				auto type_it = gTypesByName.find(identifier_handle);
 				if (type_it != gTypesByName.end()) {
-					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName (peek='{}')", 
-						idenfifier_token.value(), peek);
+					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in gTypesByName (peek='{}', context={})", 
+						idenfifier_token.value(), peek, context == ExpressionContext::TemplateArgument ? "TemplateArgument" : "other");
 					found_as_type_alias = true;
 					// Mark that we found it as a type so it can be used for type references
 					// The actual type info will be retrieved later when needed
@@ -17363,6 +17442,86 @@ bool Parser::is_base_class_template_parameter(std::string_view base_class_name) 
 		}
 	}
 	return false;
+}
+
+// Helper: Look up a type alias including inherited ones from base classes
+// Searches struct_name::member_name first, then recursively searches base classes
+// Uses depth limit to prevent infinite recursion in case of malformed input
+const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, StringHandle member_name, int depth) {
+	// Prevent infinite recursion with a reasonable depth limit
+	constexpr int kMaxInheritanceDepth = 100;
+	if (depth > kMaxInheritanceDepth) {
+		FLASH_LOG_FORMAT(Templates, Warning, "lookup_inherited_type_alias: max depth exceeded for '{}::{}'", 
+		                 StringTable::getStringView(struct_name), StringTable::getStringView(member_name));
+		return nullptr;
+	}
+	
+	FLASH_LOG_FORMAT(Templates, Debug, "lookup_inherited_type_alias: looking for '{}::{}' ", 
+	                 StringTable::getStringView(struct_name), StringTable::getStringView(member_name));
+	
+	// First try direct lookup with qualified name
+	StringBuilder qualified_name_builder;
+	qualified_name_builder.append(StringTable::getStringView(struct_name));
+	qualified_name_builder.append("::"sv);
+	qualified_name_builder.append(StringTable::getStringView(member_name));
+	std::string_view qualified_name = qualified_name_builder.commit();
+	
+	auto direct_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
+	if (direct_it != gTypesByName.end()) {
+		FLASH_LOG_FORMAT(Templates, Debug, "Found direct type alias '{}'", qualified_name);
+		return direct_it->second;
+	}
+	
+	// Not found directly, look up the struct and search its base classes
+	auto struct_it = gTypesByName.find(struct_name);
+	if (struct_it == gTypesByName.end()) {
+		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' not found in gTypesByName", StringTable::getStringView(struct_name));
+		return nullptr;
+	}
+	
+	const TypeInfo* struct_type_info = struct_it->second;
+	
+	// If this is a type alias (no struct_info_), resolve the underlying type
+	if (!struct_type_info->struct_info_) {
+		// This might be a type alias - try to find the actual struct type
+		// Type aliases have a type_index that points to the underlying type
+		if (struct_type_info->type_index_ < gTypeInfo.size() && 
+		    struct_type_info->type_index_ != static_cast<TypeIndex>(struct_it->second - &gTypeInfo[0])) {
+			// The type_index points to a different type - follow the alias
+			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_];
+			if (underlying_type.struct_info_) {
+				StringHandle underlying_name = underlying_type.name();
+				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias", 
+				                 StringTable::getStringView(struct_name), StringTable::getStringView(underlying_name));
+				return lookup_inherited_type_alias(underlying_name, member_name, depth + 1);
+			}
+		}
+		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has no struct_info_ and couldn't resolve alias", StringTable::getStringView(struct_name));
+		return nullptr;
+	}
+	
+	// Search base classes recursively
+	const StructTypeInfo* struct_info = struct_type_info->struct_info_.get();
+	FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has {} base classes", StringTable::getStringView(struct_name), struct_info->base_classes.size());
+	for (const auto& base_class : struct_info->base_classes) {
+		// Skip deferred base classes (they haven't been resolved yet)
+		if (base_class.is_deferred) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Skipping deferred base class '{}'", base_class.name);
+			continue;
+		}
+		
+		FLASH_LOG_FORMAT(Templates, Debug, "Checking base class '{}'", base_class.name);
+		// Recursively look up in base class - convert base_class.name to StringHandle for performance
+		StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_class.name);
+		const TypeInfo* base_result = lookup_inherited_type_alias(base_name_handle, member_name, depth + 1);
+		if (base_result != nullptr) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Found inherited type alias '{}::{}' via base class '{}'",
+			                 StringTable::getStringView(struct_name), StringTable::getStringView(member_name), base_class.name);
+			return base_result;
+		}
+	}
+	
+	return nullptr;
 }
 
 // Helper: Validate and add a base class (consolidates lookup, validation, and registration)
@@ -22139,21 +22298,59 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
 				    (peek_token()->value() == "," || peek_token()->value() == ">" || peek_token()->value() == "...")) {
-					FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
-					// Successfully parsed a dependent expression
-					// Create a dependent template argument
-					// IMPORTANT: For template parameter references (like T in is_same<T, T>),
-					// this should be a TYPE argument, not a VALUE argument!
-					// Try to get the type_index for the template parameter so pattern matching can detect reused parameters
-					TemplateTypeArg dependent_arg;
-					dependent_arg.base_type = Type::UserDefined;  // Template parameter is a user-defined type placeholder
-					dependent_arg.type_index = 0;  // Default, will try to look up
-					dependent_arg.is_value = false;  // This is a TYPE parameter, not a value
-					dependent_arg.is_dependent = true;
+					// Check if this is actually a concrete type (not a template parameter)
+					// If it's a concrete struct or type alias, we should fall through to type parsing instead
+					bool is_concrete_type = false;
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						const auto& id = std::get<IdentifierNode>(expr);
+						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(id.name()));
+						if (type_it != gTypesByName.end()) {
+							const TypeInfo* type_info = type_it->second;
+							// Check if it's a concrete struct (has struct_info_)
+							// OR if it's a type alias that resolves to a concrete type
+							// Type aliases have type_index pointing to the underlying type
+							if (type_info->struct_info_ != nullptr) {
+								is_concrete_type = true;
+								FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a concrete struct type, falling through to type parsing");
+							} else if (type_info->type_index_ < gTypeInfo.size()) {
+								// Check if this is a type alias (type_index points to underlying type)
+								// and the underlying type is concrete (not a template parameter)
+								const TypeInfo& underlying = gTypeInfo[type_info->type_index_];
+								// A type is concrete if:
+								// 1. It has struct_info_ (it's a defined struct/class), OR
+								// 2. It's not Type::UserDefined (i.e., it's a built-in type like int, bool, float)
+								// Template parameters are stored as Type::UserDefined without struct_info_,
+								// so this check correctly excludes them while accepting concrete types.
+								if (underlying.struct_info_ != nullptr || 
+								    underlying.type_ != Type::UserDefined) {
+									// It's a type alias to a concrete type (struct or built-in)
+									is_concrete_type = true;
+									FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a type alias to concrete type, falling through to type parsing");
+								}
+							}
+						}
+					}
 					
-					// Try to get the type_index for template parameter references
-					// For TemplateParameterReferenceNode or IdentifierNode that refers to a template parameter
-					if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+					// If it's a concrete type, restore and let type parsing handle it
+					if (is_concrete_type) {
+						restore_token_position(arg_saved_pos);
+						// Fall through to type parsing below
+					} else {
+						FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
+						// Successfully parsed a dependent expression
+						// Create a dependent template argument
+						// IMPORTANT: For template parameter references (like T in is_same<T, T>),
+						// this should be a TYPE argument, not a VALUE argument!
+						// Try to get the type_index for the template parameter so pattern matching can detect reused parameters
+						TemplateTypeArg dependent_arg;
+						dependent_arg.base_type = Type::UserDefined;  // Template parameter is a user-defined type placeholder
+						dependent_arg.type_index = 0;  // Default, will try to look up
+						dependent_arg.is_value = false;  // This is a TYPE parameter, not a value
+						dependent_arg.is_dependent = true;
+						
+						// Try to get the type_index for template parameter references
+						// For TemplateParameterReferenceNode or IdentifierNode that refers to a template parameter
+						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 						const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 						StringHandle param_name = tparam_ref.param_name();
 						// Look up the template parameter type in gTypesByName
@@ -22174,30 +22371,31 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						}
 					}
 					
-					// Check for pack expansion (...)
-					if (peek_token().has_value() && peek_token()->value() == "...") {
-						consume_token(); // consume '...'
-						dependent_arg.is_pack = true;
-						FLASH_LOG(Templates, Debug, "Marked dependent expression as pack expansion");
-					}
-					
-					template_args.push_back(dependent_arg);
-					discard_saved_token(arg_saved_pos);
-					
-					// Check for ',' or '>' after the expression (or after pack expansion)
-					// Phase 5: Handle >> token splitting for nested templates
-					if (peek_token()->value() == ">>") {
-						split_right_shift_token();
-					}
-					
-					if (peek_token()->value() == ">") {
-						consume_token(); // consume '>'
-						break;
-					}
-					
-					if (peek_token()->value() == ",") {
-						consume_token(); // consume ','
-						continue;
+						// Check for pack expansion (...)
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							consume_token(); // consume '...'
+							dependent_arg.is_pack = true;
+							FLASH_LOG(Templates, Debug, "Marked dependent expression as pack expansion");
+						}
+						
+						template_args.push_back(dependent_arg);
+						discard_saved_token(arg_saved_pos);
+						
+						// Check for ',' or '>' after the expression (or after pack expansion)
+						// Phase 5: Handle >> token splitting for nested templates
+						if (peek_token()->value() == ">>") {
+							split_right_shift_token();
+						}
+						
+						if (peek_token()->value() == ">") {
+							consume_token(); // consume '>'
+							break;
+						}
+						
+						if (peek_token()->value() == ",") {
+							consume_token(); // consume ','
+							continue;
+						}
 					}
 				}
 			}
@@ -24459,6 +24657,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			FLASH_LOG(Templates, Debug, "Processing base class: ", base_name_str);
 			
+			// NEW: Check if the base class IS a template parameter name (like T1, T2)
+			// If so, substitute it with the corresponding template argument
+			// This handles patterns like: template<typename T1, typename T2> struct __or_<T1, T2> : T1 { };
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				if (template_params[i].is<TemplateParameterNode>()) {
+					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+					if (param.name() == base_name_str) {
+						// The base class is a template parameter - substitute with the corresponding argument
+						const TemplateTypeArg& arg = template_args[i];
+						
+						// Get the concrete type name for this argument
+						std::string substituted_name = arg.toString();
+						FLASH_LOG(Templates, Debug, "Substituting base class template parameter '", base_name_str, 
+						          "' with '", substituted_name, "'");
+						base_name_str = substituted_name;
+						break;
+					}
+				}
+			}
+			
 			// WORKAROUND: If the base class name ends with "_unknown", it was instantiated
 			// during pattern parsing with template parameters. We need to re-instantiate
 			// it with the concrete template arguments.
@@ -25333,6 +25551,8 @@ if (struct_type_info.getStructInfo()) {
 	}
 
 	// Handle deferred template base classes (with dependent template arguments)
+	FLASH_LOG_FORMAT(Templates, Debug, "Template '{}' has {} deferred template base classes", 
+	                 StringTable::getStringView(class_decl.name()), class_decl.deferred_template_base_classes().size());
 	if (!class_decl.deferred_template_base_classes().empty()) {
 		ensure_substitution_maps();
 		auto identifier_matches = [](std::string_view haystack, std::string_view needle) {
@@ -25352,6 +25572,8 @@ if (struct_type_info.getStructInfo()) {
 		};
 		
 		for (const auto& deferred_base : class_decl.deferred_template_base_classes()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Processing deferred template base '{}' with {} template args",
+			                 StringTable::getStringView(deferred_base.base_template_name), deferred_base.template_arguments.size());
 			std::vector<TemplateTypeArg> resolved_args;
 			bool unresolved_arg = false;
 			for (const auto& arg_info : deferred_base.template_arguments) {
@@ -25395,7 +25617,7 @@ if (struct_type_info.getStructInfo()) {
 					TypeIndex resolved_index = type_spec.type_index();
 					bool resolved = false;
 					
-					if (resolved_type == Type::UserDefined && resolved_index < gTypeInfo.size()) {
+					if ((resolved_type == Type::UserDefined || resolved_type == Type::Struct) && resolved_index < gTypeInfo.size()) {
 						std::string_view type_name = StringTable::getStringView(gTypeInfo[resolved_index].name());
 						auto subst_it = name_substitution_map.find(type_name);
 						if (subst_it != name_substitution_map.end()) {
@@ -25407,16 +25629,45 @@ if (struct_type_info.getStructInfo()) {
 							resolved_args.push_back(subst);
 							resolved = true;
 						} else {
-							for (const auto& subst_entry : name_substitution_map) {
-								if (identifier_matches(type_name, subst_entry.first)) {
-									TemplateTypeArg subst = subst_entry.second;
-									subst.pointer_depth = type_spec.pointer_depth();
-									subst.is_reference = type_spec.is_reference();
-									subst.is_rvalue_reference = type_spec.is_rvalue_reference();
-									subst.cv_qualifier = type_spec.cv_qualifier();
-									resolved_args.push_back(subst);
+							// Check if this is a template class that needs to be instantiated with substituted args
+							// For example: is_integral<T> where T needs to be substituted with int
+							auto template_entry = gTemplateRegistry.lookupTemplate(type_name);
+							if (template_entry.has_value()) {
+								// This is a template class - try to instantiate it with our template args
+								// The template args for the nested template should be our current template args
+								// (e.g., is_integral<T> with T=int should become is_integral_int)
+								auto instantiated = try_instantiate_class_template(type_name, template_args_to_use);
+								if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
+									ast_nodes_.push_back(*instantiated);
+								}
+								std::string_view inst_name = get_instantiated_class_name(type_name, template_args_to_use);
+								auto inst_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
+								if (inst_it != gTypesByName.end()) {
+									TemplateTypeArg inst_arg;
+									inst_arg.base_type = Type::Struct;
+									inst_arg.type_index = inst_it->second->type_index_;
+									inst_arg.pointer_depth = type_spec.pointer_depth();
+									inst_arg.is_reference = type_spec.is_reference();
+									inst_arg.is_rvalue_reference = type_spec.is_rvalue_reference();
+									inst_arg.cv_qualifier = type_spec.cv_qualifier();
+									resolved_args.push_back(inst_arg);
 									resolved = true;
-									break;
+									FLASH_LOG_FORMAT(Templates, Debug, "Resolved nested template '{}' to '{}'", type_name, inst_name);
+								}
+							}
+							
+							if (!resolved) {
+								for (const auto& subst_entry : name_substitution_map) {
+									if (identifier_matches(type_name, subst_entry.first)) {
+										TemplateTypeArg subst = subst_entry.second;
+										subst.pointer_depth = type_spec.pointer_depth();
+										subst.is_reference = type_spec.is_reference();
+										subst.is_rvalue_reference = type_spec.is_rvalue_reference();
+										subst.cv_qualifier = type_spec.cv_qualifier();
+										resolved_args.push_back(subst);
+										resolved = true;
+										break;
+									}
 								}
 							}
 						}
@@ -25470,16 +25721,27 @@ if (struct_type_info.getStructInfo()) {
 			
 			std::string_view final_base_name = base_template_name;
 			if (deferred_base.member_type.has_value()) {
+				std::string_view member_name = StringTable::getStringView(*deferred_base.member_type);
+				
 				StringBuilder alias_builder;
 				alias_builder.append(base_template_name);
 				static constexpr std::string_view kScopeSeparator = "::"sv;
 				alias_builder.append(kScopeSeparator);
-				alias_builder.append(StringTable::getStringView(*deferred_base.member_type));
+				alias_builder.append(member_name);
 				std::string_view alias_name = alias_builder.commit();
 				
 				auto alias_it = gTypesByName.find(StringTable::getOrInternStringHandle(alias_name));
 				if (alias_it == gTypesByName.end()) {
-					FLASH_LOG(Templates, Error, "Deferred template base alias not found: ", alias_name);
+					// Try looking up through inheritance (e.g., __or_<...>::type where type is inherited)
+					const TypeInfo* inherited_alias = lookup_inherited_type_alias(base_template_name, member_name);
+					if (inherited_alias == nullptr) {
+						FLASH_LOG(Templates, Error, "Deferred template base alias not found: ", alias_name);
+						continue;
+					}
+					// Use the inherited type alias
+					final_base_name = StringTable::getStringView(inherited_alias->name());
+					struct_info->addBaseClass(final_base_name, inherited_alias->type_index_, deferred_base.access, deferred_base.is_virtual);
+					FLASH_LOG_FORMAT(Templates, Debug, "Resolved deferred inherited member alias base to {}", final_base_name);
 					continue;
 				}
 				
