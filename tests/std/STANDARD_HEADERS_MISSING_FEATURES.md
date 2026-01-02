@@ -4,19 +4,23 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
-**UPDATE (January 2, 2026 - Latest)**: Key features for `<type_traits>` implemented!
+**UPDATE (January 2, 2026 - Template Brace Initialization)**: 
+- ✅ **Template brace initialization (`type_identity<T>{}`)** - Templates can now be instantiated with brace initialization syntax
+- ✅ **Dependent template brace initialization** - Patterns like `__type_identity<_Tp>{}` inside templates now work (deferred resolution)
+- 🎯 **`<type_traits>` header progressing further** - Previous `__type_identity` errors now fixed
+- 🎯 **All 803 tests passing!**
+
+**UPDATE (January 2, 2026 - Earlier)**: Key features for `<type_traits>` implemented!
 - ✅ **`__has_builtin()` preprocessor support** - Standard library headers can now detect which compiler intrinsics FlashCpp supports, enabling efficient builtin implementations instead of template fallbacks
 - ✅ **Postfix cv-qualifier support** - Template specializations like `struct is_const<T const>` now parse correctly (standard library style)
 - ✅ **#ifdef __has_builtin** - Special handling for standard library compatibility
 - ✅ **60+ type trait intrinsics** exposed via `__has_builtin()` evaluation
-- 🎯 **`<type_traits>` now parses lines 1-843** (was line 737 before these fixes)
-- 🔜 **Next blocker**: Template brace initialization (`type_identity<T>{}`)
 
 **UPDATE (January 2, 2026)**: Major improvements to template argument parsing!
 - ✅ **Type alias recognition in template arguments** - Type aliases that resolve to concrete types (like `IntType = has_value<int>`) are now correctly identified and processed as types rather than dependent expressions
 - ✅ **Inherited type alias lookup** - Patterns like `wrapper<T>::type` where `type` comes from a base class now work (via `lookup_inherited_type_alias()` function with StringHandle optimization)
 - ✅ **Pack expansion tests fixed** - `test_pack_expansion_template_args_ret42.cpp` now compiles, links and runs correctly
-- 🎯 **All 800 tests passing!**
+- 🎯 **All 800+ tests passing!****
 
 **UPDATE (January 1, 2026)**: Template argument type alias resolution improved!
 - ✅ **Type alias resolution in template argument contexts** - Type aliases like `false_type`, `true_type` can now be used as template arguments (e.g., `first_t<false_type, ...>`)
