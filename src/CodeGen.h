@@ -6896,7 +6896,7 @@ private:
 						// Generate destructor call IR
 						DestructorCallOp dtor_op;
 						dtor_op.struct_name = struct_info->getName();
-						dtor_op.object = StringTable::getOrInternStringHandle(std::string(object_name));
+						dtor_op.object = StringTable::getOrInternStringHandle(object_name);
 						ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), dtor.type_name_token()));
 					} else {
 						FLASH_LOG(Codegen, Debug, "Struct ", type_name, " has no destructor, skipping call");
