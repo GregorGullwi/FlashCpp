@@ -2455,7 +2455,7 @@ class PseudoDestructorCallNode {
 public:
 	// Constructor for simple type names: obj.~Type()
 	explicit PseudoDestructorCallNode(ASTNode object, Token type_name_token, bool is_arrow)
-		: object_(object), type_name_token_(type_name_token), is_arrow_access_(is_arrow) {}
+		: object_(object), qualified_type_name_(), type_name_token_(type_name_token), is_arrow_access_(is_arrow) {}
 	
 	// Constructor with qualified type: obj.~std::string()
 	explicit PseudoDestructorCallNode(ASTNode object, std::string_view qualified_type_name, Token type_name_token, bool is_arrow)
@@ -2463,7 +2463,10 @@ public:
 
 	ASTNode object() const { return object_; }
 	std::string_view type_name() const { return type_name_token_.value(); }
-	std::string_view qualified_type_name() const { return qualified_type_name_.empty() ? type_name() : qualified_type_name_; }
+	// Returns the qualified type name if present, otherwise the simple type name from the token
+	// Note: For simple types, returns view into token data which is valid for parser lifetime
+	const std::string& qualified_type_name() const { return qualified_type_name_; }
+	bool has_qualified_name() const { return !qualified_type_name_.empty(); }
 	const Token& type_name_token() const { return type_name_token_; }
 	bool is_arrow_access() const { return is_arrow_access_; }
 

@@ -6845,7 +6845,8 @@ private:
 			// For non-class types this is a no-op that returns void
 			// For class types in decltype context, it's used to check if destructor is callable
 			const auto& dtor = std::get<PseudoDestructorCallNode>(exprNode);
-			FLASH_LOG(Codegen, Debug, "Generating pseudo-destructor call for type: ", dtor.qualified_type_name());
+			FLASH_LOG(Codegen, Debug, "Generating pseudo-destructor call for type: ", 
+			          dtor.has_qualified_name() ? dtor.qualified_type_name() : std::string(dtor.type_name()));
 			// Pseudo-destructor returns void, no value to return
 			return {};
 		}
