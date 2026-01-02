@@ -11221,6 +11221,31 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 	}
 
+	// Check for 'noexcept' keyword (operator, not specifier)
+	// noexcept(expression) returns true if expression is noexcept, false otherwise
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "noexcept"sv) {
+		Token noexcept_token = *current_token_;
+		consume_token(); // consume 'noexcept'
+
+		// noexcept operator always requires parentheses
+		if (!consume_punctuator("("sv)) {
+			return ParseResult::error("Expected '(' after 'noexcept'", *current_token_);
+		}
+
+		// Parse the expression inside noexcept(...)
+		ParseResult expr_result = parse_expression();
+		if (expr_result.is_error()) {
+			return ParseResult::error("Expected expression after 'noexcept('", *current_token_);
+		}
+
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Expected ')' after noexcept expression", *current_token_);
+		}
+
+		auto noexcept_expr = emplace_node<ExpressionNode>(NoexceptExprNode(*expr_result.node(), noexcept_token));
+		return ParseResult::success(noexcept_expr);
+	}
+
 	// Check for 'typeid' keyword
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "typeid"sv) {
 		// Handle typeid operator: typeid(type) or typeid(expression)

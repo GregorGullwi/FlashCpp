@@ -2554,6 +2554,22 @@ private:
 	bool is_type_;
 };
 
+// noexcept operator node - returns true if expression is noexcept, false otherwise
+// This is the noexcept(expr) operator, not the noexcept specifier
+class NoexceptExprNode {
+public:
+	// Constructor for noexcept(expression)
+	explicit NoexceptExprNode(ASTNode expr_node, Token noexcept_token)
+		: expr_(expr_node), noexcept_token_(noexcept_token) {}
+
+	ASTNode expr() const { return expr_; }
+	const Token& noexcept_token() const { return noexcept_token_; }
+
+private:
+	ASTNode expr_;  // The expression to check
+	Token noexcept_token_;
+};
+
 // offsetof operator node - offsetof(struct_type, member)
 class OffsetofExprNode {
 public:
@@ -2962,7 +2978,7 @@ private:
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
-	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PseudoDestructorCallNode>;
+	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PseudoDestructorCallNode, NoexceptExprNode>;
 
 /*class FunctionDefinitionNode {
 public:

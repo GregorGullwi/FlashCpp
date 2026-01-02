@@ -6786,6 +6786,15 @@ private:
 			// Fall back to IR generation if constant evaluation failed
 			return generateAlignofIr(alignof_node);
 		}
+		else if (std::holds_alternative<NoexceptExprNode>(exprNode)) {
+			// const auto& noexcept_node = std::get<NoexceptExprNode>(exprNode);
+			// noexcept(expr) returns true if expr doesn't throw, false otherwise
+			// For now, we'll conservatively return true (assume no throws) for most expressions
+			// A complete implementation would analyze the expression for potential throw sites
+			// TODO: Implement proper noexcept analysis - check if expression calls throwing functions
+			// Return a compile-time constant boolean
+			return { Type::Bool, 8, 1ULL, 0ULL };  // Conservative: assume noexcept for now
+		}
 		else if (std::holds_alternative<OffsetofExprNode>(exprNode)) {
 			const auto& expr = std::get<OffsetofExprNode>(exprNode);
 			return generateOffsetofIr(expr);
