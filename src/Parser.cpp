@@ -11543,6 +11543,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						// Not a known variable, could be a template
 						could_be_template_name = true;
 					}
+				} else if (std::holds_alternative<FunctionCallNode>(expr) ||
+				           std::holds_alternative<ConstructorCallNode>(expr)) {
+					// Function calls and constructor calls (like T(-1)) cannot have template arguments
+					// after them. The '<' following such expressions is always a comparison operator.
+					could_be_template_name = false;
 				} else {
 					// Not a simple identifier, could be a complex expression that needs template args
 					could_be_template_name = true;
