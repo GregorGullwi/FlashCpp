@@ -4,6 +4,12 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 2, 2026 - Inherited Member Template Functions)**:
+- ✅ **Inherited member template function lookup** - SFINAE patterns like `decltype(__test<_Tp>(0))` where `__test` is inherited from a base class now work correctly
+- ✅ **Template member function registration** - Member template functions are now properly added to struct type info for inheritance lookup
+- 🎯 **Core `<type_traits>` SFINAE detection patterns now compile!**
+- 🎯 **All 807 tests passing!**
+
 **UPDATE (January 2, 2026 - Reference Types in Template Defaults)**:
 - ✅ **Rvalue/lvalue references in template defaults** - Patterns like `typename U = T&&` and `typename V = T&` now parse correctly
 - ✅ **noexcept before trailing return type** - `auto f() noexcept -> T` now works (common in `<type_traits>`)
