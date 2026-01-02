@@ -11545,8 +11545,16 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					}
 				} else if (std::holds_alternative<FunctionCallNode>(expr) ||
 				           std::holds_alternative<ConstructorCallNode>(expr)) {
-					// Function calls and constructor calls (like T(-1)) cannot have template arguments
-					// after them. The '<' following such expressions is always a comparison operator.
+					// Function calls and constructor calls cannot have template arguments after them.
+					// This handles cases like:
+					// - T(-1) < T(0) where T is a template parameter used in functional-style cast
+					// - func() < value where func is a function call
+					// In both cases, '<' after the call expression is a comparison operator, not
+					// the start of template arguments. This is because:
+					// 1. The result of a function/constructor call is a value, not a template name
+					// 2. C++ doesn't allow template arguments to follow call expressions
+					// Note: This is safe because if a function returns a template type, the template
+					// instantiation happens at the function definition, not at the call site.
 					could_be_template_name = false;
 				} else {
 					// Not a simple identifier, could be a complex expression that needs template args
@@ -23101,7 +23109,6 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// When inside a namespace (e.g., std) and looking up "__detail::__or_fn",
 	// we need to also try "std::__detail::__or_fn" since templates are registered
 	// with their fully-qualified names.
-	std::string qualified_name_storage;  // Storage for the qualified name string
 	if (!all_templates || all_templates->empty()) {
 		auto namespace_path = gSymbolTable.build_current_namespace_path();
 		if (!namespace_path.empty()) {
@@ -23116,12 +23123,14 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			}
 			sb.append(template_name);
 			std::string_view qualified_name_view = sb.commit();
-			qualified_name_storage = std::string(qualified_name_view);
+			// Note: qualified_name_view points to StringBuilder's internal buffer,
+			// which is valid for the duration of this function. The lookup only
+			// needs the string_view temporarily, so no std::string allocation needed.
 			
 			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Template '{}' not found, trying qualified name '{}'",
-				recursion_depth, template_name, qualified_name_storage);
+				recursion_depth, template_name, qualified_name_view);
 			
-			all_templates = gTemplateRegistry.lookupAllTemplates(qualified_name_storage);
+			all_templates = gTemplateRegistry.lookupAllTemplates(qualified_name_view);
 		}
 	}
 	
