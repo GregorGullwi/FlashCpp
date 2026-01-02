@@ -25051,11 +25051,139 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					
+					// Check if this is a dependent qualified type (like wrapper<T>::type)
+					// that needs resolution based on already-filled template arguments
+					if (default_type.type() == Type::UserDefined && default_type.type_index() > 0 && 
+					    default_type.type_index() < gTypeInfo.size()) {
+						const TypeInfo& default_type_info = gTypeInfo[default_type.type_index()];
+						std::string_view default_type_name = StringTable::getStringView(default_type_info.name());
+						
+						// Check if this is a qualified type (contains ::)
+						auto double_colon_pos = default_type_name.find("::");
+						if (double_colon_pos != std::string_view::npos) {
+							// Extract base template name and member name
+							std::string_view base_part = default_type_name.substr(0, double_colon_pos);
+							std::string_view member_name = default_type_name.substr(double_colon_pos + 2);
+							
+							FLASH_LOG(Templates, Debug, "Resolving dependent type default: ", default_type_name,
+							          " -> base='", base_part, "', member='", member_name, "'");
+							
+							// Check if base_part contains a template parameter reference (e.g., "wrapper_void")
+							// by seeing if it matches a template name + "_" + placeholder
+							// For each filled argument, try substituting
+							for (size_t arg_idx = 0; arg_idx < filled_args_for_pattern_match.size() && arg_idx < primary_params.size(); ++arg_idx) {
+								if (!primary_params[arg_idx].is<TemplateParameterNode>()) continue;
+								const TemplateParameterNode& prev_param = primary_params[arg_idx].as<TemplateParameterNode>();
+								
+								// Build the placeholder pattern (e.g., "wrapper_void" for template parameter T)
+								// First, check if the base_part starts with a known template name
+								// followed by "_void" (dependent placeholder)
+								if (base_part.ends_with("_void")) {
+									std::string_view template_base_name = base_part.substr(0, base_part.size() - 5);  // Remove "_void"
+									
+									// Try to instantiate this template with the actual argument
+									const TemplateTypeArg& actual_arg = filled_args_for_pattern_match[arg_idx];
+									
+									// Build the instantiated template name (e.g., "wrapper_int")
+									StringBuilder instantiated_base_builder;
+									instantiated_base_builder.append(template_base_name).append("_");
+									if (actual_arg.base_type == Type::Int) instantiated_base_builder.append("int");
+									else if (actual_arg.base_type == Type::UnsignedInt) instantiated_base_builder.append("unsigned_int");
+									else if (actual_arg.base_type == Type::Long) instantiated_base_builder.append("long");
+									else if (actual_arg.base_type == Type::UnsignedLong) instantiated_base_builder.append("unsigned_long");
+									else if (actual_arg.base_type == Type::LongLong) instantiated_base_builder.append("long_long");
+									else if (actual_arg.base_type == Type::UnsignedLongLong) instantiated_base_builder.append("unsigned_long_long");
+									else if (actual_arg.base_type == Type::Short) instantiated_base_builder.append("short");
+									else if (actual_arg.base_type == Type::UnsignedShort) instantiated_base_builder.append("unsigned_short");
+									else if (actual_arg.base_type == Type::Char) instantiated_base_builder.append("char");
+									else if (actual_arg.base_type == Type::Bool) instantiated_base_builder.append("bool");
+									else if (actual_arg.base_type == Type::Float) instantiated_base_builder.append("float");
+									else if (actual_arg.base_type == Type::Double) instantiated_base_builder.append("double");
+									else if (actual_arg.base_type == Type::Void) instantiated_base_builder.append("void");
+									else if (actual_arg.base_type == Type::UserDefined || actual_arg.base_type == Type::Struct) {
+										// Get the name from type info
+										if (actual_arg.type_index < gTypeInfo.size()) {
+											instantiated_base_builder.append(StringTable::getStringView(gTypeInfo[actual_arg.type_index].name()));
+										}
+									}
+									std::string_view instantiated_base_name = instantiated_base_builder.commit();
+									
+									// Try to instantiate the template if not already done
+									std::vector<TemplateTypeArg> base_template_args = { actual_arg };
+									auto base_template_inst = try_instantiate_class_template(template_base_name, base_template_args);
+									
+									// Build the full qualified name (e.g., "wrapper_int::type")
+									StringBuilder qualified_name_builder;
+									qualified_name_builder.append(instantiated_base_name).append("::").append(member_name);
+									std::string_view qualified_name = qualified_name_builder.commit();
+									
+									FLASH_LOG(Templates, Debug, "Looking up resolved type: ", qualified_name);
+									
+									// Look up the member type
+									auto resolved_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
+									if (resolved_type_it != gTypesByName.end()) {
+										const TypeInfo* resolved_type_info = resolved_type_it->second;
+										
+										// If it's a type alias, resolve to the underlying type
+										Type resolved_base_type = resolved_type_info->type_;
+										TypeIndex resolved_type_index = resolved_type_info->type_index_;
+										
+										// Check if this is an alias to a concrete type
+										if (resolved_type_info->type_ == Type::UserDefined && 
+										    resolved_type_index != resolved_type_info->type_index_ && 
+										    resolved_type_index < gTypeInfo.size()) {
+											// Follow the alias
+											const TypeInfo& aliased_type = gTypeInfo[resolved_type_index];
+											resolved_base_type = aliased_type.type_;
+											resolved_type_index = aliased_type.type_index_;
+										}
+										
+										// If the resolved type is a basic type like int, use that
+										if (resolved_base_type != Type::UserDefined && resolved_base_type != Type::Struct) {
+											TemplateTypeArg resolved_arg;
+											resolved_arg.base_type = resolved_base_type;
+											resolved_arg.type_index = resolved_type_index;
+											filled_args_for_pattern_match.push_back(resolved_arg);
+											FLASH_LOG(Templates, Debug, "Resolved dependent default type to: ",
+											          static_cast<int>(resolved_base_type));
+											goto next_param;  // Continue to next parameter
+										} else {
+											// UserDefined/Struct type
+											TemplateTypeArg resolved_arg;
+											resolved_arg.base_type = resolved_base_type;
+											resolved_arg.type_index = resolved_type_index;
+											filled_args_for_pattern_match.push_back(resolved_arg);
+											FLASH_LOG(Templates, Debug, "Resolved dependent default to struct type index: ",
+											          resolved_type_index);
+											goto next_param;
+										}
+									}
+								}
+							}
+						}
+					}
+					
 					// For other default types, use the type as-is
 					filled_args_for_pattern_match.push_back(TemplateTypeArg(default_type));
 					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
+					
+					next_param:;
 				}
 			}
+		}
+	}
+	
+	// Regenerate instantiated name with filled-in defaults
+	// This is needed when defaults are dependent types that get resolved (e.g., typename wrapper<T>::type -> int)
+	if (filled_args_for_pattern_match.size() > template_args.size()) {
+		instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, filled_args_for_pattern_match));
+		FLASH_LOG(Templates, Debug, "Regenerated instantiated name with defaults: ", StringTable::getStringView(instantiated_name));
+		
+		// Check again if we already have this instantiation (with filled-in defaults)
+		auto existing_type_with_defaults = gTypesByName.find(instantiated_name);
+		if (existing_type_with_defaults != gTypesByName.end()) {
+			FLASH_LOG(Templates, Debug, "Found existing instantiation with filled-in defaults");
+			return std::nullopt;
 		}
 	}
 	
@@ -25865,7 +25993,100 @@ if (struct_type_info.getStructInfo()) {
 			const ASTNode& default_node = param.default_value();
 			if (default_node.is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
-				filled_template_args.push_back(TemplateTypeArg(default_type));
+				
+				// Check if this is a dependent qualified type (like wrapper<T>::type)
+				// that needs resolution based on already-filled template arguments
+				bool resolved = false;
+				if (default_type.type() == Type::UserDefined && default_type.type_index() > 0 && 
+				    default_type.type_index() < gTypeInfo.size()) {
+					const TypeInfo& default_type_info = gTypeInfo[default_type.type_index()];
+					std::string_view default_type_name = StringTable::getStringView(default_type_info.name());
+					
+					// Check if this is a qualified type (contains ::)
+					auto double_colon_pos = default_type_name.find("::");
+					if (double_colon_pos != std::string_view::npos) {
+						// Extract base template name and member name
+						std::string_view base_part = default_type_name.substr(0, double_colon_pos);
+						std::string_view member_name = default_type_name.substr(double_colon_pos + 2);
+						
+						FLASH_LOG(Templates, Debug, "Resolving dependent type default (instantiation): ", default_type_name,
+						          " -> base='", base_part, "', member='", member_name, "'");
+						
+						// Check if base_part contains a placeholder (ends with "_void")
+						if (base_part.ends_with("_void")) {
+							std::string_view template_base_name = base_part.substr(0, base_part.size() - 5);
+							
+							// Use the first filled argument
+							if (!filled_template_args.empty()) {
+								const TemplateTypeArg& actual_arg = filled_template_args[0];
+								
+								// Build the instantiated template name
+								StringBuilder instantiated_base_builder;
+								instantiated_base_builder.append(template_base_name).append("_");
+								if (actual_arg.base_type == Type::Int) instantiated_base_builder.append("int");
+								else if (actual_arg.base_type == Type::UnsignedInt) instantiated_base_builder.append("unsigned_int");
+								else if (actual_arg.base_type == Type::Long) instantiated_base_builder.append("long");
+								else if (actual_arg.base_type == Type::UnsignedLong) instantiated_base_builder.append("unsigned_long");
+								else if (actual_arg.base_type == Type::LongLong) instantiated_base_builder.append("long_long");
+								else if (actual_arg.base_type == Type::UnsignedLongLong) instantiated_base_builder.append("unsigned_long_long");
+								else if (actual_arg.base_type == Type::Short) instantiated_base_builder.append("short");
+								else if (actual_arg.base_type == Type::UnsignedShort) instantiated_base_builder.append("unsigned_short");
+								else if (actual_arg.base_type == Type::Char) instantiated_base_builder.append("char");
+								else if (actual_arg.base_type == Type::Bool) instantiated_base_builder.append("bool");
+								else if (actual_arg.base_type == Type::Float) instantiated_base_builder.append("float");
+								else if (actual_arg.base_type == Type::Double) instantiated_base_builder.append("double");
+								else if (actual_arg.base_type == Type::Void) instantiated_base_builder.append("void");
+								else if (actual_arg.base_type == Type::UserDefined || actual_arg.base_type == Type::Struct) {
+									if (actual_arg.type_index < gTypeInfo.size()) {
+										instantiated_base_builder.append(StringTable::getStringView(gTypeInfo[actual_arg.type_index].name()));
+									}
+								}
+								std::string_view instantiated_base_name = instantiated_base_builder.commit();
+								
+								// Try to instantiate the template if not already done
+								std::vector<TemplateTypeArg> base_template_args = { actual_arg };
+								auto base_template_inst = try_instantiate_class_template(template_base_name, base_template_args);
+								
+								// Build the full qualified name
+								StringBuilder qualified_name_builder;
+								qualified_name_builder.append(instantiated_base_name).append("::").append(member_name);
+								std::string_view qualified_name = qualified_name_builder.commit();
+								
+								FLASH_LOG(Templates, Debug, "Looking up resolved type (instantiation): ", qualified_name);
+								
+								// Look up the member type
+								auto resolved_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
+								if (resolved_type_it != gTypesByName.end()) {
+									const TypeInfo* resolved_type_info = resolved_type_it->second;
+									
+									Type resolved_base_type = resolved_type_info->type_;
+									TypeIndex resolved_type_index = resolved_type_info->type_index_;
+									
+									// Check if this is an alias to a concrete type
+									if (resolved_type_info->type_ == Type::UserDefined && 
+									    resolved_type_index != resolved_type_info->type_index_ && 
+									    resolved_type_index < gTypeInfo.size()) {
+										const TypeInfo& aliased_type = gTypeInfo[resolved_type_index];
+										resolved_base_type = aliased_type.type_;
+										resolved_type_index = aliased_type.type_index_;
+									}
+									
+									TemplateTypeArg resolved_arg;
+									resolved_arg.base_type = resolved_base_type;
+									resolved_arg.type_index = resolved_type_index;
+									filled_template_args.push_back(resolved_arg);
+									FLASH_LOG(Templates, Debug, "Resolved dependent default type (instantiation) to: ",
+									          static_cast<int>(resolved_base_type));
+									resolved = true;
+								}
+							}
+						}
+					}
+				}
+				
+				if (!resolved) {
+					filled_template_args.push_back(TemplateTypeArg(default_type));
+				}
 			}
 		} else if (param.kind() == TemplateParameterKind::NonType) {
 			// For non-type parameters with defaults, evaluate the expression
