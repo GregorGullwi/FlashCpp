@@ -17510,9 +17510,9 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 		}
 		
 		FLASH_LOG_FORMAT(Templates, Debug, "Checking base class '{}'", base_class.name);
-		// Recursively look up in base class
-		// base_class.name is std::string_view, so we use the convenience overload
-		const TypeInfo* base_result = lookup_inherited_type_alias(base_class.name, StringTable::getStringView(member_name), depth + 1);
+		// Recursively look up in base class - convert base_class.name to StringHandle for performance
+		StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_class.name);
+		const TypeInfo* base_result = lookup_inherited_type_alias(base_name_handle, member_name, depth + 1);
 		if (base_result != nullptr) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Found inherited type alias '{}::{}' via base class '{}'",
 			                 StringTable::getStringView(struct_name), StringTable::getStringView(member_name), base_class.name);
@@ -22315,9 +22315,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								// Check if this is a type alias (type_index points to underlying type)
 								// and the underlying type is concrete (not a template parameter)
 								const TypeInfo& underlying = gTypeInfo[type_info->type_index_];
+								// A type is concrete if:
+								// 1. It has struct_info_ (it's a defined struct/class), OR
+								// 2. It's not Type::UserDefined (i.e., it's a built-in type like int, bool, float)
+								// Template parameters are stored as Type::UserDefined without struct_info_,
+								// so this check correctly excludes them while accepting concrete types.
 								if (underlying.struct_info_ != nullptr || 
 								    underlying.type_ != Type::UserDefined) {
-									// It's a type alias to a concrete type
+									// It's a type alias to a concrete type (struct or built-in)
 									is_concrete_type = true;
 									FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a type alias to concrete type, falling through to type parsing");
 								}
