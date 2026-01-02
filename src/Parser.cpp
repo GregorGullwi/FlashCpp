@@ -24962,6 +24962,105 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return default_init;  // Return original if no substitution was performed
 	};
 	
+	// Helper lambda to append type name suffix based on TemplateTypeArg
+	// Used to build instantiated template names like "wrapper_int" from "wrapper" + int argument
+	auto append_type_name_suffix = [](StringBuilder& builder, const TemplateTypeArg& arg) {
+		if (arg.base_type == Type::Int) builder.append("int");
+		else if (arg.base_type == Type::UnsignedInt) builder.append("unsigned_int");
+		else if (arg.base_type == Type::Long) builder.append("long");
+		else if (arg.base_type == Type::UnsignedLong) builder.append("unsigned_long");
+		else if (arg.base_type == Type::LongLong) builder.append("long_long");
+		else if (arg.base_type == Type::UnsignedLongLong) builder.append("unsigned_long_long");
+		else if (arg.base_type == Type::Short) builder.append("short");
+		else if (arg.base_type == Type::UnsignedShort) builder.append("unsigned_short");
+		else if (arg.base_type == Type::Char) builder.append("char");
+		else if (arg.base_type == Type::Bool) builder.append("bool");
+		else if (arg.base_type == Type::Float) builder.append("float");
+		else if (arg.base_type == Type::Double) builder.append("double");
+		else if (arg.base_type == Type::Void) builder.append("void");
+		else if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) {
+			if (arg.type_index < gTypeInfo.size()) {
+				builder.append(StringTable::getStringView(gTypeInfo[arg.type_index].name()));
+			}
+		}
+	};
+	
+	// Helper lambda to resolve a dependent qualified type (like wrapper_void::type)
+	// to its actual type after substituting template arguments.
+	// Returns a resolved TemplateTypeArg if successful, nullopt otherwise.
+	auto resolve_dependent_qualified_type = [&](
+		std::string_view type_name,
+		const TemplateTypeArg& actual_arg) -> std::optional<TemplateTypeArg> {
+		
+		// Check if this is a qualified type (contains ::)
+		auto double_colon_pos = type_name.find("::");
+		if (double_colon_pos == std::string_view::npos) {
+			return std::nullopt;
+		}
+		
+		// Extract base template name and member name
+		std::string_view base_part = type_name.substr(0, double_colon_pos);
+		std::string_view member_name = type_name.substr(double_colon_pos + 2);
+		
+		FLASH_LOG(Templates, Debug, "Resolving dependent type: ", type_name,
+		          " -> base='", base_part, "', member='", member_name, "'");
+		
+		// Check if base_part contains a placeholder (ends with "_void")
+		if (!base_part.ends_with("_void")) {
+			return std::nullopt;
+		}
+		
+		std::string_view template_base_name = base_part.substr(0, base_part.size() - 5);
+		
+		// Build the instantiated template name (e.g., "wrapper_int")
+		StringBuilder instantiated_base_builder;
+		instantiated_base_builder.append(template_base_name).append("_");
+		append_type_name_suffix(instantiated_base_builder, actual_arg);
+		std::string_view instantiated_base_name = instantiated_base_builder.commit();
+		
+		// Try to instantiate the template if not already done
+		std::vector<TemplateTypeArg> base_template_args = { actual_arg };
+		try_instantiate_class_template(template_base_name, base_template_args);
+		
+		// Build the full qualified name (e.g., "wrapper_int::type")
+		StringBuilder qualified_name_builder;
+		qualified_name_builder.append(instantiated_base_name).append("::").append(member_name);
+		std::string_view qualified_name = qualified_name_builder.commit();
+		
+		FLASH_LOG(Templates, Debug, "Looking up resolved type: ", qualified_name);
+		
+		// Look up the member type
+		auto resolved_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
+		if (resolved_type_it == gTypesByName.end()) {
+			return std::nullopt;
+		}
+		
+		const TypeInfo* resolved_type_info = resolved_type_it->second;
+		
+		// Get the resolved type, following aliases if needed
+		Type resolved_base_type = resolved_type_info->type_;
+		TypeIndex resolved_type_index = resolved_type_info->type_index_;
+		
+		// Check if this is an alias to a concrete type
+		if (resolved_type_info->type_ == Type::UserDefined && 
+		    resolved_type_index != resolved_type_info->type_index_ && 
+		    resolved_type_index < gTypeInfo.size()) {
+			// Follow the alias
+			const TypeInfo& aliased_type = gTypeInfo[resolved_type_index];
+			resolved_base_type = aliased_type.type_;
+			resolved_type_index = aliased_type.type_index_;
+		}
+		
+		TemplateTypeArg resolved_arg;
+		resolved_arg.base_type = resolved_base_type;
+		resolved_arg.type_index = resolved_type_index;
+		
+		FLASH_LOG(Templates, Debug, "Resolved dependent type to: type=", 
+		          static_cast<int>(resolved_base_type), ", index=", resolved_type_index);
+		
+		return resolved_arg;
+	};
+	
 	// 1) Full/Exact specialization lookup
 	// If there is an exact specialization registered for (template_name, template_args),
 	// it always wins over partial specializations and the primary template.
@@ -25058,107 +25157,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const TypeInfo& default_type_info = gTypeInfo[default_type.type_index()];
 						std::string_view default_type_name = StringTable::getStringView(default_type_info.name());
 						
-						// Check if this is a qualified type (contains ::)
-						auto double_colon_pos = default_type_name.find("::");
-						if (double_colon_pos != std::string_view::npos) {
-							// Extract base template name and member name
-							std::string_view base_part = default_type_name.substr(0, double_colon_pos);
-							std::string_view member_name = default_type_name.substr(double_colon_pos + 2);
-							
-							FLASH_LOG(Templates, Debug, "Resolving dependent type default: ", default_type_name,
-							          " -> base='", base_part, "', member='", member_name, "'");
-							
-							// Check if base_part contains a template parameter reference (e.g., "wrapper_void")
-							// by seeing if it matches a template name + "_" + placeholder
-							// For each filled argument, try substituting
-							for (size_t arg_idx = 0; arg_idx < filled_args_for_pattern_match.size() && arg_idx < primary_params.size(); ++arg_idx) {
-								if (!primary_params[arg_idx].is<TemplateParameterNode>()) continue;
-								const TemplateParameterNode& prev_param = primary_params[arg_idx].as<TemplateParameterNode>();
-								
-								// Build the placeholder pattern (e.g., "wrapper_void" for template parameter T)
-								// First, check if the base_part starts with a known template name
-								// followed by "_void" (dependent placeholder)
-								if (base_part.ends_with("_void")) {
-									std::string_view template_base_name = base_part.substr(0, base_part.size() - 5);  // Remove "_void"
-									
-									// Try to instantiate this template with the actual argument
-									const TemplateTypeArg& actual_arg = filled_args_for_pattern_match[arg_idx];
-									
-									// Build the instantiated template name (e.g., "wrapper_int")
-									StringBuilder instantiated_base_builder;
-									instantiated_base_builder.append(template_base_name).append("_");
-									if (actual_arg.base_type == Type::Int) instantiated_base_builder.append("int");
-									else if (actual_arg.base_type == Type::UnsignedInt) instantiated_base_builder.append("unsigned_int");
-									else if (actual_arg.base_type == Type::Long) instantiated_base_builder.append("long");
-									else if (actual_arg.base_type == Type::UnsignedLong) instantiated_base_builder.append("unsigned_long");
-									else if (actual_arg.base_type == Type::LongLong) instantiated_base_builder.append("long_long");
-									else if (actual_arg.base_type == Type::UnsignedLongLong) instantiated_base_builder.append("unsigned_long_long");
-									else if (actual_arg.base_type == Type::Short) instantiated_base_builder.append("short");
-									else if (actual_arg.base_type == Type::UnsignedShort) instantiated_base_builder.append("unsigned_short");
-									else if (actual_arg.base_type == Type::Char) instantiated_base_builder.append("char");
-									else if (actual_arg.base_type == Type::Bool) instantiated_base_builder.append("bool");
-									else if (actual_arg.base_type == Type::Float) instantiated_base_builder.append("float");
-									else if (actual_arg.base_type == Type::Double) instantiated_base_builder.append("double");
-									else if (actual_arg.base_type == Type::Void) instantiated_base_builder.append("void");
-									else if (actual_arg.base_type == Type::UserDefined || actual_arg.base_type == Type::Struct) {
-										// Get the name from type info
-										if (actual_arg.type_index < gTypeInfo.size()) {
-											instantiated_base_builder.append(StringTable::getStringView(gTypeInfo[actual_arg.type_index].name()));
-										}
-									}
-									std::string_view instantiated_base_name = instantiated_base_builder.commit();
-									
-									// Try to instantiate the template if not already done
-									std::vector<TemplateTypeArg> base_template_args = { actual_arg };
-									auto base_template_inst = try_instantiate_class_template(template_base_name, base_template_args);
-									
-									// Build the full qualified name (e.g., "wrapper_int::type")
-									StringBuilder qualified_name_builder;
-									qualified_name_builder.append(instantiated_base_name).append("::").append(member_name);
-									std::string_view qualified_name = qualified_name_builder.commit();
-									
-									FLASH_LOG(Templates, Debug, "Looking up resolved type: ", qualified_name);
-									
-									// Look up the member type
-									auto resolved_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
-									if (resolved_type_it != gTypesByName.end()) {
-										const TypeInfo* resolved_type_info = resolved_type_it->second;
-										
-										// If it's a type alias, resolve to the underlying type
-										Type resolved_base_type = resolved_type_info->type_;
-										TypeIndex resolved_type_index = resolved_type_info->type_index_;
-										
-										// Check if this is an alias to a concrete type
-										if (resolved_type_info->type_ == Type::UserDefined && 
-										    resolved_type_index != resolved_type_info->type_index_ && 
-										    resolved_type_index < gTypeInfo.size()) {
-											// Follow the alias
-											const TypeInfo& aliased_type = gTypeInfo[resolved_type_index];
-											resolved_base_type = aliased_type.type_;
-											resolved_type_index = aliased_type.type_index_;
-										}
-										
-										// If the resolved type is a basic type like int, use that
-										if (resolved_base_type != Type::UserDefined && resolved_base_type != Type::Struct) {
-											TemplateTypeArg resolved_arg;
-											resolved_arg.base_type = resolved_base_type;
-											resolved_arg.type_index = resolved_type_index;
-											filled_args_for_pattern_match.push_back(resolved_arg);
-											FLASH_LOG(Templates, Debug, "Resolved dependent default type to: ",
-											          static_cast<int>(resolved_base_type));
-											goto next_param;  // Continue to next parameter
-										} else {
-											// UserDefined/Struct type
-											TemplateTypeArg resolved_arg;
-											resolved_arg.base_type = resolved_base_type;
-											resolved_arg.type_index = resolved_type_index;
-											filled_args_for_pattern_match.push_back(resolved_arg);
-											FLASH_LOG(Templates, Debug, "Resolved dependent default to struct type index: ",
-											          resolved_type_index);
-											goto next_param;
-										}
-									}
-								}
+						// Try to resolve using each filled argument
+						for (size_t arg_idx = 0; arg_idx < filled_args_for_pattern_match.size(); ++arg_idx) {
+							auto resolved = resolve_dependent_qualified_type(default_type_name, filled_args_for_pattern_match[arg_idx]);
+							if (resolved.has_value()) {
+								filled_args_for_pattern_match.push_back(*resolved);
+								goto next_param;
 							}
 						}
 					}
@@ -25168,6 +25172,80 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
 					
 					next_param:;
+				} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
+					// Handle non-type template parameter defaults like is_arithmetic<T>::value
+					const ExpressionNode& expr = default_node.as<ExpressionNode>();
+					
+					if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+						const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
+						
+						// Handle dependent static member access like is_arithmetic_void::value
+						if (!qual_id.namespaces().empty()) {
+							std::string type_name = qual_id.namespaces()[0];
+							std::string_view member_name = qual_id.name();
+							
+							// Check if type_name ends with "_void" (dependent placeholder)
+							if (type_name.ends_with("_void") && !filled_args_for_pattern_match.empty()) {
+								std::string_view template_base_name(type_name.data(), type_name.size() - 5);
+								
+								// Build the instantiated template name using first filled argument
+								StringBuilder inst_name_builder;
+								inst_name_builder.append(template_base_name).append("_");
+								append_type_name_suffix(inst_name_builder, filled_args_for_pattern_match[0]);
+								std::string_view inst_name = inst_name_builder.commit();
+								
+								FLASH_LOG(Templates, Debug, "Resolving dependent qualified identifier (pattern match): ", 
+								          type_name, "::", member_name, " -> ", inst_name, "::", member_name);
+								
+								// Try to instantiate the template
+								try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_args_for_pattern_match[0]});
+								
+								// Look up the instantiated type
+								auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
+								if (type_it != gTypesByName.end()) {
+									const TypeInfo* type_info = type_it->second;
+									if (type_info->getStructInfo()) {
+										const StructTypeInfo* struct_info = type_info->getStructInfo();
+										// Find the static member
+										for (const auto& static_member : struct_info->static_members) {
+											if (StringTable::getStringView(static_member.getName()) == member_name) {
+												// Evaluate the static member's initializer
+												if (static_member.initializer.has_value()) {
+													const ASTNode& init_node = *static_member.initializer;
+													if (init_node.is<ExpressionNode>()) {
+														const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+														if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
+															bool val = std::get<BoolLiteralNode>(init_expr).value();
+															TemplateTypeArg arg(val ? 1LL : 0LL);
+															filled_args_for_pattern_match.push_back(arg);
+															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
+														} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
+															const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
+															const auto& val = lit.value();
+															if (std::holds_alternative<unsigned long long>(val)) {
+																TemplateTypeArg arg(static_cast<int64_t>(std::get<unsigned long long>(val)));
+																filled_args_for_pattern_match.push_back(arg);
+															}
+														}
+													}
+												}
+												break;
+											}
+										}
+									}
+								}
+							}
+						}
+					} else if (std::holds_alternative<NumericLiteralNode>(expr)) {
+						const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+						const auto& val = lit.value();
+						if (std::holds_alternative<unsigned long long>(val)) {
+							filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+						}
+					} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
+						const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
+						filled_args_for_pattern_match.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+					}
 				}
 			}
 		}
@@ -25697,6 +25775,75 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								FLASH_LOG(Templates, Debug, "Substituted static member initializer identifier '", id_name, "' (template parameter)");
 							}
 						}
+						// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : 0)
+						else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+							const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr);
+							const ASTNode& cond_node = ternary.condition();
+							
+							// Check if condition is a template parameter reference or identifier
+							if (cond_node.is<ExpressionNode>()) {
+								const ExpressionNode& cond_expr = cond_node.as<ExpressionNode>();
+								std::optional<int64_t> cond_value;
+								
+								if (std::holds_alternative<TemplateParameterReferenceNode>(cond_expr)) {
+									const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(cond_expr);
+									FLASH_LOG(Templates, Debug, "Ternary condition is template parameter: ", tparam_ref.param_name());
+									
+									// Look up the parameter value
+									for (size_t p = 0; p < template_params.size(); ++p) {
+										const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+										if (tparam.name() == tparam_ref.param_name() && tparam.kind() == TemplateParameterKind::NonType) {
+											if (p < template_args.size() && template_args[p].is_value) {
+												cond_value = template_args[p].value;
+												FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
+											}
+											break;
+										}
+									}
+								}
+								else if (std::holds_alternative<IdentifierNode>(cond_expr)) {
+									const IdentifierNode& id_node = std::get<IdentifierNode>(cond_expr);
+									std::string_view id_name = id_node.name();
+									FLASH_LOG(Templates, Debug, "Ternary condition is identifier: ", id_name);
+									
+									// Look up the identifier as a template parameter
+									for (size_t p = 0; p < template_params.size(); ++p) {
+										const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+										if (tparam.name() == id_name && tparam.kind() == TemplateParameterKind::NonType) {
+											if (p < template_args.size() && template_args[p].is_value) {
+												cond_value = template_args[p].value;
+												FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
+											}
+											break;
+										}
+									}
+								}
+								
+								// If we found the condition value, evaluate the ternary
+								if (cond_value.has_value()) {
+									const ASTNode& result_branch = (*cond_value != 0) ? ternary.true_expr() : ternary.false_expr();
+									
+									if (result_branch.is<ExpressionNode>()) {
+										const ExpressionNode& result_expr = result_branch.as<ExpressionNode>();
+										if (std::holds_alternative<NumericLiteralNode>(result_expr)) {
+											const NumericLiteralNode& lit = std::get<NumericLiteralNode>(result_expr);
+											const auto& val = lit.value();
+											unsigned long long num_val = std::holds_alternative<unsigned long long>(val)
+												? std::get<unsigned long long>(val)
+												: static_cast<unsigned long long>(std::get<double>(val));
+											
+											// Create a new numeric literal with the evaluated result
+											std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(num_val)).commit();
+											Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+											substituted_initializer = emplace_node<ExpressionNode>(
+												NumericLiteralNode(num_token, num_val, lit.type(), lit.qualifier(), lit.sizeInBits())
+											);
+											FLASH_LOG(Templates, Debug, "Evaluated ternary to: ", num_val);
+										}
+									}
+								}
+							}
+						}
 					}
 					
 					// Phase 7B: Intern static member name and use StringHandle overload
@@ -26002,84 +26149,13 @@ if (struct_type_info.getStructInfo()) {
 					const TypeInfo& default_type_info = gTypeInfo[default_type.type_index()];
 					std::string_view default_type_name = StringTable::getStringView(default_type_info.name());
 					
-					// Check if this is a qualified type (contains ::)
-					auto double_colon_pos = default_type_name.find("::");
-					if (double_colon_pos != std::string_view::npos) {
-						// Extract base template name and member name
-						std::string_view base_part = default_type_name.substr(0, double_colon_pos);
-						std::string_view member_name = default_type_name.substr(double_colon_pos + 2);
-						
-						FLASH_LOG(Templates, Debug, "Resolving dependent type default (instantiation): ", default_type_name,
-						          " -> base='", base_part, "', member='", member_name, "'");
-						
-						// Check if base_part contains a placeholder (ends with "_void")
-						if (base_part.ends_with("_void")) {
-							std::string_view template_base_name = base_part.substr(0, base_part.size() - 5);
-							
-							// Use the first filled argument
-							if (!filled_template_args.empty()) {
-								const TemplateTypeArg& actual_arg = filled_template_args[0];
-								
-								// Build the instantiated template name
-								StringBuilder instantiated_base_builder;
-								instantiated_base_builder.append(template_base_name).append("_");
-								if (actual_arg.base_type == Type::Int) instantiated_base_builder.append("int");
-								else if (actual_arg.base_type == Type::UnsignedInt) instantiated_base_builder.append("unsigned_int");
-								else if (actual_arg.base_type == Type::Long) instantiated_base_builder.append("long");
-								else if (actual_arg.base_type == Type::UnsignedLong) instantiated_base_builder.append("unsigned_long");
-								else if (actual_arg.base_type == Type::LongLong) instantiated_base_builder.append("long_long");
-								else if (actual_arg.base_type == Type::UnsignedLongLong) instantiated_base_builder.append("unsigned_long_long");
-								else if (actual_arg.base_type == Type::Short) instantiated_base_builder.append("short");
-								else if (actual_arg.base_type == Type::UnsignedShort) instantiated_base_builder.append("unsigned_short");
-								else if (actual_arg.base_type == Type::Char) instantiated_base_builder.append("char");
-								else if (actual_arg.base_type == Type::Bool) instantiated_base_builder.append("bool");
-								else if (actual_arg.base_type == Type::Float) instantiated_base_builder.append("float");
-								else if (actual_arg.base_type == Type::Double) instantiated_base_builder.append("double");
-								else if (actual_arg.base_type == Type::Void) instantiated_base_builder.append("void");
-								else if (actual_arg.base_type == Type::UserDefined || actual_arg.base_type == Type::Struct) {
-									if (actual_arg.type_index < gTypeInfo.size()) {
-										instantiated_base_builder.append(StringTable::getStringView(gTypeInfo[actual_arg.type_index].name()));
-									}
-								}
-								std::string_view instantiated_base_name = instantiated_base_builder.commit();
-								
-								// Try to instantiate the template if not already done
-								std::vector<TemplateTypeArg> base_template_args = { actual_arg };
-								auto base_template_inst = try_instantiate_class_template(template_base_name, base_template_args);
-								
-								// Build the full qualified name
-								StringBuilder qualified_name_builder;
-								qualified_name_builder.append(instantiated_base_name).append("::").append(member_name);
-								std::string_view qualified_name = qualified_name_builder.commit();
-								
-								FLASH_LOG(Templates, Debug, "Looking up resolved type (instantiation): ", qualified_name);
-								
-								// Look up the member type
-								auto resolved_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
-								if (resolved_type_it != gTypesByName.end()) {
-									const TypeInfo* resolved_type_info = resolved_type_it->second;
-									
-									Type resolved_base_type = resolved_type_info->type_;
-									TypeIndex resolved_type_index = resolved_type_info->type_index_;
-									
-									// Check if this is an alias to a concrete type
-									if (resolved_type_info->type_ == Type::UserDefined && 
-									    resolved_type_index != resolved_type_info->type_index_ && 
-									    resolved_type_index < gTypeInfo.size()) {
-										const TypeInfo& aliased_type = gTypeInfo[resolved_type_index];
-										resolved_base_type = aliased_type.type_;
-										resolved_type_index = aliased_type.type_index_;
-									}
-									
-									TemplateTypeArg resolved_arg;
-									resolved_arg.base_type = resolved_base_type;
-									resolved_arg.type_index = resolved_type_index;
-									filled_template_args.push_back(resolved_arg);
-									FLASH_LOG(Templates, Debug, "Resolved dependent default type (instantiation) to: ",
-									          static_cast<int>(resolved_base_type));
-									resolved = true;
-								}
-							}
+					// Try to resolve using each filled argument
+					for (size_t arg_idx = 0; arg_idx < filled_template_args.size(); ++arg_idx) {
+						auto resolved_type = resolve_dependent_qualified_type(default_type_name, filled_template_args[arg_idx]);
+						if (resolved_type.has_value()) {
+							filled_template_args.push_back(*resolved_type);
+							resolved = true;
+							break;
 						}
 					}
 				}
@@ -26093,6 +26169,68 @@ if (struct_type_info.getStructInfo()) {
 			const ASTNode& default_node = param.default_value();
 			if (default_node.is<ExpressionNode>()) {
 				const ExpressionNode& expr = default_node.as<ExpressionNode>();
+				if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+					const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
+					
+					// Handle dependent static member access like is_arithmetic_void::value
+					// namespace[0] = template instantiation name (e.g., is_arithmetic_void)
+					// name() = member name (e.g., value)
+					if (!qual_id.namespaces().empty()) {
+						std::string type_name = qual_id.namespaces()[0];
+						std::string_view member_name = qual_id.name();
+						
+						// Check if type_name ends with "_void" (dependent placeholder)
+						if (type_name.ends_with("_void") && !filled_template_args.empty()) {
+							std::string_view template_base_name(type_name.data(), type_name.size() - 5);
+							
+							// Build the instantiated template name using first filled argument
+							StringBuilder inst_name_builder;
+							inst_name_builder.append(template_base_name).append("_");
+							append_type_name_suffix(inst_name_builder, filled_template_args[0]);
+							std::string_view inst_name = inst_name_builder.commit();
+							
+							FLASH_LOG(Templates, Debug, "Resolving dependent qualified identifier: ", 
+							          type_name, "::", member_name, " -> ", inst_name, "::", member_name);
+							
+							// Try to instantiate the template
+							try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
+							
+							// Look up the instantiated type
+							auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
+							if (type_it != gTypesByName.end()) {
+								const TypeInfo* type_info = type_it->second;
+								if (type_info->getStructInfo()) {
+									const StructTypeInfo* struct_info = type_info->getStructInfo();
+									// Find the static member
+									for (const auto& static_member : struct_info->static_members) {
+										if (StringTable::getStringView(static_member.getName()) == member_name) {
+											// Evaluate the static member's initializer
+											if (static_member.initializer.has_value()) {
+												const ASTNode& init_node = *static_member.initializer;
+												if (init_node.is<ExpressionNode>()) {
+													const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+													if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
+														bool val = std::get<BoolLiteralNode>(init_expr).value();
+														filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL));
+														FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
+													} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
+														const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
+														const auto& val = lit.value();
+														if (std::holds_alternative<unsigned long long>(val)) {
+															filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to numeric value");
+														}
+													}
+												}
+											}
+											break;
+										}
+									}
+								}
+							}
+						}
+					}
+				}
 				if (std::holds_alternative<NumericLiteralNode>(expr)) {
 					const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 					const auto& val = lit.value();
@@ -26102,6 +26240,81 @@ if (struct_type_info.getStructInfo()) {
 					} else if (std::holds_alternative<double>(val)) {
 						int64_t int_val = static_cast<int64_t>(std::get<double>(val));
 						filled_template_args.push_back(TemplateTypeArg(int_val));
+					}
+				} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
+					// Handle boolean literals
+					const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
+					filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+				} else if (std::holds_alternative<MemberAccessNode>(expr)) {
+					// Handle dependent expressions like is_arithmetic<T>::value
+					const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
+					std::string_view member_name = member_access.member_name();
+					
+					FLASH_LOG(Templates, Debug, "Processing MemberAccess for non-type default: member='", member_name, "'");
+					
+					// Check if the object is a type/template instantiation
+					ASTNode object_node = member_access.object();
+					if (object_node.is<ExpressionNode>()) {
+						const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
+						
+						// The object might be an IdentifierNode referencing a template
+						if (std::holds_alternative<IdentifierNode>(obj_expr)) {
+							const IdentifierNode& obj_id = std::get<IdentifierNode>(obj_expr);
+							std::string_view obj_name = obj_id.name();
+							
+							FLASH_LOG(Templates, Debug, "MemberAccess object is IdentifierNode: '", obj_name, "'");
+							
+							// Check if this identifier has template arguments stored separately
+							// For now, look for a type that was parsed as a dependent template instantiation
+							// The type name might be stored like "is_arithmetic_void" for is_arithmetic<T>
+							
+							// Try looking up as a dependent template instantiation
+							// Build the instantiated name using filled_template_args
+							if (!filled_template_args.empty()) {
+								StringBuilder inst_name_builder;
+								inst_name_builder.append(obj_name).append("_");
+								append_type_name_suffix(inst_name_builder, filled_template_args[0]);
+								std::string_view inst_name = inst_name_builder.commit();
+								
+								FLASH_LOG(Templates, Debug, "Looking up instantiated type: '", inst_name, "'");
+								
+								// Try to instantiate the template
+								try_instantiate_class_template(obj_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
+								
+								// Look up the instantiated type
+								auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
+								if (type_it != gTypesByName.end()) {
+									const TypeInfo* type_info = type_it->second;
+									if (type_info->getStructInfo()) {
+										const StructTypeInfo* struct_info = type_info->getStructInfo();
+										// Find the static member
+										for (const auto& static_member : struct_info->static_members) {
+											if (StringTable::getStringView(static_member.getName()) == member_name) {
+												// Evaluate the static member's initializer
+												if (static_member.initializer.has_value()) {
+													const ASTNode& init_node = *static_member.initializer;
+													if (init_node.is<ExpressionNode>()) {
+														const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+														if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
+															bool val = std::get<BoolLiteralNode>(init_expr).value();
+															filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL));
+															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
+														} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
+															const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
+															const auto& val = lit.value();
+															if (std::holds_alternative<unsigned long long>(val)) {
+																filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+															}
+														}
+													}
+												}
+												break;
+											}
+										}
+									}
+								}
+							}
+						}
 					}
 				}
 			}
@@ -27870,6 +28083,75 @@ if (struct_type_info.getStructInfo()) {
 						if (auto subst = substitute_template_param_in_initializer(param_name, template_args_to_use, template_params)) {
 							substituted_initializer = subst;
 							FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", param_name, "'");
+						}
+					}
+					// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : 0)
+					else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+						const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr);
+						const ASTNode& cond_node = ternary.condition();
+						
+						// Check if condition is a template parameter reference or identifier
+						if (cond_node.is<ExpressionNode>()) {
+							const ExpressionNode& cond_expr = cond_node.as<ExpressionNode>();
+							std::optional<int64_t> cond_value;
+							
+							if (std::holds_alternative<TemplateParameterReferenceNode>(cond_expr)) {
+								const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(cond_expr);
+								FLASH_LOG(Templates, Debug, "Ternary condition is template parameter: ", tparam_ref.param_name());
+								
+								// Look up the parameter value
+								for (size_t p = 0; p < template_params.size(); ++p) {
+									const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+									if (tparam.name() == tparam_ref.param_name() && tparam.kind() == TemplateParameterKind::NonType) {
+										if (p < template_args_to_use.size() && template_args_to_use[p].is_value) {
+											cond_value = template_args_to_use[p].value;
+											FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
+										}
+										break;
+									}
+								}
+							}
+							else if (std::holds_alternative<IdentifierNode>(cond_expr)) {
+								const IdentifierNode& id_node = std::get<IdentifierNode>(cond_expr);
+								std::string_view id_name = id_node.name();
+								FLASH_LOG(Templates, Debug, "Ternary condition is identifier: ", id_name);
+								
+								// Look up the identifier as a template parameter
+								for (size_t p = 0; p < template_params.size(); ++p) {
+									const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+									if (tparam.name() == id_name && tparam.kind() == TemplateParameterKind::NonType) {
+										if (p < template_args_to_use.size() && template_args_to_use[p].is_value) {
+											cond_value = template_args_to_use[p].value;
+											FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
+										}
+										break;
+									}
+								}
+							}
+							
+							// If we found the condition value, evaluate the ternary
+							if (cond_value.has_value()) {
+								const ASTNode& result_branch = (*cond_value != 0) ? ternary.true_expr() : ternary.false_expr();
+								
+								if (result_branch.is<ExpressionNode>()) {
+									const ExpressionNode& result_expr = result_branch.as<ExpressionNode>();
+									if (std::holds_alternative<NumericLiteralNode>(result_expr)) {
+										const NumericLiteralNode& lit = std::get<NumericLiteralNode>(result_expr);
+										const auto& val = lit.value();
+										unsigned long long num_val = std::holds_alternative<unsigned long long>(val)
+											? std::get<unsigned long long>(val)
+											: static_cast<unsigned long long>(std::get<double>(val));
+										
+										// Create a new numeric literal with the evaluated result
+										std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(num_val)).commit();
+										Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+										substituted_initializer = emplace_node<ExpressionNode>(
+											NumericLiteralNode(num_token, num_val, lit.type(), lit.qualifier(), lit.sizeInBits())
+										);
+										FLASH_LOG(Templates, Debug, "Evaluated ternary to: ", num_val);
+									}
+								}
+							}
 						}
 					}
 				}
