@@ -11543,6 +11543,19 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						// Not a known variable, could be a template
 						could_be_template_name = true;
 					}
+				} else if (std::holds_alternative<FunctionCallNode>(expr) ||
+				           std::holds_alternative<ConstructorCallNode>(expr)) {
+					// Function calls and constructor calls cannot have template arguments after them.
+					// This handles cases like:
+					// - T(-1) < T(0) where T is a template parameter used in functional-style cast
+					// - func() < value where func is a function call
+					// In both cases, '<' after the call expression is a comparison operator, not
+					// the start of template arguments. This is because:
+					// 1. The result of a function/constructor call is a value, not a template name
+					// 2. C++ doesn't allow template arguments to follow call expressions
+					// Note: This is safe because if a function returns a template type, the template
+					// instantiation happens at the function definition, not at the call site.
+					could_be_template_name = false;
 				} else {
 					// Not a simple identifier, could be a complex expression that needs template args
 					could_be_template_name = true;
@@ -13124,6 +13137,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			{"__is_trivially_copyable", {TypeTraitKind::IsTriviallyCopyable, false, false, false}},
 			{"__is_trivial", {TypeTraitKind::IsTrivial, false, false, false}},
 			{"__is_pod", {TypeTraitKind::IsPod, false, false, false}},
+			{"__is_literal_type", {TypeTraitKind::IsLiteralType, false, false, false}},
 			{"__is_const", {TypeTraitKind::IsConst, false, false, false}},
 			{"__is_volatile", {TypeTraitKind::IsVolatile, false, false, false}},
 			{"__is_signed", {TypeTraitKind::IsSigned, false, false, false}},
@@ -23090,6 +23104,36 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 	// Look up ALL templates with this name (for SFINAE support with same-name overloads)
 	const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(template_name);
+	
+	// If not found, try namespace-qualified lookup.
+	// When inside a namespace (e.g., std) and looking up "__detail::__or_fn",
+	// we need to also try "std::__detail::__or_fn" since templates are registered
+	// with their fully-qualified names.
+	if (!all_templates || all_templates->empty()) {
+		auto namespace_path = gSymbolTable.build_current_namespace_path();
+		if (!namespace_path.empty()) {
+			// Build the fully-qualified name by prepending the current namespace path
+			StringBuilder sb;
+			for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+				sb.append(ns).append("::");
+#else
+				sb.append(StringTable::getStringView(ns)).append("::");
+#endif
+			}
+			sb.append(template_name);
+			std::string_view qualified_name_view = sb.commit();
+			// Note: qualified_name_view points to StringBuilder's internal buffer,
+			// which is valid for the duration of this function. The lookup only
+			// needs the string_view temporarily, so no std::string allocation needed.
+			
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Template '{}' not found, trying qualified name '{}'",
+				recursion_depth, template_name, qualified_name_view);
+			
+			all_templates = gTemplateRegistry.lookupAllTemplates(qualified_name_view);
+		}
+	}
+	
 	if (!all_templates || all_templates->empty()) {
 		FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
 		recursion_depth--;
@@ -23289,8 +23333,17 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				}
 			}
 		} else {
-			// Non-type parameter - not yet supported in deduction
-			// TODO: Implement non-type parameter deduction
+			// Non-type parameter - check if it has a default value
+			if (param.has_default()) {
+				// Use the default value for non-type parameters
+				// The default value is an expression that will be evaluated during instantiation
+				// For now, we skip it in deduction and let the instantiation phase use the default
+				FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Non-type parameter '{}' has default, skipping deduction",
+					recursion_depth, param.name());
+				// Don't add anything to template_args - the instantiation will use the default
+				continue;
+			}
+			// No default value and can't deduce - fail
 			FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Non-type parameter not supported in deduction");
 
 			return std::nullopt;
