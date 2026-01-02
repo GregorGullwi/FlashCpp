@@ -4,11 +4,17 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 2, 2026 - Proper noexcept Analysis)**:
+- ✅ **noexcept operator properly implemented** - `noexcept(expr)` now analyzes the expression to determine if it can throw
+- ✅ **Function call analysis** - Checks if called functions are declared noexcept
+- ✅ **Expression recursion** - Properly analyzes sub-expressions in operators, ternary, casts
+- ✅ **Conservative defaults** - Returns false for `new`/`delete`, `dynamic_cast`, `typeid` that may throw
+- 🎯 **All 810 tests passing!**
+
 **UPDATE (January 2, 2026 - noexcept Operator)**:
 - ✅ **noexcept operator** - `noexcept(expr)` as a compile-time expression now works
 - ✅ **Boolean result** - Returns true/false indicating if expression can throw
 - 🎯 **Enables `<type_traits>` patterns** like `noexcept(declval<T>().~T())`
-- 🎯 **All 809 tests passing!**
 
 **UPDATE (January 2, 2026 - Template Parameter Cross-References)**:
 - ✅ **Template parameter cross-references in defaults** - Patterns like `template<typename T, bool = is_arithmetic<T>::value>` now work correctly
