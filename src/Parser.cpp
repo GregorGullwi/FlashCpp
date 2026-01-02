@@ -5022,13 +5022,27 @@ ParseResult Parser::parse_struct_declaration()
 				}
 			}
 		} else {
-			// Regular member function
-			const FunctionDeclarationNode& func = func_decl.function_declaration.as<FunctionDeclarationNode>();
-			const DeclarationNode& decl = func.decl_node();
+			// Regular member function or template member function
+			StringHandle func_name_handle;
+			
+			// Handle both regular functions and template functions
+			if (func_decl.function_declaration.is<FunctionDeclarationNode>()) {
+				const FunctionDeclarationNode& func = func_decl.function_declaration.as<FunctionDeclarationNode>();
+				const DeclarationNode& decl = func.decl_node();
+				func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+			} else if (func_decl.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+				// Template member function - extract name from the inner function declaration
+				const TemplateFunctionDeclarationNode& tmpl_func = func_decl.function_declaration.as<TemplateFunctionDeclarationNode>();
+				const FunctionDeclarationNode& func = tmpl_func.function_decl_node();
+				const DeclarationNode& decl = func.decl_node();
+				func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+			} else {
+				// Unknown function type - skip
+				continue;
+			}
 
 			// Add member function to struct type info
 			// Phase 7B: Intern function name and use StringHandle overload
-			StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 			struct_info->addMemberFunction(
 				func_name_handle,
 				func_decl.function_declaration,
@@ -15241,7 +15255,39 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
 								return ParseResult::success(*result);
 							}
+							
+							// Check for inherited member template function (e.g., __test<_Tp>(0) from <type_traits>)
+							// Template args already parsed at this point, so we need to check base classes
+							if (!struct_parsing_context_stack_.empty() && peek_token().has_value() && peek_token()->value() == "(") {
+								const auto& context = struct_parsing_context_stack_.back();
+								const StructDeclarationNode* struct_node = context.struct_node;
+								if (struct_node) {
+									StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+									for (const auto& base : struct_node->base_classes()) {
+										auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
+										if (base_type_it != gTypesByName.end()) {
+											const TypeInfo* base_type_info = base_type_it->second;
+											const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+											if (base_struct_info) {
+												for (const auto& member_func : base_struct_info->member_functions) {
+													if (member_func.getName() == id_handle) {
+														if (member_func.function_decl.is<TemplateFunctionDeclarationNode>()) {
+															FLASH_LOG(Parser, Debug, "Found inherited member template function '", idenfifier_token.value(), "' in base class '", base.name, "'");
+															gSymbolTable.insert(idenfifier_token.value(), member_func.function_decl);
+															identifierType = member_func.function_decl;
+															// Don't return - let normal function call parsing proceed
+															// The template args are already parsed, and we need to parse the function call
+															goto inherited_template_found;
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
 						}
+					inherited_template_found:;
 					}
 				}
 			
@@ -15338,9 +15384,107 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							FLASH_LOG(Parser, Debug, "Found class template '", idenfifier_token.value(), "' in expression context");
 							// Don't return - let it fall through to template argument parsing below
 						} else if (!found_as_type_alias) {
-							// Not an alias template, class template, or found anywhere
-							FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
-							return ParseResult::error("Missing identifier", idenfifier_token);
+							// Check if this is an inherited member template function (e.g., __test<_Tp>(0) from <type_traits>)
+							// This pattern is used for SFINAE detection where a derived class calls a base class template function
+							bool found_inherited_template = false;
+							
+							// First try member_function_context_stack_ (for code inside member function bodies)
+							if (!member_function_context_stack_.empty()) {
+								const auto& context = member_function_context_stack_.back();
+								TypeIndex struct_type_index = context.struct_type_index;
+								if (struct_type_index < gTypeInfo.size()) {
+									const TypeInfo& type_info = gTypeInfo[struct_type_index];
+									const StructTypeInfo* struct_info = type_info.getStructInfo();
+									if (struct_info) {
+										// Search through base classes for member template functions
+										std::vector<TypeIndex> base_classes_to_search;
+										for (const auto& base : struct_info->base_classes) {
+											base_classes_to_search.push_back(base.type_index);
+										}
+										
+										StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+										for (size_t i = 0; i < base_classes_to_search.size() && !found_inherited_template; ++i) {
+											TypeIndex base_idx = base_classes_to_search[i];
+											if (base_idx >= gTypeInfo.size()) continue;
+											
+											const TypeInfo& base_type_info = gTypeInfo[base_idx];
+											const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+											if (!base_struct_info) continue;
+											
+											// Check member functions in this base class for template functions
+											for (const auto& member_func : base_struct_info->member_functions) {
+												if (member_func.getName() == id_handle) {
+													// Found a match - check if it's a template function
+													if (member_func.function_decl.is<TemplateFunctionDeclarationNode>()) {
+														FLASH_LOG(Parser, Debug, "Found inherited member template function '", idenfifier_token.value(), "' in base class (member function context)");
+														// Add to symbol table and set identifierType
+														gSymbolTable.insert(idenfifier_token.value(), member_func.function_decl);
+														identifierType = member_func.function_decl;
+														found_inherited_template = true;
+														break;
+													}
+												}
+											}
+											
+											// Add this base's base classes to search list (for multi-level inheritance)
+											for (const auto& nested_base : base_struct_info->base_classes) {
+												bool already_in_list = false;
+												for (TypeIndex existing : base_classes_to_search) {
+													if (existing == nested_base.type_index) {
+														already_in_list = true;
+														break;
+													}
+												}
+												if (!already_in_list) {
+													base_classes_to_search.push_back(nested_base.type_index);
+												}
+											}
+										}
+									}
+								}
+							}
+							
+							// If not found in member function context, try struct_parsing_context_stack_
+							// This handles expressions in type aliases like: using type = decltype(__test<_Tp>(0));
+							if (!found_inherited_template && !struct_parsing_context_stack_.empty()) {
+								const auto& context = struct_parsing_context_stack_.back();
+								const StructDeclarationNode* struct_node = context.struct_node;
+								if (struct_node) {
+									// Get base classes from the struct AST node
+									StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+									for (const auto& base : struct_node->base_classes()) {
+										// Look up the base class type
+										auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
+										if (base_type_it != gTypesByName.end()) {
+											const TypeInfo* base_type_info = base_type_it->second;
+											const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+											if (base_struct_info) {
+												// Check member functions for template functions
+												for (const auto& member_func : base_struct_info->member_functions) {
+													if (member_func.getName() == id_handle) {
+														// Found a match - check if it's a template function
+														if (member_func.function_decl.is<TemplateFunctionDeclarationNode>()) {
+															FLASH_LOG(Parser, Debug, "Found inherited member template function '", idenfifier_token.value(), "' in base class (struct parsing context)");
+															// Add to symbol table and set identifierType
+															gSymbolTable.insert(idenfifier_token.value(), member_func.function_decl);
+															identifierType = member_func.function_decl;
+															found_inherited_template = true;
+															break;
+														}
+													}
+												}
+												if (found_inherited_template) break;
+											}
+										}
+									}
+								}
+							}
+							
+							if (!found_inherited_template) {
+								// Not an alias template, class template, inherited member template, or found anywhere
+								FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
+								return ParseResult::error("Missing identifier", idenfifier_token);
+							}
 						}
 					}
 				} else if (!identifierType && !found_as_type_alias) {
@@ -21931,9 +22075,15 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	const DeclarationNode& decl_node = func_decl.decl_node();
 
 	// Add to struct as a member function template
+	// First, add to the struct's member functions list so it can be found for inheritance lookup
+	struct_node.add_member_function(template_func_node, access);
+	
 	// Register the template in the global registry with qualified name (ClassName::functionName)
 	auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_node.name()).append("::"sv).append(decl_node.identifier_token().value()));
 	gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_func_node);
+	
+	// Also register with simple name for unqualified lookups (needed for inherited member template function calls)
+	gTemplateRegistry.registerTemplate(decl_node.identifier_token().value(), template_func_node);
 
 	// template_scope automatically cleans up template parameters when it goes out of scope
 
