@@ -4,6 +4,14 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 2, 2026 - Latest)**: Key features for `<type_traits>` implemented!
+- ✅ **`__has_builtin()` preprocessor support** - Standard library headers can now detect which compiler intrinsics FlashCpp supports, enabling efficient builtin implementations instead of template fallbacks
+- ✅ **Postfix cv-qualifier support** - Template specializations like `struct is_const<T const>` now parse correctly (standard library style)
+- ✅ **#ifdef __has_builtin** - Special handling for standard library compatibility
+- ✅ **60+ type trait intrinsics** exposed via `__has_builtin()` evaluation
+- 🎯 **`<type_traits>` now parses lines 1-843** (was line 737 before these fixes)
+- 🔜 **Next blocker**: Template brace initialization (`type_identity<T>{}`)
+
 **UPDATE (January 2, 2026)**: Major improvements to template argument parsing!
 - ✅ **Type alias recognition in template arguments** - Type aliases that resolve to concrete types (like `IntType = has_value<int>`) are now correctly identified and processed as types rather than dependent expressions
 - ✅ **Inherited type alias lookup** - Patterns like `wrapper<T>::type` where `type` comes from a base class now work (via `lookup_inherited_type_alias()` function with StringHandle optimization)
@@ -909,6 +917,12 @@ __cpp_lib_integral_constant_callable    // ✅ C++14 integral_constant::operator
 __cpp_lib_is_aggregate                  // ✅ C++17 is_aggregate
 __cpp_lib_void_t                        // ✅ C++17 void_t
 __cpp_lib_bool_constant                 // ✅ C++17 bool_constant
+```
+
+**Compiler Builtin Detection (January 2, 2026):**
+```cpp
+__has_builtin(x)  // ✅ Detects if a compiler builtin is supported (NEW!)
+                  // Supported for 60+ type trait and builtin function intrinsics
 ```
 
 **Attribute Detection Macros:**

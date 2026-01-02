@@ -1120,6 +1120,11 @@ public:
 	auto qualifier() const { return qualifier_; }
 	auto cv_qualifier() const { return cv_qualifier_; }
 	void set_cv_qualifier(CVQualifier cv) { cv_qualifier_ = cv; }
+	// Adds a cv-qualifier using bitwise OR - safe to call multiple times with same qualifier
+	// (e.g., parsing "T const volatile" or accidentally "T const const" will just set the bits)
+	void add_cv_qualifier(CVQualifier cv) {
+		cv_qualifier_ = static_cast<CVQualifier>(static_cast<uint8_t>(cv_qualifier_) | static_cast<uint8_t>(cv));
+	}
 	auto type_index() const { return type_index_; }
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier_) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }

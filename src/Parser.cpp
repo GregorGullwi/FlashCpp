@@ -22437,6 +22437,21 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			}
 		}
 
+		// Check for postfix cv-qualifiers: T const, T volatile, T const volatile
+		// This is the C++ postfix const/volatile syntax used in standard library headers
+		// (e.g., "template<typename T> struct is_const<T const>" from <type_traits>)
+		while (peek_token().has_value()) {
+			if (peek_token()->value() == "const") {
+				consume_token();
+				type_node.add_cv_qualifier(CVQualifier::Const);
+			} else if (peek_token()->value() == "volatile") {
+				consume_token();
+				type_node.add_cv_qualifier(CVQualifier::Volatile);
+			} else {
+				break;
+			}
+		}
+
 		// Check for pointer modifiers (*) - for patterns like T*, T**, etc.
 		while (peek_token().has_value() && peek_token()->value() == "*") {
 			consume_token(); // consume '*'

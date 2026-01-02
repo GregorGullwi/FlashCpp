@@ -664,7 +664,10 @@ public:
 				iss.seekg("#ifdef"sv.length());
 				std::string symbol;
 				iss >> symbol;
-				bool is_defined = defines_.count(symbol) > 0;
+				// __has_builtin is a compiler intrinsic - standard library uses "#ifdef __has_builtin"
+				// to check if the feature is available, then uses __has_builtin(x) with arguments.
+				// We return true for "#ifdef __has_builtin" so the library defines _GLIBCXX_HAS_BUILTIN.
+				bool is_defined = (symbol == "__has_builtin") || (defines_.count(symbol) > 0);
 				skipping_stack.push(!is_defined);
 				condition_was_true_stack.push(is_defined);
 				append_line_with_tracking("");  // Preserve line numbering
@@ -942,11 +945,26 @@ private:
 		size_t pos = 0;
 		
 		while (pos < input.size()) {
-			// Look for "defined" keyword
+			// Look for "defined" or "__has_builtin" keywords
 			size_t defined_pos = input.find("defined", pos);
+			size_t has_builtin_pos = input.find("__has_builtin", pos);
 			
-			if (defined_pos == std::string::npos) {
-				// No more "defined" keywords, expand the rest
+			// Choose the earlier one
+			size_t keyword_pos = std::string::npos;
+			size_t keyword_len = 0;
+			bool is_has_builtin = false;
+			
+			if (defined_pos != std::string::npos && (has_builtin_pos == std::string::npos || defined_pos < has_builtin_pos)) {
+				keyword_pos = defined_pos;
+				keyword_len = 7; // "defined"
+			} else if (has_builtin_pos != std::string::npos) {
+				keyword_pos = has_builtin_pos;
+				keyword_len = 13; // "__has_builtin"
+				is_has_builtin = true;
+			}
+			
+			if (keyword_pos == std::string::npos) {
+				// No more special keywords, expand the rest
 				if (settings_.isVerboseMode() && pos < input.size()) {
 					FLASH_LOG(Lexer, Trace, "  Expanding rest: '", input.substr(pos), "'");
 				}
@@ -954,37 +972,65 @@ private:
 				break;
 			}
 			
-			// Check if this is actually the "defined" keyword (not part of another identifier)
+			// Check if this is actually a keyword (not part of another identifier)
 			bool is_keyword = true;
-			if (defined_pos > 0) {
-				char prev = input[defined_pos - 1];
+			if (keyword_pos > 0) {
+				char prev = input[keyword_pos - 1];
 				if (std::isalnum(prev) || prev == '_') {
 					is_keyword = false;
 				}
 			}
-			if (is_keyword && defined_pos + 7 < input.size()) {
-				char next = input[defined_pos + 7];
+			if (is_keyword && keyword_pos + keyword_len < input.size()) {
+				char next = input[keyword_pos + keyword_len];
 				if (std::isalnum(next) || next == '_') {
 					is_keyword = false;
 				}
 			}
 			
 			if (!is_keyword) {
-				// Not actually "defined" keyword, just expand and continue
-				result += expandMacros(input.substr(pos, defined_pos - pos + 1));
-				pos = defined_pos + 1;
+				// Not actually a keyword, just expand and continue
+				result += expandMacros(input.substr(pos, keyword_pos - pos + 1));
+				pos = keyword_pos + 1;
 				continue;
 			}
 			
-			// Expand everything before "defined"
-			if (settings_.isVerboseMode() && defined_pos > pos) {
-				FLASH_LOG(Lexer, Trace, "  Expanding before 'defined': '", input.substr(pos, defined_pos - pos), "'");
+			// Expand everything before the keyword
+			if (settings_.isVerboseMode() && keyword_pos > pos) {
+				FLASH_LOG(Lexer, Trace, "  Expanding before keyword: '", input.substr(pos, keyword_pos - pos), "'");
 			}
-			result += expandMacros(input.substr(pos, defined_pos - pos));
+			result += expandMacros(input.substr(pos, keyword_pos - pos));
+			
+			// For __has_builtin, copy the entire __has_builtin(...) expression without expansion
+			if (is_has_builtin) {
+				result += "__has_builtin";
+				pos = keyword_pos + keyword_len;
+				
+				// Skip whitespace
+				while (pos < input.size() && std::isspace(input[pos])) {
+					result += input[pos++];
+				}
+				
+				// Expect '(' for __has_builtin
+				if (pos < input.size() && input[pos] == '(') {
+					result += "(";
+					pos++;
+					
+					// Find matching ')'
+					int paren_depth = 1;
+					while (pos < input.size() && paren_depth > 0) {
+						if (input[pos] == '(') paren_depth++;
+						else if (input[pos] == ')') paren_depth--;
+						result += input[pos++];
+					}
+				}
+				continue;
+			}
+			
+			// For "defined" keyword, use existing logic
 			result += "defined";  // Add the keyword itself
 			
 			// Skip past "defined"
-			pos = defined_pos + 7; // length of "defined"
+			pos = keyword_pos + 7; // length of "defined"
 			
 			// Skip whitespace
 			while (pos < input.size() && std::isspace(input[pos])) {
@@ -1506,6 +1552,70 @@ private:
 						}
 						values.push(exists);
 					}
+					else if (keyword.find("__has_builtin") == 0) {
+						// __has_builtin(__builtin_name) - check if a compiler builtin is supported
+						// Extract the builtin name from __has_builtin(__name)
+						long exists = 0;
+						std::string_view keyword_sv(keyword);
+						
+						// Find the builtin name between parentheses
+						auto start = keyword_sv.find('(');
+						auto end = keyword_sv.rfind(')');
+						if (start != std::string_view::npos && end != std::string_view::npos && end > start) {
+							std::string_view builtin_name = keyword_sv.substr(start + 1, end - start - 1);
+							
+							// Set of all supported type trait and other compiler builtins
+							// This must match the builtins supported in Parser.cpp
+							static const std::unordered_set<std::string_view> supported_builtins = {
+								// Type category traits
+								"__is_void", "__is_nullptr", "__is_integral", "__is_floating_point",
+								"__is_array", "__is_pointer", "__is_lvalue_reference", "__is_rvalue_reference",
+								"__is_member_object_pointer", "__is_member_function_pointer",
+								"__is_enum", "__is_union", "__is_class", "__is_function",
+								// Composite type category traits
+								"__is_reference", "__is_arithmetic", "__is_fundamental",
+								"__is_object", "__is_scalar", "__is_compound",
+								// Type relationship traits
+								"__is_base_of", "__is_same", "__is_convertible",
+								// Type property traits
+								"__is_polymorphic", "__is_final", "__is_abstract", "__is_empty",
+								"__is_aggregate", "__is_standard_layout",
+								"__has_unique_object_representations",
+								"__is_trivially_copyable", "__is_trivial", "__is_pod",
+								"__is_const", "__is_volatile", "__is_signed", "__is_unsigned",
+								"__is_bounded_array", "__is_unbounded_array",
+								// Type construction/destruction traits
+								"__is_constructible", "__is_trivially_constructible", "__is_nothrow_constructible",
+								"__is_assignable", "__is_trivially_assignable", "__is_nothrow_assignable",
+								"__is_destructible", "__is_trivially_destructible", "__is_nothrow_destructible",
+								// Layout traits
+								"__is_layout_compatible", "__is_pointer_interconvertible_base_of",
+								// Constant evaluation
+								"__is_constant_evaluated",
+								// Virtual destructor check
+								"__has_virtual_destructor",
+								// Builtin functions
+								"__builtin_addressof", "__builtin_unreachable", "__builtin_assume",
+								"__builtin_expect", "__builtin_launder",
+								// Type modification (added for <type_traits> support)
+								"__remove_cv", "__remove_cvref", "__remove_reference",
+								"__add_lvalue_reference", "__add_rvalue_reference",
+								"__add_pointer", "__decay",
+								"__make_signed", "__make_unsigned",
+								// Type inspection
+								"__underlying_type",
+								// Pack and tuple support
+								"__type_pack_element"
+							};
+							
+							exists = supported_builtins.count(builtin_name) > 0 ? 1 : 0;
+							
+							if (settings_.isVerboseMode()) {
+								std::cout << "__has_builtin(" << builtin_name << ") = " << exists << std::endl;
+							}
+						}
+						values.push(exists);
+					}
 					else {
 						// Unknown __ identifier (like __cpp_exceptions, __SANITIZE_THREAD__, etc.)
 						// Treat as 0 (undefined) per C++ preprocessor rules
@@ -1920,6 +2030,10 @@ private:
 		defines_["__cpp_noexcept_function_type"] = DefineDirective{ "201510L", {} };  // C++17 noexcept in type
 		defines_["__cpp_concepts"] = DefineDirective{ "202002L", {} };  // C++20 concepts
 		defines_["__cpp_aggregate_bases"] = DefineDirective{ "201603L", {} };  // C++17 aggregate base classes
+
+		// Note: __has_builtin is NOT defined as a macro here
+		// It is handled specially in expandMacrosForConditional and evaluate_expression
+		// to properly evaluate __has_builtin(builtin_name) at preprocessing time
 
 		// C++ library feature test macros (SD-6)
 		// These indicate which C++ standard library features are supported
