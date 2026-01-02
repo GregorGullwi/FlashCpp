@@ -15130,13 +15130,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									}
 									
 									// Create TypeSpecifierNode for the instantiated class
-									TypeIndex type_index = type_it->second->type_index_;
+									const TypeInfo& type_info = *type_it->second;
+									TypeIndex type_index = type_info.type_index_;
 									int type_size = 0;
-									if (type_index < gTypeInfo.size()) {
-										const TypeInfo& type_info = gTypeInfo[type_index];
-										if (type_info.struct_info_) {
-											type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
-										}
+									if (type_info.struct_info_) {
+										type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
 									}
 									auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, idenfifier_token);
 									
