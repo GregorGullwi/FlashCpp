@@ -14977,7 +14977,8 @@ private:
 				// __is_literal_type - deprecated in C++17, removed in C++20
 				FLASH_LOG(Codegen, Warning, "__is_literal_type is deprecated in C++17 and removed in C++20. "
 				          "This trait is likely being invoked from a standard library header (e.g., <type_traits>) "
-				          "that hasn't been fully updated for C++20. Consider using other type traits instead.");
+				          "that hasn't been fully updated for C++20. In modern C++, use std::is_constant_evaluated() "
+				          "to check for compile-time contexts, or use other appropriate type traits.");
 				// A literal type is one that can be used in constexpr context:
 				// - Scalar types
 				// - References
