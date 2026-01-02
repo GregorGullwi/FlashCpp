@@ -7889,6 +7889,92 @@ ParseResult Parser::parse_type_specifier()
 								const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
 								filled_template_args.push_back(TemplateTypeArg(default_type));
 							}
+						} else if (param.has_default() && param.kind() == TemplateParameterKind::NonType) {
+							// Handle non-type template parameter defaults like bool IsArith = is_arithmetic<T>::value
+							const ASTNode& default_node = param.default_value();
+							if (default_node.is<ExpressionNode>()) {
+								const ExpressionNode& expr = default_node.as<ExpressionNode>();
+								
+								// Helper lambda to build instantiated template name suffix
+								auto append_type_name_suffix_local = [](StringBuilder& sb, const TemplateTypeArg& arg) {
+									if (arg.is_value) {
+										sb.append(static_cast<uint64_t>(arg.value));
+									} else if (arg.base_type == Type::Void) {
+										sb.append("void");
+									} else if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+										sb.append(StringTable::getStringView(gTypeInfo[arg.type_index].name()));
+									} else {
+										sb.append(getTypeName(arg.base_type));
+									}
+								};
+								
+								if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+									const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
+									
+									// Handle dependent static member access like is_arithmetic_void::value
+									if (!qual_id.namespaces().empty()) {
+										std::string type_name_str = qual_id.namespaces()[0];
+										std::string_view member_name = qual_id.name();
+										
+										// Check if type_name ends with "_void" (dependent placeholder)
+										if (type_name_str.ends_with("_void") && !filled_template_args.empty()) {
+											std::string_view template_base_name(type_name_str.data(), type_name_str.size() - 5);
+											
+											// Build the instantiated template name using first filled argument
+											StringBuilder inst_name_builder;
+											inst_name_builder.append(template_base_name).append("_");
+											append_type_name_suffix_local(inst_name_builder, filled_template_args[0]);
+											std::string_view inst_name = inst_name_builder.commit();
+											
+											// Try to instantiate the template
+											try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
+											
+											// Look up the instantiated type
+											auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
+											if (type_it != gTypesByName.end()) {
+												const TypeInfo* type_info = type_it->second;
+												if (type_info->getStructInfo()) {
+													const StructTypeInfo* struct_info = type_info->getStructInfo();
+													// Find the static member
+													for (const auto& static_member : struct_info->static_members) {
+														if (StringTable::getStringView(static_member.getName()) == member_name) {
+															// Evaluate the static member's initializer
+															if (static_member.initializer.has_value()) {
+																const ASTNode& init_node = *static_member.initializer;
+																if (init_node.is<ExpressionNode>()) {
+																	const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+																	if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
+																		bool val = std::get<BoolLiteralNode>(init_expr).value();
+																		filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL));
+																	} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
+																		const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
+																		const auto& val = lit.value();
+																		if (std::holds_alternative<unsigned long long>(val)) {
+																			filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+																		}
+																	}
+																}
+															}
+															break;
+														}
+													}
+												}
+											}
+										}
+									}
+								} else if (std::holds_alternative<NumericLiteralNode>(expr)) {
+									const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+									const auto& val = lit.value();
+									if (std::holds_alternative<unsigned long long>(val)) {
+										filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+									} else if (std::holds_alternative<double>(val)) {
+										filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<double>(val))));
+									}
+								} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
+									const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
+									filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+								}
+							}
 						}
 					}
 				}
@@ -8198,6 +8284,19 @@ ParseResult Parser::parse_type_specifier()
 				auto instantiated_class = try_instantiate_class_template(type_name, empty_args);
 				
 				// Fill in default template arguments to get the actual instantiated name
+				// Helper lambda to build instantiated template name suffix
+				auto append_type_name_suffix_local = [](StringBuilder& sb, const TemplateTypeArg& arg) {
+					if (arg.is_value) {
+						sb.append(static_cast<uint64_t>(arg.value));
+					} else if (arg.base_type == Type::Void) {
+						sb.append("void");
+					} else if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+						sb.append(StringTable::getStringView(gTypeInfo[arg.type_index].name()));
+					} else {
+						sb.append(getTypeName(arg.base_type));
+					}
+				};
+				
 				std::vector<TemplateTypeArg> filled_template_args;
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
@@ -8206,6 +8305,71 @@ ParseResult Parser::parse_type_specifier()
 						if (default_node.is<TypeSpecifierNode>()) {
 							const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
 							filled_template_args.push_back(TemplateTypeArg(default_type));
+						}
+					} else if (param.has_default() && param.kind() == TemplateParameterKind::NonType) {
+						const ASTNode& default_node = param.default_value();
+						if (default_node.is<ExpressionNode>()) {
+							const ExpressionNode& expr = default_node.as<ExpressionNode>();
+							
+							if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+								const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
+								
+								if (!qual_id.namespaces().empty()) {
+									std::string type_name_str = qual_id.namespaces()[0];
+									std::string_view member_name = qual_id.name();
+									
+									if (type_name_str.ends_with("_void") && !filled_template_args.empty()) {
+										std::string_view template_base_name(type_name_str.data(), type_name_str.size() - 5);
+										
+										StringBuilder inst_name_builder;
+										inst_name_builder.append(template_base_name).append("_");
+										append_type_name_suffix_local(inst_name_builder, filled_template_args[0]);
+										std::string_view inst_name = inst_name_builder.commit();
+										
+										try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
+										
+										auto type_it_inner = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
+										if (type_it_inner != gTypesByName.end()) {
+											const TypeInfo* type_info = type_it_inner->second;
+											if (type_info->getStructInfo()) {
+												const StructTypeInfo* struct_info_inner = type_info->getStructInfo();
+												for (const auto& static_member : struct_info_inner->static_members) {
+													if (StringTable::getStringView(static_member.getName()) == member_name) {
+														if (static_member.initializer.has_value()) {
+															const ASTNode& init_node = *static_member.initializer;
+															if (init_node.is<ExpressionNode>()) {
+																const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+																if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
+																	bool val = std::get<BoolLiteralNode>(init_expr).value();
+																	filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL));
+																} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
+																	const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
+																	const auto& val = lit.value();
+																	if (std::holds_alternative<unsigned long long>(val)) {
+																		filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+																	}
+																}
+															}
+														}
+														break;
+													}
+												}
+											}
+										}
+									}
+								}
+							} else if (std::holds_alternative<NumericLiteralNode>(expr)) {
+								const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
+								const auto& val = lit.value();
+								if (std::holds_alternative<unsigned long long>(val)) {
+									filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+								} else if (std::holds_alternative<double>(val)) {
+									filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<double>(val))));
+								}
+							} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
+								const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
+								filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+							}
 						}
 					}
 				}
@@ -13884,8 +14048,106 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 				// Check if followed by :: for member access (Template<T>::member)
 				if (current_token_.has_value() && current_token_->value() == "::") {
-					// Get the instantiated class name to use in qualified identifier
-					std::string_view instantiated_name = get_instantiated_class_name(qual_id.name(), *template_args);
+					// Fill in default template arguments to get the actual instantiated name
+					std::vector<TemplateTypeArg> filled_template_args = *template_args;
+					auto template_lookup_result = gTemplateRegistry.lookupTemplate(qual_id.name());
+					if (template_lookup_result.has_value() && template_lookup_result->is<TemplateClassDeclarationNode>()) {
+						const auto& template_class = template_lookup_result->as<TemplateClassDeclarationNode>();
+						const auto& template_params = template_class.template_parameters();
+						
+						// Helper lambda to build instantiated template name suffix
+						auto append_type_name_suffix_local = [](StringBuilder& sb, const TemplateTypeArg& arg) {
+							if (arg.is_value) {
+								sb.append(static_cast<uint64_t>(arg.value));
+							} else if (arg.base_type == Type::Void) {
+								sb.append("void");
+							} else if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+								sb.append(StringTable::getStringView(gTypeInfo[arg.type_index].name()));
+							} else {
+								sb.append(getTypeName(arg.base_type));
+							}
+						};
+						
+						// Fill in defaults for missing parameters
+						for (size_t param_idx = filled_template_args.size(); param_idx < template_params.size(); ++param_idx) {
+							const TemplateParameterNode& param = template_params[param_idx].as<TemplateParameterNode>();
+							if (param.has_default() && param.kind() == TemplateParameterKind::Type) {
+								const ASTNode& default_node = param.default_value();
+								if (default_node.is<TypeSpecifierNode>()) {
+									const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+									filled_template_args.push_back(TemplateTypeArg(default_type));
+								}
+							} else if (param.has_default() && param.kind() == TemplateParameterKind::NonType) {
+								const ASTNode& default_node = param.default_value();
+								if (default_node.is<ExpressionNode>()) {
+									const ExpressionNode& expr_default = default_node.as<ExpressionNode>();
+									
+									if (std::holds_alternative<QualifiedIdentifierNode>(expr_default)) {
+										const QualifiedIdentifierNode& qual_id_default = std::get<QualifiedIdentifierNode>(expr_default);
+										
+										if (!qual_id_default.namespaces().empty()) {
+											std::string type_name_str = qual_id_default.namespaces()[0];
+											std::string_view member_name = qual_id_default.name();
+											
+											if (type_name_str.ends_with("_void") && !filled_template_args.empty()) {
+												std::string_view template_base_name(type_name_str.data(), type_name_str.size() - 5);
+												
+												StringBuilder inst_name_builder;
+												inst_name_builder.append(template_base_name).append("_");
+												append_type_name_suffix_local(inst_name_builder, filled_template_args[0]);
+												std::string_view inst_name = inst_name_builder.commit();
+												
+												try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
+												
+												auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
+												if (type_it != gTypesByName.end()) {
+													const TypeInfo* type_info = type_it->second;
+													if (type_info->getStructInfo()) {
+														const StructTypeInfo* struct_info = type_info->getStructInfo();
+														for (const auto& static_member : struct_info->static_members) {
+															if (StringTable::getStringView(static_member.getName()) == member_name) {
+																if (static_member.initializer.has_value()) {
+																	const ASTNode& init_node = *static_member.initializer;
+																	if (init_node.is<ExpressionNode>()) {
+																		const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+																		if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
+																			bool val = std::get<BoolLiteralNode>(init_expr).value();
+																			filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL));
+																		} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
+																			const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
+																			const auto& val = lit.value();
+																			if (std::holds_alternative<unsigned long long>(val)) {
+																				filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+																			}
+																		}
+																	}
+																}
+																break;
+															}
+														}
+													}
+												}
+											}
+										}
+									} else if (std::holds_alternative<NumericLiteralNode>(expr_default)) {
+										const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr_default);
+										const auto& val = lit.value();
+										if (std::holds_alternative<unsigned long long>(val)) {
+											filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+										} else if (std::holds_alternative<double>(val)) {
+											filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<double>(val))));
+										}
+									} else if (std::holds_alternative<BoolLiteralNode>(expr_default)) {
+										const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr_default);
+										filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+									}
+								}
+							}
+						}
+					}
+					
+					// Get the instantiated class name to use in qualified identifier (with defaults filled in)
+					std::string_view instantiated_name = get_instantiated_class_name(qual_id.name(), filled_template_args);
 					
 					// Build the full namespace path including the instantiated template name
 					// For "my_ns::Wrapper<int>::value", we want namespaces=["my_ns", "Wrapper_int"] and name="value"
@@ -15135,8 +15397,107 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						if (peek_token().has_value() && peek_token()->value() == "::") {
 							// Instantiate the template to get the actual instantiated name
 							std::string_view template_name = idenfifier_token.value();
-							std::string_view instantiated_name = get_instantiated_class_name(template_name, *explicit_template_args);
-							try_instantiate_class_template(template_name, *explicit_template_args);
+							
+							// Fill in default template arguments to get the actual instantiated name
+							std::vector<TemplateTypeArg> filled_template_args = *explicit_template_args;
+							auto template_lookup_result = gTemplateRegistry.lookupTemplate(template_name);
+							if (template_lookup_result.has_value() && template_lookup_result->is<TemplateClassDeclarationNode>()) {
+								const auto& template_class = template_lookup_result->as<TemplateClassDeclarationNode>();
+								const auto& template_params = template_class.template_parameters();
+								
+								// Helper lambda to build instantiated template name suffix
+								auto append_type_name_suffix_local = [](StringBuilder& sb, const TemplateTypeArg& arg) {
+									if (arg.is_value) {
+										sb.append(static_cast<uint64_t>(arg.value));
+									} else if (arg.base_type == Type::Void) {
+										sb.append("void");
+									} else if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+										sb.append(StringTable::getStringView(gTypeInfo[arg.type_index].name()));
+									} else {
+										sb.append(getTypeName(arg.base_type));
+									}
+								};
+								
+								// Fill in defaults for missing parameters
+								for (size_t param_idx = filled_template_args.size(); param_idx < template_params.size(); ++param_idx) {
+									const TemplateParameterNode& param = template_params[param_idx].as<TemplateParameterNode>();
+									if (param.has_default() && param.kind() == TemplateParameterKind::Type) {
+										const ASTNode& default_node = param.default_value();
+										if (default_node.is<TypeSpecifierNode>()) {
+											const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+											filled_template_args.push_back(TemplateTypeArg(default_type));
+										}
+									} else if (param.has_default() && param.kind() == TemplateParameterKind::NonType) {
+										const ASTNode& default_node = param.default_value();
+										if (default_node.is<ExpressionNode>()) {
+											const ExpressionNode& expr_default = default_node.as<ExpressionNode>();
+											
+											if (std::holds_alternative<QualifiedIdentifierNode>(expr_default)) {
+												const QualifiedIdentifierNode& qual_id_default = std::get<QualifiedIdentifierNode>(expr_default);
+												
+												if (!qual_id_default.namespaces().empty()) {
+													std::string type_name_str = qual_id_default.namespaces()[0];
+													std::string_view member_name = qual_id_default.name();
+													
+													if (type_name_str.ends_with("_void") && !filled_template_args.empty()) {
+														std::string_view template_base_name(type_name_str.data(), type_name_str.size() - 5);
+														
+														StringBuilder inst_name_builder;
+														inst_name_builder.append(template_base_name).append("_");
+														append_type_name_suffix_local(inst_name_builder, filled_template_args[0]);
+														std::string_view inst_name = inst_name_builder.commit();
+														
+														try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
+														
+														auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(inst_name));
+														if (type_it != gTypesByName.end()) {
+															const TypeInfo* type_info = type_it->second;
+															if (type_info->getStructInfo()) {
+																const StructTypeInfo* struct_info = type_info->getStructInfo();
+																for (const auto& static_member : struct_info->static_members) {
+																	if (StringTable::getStringView(static_member.getName()) == member_name) {
+																		if (static_member.initializer.has_value()) {
+																			const ASTNode& init_node = *static_member.initializer;
+																			if (init_node.is<ExpressionNode>()) {
+																				const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
+																				if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
+																					bool val = std::get<BoolLiteralNode>(init_expr).value();
+																					filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL));
+																				} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
+																					const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
+																					const auto& val = lit.value();
+																					if (std::holds_alternative<unsigned long long>(val)) {
+																						filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+																					}
+																				}
+																			}
+																		}
+																		break;
+																	}
+																}
+															}
+														}
+													}
+												}
+											} else if (std::holds_alternative<NumericLiteralNode>(expr_default)) {
+												const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr_default);
+												const auto& val = lit.value();
+												if (std::holds_alternative<unsigned long long>(val)) {
+													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<unsigned long long>(val))));
+												} else if (std::holds_alternative<double>(val)) {
+													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(std::get<double>(val))));
+												}
+											} else if (std::holds_alternative<BoolLiteralNode>(expr_default)) {
+												const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr_default);
+												filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+											}
+										}
+									}
+								}
+							}
+							
+							std::string_view instantiated_name = get_instantiated_class_name(template_name, filled_template_args);
+							try_instantiate_class_template(template_name, filled_template_args);
 							
 							// Parse qualified identifier after template, using the instantiated name
 							// We need to collect the :: path ourselves since we have the instantiated name
