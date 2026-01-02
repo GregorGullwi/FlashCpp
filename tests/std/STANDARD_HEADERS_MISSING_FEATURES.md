@@ -4,6 +4,12 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 2, 2026 - Template Parameter Cross-References)**:
+- ✅ **Template parameter cross-references in defaults** - Patterns like `template<typename T, bool = is_arithmetic<T>::value>` now work correctly
+- ✅ **Incremental template parameter tracking** - Earlier parameters are now visible to later parameter defaults during parsing
+- 🎯 **Eliminates "Missing identifier" errors** for template parameters in non-type default expressions
+- 🎯 **All 808 tests passing!**
+
 **UPDATE (January 2, 2026 - Inherited Member Template Functions)**:
 - ✅ **Inherited member template function lookup** - SFINAE patterns like `decltype(__test<_Tp>(0))` where `__test` is inherited from a base class now work correctly
 - ✅ **Template member function registration** - Member template functions are now properly added to struct type info for inheritance lookup

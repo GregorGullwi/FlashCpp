@@ -14139,9 +14139,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 
 		// Get the identifier's type information from the symbol table
-		// Use template-aware lookup if we're parsing a template body
+		// Use template-aware lookup if we're parsing a template body OR if we have template parameters
+		// in scope (e.g., when parsing template parameter defaults that reference earlier parameters)
 		std::optional<ASTNode> identifierType;
-		if (parsing_template_body_ && !current_template_param_names_.empty()) {
+		if (!current_template_param_names_.empty()) {
+			// Template-aware lookup: checks if identifier is a template parameter first
 			identifierType = gSymbolTable.lookup(StringTable::getOrInternStringHandle(idenfifier_token.value()), gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
 		} else {
 			identifierType = lookup_symbol(StringTable::getOrInternStringHandle(idenfifier_token.value()));
@@ -21521,14 +21523,28 @@ ParseResult Parser::parse_requires_expression() {
 
 // Parse template parameter list: typename T, int N, ...
 ParseResult Parser::parse_template_parameter_list(std::vector<ASTNode>& out_params) {
+	// Save the current template parameter names so we can restore them later.
+	// This allows nested template declarations to have their own parameter scope.
+	std::vector<StringHandle> saved_template_param_names = current_template_param_names_;
+	
 	// Parse first parameter
 	auto param_result = parse_template_parameter();
 	if (param_result.is_error()) {
+		current_template_param_names_ = std::move(saved_template_param_names);
 		return param_result;
 	}
 
 	if (param_result.node().has_value()) {
 		out_params.push_back(*param_result.node());
+		// Add this parameter's name to current_template_param_names_ so that
+		// subsequent parameters can reference it in their default values.
+		// This enables patterns like: template<typename T, bool = is_arithmetic<T>::value>
+		if (param_result.node()->is<TemplateParameterNode>()) {
+			const auto& tparam = param_result.node()->as<TemplateParameterNode>();
+			current_template_param_names_.push_back(tparam.nameHandle());
+			FLASH_LOG(Templates, Debug, "Added template parameter '", tparam.name(), 
+			          "' to current_template_param_names_ (now has ", current_template_param_names_.size(), " params)");
+		}
 	}
 
 	// Parse additional parameters separated by commas
@@ -21537,13 +21553,26 @@ ParseResult Parser::parse_template_parameter_list(std::vector<ASTNode>& out_para
 
 		param_result = parse_template_parameter();
 		if (param_result.is_error()) {
+			current_template_param_names_ = std::move(saved_template_param_names);
 			return param_result;
 		}
 
 		if (param_result.node().has_value()) {
 			out_params.push_back(*param_result.node());
+			// Add this parameter's name too
+			if (param_result.node()->is<TemplateParameterNode>()) {
+				const auto& tparam = param_result.node()->as<TemplateParameterNode>();
+				current_template_param_names_.push_back(tparam.nameHandle());
+				FLASH_LOG(Templates, Debug, "Added template parameter '", tparam.name(), 
+				          "' to current_template_param_names_ (now has ", current_template_param_names_.size(), " params)");
+			}
 		}
 	}
+
+	// Restore the original template parameter names.
+	// The caller (parse_template_declaration) will set current_template_param_names_
+	// to the full list of parameters for the body parsing phase.
+	current_template_param_names_ = std::move(saved_template_param_names);
 
 	return ParseResult::success();
 }
