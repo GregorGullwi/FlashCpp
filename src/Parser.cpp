@@ -22294,17 +22294,29 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				if (!should_try_type_parsing && peek_token().has_value() && 
 				    (peek_token()->value() == "," || peek_token()->value() == ">" || peek_token()->value() == "...")) {
 					// Check if this is actually a concrete type (not a template parameter)
-					// If it's a concrete struct, we should fall through to type parsing instead
+					// If it's a concrete struct or type alias, we should fall through to type parsing instead
 					bool is_concrete_type = false;
 					if (std::holds_alternative<IdentifierNode>(expr)) {
 						const auto& id = std::get<IdentifierNode>(expr);
 						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(id.name()));
 						if (type_it != gTypesByName.end()) {
 							const TypeInfo* type_info = type_it->second;
-							// If it has struct_info_, it's a concrete struct, not a template parameter
+							// Check if it's a concrete struct (has struct_info_)
+							// OR if it's a type alias that resolves to a concrete type
+							// Type aliases have type_index pointing to the underlying type
 							if (type_info->struct_info_ != nullptr) {
 								is_concrete_type = true;
 								FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a concrete struct type, falling through to type parsing");
+							} else if (type_info->type_index_ < gTypeInfo.size()) {
+								// Check if this is a type alias (type_index points to underlying type)
+								// and the underlying type is concrete (not a template parameter)
+								const TypeInfo& underlying = gTypeInfo[type_info->type_index_];
+								if (underlying.struct_info_ != nullptr || 
+								    underlying.type_ != Type::UserDefined) {
+									// It's a type alias to a concrete type
+									is_concrete_type = true;
+									FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a type alias to concrete type, falling through to type parsing");
+								}
 							}
 						}
 					}
