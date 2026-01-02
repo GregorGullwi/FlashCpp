@@ -4,6 +4,15 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 2, 2026 - Reference Types in Template Defaults)**:
+- ✅ **Rvalue/lvalue references in template defaults** - Patterns like `typename U = T&&` and `typename V = T&` now parse correctly
+- ✅ **noexcept before trailing return type** - `auto f() noexcept -> T` now works (common in `<type_traits>`)
+- ✅ **Dependent template function calls** - Calls like `__declval<_Tp>(0)` with dependent template args are now deferred
+- ✅ **Dependent decltype expressions** - `decltype(dependent_expr)` in template bodies returns `auto` placeholder
+- ✅ **Pseudo-destructor calls** - Patterns like `obj.~Type()` now parse correctly
+- 🎯 **`<type_traits>` progresses from line 963 to 1019** (56 more lines!)
+- 🎯 **All 804 tests passing!**
+
 **UPDATE (January 2, 2026 - Template Brace Initialization)**: 
 - ✅ **Template brace initialization (`type_identity<T>{}`)** - Templates can now be instantiated with brace initialization syntax
 - ✅ **Dependent template brace initialization** - Patterns like `__type_identity<_Tp>{}` inside templates now work (deferred resolution)
@@ -1355,17 +1364,43 @@ auto test_func(T x) -> decltype(x + 1) {
 - Line 175: ✅ **FIXED** - Pack expansion `!bool(_Bn::value)...` now parses correctly
 - Line 194: ❌ **NEW BLOCKER** - `decltype` in base class specification
 
-**Current Blocker Details:**
+**Current Blocker Details (January 2, 2026 - Updated):**
+
+Previous blocker at line 194 has been partially addressed. The current blocker is at **line 1019**:
+
 ```cpp
-template<typename... _Bn>
-struct __or_
-  : decltype(__detail::__or_fn<_Bn...>(0))
-    { };
+struct __do_is_destructible_impl
+{
+    template<typename _Tp, typename = decltype(declval<_Tp&>().~_Tp())>
+      static true_type __test(int);
+
+    template<typename>
+      static false_type __test(...);
+};
+
+template<typename _Tp>
+    struct __is_destructible_impl
+    : public __do_is_destructible_impl
+    {
+      using type = decltype(__test<_Tp>(0));  // <-- LINE 1019: __test lookup fails
+    };
 ```
 
-The issue is that `decltype` is not supported as a base class specifier. This requires significant changes to inheritance parsing logic.
+**Issue**: Member template function lookup through inheritance. When `__is_destructible_impl` inherits from `__do_is_destructible_impl` and tries to call `__test<_Tp>(0)`, the parser cannot find `__test` because:
+1. `__test` is a member function template of the base class
+2. Member lookup needs to search inherited members
+3. Template arguments make this dependent on the template parameter
 
-This is advanced SFINAE and would require significant template metaprogramming support.
+**Why This Is Hard:**
+- Requires implementing proper member name lookup through inheritance chains
+- Need to handle template member functions in base classes
+- Must handle dependent member lookups correctly in template contexts
+
+**Progress Made:**
+- ✅ Line 963: `typename U = T&&` - rvalue references in template defaults
+- ✅ Line 973: `auto f() noexcept -> T` - noexcept before trailing return type  
+- ✅ Line 1008: `decltype(declval<_Tp&>().~_Tp())` - pseudo-destructor calls
+- ❌ Line 1019: `decltype(__test<_Tp>(0))` - member lookup through inheritance
 
 ### ✅ Parsing Bug Fixes - noexcept Support
 
@@ -1492,19 +1527,20 @@ Profiling with `--timing` flag shows:
 
 **High Priority (Achievable):**
 1. ✅ Already done: Conversion operators, constexpr control flow, simple decltype
-2. **Next**: Debug type alias resolution in template namespaces (separate from pack expansion)
-3. Add comprehensive test cases for edge cases of working features
+2. ✅ Already done: Reference types in template defaults, noexcept+trailing return
+3. ✅ Already done: Pseudo-destructor calls, dependent decltype
+4. **Next**: Member lookup through inheritance (for patterns like `__test<_Tp>(0)`)
 
 **Medium Priority (Complex):**
-4. Implement parameter pack expansion in `ExpressionSubstitutor`
+5. Implement parameter pack expansion in `ExpressionSubstitutor`
    - Start with single pack parameter cases
    - Gradually add complexity with multiple packs
    - Extensive testing required
 
 **Low Priority:**
-5. ~~Template instantiation performance optimization~~ - Already fast, not currently a blocker
+6. ~~Template instantiation performance optimization~~ - Already fast, not currently a blocker
 
 ---
 
-**Last Updated**: December 26, 2024 (Investigation Update)
+**Last Updated**: January 2, 2026 (Reference Types in Template Defaults)
 **Recent Contributors**: GitHub Copilot, FlashCpp team

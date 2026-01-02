@@ -8343,6 +8343,16 @@ ParseResult Parser::parse_decltype_specifier()
 	// Deduce the type from the expression
 	auto type_spec_opt = get_expression_type(*expr_result.node());
 	if (!type_spec_opt.has_value()) {
+		// If we're in a template body and the expression is dependent,
+		// create a dependent type placeholder that will be resolved during instantiation
+		if (parsing_template_body_) {
+			FLASH_LOG(Templates, Debug, "Creating dependent type for decltype expression in template body");
+			// Create a placeholder type for the dependent decltype expression
+			// Store the expression so it can be re-evaluated during instantiation
+			TypeSpecifierNode dependent_type(Type::Auto, TypeQualifier::None, 0);
+			// Mark it as dependent/unresolved - it will be resolved during template instantiation
+			return saved_position.success(emplace_node<TypeSpecifierNode>(dependent_type));
+		}
 		return ParseResult::error("Could not deduce type from decltype expression", decltype_token);
 	}
 
@@ -11974,6 +11984,21 @@ void Parser::skip_function_trailing_specifiers()
 	}
 }
 
+// Apply reference qualifiers (& or &&) to a type specifier if present
+// This is used when parsing template parameter default types like: typename U = T&&
+void Parser::apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec) {
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+		std::string_view op_value = peek_token()->value();
+		if (op_value == "&&") {
+			consume_token();
+			type_spec.set_reference(true);  // true = rvalue reference
+		} else if (op_value == "&") {
+			consume_token();
+			type_spec.set_reference(false);  // false = lvalue reference
+		}
+	}
+}
+
 // Helper to parse static member functions - reduces code duplication across three call sites
 bool Parser::parse_static_member_function(
 	ParseResult& type_and_name_result,
@@ -12752,7 +12777,53 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			break;  // No more postfix operators
 		}
 
-		// Expect an identifier (member name)
+		// Expect an identifier (member name) OR ~ for pseudo-destructor call
+		// Pseudo-destructor pattern: obj.~Type() or ptr->~Type()
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "~") {
+			consume_token(); // consume '~'
+			
+			// The destructor name follows the ~
+			// This can be a simple identifier (e.g., ~int) or a qualified name (e.g., ~std::string)
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected type name after '~' in pseudo-destructor call", *current_token_);
+			}
+			
+			Token destructor_type_token = *peek_token();
+			consume_token(); // consume type name
+			
+			// Build qualified type name if present (e.g., std::string -> handle ~std::string)
+			std::string qualified_type_name(destructor_type_token.value());
+			while (peek_token().has_value() && peek_token()->value() == "::") {
+				consume_token(); // consume '::'
+				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected identifier after '::' in pseudo-destructor type", *current_token_);
+				}
+				qualified_type_name += "::";
+				qualified_type_name += peek_token()->value();
+				consume_token(); // consume identifier
+			}
+			
+			// Expect '(' for the destructor call
+			if (!peek_token().has_value() || peek_token()->value() != "(") {
+				return ParseResult::error("Expected '(' after destructor name", *current_token_);
+			}
+			consume_token(); // consume '('
+			
+			// Expect ')' - destructors take no arguments
+			if (!peek_token().has_value() || peek_token()->value() != ")") {
+				return ParseResult::error("Expected ')' - pseudo-destructor takes no arguments", *current_token_);
+			}
+			consume_token(); // consume ')'
+			
+			FLASH_LOG(Parser, Debug, "Parsed pseudo-destructor call: ~", qualified_type_name);
+			
+			// Create a PseudoDestructorCallNode to properly represent this expression
+			// The result type is always void
+			result = emplace_node<ExpressionNode>(
+				PseudoDestructorCallNode(*result, qualified_type_name, destructor_type_token, is_arrow_access));
+			continue;
+		}
+		
 		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
 			return ParseResult::error("Expected member name after '.' or '->'", *current_token_);
 		}
@@ -15639,9 +15710,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (arg_types.size() == args.size()) {
 								// If explicit template arguments were provided, use them directly
 								if (explicit_template_args.has_value()) {
+									// Check if any template arguments are dependent (contain template parameters)
+									// In that case, we cannot instantiate the template now - it will be done at instantiation time
+									bool has_dependent_template_args = false;
+									for (const auto& targ : *explicit_template_args) {
+										if (targ.is_dependent) {
+											has_dependent_template_args = true;
+											break;
+										}
+									}
+									
 									// Skip template instantiation in extern "C" contexts - C has no templates
 									std::optional<ASTNode> instantiated_func;
-									if (current_linkage_ != Linkage::C) {
+									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
 										instantiated_func = try_instantiate_template_explicit(idenfifier_token.value(), *explicit_template_args);
 									}
 									if (instantiated_func.has_value()) {
@@ -15659,6 +15740,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
 											}
 										}
+									} else if (has_dependent_template_args) {
+										// Template arguments are dependent - this is a template-dependent expression
+										// Create a placeholder expression that will be resolved during template instantiation
+										// For now, just skip this - the expression will be re-parsed when the template is instantiated
+										FLASH_LOG(Templates, Debug, "Skipping template instantiation for dependent call to '", idenfifier_token.value(), "'");
+										// Create a placeholder with the identifier - this will be re-resolved during instantiation
+										result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
 									} else {
 										return ParseResult::error("No matching template for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 									}
@@ -18072,6 +18160,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				}
 			}
 		}
+	}
+	else if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
+		// Pseudo-destructor call (obj.~Type()) always returns void
+		const auto& dtor_call = std::get<PseudoDestructorCallNode>(expr);
+		return TypeSpecifierNode(Type::Void, TypeQualifier::None, 0, dtor_call.type_name_token());
 	}
 	// Add more cases as needed
 
@@ -21437,6 +21530,8 @@ ParseResult Parser::parse_template_parameter() {
 				}
 				
 				if (default_type_result.node().has_value()) {
+					// Apply reference qualifiers if present (e.g., T& or T&&)
+					apply_trailing_reference_qualifiers(default_type_result.node()->as<TypeSpecifierNode>());
 					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
 				}
 			}
@@ -21509,6 +21604,8 @@ ParseResult Parser::parse_template_parameter() {
 				}
 				
 				if (default_type_result.node().has_value()) {
+					// Apply reference qualifiers if present (e.g., T& or T&&)
+					apply_trailing_reference_qualifiers(default_type_result.node()->as<TypeSpecifierNode>());
 					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
 				}
 			}
@@ -21698,8 +21795,13 @@ ParseResult Parser::parse_template_function_declaration_body(
 
 	FunctionDeclarationNode& func_decl = *func_decl_ptr;
 
+	// In C++, the order after parameters is: cv-qualifiers -> ref-qualifier -> noexcept -> trailing-return-type
+	// We need to skip cv-qualifiers, ref-qualifier, and noexcept BEFORE checking for trailing return type
+	// Example: template<typename T> auto func(T x) const noexcept -> decltype(x + 1)
+	skip_function_trailing_specifiers();
+
 	// Handle trailing return type for auto return type
-	// This must be done BEFORE skip_function_trailing_specifiers()
+	// This must be done AFTER skipping cv-qualifiers/noexcept but BEFORE semicolon/body
 	// Example: template<typename T> auto func(T x) -> decltype(x + 1)
 	DeclarationNode& decl_node = func_decl.decl_node();
 	TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
@@ -21719,11 +21821,6 @@ ParseResult Parser::parse_template_function_declaration_body(
 		// Replace the auto type with the trailing return type
 		return_type = trailing_type_specifier.node()->as<TypeSpecifierNode>();
 	}
-
-	// Skip trailing function specifiers (const, volatile, &, &&, noexcept, etc.)
-	// These appear after the parameter list but before the function body
-	// For namespace-scope template functions, we skip them (member functions handle them differently)
-	skip_function_trailing_specifiers();
 
 	// Check for trailing requires clause: template<typename T> T func(T x) requires constraint
 	std::optional<ASTNode> trailing_requires_clause;

@@ -6840,6 +6840,76 @@ private:
 			FLASH_LOG(Codegen, Error, "Fold expression found during code generation - should have been expanded during template instantiation");
 			return {};
 		}
+		else if (std::holds_alternative<PseudoDestructorCallNode>(exprNode)) {
+			// Explicit destructor call: obj.~Type() or ptr->~Type()
+			// For class types, this calls the destructor
+			// For non-class types (like int), this is a no-op
+			const auto& dtor = std::get<PseudoDestructorCallNode>(exprNode);
+			std::string_view type_name = dtor.has_qualified_name() 
+				? std::string_view(dtor.qualified_type_name()) 
+				: dtor.type_name();
+			FLASH_LOG(Codegen, Debug, "Generating explicit destructor call for type: ", type_name);
+			
+			// Get the object expression
+			ASTNode object_node = dtor.object();
+			
+			// Try to determine if this is a struct type that needs destructor call
+			std::string_view object_name;
+			const DeclarationNode* object_decl = nullptr;
+			TypeSpecifierNode object_type(Type::Void, TypeQualifier::None, 0);
+			
+			if (object_node.is<ExpressionNode>()) {
+				const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
+				
+				if (std::holds_alternative<IdentifierNode>(object_expr)) {
+					const IdentifierNode& object_ident = std::get<IdentifierNode>(object_expr);
+					object_name = object_ident.name();
+					
+					// Look up the object in symbol table
+					const std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
+					if (symbol.has_value()) {
+						object_decl = get_decl_from_symbol(*symbol);
+						if (object_decl) {
+							object_type = object_decl->type_node().as<TypeSpecifierNode>();
+							
+							// Handle arrow access (ptr->~Type)
+							if (dtor.is_arrow_access() && object_type.pointer_levels().size() > 0) {
+								object_type.remove_pointer_level();
+							}
+						}
+					}
+				}
+			}
+			
+			// Only generate destructor call for struct types
+			if (is_struct_type(object_type.type())) {
+				size_t struct_type_index = object_type.type_index();
+				if (struct_type_index > 0 && struct_type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[struct_type_index];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					
+					// Check if struct has a destructor
+					if (struct_info && struct_info->hasDestructor()) {
+						FLASH_LOG(Codegen, Debug, "Generating IR for destructor call on struct: ", 
+						         StringTable::getStringView(struct_info->getName()));
+						
+						// Generate destructor call IR
+						DestructorCallOp dtor_op;
+						dtor_op.struct_name = struct_info->getName();
+						dtor_op.object = StringTable::getOrInternStringHandle(object_name);
+						ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), dtor.type_name_token()));
+					} else {
+						FLASH_LOG(Codegen, Debug, "Struct ", type_name, " has no destructor, skipping call");
+					}
+				}
+			} else {
+				// For non-class types (int, etc.), explicit destructor call is a no-op
+				FLASH_LOG(Codegen, Debug, "Non-class type ", type_name, " - destructor call is no-op");
+			}
+			
+			// Destructor calls return void
+			return {};
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
