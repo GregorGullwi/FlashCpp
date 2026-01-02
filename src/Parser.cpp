@@ -15043,6 +15043,110 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						
 						// Template arguments parsed but NOT followed by ::
+						// Check for template class brace initialization: Template<T>{}
+						// This creates a temporary object using value-initialization or aggregate-initialization
+						if (!identifierType && peek_token().has_value() && peek_token()->value() == "{") {
+							// This is template class brace initialization (e.g., type_identity<int>{})
+							// Check if any template arguments are dependent
+							bool has_dependent_args = false;
+							for (const auto& arg : *explicit_template_args) {
+								if (arg.is_dependent || arg.is_pack) {
+									has_dependent_args = true;
+									break;
+								}
+							}
+							
+							auto class_template_opt = gTemplateRegistry.lookupTemplate(idenfifier_token.value());
+							if (class_template_opt.has_value()) {
+								FLASH_LOG(Parser, Debug, "Template brace initialization detected for '", idenfifier_token.value(), "', has_dependent_args=", has_dependent_args);
+								
+								if (has_dependent_args) {
+									// Dependent template arguments - create a placeholder for now
+									// The actual instantiation will happen when the outer template is instantiated
+									consume_token(); // consume '{'
+									
+									// Skip the brace content - should be empty {} for value-initialization
+									ChunkedVector<ASTNode> args;
+									while (peek_token().has_value() && peek_token()->value() != "}") {
+										auto argResult = parse_expression();
+										if (argResult.is_error()) {
+											return argResult;
+										}
+										if (auto node = argResult.node()) {
+											args.push_back(*node);
+										}
+										
+										if (peek_token().has_value() && peek_token()->value() == ",") {
+											consume_token(); // consume ','
+										} else if (!peek_token().has_value() || peek_token()->value() != "}") {
+											return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+										}
+									}
+									
+									if (!consume_punctuator("}")) {
+										return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+									}
+									
+									// For dependent args, create a placeholder ConstructorCallNode
+									// The actual type will be resolved during template instantiation
+									// Use a placeholder type for now
+									auto placeholder_type_node = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, idenfifier_token);
+									result = emplace_node<ExpressionNode>(ConstructorCallNode(placeholder_type_node, std::move(args), idenfifier_token));
+									return ParseResult::success(*result);
+								}
+								
+								// Non-dependent template arguments - instantiate the class template
+								try_instantiate_class_template(idenfifier_token.value(), *explicit_template_args);
+								
+								// Build the instantiated type name to look up the type
+								std::string_view instantiated_name = get_instantiated_class_name(idenfifier_token.value(), *explicit_template_args);
+								
+								// Look up the instantiated type
+								auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
+								auto type_it = gTypesByName.find(type_handle);
+								if (type_it != gTypesByName.end()) {
+									// Found the instantiated type - now parse the brace initializer
+									consume_token(); // consume '{'
+									
+									ChunkedVector<ASTNode> args;
+									while (peek_token().has_value() && peek_token()->value() != "}") {
+										auto argResult = parse_expression();
+										if (argResult.is_error()) {
+											return argResult;
+										}
+										if (auto node = argResult.node()) {
+											args.push_back(*node);
+										}
+										
+										if (peek_token().has_value() && peek_token()->value() == ",") {
+											consume_token(); // consume ','
+										} else if (!peek_token().has_value() || peek_token()->value() != "}") {
+											return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+										}
+									}
+									
+									if (!consume_punctuator("}")) {
+										return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+									}
+									
+									// Create TypeSpecifierNode for the instantiated class
+									TypeIndex type_index = type_it->second->type_index_;
+									int type_size = 0;
+									if (type_index < gTypeInfo.size()) {
+										const TypeInfo& type_info = gTypeInfo[type_index];
+										if (type_info.struct_info_) {
+											type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
+										}
+									}
+									auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, idenfifier_token);
+									
+									// Create ConstructorCallNode
+									result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
+									return ParseResult::success(*result);
+								}
+							}
+						}
+						
 						// Check if this is a template alias - if so, treat as valid dependent expression
 						// This handles patterns like: __enable_if_t<...> in template argument contexts
 						if (!identifierType) {
@@ -15130,8 +15234,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					return ParseResult::success(*result);
 				}
 				
-				// Before reporting error, check if this could be a template alias usage
+				// Before reporting error, check if this could be a template alias or class template usage
 				// Example: remove_const_t<T> where remove_const_t is defined as "using remove_const_t = typename remove_const<T>::type;"
+				// Or: type_identity<T>{} for template class brace initialization
 				if (!identifierType && peek_token().has_value() && peek_token()->value() == "<") {
 					// Check if this is an alias template
 					auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
@@ -15142,10 +15247,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// For now, create a placeholder node and let the template instantiation logic handle it
 						FLASH_LOG(Parser, Debug, "Found alias template '", idenfifier_token.value(), "' in expression context");
 						// Don't return yet - let it fall through to template argument parsing below
-					} else if (!found_as_type_alias) {
-						// Not an alias template and not found anywhere
-						FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
-						return ParseResult::error("Missing identifier", idenfifier_token);
+					} else {
+						// Check if this is a class template (for expressions like type_identity<T>{})
+						auto class_template_opt = gTemplateRegistry.lookupTemplate(idenfifier_token.value());
+						FLASH_LOG(Parser, Debug, "Looking up class template '", idenfifier_token.value(), "', found=", class_template_opt.has_value());
+						if (class_template_opt.has_value()) {
+							FLASH_LOG(Parser, Debug, "Found class template '", idenfifier_token.value(), "' in expression context");
+							// Don't return - let it fall through to template argument parsing below
+						} else if (!found_as_type_alias) {
+							// Not an alias template, class template, or found anywhere
+							FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
+							return ParseResult::error("Missing identifier", idenfifier_token);
+						}
 					}
 				} else if (!identifierType && !found_as_type_alias) {
 					// Not a function call, template member access, template parameter reference, pack expansion, or alias template - this is an error
@@ -20879,6 +20992,7 @@ if (struct_type_info.getStructInfo()) {
 		std::string_view simple_name = StringTable::getStringView(struct_decl.name());
 		
 		// Register with simple name (for backward compatibility and unqualified lookups)
+		FLASH_LOG_FORMAT(Templates, Debug, "Registering template class with simple name: '{}'", simple_name);
 		gTemplateRegistry.registerTemplate(simple_name, template_class_node);
 		
 		// If in a namespace, also register with qualified name for namespace-qualified lookups
