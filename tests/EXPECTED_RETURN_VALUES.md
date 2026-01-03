@@ -11,8 +11,8 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-03
 
 **Total files tested:** 817
-**Valid returns (matching expected):** 784
-**Regressions (mismatches):** 20
+**Valid returns (matching expected):** 786
+**Regressions (mismatches):** 18
 **Runtime crashes:** 13
 **Compile failures:** 0
 **Link failures:** 0
@@ -23,8 +23,6 @@ The following test files have a mismatch between their expected return value (fr
 
 | Test File | Expected | Actual | Status |
 |-----------|----------|--------|--------|
-| integer_arithmetic_ret18.cpp | 18 | 33 | REGRESSION |
-| spaceship_basic_ret255.cpp | 255 | 253 | REGRESSION |
 | test_all_mix_ret123.cpp | 123 | 125 | REGRESSION |
 | test_auto_trailing_return_ret42.cpp | 42 | 192 | REGRESSION |
 | test_comma_init_ret197.cpp | 197 | 42 | REGRESSION |

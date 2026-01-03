@@ -13282,10 +13282,27 @@ private:
 			// Add the object as the first argument (this pointer)
 			// The 'this' pointer is always 64 bits (pointer size on x64), regardless of struct size
 			// This is critical for empty structs (size 0) which still need a valid address
+			IrValue this_arg_value;
+			bool object_is_pointer_like = object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
+			if (object_is_pointer_like) {
+				// For pointer/reference objects, pass through directly
+				this_arg_value = IrValue(StringTable::getOrInternStringHandle(object_name));
+			} else {
+				// For object values, take the address so member functions receive a pointer to the object
+				TempVar this_addr = var_counter.next();
+				AddressOfOp addr_op;
+				addr_op.result = this_addr;
+				addr_op.operand.type = object_type.type();
+				addr_op.operand.size_in_bits = static_cast<int>(object_type.size_in_bits());
+				addr_op.operand.pointer_depth = static_cast<int>(object_type.pointer_depth());
+				addr_op.operand.value = StringTable::getOrInternStringHandle(object_name);
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), memberFunctionCallNode.called_from()));
+				this_arg_value = IrValue(this_addr);
+			}
 			call_op.args.push_back(TypedValue{
 				.type = object_type.type(),
 				.size_in_bits = 64,  // Pointer size - always 64 bits on x64 architecture
-				.value = IrValue(StringTable::getOrInternStringHandle(object_name))
+				.value = this_arg_value
 			});
 
 			// Generate IR for function arguments and add to CallOp
