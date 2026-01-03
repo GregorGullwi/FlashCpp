@@ -503,6 +503,14 @@ private:
         // Returns ParseResult with StaticCastNode on success
         ParseResult parse_functional_cast(std::string_view type_name, const Token& type_token);
         
+        // Helper function to parse cv-qualifiers (const/volatile) from token stream
+        // Returns combined CVQualifier flags (None, Const, Volatile, or ConstVolatile)
+        CVQualifier parse_cv_qualifiers();
+        
+        // Helper function to append template type argument suffix to a StringBuilder
+        // Used when building instantiated template names (e.g., "is_arithmetic_int")
+        static void append_type_name_suffix(StringBuilder& sb, const TemplateTypeArg& arg);
+        
         ParseResult parse_declaration_or_function_definition();
         ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default);
         ParseResult parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);  // Phase 1: Unified parameter list parsing

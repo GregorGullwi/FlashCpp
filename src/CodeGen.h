@@ -888,6 +888,188 @@ private:
 		return {};
 	}
 
+	// Helper function to evaluate whether an expression is noexcept
+	// Returns true if the expression is guaranteed not to throw, false otherwise
+	bool isExpressionNoexcept(const ExpressionNode& expr) const {
+		// Literals are always noexcept
+		if (std::holds_alternative<BoolLiteralNode>(expr) ||
+		    std::holds_alternative<NumericLiteralNode>(expr) ||
+		    std::holds_alternative<StringLiteralNode>(expr)) {
+			return true;
+		}
+		
+		// Identifiers (variable references) are noexcept
+		if (std::holds_alternative<IdentifierNode>(expr) ||
+		    std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+			return true;
+		}
+		
+		// Template parameter references are noexcept
+		if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+			return true;
+		}
+		
+		// Built-in operators on primitives are noexcept
+		if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+			const auto& binop = std::get<BinaryOperatorNode>(expr);
+			// Recursively check operands
+			if (binop.get_lhs().is<ExpressionNode>() && binop.get_rhs().is<ExpressionNode>()) {
+				return isExpressionNoexcept(binop.get_lhs().as<ExpressionNode>()) &&
+				       isExpressionNoexcept(binop.get_rhs().as<ExpressionNode>());
+			}
+			// If operands are not expressions, assume noexcept for built-ins
+			return true;
+		}
+		
+		if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+			const auto& unop = std::get<UnaryOperatorNode>(expr);
+			if (unop.get_operand().is<ExpressionNode>()) {
+				return isExpressionNoexcept(unop.get_operand().as<ExpressionNode>());
+			}
+			return true;
+		}
+		
+		// Ternary operator: check all three sub-expressions
+		if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+			const auto& ternary = std::get<TernaryOperatorNode>(expr);
+			bool cond_noexcept = true, then_noexcept = true, else_noexcept = true;
+			if (ternary.condition().is<ExpressionNode>()) {
+				cond_noexcept = isExpressionNoexcept(ternary.condition().as<ExpressionNode>());
+			}
+			if (ternary.true_expr().is<ExpressionNode>()) {
+				then_noexcept = isExpressionNoexcept(ternary.true_expr().as<ExpressionNode>());
+			}
+			if (ternary.false_expr().is<ExpressionNode>()) {
+				else_noexcept = isExpressionNoexcept(ternary.false_expr().as<ExpressionNode>());
+			}
+			return cond_noexcept && then_noexcept && else_noexcept;
+		}
+		
+		// Function calls: check if function is declared noexcept
+		if (std::holds_alternative<FunctionCallNode>(expr)) {
+			const auto& func_call = std::get<FunctionCallNode>(expr);
+			// Check if function_declaration is available and noexcept
+			// The FunctionCallNode contains a reference to the function's DeclarationNode
+			// We need to look up the FunctionDeclarationNode to check noexcept
+			const DeclarationNode& decl = func_call.function_declaration();
+			std::string_view func_name = decl.identifier_token().value();
+			
+			// Look up the function in the symbol table
+			extern SymbolTable gSymbolTable;
+			auto symbol = gSymbolTable.lookup(StringTable::getOrInternStringHandle(func_name));
+			if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
+				const FunctionDeclarationNode& func_decl = symbol->as<FunctionDeclarationNode>();
+				return func_decl.is_noexcept();
+			}
+			// If we can't determine, conservatively assume it may throw
+			return false;
+		}
+		
+		// Member function calls: check if method is declared noexcept
+		if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
+			const auto& member_call = std::get<MemberFunctionCallNode>(expr);
+			const FunctionDeclarationNode& func_decl = member_call.function_declaration();
+			return func_decl.is_noexcept();
+		}
+		
+		// Constructor calls: check if constructor is noexcept
+		if (std::holds_alternative<ConstructorCallNode>(expr)) {
+			// For now, conservatively assume constructors may throw
+			// A complete implementation would check the constructor declaration
+			return false;
+		}
+		
+		// Array subscript: noexcept if index expression is noexcept
+		if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+			const auto& subscript = std::get<ArraySubscriptNode>(expr);
+			if (subscript.index_expr().is<ExpressionNode>()) {
+				return isExpressionNoexcept(subscript.index_expr().as<ExpressionNode>());
+			}
+			return true;
+		}
+		
+		// Member access is noexcept
+		if (std::holds_alternative<MemberAccessNode>(expr)) {
+			return true;
+		}
+		
+		// sizeof, alignof, offsetof are always noexcept
+		if (std::holds_alternative<SizeofExprNode>(expr) ||
+		    std::holds_alternative<SizeofPackNode>(expr) ||
+		    std::holds_alternative<AlignofExprNode>(expr) ||
+		    std::holds_alternative<OffsetofExprNode>(expr)) {
+			return true;
+		}
+		
+		// Type traits are noexcept
+		if (std::holds_alternative<TypeTraitExprNode>(expr)) {
+			return true;
+		}
+		
+		// new/delete can throw (unless using nothrow variant)
+		if (std::holds_alternative<NewExpressionNode>(expr) ||
+		    std::holds_alternative<DeleteExpressionNode>(expr)) {
+			return false;
+		}
+		
+		// Cast expressions: check the operand
+		if (std::holds_alternative<StaticCastNode>(expr)) {
+			const auto& cast = std::get<StaticCastNode>(expr);
+			if (cast.expr().is<ExpressionNode>()) {
+				return isExpressionNoexcept(cast.expr().as<ExpressionNode>());
+			}
+			return true;
+		}
+		if (std::holds_alternative<DynamicCastNode>(expr)) {
+			// dynamic_cast can throw std::bad_cast
+			return false;
+		}
+		if (std::holds_alternative<ConstCastNode>(expr)) {
+			const auto& cast = std::get<ConstCastNode>(expr);
+			if (cast.expr().is<ExpressionNode>()) {
+				return isExpressionNoexcept(cast.expr().as<ExpressionNode>());
+			}
+			return true;
+		}
+		if (std::holds_alternative<ReinterpretCastNode>(expr)) {
+			const auto& cast = std::get<ReinterpretCastNode>(expr);
+			if (cast.expr().is<ExpressionNode>()) {
+				return isExpressionNoexcept(cast.expr().as<ExpressionNode>());
+			}
+			return true;
+		}
+		
+		// typeid can throw for dereferencing null polymorphic pointers
+		if (std::holds_alternative<TypeidNode>(expr)) {
+			return false;
+		}
+		
+		// Lambda expressions themselves are noexcept (creating the closure)
+		if (std::holds_alternative<LambdaExpressionNode>(expr)) {
+			return true;
+		}
+		
+		// Fold expressions: would need to check all sub-expressions
+		if (std::holds_alternative<FoldExpressionNode>(expr)) {
+			// Conservatively assume may throw
+			return false;
+		}
+		
+		// Pseudo-destructor calls are noexcept
+		if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
+			return true;
+		}
+		
+		// Nested noexcept expression
+		if (std::holds_alternative<NoexceptExprNode>(expr)) {
+			// noexcept(noexcept(x)) - the outer noexcept doesn't evaluate its operand
+			return true;
+		}
+		
+		// Default: conservatively assume may throw
+		return false;
+	}
+
 	// Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 	// Used when a member function call syntax is used but the object is not a struct
 	std::vector<IrOperand> convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
@@ -6785,6 +6967,19 @@ private:
 			
 			// Fall back to IR generation if constant evaluation failed
 			return generateAlignofIr(alignof_node);
+		}
+		else if (std::holds_alternative<NoexceptExprNode>(exprNode)) {
+			const auto& noexcept_node = std::get<NoexceptExprNode>(exprNode);
+			// noexcept(expr) returns true if expr doesn't throw, false otherwise
+			// Analyze the expression to determine if it can throw
+			bool is_noexcept = true;  // Default assumption
+			
+			if (noexcept_node.expr().is<ExpressionNode>()) {
+				is_noexcept = isExpressionNoexcept(noexcept_node.expr().as<ExpressionNode>());
+			}
+			
+			// Return a compile-time constant boolean
+			return { Type::Bool, 8, is_noexcept ? 1ULL : 0ULL, 0ULL };
 		}
 		else if (std::holds_alternative<OffsetofExprNode>(exprNode)) {
 			const auto& expr = std::get<OffsetofExprNode>(exprNode);
