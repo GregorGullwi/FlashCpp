@@ -12267,6 +12267,15 @@ private:
 			if (!array_is_tempvar) {
 				StringHandle lookup_name_handle = is_member_array ? StringTable::getOrInternStringHandle(object_name) : array_name_handle;
 				array_base_offset = variable_scopes.back().variables[lookup_name_handle].offset;
+				// Fallback: if not found (offset == INT_MIN), try matching by string to tolerate handle mismatches
+				if (array_base_offset == INT_MIN) {
+					for (const auto& [handle, info] : variable_scopes.back().variables) {
+						if (StringTable::getStringView(handle) == (is_member_array ? object_name : array_name_view)) {
+							array_base_offset = info.offset;
+							break;
+						}
+					}
+				}
 			}
 			
 			// Check if the object (not the array) is a pointer (like 'this' or a reference)

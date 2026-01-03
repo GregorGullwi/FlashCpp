@@ -14022,7 +14022,13 @@ private:
 			}
 		}
 		if (!std::holds_alternative<StringHandle>(base_variant)) {
-			base_variant = array_operands[2];
+			if (std::holds_alternative<StringHandle>(array_operands[2])) {
+				base_variant = std::get<StringHandle>(array_operands[2]);
+			}
+		}
+		// Prefer keeping TempVar base when available to preserve stack offsets for nested accesses
+		if (!std::holds_alternative<TempVar>(base_variant) && std::holds_alternative<TempVar>(array_operands[2])) {
+			base_variant = std::get<TempVar>(array_operands[2]);
 		}
 		
 		// Mark array element access as lvalue (Option 2: Value Category Tracking)
