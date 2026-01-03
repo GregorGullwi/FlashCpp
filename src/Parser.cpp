@@ -22859,6 +22859,16 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				FLASH_LOG_FORMAT(Templates, Debug, "After parsing expression, peek_token={}", 
 				                 peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 				
+				// Special case: If we parsed T[N] as an array subscript expression,
+				// this is actually an array type declarator in a specialization pattern,
+				// not an array access. Reparse as a type.
+				bool is_array_subscript = std::holds_alternative<ArraySubscriptNode>(expr);
+				if (is_array_subscript) {
+					FLASH_LOG(Templates, Debug, "Detected array subscript in template arg - reparsing as array type");
+					restore_token_position(arg_saved_pos);
+					// Fall through to type parsing below
+				} else {
+				
 				// Special case: If out_type_nodes is provided AND the expression is a simple identifier,
 				// we should fall through to type parsing so identifiers get properly converted to TypeSpecifierNode.
 				// This is needed for deduction guides where template parameters must be TypeSpecifierNode.
@@ -22867,13 +22877,17 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// ALSO: If we parsed a simple identifier followed by '<', we should fall through to type parsing
 				// because this is likely a template type (e.g., enable_if_t<...>), not a value expression.
 				// 
+				// ALSO: If followed by '[', this is an array type declarator - must parse as type
+				// 
 				// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
 				bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) || 
 				                            std::holds_alternative<TemplateParameterReferenceNode>(expr);
 				bool followed_by_template_args = peek_token().has_value() && peek_token()->value() == "<";
+				bool followed_by_array_declarator = peek_token().has_value() && peek_token()->value() == "[";
 				bool followed_by_pack_expansion = peek_token().has_value() && peek_token()->value() == "...";
 				bool should_try_type_parsing = (out_type_nodes != nullptr && is_simple_identifier && !followed_by_pack_expansion) ||
-				                               (is_simple_identifier && followed_by_template_args);
+				                               (is_simple_identifier && followed_by_template_args) ||
+				                               (is_simple_identifier && followed_by_array_declarator);
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
 				    (peek_token()->value() == "," || peek_token()->value() == ">" || peek_token()->value() == "...")) {
@@ -22977,6 +22991,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						}
 					}
 				}
+				}  // End of else block for !is_array_subscript
 			}
 
 			// Expression is not a numeric literal or evaluable constant - fall through to type parsing
