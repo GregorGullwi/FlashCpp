@@ -13966,20 +13966,77 @@ private:
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 		
+		// If the array expression resolved to a TempVar that actually refers to a member,
+		// recover the qualified name and offset from its lvalue metadata so we don't lose
+		// struct/offset information (important for member arrays).
+		std::variant<StringHandle, TempVar> base_variant;
+		int base_member_offset = 0;
+		bool base_is_pointer_to_member = false;
+		// Fast-path: if the array expression is a member access, rebuild qualified name directly
+		if (std::holds_alternative<MemberAccessNode>(array_expr)) {
+			const auto& member_access = std::get<MemberAccessNode>(array_expr);
+			if (member_access.object().is<ExpressionNode>()) {
+				const ExpressionNode& obj_expr = member_access.object().as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(obj_expr)) {
+					const auto& object_ident = std::get<IdentifierNode>(obj_expr);
+					std::string_view object_name = object_ident.name();
+					auto symbol = symbol_table.lookup(object_name);
+					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+						const auto& decl_node = symbol->as<DeclarationNode>();
+						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+						if (is_struct_type(type_node.type()) && type_node.type_index() < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+								if (const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_access.member_name())))) {
+									base_variant = StringTable::getOrInternStringHandle(
+										StringBuilder().append(object_name).append(".").append(member_access.member_name()));
+									base_member_offset = static_cast<int>(member->offset);
+									// Member access via '.' is not a pointer access for locals
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		// Simple identifier array (non-member)
+		else if (std::holds_alternative<IdentifierNode>(array_expr)) {
+			const auto& ident = std::get<IdentifierNode>(array_expr);
+			base_variant = StringTable::getOrInternStringHandle(ident.name());
+		}
+		if (std::holds_alternative<TempVar>(array_operands[2])) {
+			TempVar base_temp = std::get<TempVar>(array_operands[2]);
+			if (auto base_lv = getTempVarLValueInfo(base_temp)) {
+				if (base_lv->kind == LValueInfo::Kind::Member && base_lv->member_name.has_value()) {
+					// Build qualified name: object.member
+					if (std::holds_alternative<StringHandle>(base_lv->base)) {
+						auto obj_name = std::get<StringHandle>(base_lv->base);
+						base_variant = StringTable::getOrInternStringHandle(
+							StringBuilder().append(StringTable::getStringView(obj_name))
+							                .append(".")
+							                .append(StringTable::getStringView(base_lv->member_name.value())));
+						base_member_offset = base_lv->offset;
+						base_is_pointer_to_member = base_lv->is_pointer_to_member;
+					}
+				}
+			}
+		}
+		if (!std::holds_alternative<StringHandle>(base_variant)) {
+			base_variant = array_operands[2];
+		}
+		
 		// Mark array element access as lvalue (Option 2: Value Category Tracking)
 		// arr[i] is an lvalue - it designates an object with a stable address
 		LValueInfo lvalue_info(
 			LValueInfo::Kind::ArrayElement,
-			std::holds_alternative<StringHandle>(array_operands[2])
-				? std::variant<StringHandle, TempVar>(std::get<StringHandle>(array_operands[2]))
-				: std::variant<StringHandle, TempVar>(std::get<TempVar>(array_operands[2])),
-			0  // offset computed dynamically by index
+			base_variant,
+			base_member_offset  // offset for member arrays (otherwise 0)
 		);
 		// Store index information for unified assignment handler
 		// Support both constant and variable indices
 		lvalue_info.array_index = toIrValue(index_operands[2]);
 		FLASH_LOG(Codegen, Debug, "Array index stored in metadata (supports constants and variables)");
-		lvalue_info.is_pointer_to_array = is_pointer_to_array;
+		lvalue_info.is_pointer_to_array = is_pointer_to_array || base_is_pointer_to_member;
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 		// Create typed payload for ArrayAccess
