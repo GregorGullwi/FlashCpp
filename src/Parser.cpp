@@ -1538,25 +1538,30 @@ ParseResult Parser::parse_type_and_name() {
         }
     }
 
-    // Check for array declaration: identifier[size]
-    std::optional<ASTNode> array_size;
+    // Check for array declaration: identifier[size] or identifier[size1][size2]...
+    std::vector<ASTNode> array_dimensions;
     bool is_unsized_array = false;
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-        peek_token()->value() == "[") {
+    while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+           peek_token()->value() == "[") {
         consume_token(); // consume '['
 
         // Check for empty brackets (unsized array, size inferred from initializer)
+        // Only the first dimension can be unsized
         if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
             peek_token()->value() == "]") {
-            // Empty brackets - array size will be inferred from initializer
-            is_unsized_array = true;
+            if (array_dimensions.empty()) {
+                // Empty brackets - array size will be inferred from initializer
+                is_unsized_array = true;
+            } else {
+                return ParseResult::error("Only the first array dimension can be unsized", *current_token_);
+            }
         } else {
             // Parse the array size expression
             ParseResult size_result = parse_expression();
             if (size_result.is_error()) {
                 return size_result;
             }
-            array_size = size_result.node();
+            array_dimensions.push_back(*size_result.node());
         }
 
         // Expect closing ']'
@@ -1570,8 +1575,8 @@ ParseResult Parser::parse_type_and_name() {
     // Unwrap the optional ASTNode before passing it to emplace_node
     if (auto node = type_specifier_result.node()) {
         ASTNode decl_node;
-        if (array_size.has_value()) {
-            decl_node = emplace_node<DeclarationNode>(*node, identifier_token, array_size);
+        if (!array_dimensions.empty()) {
+            decl_node = emplace_node<DeclarationNode>(*node, identifier_token, std::move(array_dimensions));
         } else if (is_unsized_array) {
             // Mark as an unsized array - size will be inferred from initializer
             decl_node = emplace_node<DeclarationNode>(*node, identifier_token);
@@ -6119,10 +6124,10 @@ ParseResult Parser::parse_typedef_declaration()
 			}
 			consume_token(); // consume the member name
 
-			// Check for array declarator: '[' size ']'
-			std::optional<ASTNode> array_size;
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-			    peek_token()->value() == "[") {
+			// Check for array declarator: '[' size ']' or multidimensional '[' size1 '][' size2 ']'...
+			std::vector<ASTNode> array_dimensions;
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+			       peek_token()->value() == "[") {
 				consume_token(); // consume '['
 
 				// Parse the array size expression
@@ -6130,7 +6135,7 @@ ParseResult Parser::parse_typedef_declaration()
 				if (size_result.is_error()) {
 					return size_result;
 				}
-				array_size = size_result.node();
+				array_dimensions.push_back(*size_result.node());
 
 				// Expect closing ']'
 				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Punctuator ||
@@ -6142,8 +6147,8 @@ ParseResult Parser::parse_typedef_declaration()
 
 			// Create member declaration
 			ASTNode member_decl_node;
-			if (array_size.has_value()) {
-				member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), *member_name_token, array_size);
+			if (!array_dimensions.empty()) {
+				member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), *member_name_token, std::move(array_dimensions));
 			} else {
 				member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), *member_name_token);
 			}
@@ -26931,7 +26936,7 @@ if (struct_type_info.getStructInfo()) {
 		std::optional<ASTNode> substituted_array_size;
 		if (decl.is_array()) {
 			if (decl.array_size().has_value()) {
-				const ASTNode& array_size_node = *decl.array_size();
+				ASTNode array_size_node = *decl.array_size();
 				
 				// The array size might be stored directly or wrapped in different node types
 				// Try to extract the identifier or value from various possible representations
