@@ -18218,7 +18218,11 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 			if (!found_match && type_name.find("::") != std::string_view::npos) {
 				auto sep_pos = type_name.find("::");
 				std::string base_part(type_name.substr(0, sep_pos));
-				std::string member_part(type_name.substr(sep_pos + 2));
+				std::string_view member_part = type_name.substr(sep_pos + 2);
+				auto build_resolved_name = [](std::string_view base, std::string_view member) {
+					StringBuilder sb;
+					return std::string(sb.append(base).append("::").append(member).commit());
+				};
 				
 				bool replaced = false;
 				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
@@ -18233,7 +18237,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 				}
 				
 				if (replaced) {
-					std::string resolved_name = base_part + "::" + member_part;
+					std::string resolved_name = build_resolved_name(base_part, member_part);
 					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(resolved_name));
 					FLASH_LOG(Templates, Debug, "Dependent member type lookup for '", resolved_name, "' found=", (type_it != gTypesByName.end()));
 					
@@ -18245,7 +18249,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 							try_instantiate_class_template(base_template_name, template_args);
 							
 							std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
-							resolved_name = std::string(instantiated_base) + "::" + member_part;
+							resolved_name = build_resolved_name(instantiated_base, member_part);
 							type_it = gTypesByName.find(StringTable::getOrInternStringHandle(resolved_name));
 							FLASH_LOG(Templates, Debug, "After instantiating base template, lookup for '", resolved_name, "' found=", (type_it != gTypesByName.end()));
 						}
@@ -24251,7 +24255,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		if (sep_pos == std::string_view::npos) return;
 		
 		std::string base_part(type_name.substr(0, sep_pos));
-		std::string member_part(type_name.substr(sep_pos + 2));
+		std::string_view member_part = type_name.substr(sep_pos + 2);
+		auto build_resolved_name = [](std::string_view base, std::string_view member) {
+			StringBuilder sb;
+			return std::string(sb.append(base).append("::").append(member).commit());
+		};
 		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: type_name=", type_name,
 		          " base_part=", base_part, " member_part=", member_part,
 		          " template_args=", template_args_as_type_args.size());
@@ -24267,7 +24275,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 		
-		std::string resolved_name = base_part + "::" + member_part;
+		std::string resolved_name = build_resolved_name(base_part, member_part);
 		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: resolved_name=", resolved_name);
 		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(resolved_name));
 		
@@ -24279,12 +24287,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				try_instantiate_class_template(base_template_name, template_args_as_type_args);
 				
 				std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args_as_type_args);
-				resolved_name = std::string(instantiated_base) + "::" + member_part;
+				resolved_name = build_resolved_name(instantiated_base, member_part);
 				type_it = gTypesByName.find(StringTable::getOrInternStringHandle(resolved_name));
 				
 				// Fallback: also try using the primary template name (uninstantiated) to find a registered alias
 				if (type_it == gTypesByName.end()) {
-					std::string primary_name = base_template_name + "::" + member_part;
+					std::string primary_name = build_resolved_name(base_template_name, member_part);
 					type_it = gTypesByName.find(StringTable::getOrInternStringHandle(primary_name));
 				}
 				FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: after instantiation lookup '", resolved_name,
