@@ -7228,6 +7228,21 @@ CVQualifier Parser::parse_cv_qualifiers() {
 	return cv;
 }
 
+// Helper function to append template type argument suffix to a StringBuilder
+// Consolidates the logic for building instantiated template names (e.g., "is_arithmetic_int")
+// Previously duplicated in 4 locations throughout Parser.cpp
+void Parser::append_type_name_suffix(StringBuilder& sb, const TemplateTypeArg& arg) {
+	if (arg.is_value) {
+		sb.append(static_cast<uint64_t>(arg.value));
+	} else if (arg.base_type == Type::Void) {
+		sb.append("void");
+	} else if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+		sb.append(StringTable::getStringView(gTypeInfo[arg.type_index].name()));
+	} else {
+		sb.append(getTypeName(arg.base_type));
+	}
+}
+
 ParseResult Parser::parse_type_specifier()
 {
 	FLASH_LOG(Parser, Debug, "parse_type_specifier: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
@@ -7831,18 +7846,6 @@ ParseResult Parser::parse_type_specifier()
 								const ExpressionNode& expr = default_node.as<ExpressionNode>();
 								
 								// Helper lambda to build instantiated template name suffix
-								auto append_type_name_suffix_local = [](StringBuilder& sb, const TemplateTypeArg& arg) {
-									if (arg.is_value) {
-										sb.append(static_cast<uint64_t>(arg.value));
-									} else if (arg.base_type == Type::Void) {
-										sb.append("void");
-									} else if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-										sb.append(StringTable::getStringView(gTypeInfo[arg.type_index].name()));
-									} else {
-										sb.append(getTypeName(arg.base_type));
-									}
-								};
-								
 								if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 									const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
 									
@@ -7858,7 +7861,7 @@ ParseResult Parser::parse_type_specifier()
 											// Build the instantiated template name using first filled argument
 											StringBuilder inst_name_builder;
 											inst_name_builder.append(template_base_name).append("_");
-											append_type_name_suffix_local(inst_name_builder, filled_template_args[0]);
+											append_type_name_suffix(inst_name_builder, filled_template_args[0]);
 											std::string_view inst_name = inst_name_builder.commit();
 											
 											// Try to instantiate the template
@@ -8220,18 +8223,6 @@ ParseResult Parser::parse_type_specifier()
 				
 				// Fill in default template arguments to get the actual instantiated name
 				// Helper lambda to build instantiated template name suffix
-				auto append_type_name_suffix_local = [](StringBuilder& sb, const TemplateTypeArg& arg) {
-					if (arg.is_value) {
-						sb.append(static_cast<uint64_t>(arg.value));
-					} else if (arg.base_type == Type::Void) {
-						sb.append("void");
-					} else if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-						sb.append(StringTable::getStringView(gTypeInfo[arg.type_index].name()));
-					} else {
-						sb.append(getTypeName(arg.base_type));
-					}
-				};
-				
 				std::vector<TemplateTypeArg> filled_template_args;
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
@@ -8258,7 +8249,7 @@ ParseResult Parser::parse_type_specifier()
 										
 										StringBuilder inst_name_builder;
 										inst_name_builder.append(template_base_name).append("_");
-										append_type_name_suffix_local(inst_name_builder, filled_template_args[0]);
+										append_type_name_suffix(inst_name_builder, filled_template_args[0]);
 										std::string_view inst_name = inst_name_builder.commit();
 										
 										try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
@@ -13908,18 +13899,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						const auto& template_params = template_class.template_parameters();
 						
 						// Helper lambda to build instantiated template name suffix
-						auto append_type_name_suffix_local = [](StringBuilder& sb, const TemplateTypeArg& arg) {
-							if (arg.is_value) {
-								sb.append(static_cast<uint64_t>(arg.value));
-							} else if (arg.base_type == Type::Void) {
-								sb.append("void");
-							} else if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-								sb.append(StringTable::getStringView(gTypeInfo[arg.type_index].name()));
-							} else {
-								sb.append(getTypeName(arg.base_type));
-							}
-						};
-						
 						// Fill in defaults for missing parameters
 						for (size_t param_idx = filled_template_args.size(); param_idx < template_params.size(); ++param_idx) {
 							const TemplateParameterNode& param = template_params[param_idx].as<TemplateParameterNode>();
@@ -13946,7 +13925,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												
 												StringBuilder inst_name_builder;
 												inst_name_builder.append(template_base_name).append("_");
-												append_type_name_suffix_local(inst_name_builder, filled_template_args[0]);
+												append_type_name_suffix(inst_name_builder, filled_template_args[0]);
 												std::string_view inst_name = inst_name_builder.commit();
 												
 												try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
@@ -15258,18 +15237,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								const auto& template_params = template_class.template_parameters();
 								
 								// Helper lambda to build instantiated template name suffix
-								auto append_type_name_suffix_local = [](StringBuilder& sb, const TemplateTypeArg& arg) {
-									if (arg.is_value) {
-										sb.append(static_cast<uint64_t>(arg.value));
-									} else if (arg.base_type == Type::Void) {
-										sb.append("void");
-									} else if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
-										sb.append(StringTable::getStringView(gTypeInfo[arg.type_index].name()));
-									} else {
-										sb.append(getTypeName(arg.base_type));
-									}
-								};
-								
 								// Fill in defaults for missing parameters
 								for (size_t param_idx = filled_template_args.size(); param_idx < template_params.size(); ++param_idx) {
 									const TemplateParameterNode& param = template_params[param_idx].as<TemplateParameterNode>();
@@ -15296,7 +15263,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 														
 														StringBuilder inst_name_builder;
 														inst_name_builder.append(template_base_name).append("_");
-														append_type_name_suffix_local(inst_name_builder, filled_template_args[0]);
+														append_type_name_suffix(inst_name_builder, filled_template_args[0]);
 														std::string_view inst_name = inst_name_builder.commit();
 														
 														try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
