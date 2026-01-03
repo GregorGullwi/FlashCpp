@@ -1168,9 +1168,28 @@ public:
 	bool is_array() const { return is_array_; }
 	void set_array(bool is_array, std::optional<size_t> array_size = std::nullopt) {
 		is_array_ = is_array;
-		array_size_ = array_size;
+		array_dimensions_.clear();
+		if (array_size.has_value()) {
+			array_dimensions_.push_back(*array_size);
+		}
 	}
-	std::optional<size_t> array_size() const { return array_size_; }
+	// Multidimensional array support
+	void add_array_dimension(size_t size) {
+		is_array_ = true;
+		array_dimensions_.push_back(size);
+	}
+	void set_array_dimensions(const std::vector<size_t>& dims) {
+		is_array_ = !dims.empty();
+		array_dimensions_ = dims;
+	}
+	// Returns the first (outermost) dimension size for backwards compatibility
+	std::optional<size_t> array_size() const { 
+		if (array_dimensions_.empty()) return std::nullopt;
+		return array_dimensions_[0];
+	}
+	// Returns all array dimensions (e.g., [2][3][4] returns {2, 3, 4})
+	const std::vector<size_t>& array_dimensions() const { return array_dimensions_; }
+	size_t array_dimension_count() const { return array_dimensions_.size(); }
 
 	// Pack expansion support (for variadic templates like Args...)
 	bool is_pack_expansion() const { return is_pack_expansion_; }
@@ -1182,7 +1201,7 @@ public:
 		pointer_levels_ = other.pointer_levels_;
 		reference_qualifier_ = other.reference_qualifier_;
 		is_array_ = other.is_array_;
-		array_size_ = other.array_size_;
+		array_dimensions_ = other.array_dimensions_;
 		// Note: is_pack_expansion_ is NOT copied - it's context-specific during parsing
 		// and shouldn't be propagated during type substitution in template instantiation
 	}
@@ -1234,7 +1253,7 @@ private:
 	std::vector<PointerLevel> pointer_levels_;  // Empty if not a pointer, one entry per * level
 	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;  // Reference qualifier (None, LValue, or RValue)
 	bool is_array_ = false;      // True if this is an array type (T[N] or T[])
-	std::optional<size_t> array_size_;  // Array size if known (e.g., int[10] -> 10)
+	std::vector<size_t> array_dimensions_;  // Array dimensions (e.g., int[2][3][4] -> {2, 3, 4})
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
 	bool is_pack_expansion_ = false;  // True if this type is followed by ... (pack expansion)
 };
@@ -1243,16 +1262,32 @@ class DeclarationNode {
 public:
 	DeclarationNode() = default;
 	DeclarationNode(ASTNode type_node, Token identifier)
-		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(std::nullopt), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
+		: type_node_(type_node), identifier_(std::move(identifier)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
 	DeclarationNode(ASTNode type_node, Token identifier, std::optional<ASTNode> array_size)
-		: type_node_(type_node), identifier_(std::move(identifier)), array_size_(array_size), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
+		: type_node_(type_node), identifier_(std::move(identifier)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {
+		if (array_size.has_value()) {
+			array_dimensions_.push_back(*array_size);
+		}
+	}
+	// Multidimensional array constructor
+	DeclarationNode(ASTNode type_node, Token identifier, std::vector<ASTNode> array_dimensions)
+		: type_node_(type_node), identifier_(std::move(identifier)), array_dimensions_(std::move(array_dimensions)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
 
 	ASTNode type_node() const { return type_node_; }
 	void set_type_node(const ASTNode& type_node) { type_node_ = type_node; }
 	const Token& identifier_token() const { return identifier_; }
 	uint32_t line_number() const { return identifier_.line(); }
-	bool is_array() const { return array_size_.has_value() || is_unsized_array_; }
-	const std::optional<ASTNode>& array_size() const { return array_size_; }
+	bool is_array() const { return !array_dimensions_.empty() || is_unsized_array_; }
+	// Returns the first (outermost) dimension for backwards compatibility
+	const std::optional<ASTNode> array_size() const { 
+		if (array_dimensions_.empty()) return std::nullopt;
+		return array_dimensions_[0];
+	}
+	// Multidimensional array support
+	const std::vector<ASTNode>& array_dimensions() const { return array_dimensions_; }
+	size_t array_dimension_count() const { return array_dimensions_.size(); }
+	void add_array_dimension(ASTNode dim) { array_dimensions_.push_back(dim); }
+	void set_array_dimensions(std::vector<ASTNode> dims) { array_dimensions_ = std::move(dims); }
 
 	// Unsized array support (e.g., int arr[] = {1, 2, 3})
 	bool is_unsized_array() const { return is_unsized_array_; }
@@ -1274,7 +1309,7 @@ public:
 private:
 	ASTNode type_node_;
 	Token identifier_;
-	std::optional<ASTNode> array_size_;  // For array declarations like int arr[10]
+	std::vector<ASTNode> array_dimensions_;  // For array declarations like int arr[2][3][4]
 	size_t custom_alignment_;            // Custom alignment from alignas(n), 0 = use natural alignment
 	bool is_parameter_pack_;             // True for parameter packs like Args... args
 	bool is_unsized_array_;              // True for unsized arrays like int arr[] = {1, 2, 3}

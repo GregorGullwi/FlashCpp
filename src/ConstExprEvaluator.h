@@ -347,7 +347,7 @@ private:
 								
 								// Get array size from declaration
 								if (decl->array_size().has_value()) {
-									const ASTNode& size_expr = *decl->array_size();
+									ASTNode size_expr = *decl->array_size();
 									auto eval_result = evaluate(size_expr, context);
 									if (eval_result.success) {
 										long long array_count = eval_result.as_int();
@@ -398,7 +398,7 @@ private:
 									
 									// Get array size from declaration
 									if (decl->array_size().has_value()) {
-										const ASTNode& size_expr = *decl->array_size();
+										ASTNode size_expr = *decl->array_size();
 										auto eval_result = evaluate(size_expr, context);
 										if (eval_result.success) {
 											long long array_count = eval_result.as_int();

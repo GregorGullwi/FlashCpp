@@ -12124,6 +12124,11 @@ private:
 
 
 	void handleArrayStore(const IrInstruction& instruction) {
+		// Ensure all computed values (especially indices from expressions) are spilled to stack
+		// before we load them. This is necessary because variable indices (TempVars) may still
+		// be in registers and not yet written to their stack locations.
+		flushAllDirtyRegisters();
+		
 		// Try typed payload first
 		if (instruction.hasTypedPayload()) {
 			const ArrayStoreOp& op = std::any_cast<const ArrayStoreOp&>(instruction.getTypedPayload());
