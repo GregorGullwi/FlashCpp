@@ -14719,8 +14719,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
 				const auto& func = template_func_inst->as<FunctionDeclarationNode>();
-				result = emplace_node<ExpressionNode>(
+				auto function_call_node = emplace_node<ExpressionNode>(
 					FunctionCallNode(const_cast<DeclarationNode&>(func.decl_node()), std::move(args), idenfifier_token));
+				
+				// Set the mangled name on the function call if the instantiated function has one
+				if (func.has_mangled_name()) {
+					std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_mangled_name(func.mangled_name());
+				}
+				
+				result = function_call_node;
 				return ParseResult::success(*result);
 			} else {
 				FLASH_LOG(Parser, Error, "Template instantiation failed");
@@ -24694,7 +24701,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Mangled name was already computed and set above - don't recompute it!
-	// The mangled name is saved_mangled_name and was already set on the function node
+	// The mangled name is proper_mangled_name and was already set on the function node
 	
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
@@ -24702,6 +24709,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Add to symbol table at GLOBAL scope (not current scope)
 	// Template instantiations should be globally visible, not scoped to where they're called
 	// Use insertGlobal() to add to global scope without modifying the scope stack
+	// Register with the human-readable template-specific name for template lookups
 	gSymbolTable.insertGlobal(saved_mangled_name, new_func_node);
 
 	// Add to top-level AST so it gets visited by the code generator
