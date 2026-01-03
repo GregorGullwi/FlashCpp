@@ -8228,6 +8228,13 @@ private:
 		if (std::holds_alternative<ArraySubscriptNode>(expr)) {
 			const ArraySubscriptNode& arraySubscript = std::get<ArraySubscriptNode>(expr);
 			
+			// For multidimensional arrays (nested ArraySubscriptNode), return nullopt
+			// to let the specialized handling in generateUnaryOperatorIr compute the flat index correctly
+			const ExpressionNode& array_expr_inner = arraySubscript.array_expr().as<ExpressionNode>();
+			if (std::holds_alternative<ArraySubscriptNode>(array_expr_inner)) {
+				return std::nullopt;  // Fall through to multidimensional array handling
+			}
+			
 			// Get the array and index operands
 			auto array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
 			auto index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
@@ -8687,10 +8694,113 @@ private:
 				}
 			}
 			
-			// Handle &arr[index] (without member access)
+			// Handle &arr[index] (without member access) - includes multidimensional arrays
 			if (std::holds_alternative<ArraySubscriptNode>(operandExpr)) {
 				const ArraySubscriptNode& arraySubscript = std::get<ArraySubscriptNode>(operandExpr);
 				
+				// Check if this is a multidimensional array access (nested ArraySubscriptNode)
+				const ExpressionNode& array_expr = arraySubscript.array_expr().as<ExpressionNode>();
+				if (std::holds_alternative<ArraySubscriptNode>(array_expr)) {
+					// This is a multidimensional array access like &arr[i][j]
+					auto multi_dim = collectMultiDimArrayIndices(arraySubscript);
+					
+					if (multi_dim.is_valid && multi_dim.base_decl) {
+						// Compute flat index using the same logic as generateArraySubscriptIr
+						const auto& dims = multi_dim.base_decl->array_dimensions();
+						std::vector<size_t> strides;
+						strides.reserve(dims.size());
+						
+						// Calculate strides (same as in generateArraySubscriptIr)
+						for (size_t i = 0; i < dims.size(); ++i) {
+							size_t stride = 1;
+							for (size_t j = i + 1; j < dims.size(); ++j) {
+								ConstExpr::EvaluationContext ctx(symbol_table);
+								auto eval_result = ConstExpr::Evaluator::evaluate(dims[j], ctx);
+								if (eval_result.success && eval_result.as_int() > 0) {
+									stride *= static_cast<size_t>(eval_result.as_int());
+								}
+							}
+							strides.push_back(stride);
+						}
+						
+						// Get element type and size
+						const TypeSpecifierNode& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
+						Type element_type = type_node.type();
+						int element_size_bits = static_cast<int>(type_node.size_in_bits());
+						if (element_size_bits == 0) {
+							element_size_bits = get_type_size_bits(element_type);
+						}
+						TypeIndex element_type_index = type_node.type_index();
+						
+						// Compute flat index: for arr[i][j] on arr[M][N], index = i*N + j
+						TempVar flat_index = var_counter.next();
+						bool first_term = true;
+						
+						for (size_t k = 0; k < multi_dim.indices.size(); ++k) {
+							auto idx_operands = visitExpressionNode(multi_dim.indices[k].as<ExpressionNode>());
+							
+							if (strides[k] == 1) {
+								if (first_term) {
+									// flat_index = indices[k]
+									AssignmentOp assign_op;
+									assign_op.result = flat_index;
+									assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, flat_index};
+									assign_op.rhs = toTypedValue(idx_operands);
+									ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+									first_term = false;
+								} else {
+									// flat_index += indices[k]
+									TempVar new_flat = var_counter.next();
+									BinaryOp add_op;
+									add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, flat_index};
+									add_op.rhs = toTypedValue(idx_operands);
+									add_op.result = IrValue{new_flat};
+									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
+									flat_index = new_flat;
+								}
+							} else {
+								// temp = indices[k] * strides[k]
+								TempVar temp_prod = var_counter.next();
+								BinaryOp mul_op;
+								mul_op.lhs = toTypedValue(idx_operands);
+								mul_op.rhs = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(strides[k])};
+								mul_op.result = IrValue{temp_prod};
+								ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
+								
+								if (first_term) {
+									flat_index = temp_prod;
+									first_term = false;
+								} else {
+									// flat_index += temp
+									TempVar new_flat = var_counter.next();
+									BinaryOp add_op;
+									add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, flat_index};
+									add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, temp_prod};
+									add_op.result = IrValue{new_flat};
+									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
+									flat_index = new_flat;
+								}
+							}
+						}
+						
+						// Now generate ArrayElementAddress with the flat index
+						TempVar addr_var = var_counter.next();
+						ArrayElementAddressOp payload;
+						payload.result = addr_var;
+						payload.element_type = element_type;
+						payload.element_size_in_bits = element_size_bits;
+						payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
+						payload.index.type = Type::UnsignedLongLong;
+						payload.index.size_in_bits = 64;
+						payload.index.value = flat_index;
+						
+						ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
+						
+						return { element_type, 64, addr_var, static_cast<unsigned long long>(element_type_index) };
+					}
+				}
+				
+				// Fall through to single-dimensional array handling
 				// Get the array and index operands
 				auto array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
 				auto index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());

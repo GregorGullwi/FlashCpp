@@ -2276,8 +2276,20 @@ inline void emitLoadFromAddressInReg(std::vector<char>& textSectionData, X64Regi
 	bool dest_extended = static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8);
 	bool addr_extended = static_cast<uint8_t>(addr_reg) >= static_cast<uint8_t>(X64Register::R8);
 	
-	// ModR/M: mod=00 (indirect), reg=dest_bits, r/m=addr_bits
-	uint8_t modrm = (dest_bits << 3) | addr_bits;
+	// Check if addr_reg is RSP or R12 (both have addr_bits=4) - requires SIB byte
+	bool needs_sib = (addr_bits == 4);
+	// Check if addr_reg is RBP or R13 (both have addr_bits=5) - requires disp8 in mod=00
+	// In mod=00 with r/m=101, the encoding means disp32[RIP] (RIP-relative), not [RBP/R13]
+	// To get [RBP/R13], we use mod=01 with disp8=0
+	bool needs_disp0 = (addr_bits == 5);
+	
+	// ModR/M byte
+	// For normal indirect: mod=00, reg=dest_bits, r/m=addr_bits
+	// For RBP/R13 with disp8=0: mod=01, reg=dest_bits, r/m=addr_bits
+	uint8_t mod = needs_disp0 ? 0x40 : 0x00;  // 0x40 = mod=01
+	uint8_t modrm = mod | (dest_bits << 3) | addr_bits;
+	// SIB byte for RSP/R12: scale=00, index=100 (none), base=100 (RSP or R12)
+	uint8_t sib = 0x24;  // scale=00, index=100, base=100
 	
 	if (element_size_bytes == 1) {
 		// MOVZX dest32, BYTE PTR [addr_reg]
@@ -2288,6 +2300,8 @@ inline void emitLoadFromAddressInReg(std::vector<char>& textSectionData, X64Regi
 		textSectionData.push_back(0x0F);
 		textSectionData.push_back(0xB6); // MOVZX r32, r/m8
 		textSectionData.push_back(modrm);
+		if (needs_sib) textSectionData.push_back(sib);
+		if (needs_disp0) textSectionData.push_back(0x00);  // disp8 = 0
 	} else if (element_size_bytes == 2) {
 		// MOVZX dest32, WORD PTR [addr_reg]
 		uint8_t rex = 0x40;
@@ -2297,6 +2311,8 @@ inline void emitLoadFromAddressInReg(std::vector<char>& textSectionData, X64Regi
 		textSectionData.push_back(0x0F);
 		textSectionData.push_back(0xB7); // MOVZX r32, r/m16
 		textSectionData.push_back(modrm);
+		if (needs_sib) textSectionData.push_back(sib);
+		if (needs_disp0) textSectionData.push_back(0x00);  // disp8 = 0
 	} else if (element_size_bytes == 4) {
 		// MOV dest32, DWORD PTR [addr_reg]
 		uint8_t rex = 0x40;
@@ -2305,6 +2321,8 @@ inline void emitLoadFromAddressInReg(std::vector<char>& textSectionData, X64Regi
 		if (rex != 0x40) textSectionData.push_back(rex);
 		textSectionData.push_back(0x8B); // MOV r32, r/m32
 		textSectionData.push_back(modrm);
+		if (needs_sib) textSectionData.push_back(sib);
+		if (needs_disp0) textSectionData.push_back(0x00);  // disp8 = 0
 	} else {
 		// MOV dest64, QWORD PTR [addr_reg]
 		uint8_t rex = 0x48; // REX.W
@@ -2313,6 +2331,8 @@ inline void emitLoadFromAddressInReg(std::vector<char>& textSectionData, X64Regi
 		textSectionData.push_back(rex);
 		textSectionData.push_back(0x8B); // MOV r64, r/m64
 		textSectionData.push_back(modrm);
+		if (needs_sib) textSectionData.push_back(sib);
+		if (needs_disp0) textSectionData.push_back(0x00);  // disp8 = 0
 	}
 }
 
@@ -3564,11 +3584,6 @@ public:
 
 		auto ir_processing_end = std::chrono::high_resolution_clock::now();
 	
-		// Clean up the last function's variable scope after all instructions are processed
-		if (!variable_scopes.empty()) {
-			variable_scopes.pop_back();
-		}
-	
 		if (show_timing) {
 			auto ir_duration = std::chrono::duration_cast<std::chrono::microseconds>(ir_processing_end - ir_processing_start);
 			printf("    IR instruction processing: %8.3f ms\n", ir_duration.count() / 1000.0);
@@ -3603,6 +3618,12 @@ public:
 		{
 			ProfilingTimer timer("Finalize sections", show_timing);
 			finalizeSections();
+		}
+
+		// Clean up the last function's variable scope AFTER finalizeSections has used it
+		// for stack size patching
+		if (!variable_scopes.empty()) {
+			variable_scopes.pop_back();
 		}
 
 		{
@@ -12024,6 +12045,9 @@ private:
 
 
 	void handleArrayElementAddress(const IrInstruction& instruction) {
+		// Flush dirty registers to ensure index values are in memory
+		flushAllDirtyRegisters();
+		
 		// Try typed payload first
 		if (instruction.hasTypedPayload()) {
 			const ArrayElementAddressOp& op = std::any_cast<const ArrayElementAddressOp&>(instruction.getTypedPayload());
@@ -14359,10 +14383,9 @@ private:
 
 		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
 		if (current_function_name_.isValid()) {
-			// Calculate actual stack space needed: named vars + outgoing args + TempVars
-			size_t temp_vars_space = (next_temp_var_offset_ > 8) ? (next_temp_var_offset_ - 8) : 0;
-			size_t named_and_shadow = current_function_named_vars_size_;
-			size_t total_stack = named_and_shadow + temp_vars_space;
+			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
+			// scope_stack_space is negative (offset from RBP), so negate to get positive size
+			size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
 			
 			// Stack alignment: After PUSH RBP, RSP is 16-aligned.
 			// SUB RSP, N must keep it 16-aligned for subsequent CALLs.
