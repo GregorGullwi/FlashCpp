@@ -4093,7 +4093,9 @@ private:
 								ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 							}
 							
-							emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, ctx.operand_size_in_bits);
+							// Use the RHS's actual size for loading, not the LHS/operand size
+							// This is important when types are mixed (e.g., int + long)
+							emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, bin_op.rhs.size_in_bits);
 						}
 						regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 					}
@@ -4167,7 +4169,9 @@ private:
 							ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 						}
 						
-						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_stack_var_addr, ctx.operand_size_in_bits);
+						// Use the RHS's actual size for loading, not the LHS/operand size
+						// This is important when types are mixed (e.g., int + long)
+						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_stack_var_addr, bin_op.rhs.size_in_bits);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 				}
