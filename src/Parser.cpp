@@ -18213,6 +18213,58 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 					}
 				}
 			}
+
+			// Try to resolve dependent qualified member types (e.g., Helper_T::type)
+			if (!found_match && type_name.find("::") != std::string_view::npos) {
+				auto sep_pos = type_name.find("::");
+				std::string base_part(type_name.substr(0, sep_pos));
+				std::string_view member_part = type_name.substr(sep_pos + 2);
+				auto build_resolved_handle = [](std::string_view base, std::string_view member) {
+					StringBuilder sb;
+					return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
+				};
+				
+				bool replaced = false;
+				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+					if (!template_params[i].is<TemplateParameterNode>()) continue;
+					const auto& tparam = template_params[i].as<TemplateParameterNode>();
+					std::string_view tname = tparam.name();
+					auto pos = base_part.find(tname);
+					if (pos != std::string::npos) {
+						base_part.replace(pos, tname.size(), template_args[i].toString());
+						replaced = true;
+					}
+				}
+				
+				if (replaced) {
+					StringHandle resolved_handle = build_resolved_handle(base_part, member_part);
+					auto type_it = gTypesByName.find(resolved_handle);
+					FLASH_LOG(Templates, Debug, "Dependent member type lookup for '",
+					          StringTable::getStringView(resolved_handle), "' found=", (type_it != gTypesByName.end()));
+					
+					// If not found, try instantiating the base template using the portion before the first '_'
+					if (type_it == gTypesByName.end()) {
+						auto underscore_pos = base_part.find('_');
+						if (underscore_pos != std::string::npos) {
+							std::string_view base_template_name = std::string_view(base_part).substr(0, underscore_pos);
+							try_instantiate_class_template(base_template_name, template_args);
+							
+							std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
+							resolved_handle = build_resolved_handle(instantiated_base, member_part);
+							type_it = gTypesByName.find(resolved_handle);
+							FLASH_LOG(Templates, Debug, "After instantiating base template, lookup for '",
+							          StringTable::getStringView(resolved_handle), "' found=", (type_it != gTypesByName.end()));
+						}
+					}
+					
+					if (type_it != gTypesByName.end()) {
+						const TypeInfo* resolved_info = type_it->second;
+						result_type = resolved_info->type_;
+						result_type_index = resolved_info->type_index_;
+						found_match = true;
+					}
+				}
+			}
 			
 			// If not found as a direct template parameter, check if this is a type alias
 			// that resolves to a template parameter (e.g., "using value_type = T;")
@@ -22171,6 +22223,13 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// Example: template<typename T> auto func(T x) -> decltype(x + 1)
 	DeclarationNode& decl_node = func_decl.decl_node();
 	TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
+	FLASH_LOG(Templates, Debug, "Template instantiation: pre-trailing return type: type=", static_cast<int>(return_type.type()),
+	          ", index=", return_type.type_index(), ", token='", return_type.token().value(), "'");
+	if (peek_token().has_value()) {
+		FLASH_LOG(Templates, Debug, "Template instantiation: next token after params='", peek_token()->value(), "'");
+	} else {
+		FLASH_LOG(Templates, Debug, "Template instantiation: no token after params");
+	}
 	if (return_type.type() == Type::Auto && peek_token().has_value() && peek_token()->value() == "->") {
 		consume_token();  // consume '->'
 		
@@ -22183,9 +22242,19 @@ ParseResult Parser::parse_template_function_declaration_body(
 		if (!trailing_type_specifier.node().has_value() || !trailing_type_specifier.node()->is<TypeSpecifierNode>()) {
 			return ParseResult::error("Expected type specifier for trailing return type", *current_token_);
 		}
+		const auto& trailing_ts = trailing_type_specifier.node()->as<TypeSpecifierNode>();
+		FLASH_LOG(Templates, Debug, "Template instantiation: parsed trailing return type: type=", static_cast<int>(trailing_ts.type()),
+		          ", index=", trailing_ts.type_index(), ", token='", trailing_ts.token().value(), "'");
+		if (trailing_ts.type_index() < gTypeInfo.size()) {
+			FLASH_LOG(Templates, Debug, "Template instantiation: trailing return gTypeInfo name='",
+			          StringTable::getStringView(gTypeInfo[trailing_ts.type_index()].name()), 
+			          "', underlying_type=", static_cast<int>(gTypeInfo[trailing_ts.type_index()].type_));
+		}
 		
 		// Replace the auto type with the trailing return type
 		return_type = trailing_type_specifier.node()->as<TypeSpecifierNode>();
+		FLASH_LOG(Templates, Debug, "Template instantiation: updated return type from trailing clause: type=", static_cast<int>(return_type.type()),
+		          ", index=", return_type.type_index());
 	}
 
 	// Check for trailing requires clause: template<typename T> T func(T x) requires constraint
@@ -24163,6 +24232,111 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		return_type = emplace_node<TypeSpecifierNode>(new_return_type);
 	}
 
+	// Resolve dependent qualified aliases like Helper_T::type after substituting template arguments
+	auto resolve_dependent_member_alias = [&](ASTNode& type_node) {
+		if (!type_node.is<TypeSpecifierNode>()) return;
+		auto& ts = type_node.as<TypeSpecifierNode>();
+		if (ts.type() != Type::UserDefined) return;
+		TypeIndex idx = ts.type_index();
+		if (idx >= gTypeInfo.size()) return;
+		
+		std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());
+		
+		// Fast path: check alias registry for the exact dependent name
+		if (auto direct_alias = gTemplateRegistry.lookup_alias_template(std::string(type_name)); 
+		    direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
+			const auto& alias_node = direct_alias->as<TemplateAliasNode>();
+			if (alias_node.target_type().is<TypeSpecifierNode>()) {
+				type_node = emplace_node<TypeSpecifierNode>(alias_node.target_type().as<TypeSpecifierNode>());
+				FLASH_LOG(Templates, Debug, "Resolved dependent alias directly: ", type_name);
+				return;
+			}
+		}
+		
+		auto sep_pos = type_name.find("::");
+		if (sep_pos == std::string_view::npos) return;
+		
+		std::string base_part(type_name.substr(0, sep_pos));
+		std::string_view member_part = type_name.substr(sep_pos + 2);
+		auto build_resolved_handle = [](std::string_view base, std::string_view member) {
+			StringBuilder sb;
+			return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
+		};
+		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: type_name=", type_name,
+		          " base_part=", base_part, " member_part=", member_part,
+		          " template_args=", template_args_as_type_args.size());
+		
+		// Substitute template parameter names with concrete argument strings
+		for (size_t i = 0; i < template_params.size() && i < template_args_as_type_args.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) continue;
+			const auto& tparam = template_params[i].as<TemplateParameterNode>();
+			std::string_view tname = tparam.name();
+			auto pos = base_part.find(tname);
+			if (pos != std::string::npos) {
+				base_part.replace(pos, tname.size(), template_args_as_type_args[i].toString());
+			}
+		}
+		
+		StringHandle resolved_handle = build_resolved_handle(base_part, member_part);
+		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: resolved_name=",
+		          StringTable::getStringView(resolved_handle));
+		auto type_it = gTypesByName.find(resolved_handle);
+		
+		if (type_it == gTypesByName.end()) {
+			// Try instantiating the base template to register member aliases
+			auto underscore_pos = base_part.find('_');
+			if (underscore_pos != std::string::npos) {
+				std::string_view base_template_name = std::string_view(base_part).substr(0, underscore_pos);
+				try_instantiate_class_template(base_template_name, template_args_as_type_args);
+				
+				std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args_as_type_args);
+				resolved_handle = build_resolved_handle(instantiated_base, member_part);
+				type_it = gTypesByName.find(resolved_handle);
+				
+				// Fallback: also try using the primary template name (uninstantiated) to find a registered alias
+				if (type_it == gTypesByName.end()) {
+					StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
+					type_it = gTypesByName.find(primary_handle);
+				}
+				FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: after instantiation lookup '",
+				          StringTable::getStringView(resolved_handle), "' found=", (type_it != gTypesByName.end()));
+			}
+		}
+		
+		if (type_it == gTypesByName.end()) {
+			// Fallback: check alias templates registry
+			auto alias_opt = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(resolved_handle));
+			if (alias_opt.has_value() && alias_opt->is<TemplateAliasNode>()) {
+				const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
+				if (alias_node.target_type().is<TypeSpecifierNode>()) {
+					const auto& alias_ts = alias_node.target_type().as<TypeSpecifierNode>();
+					type_node = emplace_node<TypeSpecifierNode>(alias_ts);
+					FLASH_LOG(Templates, Debug, "Resolved dependent alias via registry '", type_name, "' -> ", alias_node.alias_name());
+					return;
+				}
+			}
+		} else {
+			const TypeInfo* resolved_info = type_it->second;
+			TypeSpecifierNode resolved_spec(
+				resolved_info->type_,
+				TypeQualifier::None,
+				get_type_size_bits(resolved_info->type_),
+				Token()
+			);
+			resolved_spec.set_type_index(resolved_info->type_index_);
+			type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
+			FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(resolved_info->type_),
+			          ", index=", resolved_info->type_index_);
+		}
+	};
+	
+	resolve_dependent_member_alias(return_type);
+	if (return_type.is<TypeSpecifierNode>()) {
+		const auto& rt = return_type.as<TypeSpecifierNode>();
+		FLASH_LOG(Templates, Debug, "Template instantiation: final return type after alias resolve: type=",
+		          static_cast<int>(rt.type()), " index=", rt.type_index());
+	}
+	
 	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 	
 	
@@ -24250,50 +24424,47 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				
 			} else {
 				// Regular parameter - substitute template parameters in the parameter type
-				if (arg_type_index < arg_types.size()) {
+				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				auto [subst_type, subst_type_index] = substitute_template_parameter(
+					orig_param_type, template_params, template_args_as_type_args
+				);
+
+				ASTNode param_type = emplace_node<TypeSpecifierNode>(
+					subst_type,
+					TypeQualifier::None,
+					get_type_size_bits(subst_type),
+					Token(),
+					orig_param_type.cv_qualifier()
+				);
+				param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
+
+				// Preserve pointer levels from the original declaration
+				for (const auto& ptr_level : orig_param_type.pointer_levels()) {
+					param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
+				}
+
+				// Handle forwarding references using the deduced argument type (if available)
+				if (orig_param_type.is_rvalue_reference() && arg_type_index < arg_types.size()) {
 					const TypeSpecifierNode& arg_type = arg_types[arg_type_index];
-					
-					// Check if the original parameter type is a forwarding reference (T&&)
-					const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
-					bool is_forwarding_reference = orig_param_type.is_rvalue_reference();
-					
-					ASTNode param_type = emplace_node<TypeSpecifierNode>(
-						arg_type.type(),
-						arg_type.qualifier(),
-						arg_type.size_in_bits(),
-						Token()
-					);
-					param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
-					
-					// If the original parameter was a forwarding reference (T&&), apply reference collapsing
-					// Reference collapsing rules:
-					//   T& && → T&    (lvalue reference wins)
-					//   T&& && → T&&  (both rvalue → rvalue)
-					//   T && → T&&    (non-reference + && → rvalue reference)
-					if (is_forwarding_reference) {
-						if (arg_type.is_lvalue_reference()) {
-							// Deduced type is lvalue reference (e.g., int&)
-							// Applying && gives int& && which collapses to int&
-							param_type.as<TypeSpecifierNode>().set_lvalue_reference(true);
-						} else if (arg_type.is_rvalue_reference()) {
-							// Deduced type is rvalue reference (e.g., int&&)
-							// Applying && gives int&& && which collapses to int&&
-							param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
-						} else {
-							// Deduced type is non-reference (e.g., int from literal)
-							// Applying && gives int&&
-							param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
-						}
+					if (arg_type.is_lvalue_reference()) {
+						param_type.as<TypeSpecifierNode>().set_lvalue_reference(true);
+					} else if (arg_type.is_rvalue_reference()) {
+						param_type.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+					} else if (arg_type.is_reference()) {
+						param_type.as<TypeSpecifierNode>().set_reference(arg_type.is_rvalue_reference());
+					} else {
+						param_type.as<TypeSpecifierNode>().set_reference(true);  // T && → T&&
 					}
-					
-					// Copy pointer levels and CV qualifiers
-					for (const auto& ptr_level : arg_type.pointer_levels()) {
-						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
-					}
-					
-					auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
-					new_func_ref.add_parameter_node(new_param_decl);
-					
+				} else if (orig_param_type.is_lvalue_reference()) {
+					param_type.as<TypeSpecifierNode>().set_lvalue_reference(true);
+				} else if (orig_param_type.is_rvalue_reference()) {
+					param_type.as<TypeSpecifierNode>().set_reference(true);
+				}
+
+				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
+				new_func_ref.add_parameter_node(new_param_decl);
+
+				if (arg_type_index < arg_types.size()) {
 					arg_type_index++;
 				}
 			}
