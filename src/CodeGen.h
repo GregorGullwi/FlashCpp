@@ -4678,10 +4678,17 @@ private:
 			// The reference will bind to the object pointed to by __begin
 			init_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 		} else {
-			// For non-reference variables, dereference the iterator: *__begin
-			auto begin_ident_deref = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+			// For non-reference variables, reinterpret iterator as pointer to element type, then dereference
+			auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+			auto loop_ptr_type = ASTNode::emplace_node<TypeSpecifierNode>(
+				loop_type.type(), loop_type.type_index(), static_cast<int>(loop_type.size_in_bits()), Token()
+			);
+			loop_ptr_type.as<TypeSpecifierNode>().add_pointer_level();
+			auto cast_expr = ASTNode::emplace_node<ExpressionNode>(
+				ReinterpretCastNode(loop_ptr_type, begin_ident_expr, Token(Token::Type::Keyword, "reinterpret_cast", 0, 0, 0))
+			);
 			init_expr = ASTNode::emplace_node<ExpressionNode>(
-				UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), begin_ident_deref, true)
+				UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), cast_expr, true)
 			);
 		}
 		
@@ -9485,7 +9492,8 @@ private:
 			
 			// Populate TypedValue with full type information
 			op.pointer.type = operandType;
-			op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+			// Use element_size as pointee size so IRConverter can load correct width
+			op.pointer.size_in_bits = element_size;
 			op.pointer.pointer_depth = pointer_depth;
 			
 			// Get the pointer value - it's at index 2 in operandIrOperands
@@ -13282,10 +13290,27 @@ private:
 			// Add the object as the first argument (this pointer)
 			// The 'this' pointer is always 64 bits (pointer size on x64), regardless of struct size
 			// This is critical for empty structs (size 0) which still need a valid address
+			IrValue this_arg_value;
+			bool object_is_pointer_like = object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
+			if (object_is_pointer_like) {
+				// For pointer/reference objects, pass through directly
+				this_arg_value = IrValue(StringTable::getOrInternStringHandle(object_name));
+			} else {
+				// For object values, take the address so member functions receive a pointer to the object
+				TempVar this_addr = var_counter.next();
+				AddressOfOp addr_op;
+				addr_op.result = this_addr;
+				addr_op.operand.type = object_type.type();
+				addr_op.operand.size_in_bits = static_cast<int>(object_type.size_in_bits());
+				addr_op.operand.pointer_depth = static_cast<int>(object_type.pointer_depth());
+				addr_op.operand.value = StringTable::getOrInternStringHandle(object_name);
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), memberFunctionCallNode.called_from()));
+				this_arg_value = IrValue(this_addr);
+			}
 			call_op.args.push_back(TypedValue{
 				.type = object_type.type(),
 				.size_in_bits = 64,  // Pointer size - always 64 bits on x64 architecture
-				.value = IrValue(StringTable::getOrInternStringHandle(object_name))
+				.value = this_arg_value
 			});
 
 			// Generate IR for function arguments and add to CallOp
@@ -13941,20 +13966,93 @@ private:
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
 		
+		// If the array expression resolved to a TempVar that actually refers to a member,
+		// recover the qualified name and offset from its lvalue metadata so we don't lose
+		// struct/offset information (important for member arrays).
+		std::variant<StringHandle, TempVar> base_variant;
+		int base_member_offset = 0;
+		bool base_is_pointer_to_member = false;
+		// Fast-path: if the array expression is a member access, rebuild qualified name directly
+		if (std::holds_alternative<MemberAccessNode>(array_expr)) {
+			const auto& member_access = std::get<MemberAccessNode>(array_expr);
+			if (member_access.object().is<ExpressionNode>()) {
+				const ExpressionNode& obj_expr = member_access.object().as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(obj_expr)) {
+					const auto& object_ident = std::get<IdentifierNode>(obj_expr);
+					std::string_view object_name = object_ident.name();
+					auto symbol = symbol_table.lookup(object_name);
+					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+						const auto& decl_node = symbol->as<DeclarationNode>();
+						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+						if (is_struct_type(type_node.type()) && type_node.type_index() < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+								if (const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_access.member_name())))) {
+									base_variant = StringTable::getOrInternStringHandle(
+										StringBuilder().append(object_name).append(".").append(member_access.member_name()));
+									base_member_offset = static_cast<int>(member->offset);
+									// Member access via '.' is not a pointer access for locals
+								}
+							}
+						}
+					}
+				}
+			}
+			// If object isn't a simple identifier (e.g., arr[i].member), fall back to using the
+			// computed operands to keep a valid base (TempVar or StringHandle) instead of
+			// leaving an empty StringHandle that leads to invalid offsets.
+			if (base_variant.valueless_by_exception()) {
+				if (std::holds_alternative<TempVar>(array_operands[2])) {
+					base_variant = std::get<TempVar>(array_operands[2]);
+				} else if (std::holds_alternative<StringHandle>(array_operands[2])) {
+					base_variant = std::get<StringHandle>(array_operands[2]);
+				}
+			}
+		}
+		// Simple identifier array (non-member)
+		else if (std::holds_alternative<IdentifierNode>(array_expr)) {
+			const auto& ident = std::get<IdentifierNode>(array_expr);
+			base_variant = StringTable::getOrInternStringHandle(ident.name());
+		}
+		if (std::holds_alternative<TempVar>(array_operands[2])) {
+			TempVar base_temp = std::get<TempVar>(array_operands[2]);
+			if (auto base_lv = getTempVarLValueInfo(base_temp)) {
+				if (base_lv->kind == LValueInfo::Kind::Member && base_lv->member_name.has_value()) {
+					// Build qualified name: object.member
+					if (std::holds_alternative<StringHandle>(base_lv->base)) {
+						auto obj_name = std::get<StringHandle>(base_lv->base);
+						base_variant = StringTable::getOrInternStringHandle(
+							StringBuilder().append(StringTable::getStringView(obj_name))
+							                .append(".")
+							                .append(StringTable::getStringView(base_lv->member_name.value())));
+						base_member_offset = base_lv->offset;
+						base_is_pointer_to_member = base_lv->is_pointer_to_member;
+					}
+				}
+			}
+		}
+		if (!std::holds_alternative<StringHandle>(base_variant)) {
+			if (std::holds_alternative<StringHandle>(array_operands[2])) {
+				base_variant = std::get<StringHandle>(array_operands[2]);
+			}
+		}
+		// Prefer keeping TempVar base when available to preserve stack offsets for nested accesses
+		if (!std::holds_alternative<TempVar>(base_variant) && std::holds_alternative<TempVar>(array_operands[2])) {
+			base_variant = std::get<TempVar>(array_operands[2]);
+		}
+		
 		// Mark array element access as lvalue (Option 2: Value Category Tracking)
 		// arr[i] is an lvalue - it designates an object with a stable address
 		LValueInfo lvalue_info(
 			LValueInfo::Kind::ArrayElement,
-			std::holds_alternative<StringHandle>(array_operands[2])
-				? std::variant<StringHandle, TempVar>(std::get<StringHandle>(array_operands[2]))
-				: std::variant<StringHandle, TempVar>(std::get<TempVar>(array_operands[2])),
-			0  // offset computed dynamically by index
+			base_variant,
+			base_member_offset  // offset for member arrays (otherwise 0)
 		);
 		// Store index information for unified assignment handler
 		// Support both constant and variable indices
 		lvalue_info.array_index = toIrValue(index_operands[2]);
 		FLASH_LOG(Codegen, Debug, "Array index stored in metadata (supports constants and variables)");
-		lvalue_info.is_pointer_to_array = is_pointer_to_array;
+		lvalue_info.is_pointer_to_array = is_pointer_to_array || base_is_pointer_to_member;
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
 		// Create typed payload for ArrayAccess
@@ -16570,6 +16668,7 @@ private:
 		const auto& target_type_node = reinterpretCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
+		int target_pointer_depth = target_type_node.pointer_depth();
 		
 		// Special handling for rvalue reference casts: reinterpret_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
@@ -16584,7 +16683,8 @@ private:
 		// reinterpret_cast reinterprets the bits without conversion
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual bit pattern remains unchanged
-		return { target_type, target_size, expr_operands[2], 0ULL };
+		int result_size = (target_pointer_depth > 0) ? 64 : target_size;
+		return { target_type, result_size, expr_operands[2], static_cast<unsigned long long>(target_pointer_depth) };
 	}
 
 	// Structure to track variables that need destructors called
