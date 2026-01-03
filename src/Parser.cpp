@@ -23074,6 +23074,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					if (const_size->value >= 0) {
 						parsed_array_size = static_cast<size_t>(const_size->value);
 					}
+				} else {
+					// Size expression present but not evaluable (e.g., template parameter N)
+					// Use SIZE_MAX as a sentinel to indicate "sized array with unknown size"
+					parsed_array_size = SIZE_MAX;
 				}
 			}
 

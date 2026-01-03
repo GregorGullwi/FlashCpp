@@ -604,7 +604,7 @@ struct TemplatePattern {
 	}
 	
 	// Calculate specificity score (higher = more specialized)
-	// T = 0, T& = 1, T* = 1, const T = 1, const T& = 2, etc.
+	// T = 0, T& = 1, T* = 1, const T = 1, const T& = 2, T[N] = 2, T[] = 1, etc.
 	int specificity() const
 	{
 		int score = 0;
@@ -621,6 +621,17 @@ struct TemplatePattern {
 			}
 			if (arg.is_rvalue_reference) {
 				score += 1;  // T&& is more specific than T
+			}
+		
+			// Array modifiers add specificity
+			if (arg.is_array) {
+				if (arg.array_size.has_value()) {
+					// SIZE_MAX indicates "array with size expression but value unknown" (like T[N])
+					// Concrete sizes (like T[3]) and template parameter sizes (like T[N]) both get score of 2
+					score += 2;  // T[N] or T[3] is more specific than T[]
+				} else {
+					score += 1;  // T[] is more specific than T
+				}
 			}
 		
 			// CV-qualifiers add specificity
