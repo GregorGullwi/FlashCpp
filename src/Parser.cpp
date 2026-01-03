@@ -21434,8 +21434,33 @@ if (struct_type_info.getStructInfo()) {
 			
 			// Generate proper C++ ABI mangled name
 			FunctionDeclarationNode& func_for_mangling = func_node_copy.as<FunctionDeclarationNode>();
-			NameMangling::MangledName specialization_mangled_name = 
-				NameMangling::generateMangledNameFromNode(func_for_mangling, ns_path);
+			NameMangling::MangledName specialization_mangled_name;
+			
+			// Check if this specialization has non-type template arguments (like get<0>, get<1>)
+			if (func_for_mangling.has_non_type_template_args()) {
+				// Use the version that includes non-type template arguments in the mangled name
+				const std::vector<int64_t>& non_type_args = func_for_mangling.non_type_template_args();
+				const DeclarationNode& decl = func_for_mangling.decl_node();
+				const TypeSpecifierNode& return_type = decl.type_node().as<TypeSpecifierNode>();
+				
+				// Build parameter type list
+				std::vector<TypeSpecifierNode> param_types;
+				for (const auto& param_node : func_for_mangling.parameter_nodes()) {
+					if (param_node.is<DeclarationNode>()) {
+						const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+						param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+					}
+				}
+				
+				specialization_mangled_name = NameMangling::generateMangledNameWithTemplateArgs(
+					func_base_name, return_type, param_types, non_type_args, 
+					func_for_mangling.is_variadic(), "", ns_path);
+			} else {
+				// Regular specialization without non-type template args
+				specialization_mangled_name = 
+					NameMangling::generateMangledNameFromNode(func_for_mangling, ns_path);
+			}
+			
 			func_for_mangling.set_mangled_name(specialization_mangled_name.view());
 			
 			gTemplateRegistry.registerSpecialization(qualified_specialization_name, spec_template_args, func_node_copy);
