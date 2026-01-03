@@ -18219,9 +18219,9 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 				auto sep_pos = type_name.find("::");
 				std::string base_part(type_name.substr(0, sep_pos));
 				std::string_view member_part = type_name.substr(sep_pos + 2);
-				auto build_resolved_name = [](std::string_view base, std::string_view member) {
+				auto build_resolved_handle = [](std::string_view base, std::string_view member) {
 					StringBuilder sb;
-					return std::string(sb.append(base).append("::").append(member).commit());
+					return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
 				};
 				
 				bool replaced = false;
@@ -18237,21 +18237,23 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 				}
 				
 				if (replaced) {
-					std::string resolved_name = build_resolved_name(base_part, member_part);
-					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(resolved_name));
-					FLASH_LOG(Templates, Debug, "Dependent member type lookup for '", resolved_name, "' found=", (type_it != gTypesByName.end()));
+					StringHandle resolved_handle = build_resolved_handle(base_part, member_part);
+					auto type_it = gTypesByName.find(resolved_handle);
+					FLASH_LOG(Templates, Debug, "Dependent member type lookup for '",
+					          StringTable::getStringView(resolved_handle), "' found=", (type_it != gTypesByName.end()));
 					
 					// If not found, try instantiating the base template using the portion before the first '_'
 					if (type_it == gTypesByName.end()) {
 						auto underscore_pos = base_part.find('_');
 						if (underscore_pos != std::string::npos) {
-							std::string base_template_name = base_part.substr(0, underscore_pos);
+							std::string_view base_template_name = std::string_view(base_part).substr(0, underscore_pos);
 							try_instantiate_class_template(base_template_name, template_args);
 							
 							std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
-							resolved_name = build_resolved_name(instantiated_base, member_part);
-							type_it = gTypesByName.find(StringTable::getOrInternStringHandle(resolved_name));
-							FLASH_LOG(Templates, Debug, "After instantiating base template, lookup for '", resolved_name, "' found=", (type_it != gTypesByName.end()));
+							resolved_handle = build_resolved_handle(instantiated_base, member_part);
+							type_it = gTypesByName.find(resolved_handle);
+							FLASH_LOG(Templates, Debug, "After instantiating base template, lookup for '",
+							          StringTable::getStringView(resolved_handle), "' found=", (type_it != gTypesByName.end()));
 						}
 					}
 					
@@ -24256,9 +24258,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		std::string base_part(type_name.substr(0, sep_pos));
 		std::string_view member_part = type_name.substr(sep_pos + 2);
-		auto build_resolved_name = [](std::string_view base, std::string_view member) {
+		auto build_resolved_handle = [](std::string_view base, std::string_view member) {
 			StringBuilder sb;
-			return std::string(sb.append(base).append("::").append(member).commit());
+			return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
 		};
 		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: type_name=", type_name,
 		          " base_part=", base_part, " member_part=", member_part,
@@ -24275,34 +24277,35 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 		
-		std::string resolved_name = build_resolved_name(base_part, member_part);
-		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: resolved_name=", resolved_name);
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(resolved_name));
+		StringHandle resolved_handle = build_resolved_handle(base_part, member_part);
+		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: resolved_name=",
+		          StringTable::getStringView(resolved_handle));
+		auto type_it = gTypesByName.find(resolved_handle);
 		
 		if (type_it == gTypesByName.end()) {
 			// Try instantiating the base template to register member aliases
 			auto underscore_pos = base_part.find('_');
 			if (underscore_pos != std::string::npos) {
-				std::string base_template_name = base_part.substr(0, underscore_pos);
+				std::string_view base_template_name = std::string_view(base_part).substr(0, underscore_pos);
 				try_instantiate_class_template(base_template_name, template_args_as_type_args);
 				
 				std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args_as_type_args);
-				resolved_name = build_resolved_name(instantiated_base, member_part);
-				type_it = gTypesByName.find(StringTable::getOrInternStringHandle(resolved_name));
+				resolved_handle = build_resolved_handle(instantiated_base, member_part);
+				type_it = gTypesByName.find(resolved_handle);
 				
 				// Fallback: also try using the primary template name (uninstantiated) to find a registered alias
 				if (type_it == gTypesByName.end()) {
-					std::string primary_name = build_resolved_name(base_template_name, member_part);
-					type_it = gTypesByName.find(StringTable::getOrInternStringHandle(primary_name));
+					StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
+					type_it = gTypesByName.find(primary_handle);
 				}
-				FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: after instantiation lookup '", resolved_name,
-				          "' found=", (type_it != gTypesByName.end()));
+				FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: after instantiation lookup '",
+				          StringTable::getStringView(resolved_handle), "' found=", (type_it != gTypesByName.end()));
 			}
 		}
 		
 		if (type_it == gTypesByName.end()) {
 			// Fallback: check alias templates registry
-			auto alias_opt = gTemplateRegistry.lookup_alias_template(resolved_name);
+			auto alias_opt = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(resolved_handle));
 			if (alias_opt.has_value() && alias_opt->is<TemplateAliasNode>()) {
 				const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
 				if (alias_node.target_type().is<TypeSpecifierNode>()) {
