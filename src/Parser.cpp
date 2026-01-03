@@ -21398,8 +21398,40 @@ if (struct_type_info.getStructInfo()) {
 			
 			// Register the specialization with the template registry
 			// This makes it available when the template is instantiated with these args
+			// Build the qualified name including current namespace path
+			StringBuilder qualified_name_builder;
+			auto namespace_path = gSymbolTable.build_current_namespace_path();
+			for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+				qualified_name_builder.append(ns).append("::");
+#else
+				qualified_name_builder.append(StringTable::getStringView(ns)).append("::");
+#endif
+			}
+			qualified_name_builder.append(func_base_name);
+			std::string_view qualified_specialization_name = qualified_name_builder.commit();
+			
 			ASTNode func_node_copy = *func_result.node();
-			gTemplateRegistry.registerSpecialization(func_base_name, spec_template_args, func_node_copy);
+			
+			// Compute and set the proper mangled name for the specialization
+			// Extract namespace path as string_view vector
+			std::vector<std::string_view> ns_path;
+			ns_path.reserve(namespace_path.size());
+			for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+				ns_path.push_back(ns);
+#else
+				ns_path.push_back(StringTable::getStringView(ns));
+#endif
+			}
+			
+			// Generate proper C++ ABI mangled name
+			FunctionDeclarationNode& func_for_mangling = func_node_copy.as<FunctionDeclarationNode>();
+			NameMangling::MangledName specialization_mangled_name = 
+				NameMangling::generateMangledNameFromNode(func_for_mangling, ns_path);
+			func_for_mangling.set_mangled_name(specialization_mangled_name.view());
+			
+			gTemplateRegistry.registerSpecialization(qualified_specialization_name, spec_template_args, func_node_copy);
 			
 			// Also add to symbol table so codegen can find it during overload resolution
 			// Use the base function name (without template args) so it can be looked up
