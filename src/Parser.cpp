@@ -1353,18 +1353,11 @@ ParseResult Parser::parse_type_and_name() {
 
     // Parse reference declarators: & or &&
     // Example: int& ref or int&& rvalue_ref
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-        std::string_view op_value = peek_token()->value();
-
-        if (op_value == "&&") {
-            // Rvalue reference (lexer tokenizes && as a single token)
-            consume_token();
-            type_spec.set_reference(true);  // true = rvalue reference
-        } else if (op_value == "&") {
-            // Lvalue reference
-            consume_token();
-            type_spec.set_reference(false);  // false = lvalue reference
-        }
+    ReferenceQualifier ref_qual = parse_reference_qualifier();
+    if (ref_qual == ReferenceQualifier::RValueReference) {
+        type_spec.set_reference(true);  // true = rvalue reference
+    } else if (ref_qual == ReferenceQualifier::LValueReference) {
+        type_spec.set_reference(false);  // false = lvalue reference
     }
 
     // Check for calling convention AFTER pointer/reference declarators
@@ -2694,33 +2687,18 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
 		       peek_token()->value() == "*") {
 			consume_token(); // consume '*'
-			type_spec.add_pointer_level();
 			
-			// Check for const/volatile after pointer
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				if (peek_token()->value() == "const") {
-					consume_token();
-					// Note: could track const qualifier per pointer level
-				} else if (peek_token()->value() == "volatile") {
-					consume_token();
-				} else {
-					break;
-				}
-			}
+			// Parse cv-qualifiers after pointer
+			CVQualifier ptr_cv = parse_cv_qualifiers();
+			type_spec.add_pointer_level(ptr_cv);
 		}
 		
 		// Parse reference modifiers: & or &&
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-			std::string_view op_value = peek_token()->value();
-			if (op_value == "&&") {
-				// Rvalue reference
-				consume_token();
-				type_spec.set_reference(true);  // true = rvalue reference
-			} else if (op_value == "&") {
-				// Lvalue reference
-				consume_token();
-				type_spec.set_reference(false);  // false = lvalue reference
-			}
+		ReferenceQualifier ref_qual = parse_reference_qualifier();
+		if (ref_qual == ReferenceQualifier::RValueReference) {
+			type_spec.set_reference(true);  // true = rvalue reference
+		} else if (ref_qual == ReferenceQualifier::LValueReference) {
+			type_spec.set_reference(false);  // false = lvalue reference
 		}
 		
 		// Consume semicolon
@@ -6759,18 +6737,11 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					}
 					
 					// Parse reference declarators: & or &&
-					if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-						std::string_view op_value = peek_token()->value();
-						
-						if (op_value == "&&") {
-							// Rvalue reference
-							consume_token();
-							type_spec.set_reference(true);  // true = rvalue reference
-						} else if (op_value == "&") {
-							// Lvalue reference
-							consume_token();
-							type_spec.set_reference(false);  // false = lvalue reference
-						}
+					ReferenceQualifier ref_qual = parse_reference_qualifier();
+					if (ref_qual == ReferenceQualifier::RValueReference) {
+						type_spec.set_reference(true);  // true = rvalue reference
+					} else if (ref_qual == ReferenceQualifier::LValueReference) {
+						type_spec.set_reference(false);  // false = lvalue reference
 					}
 					
 					// This is a type alias
@@ -7267,6 +7238,25 @@ CVQualifier Parser::parse_cv_qualifiers() {
 	}
 	
 	return cv;
+}
+
+// Helper function to parse reference qualifiers (& or &&) from the token stream
+// Consolidates the repeated pattern of parsing reference operators throughout Parser.cpp
+// Returns ReferenceQualifier: None, LValueReference, or RValueReference
+ReferenceQualifier Parser::parse_reference_qualifier() {
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+		std::string_view op_value = peek_token()->value();
+		if (op_value == "&&") {
+			// Rvalue reference (lexer tokenizes && as a single token)
+			consume_token();
+			return ReferenceQualifier::RValueReference;
+		} else if (op_value == "&") {
+			// Lvalue reference
+			consume_token();
+			return ReferenceQualifier::LValueReference;
+		}
+	}
+	return ReferenceQualifier::None;
 }
 
 // Helper function to append template type argument suffix to a StringBuilder
@@ -10651,16 +10641,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse reference declarators: & or &&
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-			if (peek_token()->value() == "&&") {
-				// Rvalue reference
-				consume_token(); // consume '&&'
-				type_spec.set_reference(true);  // true = rvalue reference
-			} else if (peek_token()->value() == "&") {
-				// Lvalue reference
-				consume_token(); // consume '&'
-				type_spec.set_reference(false);  // false = lvalue reference
-			}
+		ReferenceQualifier ref_qual = parse_reference_qualifier();
+		if (ref_qual == ReferenceQualifier::RValueReference) {
+			type_spec.set_reference(true);  // true = rvalue reference
+		} else if (ref_qual == ReferenceQualifier::LValueReference) {
+			type_spec.set_reference(false);  // false = lvalue reference
 		}
 
 		// Expect '>'
@@ -10722,16 +10707,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse reference declarators: & or &&
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-			if (peek_token()->value() == "&&") {
-				// Rvalue reference
-				consume_token(); // consume '&&'
-				type_spec.set_reference(true);  // true = rvalue reference
-			} else if (peek_token()->value() == "&") {
-				// Lvalue reference
-				consume_token(); // consume '&'
-				type_spec.set_reference(false);  // false = lvalue reference
-			}
+		ReferenceQualifier ref_qual = parse_reference_qualifier();
+		if (ref_qual == ReferenceQualifier::RValueReference) {
+			type_spec.set_reference(true);  // true = rvalue reference
+		} else if (ref_qual == ReferenceQualifier::LValueReference) {
+			type_spec.set_reference(false);  // false = lvalue reference
 		}
 
 		// Expect '>'
@@ -10793,16 +10773,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse reference declarators: & or &&
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-			if (peek_token()->value() == "&&") {
-				// Rvalue reference
-				consume_token(); // consume '&&'
-				type_spec.set_reference(true);  // true = rvalue reference
-			} else if (peek_token()->value() == "&") {
-				// Lvalue reference
-				consume_token(); // consume '&'
-				type_spec.set_reference(false);  // false = lvalue reference
-			}
+		ReferenceQualifier ref_qual = parse_reference_qualifier();
+		if (ref_qual == ReferenceQualifier::RValueReference) {
+			type_spec.set_reference(true);  // true = rvalue reference
+		} else if (ref_qual == ReferenceQualifier::LValueReference) {
+			type_spec.set_reference(false);  // false = lvalue reference
 		}
 
 		// Expect '>'
@@ -10864,16 +10839,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse reference declarators: & or &&
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-			if (peek_token()->value() == "&&") {
-				// Rvalue reference
-				consume_token(); // consume '&&'
-				type_spec.set_reference(true);  // true = rvalue reference
-			} else if (peek_token()->value() == "&") {
-				// Lvalue reference
-				consume_token(); // consume '&'
-				type_spec.set_reference(false);  // false = lvalue reference
-			}
+		ReferenceQualifier ref_qual = parse_reference_qualifier();
+		if (ref_qual == ReferenceQualifier::RValueReference) {
+			type_spec.set_reference(true);  // true = rvalue reference
+		} else if (ref_qual == ReferenceQualifier::LValueReference) {
+			type_spec.set_reference(false);  // false = lvalue reference
 		}
 
 		// Expect '>'
@@ -10929,13 +10899,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			}
 			
 			// Parse reference declarators: & or &&
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
-				std::string_view op_value = peek_token()->value();
-				if (op_value == "&&" || op_value == "&") {
-					bool is_rvalue = (op_value == "&&");
-					consume_token();
-					type_spec.set_reference(is_rvalue);
-				}
+			ReferenceQualifier ref_qual = parse_reference_qualifier();
+			if (ref_qual == ReferenceQualifier::RValueReference) {
+				type_spec.set_reference(true);  // true = rvalue reference
+			} else if (ref_qual == ReferenceQualifier::LValueReference) {
+				type_spec.set_reference(false);  // false = lvalue reference
 			}
 
 			// Check if followed by ')'
@@ -13363,15 +13331,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// Parse reference (&) or rvalue reference (&&)
 			// Note: The lexer tokenizes && as a single token, not two separate & tokens
-			if (peek_token().has_value()) {
-				std::string_view next_token = peek_token()->value();
-				if (next_token == "&&") {
-					consume_token();
-					type_spec.set_reference(true);  // true for rvalue reference
-				} else if (next_token == "&") {
-					consume_token();
-					type_spec.set_reference(false);  // false for lvalue reference
-				}
+			ReferenceQualifier ref_qual = parse_reference_qualifier();
+			if (ref_qual == ReferenceQualifier::RValueReference) {
+				type_spec.set_reference(true);  // true for rvalue reference
+			} else if (ref_qual == ReferenceQualifier::LValueReference) {
+				type_spec.set_reference(false);  // false for lvalue reference
 			}
 
 			// Parse array specifications ([N] or [])
@@ -21215,13 +21179,11 @@ if (struct_type_info.getStructInfo()) {
 						}
 
 						// Parse references (& or &&)
-						if (peek_token().has_value() && peek_token()->value() == "&&") {
+						ReferenceQualifier ref_qual = parse_reference_qualifier();
+						if (ref_qual == ReferenceQualifier::RValueReference) {
 							param_type.set_reference(true);
-							consume_token();
-						}
-						else if (peek_token().has_value() && peek_token()->value() == "&") {
+						} else if (ref_qual == ReferenceQualifier::LValueReference) {
 							param_type.set_lvalue_reference(true);
-							consume_token();
 						}
 					}
 					
