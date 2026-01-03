@@ -83,7 +83,7 @@ The following test files crash at runtime (signal 11 - Segmentation Fault):
 ## Running the Validation Script
 
 ```bash
-cd /home/runner/work/FlashCpp/FlashCpp
+# From the repository root
 ./tests/validate_return_values.sh
 ```
 
