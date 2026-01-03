@@ -8,12 +8,12 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-03
+**Last Run:** 2026-01-03  
 
 **Total files tested:** 817  
-**Valid returns (matching expected):** 801  
-**Regressions (mismatches):** 22  
-**Runtime crashes:** 14  
+**Valid returns (matching expected):** 784  
+**Regressions (mismatches):** 20  
+**Runtime crashes:** 13  
 **Compile failures:** 0  
 **Link failures:** 0  
 
@@ -23,20 +23,18 @@ The following test files have a mismatch between their expected return value (fr
 
 | Test File | Expected | Actual | Status |
 |-----------|----------|--------|--------|
-| test_addressof_longlong_index_ret1.cpp | 1 | 0 | REGRESSION |
-| test_addressof_size_t_index_ret1.cpp | 1 | 0 | REGRESSION |
+| integer_arithmetic_ret18.cpp | 18 | 33 | REGRESSION |
+| spaceship_basic_ret255.cpp | 255 | 253 | REGRESSION |
 | test_all_mix_ret123.cpp | 123 | 125 | REGRESSION |
-| test_array_hardcoded_ret99.cpp | 99 | 42 | REGRESSION |
-| test_array_partial_specialization_ret42.cpp | 42 | 0 | REGRESSION |
 | test_auto_trailing_return_ret42.cpp | 42 | 192 | REGRESSION |
-| test_comma_init_ret197.cpp | 197 | 91 | REGRESSION |
-| test_container_out_of_line_ret60.cpp | 60 | 200 | REGRESSION |
-| test_covariant_return_ret180.cpp | 180 | 15 | REGRESSION |
+| test_comma_init_ret197.cpp | 197 | 42 | REGRESSION |
+| test_container_out_of_line_ret60.cpp | 60 | 72 | REGRESSION |
+| test_covariant_return_ret180.cpp | 180 | 111 | REGRESSION |
 | test_global_namespace_scope_ret1.cpp | 1 | 203 | REGRESSION |
 | test_inherited_type_alias_ret42.cpp | 42 | 0 | REGRESSION |
 | test_lambda_init_capture_demo_ret57.cpp | 57 | 70 | REGRESSION |
 | test_qualified_base_class_ret42.cpp | 42 | 0 | REGRESSION |
-| test_simple_range_ret6.cpp | 6 | 170 | REGRESSION |
+| test_simple_range_ret6.cpp | 6 | 74 | REGRESSION |
 | test_sizeof_template_param_default_ret4.cpp | 4 | 1 | REGRESSION |
 | test_static_constexpr_pack_value_ret42.cpp | 42 | 0 | REGRESSION |
 | test_std_header_features_ret0.cpp | 0 | 8 | REGRESSION |
@@ -58,12 +56,11 @@ The following test files crash at runtime (signal 11 - Segmentation Fault):
 6. test_xvalue_all_casts.cpp
 7. test_template_complex_substitution_ret3.cpp
 8. test_exceptions_basic.cpp
-9. multidim_array_var_index_ret6.cpp
-10. test_varargs.cpp
-11. test_return_pointer_ret100.cpp
-12. test_operator_addressof_overload_baseline.cpp
-13. test_operator_addressof_resolved_ret100.cpp
-14. test_exceptions_nested.cpp
+9. test_varargs.cpp
+10. test_return_pointer_ret100.cpp
+11. test_operator_addressof_overload_baseline.cpp
+12. test_operator_addressof_resolved_ret100.cpp
+13. test_exceptions_nested.cpp
 
 ## Notes
 
