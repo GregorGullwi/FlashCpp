@@ -8711,6 +8711,7 @@ private:
 						strides.reserve(dims.size());
 						
 						// Calculate strides (same as in generateArraySubscriptIr)
+						bool valid_dimensions = true;
 						for (size_t i = 0; i < dims.size(); ++i) {
 							size_t stride = 1;
 							for (size_t j = i + 1; j < dims.size(); ++j) {
@@ -8718,9 +8719,19 @@ private:
 								auto eval_result = ConstExpr::Evaluator::evaluate(dims[j], ctx);
 								if (eval_result.success && eval_result.as_int() > 0) {
 									stride *= static_cast<size_t>(eval_result.as_int());
+								} else {
+									// Invalid dimension - fall through to single-dimension handling
+									valid_dimensions = false;
+									break;
 								}
 							}
+							if (!valid_dimensions) break;
 							strides.push_back(stride);
+						}
+						
+						if (!valid_dimensions) {
+							// Fall through to single-dimensional array handling
+							goto single_dim_handling;
 						}
 						
 						// Get element type and size
@@ -8801,6 +8812,7 @@ private:
 				}
 				
 				// Fall through to single-dimensional array handling
+				single_dim_handling:
 				// Get the array and index operands
 				auto array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
 				auto index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());

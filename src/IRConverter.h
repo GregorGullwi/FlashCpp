@@ -2276,12 +2276,12 @@ inline void emitLoadFromAddressInReg(std::vector<char>& textSectionData, X64Regi
 	bool dest_extended = static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8);
 	bool addr_extended = static_cast<uint8_t>(addr_reg) >= static_cast<uint8_t>(X64Register::R8);
 	
-	// Check if addr_reg is RSP or R12 (both have addr_bits=4) - requires SIB byte
-	bool needs_sib = (addr_bits == 4);
-	// Check if addr_reg is RBP or R13 (both have addr_bits=5) - requires disp8 in mod=00
-	// In mod=00 with r/m=101, the encoding means disp32[RIP] (RIP-relative), not [RBP/R13]
-	// To get [RBP/R13], we use mod=01 with disp8=0
-	bool needs_disp0 = (addr_bits == 5);
+	// x86-64 ModR/M encoding quirks (Intel SDM Vol 2A, Table 2-2):
+	// - r/m=100 (RSP/R12) in mod=00 requires SIB byte to specify base register
+	// - r/m=101 (RBP/R13) in mod=00 means disp32[RIP], not [RBP/R13]
+	// To encode [RBP/R13], use mod=01 with disp8=0
+	bool needs_sib = (addr_bits == 4);   // RSP or R12
+	bool needs_disp0 = (addr_bits == 5); // RBP or R13
 	
 	// ModR/M byte
 	// For normal indirect: mod=00, reg=dest_bits, r/m=addr_bits
