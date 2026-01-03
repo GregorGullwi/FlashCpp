@@ -341,16 +341,20 @@ static Type get_unsigned_version(Type type) {
 }
 
 // Check if a signed type can represent all values of an unsigned type
-// This depends on platform-specific type sizes
+// This depends on platform-specific type sizes.
+// Per C++20 [conv.rank], a signed type can represent all values of an unsigned type
+// only if the signed type has strictly more bits. When bits are equal, the signed
+// type cannot represent the upper half of the unsigned range (since half its range is negative).
+// Example: signed long (64 bits) can represent all unsigned int (32 bits) values
+// because max(long) = 2^63-1 > max(uint) = 2^32-1.
+// But: signed int (32 bits) CANNOT represent all unsigned int (32 bits) values
+// because max(int) = 2^31-1 < max(uint) = 2^32-1.
 static bool can_represent_all_values(Type signed_type, Type unsigned_type) {
     // Get the bit sizes for comparison
     int signed_bits = get_type_size_bits(signed_type);
     int unsigned_bits = get_type_size_bits(unsigned_type);
     
-    // A signed type can represent all values of an unsigned type
-    // if the signed type has more bits (excluding the sign bit)
-    // For example: int (32-bit signed) can represent all unsigned short (16-bit) values
-    // but int cannot represent all unsigned int values (same size)
+    // Strictly greater means all values can be represented
     return signed_bits > unsigned_bits;
 }
 
