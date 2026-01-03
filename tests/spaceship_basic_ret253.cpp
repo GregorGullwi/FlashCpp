@@ -48,5 +48,5 @@ int main() {
     SimpleOrdering r3 = p3 <=> p3b;
     int r3v = r3.value;
     
-    return r1 + r2 + r3v;  // -1 + -1 + -1 = -3
+    return r1 + r2 + r3v;  // -1 + -1 + -1 = -3 (wrapped to 253)
 }
