@@ -1183,7 +1183,8 @@ public:
 		reference_qualifier_ = other.reference_qualifier_;
 		is_array_ = other.is_array_;
 		array_size_ = other.array_size_;
-		is_pack_expansion_ = other.is_pack_expansion_;
+		// Note: is_pack_expansion_ is NOT copied - it's context-specific during parsing
+		// and shouldn't be propagated during type substitution in template instantiation
 	}
 
 	// Get readable string representation
