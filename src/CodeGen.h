@@ -10741,28 +10741,22 @@ private:
 				return { Type::Bool, 8, result_var, 0ULL };
 			}
 
-			// Assignment handling moved earlier (before common type promotion)
-			if (op == "=") {
-				// This should never be reached since assignment is handled before common type conversion
-				assert(false && "Assignment should have been handled earlier");
-				return {};
-			}
-			else {
-				assert(false && "Unsupported binary operator in this code path");
-				return {};
-			}
+			// Assignment is now handled earlier (before common type promotion)
+			// If we reach here with an assignment operator, something went wrong
+			assert(op != "=" && "Assignment should have been handled before reaching this code");
+			
+			// Unsupported binary operator
+			assert(false && "Unsupported binary operator in this code path");
+			return {};
 		}
 	
 		// For comparison operations, return boolean type (8 bits - bool size in C++)
 		// For other operations, return the common type
 		if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
 			return { Type::Bool, 8, result_var, 0ULL };
-		} else if (op == "=") {
-			// Assignment already handled above, should never reach here
-			assert(false && "Assignment should have been handled earlier");
-			return {};
 		} else {
 			// Return the result variable with its type and size
+			// Note: Assignment is handled earlier and returns before reaching this point
 			return { commonType, get_type_size_bits(commonType), result_var, 0ULL };
 		}
 	}
