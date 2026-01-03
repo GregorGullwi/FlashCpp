@@ -44,6 +44,8 @@ The following test files have a mismatch between their expected return value (fr
 | test_type_alias_fix_simple_ret42.cpp | 42 | 0 | REGRESSION |
 | test_void_t_positive_ret0.cpp | 0 | 42 | REGRESSION |
 
+These values come from the 2026-01-03 run of `tests/validate_return_values.sh`. When a regression is triaged, add a short note or link next to the entry to preserve context.
+
 ## Runtime Crashes
 
 The following test files crash at runtime (signal 11 - Segmentation Fault):
