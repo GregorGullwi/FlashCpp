@@ -95,10 +95,12 @@ The script will:
 
 ## Interpreting Results
 
-- **OK**: Test returned the expected value (green)
-- **EXPECTED FAIL**: Test is expected to fail compilation (yellow)
-- **EXPECTED LINK FAIL**: Test is expected to fail linking (yellow)
-- **COMPILE FAIL**: Unexpected compilation failure (red)
-- **LINK FAIL**: Unexpected link failure (red)
-- **CRASH**: Runtime crash/segfault (red)
-- **TIMEOUT**: Test hung or infinite loop (red)
+When running the validation script, results are color-coded in the terminal output:
+
+- **OK**: Test returned the expected value (displayed in green)
+- **EXPECTED FAIL**: Test is expected to fail compilation (displayed in yellow)
+- **EXPECTED LINK FAIL**: Test is expected to fail linking (displayed in yellow)
+- **COMPILE FAIL**: Unexpected compilation failure (displayed in red)
+- **LINK FAIL**: Unexpected link failure (displayed in red)
+- **CRASH**: Runtime crash/segfault (displayed in red)
+- **TIMEOUT**: Test hung or infinite loop (displayed in red)
