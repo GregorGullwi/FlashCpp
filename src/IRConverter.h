@@ -9496,6 +9496,14 @@ private:
 	}
 
 	void handleModulo(const IrInstruction& instruction) {
+		flushAllDirtyRegisters();	// we do this so that RDX is free to use
+
+		regAlloc.release(X64Register::RAX);
+		regAlloc.allocateSpecific(X64Register::RAX, INT_MIN);
+
+		regAlloc.release(X64Register::RDX);
+		regAlloc.allocateSpecific(X64Register::RDX, INT_MIN);
+
 		// Setup and load operands
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "modulo");
 
@@ -9503,23 +9511,60 @@ private:
 		// idiv instruction computes both quotient (RAX) and remainder (RDX)
 		// We need the remainder in RDX
 
-		// Move dividend to RAX, divisor to a register
-		// Sign extend RAX to RDX:RAX for signed division
-		std::array<uint8_t, 3> cqoInst = { 0x48, 0x99, 0x00 }; // cqo (sign extend RAX to RDX:RAX)
-		textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end() - 1);
+		// Move dividend to RAX (dividend must be in RAX for idiv)
+		auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits / 8);
+		textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 
-		// Perform signed division: idiv r/m64
-		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.result_value.size_in_bits);
+		// Release the original result register since we moved its value to RAX
+		regAlloc.release(ctx.result_physical_reg);
 
-		// Move remainder from RDX to result register
-		if (ctx.result_physical_reg != X64Register::RDX) {
-			auto mov_encoding = encodeRegToRegInstruction(X64Register::RDX, ctx.result_physical_reg);
-			std::array<uint8_t, 3> movInst = { mov_encoding.rex_prefix, 0x89, mov_encoding.modrm_byte };
-			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		// Sign extend RAX into RDX:RAX
+		if (ctx.result_value.size_in_bits == 64) {
+			// CQO - sign extend RAX into RDX:RAX (fills RDX with 0 or -1)
+			std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 }; // REX.W + CQO
+			textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
+		} else {
+			// CDQ - sign extend EAX into EDX:EAX (for 32-bit)
+			std::array<uint8_t, 1> cdqInst = { 0x99 };
+			textSectionData.insert(textSectionData.end(), cdqInst.begin(), cdqInst.end());
 		}
 
-		// Store the result to the appropriate destination
-		storeArithmeticResult(ctx);
+	    // idiv rhs_physical_reg
+		uint8_t rex = 0x40; // Base REX prefix
+		if (ctx.result_value.size_in_bits == 64) {
+			rex |= 0x08; // Set REX.W for 64-bit operation
+		}
+
+		// Check if we need REX.B for the divisor register
+		if (static_cast<uint8_t>(ctx.rhs_physical_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+			rex |= 0x01; // Set REX.B
+		}
+
+		std::array<uint8_t, 3> divInst = {
+			rex,
+			0xF7,  // Opcode for IDIV
+			static_cast<uint8_t>(0xF8 + (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07))  // ModR/M: 11 111 reg (opcode extension 7 for IDIV)
+		};
+		textSectionData.insert(textSectionData.end(), divInst.begin(), divInst.end());
+
+		// Manually store remainder from RDX to the result variable's stack location
+		// Don't use storeArithmeticResult because it tries to be too clever with register tracking
+		if (std::holds_alternative<StringHandle>(ctx.result_value.value)) {
+			int final_result_offset = variable_scopes.back().variables[std::get<StringHandle>(ctx.result_value.value)].offset;
+			emitMovToFrameSized(
+				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
+				SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+			);
+		} else if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
+			auto res_var_op = std::get<TempVar>(ctx.result_value.value);
+			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op, ctx.result_value.size_in_bits);
+			emitMovToFrameSized(
+				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
+				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+			);
+		}
+
+		regAlloc.release(X64Register::RDX);
 	}
 
 	void handleEqual(const IrInstruction& instruction) {
