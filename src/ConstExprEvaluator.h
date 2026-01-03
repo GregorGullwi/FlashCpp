@@ -345,15 +345,22 @@ private:
 								const auto& array_type_spec = decl->type_node().as<TypeSpecifierNode>();
 								size_t element_size = get_typespec_size_bytes(array_type_spec);
 								
-								// Get array size from declaration
-								if (decl->array_size().has_value()) {
-									ASTNode size_expr = *decl->array_size();
-									auto eval_result = evaluate(size_expr, context);
-									if (eval_result.success) {
-										long long array_count = eval_result.as_int();
-										if (array_count > 0 && element_size > 0) {
-											return EvalResult::from_int(static_cast<long long>(element_size * array_count));
+								// Get total array size from all dimensions
+								const auto& dims = decl->array_dimensions();
+								if (!dims.empty()) {
+									long long total_count = 1;
+									bool all_evaluated = true;
+									for (const auto& dim_expr : dims) {
+										auto eval_result = evaluate(dim_expr, context);
+										if (eval_result.success && eval_result.as_int() > 0) {
+											total_count *= eval_result.as_int();
+										} else {
+											all_evaluated = false;
+											break;
 										}
+									}
+									if (all_evaluated && element_size > 0) {
+										return EvalResult::from_int(static_cast<long long>(element_size * total_count));
 									}
 								}
 							}
@@ -396,15 +403,22 @@ private:
 									const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
 									size_t element_size = get_typespec_size_bytes(type_spec);
 									
-									// Get array size from declaration
-									if (decl->array_size().has_value()) {
-										ASTNode size_expr = *decl->array_size();
-										auto eval_result = evaluate(size_expr, context);
-										if (eval_result.success) {
-											long long array_count = eval_result.as_int();
-											if (array_count > 0 && element_size > 0) {
-												return EvalResult::from_int(static_cast<long long>(element_size * array_count));
+									// Get total array size from all dimensions
+									const auto& dims = decl->array_dimensions();
+									if (!dims.empty()) {
+										long long total_count = 1;
+										bool all_evaluated = true;
+										for (const auto& dim_expr : dims) {
+											auto eval_result = evaluate(dim_expr, context);
+											if (eval_result.success && eval_result.as_int() > 0) {
+												total_count *= eval_result.as_int();
+											} else {
+												all_evaluated = false;
+												break;
 											}
+										}
+										if (all_evaluated && element_size > 0) {
+											return EvalResult::from_int(static_cast<long long>(element_size * total_count));
 										}
 									}
 								}

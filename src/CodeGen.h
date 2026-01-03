@@ -13579,7 +13579,7 @@ private:
 							TempVar new_flat = var_counter.next();
 							BinaryOp add_op;
 							add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, flat_index};
-							add_op.rhs = TypedValue{Type::Int, 32, temp_prod};
+							add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, temp_prod};
 							add_op.result = IrValue{new_flat};
 							ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 							flat_index = new_flat;
@@ -14582,30 +14582,37 @@ private:
 			return std::nullopt;
 		}
 		
-		// Get array size
-		if (!decl.array_size().has_value()) {
+		// Get array size - support multidimensional arrays
+		const auto& dims = decl.array_dimensions();
+		if (dims.empty()) {
 			return std::nullopt;
 		}
 
-		// Evaluate the array size expression using ConstExprEvaluator
-		ASTNode size_expr = *decl.array_size();
+		// Evaluate all dimension size expressions and compute total element count
+		size_t array_count = 1;
 		ConstExpr::EvaluationContext ctx(symbol_table);
-		auto eval_result = ConstExpr::Evaluator::evaluate(size_expr, ctx);
 		
-		if (!eval_result.success) {
-			return std::nullopt;
+		for (const auto& dim_expr : dims) {
+			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+			if (!eval_result.success) {
+				return std::nullopt;
+			}
+			
+			long long dim_size = eval_result.as_int();
+			if (dim_size <= 0) {
+				return std::nullopt;
+			}
+			
+			// Check for potential overflow in multiplication
+			size_t dim_size_u = static_cast<size_t>(dim_size);
+			if (array_count > SIZE_MAX / dim_size_u) {
+				FLASH_LOG(Codegen, Warning, "Array dimension count calculation would overflow");
+				return std::nullopt;
+			}
+			array_count *= dim_size_u;
 		}
-
-		long long array_count_signed = eval_result.as_int();
 		
-		// Check for negative or zero array size
-		if (array_count_signed <= 0) {
-			return std::nullopt;
-		}
-
-		size_t array_count = static_cast<size_t>(array_count_signed);
-		
-		// Check for potential overflow in multiplication
+		// Check for potential overflow in multiplication with element size
 		if (array_count > SIZE_MAX / element_size) {
 			FLASH_LOG(Codegen, Warning, "Array size calculation would overflow: ", array_count, " * ", element_size);
 			return std::nullopt;
