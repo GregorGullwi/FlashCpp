@@ -13998,6 +13998,16 @@ private:
 					}
 				}
 			}
+			// If object isn't a simple identifier (e.g., arr[i].member), fall back to using the
+			// computed operands to keep a valid base (TempVar or StringHandle) instead of
+			// leaving an empty StringHandle that leads to invalid offsets.
+			if (base_variant.valueless_by_exception()) {
+				if (std::holds_alternative<TempVar>(array_operands[2])) {
+					base_variant = std::get<TempVar>(array_operands[2]);
+				} else if (std::holds_alternative<StringHandle>(array_operands[2])) {
+					base_variant = std::get<StringHandle>(array_operands[2]);
+				}
+			}
 		}
 		// Simple identifier array (non-member)
 		else if (std::holds_alternative<IdentifierNode>(array_expr)) {
