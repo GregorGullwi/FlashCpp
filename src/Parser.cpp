@@ -22859,6 +22859,16 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				FLASH_LOG_FORMAT(Templates, Debug, "After parsing expression, peek_token={}", 
 				                 peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 				
+				// Special case: If we parsed T[N] as an array subscript expression,
+				// this is actually an array type declarator in a specialization pattern,
+				// not an array access. Reparse as a type.
+				bool is_array_subscript = std::holds_alternative<ArraySubscriptNode>(expr);
+				if (is_array_subscript) {
+					FLASH_LOG(Templates, Debug, "Detected array subscript in template arg - reparsing as array type");
+					restore_token_position(arg_saved_pos);
+					// Fall through to type parsing below
+				} else {
+				
 				// Special case: If out_type_nodes is provided AND the expression is a simple identifier,
 				// we should fall through to type parsing so identifiers get properly converted to TypeSpecifierNode.
 				// This is needed for deduction guides where template parameters must be TypeSpecifierNode.
@@ -22867,13 +22877,17 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// ALSO: If we parsed a simple identifier followed by '<', we should fall through to type parsing
 				// because this is likely a template type (e.g., enable_if_t<...>), not a value expression.
 				// 
+				// ALSO: If followed by '[', this is an array type declarator - must parse as type
+				// 
 				// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
 				bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) || 
 				                            std::holds_alternative<TemplateParameterReferenceNode>(expr);
 				bool followed_by_template_args = peek_token().has_value() && peek_token()->value() == "<";
+				bool followed_by_array_declarator = peek_token().has_value() && peek_token()->value() == "[";
 				bool followed_by_pack_expansion = peek_token().has_value() && peek_token()->value() == "...";
 				bool should_try_type_parsing = (out_type_nodes != nullptr && is_simple_identifier && !followed_by_pack_expansion) ||
-				                               (is_simple_identifier && followed_by_template_args);
+				                               (is_simple_identifier && followed_by_template_args) ||
+				                               (is_simple_identifier && followed_by_array_declarator);
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
 				    (peek_token()->value() == "," || peek_token()->value() == ">" || peek_token()->value() == "...")) {
@@ -22977,6 +22991,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						}
 					}
 				}
+				}  // End of else block for !is_array_subscript
 			}
 
 			// Expression is not a numeric literal or evaluable constant - fall through to type parsing
@@ -23074,6 +23089,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					if (const_size->value >= 0) {
 						parsed_array_size = static_cast<size_t>(const_size->value);
 					}
+				} else {
+					// Size expression present but not evaluable (e.g., template parameter N)
+					// Use SIZE_MAX as a sentinel to indicate "sized array with unknown size"
+					parsed_array_size = SIZE_MAX;
 				}
 			}
 
@@ -25397,6 +25416,86 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					} else if (std::holds_alternative<BoolLiteralNode>(expr)) {
 						const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
 						filled_args_for_pattern_match.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL));
+					} else if (std::holds_alternative<SizeofExprNode>(expr)) {
+						// Handle sizeof(T) as a default value
+						const SizeofExprNode& sizeof_node = std::get<SizeofExprNode>(expr);
+						if (sizeof_node.is_type()) {
+							// sizeof(type) - evaluate the type size
+							const ASTNode& type_node = sizeof_node.type_or_expr();
+							if (type_node.is<TypeSpecifierNode>()) {
+								TypeSpecifierNode type_spec = type_node.as<TypeSpecifierNode>();
+								
+								// Check if this is a template parameter that needs substitution
+								bool found_substitution = false;
+								if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+									const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+									std::string_view type_name = StringTable::getStringView(type_info.name());
+									
+									// Check if this is one of the template parameters we've already filled
+									for (size_t j = 0; j < primary_params.size() && j < filled_args_for_pattern_match.size(); ++j) {
+										if (primary_params[j].is<TemplateParameterNode>()) {
+											const TemplateParameterNode& prev_param = primary_params[j].as<TemplateParameterNode>();
+											if (prev_param.name() == type_name) {
+												// Found the matching template parameter - use its filled value
+												const TemplateTypeArg& filled_arg = filled_args_for_pattern_match[j];
+												if (filled_arg.base_type != Type::Invalid) {
+													// Calculate the size of the filled type
+													int size_in_bytes = 0;
+													switch (filled_arg.base_type) {
+														case Type::Bool:
+														case Type::Char:
+														case Type::UnsignedChar:
+															size_in_bytes = 1;
+															break;
+														case Type::Short:
+														case Type::UnsignedShort:
+															size_in_bytes = 2;
+															break;
+														case Type::Int:
+														case Type::UnsignedInt:
+														case Type::Float:
+															size_in_bytes = 4;
+															break;
+														case Type::Long:
+														case Type::UnsignedLong:
+														case Type::LongLong:
+														case Type::UnsignedLongLong:
+														case Type::Double:
+															size_in_bytes = 8;
+															break;
+														case Type::Struct:
+															// For struct types, we need to look up the actual size
+															if (filled_arg.type_index < gTypeInfo.size()) {
+																const TypeInfo& struct_type = gTypeInfo[filled_arg.type_index];
+																if (struct_type.getStructInfo()) {
+																	size_in_bytes = struct_type.getStructInfo()->total_size;
+																}
+															}
+															break;
+														default:
+															break;
+													}
+													if (size_in_bytes > 0) {
+														filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
+														FLASH_LOG(Templates, Debug, "Filled in sizeof(", type_name, ") default: ", size_in_bytes, " bytes");
+														found_substitution = true;
+														break;
+													}
+												}
+											}
+										}
+									}
+								}
+								
+								if (!found_substitution) {
+									// Direct type (not a template parameter)
+									int size_in_bits = type_spec.size_in_bits();
+									int size_in_bytes = (size_in_bits + 7) / 8;  // Round up to bytes
+									filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
+									FLASH_LOG(Templates, Debug, "Filled in sizeof default: ", size_in_bytes, " bytes");
+								}
+							}
+						}
 					}
 				}
 			}

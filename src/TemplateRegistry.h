@@ -461,10 +461,24 @@ struct TemplatePattern {
 				FLASH_LOG(Templates, Trace, "  FAILED: array-ness mismatch");
 				return false;
 			}
-			if (pattern_arg.is_array && pattern_arg.array_size.has_value() && concrete_arg.array_size.has_value() &&
-			    *pattern_arg.array_size != *concrete_arg.array_size) {
-				FLASH_LOG(Templates, Trace, "  FAILED: array size mismatch");
-				return false;
+			// Check array size matching
+			// - If pattern has no size (T[]), it matches any array
+			// - If pattern has SIZE_MAX (T[N] where N is template param), it matches any sized array but not unsized arrays
+			// - If pattern has a specific size (T[3]), it must match exactly
+			if (pattern_arg.is_array && pattern_arg.array_size.has_value() && concrete_arg.array_size.has_value()) {
+				// Both have sizes - check if they match
+				// SIZE_MAX in pattern means "any size" (template parameter like N)
+				if (*pattern_arg.array_size != SIZE_MAX && *pattern_arg.array_size != *concrete_arg.array_size) {
+					FLASH_LOG(Templates, Trace, "  FAILED: array size mismatch");
+					return false;
+				}
+			} else if (pattern_arg.is_array && pattern_arg.array_size.has_value() && *pattern_arg.array_size == SIZE_MAX) {
+				// Pattern has SIZE_MAX (like T[N]) but concrete has no size (like int[])
+				// This should not match - T[N] requires a sized array
+				if (!concrete_arg.array_size.has_value()) {
+					FLASH_LOG(Templates, Trace, "  FAILED: pattern requires sized array but concrete is unsized");
+					return false;
+				}
 			}
 			if (pattern_arg.member_pointer_kind != concrete_arg.member_pointer_kind) {
 				FLASH_LOG(Templates, Trace, "  FAILED: member pointer kind mismatch");
@@ -604,7 +618,7 @@ struct TemplatePattern {
 	}
 	
 	// Calculate specificity score (higher = more specialized)
-	// T = 0, T& = 1, T* = 1, const T = 1, const T& = 2, etc.
+	// T = 0, T& = 1, T* = 1, const T = 1, const T& = 2, T[N] = 2, T[] = 1, etc.
 	int specificity() const
 	{
 		int score = 0;
@@ -621,6 +635,17 @@ struct TemplatePattern {
 			}
 			if (arg.is_rvalue_reference) {
 				score += 1;  // T&& is more specific than T
+			}
+		
+			// Array modifiers add specificity
+			if (arg.is_array) {
+				if (arg.array_size.has_value()) {
+					// SIZE_MAX indicates "array with size expression but value unknown" (like T[N])
+					// Concrete sizes (like T[3]) and template parameter sizes (like T[N]) both get score of 2
+					score += 2;  // T[N] or T[3] is more specific than T[]
+				} else {
+					score += 1;  // T[] is more specific than T
+				}
 			}
 		
 			// CV-qualifiers add specificity
