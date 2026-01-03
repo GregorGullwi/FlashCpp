@@ -4678,10 +4678,17 @@ private:
 			// The reference will bind to the object pointed to by __begin
 			init_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 		} else {
-			// For non-reference variables, dereference the iterator: *__begin
-			auto begin_ident_deref = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+			// For non-reference variables, reinterpret iterator as pointer to element type, then dereference
+			auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+			auto loop_ptr_type = ASTNode::emplace_node<TypeSpecifierNode>(
+				loop_type.type(), loop_type.type_index(), static_cast<int>(loop_type.size_in_bits()), Token()
+			);
+			loop_ptr_type.as<TypeSpecifierNode>().add_pointer_level();
+			auto cast_expr = ASTNode::emplace_node<ExpressionNode>(
+				ReinterpretCastNode(loop_ptr_type, begin_ident_expr, Token(Token::Type::Keyword, "reinterpret_cast", 0, 0, 0))
+			);
 			init_expr = ASTNode::emplace_node<ExpressionNode>(
-				UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), begin_ident_deref, true)
+				UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), cast_expr, true)
 			);
 		}
 		
@@ -9485,7 +9492,8 @@ private:
 			
 			// Populate TypedValue with full type information
 			op.pointer.type = operandType;
-			op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+			// Use element_size as pointee size so IRConverter can load correct width
+			op.pointer.size_in_bits = element_size;
 			op.pointer.pointer_depth = pointer_depth;
 			
 			// Get the pointer value - it's at index 2 in operandIrOperands
@@ -16587,6 +16595,7 @@ private:
 		const auto& target_type_node = reinterpretCastNode.target_type().as<TypeSpecifierNode>();
 		Type target_type = target_type_node.type();
 		int target_size = static_cast<int>(target_type_node.size_in_bits());
+		int target_pointer_depth = target_type_node.pointer_depth();
 		
 		// Special handling for rvalue reference casts: reinterpret_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
@@ -16601,7 +16610,8 @@ private:
 		// reinterpret_cast reinterprets the bits without conversion
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual bit pattern remains unchanged
-		return { target_type, target_size, expr_operands[2], 0ULL };
+		int result_size = (target_pointer_depth > 0) ? 64 : target_size;
+		return { target_type, result_size, expr_operands[2], static_cast<unsigned long long>(target_pointer_depth) };
 	}
 
 	// Structure to track variables that need destructors called
