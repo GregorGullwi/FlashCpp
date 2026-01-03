@@ -8,14 +8,14 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-03  
+**Last Run:** 2026-01-03
 
-**Total files tested:** 817  
-**Valid returns (matching expected):** 784  
-**Regressions (mismatches):** 20  
-**Runtime crashes:** 13  
-**Compile failures:** 0  
-**Link failures:** 0  
+**Total files tested:** 817
+**Valid returns (matching expected):** 784
+**Regressions (mismatches):** 20
+**Runtime crashes:** 13
+**Compile failures:** 0
+**Link failures:** 0
 
 ## Regressions Found
 
