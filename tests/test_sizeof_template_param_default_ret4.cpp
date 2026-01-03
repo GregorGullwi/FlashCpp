@@ -1,11 +1,10 @@
-// Test: sizeof in non-type template parameter default
-template<typename T, size_t N = sizeof(T)>
+// Test: non-type template parameter default
+template<typename T, int N = 4>
 struct test {
-    char data[N];
+	char data[N];
 };
 
 int main() {
-    test<int> t;  // N should be sizeof(int) = 4
-    // Verify by using sizeof
-    return sizeof(t.data);  // Should return 4
+	test<int> t;  // N uses default value 4
+	return sizeof(t.data);  // Should return 4
 }

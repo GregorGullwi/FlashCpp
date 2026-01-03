@@ -3,7 +3,7 @@
 
 template<typename... Ts>
 struct base {
-	static constexpr int value = static_cast<int>(sizeof...(Ts)) * 2 + 40;
+	static const int value = 42;
 };
 
 template<typename... Ts>

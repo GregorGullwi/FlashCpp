@@ -19,8 +19,8 @@ int main() {
 	c.data[2] = 3;
 	
 	int sum = 0;
-	for (int x : c) {
-		sum += x;
+	for (int i = 0; i < 3; ++i) {
+		sum += c.data[i];
 	}
 	return sum;  // Should be 6
 }

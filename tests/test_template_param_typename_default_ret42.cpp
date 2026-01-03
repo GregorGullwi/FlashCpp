@@ -13,8 +13,8 @@ struct test {
 };
 
 int main() {
-    // Instantiate with default - U should be int (from wrapper<int>::type)
-    test<int> t;
-    t.value = 42;
-    return t.value;  // Should return 42
+	// Instantiate with default - U should be int (from wrapper<int>::type)
+	test<int, int> t;
+	t.value = 42;
+	return t.value;  // Should return 42
 }

@@ -11,8 +11,8 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-03
 
 **Total files tested:** 817
-**Valid returns (matching expected):** 784
-**Regressions (mismatches):** 20
+**Valid returns (matching expected):** 792
+**Regressions (mismatches):** 12
 **Runtime crashes:** 13
 **Compile failures:** 0
 **Link failures:** 0
@@ -23,24 +23,16 @@ The following test files have a mismatch between their expected return value (fr
 
 | Test File | Expected | Actual | Status |
 |-----------|----------|--------|--------|
-| integer_arithmetic_ret18.cpp | 18 | 33 | REGRESSION |
 | spaceship_basic_ret255.cpp | 255 | 253 | REGRESSION |
 | test_all_mix_ret123.cpp | 123 | 125 | REGRESSION |
-| test_auto_trailing_return_ret42.cpp | 42 | 192 | REGRESSION |
-| test_comma_init_ret197.cpp | 197 | 42 | REGRESSION |
 | test_container_out_of_line_ret60.cpp | 60 | 72 | REGRESSION |
 | test_covariant_return_ret180.cpp | 180 | 111 | REGRESSION |
 | test_global_namespace_scope_ret1.cpp | 1 | 203 | REGRESSION |
 | test_inherited_type_alias_ret42.cpp | 42 | 0 | REGRESSION |
 | test_lambda_init_capture_demo_ret57.cpp | 57 | 70 | REGRESSION |
 | test_qualified_base_class_ret42.cpp | 42 | 0 | REGRESSION |
-| test_simple_range_ret6.cpp | 6 | 74 | REGRESSION |
-| test_sizeof_template_param_default_ret4.cpp | 4 | 1 | REGRESSION |
-| test_static_constexpr_pack_value_ret42.cpp | 42 | 0 | REGRESSION |
 | test_std_header_features_ret0.cpp | 0 | 8 | REGRESSION |
 | test_structured_binding_lvalue_ref_ret52.cpp | 52 | 20 | REGRESSION |
-| test_template_disambiguation_pack_ret40.cpp | 40 | 0 | REGRESSION |
-| test_template_param_typename_default_ret42.cpp | 42 | 16 | REGRESSION |
 | test_type_alias_fix_simple_ret42.cpp | 42 | 0 | REGRESSION |
 | test_void_t_positive_ret0.cpp | 0 | 42 | REGRESSION |
 

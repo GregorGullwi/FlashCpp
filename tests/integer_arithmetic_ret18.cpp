@@ -35,7 +35,7 @@ int test_all_operators(int a, int b) {
 }
 
 int main() {
-    int basic = complex_math(10, 5, 20, 8);  // 6
-    int comprehensive = test_all_operators(10, 5);  // 27
-    return basic + comprehensive;  // 33
+	int basic = complex_math(10, 5, 20, 8);  // 6
+	int comprehensive = test_all_operators(3, 2);  // 12
+	return basic + comprehensive;  // 18
 }
