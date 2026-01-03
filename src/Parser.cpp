@@ -14719,8 +14719,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
 				const auto& func = template_func_inst->as<FunctionDeclarationNode>();
-				result = emplace_node<ExpressionNode>(
+				auto function_call_node = emplace_node<ExpressionNode>(
 					FunctionCallNode(const_cast<DeclarationNode&>(func.decl_node()), std::move(args), idenfifier_token));
+				
+				// Set the mangled name on the function call if the instantiated function has one
+				if (func.has_mangled_name()) {
+					std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_mangled_name(func.mangled_name());
+				}
+				
+				result = function_call_node;
 				return ParseResult::success(*result);
 			} else {
 				FLASH_LOG(Parser, Error, "Template instantiation failed");
@@ -21398,8 +21405,65 @@ if (struct_type_info.getStructInfo()) {
 			
 			// Register the specialization with the template registry
 			// This makes it available when the template is instantiated with these args
+			// Build the qualified name including current namespace path
+			StringBuilder qualified_name_builder;
+			auto namespace_path = gSymbolTable.build_current_namespace_path();
+			for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+				qualified_name_builder.append(ns).append("::");
+#else
+				qualified_name_builder.append(StringTable::getStringView(ns)).append("::");
+#endif
+			}
+			qualified_name_builder.append(func_base_name);
+			std::string_view qualified_specialization_name = qualified_name_builder.commit();
+			
 			ASTNode func_node_copy = *func_result.node();
-			gTemplateRegistry.registerSpecialization(func_base_name, spec_template_args, func_node_copy);
+			
+			// Compute and set the proper mangled name for the specialization
+			// Extract namespace path as string_view vector
+			std::vector<std::string_view> ns_path;
+			ns_path.reserve(namespace_path.size());
+			for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+				ns_path.push_back(ns);
+#else
+				ns_path.push_back(StringTable::getStringView(ns));
+#endif
+			}
+			
+			// Generate proper C++ ABI mangled name
+			FunctionDeclarationNode& func_for_mangling = func_node_copy.as<FunctionDeclarationNode>();
+			NameMangling::MangledName specialization_mangled_name;
+			
+			// Check if this specialization has non-type template arguments (like get<0>, get<1>)
+			if (func_for_mangling.has_non_type_template_args()) {
+				// Use the version that includes non-type template arguments in the mangled name
+				const std::vector<int64_t>& non_type_args = func_for_mangling.non_type_template_args();
+				const DeclarationNode& decl = func_for_mangling.decl_node();
+				const TypeSpecifierNode& return_type = decl.type_node().as<TypeSpecifierNode>();
+				
+				// Build parameter type list
+				std::vector<TypeSpecifierNode> param_types;
+				for (const auto& param_node : func_for_mangling.parameter_nodes()) {
+					if (param_node.is<DeclarationNode>()) {
+						const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+						param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+					}
+				}
+				
+				specialization_mangled_name = NameMangling::generateMangledNameWithTemplateArgs(
+					func_base_name, return_type, param_types, non_type_args, 
+					func_for_mangling.is_variadic(), "", ns_path);
+			} else {
+				// Regular specialization without non-type template args
+				specialization_mangled_name = 
+					NameMangling::generateMangledNameFromNode(func_for_mangling, ns_path);
+			}
+			
+			func_for_mangling.set_mangled_name(specialization_mangled_name.view());
+			
+			gTemplateRegistry.registerSpecialization(qualified_specialization_name, spec_template_args, func_node_copy);
 			
 			// Also add to symbol table so codegen can find it during overload resolution
 			// Use the base function name (without template args) so it can be looked up
@@ -23998,10 +24062,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 	}
 
-	// Create a token for the mangled name
-	Token mangled_token(Token::Type::Identifier, mangled_name,
-	                    orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
-	                    orig_decl.identifier_token().file_index());
+	// Save the mangled name - we'll set it on the function node after creation
+	// Do NOT use the mangled name as the identifier token!
+	std::string_view saved_mangled_name = mangled_name;
 
 	// Create return type - re-parse declaration if available (for SFINAE)
 	const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
@@ -24337,10 +24400,43 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		          static_cast<int>(rt.type()), " index=", rt.type_index());
 	}
 	
-	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
-	
+	// Use the original function name token for the declaration, not the mangled name
+	auto new_decl = emplace_node<DeclarationNode>(return_type, func_name_token);
 	
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
+	
+	// Parse the template_name to extract namespace and function name
+	// template_name might be like "ns::sum" or just "sum"
+	std::vector<std::string_view> namespace_path;
+	std::string_view function_name_only;
+	
+	size_t last_colon = template_name.rfind("::");
+	if (last_colon != std::string_view::npos) {
+		// Has namespace - split it
+		std::string_view namespace_part = template_name.substr(0, last_colon);
+		function_name_only = template_name.substr(last_colon + 2);
+		
+		// Parse namespace parts (could be nested like "a::b::c")
+		size_t start = 0;
+		while (start < namespace_part.size()) {
+			size_t end = namespace_part.find("::", start);
+			if (end == std::string_view::npos) {
+				end = namespace_part.size();
+			}
+			if (end > start) {
+				namespace_path.push_back(namespace_part.substr(start, end - start));
+			}
+			start = (end == namespace_part.size()) ? end : end + 2;
+		}
+	} else {
+		// No namespace
+		function_name_only = template_name;
+	}
+	
+	// Compute the proper C++ ABI mangled name using NameMangling
+	// We need to pass the function name, return type, parameter types, and namespace path
+	NameMangling::MangledName proper_mangled_name = NameMangling::generateMangledNameFromNode(new_func_ref, namespace_path);
+	new_func_ref.set_mangled_name(proper_mangled_name.view());
 
 	// Add parameters with substituted types
 	size_t arg_type_index = 0;  // Track which argument type we're using
@@ -24629,8 +24725,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 	}
 
-	// Compute and set the proper mangled name (Itanium/MSVC) for code generation
-	compute_and_set_mangled_name(new_func_ref);
+	// Mangled name was already computed and set above - don't recompute it!
+	// The mangled name is proper_mangled_name and was already set on the function node
 	
 	// Register the instantiation
 	gTemplateRegistry.registerInstantiation(key, new_func_node);
@@ -24638,7 +24734,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// Add to symbol table at GLOBAL scope (not current scope)
 	// Template instantiations should be globally visible, not scoped to where they're called
 	// Use insertGlobal() to add to global scope without modifying the scope stack
-	gSymbolTable.insertGlobal(mangled_token.value(), new_func_node);
+	// Register with the human-readable template-specific name for template lookups
+	gSymbolTable.insertGlobal(saved_mangled_name, new_func_node);
 
 	// Add to top-level AST so it gets visited by the code generator
 	ast_nodes_.push_back(new_func_node);
