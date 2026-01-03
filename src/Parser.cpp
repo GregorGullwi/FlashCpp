@@ -6712,21 +6712,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						consume_token(); // consume '*'
 						
 						// Check for CV-qualifiers after the *
-						CVQualifier ptr_cv = CVQualifier::None;
-						while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-							std::string_view kw = peek_token()->value();
-							if (kw == "const") {
-								ptr_cv = static_cast<CVQualifier>(
-									static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
-								consume_token();
-							} else if (kw == "volatile") {
-								ptr_cv = static_cast<CVQualifier>(
-									static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
-								consume_token();
-							} else {
-								break;
-							}
-						}
+						CVQualifier ptr_cv = parse_cv_qualifiers();
 						
 						type_spec.add_pointer_level(ptr_cv);
 					}
@@ -10627,21 +10613,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			consume_token(); // consume '*'
 
 			// Check for CV-qualifiers after the *
-			CVQualifier ptr_cv = CVQualifier::None;
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				std::string_view kw = peek_token()->value();
-				if (kw == "const") {
-					ptr_cv = static_cast<CVQualifier>(
-						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
-					consume_token();
-				} else if (kw == "volatile") {
-					ptr_cv = static_cast<CVQualifier>(
-						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
-					consume_token();
-				} else {
-					break;
-				}
-			}
+			CVQualifier ptr_cv = parse_cv_qualifiers();
 
 			type_spec.add_pointer_level(ptr_cv);
 		}
@@ -10712,21 +10684,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			consume_token(); // consume '*'
 
 			// Check for CV-qualifiers after the *
-			CVQualifier ptr_cv = CVQualifier::None;
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				std::string_view kw = peek_token()->value();
-				if (kw == "const") {
-					ptr_cv = static_cast<CVQualifier>(
-						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
-					consume_token();
-				} else if (kw == "volatile") {
-					ptr_cv = static_cast<CVQualifier>(
-						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
-					consume_token();
-				} else {
-					break;
-				}
-			}
+			CVQualifier ptr_cv = parse_cv_qualifiers();
 
 			type_spec.add_pointer_level(ptr_cv);
 		}
@@ -10797,21 +10755,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			consume_token(); // consume '*'
 
 			// Check for CV-qualifiers after the *
-			CVQualifier ptr_cv = CVQualifier::None;
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				std::string_view kw = peek_token()->value();
-				if (kw == "const") {
-					ptr_cv = static_cast<CVQualifier>(
-						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
-					consume_token();
-				} else if (kw == "volatile") {
-					ptr_cv = static_cast<CVQualifier>(
-						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
-					consume_token();
-				} else {
-					break;
-				}
-			}
+			CVQualifier ptr_cv = parse_cv_qualifiers();
 
 			type_spec.add_pointer_level(ptr_cv);
 		}
@@ -10882,21 +10826,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			consume_token(); // consume '*'
 
 			// Check for CV-qualifiers after the *
-			CVQualifier ptr_cv = CVQualifier::None;
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				std::string_view kw = peek_token()->value();
-				if (kw == "const") {
-					ptr_cv = static_cast<CVQualifier>(
-						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
-					consume_token();
-				} else if (kw == "volatile") {
-					ptr_cv = static_cast<CVQualifier>(
-						static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
-					consume_token();
-				} else {
-					break;
-				}
-			}
+			CVQualifier ptr_cv = parse_cv_qualifiers();
 
 			type_spec.add_pointer_level(ptr_cv);
 		}
@@ -10961,21 +10891,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				consume_token(); // consume '*'
 				
 				// Check for cv-qualifiers after the pointer
-				CVQualifier ptr_cv = CVQualifier::None;
-				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-					std::string_view kw = peek_token()->value();
-					if (kw == "const") {
-						ptr_cv = static_cast<CVQualifier>(
-							static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
-						consume_token();
-					} else if (kw == "volatile") {
-						ptr_cv = static_cast<CVQualifier>(
-							static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
-						consume_token();
-					} else {
-						break;
-					}
-				}
+				CVQualifier ptr_cv = parse_cv_qualifiers();
 				
 				type_spec.add_pointer_level(ptr_cv);
 			}
@@ -11218,20 +11134,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 						consume_token(); // consume '*'
 						
 						// Check for const/volatile after *
-						CVQualifier ptr_cv = CVQualifier::None;
-						while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-							if (peek_token()->value() == "const") {
-								ptr_cv = static_cast<CVQualifier>(
-									static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
-								consume_token();
-							} else if (peek_token()->value() == "volatile") {
-								ptr_cv = static_cast<CVQualifier>(
-									static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
-								consume_token();
-							} else {
-								break;
-							}
-						}
+						CVQualifier ptr_cv = parse_cv_qualifiers();
 						
 						type_spec.add_pointer_level(ptr_cv);
 					} else if (next_token->value() == "&") {
@@ -19417,23 +19320,7 @@ ParseResult Parser::parse_template_declaration() {
 			consume_token(); // consume '*'
 			
 			// Parse CV-qualifiers after the * (const, volatile)
-			CVQualifier ptr_cv = CVQualifier::None;
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				std::string_view kw = peek_token()->value();
-				if (kw == "const") {
-					ptr_cv = static_cast<CVQualifier>(
-						static_cast<uint8_t>(ptr_cv) |
-						static_cast<uint8_t>(CVQualifier::Const));
-					consume_token();
-				} else if (kw == "volatile") {
-					ptr_cv = static_cast<CVQualifier>(
-						static_cast<uint8_t>(ptr_cv) |
-						static_cast<uint8_t>(CVQualifier::Volatile));
-					consume_token();
-				} else {
-					break;
-				}
-			}
+			CVQualifier ptr_cv = parse_cv_qualifiers();
 			
 			type_spec.add_pointer_level(ptr_cv);
 		}
@@ -21302,23 +21189,7 @@ if (struct_type_info.getStructInfo()) {
 						       peek_token()->value() == "*") {
 							consume_token(); // consume '*'
 
-							CVQualifier ptr_cv = CVQualifier::None;
-							while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-								std::string_view kw = peek_token()->value();
-								if (kw == "const") {
-									ptr_cv = static_cast<CVQualifier>(
-										static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Const));
-									consume_token();
-								}
-								else if (kw == "volatile") {
-									ptr_cv = static_cast<CVQualifier>(
-										static_cast<uint8_t>(ptr_cv) | static_cast<uint8_t>(CVQualifier::Volatile));
-									consume_token();
-								}
-								else {
-									break;
-								}
-							}
+							CVQualifier ptr_cv = parse_cv_qualifiers();
 
 							param_type.add_pointer_level(ptr_cv);
 						}
@@ -22537,23 +22408,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		consume_token(); // consume '*'
 
 		// Parse CV-qualifiers after the * (const, volatile)
-		CVQualifier ptr_cv = CVQualifier::None;
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-			std::string_view kw = peek_token()->value();
-			if (kw == "const") {
-				ptr_cv = static_cast<CVQualifier>(
-					static_cast<uint8_t>(ptr_cv) |
-					static_cast<uint8_t>(CVQualifier::Const));
-				consume_token();
-			} else if (kw == "volatile") {
-				ptr_cv = static_cast<CVQualifier>(
-					static_cast<uint8_t>(ptr_cv) |
-					static_cast<uint8_t>(CVQualifier::Volatile));
-				consume_token();
-			} else {
-				break;
-			}
-		}
+		CVQualifier ptr_cv = parse_cv_qualifiers();
 
 		type_spec.add_pointer_level(ptr_cv);
 	}
