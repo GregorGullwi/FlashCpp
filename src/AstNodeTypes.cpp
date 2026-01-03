@@ -214,8 +214,17 @@ bool is_unsigned_integer_type(Type type) {
 }
 
 int get_integer_rank(Type type) {
-    // C++ integer conversion rank (higher rank = larger type)
+    // C++20 integer conversion rank (higher rank = larger type)
+    // [conv.rank] specifies the conversion rank:
+    // - bool has the lowest rank
+    // - signed char/unsigned char have the same rank (less than short)
+    // - short/unsigned short have the same rank (less than int)
+    // - int/unsigned int have the same rank
+    // - long/unsigned long have the same rank
+    // - long long/unsigned long long have the highest standard integer rank
     switch (type) {
+        case Type::Bool:
+            return 0;  // Bool has lowest rank
         case Type::Char:
         case Type::UnsignedChar:
             return 1;
@@ -232,7 +241,7 @@ int get_integer_rank(Type type) {
         case Type::UnsignedLongLong:
             return 5;
         default:
-            return 0;
+            return -1;  // Invalid/unknown type
     }
 }
 
@@ -308,7 +317,46 @@ Type promote_floating_point_type(Type type) {
     return type;
 }
 
+// Helper function to get the unsigned version of an integer type
+static Type get_unsigned_version(Type type) {
+    switch (type) {
+        case Type::Char:
+        case Type::UnsignedChar:
+            return Type::UnsignedChar;
+        case Type::Short:
+        case Type::UnsignedShort:
+            return Type::UnsignedShort;
+        case Type::Int:
+        case Type::UnsignedInt:
+            return Type::UnsignedInt;
+        case Type::Long:
+        case Type::UnsignedLong:
+            return Type::UnsignedLong;
+        case Type::LongLong:
+        case Type::UnsignedLongLong:
+            return Type::UnsignedLongLong;
+        default:
+            return type;  // Keep as-is for non-integer types
+    }
+}
+
+// Check if a signed type can represent all values of an unsigned type
+// This depends on platform-specific type sizes
+static bool can_represent_all_values(Type signed_type, Type unsigned_type) {
+    // Get the bit sizes for comparison
+    int signed_bits = get_type_size_bits(signed_type);
+    int unsigned_bits = get_type_size_bits(unsigned_type);
+    
+    // A signed type can represent all values of an unsigned type
+    // if the signed type has more bits (excluding the sign bit)
+    // For example: int (32-bit signed) can represent all unsigned short (16-bit) values
+    // but int cannot represent all unsigned int values (same size)
+    return signed_bits > unsigned_bits;
+}
+
 Type get_common_type(Type left, Type right) {
+    // C++20 usual arithmetic conversions [conv.arith]
+    
     // Floating-point types have higher precedence than integer types
     bool left_is_fp = is_floating_point_type(left);
     bool right_is_fp = is_floating_point_type(right);
@@ -329,7 +377,7 @@ Type get_common_type(Type left, Type right) {
     }
 
     // Both are integer types: apply integer promotions first
-    // This handles bool -> int, char -> int, short -> int
+    // This handles bool -> int, char -> int, short -> int, unsigned char/short -> int
     left = promote_integer_type(left);
     right = promote_integer_type(right);
 
@@ -338,22 +386,36 @@ Type get_common_type(Type left, Type right) {
         return left;
     }
 
-    // If one is signed and the other unsigned, and they have the same rank
+    // Get signedness and ranks
+    bool left_unsigned = is_unsigned_integer_type(left);
+    bool right_unsigned = is_unsigned_integer_type(right);
     int left_rank = get_integer_rank(left);
     int right_rank = get_integer_rank(right);
 
-    if (left_rank == right_rank) {
-        // Same rank: unsigned wins
-        if (is_unsigned_integer_type(left)) return left;
-        if (is_unsigned_integer_type(right)) return right;
+    // Case 1: Same signedness - higher rank wins
+    if (left_unsigned == right_unsigned) {
+        return (left_rank > right_rank) ? left : right;
     }
 
-    // Different ranks: higher rank wins
-    if (left_rank > right_rank) {
-        return left;
-    } else {
-        return right;
+    // Case 2: One is signed, one is unsigned - apply C++20 rules
+    // Identify which is signed and which is unsigned
+    Type signed_type = left_unsigned ? right : left;
+    Type unsigned_type = left_unsigned ? left : right;
+    int signed_rank = left_unsigned ? right_rank : left_rank;
+    int unsigned_rank = left_unsigned ? left_rank : right_rank;
+
+    // Rule 1: If unsigned type's rank >= signed type's rank, convert to unsigned
+    if (unsigned_rank >= signed_rank) {
+        return unsigned_type;
     }
+
+    // Rule 2: If signed type can represent all values of unsigned type, convert to signed
+    if (can_represent_all_values(signed_type, unsigned_type)) {
+        return signed_type;
+    }
+
+    // Rule 3: Convert both to unsigned version of the signed type
+    return get_unsigned_version(signed_type);
 }
 
 bool requires_conversion(Type from, Type to) {
