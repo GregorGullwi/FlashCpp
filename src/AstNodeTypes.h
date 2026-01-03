@@ -1172,6 +1172,10 @@ public:
 	}
 	std::optional<size_t> array_size() const { return array_size_; }
 
+	// Pack expansion support (for variadic templates like Args...)
+	bool is_pack_expansion() const { return is_pack_expansion_; }
+	void set_pack_expansion(bool is_pack) { is_pack_expansion_ = is_pack; }
+
 	void set_type_index(TypeIndex index) { type_index_ = index; }
 	const Token& token() const { return token_; }
 	void copy_indirection_from(const TypeSpecifierNode& other) {
@@ -1179,6 +1183,7 @@ public:
 		reference_qualifier_ = other.reference_qualifier_;
 		is_array_ = other.is_array_;
 		array_size_ = other.array_size_;
+		is_pack_expansion_ = other.is_pack_expansion_;
 	}
 
 	// Get readable string representation
@@ -1230,6 +1235,7 @@ private:
 	bool is_array_ = false;      // True if this is an array type (T[N] or T[])
 	std::optional<size_t> array_size_;  // Array size if known (e.g., int[10] -> 10)
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
+	bool is_pack_expansion_ = false;  // True if this type is followed by ... (pack expansion)
 };
 
 class DeclarationNode {

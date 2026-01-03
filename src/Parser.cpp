@@ -2685,6 +2685,43 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		if (!type_result.node().has_value()) {
 			return ParseResult::error("Expected type after '=' in type alias", *current_token_);
 		}
+
+		// Parse pointer/reference modifiers after the base type
+		// For example: using type = _Tp&; or using RvalueRef = T&&;
+		TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+		
+		// Parse pointer declarators: * [const] [volatile] *...
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+		       peek_token()->value() == "*") {
+			consume_token(); // consume '*'
+			type_spec.add_pointer_level();
+			
+			// Check for const/volatile after pointer
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				if (peek_token()->value() == "const") {
+					consume_token();
+					// Note: could track const qualifier per pointer level
+				} else if (peek_token()->value() == "volatile") {
+					consume_token();
+				} else {
+					break;
+				}
+			}
+		}
+		
+		// Parse reference modifiers: & or &&
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+			std::string_view op_value = peek_token()->value();
+			if (op_value == "&&") {
+				// Rvalue reference
+				consume_token();
+				type_spec.set_reference(true);  // true = rvalue reference
+			} else if (op_value == "&") {
+				// Lvalue reference
+				consume_token();
+				type_spec.set_reference(false);  // false = lvalue reference
+			}
+		}
 		
 		// Consume semicolon
 		if (!consume_punctuator(";")) {
@@ -2697,7 +2734,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		}
 		
 		// Also register it globally with qualified name (e.g., WithType::type)
-		const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+		// (re-get type_spec since we modified it above)
+		const TypeSpecifierNode& final_type_spec = type_result.node()->as<TypeSpecifierNode>();
 		
 		// Build qualified name if we're inside a struct
 		StringHandle qualified_alias_name = alias_name;
@@ -2709,9 +2747,12 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			qualified_alias_name = StringTable::getOrInternStringHandle(qualified_builder.commit());
 		}
 		
-		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, type_spec.type(), gTypeInfo.size());
-		alias_type_info.type_index_ = type_spec.type_index();
-		alias_type_info.type_size_ = type_spec.size_in_bits();
+		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, final_type_spec.type(), gTypeInfo.size());
+		alias_type_info.type_index_ = final_type_spec.type_index();
+		alias_type_info.type_size_ = final_type_spec.size_in_bits();
+		alias_type_info.is_reference_ = final_type_spec.is_reference();
+		alias_type_info.is_rvalue_reference_ = final_type_spec.is_rvalue_reference();
+		alias_type_info.pointer_depth_ = final_type_spec.pointer_depth();
 		gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 		
 		return ParseResult::success();
@@ -13363,6 +13404,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				type_spec.set_array(true, array_size_val);
 			}
 
+			// Check for pack expansion (...) after the first type argument
+			if (peek_token().has_value() && peek_token()->value() == "...") {
+				consume_token();  // consume '...'
+				type_spec.set_pack_expansion(true);
+			}
+
 			if (is_variadic_trait) {
 				// Variadic trait: parse comma-separated additional types
 				std::vector<ASTNode> additional_types;
@@ -13414,6 +13461,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						
 						arg_type_spec.set_array(true, array_size_val);
+					}
+
+					// Check for pack expansion (...) after the type argument
+					if (peek_token().has_value() && peek_token()->value() == "...") {
+						consume_token();  // consume '...'
+						arg_type_spec.set_pack_expansion(true);
 					}
 					
 					additional_types.push_back(*arg_type_result.node());
