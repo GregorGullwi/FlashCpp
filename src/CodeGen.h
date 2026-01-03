@@ -10457,6 +10457,32 @@ private:
 			}
 		}
 		
+		// Special handling for assignment: convert RHS to LHS type instead of finding common type
+		// For assignment, we don't want to promote the LHS
+		if (op == "=") {
+			// Convert RHS to LHS type if they differ
+			if (rhsType != lhsType) {
+				rhsIrOperands = generateTypeConversion(rhsIrOperands, rhsType, lhsType, binaryOperatorNode.get_token());
+			}
+			// Now both are the same type, create assignment
+			AssignmentOp assign_op;
+			// Extract the LHS value directly (it's either StringHandle or TempVar)
+			if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
+				assign_op.result = std::get<StringHandle>(lhsIrOperands[2]);
+			} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
+				assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
+			} else {
+				// LHS is an immediate value - this shouldn't happen for valid assignments
+				assert(false && "Assignment LHS cannot be an immediate value");
+				return {};
+			}
+			assign_op.lhs = toTypedValue(lhsIrOperands);
+			assign_op.rhs = toTypedValue(rhsIrOperands);
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
+			// Assignment expression returns the LHS (the assigned-to value)
+			return lhsIrOperands;
+		}
+		
 		Type commonType = get_common_type(lhsType, rhsType);
 
 		// Generate conversions if needed
@@ -10715,24 +10741,11 @@ private:
 				return { Type::Bool, 8, result_var, 0ULL };
 			}
 
-			// Assignment using typed payload
+			// Assignment handling moved earlier (before common type promotion)
 			if (op == "=") {
-				AssignmentOp assign_op;
-				// Extract the LHS value directly (it's either StringHandle or TempVar)
-				if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
-					assign_op.result = std::get<StringHandle>(lhsIrOperands[2]);
-				} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
-					assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
-				} else {
-					// LHS is an immediate value - this shouldn't happen for valid assignments
-					assert(false && "Assignment LHS cannot be an immediate value");
-					return {};
-				}
-				assign_op.lhs = toTypedValue(lhsIrOperands);
-				assign_op.rhs = toTypedValue(rhsIrOperands);
-				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
-				// Assignment expression returns the LHS (the assigned-to value)
-				return lhsIrOperands;
+				// This should never be reached since assignment is handled before common type conversion
+				assert(false && "Assignment should have been handled earlier");
+				return {};
 			}
 			else {
 				assert(false && "Unsupported binary operator in this code path");
