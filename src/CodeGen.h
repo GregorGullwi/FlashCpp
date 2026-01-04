@@ -10594,13 +10594,32 @@ private:
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		// Comparison operations (typed)
-		else if (op == "==" && !is_floating_point_op) {
+		// For pointer comparisons, override types to use 64-bit unsigned integers
+		// Helper lambda to apply pointer comparison type override
+		auto applyPointerComparisonOverride = [&](BinaryOp& bin_op, IrOpcode& opcode) {
+			if (lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
+				bin_op.lhs.type = Type::UnsignedLongLong;
+				bin_op.lhs.size_in_bits = 64;
+				bin_op.rhs.type = Type::UnsignedLongLong;
+				bin_op.rhs.size_in_bits = 64;
+				
+				// For ordered comparisons, ensure we use unsigned comparison for pointers
+				if (opcode == IrOpcode::LessThan) opcode = IrOpcode::UnsignedLessThan;
+				else if (opcode == IrOpcode::LessEqual) opcode = IrOpcode::UnsignedLessEqual;
+				else if (opcode == IrOpcode::GreaterThan) opcode = IrOpcode::UnsignedGreaterThan;
+				else if (opcode == IrOpcode::GreaterEqual) opcode = IrOpcode::UnsignedGreaterEqual;
+			}
+		};
+		
+		if (op == "==" && !is_floating_point_op) {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
 				.result = result_var,
 			};
-			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(bin_op), binaryOperatorNode.get_token()));
+			opcode = IrOpcode::Equal;
+			applyPointerComparisonOverride(bin_op, opcode);
+			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == "!=" && !is_floating_point_op) {
 			BinaryOp bin_op{
@@ -10608,7 +10627,9 @@ private:
 				.rhs = toTypedValue(rhsIrOperands),
 				.result = result_var,
 			};
-			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), binaryOperatorNode.get_token()));
+			opcode = IrOpcode::NotEqual;
+			applyPointerComparisonOverride(bin_op, opcode);
+			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == "<" && !is_floating_point_op) {
 			opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedLessThan : IrOpcode::LessThan;
@@ -10617,6 +10638,7 @@ private:
 				.rhs = toTypedValue(rhsIrOperands),
 				.result = result_var,
 			};
+			applyPointerComparisonOverride(bin_op, opcode);
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == "<=" && !is_floating_point_op) {
@@ -10626,6 +10648,7 @@ private:
 				.rhs = toTypedValue(rhsIrOperands),
 				.result = result_var,
 			};
+			applyPointerComparisonOverride(bin_op, opcode);
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == ">" && !is_floating_point_op) {
@@ -10635,6 +10658,7 @@ private:
 				.rhs = toTypedValue(rhsIrOperands),
 				.result = result_var,
 			};
+			applyPointerComparisonOverride(bin_op, opcode);
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == ">=" && !is_floating_point_op) {
@@ -10644,6 +10668,7 @@ private:
 				.rhs = toTypedValue(rhsIrOperands),
 				.result = result_var,
 			};
+			applyPointerComparisonOverride(bin_op, opcode);
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		// Compound assignment operations (typed)
