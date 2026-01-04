@@ -26919,6 +26919,94 @@ if (struct_type_info.getStructInfo()) {
 							}
 						}
 					}
+				} else if (std::holds_alternative<SizeofExprNode>(expr)) {
+					// Handle sizeof(T) as a default value
+					const SizeofExprNode& sizeof_node = std::get<SizeofExprNode>(expr);
+					if (sizeof_node.is_type()) {
+						// sizeof(type) - evaluate the type size
+						const ASTNode& type_node = sizeof_node.type_or_expr();
+						if (type_node.is<TypeSpecifierNode>()) {
+							TypeSpecifierNode type_spec = type_node.as<TypeSpecifierNode>();
+							
+							// Check if this is a template parameter that needs substitution
+							bool found_substitution = false;
+							std::string_view sizeof_type_name;
+							
+							// Try to get the type name from the token first (most reliable for template params)
+							if (type_spec.token().type() == Token::Type::Identifier) {
+								sizeof_type_name = type_spec.token().value();
+							} else if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+								// Fall back to gTypeInfo for fully resolved types
+								const TypeInfo& sizeof_type_info = gTypeInfo[type_spec.type_index()];
+								sizeof_type_name = StringTable::getStringView(sizeof_type_info.name());
+							}
+							
+							if (!sizeof_type_name.empty()) {
+								// Check if this is one of the template parameters we've already filled
+								for (size_t j = 0; j < template_params.size() && j < filled_template_args.size(); ++j) {
+									if (template_params[j].is<TemplateParameterNode>()) {
+										const TemplateParameterNode& prev_param = template_params[j].as<TemplateParameterNode>();
+										if (prev_param.name() == sizeof_type_name) {
+											// Found the matching template parameter - use its filled value
+											const TemplateTypeArg& filled_arg = filled_template_args[j];
+											if (filled_arg.base_type != Type::Invalid) {
+												// Calculate the size of the filled type
+												int size_in_bytes = 0;
+												switch (filled_arg.base_type) {
+													case Type::Bool:
+													case Type::Char:
+													case Type::UnsignedChar:
+														size_in_bytes = 1;
+														break;
+													case Type::Short:
+													case Type::UnsignedShort:
+														size_in_bytes = 2;
+														break;
+													case Type::Int:
+													case Type::UnsignedInt:
+													case Type::Float:
+														size_in_bytes = 4;
+														break;
+													case Type::Long:
+													case Type::UnsignedLong:
+													case Type::LongLong:
+													case Type::UnsignedLongLong:
+													case Type::Double:
+														size_in_bytes = 8;
+														break;
+													case Type::Struct:
+														// For struct types, we need to look up the actual size
+														if (filled_arg.type_index < gTypeInfo.size()) {
+															const TypeInfo& struct_type = gTypeInfo[filled_arg.type_index];
+															if (struct_type.getStructInfo()) {
+																size_in_bytes = struct_type.getStructInfo()->total_size;
+															}
+														}
+														break;
+													default:
+														break;
+												}
+												if (size_in_bytes > 0) {
+													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
+													FLASH_LOG(Templates, Debug, "Filled in sizeof(", sizeof_type_name, ") default for instantiation: ", size_in_bytes, " bytes");
+													found_substitution = true;
+													break;
+												}
+											}
+										}
+									}
+								}
+							}
+							
+							if (!found_substitution) {
+								// Direct type (not a template parameter)
+								int size_in_bits = type_spec.size_in_bits();
+								int size_in_bytes = (size_in_bits + 7) / 8;  // Round up to bytes
+								filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
+								FLASH_LOG(Templates, Debug, "Filled in sizeof default for instantiation: ", size_in_bytes, " bytes");
+							}
+						}
+					}
 				}
 			}
 		}
@@ -27218,14 +27306,56 @@ if (struct_type_info.getStructInfo()) {
 				// Fallback: if we have concrete template arguments available, try instantiating directly
 				if (!template_args_to_use.empty()) {
 					std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
-					std::string_view instantiated_name = instantiate_and_register_base_template(base_template_name, template_args_to_use);
-					if (!instantiated_name.empty()) {
-						base_template_name = instantiated_name;
+					
+					// Check if the base_template_name contains a member type suffix (e.g., "detail::select_base::type")
+					// This happens when the full qualified name is stored in base_template_name
+					std::string_view member_type_suffix;
+					std::string_view actual_template_name = base_template_name;
+					
+					// Find the last "::" that's not part of the template name
+					// For "detail::select_base::type", we want to split at the last "::" before "type"
+					size_t last_scope = base_template_name.rfind("::");
+					if (last_scope != std::string_view::npos && last_scope > 0) {
+						member_type_suffix = base_template_name.substr(last_scope + 2);
+						// Check if this looks like a member type (common names like "type", "value_type", etc.)
+						// Or check if the part before :: is a valid template name
+						std::string_view potential_template = base_template_name.substr(0, last_scope);
+						
+						// Only treat as member type if the potential template is a valid namespace::template pattern
+						if (potential_template.find("::") != std::string_view::npos) {
+							actual_template_name = potential_template;
+						} else {
+							// Single-level template, keep as-is
+							member_type_suffix = std::string_view{};
+						}
 					}
 					
-					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_template_name));
+					std::string_view instantiated_name = instantiate_and_register_base_template(actual_template_name, template_args_to_use);
+					if (!instantiated_name.empty()) {
+						actual_template_name = instantiated_name;
+					}
+					
+					// If we have a member type suffix, look it up from the instantiated template
+					if (!member_type_suffix.empty()) {
+						StringBuilder member_lookup_builder;
+						member_lookup_builder.append(actual_template_name);
+						member_lookup_builder.append("::");
+						member_lookup_builder.append(member_type_suffix);
+						std::string_view member_lookup_name = member_lookup_builder.commit();
+						
+						auto member_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(member_lookup_name));
+						if (member_type_it != gTypesByName.end()) {
+							struct_info->addBaseClass(member_lookup_name, member_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
+							FLASH_LOG(Templates, Debug, "Resolved deferred base with member type: ", member_lookup_name);
+							continue;
+						} else {
+							FLASH_LOG(Templates, Warning, "Could not find member type '", member_type_suffix, "' in instantiated template '", actual_template_name, "'");
+						}
+					}
+					
+					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(actual_template_name));
 					if (base_type_it != gTypesByName.end()) {
-						struct_info->addBaseClass(base_template_name, base_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
+						struct_info->addBaseClass(actual_template_name, base_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
 					}
 				}
 				continue;
@@ -27656,6 +27786,68 @@ if (struct_type_info.getStructInfo()) {
 				);
 			}
 			
+			// Copy static members from the original nested struct
+			// Look up the original nested struct by building its qualified name from the template
+			StringBuilder original_nested_name_builder;
+			original_nested_name_builder.append(template_name).append("::"sv).append(nested_struct.name());
+			std::string_view original_nested_name = original_nested_name_builder.commit();
+			
+			FLASH_LOG(Templates, Debug, "Looking for original nested class: ", original_nested_name);
+			auto original_nested_it = gTypesByName.find(StringTable::getOrInternStringHandle(original_nested_name));
+			if (original_nested_it != gTypesByName.end()) {
+				const TypeInfo* original_nested_type = original_nested_it->second;
+				FLASH_LOG(Templates, Debug, "Found original nested class, checking struct info...");
+				if (original_nested_type->getStructInfo()) {
+					const StructTypeInfo* original_struct_info = original_nested_type->getStructInfo();
+					FLASH_LOG(Templates, Debug, "Copying ", original_struct_info->static_members.size(), 
+					          " static members from nested class ", original_nested_name);
+					for (const auto& static_member : original_struct_info->static_members) {
+						FLASH_LOG(Templates, Debug, "  Copying static member: ", StringTable::getStringView(static_member.getName()));
+						nested_struct_info->addStaticMember(
+							static_member.getName(),
+							static_member.type,
+							static_member.type_index,
+							static_member.size,
+							static_member.alignment,
+							static_member.access,
+							static_member.initializer,
+							static_member.is_const
+						);
+					}
+				} else {
+					FLASH_LOG(Templates, Debug, "Original nested class has no struct info");
+				}
+			} else {
+				// Try looking up with just the nested struct name (without template prefix)
+				// This handles cases where templates use simple names for nested types
+				std::string_view simple_name = StringTable::getStringView(nested_struct.name());
+				FLASH_LOG(Templates, Debug, "Looking for nested class with simple name: ", simple_name);
+				auto simple_nested_it = gTypesByName.find(nested_struct.name());
+				if (simple_nested_it != gTypesByName.end()) {
+					const TypeInfo* original_nested_type = simple_nested_it->second;
+					if (original_nested_type->getStructInfo()) {
+						const StructTypeInfo* original_struct_info = original_nested_type->getStructInfo();
+						FLASH_LOG(Templates, Debug, "Copying ", original_struct_info->static_members.size(), 
+						          " static members from nested class (simple name) ", simple_name);
+						for (const auto& static_member : original_struct_info->static_members) {
+							FLASH_LOG(Templates, Debug, "  Copying static member: ", StringTable::getStringView(static_member.getName()));
+							nested_struct_info->addStaticMember(
+								static_member.getName(),
+								static_member.type,
+								static_member.type_index,
+								static_member.size,
+								static_member.alignment,
+								static_member.access,
+								static_member.initializer,
+								static_member.is_const
+							);
+						}
+					}
+				} else {
+					FLASH_LOG(Templates, Debug, "Original nested class not found in gTypesByName");
+				}
+			}
+			
 			// Finalize the nested struct layout
 			nested_struct_info->finalize();
 			
@@ -27666,6 +27858,7 @@ if (struct_type_info.getStructInfo()) {
 				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
 			}
 			gTypesByName.emplace(qualified_name, &nested_type_info);
+			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
 		}
 	}
 

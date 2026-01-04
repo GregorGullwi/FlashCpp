@@ -15110,6 +15110,95 @@ private:
 					}
 				}
 			}
+			// Special handling for member access: sizeof(s.member) where member is an array
+			else if (std::holds_alternative<MemberAccessNode>(expr)) {
+				const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
+				std::string_view member_name = member_access.member_name();
+				FLASH_LOG(Codegen, Debug, "sizeof(member_access): member_name=", member_name);
+				
+				// Get the object's type to find the struct info
+				const ASTNode& object_node = member_access.object();
+				if (object_node.is<ExpressionNode>()) {
+					const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(obj_expr)) {
+						const IdentifierNode& id_node = std::get<IdentifierNode>(obj_expr);
+						FLASH_LOG(Codegen, Debug, "sizeof(member_access): object_name=", id_node.name());
+						
+						// Look up the identifier to get its type
+						std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
+						if (!symbol.has_value() && global_symbol_table_) {
+							symbol = global_symbol_table_->lookup(id_node.name());
+						}
+						
+						if (symbol.has_value()) {
+							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+							if (decl) {
+								const TypeSpecifierNode& obj_type = decl->type_node().as<TypeSpecifierNode>();
+								FLASH_LOG(Codegen, Debug, "sizeof(member_access): obj_type=", (int)obj_type.type(), " type_index=", obj_type.type_index());
+								if (obj_type.type() == Type::Struct) {
+									size_t type_index = obj_type.type_index();
+									if (type_index < gTypeInfo.size()) {
+										const TypeInfo& type_info = gTypeInfo[type_index];
+										std::string_view base_type_name = StringTable::getStringView(type_info.name());
+										FLASH_LOG(Codegen, Debug, "sizeof(member_access): type_info name=", base_type_name);
+										const StructTypeInfo* struct_info = type_info.getStructInfo();
+										
+										// First try the direct struct_info
+										size_t direct_member_size = 0;
+										if (struct_info && !struct_info->members.empty()) {
+											FLASH_LOG(Codegen, Debug, "sizeof(member_access): struct found, members=", struct_info->members.size());
+											// Find the member in the struct
+											for (const auto& member : struct_info->members) {
+												FLASH_LOG(Codegen, Debug, "  checking member: ", StringTable::getStringView(member.getName()), " size=", member.size);
+												if (StringTable::getStringView(member.getName()) == member_name) {
+													direct_member_size = member.size;
+													break;
+												}
+											}
+										}
+										
+										// If direct lookup found a member with size > 1, use it
+										// Otherwise, search for instantiated types (template vs instantiation mismatch)
+										if (direct_member_size > 1) {
+											FLASH_LOG(Codegen, Debug, "sizeof(member_access): FOUND member size=", direct_member_size);
+											return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(direct_member_size) };
+										}
+										
+										// Fallback: If direct lookup failed or found size <= 1 (could be unsubstituted template),
+										// search for instantiated types that match this base template name
+										// This handles cases like test<int> where type_index points to 'test' 
+										// but we need 'test_int_4' for the correct member size
+										for (const auto& ti : gTypeInfo) {
+											std::string_view ti_name = StringTable::getStringView(ti.name());
+											// Check if this is an instantiation of the base template
+											// Instantiated names start with base_name followed by '_'
+											if (ti_name.size() > base_type_name.size() && 
+											    ti_name.substr(0, base_type_name.size()) == base_type_name &&
+											    ti_name[base_type_name.size()] == '_') {
+												const StructTypeInfo* inst_struct_info = ti.getStructInfo();
+												if (inst_struct_info && !inst_struct_info->members.empty()) {
+													for (const auto& member : inst_struct_info->members) {
+														if (StringTable::getStringView(member.getName()) == member_name) {
+															FLASH_LOG(Codegen, Debug, "sizeof(member_access): Found in instantiated type '", ti_name, "' member size=", member.size);
+															return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member.size) };
+														}
+													}
+												}
+											}
+										}
+										
+										// If no instantiation found but direct lookup had a result, use that
+										if (direct_member_size > 0) {
+											FLASH_LOG(Codegen, Debug, "sizeof(member_access): Using direct lookup member size=", direct_member_size);
+											return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(direct_member_size) };
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
 
 			// Fall back to default expression handling
 			// Generate IR for the expression to get its type
