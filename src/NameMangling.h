@@ -772,20 +772,20 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	std::string_view struct_name = "",
 	const std::vector<std::string_view>& namespace_path = {}
 ) {
-	StringBuilder builder;
-	
 	if (func_name == "main") {
+		StringBuilder builder;
 		builder.append("main");
 		return MangledName(builder.commit());
 	}
-	
+
 	// Use Itanium ABI for template specializations (most portable)
 	if (g_mangling_style == ManglingStyle::Itanium) {
+		StringBuilder builder;
 		generateItaniumMangledNameWithTemplateArgs(builder, func_name, return_type, param_types,
 		                                           non_type_template_args, is_variadic, struct_name, namespace_path);
 		return MangledName(builder.commit());
 	}
-	
+
 	// MSVC: Append template args to function name (simplified)
 	// Format: ?func_name<0>@...
 	StringBuilder name_with_args;
@@ -798,9 +798,9 @@ inline MangledName generateMangledNameWithTemplateArgs(
 		}
 		name_with_args.append(">");
 	}
-	
+
 	// Fall back to regular mangling with modified name
-	return generateMangledName(name_with_args.commit(), return_type, param_types, 
+	return generateMangledName(name_with_args.commit(), return_type, param_types,
 	                           is_variadic, struct_name, namespace_path);
 }
 

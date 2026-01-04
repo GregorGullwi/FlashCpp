@@ -3443,14 +3443,12 @@ private:
 				}
 				
 				// Find the struct info
-				TypeIndex type_index = 0;
 				const StructTypeInfo* struct_info = nullptr;
 				
 				// Look up the struct by return type index or name
 				for (size_t i = 0; i < gTypeInfo.size(); ++i) {
 					if (gTypeInfo[i].struct_info_ &&
 					    static_cast<int>(gTypeInfo[i].struct_info_->total_size * 8) == return_size) {
-						type_index = static_cast<TypeIndex>(i);
 						struct_info = gTypeInfo[i].struct_info_.get();
 						break;
 					}
@@ -10675,6 +10673,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),  // Store result in LHS variable
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::AddAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "-=") {
 			BinaryOp bin_op{
@@ -10683,6 +10682,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::SubAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "*=") {
 			BinaryOp bin_op{
@@ -10691,6 +10691,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::MulAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "/=") {
 			BinaryOp bin_op{
@@ -10699,6 +10700,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::DivAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "%=") {
 			BinaryOp bin_op{
@@ -10707,6 +10709,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ModAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "&=") {
 			BinaryOp bin_op{
@@ -10715,6 +10718,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::AndAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "|=") {
 			BinaryOp bin_op{
@@ -10723,6 +10727,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::OrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "^=") {
 			BinaryOp bin_op{
@@ -10731,6 +10736,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::XorAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "<<=") {
 			BinaryOp bin_op{
@@ -10739,6 +10745,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ShlAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == ">>=") {
 			BinaryOp bin_op{
@@ -10747,10 +10754,11 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ShrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
-		else { // Build operands differently based on whether we're using typed struct
+		else if (is_floating_point_op) { // Floating-point operations
 			// Float operations use typed BinaryOp
-			if (is_floating_point_op && (op == "+" || op == "-" || op == "*" || op == "/")) {
+			if (op == "+" || op == "-" || op == "*" || op == "/") {
 				// Determine float opcode
 				IrOpcode float_opcode;
 				if (op == "+") float_opcode = IrOpcode::FloatAdd;
@@ -10774,7 +10782,7 @@ private:
 			}
 
 			// Float comparison operations use typed BinaryOp
-			if (is_floating_point_op && (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=")) {
+			else if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
 				// Determine float comparison opcode
 				IrOpcode float_cmp_opcode;
 				if (op == "==") float_cmp_opcode = IrOpcode::FloatEqual;
@@ -10800,14 +10808,11 @@ private:
 				// Float comparisons return boolean (bool8)
 				return { Type::Bool, 8, result_var, 0ULL };
 			}
-
-			// Assignment is now handled earlier (before common type promotion)
-			// If we reach here with an assignment operator, something went wrong
-			assert(op != "=" && "Assignment should have been handled before reaching this code");
-			
-			// Unsupported binary operator
-			assert(false && "Unsupported binary operator in this code path");
-			return {};
+			else {
+				// Unsupported floating-point operator
+				assert(false && "Unsupported floating-point binary operator");
+				return {};
+			}
 		}
 	
 		// For comparison operations, return boolean type (8 bits - bool size in C++)
