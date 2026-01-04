@@ -3781,8 +3781,8 @@ private:
 	// Helper function to emit a binary operation instruction (reg-to-reg)
 	void emitBinaryOpInstruction(uint8_t opcode, X64Register src_reg, X64Register dst_reg, int size_in_bits) {
 		// Determine if we need a REX prefix
-		bool needs_rex = (size_in_bits == 64);
-		uint8_t rex_prefix = (size_in_bits == 64) ? 0x48 : 0x40;
+		bool needs_rex = (size_in_bits == 64);  // Always need REX for 64-bit (REX.W)
+		uint8_t rex_prefix = (size_in_bits == 64) ? 0x48 : 0x40;  // REX.W for 64-bit, base REX for 32-bit
 		
 		// Check if registers need REX extensions
 		if (static_cast<uint8_t>(src_reg) >= 8) {
@@ -3992,19 +3992,42 @@ private:
 			ctx.result_physical_reg = allocateRegisterWithSpilling();
 
 			// Load the literal value into the register
-			// mov reg, imm64
-			uint8_t rex_prefix = 0x48; // REX.W
+			// Use the correct operand size for the move instruction
 			uint8_t reg_num = static_cast<uint8_t>(ctx.result_physical_reg);
 			
-			// For R8-R15, set REX.B bit
-			if (reg_num >= 8) {
-				rex_prefix |= 0x01; // Set REX.B
-				reg_num &= 0x07; // Use lower 3 bits for opcode
+			if (ctx.operand_size_in_bits == 64) {
+				// 64-bit: mov reg, imm64 with REX.W
+				uint8_t rex_prefix = 0x48; // REX.W
+				
+				// For R8-R15, set REX.B bit
+				if (reg_num >= 8) {
+					rex_prefix |= 0x01; // Set REX.B
+					reg_num &= 0x07; // Use lower 3 bits for opcode
+				}
+				
+				std::array<uint8_t, 10> movInst = { rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0 };
+				std::memcpy(&movInst[2], &lhs_value, sizeof(lhs_value));
+				textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+			} else {
+				// 32-bit (or smaller): mov r32, imm32
+				// Only use REX if we need extended registers (R8-R15)
+				bool needs_rex = (reg_num >= 8);
+				
+				if (needs_rex) {
+					uint8_t rex_prefix = 0x40; // Base REX (no REX.W for 32-bit)
+					rex_prefix |= 0x01; // Set REX.B
+					textSectionData.push_back(rex_prefix);
+					reg_num &= 0x07; // Use lower 3 bits for opcode
+				}
+				
+				// mov r32, imm32: opcode B8+r, imm32
+				textSectionData.push_back(static_cast<uint8_t>(0xB8 + reg_num));
+				uint32_t imm32 = static_cast<uint32_t>(lhs_value);
+				textSectionData.push_back(imm32 & 0xFF);
+				textSectionData.push_back((imm32 >> 8) & 0xFF);
+				textSectionData.push_back((imm32 >> 16) & 0xFF);
+				textSectionData.push_back((imm32 >> 24) & 0xFF);
 			}
-			
-			std::array<uint8_t, 10> movInst = { rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0 };
-			std::memcpy(&movInst[2], &lhs_value, sizeof(lhs_value));
-			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 		}
 		else if (instruction.isOperandType<double>(3)) {
 			// LHS is a floating-point literal value
@@ -4190,19 +4213,42 @@ private:
 			}
 
 			// Load the literal value into the register
-			// mov reg, imm64
-			uint8_t rex_prefix = 0x48; // REX.W
+			// Use the correct operand size for the move instruction
 			uint8_t reg_num = static_cast<uint8_t>(ctx.rhs_physical_reg);
 			
-			// For R8-R15, set REX.B bit
-			if (reg_num >= 8) {
-				rex_prefix |= 0x01; // Set REX.B
-				reg_num &= 0x07; // Use lower 3 bits for opcode
+			if (ctx.operand_size_in_bits == 64) {
+				// 64-bit: mov reg, imm64 with REX.W
+				uint8_t rex_prefix = 0x48; // REX.W
+				
+				// For R8-R15, set REX.B bit
+				if (reg_num >= 8) {
+					rex_prefix |= 0x01; // Set REX.B
+					reg_num &= 0x07; // Use lower 3 bits for opcode
+				}
+				
+				std::array<uint8_t, 10> movInst = { rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0 };
+				std::memcpy(&movInst[2], &rhs_value, sizeof(rhs_value));
+				textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+			} else {
+				// 32-bit (or smaller): mov r32, imm32
+				// Only use REX if we need extended registers (R8-R15)
+				bool needs_rex = (reg_num >= 8);
+				
+				if (needs_rex) {
+					uint8_t rex_prefix = 0x40; // Base REX (no REX.W for 32-bit)
+					rex_prefix |= 0x01; // Set REX.B
+					textSectionData.push_back(rex_prefix);
+					reg_num &= 0x07; // Use lower 3 bits for opcode
+				}
+				
+				// mov r32, imm32: opcode B8+r, imm32
+				textSectionData.push_back(static_cast<uint8_t>(0xB8 + reg_num));
+				uint32_t imm32 = static_cast<uint32_t>(rhs_value);
+				textSectionData.push_back(imm32 & 0xFF);
+				textSectionData.push_back((imm32 >> 8) & 0xFF);
+				textSectionData.push_back((imm32 >> 16) & 0xFF);
+				textSectionData.push_back((imm32 >> 24) & 0xFF);
 			}
-			
-			std::array<uint8_t, 10> movInst = { rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0 };
-			std::memcpy(&movInst[2], &rhs_value, sizeof(rhs_value));
-			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 		}
 		else if (std::holds_alternative<double>(bin_op.rhs.value)) {
 			// RHS is a floating-point literal value
