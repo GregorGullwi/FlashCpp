@@ -27682,21 +27682,35 @@ if (struct_type_info.getStructInfo()) {
 		unsigned char substituted_size = alias_type_spec.size_in_bits();
 		
 		// Substitute template parameters in the alias type
-		if (substituted_type == Type::UserDefined) {
+		// Handle both UserDefined and Struct types (template types are often registered as Struct)
+		if (substituted_type == Type::UserDefined || substituted_type == Type::Struct) {
 			TypeIndex type_idx = alias_type_spec.type_index();
 			if (type_idx < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[type_idx];
 				std::string_view type_name = StringTable::getStringView(type_info.name());
 				
-				// Try to find which template parameter this is
-				for (size_t i = 0; i < template_params.size(); ++i) {
-					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-					if (tparam.name() == type_name) {
-						// This is a template parameter - substitute with concrete type
-						substituted_type = template_args_to_use[i].base_type;
-						substituted_type_index = template_args_to_use[i].type_index;
-						substituted_size = get_type_size_bits(substituted_type);
-						break;
+				// Check for self-referential type alias (e.g., "using type = bool_constant;" inside bool_constant template)
+				// When the template is instantiated (e.g., bool_constant_true), this should point to the instantiated type
+				if (type_name == template_name) {
+					// Self-referential type alias - point to the instantiated type
+					auto inst_it = gTypesByName.find(instantiated_name);
+					if (inst_it != gTypesByName.end()) {
+						TypeIndex inst_idx = static_cast<TypeIndex>(inst_it->second - &gTypeInfo[0]);
+						substituted_type_index = inst_idx;
+						FLASH_LOG(Templates, Debug, "Self-referential type alias '", StringTable::getStringView(type_alias.alias_name), 
+						          "' now points to instantiated type '", instantiated_name, "' (index ", inst_idx, ")");
+					}
+				} else {
+					// Try to find which template parameter this is
+					for (size_t i = 0; i < template_params.size(); ++i) {
+						const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+						if (tparam.name() == type_name) {
+							// This is a template parameter - substitute with concrete type
+							substituted_type = template_args_to_use[i].base_type;
+							substituted_type_index = template_args_to_use[i].type_index;
+							substituted_size = get_type_size_bits(substituted_type);
+							break;
+						}
 					}
 				}
 			}
@@ -28613,58 +28627,88 @@ if (struct_type_info.getStructInfo()) {
 						// Binary expression like "1 + sizeof...(Rest)" - need to substitute sizeof...
 						const BinaryOperatorNode& bin_expr = std::get<BinaryOperatorNode>(expr);
 						
-						// Check if RHS is sizeof...
-						if (bin_expr.get_rhs().is<ExpressionNode>()) {
-							const ExpressionNode& rhs_expr = bin_expr.get_rhs().as<ExpressionNode>();
-							if (std::holds_alternative<SizeofPackNode>(rhs_expr)) {
-								const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(rhs_expr);
-								if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
-									// Evaluate the expression at compile time if LHS is a numeric literal
-									if (bin_expr.get_lhs().is<ExpressionNode>()) {
-										const ExpressionNode& lhs_expr = bin_expr.get_lhs().as<ExpressionNode>();
-										if (std::holds_alternative<NumericLiteralNode>(lhs_expr)) {
-											const NumericLiteralNode& lhs_num = std::get<NumericLiteralNode>(lhs_expr);
-											auto lhs_val = lhs_num.value();
-											unsigned long long lhs_value = std::holds_alternative<unsigned long long>(lhs_val) 
-												? std::get<unsigned long long>(lhs_val)
-												: static_cast<unsigned long long>(std::get<double>(lhs_val));
-											unsigned long long result = 0;
-											if (bin_expr.op() == "+") {
-												result = lhs_value + *pack_size;
-											} else if (bin_expr.op() == "-") {
-												result = lhs_value - *pack_size;
-											} else if (bin_expr.op() == "*") {
-												result = lhs_value * *pack_size;
-											}
-											substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
-										}
+						// Helper to extract pack size from various expression forms (including static_cast)
+						auto try_extract_pack_size = [&](const ExpressionNode& e) -> std::optional<size_t> {
+							if (std::holds_alternative<SizeofPackNode>(e)) {
+								const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(e);
+								return calculate_pack_size(sizeof_pack.pack_name());
+							}
+							// Handle static_cast<T>(sizeof...(Ts))
+							if (std::holds_alternative<StaticCastNode>(e)) {
+								const StaticCastNode& cast_node = std::get<StaticCastNode>(e);
+								if (cast_node.expr().is<ExpressionNode>()) {
+									const ExpressionNode& cast_inner = cast_node.expr().as<ExpressionNode>();
+									if (std::holds_alternative<SizeofPackNode>(cast_inner)) {
+										const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(cast_inner);
+										return calculate_pack_size(sizeof_pack.pack_name());
 									}
 								}
 							}
-						}
-						// Check if LHS is sizeof...
-						if (bin_expr.get_lhs().is<ExpressionNode>()) {
+							return std::nullopt;
+						};
+						
+						// Helper to extract numeric value from expression
+						auto try_extract_numeric = [](const ExpressionNode& e) -> std::optional<unsigned long long> {
+							if (std::holds_alternative<NumericLiteralNode>(e)) {
+								const NumericLiteralNode& num = std::get<NumericLiteralNode>(e);
+								auto val = num.value();
+								return std::holds_alternative<unsigned long long>(val) 
+									? std::get<unsigned long long>(val)
+									: static_cast<unsigned long long>(std::get<double>(val));
+							}
+							return std::nullopt;
+						};
+						
+						// Helper to evaluate a binary expression
+						auto evaluate_binary = [](std::string_view op, unsigned long long lhs, unsigned long long rhs) -> unsigned long long {
+							if (op == "+") return lhs + rhs;
+							if (op == "-") return lhs - rhs;
+							if (op == "*") return lhs * rhs;
+							if (op == "/") return rhs != 0 ? lhs / rhs : 0;
+							return 0;
+						};
+						
+						// Try to evaluate the top-level binary expression
+						if (bin_expr.get_lhs().is<ExpressionNode>() && bin_expr.get_rhs().is<ExpressionNode>()) {
 							const ExpressionNode& lhs_expr = bin_expr.get_lhs().as<ExpressionNode>();
-							if (std::holds_alternative<SizeofPackNode>(lhs_expr)) {
-								const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(lhs_expr);
-								if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
-									// Evaluate the expression at compile time if RHS is a numeric literal
-									if (bin_expr.get_rhs().is<ExpressionNode>()) {
-										const ExpressionNode& rhs_expr = bin_expr.get_rhs().as<ExpressionNode>();
-										if (std::holds_alternative<NumericLiteralNode>(rhs_expr)) {
-											const NumericLiteralNode& rhs_num = std::get<NumericLiteralNode>(rhs_expr);
-											auto rhs_val = rhs_num.value();
-											unsigned long long rhs_value = std::holds_alternative<unsigned long long>(rhs_val)
-												? std::get<unsigned long long>(rhs_val)
-												: static_cast<unsigned long long>(std::get<double>(rhs_val));
-											unsigned long long result = 0;
-											if (bin_expr.op() == "+") {
-												result = *pack_size + rhs_value;
-											} else if (bin_expr.op() == "-") {
-												result = *pack_size - rhs_value;
-											} else if (bin_expr.op() == "*") {
-												result = *pack_size * rhs_value;
-											}
+							const ExpressionNode& rhs_expr = bin_expr.get_rhs().as<ExpressionNode>();
+							
+							// Case 1: LHS is pack_size_expr (direct or via static_cast), RHS is numeric
+							if (auto lhs_pack = try_extract_pack_size(lhs_expr)) {
+								if (auto rhs_num = try_extract_numeric(rhs_expr)) {
+									unsigned long long result = evaluate_binary(bin_expr.op(), *lhs_pack, *rhs_num);
+									substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
+								}
+							}
+							// Case 2: LHS is numeric, RHS is pack_size_expr
+							else if (auto lhs_num = try_extract_numeric(lhs_expr)) {
+								if (auto rhs_pack = try_extract_pack_size(rhs_expr)) {
+									unsigned long long result = evaluate_binary(bin_expr.op(), *lhs_num, *rhs_pack);
+									substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
+								}
+							}
+							// Case 3: LHS is nested binary expression (e.g., static_cast<int>(sizeof...(Ts)) * 2), RHS is numeric
+							// Handles patterns like (static_cast<int>(sizeof...(Ts)) * 2) + 40
+							else if (std::holds_alternative<BinaryOperatorNode>(lhs_expr)) {
+								const BinaryOperatorNode& nested_bin = std::get<BinaryOperatorNode>(lhs_expr);
+								if (nested_bin.get_lhs().is<ExpressionNode>() && nested_bin.get_rhs().is<ExpressionNode>()) {
+									const ExpressionNode& nested_lhs = nested_bin.get_lhs().as<ExpressionNode>();
+									const ExpressionNode& nested_rhs = nested_bin.get_rhs().as<ExpressionNode>();
+									
+									std::optional<unsigned long long> nested_result;
+									if (auto nlhs_pack = try_extract_pack_size(nested_lhs)) {
+										if (auto nrhs_num = try_extract_numeric(nested_rhs)) {
+											nested_result = evaluate_binary(nested_bin.op(), *nlhs_pack, *nrhs_num);
+										}
+									} else if (auto nlhs_num = try_extract_numeric(nested_lhs)) {
+										if (auto nrhs_pack = try_extract_pack_size(nested_rhs)) {
+											nested_result = evaluate_binary(nested_bin.op(), *nlhs_num, *nrhs_pack);
+										}
+									}
+									
+									if (nested_result) {
+										if (auto rhs_num = try_extract_numeric(rhs_expr)) {
+											unsigned long long result = evaluate_binary(bin_expr.op(), *nested_result, *rhs_num);
 											substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
 										}
 									}

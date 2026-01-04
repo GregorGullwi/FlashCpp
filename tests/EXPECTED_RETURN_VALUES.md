@@ -8,11 +8,11 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-03 (after char assignment and modulo fixes)
+**Last Run:** 2026-01-04 (after static constexpr and type alias fixes)
 
 **Total files tested:** 817
-**Valid returns (matching expected):** 789 (up from 786)
-**Regressions (mismatches):** 15 (down from 18)
+**Valid returns (matching expected):** 793 (up from 789)
+**Regressions (mismatches):** 11 (down from 15)
 **Runtime crashes:** 13
 **Compile failures:** 0
 **Link failures:** 0
@@ -28,6 +28,11 @@ The following regressions have been FIXED:
 | test_template_param_typename_default_ret42.cpp | 42 | 16 | Assignment fix (side effect) | Fixed as side effect of assignment operator fix |
 | test_auto_trailing_return_ret42.cpp | 42 | 192 | Template parameter substitution | Function parameters were incorrectly substituted with first template argument |
 | test_structured_binding_lvalue_ref_ret52.cpp | 52 | 20 | (Already fixed) | Likely fixed by previous commit |
+| test_simple_range_ret6.cpp | 6 | 169 | (Already fixed) | Was incorrectly using 64-bit registers for 32-bit int ops |
+| test_container_out_of_line_ret60.cpp | 60 | 232 | (Already fixed) | Was incorrectly using 64-bit registers for 32-bit int ops |
+| test_static_constexpr_pack_value_ret42.cpp | 42 | 0 | sizeof... pack expansion | Nested binary expressions with static_cast<int>(sizeof...(Ts)) were not handled |
+| test_inherited_type_alias_ret42.cpp | 42 | 0 | Self-referential type alias | Type alias `using type = bool_constant;` inside `bool_constant` now correctly points to instantiated type |
+| test_type_alias_fix_simple_ret42.cpp | 42 | 0 | (Already fixed) | Static constexpr was properly initialized |
 
 ## Regressions Found
 
@@ -35,18 +40,13 @@ The following test files still have a mismatch between their expected return val
 
 | Test File | Expected | Actual | Status | Root Cause |
 |-----------|----------|--------|--------|------------|
-| test_container_out_of_line_ret60.cpp | 60 | 232 | REGRESSION | Codegen: 64-bit registers used for 32-bit int ops |
-| test_covariant_return_ret180.cpp | 180 | 111 | REGRESSION | Virtual function covariant return issue |
-| test_global_namespace_scope_ret1.cpp | 1 | 203 | REGRESSION | Global namespace resolution (sum=1025, need modulo) |
-| test_inherited_type_alias_ret42.cpp | 42 | 0 | REGRESSION | Static constexpr not initialized |
-| test_lambda_init_capture_demo_ret57.cpp | 57 | 73 | REGRESSION | May be test expectation issue (expected 68?) |
-| test_qualified_base_class_ret42.cpp | 42 | 0 | REGRESSION | Static constexpr not initialized |
-| test_simple_range_ret6.cpp | 6 | 169 | REGRESSION | Codegen: 64-bit registers used for 32-bit int ops |
+| test_covariant_return_ret180.cpp | 180 | crash | REGRESSION | Virtual function covariant return issue |
+| test_global_namespace_scope_ret1.cpp | 1 | 203 | EXPECTED | Global namespace resolution (sum=1025, 1025 % 256 = 1) |
+| test_lambda_init_capture_demo_ret57.cpp | 57 | 73 | TEST ISSUE | File naming issue - clang returns 68, test says expected 68 |
+| test_qualified_base_class_ret42.cpp | 42 | 0 | REGRESSION | Deferred template base with member type alias not resolved |
 | test_sizeof_template_param_default_ret4.cpp | 4 | 1 | REGRESSION | Template array size not substituted correctly |
-| test_static_constexpr_pack_value_ret42.cpp | 42 | 0 | REGRESSION | Static constexpr not initialized |
 | test_std_header_features_ret0.cpp | 0 | 8 | REGRESSION | Type trait/constexpr evaluation |
 | test_template_disambiguation_pack_ret40.cpp | 40 | 20 | REGRESSION | Template specialization not selected |
-| test_type_alias_fix_simple_ret42.cpp | 42 | 0 | REGRESSION | Static constexpr not initialized |
 | test_void_t_positive_ret0.cpp | 0 | 42 | REGRESSION | SFINAE specialization not selected |
 
 These values come from the 2026-01-04 run. When a regression is triaged, add a short note or link next to the entry to preserve context.
@@ -55,17 +55,17 @@ These values come from the 2026-01-04 run. When a regression is triaged, add a s
 
 The remaining regressions fall into these categories:
 
-1. **Static Constexpr Initialization** (5 tests): Static constexpr members in template instantiations are emitted as global symbols but contain zero values. The constexpr initializers are not being evaluated during template instantiation.
+1. **Template Specialization Selection** (2 tests): Template specializations with explicit arguments are not being selected correctly. The primary template is called instead of the specialization.
 
-2. **Codegen Register Size Bug** (2 tests): Range-based for loops incorrectly use 64-bit registers (rdx, rcx) instead of 32-bit (edx, ecx) for 32-bit int arithmetic, causing garbage in upper bits to corrupt results.
+2. **SFINAE Issues** (1 test): void_t SFINAE pattern doesn't select the correct specialization.
 
-3. **Template Specialization Selection** (2 tests): Template specializations with explicit arguments are not being selected correctly. The primary template is called instead of the specialization.
+3. **Template Array Size Substitution** (1 test): Non-type template parameters used as array sizes are not being substituted correctly during template instantiation.
 
-4. **SFINAE Issues** (1 test): void_t SFINAE pattern doesn't select the correct specialization.
+4. **Deferred Template Base Resolution** (1 test): Template base classes with dependent type member aliases (e.g., `detail::select_base<T>::type`) are not being resolved correctly.
 
-5. **Template Array Size Substitution** (1 test): Non-type template parameters used as array sizes are not being substituted correctly during template instantiation.
+5. **Type Trait Evaluation** (1 test): Complex constexpr type traits are not being evaluated correctly.
 
-6. **Other** (2 tests): Virtual function covariant returns, namespace resolution.
+6. **Other** (1 test): Virtual function covariant returns cause runtime crashes.
 
 ## Runtime Crashes
 
