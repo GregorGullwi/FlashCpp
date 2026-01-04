@@ -430,6 +430,8 @@ public:
 				continue;
 			}
 			
+			FLASH_LOG(Codegen, Debug, "Generating static members for struct '", type_name_view, "' - has_static_members=", !struct_info->static_members.empty(), " has_base_classes=", !struct_info->base_classes.empty());
+			
 			// Generate static members that this struct directly owns
 			if (!struct_info->static_members.empty()) {
 				for (const auto& static_member : struct_info->static_members) {
@@ -602,7 +604,16 @@ public:
 			// Also check if this struct inherits static members from base classes
 			// and generate alias definitions if needed (Phase 3: Generate ALL inherited static members)
 			if (!struct_info->base_classes.empty()) {
+				FLASH_LOG(Codegen, Debug, "Struct '", type_name_view, "' has ", struct_info->base_classes.size(), " base classes");
 				for (const auto& base : struct_info->base_classes) {
+					FLASH_LOG(Codegen, Debug, "  Base class: name='", base.name, "', type_index=", base.type_index);
+					if (base.type_index < gTypeInfo.size()) {
+						const TypeInfo& base_type = gTypeInfo[base.type_index];
+						const StructTypeInfo* base_info = base_type.getStructInfo();
+						if (base_info) {
+							FLASH_LOG(Codegen, Debug, "    Resolved to struct: '", StringTable::getStringView(base_info->name), "'");
+						}
+					}
 					if (base.type_index >= gTypeInfo.size()) {
 						continue;
 					}
@@ -627,6 +638,13 @@ public:
 							if (visited.count(current)) continue;
 							visited.insert(current);
 							
+							// Skip pattern structs - they have unsubstituted template parameters
+							std::string_view current_name = StringTable::getStringView(current->name);
+							if (current_name.find("_pattern_") != std::string::npos) {
+								FLASH_LOG(Codegen, Debug, "Skipping pattern struct '", current_name, "' in inheritance traversal");
+								continue;
+							}
+							
 							// Add all static members from current struct
 							for (const auto& static_member : current->static_members) {
 								all_static_members.emplace_back(&static_member, current);
@@ -646,6 +664,91 @@ public:
 						// Generate inherited static member definitions for each one found
 						for (const auto& [static_member_ptr, owner_struct] : all_static_members) {
 							std::string_view member_name = StringTable::getStringView(static_member_ptr->name);
+							std::string_view owner_struct_name = StringTable::getStringView(owner_struct->name);
+							
+							FLASH_LOG(Codegen, Debug, "Processing inherited static member '", member_name, 
+							          "' from owner struct '", owner_struct_name, "'");
+							
+							// Skip static members with unsubstituted template parameters
+							// These are from pattern templates and should only generate code when properly instantiated
+							// However, try to find the correct instantiation first
+							const StructStaticMember* effective_member_ptr = static_member_ptr;
+							const StructTypeInfo* effective_owner = owner_struct;
+							bool should_skip = false;
+							
+							if (static_member_ptr->initializer.has_value() && static_member_ptr->initializer->is<ExpressionNode>()) {
+								const ExpressionNode& expr = static_member_ptr->initializer->as<ExpressionNode>();
+								
+								bool is_unsubstituted = false;
+								std::string unsubst_reason;
+								
+								if (std::holds_alternative<SizeofPackNode>(expr)) {
+									is_unsubstituted = true;
+									unsubst_reason = "sizeof...";
+								}
+								else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+									const auto& tparam = std::get<TemplateParameterReferenceNode>(expr);
+									is_unsubstituted = true;
+									unsubst_reason = "template parameter '" + std::string(StringTable::getStringView(tparam.param_name())) + "'";
+								}
+								else if (std::holds_alternative<IdentifierNode>(expr)) {
+									const auto& id = std::get<IdentifierNode>(expr);
+									auto symbol = global_symbol_table_->lookup(id.name());
+									if (!symbol.has_value()) {
+										is_unsubstituted = true;
+										unsubst_reason = "identifier '" + std::string(id.name()) + "'";
+									}
+								}
+								
+								if (is_unsubstituted) {
+									// This static member is from a pattern template
+									// Try to find the correctly instantiated version based on the base class name
+									std::string_view base_class_name = base.name;
+									size_t scope_pos = base_class_name.find("::");
+									std::string_view instantiated_struct_name = base_class_name;
+									if (scope_pos != std::string_view::npos) {
+										instantiated_struct_name = base_class_name.substr(0, scope_pos);
+									}
+									
+									FLASH_LOG(Codegen, Debug, "Found unsubstituted static member '", member_name, 
+									          "' (", unsubst_reason, ") from pattern '", owner_struct_name, 
+									          "'. Looking for instantiated struct: '", instantiated_struct_name, "'");
+									
+									// Look up the instantiated struct
+									StringHandle instantiated_handle = StringTable::getOrInternStringHandle(instantiated_struct_name);
+									bool found_instantiation = false;
+									if (instantiated_handle.isValid()) {
+										auto it = gTypesByName.find(instantiated_handle);
+										if (it != gTypesByName.end() && it->second->isStruct()) {
+											const StructTypeInfo* instantiated_struct = it->second->getStructInfo();
+											if (instantiated_struct && instantiated_struct != owner_struct) {
+												// Find the same static member in the instantiated struct
+												for (const auto& inst_member : instantiated_struct->static_members) {
+													if (inst_member.getName() == static_member_ptr->name) {
+														FLASH_LOG(Codegen, Debug, "Found instantiated static member in '", instantiated_struct_name, "'");
+														// Use the instantiated member instead
+														effective_member_ptr = &inst_member;
+														effective_owner = instantiated_struct;
+														found_instantiation = true;
+														break;
+													}
+												}
+											}
+										}
+									}
+									
+									if (!found_instantiation) {
+										FLASH_LOG(Codegen, Debug, "Skipping inherited static member '", member_name, 
+										          "' with unsubstituted ", unsubst_reason, " from '", owner_struct_name, 
+										          "' (could not find instantiated version)");
+										should_skip = true;
+									}
+								}
+							}
+							
+							if (should_skip) {
+								continue;
+							}
 							
 							// Generate definition for this derived class
 							StringBuilder derived_qualified_name_sb;
@@ -666,8 +769,8 @@ public:
 							          "' for ", type_name, " from base ", base_name_str);
 							
 							GlobalVariableDeclOp alias_op;
-							alias_op.type = static_member_ptr->type;
-							alias_op.size_in_bits = static_cast<int>(static_member_ptr->size * 8);
+							alias_op.type = effective_member_ptr->type;
+							alias_op.size_in_bits = static_cast<int>(effective_member_ptr->size * 8);
 							alias_op.var_name = derived_name_handle;
 							alias_op.is_initialized = true;
 							
@@ -675,9 +778,13 @@ public:
 							bool found_base_value = false;
 							unsigned long long inferred_value = 0;
 							
-							if (static_member_ptr->initializer.has_value() && 
-							    static_member_ptr->initializer->is<ExpressionNode>()) {
-								const ExpressionNode& init_expr = static_member_ptr->initializer->as<ExpressionNode>();
+							FLASH_LOG(Codegen, Debug, "Checking initializer: has_value=", effective_member_ptr->initializer.has_value(),
+							          " is_expr=", (effective_member_ptr->initializer.has_value() && effective_member_ptr->initializer->is<ExpressionNode>()));
+							
+							if (effective_member_ptr->initializer.has_value() && 
+							    effective_member_ptr->initializer->is<ExpressionNode>()) {
+								const ExpressionNode& init_expr = effective_member_ptr->initializer->as<ExpressionNode>();
+								FLASH_LOG(Codegen, Debug, "Initializer expression variant index: ", init_expr.index());
 								
 								if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 									const auto& bool_lit = std::get<BoolLiteralNode>(init_expr);
@@ -696,9 +803,11 @@ public:
 										found_base_value = true;
 										FLASH_LOG(Codegen, Debug, "Found double literal value: ", d);
 									}
-								} else if (evaluate_static_initializer(*static_member_ptr->initializer, inferred_value)) {
+								} else if (evaluate_static_initializer(*effective_member_ptr->initializer, inferred_value)) {
 									found_base_value = true;
-									FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for inherited static member '", member_name, "'");
+									FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for inherited static member '", member_name, "': value=", inferred_value);
+								} else {
+									FLASH_LOG(Codegen, Debug, "Failed to evaluate constexpr initializer for inherited static member '", member_name, "'");
 								}
 							}
 							
