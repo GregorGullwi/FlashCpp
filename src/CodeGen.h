@@ -610,6 +610,35 @@ public:
 					const TypeInfo& base_type = gTypeInfo[base.type_index];
 					const StructTypeInfo* base_info = base_type.getStructInfo();
 					
+					// If base_type is a type alias (no struct_info), follow type_index_ to get the actual struct
+					// This handles cases like `struct Test : wrapper<true_type>::type` where `::type` is a type alias
+					if (!base_info && base_type.type_index_ != base.type_index && base_type.type_index_ < gTypeInfo.size()) {
+						const TypeInfo& resolved_type = gTypeInfo[base_type.type_index_];
+						base_info = resolved_type.getStructInfo();
+						FLASH_LOG(Codegen, Debug, "Resolved type alias '", StringTable::getStringView(base_type.name_), 
+						          "' to struct '", StringTable::getStringView(resolved_type.name_), "'");
+					}
+					
+					// Special handling for type aliases like "bool_constant_true::type"
+					// The StructTypeInfo for the type alias may have static members with unsubstituted initializers
+					// In this case, we need to find the actual underlying struct and use its static members instead
+					if (base_info && base.name.find("::") != std::string_view::npos) {
+						// Extract the struct name before "::" (e.g., "bool_constant_true" from "bool_constant_true::type")
+						auto pos = base.name.rfind("::");
+						if (pos != std::string_view::npos) {
+							std::string_view actual_struct_name = base.name.substr(0, pos);
+							auto actual_struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(actual_struct_name));
+							if (actual_struct_it != gTypesByName.end()) {
+								const StructTypeInfo* actual_info = actual_struct_it->second->getStructInfo();
+								if (actual_info) {
+									FLASH_LOG(Codegen, Debug, "Using actual struct '", actual_struct_name, 
+									          "' instead of type alias '", base.name, "' for static members");
+									base_info = actual_info;
+								}
+							}
+						}
+					}
+					
 					// Iterate through ALL static members in the base class hierarchy (Phase 3 fix)
 					if (base_info) {
 						// Collect all static members recursively from this base and its bases
