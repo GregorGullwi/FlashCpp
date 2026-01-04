@@ -14265,9 +14265,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 				if (identifierType->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
+					FLASH_LOG(Templates, Debug, "Checking mangled name on FunctionDeclarationNode: has_mangled_name=", func_decl.has_mangled_name());
 					if (func_decl.has_mangled_name()) {
 						std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+						FLASH_LOG(Templates, Debug, "Copied mangled name to FunctionCallNode: ", func_decl.mangled_name());
 					}
+				} else {
+					FLASH_LOG(Templates, Debug, "identifierType is not FunctionDeclarationNode");
 				}
 			} else {
 				// Just a qualified identifier reference
@@ -23475,6 +23479,14 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, explicit_types);
 	if (specialization_opt.has_value()) {
 		FLASH_LOG(Templates, Debug, "Found explicit specialization for ", template_name);
+		// Debug: check if the specialization has a mangled name
+		if (specialization_opt->is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& spec_func = specialization_opt->as<FunctionDeclarationNode>();
+			FLASH_LOG(Templates, Debug, "  Specialization has_mangled_name: ", spec_func.has_mangled_name());
+			if (spec_func.has_mangled_name()) {
+				FLASH_LOG(Templates, Debug, "  Specialization mangled_name: ", spec_func.mangled_name());
+			}
+		}
 		return *specialization_opt;
 	}
 
@@ -30456,7 +30468,12 @@ ASTNode Parser::substituteTemplateParameters(
 			for (size_t i = 0; i < func_call.arguments().size(); ++i) {
 				substituted_args.push_back(substituteTemplateParameters(func_call.arguments()[i], template_params, template_args));
 			}
-			return emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from()));
+			ASTNode new_func_call = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from()));
+			// Copy mangled name if present (important for template instantiation)
+			if (func_call.has_mangled_name()) {
+				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()).set_mangled_name(func_call.mangled_name());
+			}
+			return new_func_call;
 		} else if (std::holds_alternative<MemberAccessNode>(expr)) {
 			const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
 			ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
@@ -30588,7 +30605,12 @@ ASTNode Parser::substituteTemplateParameters(
 
 		// For now, don't substitute the function declaration itself
 		// Create new function call with substituted arguments
-		return emplace_node<FunctionCallNode>(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from());
+		ASTNode new_func_call = emplace_node<FunctionCallNode>(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from());
+		// Copy mangled name if present (important for template instantiation)
+		if (func_call.has_mangled_name()) {
+			new_func_call.as<FunctionCallNode>().set_mangled_name(func_call.mangled_name());
+		}
+		return new_func_call;
 
 	} else if (node.is<BinaryOperatorNode>()) {
 		// Handle binary operators

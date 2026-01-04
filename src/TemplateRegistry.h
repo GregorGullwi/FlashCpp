@@ -122,8 +122,22 @@ struct TemplateTypeArg {
 		, is_dependent(false) {}
 	
 	bool operator==(const TemplateTypeArg& other) const {
+		// Only compare type_index for user-defined types (Struct, Enum, UserDefined)
+		// For primitive types like int, float, etc., the type_index should be ignored
+		bool type_index_match = true;
+		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
+			type_index_match = (type_index == other.type_index);
+		}
+		
+		// NOTE: is_pack is intentionally NOT compared here.
+		// The is_pack flag indicates whether this arg came from a pack expansion,
+		// but for type matching purposes (specialization lookup, pattern matching),
+		// is_pack should be ignored. For example, when looking up ns::sum<int>
+		// from a pack expansion ns::sum<Args...> where Args=int, the lookup arg
+		// has is_pack=true but should still match the specialization which has is_pack=false.
+		
 		return base_type == other.base_type &&
-		       type_index == other.type_index &&
+		       type_index_match &&
 		       is_reference == other.is_reference &&
 		       is_rvalue_reference == other.is_rvalue_reference &&
 		       pointer_depth == other.pointer_depth &&
@@ -132,8 +146,7 @@ struct TemplateTypeArg {
 		       array_size == other.array_size &&
 		       member_pointer_kind == other.member_pointer_kind &&
 		       is_value == other.is_value &&
-		       (!is_value || value == other.value) &&  // Only compare value if it's a value
-		       is_pack == other.is_pack;
+		       (!is_value || value == other.value);  // Only compare value if it's a value
 	}
 
 	// Helper method to check if this is a parameter pack
@@ -227,7 +240,10 @@ struct TemplateTypeArg {
 struct TemplateTypeArgHash {
 	size_t operator()(const TemplateTypeArg& arg) const {
 		size_t hash = std::hash<int>{}(static_cast<int>(arg.base_type));
-		hash ^= std::hash<size_t>{}(arg.type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		// Only include type_index in hash for user-defined types (to match operator==)
+		if (arg.base_type == Type::Struct || arg.base_type == Type::Enum || arg.base_type == Type::UserDefined) {
+			hash ^= std::hash<size_t>{}(arg.type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
 		hash ^= std::hash<bool>{}(arg.is_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<bool>{}(arg.is_rvalue_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<size_t>{}(arg.pointer_depth) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
@@ -241,7 +257,7 @@ struct TemplateTypeArgHash {
 		if (arg.is_value) {
 			hash ^= std::hash<int64_t>{}(arg.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
-		hash ^= std::hash<bool>{}(arg.is_pack) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		// NOTE: is_pack is intentionally NOT included in the hash to match operator==
 		return hash;
 	}
 };
@@ -1005,11 +1021,66 @@ public:
 	void registerSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode specialized_node) {
 		SpecializationKey key{std::string(template_name), template_args};
 		specializations_[key] = specialized_node;
+		FLASH_LOG(Templates, Debug, "registerSpecialization: '", template_name, "' with ", template_args.size(), " args");
+		for (size_t i = 0; i < template_args.size(); ++i) {
+			const auto& arg = template_args[i];
+			FLASH_LOG(Templates, Debug, "  arg[", i, "]: base_type=", static_cast<int>(arg.base_type), 
+			          ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent);
+		}
 	}
 
 	// Look up an exact template specialization (no pattern matching)
 	std::optional<ASTNode> lookupExactSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) const {
 		SpecializationKey key{std::string(template_name), template_args};
+		
+		FLASH_LOG(Templates, Debug, "lookupExactSpecialization: '", template_name, "' with ", template_args.size(), " args");
+		for (size_t i = 0; i < template_args.size(); ++i) {
+			const auto& arg = template_args[i];
+			FLASH_LOG(Templates, Debug, "  lookup arg[", i, "]: base_type=", static_cast<int>(arg.base_type), 
+			          ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent);
+		}
+		
+		// Debug: Check if the key would match any registered specialization
+		SpecializationKeyHash hasher;
+		size_t lookup_hash = hasher(key);
+		FLASH_LOG(Templates, Debug, "  lookup hash: ", lookup_hash);
+		
+		for (const auto& [registered_key, node] : specializations_) {
+			if (registered_key.template_name == key.template_name) {
+				size_t registered_hash = hasher(registered_key);
+				bool equal = (registered_key == key);
+				FLASH_LOG(Templates, Debug, "  Comparing with registered key: hash=", registered_hash, 
+				          ", equal=", equal);
+				if (!equal && registered_key.template_args.size() == template_args.size()) {
+					// Check why they're not equal
+					for (size_t i = 0; i < registered_key.template_args.size(); ++i) {
+						const auto& reg_arg = registered_key.template_args[i];
+						const auto& lookup_arg = template_args[i];
+						bool arg_eq = (reg_arg == lookup_arg);
+						FLASH_LOG(Templates, Debug, "    arg[", i, "]: reg_base=", static_cast<int>(reg_arg.base_type),
+						          ", lookup_base=", static_cast<int>(lookup_arg.base_type),
+						          ", equal=", arg_eq);
+						if (!arg_eq) {
+							FLASH_LOG(Templates, Debug, "      reg:  is_ref=", reg_arg.is_reference, 
+							          ", is_rval_ref=", reg_arg.is_rvalue_reference, 
+							          ", ptr_depth=", reg_arg.pointer_depth,
+							          ", cv=", static_cast<int>(reg_arg.cv_qualifier),
+							          ", is_pack=", reg_arg.is_pack,
+							          ", is_value=", reg_arg.is_value,
+							          ", is_dependent=", reg_arg.is_dependent);
+							FLASH_LOG(Templates, Debug, "      look: is_ref=", lookup_arg.is_reference, 
+							          ", is_rval_ref=", lookup_arg.is_rvalue_reference, 
+							          ", ptr_depth=", lookup_arg.pointer_depth,
+							          ", cv=", static_cast<int>(lookup_arg.cv_qualifier),
+							          ", is_pack=", lookup_arg.is_pack,
+							          ", is_value=", lookup_arg.is_value,
+							          ", is_dependent=", lookup_arg.is_dependent);
+						}
+					}
+				}
+			}
+		}
+		
 		auto it = specializations_.find(key);
 		if (it != specializations_.end()) {
 			return it->second;
