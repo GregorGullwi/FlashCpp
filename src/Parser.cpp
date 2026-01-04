@@ -16545,6 +16545,9 @@ ParseResult Parser::parse_for_loop() {
         return ParseResult::error("Expected '(' after 'for'", *current_token_);
     }
 
+    // Enter a new scope for the for loop (C++ standard: for-init-statement creates a scope)
+    FlashCpp::SymbolTableScope for_scope(ScopeType::Block);
+
     // Parse initialization (optional: can be empty, declaration, or expression)
     std::optional<ASTNode> init_statement;
 
@@ -17683,6 +17686,7 @@ ParseResult Parser::parse_if_statement() {
 
     // Check for C++20 if-with-initializer: if (init; condition)
     std::optional<ASTNode> init_statement;
+    std::optional<FlashCpp::SymbolTableScope> if_scope;
 
     // Look ahead to see if there's a semicolon (indicating init statement)
     // Only try to parse as initializer if we see a type keyword or CV-qualifier
@@ -17691,19 +17695,26 @@ ParseResult Parser::parse_if_statement() {
         if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
             // Could be a declaration like: if (int x = 5; x > 0)
             auto checkpoint = save_token_position();
+            
+            // Create a scope before parsing the initializer (C++ standard: if-with-initializer creates a scope)
+            // We'll dismiss it if this turns out not to be an initializer
+            if_scope.emplace(ScopeType::Block);
+            
             ParseResult potential_init = parse_variable_declaration();
 
             if (!potential_init.is_error() && peek_token().has_value() &&
                 peek_token()->type() == Token::Type::Punctuator &&
                 peek_token()->value() == ";") {
-                // We have an initializer
+                // We have an initializer - keep the scope
                 discard_saved_token(checkpoint);
                 init_statement = potential_init.node();
                 if (!consume_punctuator(";")) {
                     return ParseResult::error("Expected ';' after if initializer", *current_token_);
                 }
             } else {
-                // Not an initializer, restore position
+                // Not an initializer, dismiss the scope and restore position
+                if_scope->dismiss();
+                if_scope.reset();
                 restore_token_position(checkpoint);
             }
         }
