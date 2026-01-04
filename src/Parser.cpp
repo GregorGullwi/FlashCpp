@@ -23554,13 +23554,28 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	                    orig_decl.identifier_token().line(), orig_decl.identifier_token().column(),
 	                    orig_decl.identifier_token().file_index());
 
-	// Create return type with the first template argument
+	// Substitute template parameters in the return type
+	const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
+	auto [substituted_return_type, substituted_return_type_index] = substitute_template_parameter(
+		orig_return_type, template_params, explicit_types);
+	
+	// Create return type with substituted type, preserving qualifiers
 	ASTNode return_type = emplace_node<TypeSpecifierNode>(
-		template_args[0].type_value,
-		TypeQualifier::None,
-		get_type_size_bits(template_args[0].type_value),
-		Token()
+		substituted_return_type,
+		substituted_return_type_index,
+		get_type_size_bits(substituted_return_type),
+		orig_return_type.token(),
+		orig_return_type.cv_qualifier()
 	);
+	
+	// Apply pointer levels and references from original type
+	TypeSpecifierNode& return_type_ref = return_type.as<TypeSpecifierNode>();
+	for (const auto& ptr_level : orig_return_type.pointer_levels()) {
+		return_type_ref.add_pointer_level(ptr_level.cv_qualifier);
+	}
+	if (orig_return_type.is_reference() || orig_return_type.is_rvalue_reference()) {
+		return_type_ref.set_reference(orig_return_type.is_rvalue_reference());
+	}
 
 	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
@@ -23571,13 +23586,30 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		if (param.is<DeclarationNode>()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 
-			// Use the deduced type (simplified - assumes all params are T)
+			// Get original parameter type
+			const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
+			
+			// Substitute template parameters in the type
+			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+				orig_param_type, template_params, explicit_types);
+			
+			// Create new type specifier with substituted type
 			ASTNode param_type = emplace_node<TypeSpecifierNode>(
-				template_args[0].type_value,
-				TypeQualifier::None,
-				get_type_size_bits(template_args[0].type_value),
-				Token()
+				substituted_type,
+				substituted_type_index,
+				get_type_size_bits(substituted_type),
+				orig_param_type.token(),
+				orig_param_type.cv_qualifier()
 			);
+			
+			// Apply pointer levels and references from original type
+			TypeSpecifierNode& param_type_ref = param_type.as<TypeSpecifierNode>();
+			for (const auto& ptr_level : orig_param_type.pointer_levels()) {
+				param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
+			}
+			if (orig_param_type.is_reference() || orig_param_type.is_rvalue_reference()) {
+				param_type_ref.set_reference(orig_param_type.is_rvalue_reference());
+			}
 
 			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 			new_func_ref.add_parameter_node(new_param_decl);
