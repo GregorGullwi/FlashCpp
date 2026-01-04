@@ -430,6 +430,44 @@ public:
 		mangled += '?';
 		mangled += name;
 
+		// Check if this is a destructor (starts with ~)
+		if (name.size() > 1 && name[0] == '~') {
+			// Delegate to NameMangling implementation which handles MSVC destructor logic correctly
+			// (??1ClassName@@QAE@XZ)
+			if (!sig.class_name.empty()) {
+				// Verify it matches class name to be safe
+				std::string_view class_short_name = sig.class_name;
+				size_t last_colon = class_short_name.rfind("::");
+				if (last_colon != std::string_view::npos) {
+					class_short_name = class_short_name.substr(last_colon + 2);
+				}
+				
+				if (name.substr(1) == class_short_name) {
+					// It is a destructor
+					return std::string(NameMangling::generateMangledNameForDestructor(
+						StringTable::getOrInternStringHandle(sig.class_name)
+					));
+				}
+			}
+		}
+
+		// Check if this is a constructor (name matches class name)
+		if (!sig.class_name.empty()) {
+			std::string_view class_short_name = sig.class_name;
+			size_t last_colon = class_short_name.rfind("::");
+			if (last_colon != std::string_view::npos) {
+				class_short_name = class_short_name.substr(last_colon + 2);
+			}
+				
+			if (name == class_short_name) {
+				// It is a constructor
+				return std::string(NameMangling::generateMangledNameForConstructor(
+					sig.class_name,
+					sig.parameter_types
+				));
+			}
+		}
+
 		// Add class name if this is a member function
 		// For nested classes (e.g., "Outer::Inner"), reverse the order and use @ separators
 		// Example: "Outer::Inner" becomes "@Inner@Outer"

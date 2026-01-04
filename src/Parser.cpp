@@ -777,7 +777,7 @@ void Parser::register_builtin_functions() {
 		
 		// Set pre-computed mangled name if provided
 		if (!mangled_name.empty()) {
-			func_decl_ref.set_mangled_name(std::string(mangled_name));
+			func_decl_ref.set_mangled_name(mangled_name);
 		}
 		
 		// Register in global symbol table

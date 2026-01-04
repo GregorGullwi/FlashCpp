@@ -910,7 +910,16 @@ inline MangledName generateMangledNameForConstructor(
 	StringBuilder builder;
 	
 	builder.append("??0");  // Constructor marker in MSVC mangling
-	builder.append(struct_name);
+	
+	// Handle nested classes: "Outer::Inner" -> "Inner@Outer"
+	std::string_view remaining = struct_name;
+	size_t sep_pos;
+	while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
+		builder.append(remaining.substr(sep_pos + 2));
+		builder.append('@');
+		remaining = remaining.substr(0, sep_pos);
+	}
+	builder.append(remaining);  // Append the first (outermost) part
 	
 	// Add namespace path if present
 	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
@@ -939,7 +948,16 @@ inline MangledName generateMangledNameForConstructor(
 	StringBuilder builder;
 	
 	builder.append("??0");  // Constructor marker in MSVC mangling
-	builder.append(struct_name);
+	
+	// Handle nested classes: "Outer::Inner" -> "Inner@Outer"
+	std::string_view remaining = struct_name;
+	size_t sep_pos;
+	while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
+		builder.append(remaining.substr(sep_pos + 2));
+		builder.append('@');
+		remaining = remaining.substr(0, sep_pos);
+	}
+	builder.append(remaining);  // Append the first (outermost) part
 	
 	// Add namespace path if present
 	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
@@ -971,7 +989,17 @@ inline MangledName generateMangledNameForDestructor(
 	StringBuilder builder;
 	
 	builder.append("??1");  // Destructor marker in MSVC mangling
-	builder.append(struct_name);
+	
+	// Handle nested classes: "Outer::Inner" -> "Inner@Outer"
+	// struct_name is a StringHandle, convert to view
+	std::string_view remaining = StringTable::getStringView(struct_name);
+	size_t sep_pos;
+	while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
+		builder.append(remaining.substr(sep_pos + 2));
+		builder.append('@');
+		remaining = remaining.substr(0, sep_pos);
+	}
+	builder.append(remaining);  // Append the first (outermost) part
 	
 	// Add namespace path if present
 	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
