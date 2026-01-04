@@ -26,6 +26,8 @@ The following regressions have been FIXED:
 | test_all_mix_ret123.cpp | 123 | 125 | Modulo fix | Was returning 125 due to modulo returning 2 instead of 0 |
 | test_comma_init_ret197.cpp | 197 | 200 | Assignment fix | Char variables were being sign-extended during assignment |
 | test_template_param_typename_default_ret42.cpp | 42 | 16 | Assignment fix (side effect) | Fixed as side effect of assignment operator fix |
+| test_auto_trailing_return_ret42.cpp | 42 | 192 | Template parameter substitution | Function parameters were incorrectly substituted with first template argument |
+| test_structured_binding_lvalue_ref_ret52.cpp | 52 | 20 | (Already fixed) | Likely fixed by previous commit |
 
 ## Regressions Found
 
@@ -33,21 +35,19 @@ The following test files still have a mismatch between their expected return val
 
 | Test File | Expected | Actual | Status |
 |-----------|----------|--------|--------|
-| test_auto_trailing_return_ret42.cpp | 42 | 192 | REGRESSION |
 | test_container_out_of_line_ret60.cpp | 60 | 138 | REGRESSION (was 233) |
 | test_covariant_return_ret180.cpp | 180 | 111 | REGRESSION |
 | test_global_namespace_scope_ret1.cpp | 1 | 203 | REGRESSION |
 | test_inherited_type_alias_ret42.cpp | 42 | 0 | REGRESSION |
 | test_lambda_init_capture_demo_ret57.cpp | 57 | 73 | REGRESSION |
 | test_qualified_base_class_ret42.cpp | 42 | 0 | REGRESSION |
-| test_simple_range_ret6.cpp | 6 | 234 | REGRESSION (was 74) |
-| test_sizeof_template_param_default_ret4.cpp | 4 | 1 | REGRESSION |
+| test_simple_range_ret6.cpp | 6 | 169 | REGRESSION (was 234) - Codegen issue with 64-bit registers |
+| test_sizeof_template_param_default_ret4.cpp | 4 | 1 | REGRESSION - Array size not substituted in template |
 | test_static_constexpr_pack_value_ret42.cpp | 42 | 0 | REGRESSION |
 | test_std_header_features_ret0.cpp | 0 | 8 | REGRESSION |
-| test_structured_binding_lvalue_ref_ret52.cpp | 52 | 20 | REGRESSION |
 | test_template_disambiguation_pack_ret40.cpp | 40 | 20 | REGRESSION |
 | test_type_alias_fix_simple_ret42.cpp | 42 | 0 | REGRESSION |
-| test_void_t_positive_ret0.cpp | 0 | 42 | REGRESSION |
+| test_void_t_positive_ret0.cpp | 0 | 42 | REGRESSION - SFINAE not selecting specialization |
 
 These values come from the 2026-01-03 run of `tests/validate_return_values.sh`. When a regression is triaged, add a short note or link next to the entry to preserve context.
 
