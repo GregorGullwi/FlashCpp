@@ -694,6 +694,15 @@ public:
 	                                 uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {},
 	                                 const std::vector<UnwindMapEntryInfo>& unwind_map = {},
 	                                 const std::vector<CFIInstruction>& cfi_instructions = {}) {
+		// Check if exception info has already been added for this function
+		for (const auto& existing : added_exception_functions_) {
+			if (existing == mangled_name) {
+				if (g_enable_debug_output) std::cerr << "Exception info already added for function: " << mangled_name << " - skipping" << std::endl;
+				return;
+			}
+		}
+		added_exception_functions_.push_back(std::string(mangled_name));
+
 		// Add FDE for this function (all functions get an FDE for proper unwinding)
 		FDEInfo fde_info;
 		fde_info.function_start_offset = function_start;
@@ -1413,6 +1422,9 @@ private:
 
 	// Function signatures for name mangling
 	std::unordered_map<std::string, FunctionSignature> function_signatures_;
+
+	// Track functions that already have exception info to avoid duplicates
+	std::vector<std::string> added_exception_functions_;
 
 	/**
 	 * @brief Create standard ELF sections

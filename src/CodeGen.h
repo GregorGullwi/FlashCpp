@@ -610,6 +610,35 @@ public:
 					const TypeInfo& base_type = gTypeInfo[base.type_index];
 					const StructTypeInfo* base_info = base_type.getStructInfo();
 					
+					// If base_type is a type alias (no struct_info), follow type_index_ to get the actual struct
+					// This handles cases like `struct Test : wrapper<true_type>::type` where `::type` is a type alias
+					if (!base_info && base_type.type_index_ != base.type_index && base_type.type_index_ < gTypeInfo.size()) {
+						const TypeInfo& resolved_type = gTypeInfo[base_type.type_index_];
+						base_info = resolved_type.getStructInfo();
+						FLASH_LOG(Codegen, Debug, "Resolved type alias '", StringTable::getStringView(base_type.name_), 
+						          "' to struct '", StringTable::getStringView(resolved_type.name_), "'");
+					}
+					
+					// Special handling for type aliases like "bool_constant_true::type"
+					// The StructTypeInfo for the type alias may have static members with unsubstituted initializers
+					// In this case, we need to find the actual underlying struct and use its static members instead
+					if (base_info && base.name.find("::") != std::string_view::npos) {
+						// Extract the struct name before "::" (e.g., "bool_constant_true" from "bool_constant_true::type")
+						auto pos = base.name.rfind("::");
+						if (pos != std::string_view::npos) {
+							std::string_view actual_struct_name = base.name.substr(0, pos);
+							auto actual_struct_it = gTypesByName.find(StringTable::getOrInternStringHandle(actual_struct_name));
+							if (actual_struct_it != gTypesByName.end()) {
+								const StructTypeInfo* actual_info = actual_struct_it->second->getStructInfo();
+								if (actual_info) {
+									FLASH_LOG(Codegen, Debug, "Using actual struct '", actual_struct_name, 
+									          "' instead of type alias '", base.name, "' for static members");
+									base_info = actual_info;
+								}
+							}
+						}
+					}
+					
 					// Iterate through ALL static members in the base class hierarchy (Phase 3 fix)
 					if (base_info) {
 						// Collect all static members recursively from this base and its bases
@@ -782,10 +811,25 @@ public:
 				ctor_decl_op.is_variadic = false;
 
 				// Generate mangled name for default constructor
+				// Use style-aware generateMangledName instead of MSVC-only generateMangledNameForConstructor
 				std::vector<TypeSpecifierNode> empty_params;  // Explicit type to avoid ambiguity
-				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledNameForConstructor(
-					StringTable::getStringView(type_info->name()),
-					empty_params  // no parameters
+				std::vector<std::string_view> empty_namespace_path;  // Explicit type to avoid ambiguity
+				std::string_view class_name = StringTable::getStringView(type_info->name());
+				// Extract the last component for func_name (handles nested classes like "Outer::Inner")
+				std::string_view func_name = class_name;
+				auto last_colon = class_name.rfind("::");
+				if (last_colon != std::string_view::npos) {
+					func_name = class_name.substr(last_colon + 2);
+				}
+				TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0);
+				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
+					func_name,
+					void_return,
+					empty_params,
+					false,  // not variadic
+					class_name,  // struct_name
+					empty_namespace_path,
+					Linkage::CPlusPlus
 				));
 
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), Token()));
@@ -2800,12 +2844,16 @@ private:
 		ctor_decl_op.is_inline = true;
 
 		// Generate mangled name for constructor
-		// Use the dedicated mangling function for constructors to ensure correct platform-specific mangling
-		// (e.g., MSVC uses ??0ClassName@... format)
-		ctor_decl_op.mangled_name = NameMangling::generateMangledNameForConstructor(
-			struct_name_for_ctor,
-			node.parameter_nodes()
-		);
+		// For template instantiations, use struct_name_for_ctor which has the correct instantiated name
+		// (e.g., "Base_char" instead of "Base")
+		{
+			// Create a dummy TypeSpecifierNode for the return type (constructors return void)
+			TypeSpecifierNode return_type(Type::Void, TypeQualifier::None, 0);
+			std::vector<std::string_view> empty_namespace_path;
+			ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
+				ctor_function_name, return_type, node.parameter_nodes(),
+				false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus));
+		}
 		
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
@@ -7821,67 +7869,88 @@ private:
 						// Check if we're accessing through a type alias by comparing names
 						if (struct_type_it->second->name() != owner_struct->getName()) {
 							// Accessing through type alias or derived class
-							// Try to resolve to the actual instantiated type
-							const TypeInfo* resolved_type = struct_type_it->second;
-							
-							// Special handling for true_type and false_type
-							// These should resolve to integral_constant<bool, 1> and integral_constant<bool, 0>
-							// but the template system doesn't instantiate them properly
-							std::string_view alias_name = StringTable::getStringView(resolved_type->name());
-							if (alias_name == "true_type" || alias_name == "false_type") {
-								// Generate the value directly without needing a static member
-								// true_type -> 1, false_type -> 0
-								bool value = (alias_name == "true_type") ? true : false;
-								FLASH_LOG(Codegen, Debug, "Special handling for ", alias_name, " -> value=", value);
-								return { Type::Bool, 8, static_cast<unsigned long long>(value), 0ULL };
-							}
-							
-							// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
-							std::unordered_set<TypeIndex> visited;
-							while (resolved_type && 
-							       resolved_type->type_index_ < gTypeInfo.size() && 
-							       resolved_type->type_index_ != 0 &&
-							       !visited.contains(resolved_type->type_index_)) {
-								visited.insert(resolved_type->type_index_);
-								const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_];
-								
-								if (target_type && target_type->isStruct() && target_type->getStructInfo()) {
-									// Use the target struct's name
-									qualified_struct_name = target_type->name();
-									FLASH_LOG(Codegen, Debug, "Resolved type alias to: ", qualified_struct_name);
-									
-									// If target is also an alias, continue following
-									if (target_type->type_index_ != 0 && target_type->type_index_ != resolved_type->type_index_) {
-										resolved_type = target_type;
-									} else {
-										break;
+							// First, check if this is inheritance (owner_struct is a base class of accessed struct)
+							// In that case, we should use owner_struct's name directly, not do type alias resolution
+							bool is_inheritance = false;
+							const StructTypeInfo* accessed_struct = struct_type_it->second->getStructInfo();
+							if (accessed_struct) {
+								for (const auto& base : accessed_struct->base_classes) {
+									if (base.type_index < gTypeInfo.size()) {
+										const TypeInfo& base_type = gTypeInfo[base.type_index];
+										const StructTypeInfo* base_struct = base_type.getStructInfo();
+										if (base_struct && base_struct->getName() == owner_struct->getName()) {
+											is_inheritance = true;
+											FLASH_LOG(Codegen, Debug, "Static member found via inheritance from base class: ", owner_struct->getName());
+											break;
+										}
 									}
-								} else {
-									break;
 								}
 							}
 							
-							// If still resolving to a primary template (no template args in name),
-							// try to find a properly instantiated version by checking emitted static members
-							std::string_view owner_name_str = StringTable::getStringView(qualified_struct_name);
-							bool looks_like_primary_template = 
-								(owner_name_str.find('_') == std::string_view::npos || 
-								 owner_name_str == StringTable::getStringView(owner_struct->getName()));
-							
-							if (looks_like_primary_template) {
-								// Search for an instantiated version that has this static member
-								std::string search_suffix = std::string("::") + std::string(StringTable::getStringView(StringTable::getOrInternStringHandle(qualifiedIdNode.name())));
-								for (const auto& emitted_handle : emitted_static_members_) {
-									std::string_view emitted = StringTable::getStringView(emitted_handle);
-									if (emitted.find(search_suffix) != std::string::npos &&
-									    emitted.find(std::string(owner_name_str) + "_") == 0) {
-										// Found an instantiated version - extract the struct name
-										size_t colon_pos = emitted.find("::");
-										if (colon_pos != std::string::npos) {
-											std::string inst_name = std::string(emitted.substr(0, colon_pos));
-											qualified_struct_name = StringTable::getOrInternStringHandle(inst_name);
-											FLASH_LOG(Codegen, Debug, "Using instantiated version: ", inst_name, " instead of primary template");
+							// Skip type alias resolution for inheritance - use owner_struct's name directly
+							if (!is_inheritance) {
+								// Try to resolve to the actual instantiated type
+								const TypeInfo* resolved_type = struct_type_it->second;
+								
+								// Special handling for true_type and false_type
+								// These should resolve to integral_constant<bool, 1> and integral_constant<bool, 0>
+								// but the template system doesn't instantiate them properly
+								std::string_view alias_name = StringTable::getStringView(resolved_type->name());
+								if (alias_name == "true_type" || alias_name == "false_type") {
+									// Generate the value directly without needing a static member
+									// true_type -> 1, false_type -> 0
+									bool value = (alias_name == "true_type") ? true : false;
+									FLASH_LOG(Codegen, Debug, "Special handling for ", alias_name, " -> value=", value);
+									return { Type::Bool, 8, static_cast<unsigned long long>(value), 0ULL };
+								}
+								
+								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
+								std::unordered_set<TypeIndex> visited;
+								while (resolved_type && 
+								       resolved_type->type_index_ < gTypeInfo.size() && 
+								       resolved_type->type_index_ != 0 &&
+								       !visited.contains(resolved_type->type_index_)) {
+									visited.insert(resolved_type->type_index_);
+									const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_];
+									
+									if (target_type && target_type->isStruct() && target_type->getStructInfo()) {
+										// Use the target struct's name
+										qualified_struct_name = target_type->name();
+										FLASH_LOG(Codegen, Debug, "Resolved type alias to: ", qualified_struct_name);
+										
+										// If target is also an alias, continue following
+										if (target_type->type_index_ != 0 && target_type->type_index_ != resolved_type->type_index_) {
+											resolved_type = target_type;
+										} else {
 											break;
+										}
+									} else {
+										break;
+									}
+								}
+								
+								// If still resolving to a primary template (no template args in name),
+								// try to find a properly instantiated version by checking emitted static members
+								std::string_view owner_name_str = StringTable::getStringView(qualified_struct_name);
+								bool looks_like_primary_template = 
+									(owner_name_str.find('_') == std::string_view::npos || 
+									 owner_name_str == StringTable::getStringView(owner_struct->getName()));
+								
+								if (looks_like_primary_template) {
+									// Search for an instantiated version that has this static member
+									std::string search_suffix = std::string("::") + std::string(StringTable::getStringView(StringTable::getOrInternStringHandle(qualifiedIdNode.name())));
+									for (const auto& emitted_handle : emitted_static_members_) {
+										std::string_view emitted = StringTable::getStringView(emitted_handle);
+										if (emitted.find(search_suffix) != std::string::npos &&
+										    emitted.find(std::string(owner_name_str) + "_") == 0) {
+											// Found an instantiated version - extract the struct name
+											size_t colon_pos = emitted.find("::");
+											if (colon_pos != std::string::npos) {
+												std::string inst_name = std::string(emitted.substr(0, colon_pos));
+												qualified_struct_name = StringTable::getOrInternStringHandle(inst_name);
+												FLASH_LOG(Codegen, Debug, "Using instantiated version: ", inst_name, " instead of primary template");
+												break;
+											}
 										}
 									}
 								}
