@@ -181,7 +181,7 @@ void DebugInfoBuilder::setCurrentFunction(const std::string& name, uint32_t file
 
         // Find the function and update its line information
         for (auto& func : functions_) {
-            if (func.name == current_function_name_) {
+            if (func.name == current_function_name_ || func.mangled_name == current_function_name_) {
                 // Only update if not already finalized
                 if (!func.is_finalized) {
                     func.line_offsets = std::move(current_function_lines_);
@@ -215,7 +215,7 @@ void DebugInfoBuilder::addLocalVariable(const std::string& name, uint32_t type_i
                                       const std::vector<VariableLocation>& locations) {
     if (!current_function_name_.empty()) {
         for (auto& func : functions_) {
-            if (func.name == current_function_name_) {
+            if (func.name == current_function_name_ || func.mangled_name == current_function_name_) {
                 LocalVariableInfo var_info;
                 var_info.name = name;
                 var_info.type_index = type_index;
@@ -232,7 +232,7 @@ void DebugInfoBuilder::addFunctionParameter(const std::string& name, uint32_t ty
     if (!current_function_name_.empty()) {
         // Find the current function and add the parameter
         for (auto& func : functions_) {
-            if (func.name == current_function_name_) {
+            if (func.name == current_function_name_ || func.mangled_name == current_function_name_) {
                 ParameterInfo param_info;
                 param_info.name = name;
                 param_info.type_index = type_index;
@@ -285,7 +285,7 @@ void DebugInfoBuilder::finalizeCurrentFunction() {
                   << " and " << current_function_lines_.size() << " lines" << std::endl;
         // Find the function and update its line information
         for (auto& func : functions_) {
-            if (func.name == current_function_name_) {
+            if (func.name == current_function_name_ || func.mangled_name == current_function_name_) {
                 // Only update if not already finalized
                 if (!func.is_finalized) {
                     func.line_offsets = std::move(current_function_lines_);

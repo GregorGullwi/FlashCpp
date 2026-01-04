@@ -2621,7 +2621,7 @@ inline void emitAddRegs(std::vector<char>& textSectionData, X64Register dest_reg
 	bool src_extended = static_cast<uint8_t>(src_reg) >= static_cast<uint8_t>(X64Register::R8);
 	
 	// REX.W with branchless R and B bits
-	uint8_t rex = 0x48 | (src_extended << 2) | dest_extended;
+	uint8_t rex = 0x48 | (static_cast<uint8_t>(src_extended) << 2) | static_cast<uint8_t>(dest_extended);
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x01); // ADD r/m64, r64
 	textSectionData.push_back(0xC0 | (src_bits << 3) | dest_bits); // ModR/M: mod=11, reg=src, r/m=dest

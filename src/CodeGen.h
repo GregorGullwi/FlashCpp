@@ -878,7 +878,7 @@ public:
 			// Generate trivial default constructor if no constructor exists
 			if (!has_constructor) {
 				FLASH_LOG(Codegen, Debug, "Generating trivial constructor for ", type_name);
-				
+
 				// Use the pattern from visitConstructorDeclarationNode
 				// Create function declaration for constructor
 				FunctionDeclOp ctor_decl_op;
@@ -889,18 +889,14 @@ public:
 				ctor_decl_op.return_pointer_depth = 0;
 				ctor_decl_op.linkage = Linkage::CPlusPlus;
 				ctor_decl_op.is_variadic = false;
-				
+
 				// Generate mangled name for default constructor
-				TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
 				std::vector<TypeSpecifierNode> empty_params;  // Explicit type to avoid ambiguity
-				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(generateMangledNameForCall(
+				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledNameForConstructor(
 					StringTable::getStringView(type_info->name()),
-					void_type,
-					empty_params,  // no parameters
-					false,  // not variadic
-					StringTable::getStringView(type_info->name())  // parent class name
+					empty_params  // no parameters
 				));
-				
+
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), Token()));
 				
 				// Call base class constructors if any
@@ -2862,8 +2858,16 @@ private:
 	}
 
 	void visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
-		if (!node.get_definition().has_value())
-			return;
+		// If no definition and not explicit, check if implicit
+		if (!node.get_definition().has_value()) {
+			if (node.is_implicit()) {
+				// Implicit constructors might not have a body if trivial, but we must emit the symbol
+				// so the linker can find it if referenced.
+				// Proceed to generate an empty function body.
+			} else {
+				return;
+			}
+		}
 
 		// Reset the temporary variable counter for each new constructor
 		// Constructors are always member functions, so reserve TempVar(1) for 'this'
@@ -2904,16 +2908,13 @@ private:
 		// Mark them as inline so they get weak linkage in the object file
 		ctor_decl_op.is_inline = true;
 
-		// Generate mangled name for constructor (MSVC format: ?ConstructorName@ClassName@@...)
-		// For nested classes, use the full struct name for mangling
-		TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
-		ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(generateMangledNameForCall(
-			ctor_function_name,
-			void_type,
-			node.parameter_nodes(),  // Use parameter nodes directly
-			false,  // not variadic
-			struct_name_for_ctor  // Use full struct name for mangling (e.g., "Outer::Inner")
-		));
+		// Generate mangled name for constructor
+		// Use the dedicated mangling function for constructors to ensure correct platform-specific mangling
+		// (e.g., MSVC uses ??0ClassName@... format)
+		ctor_decl_op.mangled_name = NameMangling::generateMangledNameForConstructor(
+			struct_name_for_ctor,
+			node.parameter_nodes()
+		);
 		
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
@@ -3414,18 +3415,10 @@ private:
 	dtor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for destructors
 	dtor_decl_op.is_variadic = false;  // Destructors are never variadic
 
-	// Generate mangled name for destructor (MSVC format: ?~ClassName@ClassName@@...)
-	// Destructors have no parameters (except implicit 'this')
-	std::vector<TypeSpecifierNode> empty_params;
-	std::string_view dtor_name = StringBuilder().append("~").append(node.struct_name()).commit();
-	TypeSpecifierNode void_type(Type::Void, TypeQualifier::None, 0);
-	dtor_decl_op.mangled_name = StringTable::getOrInternStringHandle(generateMangledNameForCall(
-		dtor_name,
-		void_type,
-		empty_params,
-		false,  // not variadic
-		node.struct_name().view()  // struct name for member function mangling
-	));
+	// Generate mangled name for destructor
+	// Use the dedicated mangling function for destructors to ensure correct platform-specific mangling
+	// (e.g., MSVC uses ??1ClassName@... format)
+	dtor_decl_op.mangled_name = NameMangling::generateMangledNameFromNode(node);
 
 	// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 	// We don't add it here to avoid duplication
@@ -3559,14 +3552,12 @@ private:
 				}
 				
 				// Find the struct info
-				TypeIndex type_index = 0;
 				const StructTypeInfo* struct_info = nullptr;
 				
 				// Look up the struct by return type index or name
 				for (size_t i = 0; i < gTypeInfo.size(); ++i) {
 					if (gTypeInfo[i].struct_info_ &&
 					    static_cast<int>(gTypeInfo[i].struct_info_->total_size * 8) == return_size) {
-						type_index = static_cast<TypeIndex>(i);
 						struct_info = gTypeInfo[i].struct_info_.get();
 						break;
 					}
@@ -10791,6 +10782,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),  // Store result in LHS variable
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::AddAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "-=") {
 			BinaryOp bin_op{
@@ -10799,6 +10791,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::SubAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "*=") {
 			BinaryOp bin_op{
@@ -10807,6 +10800,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::MulAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "/=") {
 			BinaryOp bin_op{
@@ -10815,6 +10809,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::DivAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "%=") {
 			BinaryOp bin_op{
@@ -10823,6 +10818,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ModAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "&=") {
 			BinaryOp bin_op{
@@ -10831,6 +10827,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::AndAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "|=") {
 			BinaryOp bin_op{
@@ -10839,6 +10836,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::OrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "^=") {
 			BinaryOp bin_op{
@@ -10847,6 +10845,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::XorAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == "<<=") {
 			BinaryOp bin_op{
@@ -10855,6 +10854,7 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ShlAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
 		else if (op == ">>=") {
 			BinaryOp bin_op{
@@ -10863,10 +10863,11 @@ private:
 				.result = toIrValue(lhsIrOperands[2]),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ShrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
+			return lhsIrOperands;  // Compound assignment returns the LHS
 		}
-		else { // Build operands differently based on whether we're using typed struct
+		else if (is_floating_point_op) { // Floating-point operations
 			// Float operations use typed BinaryOp
-			if (is_floating_point_op && (op == "+" || op == "-" || op == "*" || op == "/")) {
+			if (op == "+" || op == "-" || op == "*" || op == "/") {
 				// Determine float opcode
 				IrOpcode float_opcode;
 				if (op == "+") float_opcode = IrOpcode::FloatAdd;
@@ -10890,7 +10891,7 @@ private:
 			}
 
 			// Float comparison operations use typed BinaryOp
-			if (is_floating_point_op && (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=")) {
+			else if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
 				// Determine float comparison opcode
 				IrOpcode float_cmp_opcode;
 				if (op == "==") float_cmp_opcode = IrOpcode::FloatEqual;
@@ -10916,14 +10917,11 @@ private:
 				// Float comparisons return boolean (bool8)
 				return { Type::Bool, 8, result_var, 0ULL };
 			}
-
-			// Assignment is now handled earlier (before common type promotion)
-			// If we reach here with an assignment operator, something went wrong
-			assert(op != "=" && "Assignment should have been handled before reaching this code");
-			
-			// Unsupported binary operator
-			assert(false && "Unsupported binary operator in this code path");
-			return {};
+			else {
+				// Unsupported floating-point operator
+				assert(false && "Unsupported floating-point binary operator");
+				return {};
+			}
 		}
 	
 		// For comparison operations, return boolean type (8 bits - bool size in C++)
