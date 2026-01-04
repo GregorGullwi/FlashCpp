@@ -11113,11 +11113,18 @@ private:
 			}
 		} else {
 			// Integer multiplication: IMUL r64, r/m64
-			// Use encodeRegToRegInstruction to properly handle R8-R15 registers
+			// Use correct register size based on operand size
 			// Note: For IMUL, the reg field is the destination (result) and rm is the source (rhs)
-			auto encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.rhs_physical_reg);
-			std::array<uint8_t, 4> imulInst = { encoding.rex_prefix, 0x0F, 0xAF, encoding.modrm_byte };
-			textSectionData.insert(textSectionData.end(), imulInst.begin(), imulInst.end());
+			bool include_rex_w = (ctx.operand_size_in_bits == 64);
+			auto encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.rhs_physical_reg, include_rex_w);
+			
+			// Only emit REX prefix if needed
+			if (encoding.rex_prefix != 0) {
+				textSectionData.push_back(encoding.rex_prefix);
+			}
+			textSectionData.push_back(0x0F);
+			textSectionData.push_back(0xAF);
+			textSectionData.push_back(encoding.modrm_byte);
 		}
 		storeArithmeticResult(ctx);
 	}
@@ -11139,22 +11146,37 @@ private:
 			}
 		} else {
 			// Integer division
-			// mov rax, result_reg (move dividend to RAX)
-			auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX);
-			std::array<uint8_t, 3> movInst = { mov_to_rax.rex_prefix, 0x89, mov_to_rax.modrm_byte };
-			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+			// Use correct register size based on operand size
+			bool include_rex_w = (ctx.operand_size_in_bits == 64);
 			
-			// cqo (sign extend RAX to RDX:RAX)
-			std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 };
-			textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
+			// mov rax, result_reg (move dividend to RAX)
+			auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX, include_rex_w);
+			if (mov_to_rax.rex_prefix != 0) {
+				textSectionData.push_back(mov_to_rax.rex_prefix);
+			}
+			textSectionData.push_back(0x89);
+			textSectionData.push_back(mov_to_rax.modrm_byte);
+			
+			// Sign extend based on operand size
+			if (ctx.operand_size_in_bits == 64) {
+				// cqo (sign extend RAX to RDX:RAX)
+				std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 };
+				textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
+			} else {
+				// cdq (sign extend EAX to EDX:EAX) - 32-bit
+				textSectionData.push_back(0x99);
+			}
 			
 			// idiv rhs_reg (divide RDX:RAX by rhs_reg, quotient in RAX)
-			emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.result_value.size_in_bits);
+			emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.operand_size_in_bits);
 			
 			// mov result_reg, rax (move quotient to result)
-			auto mov_from_rax = encodeRegToRegInstruction(X64Register::RAX, ctx.result_physical_reg);
-			std::array<uint8_t, 3> movResultInst = { mov_from_rax.rex_prefix, 0x89, mov_from_rax.modrm_byte };
-			textSectionData.insert(textSectionData.end(), movResultInst.begin(), movResultInst.end());
+			auto mov_from_rax = encodeRegToRegInstruction(X64Register::RAX, ctx.result_physical_reg, include_rex_w);
+			if (mov_from_rax.rex_prefix != 0) {
+				textSectionData.push_back(mov_from_rax.rex_prefix);
+			}
+			textSectionData.push_back(0x89);
+			textSectionData.push_back(mov_from_rax.modrm_byte);
 		}
 		
 		storeArithmeticResult(ctx);
@@ -11163,22 +11185,37 @@ private:
 	void handleModAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "modulo assignment");
 		
-		// mov rax, result_reg (move dividend to RAX)
-		auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX);
-		std::array<uint8_t, 3> movInst = { mov_to_rax.rex_prefix, 0x89, mov_to_rax.modrm_byte };
-		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		// Use correct register size based on operand size
+		bool include_rex_w = (ctx.operand_size_in_bits == 64);
 		
-		// cqo (sign extend RAX to RDX:RAX)
-		std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 };
-		textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
+		// mov rax, result_reg (move dividend to RAX)
+		auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX, include_rex_w);
+		if (mov_to_rax.rex_prefix != 0) {
+			textSectionData.push_back(mov_to_rax.rex_prefix);
+		}
+		textSectionData.push_back(0x89);
+		textSectionData.push_back(mov_to_rax.modrm_byte);
+		
+		// Sign extend based on operand size
+		if (ctx.operand_size_in_bits == 64) {
+			// cqo (sign extend RAX to RDX:RAX)
+			std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 };
+			textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
+		} else {
+			// cdq (sign extend EAX to EDX:EAX) - 32-bit
+			textSectionData.push_back(0x99);
+		}
 		
 		// idiv rhs_reg (divide RDX:RAX by rhs_reg, remainder in RDX)
-		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.result_value.size_in_bits);
+		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.operand_size_in_bits);
 		
 		// mov result_reg, rdx (move remainder to result)
-		auto mov_from_rdx = encodeRegToRegInstruction(X64Register::RDX, ctx.result_physical_reg);
-		std::array<uint8_t, 3> movResultInst = { mov_from_rdx.rex_prefix, 0x89, mov_from_rdx.modrm_byte };
-		textSectionData.insert(textSectionData.end(), movResultInst.begin(), movResultInst.end());
+		auto mov_from_rdx = encodeRegToRegInstruction(X64Register::RDX, ctx.result_physical_reg, include_rex_w);
+		if (mov_from_rdx.rex_prefix != 0) {
+			textSectionData.push_back(mov_from_rdx.rex_prefix);
+		}
+		textSectionData.push_back(0x89);
+		textSectionData.push_back(mov_from_rdx.modrm_byte);
 		
 		storeArithmeticResult(ctx);
 	}
