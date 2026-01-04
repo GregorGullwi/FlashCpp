@@ -7633,7 +7633,22 @@ private:
 		//last_allocated_variable_offset_ = var_it->second.offset;
 
 		if (is_reference) {
-			setReferenceInfo(var_it->second.offset, var_type, op.size_in_bits, is_rvalue_reference);
+			// For references, we need to determine the size of the VALUE being referenced,
+			// not the size of the reference itself (which is always 64 bits for a pointer)
+			int value_size_bits = op.size_in_bits;
+			
+			// If size_in_bits is 64 and the type is not a 64-bit type, we need to calculate the actual size
+			// This happens for structured bindings where size_in_bits is set to 64 (pointer size)
+			if (op.size_in_bits == 64) {
+				// Try to get the actual size from the type
+				int calculated_size = get_type_size_bits(var_type);
+				if (calculated_size > 0 && calculated_size != 64) {
+					value_size_bits = calculated_size;
+					FLASH_LOG(Codegen, Debug, "Reference variable: Calculated value_size_bits=", value_size_bits, " from type=", static_cast<int>(var_type));
+				}
+			}
+			
+			setReferenceInfo(var_it->second.offset, var_type, value_size_bits, is_rvalue_reference);
 			int32_t dst_offset = var_it->second.offset;
 			X64Register pointer_reg = allocateRegisterWithSpilling();
 			bool pointer_initialized = false;
