@@ -10594,12 +10594,20 @@ private:
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		// Comparison operations (typed)
+		// For pointer comparisons, override types to use 64-bit unsigned integers
 		else if (op == "==" && !is_floating_point_op) {
 			BinaryOp bin_op{
 				.lhs = toTypedValue(lhsIrOperands),
 				.rhs = toTypedValue(rhsIrOperands),
 				.result = result_var,
 			};
+			// Override types for pointer comparisons
+			if (lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
+				bin_op.lhs.type = Type::UnsignedLongLong;
+				bin_op.lhs.size_in_bits = 64;
+				bin_op.rhs.type = Type::UnsignedLongLong;
+				bin_op.rhs.size_in_bits = 64;
+			}
 			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == "!=" && !is_floating_point_op) {
@@ -10608,6 +10616,13 @@ private:
 				.rhs = toTypedValue(rhsIrOperands),
 				.result = result_var,
 			};
+			// Override types for pointer comparisons
+			if (lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
+				bin_op.lhs.type = Type::UnsignedLongLong;
+				bin_op.lhs.size_in_bits = 64;
+				bin_op.rhs.type = Type::UnsignedLongLong;
+				bin_op.rhs.size_in_bits = 64;
+			}
 			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == "<" && !is_floating_point_op) {
@@ -10617,6 +10632,14 @@ private:
 				.rhs = toTypedValue(rhsIrOperands),
 				.result = result_var,
 			};
+			// Override types for pointer comparisons
+			if (lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
+				opcode = IrOpcode::UnsignedLessThan;
+				bin_op.lhs.type = Type::UnsignedLongLong;
+				bin_op.lhs.size_in_bits = 64;
+				bin_op.rhs.type = Type::UnsignedLongLong;
+				bin_op.rhs.size_in_bits = 64;
+			}
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == "<=" && !is_floating_point_op) {
@@ -10626,6 +10649,14 @@ private:
 				.rhs = toTypedValue(rhsIrOperands),
 				.result = result_var,
 			};
+			// Override types for pointer comparisons
+			if (lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
+				opcode = IrOpcode::UnsignedLessEqual;
+				bin_op.lhs.type = Type::UnsignedLongLong;
+				bin_op.lhs.size_in_bits = 64;
+				bin_op.rhs.type = Type::UnsignedLongLong;
+				bin_op.rhs.size_in_bits = 64;
+			}
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == ">" && !is_floating_point_op) {
@@ -10635,6 +10666,14 @@ private:
 				.rhs = toTypedValue(rhsIrOperands),
 				.result = result_var,
 			};
+			// Override types for pointer comparisons
+			if (lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
+				opcode = IrOpcode::UnsignedGreaterThan;
+				bin_op.lhs.type = Type::UnsignedLongLong;
+				bin_op.lhs.size_in_bits = 64;
+				bin_op.rhs.type = Type::UnsignedLongLong;
+				bin_op.rhs.size_in_bits = 64;
+			}
 			ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		else if (op == ">=" && !is_floating_point_op) {
@@ -10644,6 +10683,14 @@ private:
 				.rhs = toTypedValue(rhsIrOperands),
 				.result = result_var,
 			};
+			// Override types for pointer comparisons
+			if (lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
+				opcode = IrOpcode::UnsignedGreaterEqual;
+				bin_op.lhs.type = Type::UnsignedLongLong;
+				bin_op.lhs.size_in_bits = 64;
+				bin_op.rhs.type = Type::UnsignedLongLong;
+				bin_op.rhs.size_in_bits = 64;
+			}
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
 		// Compound assignment operations (typed)
