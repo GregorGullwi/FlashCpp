@@ -7861,67 +7861,88 @@ private:
 						// Check if we're accessing through a type alias by comparing names
 						if (struct_type_it->second->name() != owner_struct->getName()) {
 							// Accessing through type alias or derived class
-							// Try to resolve to the actual instantiated type
-							const TypeInfo* resolved_type = struct_type_it->second;
-							
-							// Special handling for true_type and false_type
-							// These should resolve to integral_constant<bool, 1> and integral_constant<bool, 0>
-							// but the template system doesn't instantiate them properly
-							std::string_view alias_name = StringTable::getStringView(resolved_type->name());
-							if (alias_name == "true_type" || alias_name == "false_type") {
-								// Generate the value directly without needing a static member
-								// true_type -> 1, false_type -> 0
-								bool value = (alias_name == "true_type") ? true : false;
-								FLASH_LOG(Codegen, Debug, "Special handling for ", alias_name, " -> value=", value);
-								return { Type::Bool, 8, static_cast<unsigned long long>(value), 0ULL };
-							}
-							
-							// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
-							std::unordered_set<TypeIndex> visited;
-							while (resolved_type && 
-							       resolved_type->type_index_ < gTypeInfo.size() && 
-							       resolved_type->type_index_ != 0 &&
-							       !visited.contains(resolved_type->type_index_)) {
-								visited.insert(resolved_type->type_index_);
-								const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_];
-								
-								if (target_type && target_type->isStruct() && target_type->getStructInfo()) {
-									// Use the target struct's name
-									qualified_struct_name = target_type->name();
-									FLASH_LOG(Codegen, Debug, "Resolved type alias to: ", qualified_struct_name);
-									
-									// If target is also an alias, continue following
-									if (target_type->type_index_ != 0 && target_type->type_index_ != resolved_type->type_index_) {
-										resolved_type = target_type;
-									} else {
-										break;
+							// First, check if this is inheritance (owner_struct is a base class of accessed struct)
+							// In that case, we should use owner_struct's name directly, not do type alias resolution
+							bool is_inheritance = false;
+							const StructTypeInfo* accessed_struct = struct_type_it->second->getStructInfo();
+							if (accessed_struct) {
+								for (const auto& base : accessed_struct->base_classes) {
+									if (base.type_index < gTypeInfo.size()) {
+										const TypeInfo& base_type = gTypeInfo[base.type_index];
+										const StructTypeInfo* base_struct = base_type.getStructInfo();
+										if (base_struct && base_struct->getName() == owner_struct->getName()) {
+											is_inheritance = true;
+											FLASH_LOG(Codegen, Debug, "Static member found via inheritance from base class: ", owner_struct->getName());
+											break;
+										}
 									}
-								} else {
-									break;
 								}
 							}
 							
-							// If still resolving to a primary template (no template args in name),
-							// try to find a properly instantiated version by checking emitted static members
-							std::string_view owner_name_str = StringTable::getStringView(qualified_struct_name);
-							bool looks_like_primary_template = 
-								(owner_name_str.find('_') == std::string_view::npos || 
-								 owner_name_str == StringTable::getStringView(owner_struct->getName()));
-							
-							if (looks_like_primary_template) {
-								// Search for an instantiated version that has this static member
-								std::string search_suffix = std::string("::") + std::string(StringTable::getStringView(StringTable::getOrInternStringHandle(qualifiedIdNode.name())));
-								for (const auto& emitted_handle : emitted_static_members_) {
-									std::string_view emitted = StringTable::getStringView(emitted_handle);
-									if (emitted.find(search_suffix) != std::string::npos &&
-									    emitted.find(std::string(owner_name_str) + "_") == 0) {
-										// Found an instantiated version - extract the struct name
-										size_t colon_pos = emitted.find("::");
-										if (colon_pos != std::string::npos) {
-											std::string inst_name = std::string(emitted.substr(0, colon_pos));
-											qualified_struct_name = StringTable::getOrInternStringHandle(inst_name);
-											FLASH_LOG(Codegen, Debug, "Using instantiated version: ", inst_name, " instead of primary template");
+							// Skip type alias resolution for inheritance - use owner_struct's name directly
+							if (!is_inheritance) {
+								// Try to resolve to the actual instantiated type
+								const TypeInfo* resolved_type = struct_type_it->second;
+								
+								// Special handling for true_type and false_type
+								// These should resolve to integral_constant<bool, 1> and integral_constant<bool, 0>
+								// but the template system doesn't instantiate them properly
+								std::string_view alias_name = StringTable::getStringView(resolved_type->name());
+								if (alias_name == "true_type" || alias_name == "false_type") {
+									// Generate the value directly without needing a static member
+									// true_type -> 1, false_type -> 0
+									bool value = (alias_name == "true_type") ? true : false;
+									FLASH_LOG(Codegen, Debug, "Special handling for ", alias_name, " -> value=", value);
+									return { Type::Bool, 8, static_cast<unsigned long long>(value), 0ULL };
+								}
+								
+								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
+								std::unordered_set<TypeIndex> visited;
+								while (resolved_type && 
+								       resolved_type->type_index_ < gTypeInfo.size() && 
+								       resolved_type->type_index_ != 0 &&
+								       !visited.contains(resolved_type->type_index_)) {
+									visited.insert(resolved_type->type_index_);
+									const TypeInfo* target_type = &gTypeInfo[resolved_type->type_index_];
+									
+									if (target_type && target_type->isStruct() && target_type->getStructInfo()) {
+										// Use the target struct's name
+										qualified_struct_name = target_type->name();
+										FLASH_LOG(Codegen, Debug, "Resolved type alias to: ", qualified_struct_name);
+										
+										// If target is also an alias, continue following
+										if (target_type->type_index_ != 0 && target_type->type_index_ != resolved_type->type_index_) {
+											resolved_type = target_type;
+										} else {
 											break;
+										}
+									} else {
+										break;
+									}
+								}
+								
+								// If still resolving to a primary template (no template args in name),
+								// try to find a properly instantiated version by checking emitted static members
+								std::string_view owner_name_str = StringTable::getStringView(qualified_struct_name);
+								bool looks_like_primary_template = 
+									(owner_name_str.find('_') == std::string_view::npos || 
+									 owner_name_str == StringTable::getStringView(owner_struct->getName()));
+								
+								if (looks_like_primary_template) {
+									// Search for an instantiated version that has this static member
+									std::string search_suffix = std::string("::") + std::string(StringTable::getStringView(StringTable::getOrInternStringHandle(qualifiedIdNode.name())));
+									for (const auto& emitted_handle : emitted_static_members_) {
+										std::string_view emitted = StringTable::getStringView(emitted_handle);
+										if (emitted.find(search_suffix) != std::string::npos &&
+										    emitted.find(std::string(owner_name_str) + "_") == 0) {
+											// Found an instantiated version - extract the struct name
+											size_t colon_pos = emitted.find("::");
+											if (colon_pos != std::string::npos) {
+												std::string inst_name = std::string(emitted.substr(0, colon_pos));
+												qualified_struct_name = StringTable::getOrInternStringHandle(inst_name);
+												FLASH_LOG(Codegen, Debug, "Using instantiated version: ", inst_name, " instead of primary template");
+												break;
+											}
 										}
 									}
 								}
