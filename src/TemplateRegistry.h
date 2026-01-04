@@ -1022,11 +1022,6 @@ public:
 		SpecializationKey key{std::string(template_name), template_args};
 		specializations_[key] = specialized_node;
 		FLASH_LOG(Templates, Debug, "registerSpecialization: '", template_name, "' with ", template_args.size(), " args");
-		for (size_t i = 0; i < template_args.size(); ++i) {
-			const auto& arg = template_args[i];
-			FLASH_LOG(Templates, Debug, "  arg[", i, "]: base_type=", static_cast<int>(arg.base_type), 
-			          ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent);
-		}
 	}
 
 	// Look up an exact template specialization (no pattern matching)
@@ -1034,52 +1029,6 @@ public:
 		SpecializationKey key{std::string(template_name), template_args};
 		
 		FLASH_LOG(Templates, Debug, "lookupExactSpecialization: '", template_name, "' with ", template_args.size(), " args");
-		for (size_t i = 0; i < template_args.size(); ++i) {
-			const auto& arg = template_args[i];
-			FLASH_LOG(Templates, Debug, "  lookup arg[", i, "]: base_type=", static_cast<int>(arg.base_type), 
-			          ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent);
-		}
-		
-		// Debug: Check if the key would match any registered specialization
-		SpecializationKeyHash hasher;
-		size_t lookup_hash = hasher(key);
-		FLASH_LOG(Templates, Debug, "  lookup hash: ", lookup_hash);
-		
-		for (const auto& [registered_key, node] : specializations_) {
-			if (registered_key.template_name == key.template_name) {
-				size_t registered_hash = hasher(registered_key);
-				bool equal = (registered_key == key);
-				FLASH_LOG(Templates, Debug, "  Comparing with registered key: hash=", registered_hash, 
-				          ", equal=", equal);
-				if (!equal && registered_key.template_args.size() == template_args.size()) {
-					// Check why they're not equal
-					for (size_t i = 0; i < registered_key.template_args.size(); ++i) {
-						const auto& reg_arg = registered_key.template_args[i];
-						const auto& lookup_arg = template_args[i];
-						bool arg_eq = (reg_arg == lookup_arg);
-						FLASH_LOG(Templates, Debug, "    arg[", i, "]: reg_base=", static_cast<int>(reg_arg.base_type),
-						          ", lookup_base=", static_cast<int>(lookup_arg.base_type),
-						          ", equal=", arg_eq);
-						if (!arg_eq) {
-							FLASH_LOG(Templates, Debug, "      reg:  is_ref=", reg_arg.is_reference, 
-							          ", is_rval_ref=", reg_arg.is_rvalue_reference, 
-							          ", ptr_depth=", reg_arg.pointer_depth,
-							          ", cv=", static_cast<int>(reg_arg.cv_qualifier),
-							          ", is_pack=", reg_arg.is_pack,
-							          ", is_value=", reg_arg.is_value,
-							          ", is_dependent=", reg_arg.is_dependent);
-							FLASH_LOG(Templates, Debug, "      look: is_ref=", lookup_arg.is_reference, 
-							          ", is_rval_ref=", lookup_arg.is_rvalue_reference, 
-							          ", ptr_depth=", lookup_arg.pointer_depth,
-							          ", cv=", static_cast<int>(lookup_arg.cv_qualifier),
-							          ", is_pack=", lookup_arg.is_pack,
-							          ", is_value=", lookup_arg.is_value,
-							          ", is_dependent=", lookup_arg.is_dependent);
-						}
-					}
-				}
-			}
-		}
 		
 		auto it = specializations_.find(key);
 		if (it != specializations_.end()) {
