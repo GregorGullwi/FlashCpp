@@ -27786,6 +27786,68 @@ if (struct_type_info.getStructInfo()) {
 				);
 			}
 			
+			// Copy static members from the original nested struct
+			// Look up the original nested struct by building its qualified name from the template
+			StringBuilder original_nested_name_builder;
+			original_nested_name_builder.append(template_name).append("::"sv).append(nested_struct.name());
+			std::string_view original_nested_name = original_nested_name_builder.commit();
+			
+			FLASH_LOG(Templates, Debug, "Looking for original nested class: ", original_nested_name);
+			auto original_nested_it = gTypesByName.find(StringTable::getOrInternStringHandle(original_nested_name));
+			if (original_nested_it != gTypesByName.end()) {
+				const TypeInfo* original_nested_type = original_nested_it->second;
+				FLASH_LOG(Templates, Debug, "Found original nested class, checking struct info...");
+				if (original_nested_type->getStructInfo()) {
+					const StructTypeInfo* original_struct_info = original_nested_type->getStructInfo();
+					FLASH_LOG(Templates, Debug, "Copying ", original_struct_info->static_members.size(), 
+					          " static members from nested class ", original_nested_name);
+					for (const auto& static_member : original_struct_info->static_members) {
+						FLASH_LOG(Templates, Debug, "  Copying static member: ", StringTable::getStringView(static_member.getName()));
+						nested_struct_info->addStaticMember(
+							static_member.getName(),
+							static_member.type,
+							static_member.type_index,
+							static_member.size,
+							static_member.alignment,
+							static_member.access,
+							static_member.initializer,
+							static_member.is_const
+						);
+					}
+				} else {
+					FLASH_LOG(Templates, Debug, "Original nested class has no struct info");
+				}
+			} else {
+				// Try looking up with just the nested struct name (without template prefix)
+				// This handles cases where templates use simple names for nested types
+				std::string_view simple_name = StringTable::getStringView(nested_struct.name());
+				FLASH_LOG(Templates, Debug, "Looking for nested class with simple name: ", simple_name);
+				auto simple_nested_it = gTypesByName.find(nested_struct.name());
+				if (simple_nested_it != gTypesByName.end()) {
+					const TypeInfo* original_nested_type = simple_nested_it->second;
+					if (original_nested_type->getStructInfo()) {
+						const StructTypeInfo* original_struct_info = original_nested_type->getStructInfo();
+						FLASH_LOG(Templates, Debug, "Copying ", original_struct_info->static_members.size(), 
+						          " static members from nested class (simple name) ", simple_name);
+						for (const auto& static_member : original_struct_info->static_members) {
+							FLASH_LOG(Templates, Debug, "  Copying static member: ", StringTable::getStringView(static_member.getName()));
+							nested_struct_info->addStaticMember(
+								static_member.getName(),
+								static_member.type,
+								static_member.type_index,
+								static_member.size,
+								static_member.alignment,
+								static_member.access,
+								static_member.initializer,
+								static_member.is_const
+							);
+						}
+					}
+				} else {
+					FLASH_LOG(Templates, Debug, "Original nested class not found in gTypesByName");
+				}
+			}
+			
 			// Finalize the nested struct layout
 			nested_struct_info->finalize();
 			
@@ -27796,6 +27858,7 @@ if (struct_type_info.getStructInfo()) {
 				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
 			}
 			gTypesByName.emplace(qualified_name, &nested_type_info);
+			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
 		}
 	}
 
