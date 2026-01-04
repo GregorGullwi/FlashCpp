@@ -3778,18 +3778,20 @@ private:
 		// Check if this block contains only VariableDeclarationNodes
 		// If so, it's likely from comma-separated declarations and shouldn't create a new scope
 		bool only_var_decls = true;
-		bool has_statements = false;
+		size_t var_decl_count = 0;
 		node.get_statements().visit([&](const ASTNode& statement) {
-			has_statements = true;
-			if (!statement.is<VariableDeclarationNode>()) {
+			if (statement.is<VariableDeclarationNode>()) {
+				var_decl_count++;
+			} else {
 				only_var_decls = false;
 			}
 		});
 
-		// For blocks that only contain variable declarations, don't enter a new scope
+		// For blocks that only contain two or more variable declarations, don't enter a new scope
 		// This handles comma-separated declarations like: int a = 1, b = 2;
 		// which the parser represents as a BlockNode containing multiple VariableDeclarationNodes
-		bool enter_scope = !only_var_decls || !has_statements;
+		// Single variable declarations in blocks (e.g., { int x = 5; }) should create a scope
+		bool enter_scope = !(only_var_decls && var_decl_count > 1);
 
 		if (enter_scope) {
 			// Enter a new scope
