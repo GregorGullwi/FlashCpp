@@ -26919,6 +26919,94 @@ if (struct_type_info.getStructInfo()) {
 							}
 						}
 					}
+				} else if (std::holds_alternative<SizeofExprNode>(expr)) {
+					// Handle sizeof(T) as a default value
+					const SizeofExprNode& sizeof_node = std::get<SizeofExprNode>(expr);
+					if (sizeof_node.is_type()) {
+						// sizeof(type) - evaluate the type size
+						const ASTNode& type_node = sizeof_node.type_or_expr();
+						if (type_node.is<TypeSpecifierNode>()) {
+							TypeSpecifierNode type_spec = type_node.as<TypeSpecifierNode>();
+							
+							// Check if this is a template parameter that needs substitution
+							bool found_substitution = false;
+							std::string_view sizeof_type_name;
+							
+							// Try to get the type name from the token first (most reliable for template params)
+							if (type_spec.token().type() == Token::Type::Identifier) {
+								sizeof_type_name = type_spec.token().value();
+							} else if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+								// Fall back to gTypeInfo for fully resolved types
+								const TypeInfo& sizeof_type_info = gTypeInfo[type_spec.type_index()];
+								sizeof_type_name = StringTable::getStringView(sizeof_type_info.name());
+							}
+							
+							if (!sizeof_type_name.empty()) {
+								// Check if this is one of the template parameters we've already filled
+								for (size_t j = 0; j < template_params.size() && j < filled_template_args.size(); ++j) {
+									if (template_params[j].is<TemplateParameterNode>()) {
+										const TemplateParameterNode& prev_param = template_params[j].as<TemplateParameterNode>();
+										if (prev_param.name() == sizeof_type_name) {
+											// Found the matching template parameter - use its filled value
+											const TemplateTypeArg& filled_arg = filled_template_args[j];
+											if (filled_arg.base_type != Type::Invalid) {
+												// Calculate the size of the filled type
+												int size_in_bytes = 0;
+												switch (filled_arg.base_type) {
+													case Type::Bool:
+													case Type::Char:
+													case Type::UnsignedChar:
+														size_in_bytes = 1;
+														break;
+													case Type::Short:
+													case Type::UnsignedShort:
+														size_in_bytes = 2;
+														break;
+													case Type::Int:
+													case Type::UnsignedInt:
+													case Type::Float:
+														size_in_bytes = 4;
+														break;
+													case Type::Long:
+													case Type::UnsignedLong:
+													case Type::LongLong:
+													case Type::UnsignedLongLong:
+													case Type::Double:
+														size_in_bytes = 8;
+														break;
+													case Type::Struct:
+														// For struct types, we need to look up the actual size
+														if (filled_arg.type_index < gTypeInfo.size()) {
+															const TypeInfo& struct_type = gTypeInfo[filled_arg.type_index];
+															if (struct_type.getStructInfo()) {
+																size_in_bytes = struct_type.getStructInfo()->total_size;
+															}
+														}
+														break;
+													default:
+														break;
+												}
+												if (size_in_bytes > 0) {
+													filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
+													FLASH_LOG(Templates, Debug, "Filled in sizeof(", sizeof_type_name, ") default for instantiation: ", size_in_bytes, " bytes");
+													found_substitution = true;
+													break;
+												}
+											}
+										}
+									}
+								}
+							}
+							
+							if (!found_substitution) {
+								// Direct type (not a template parameter)
+								int size_in_bits = type_spec.size_in_bits();
+								int size_in_bytes = (size_in_bits + 7) / 8;  // Round up to bytes
+								filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
+								FLASH_LOG(Templates, Debug, "Filled in sizeof default for instantiation: ", size_in_bytes, " bytes");
+							}
+						}
+					}
 				}
 			}
 		}
