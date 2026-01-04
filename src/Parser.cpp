@@ -25696,10 +25696,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								
 								// Check if this is a template parameter that needs substitution
 								bool found_substitution = false;
-								if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+								std::string_view type_name;
+								
+								// Try to get the type name from the token first (most reliable for template params)
+								if (type_spec.token().type() == Token::Type::Identifier) {
+									type_name = type_spec.token().value();
+								} else if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+									// Fall back to gTypeInfo for fully resolved types
 									const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-									std::string_view type_name = StringTable::getStringView(type_info.name());
-									
+									type_name = StringTable::getStringView(type_info.name());
+								}
+								
+								if (!type_name.empty()) {
 									// Check if this is one of the template parameters we've already filled
 									for (size_t j = 0; j < primary_params.size() && j < filled_args_for_pattern_match.size(); ++j) {
 										if (primary_params[j].is<TemplateParameterNode>()) {
