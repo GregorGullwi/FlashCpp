@@ -23095,6 +23095,23 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							dependent_arg.type_index = type_it->second->type_index_;
 							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index, 
 							          " for identifier '", id.name(), "'");
+						} else {
+							// Check if this identifier is a template alias (like void_t)
+							// Template aliases may resolve to concrete types even when used with dependent arguments
+							auto alias_opt = gTemplateRegistry.lookup_alias_template(id.name());
+							if (alias_opt.has_value()) {
+								const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
+								Type target_type = alias_node.target_type_node().type();
+								
+								// If the alias always resolves to a concrete type (like void_t -> void),
+								// use that concrete type instead of marking as dependent
+								if (target_type != Type::UserDefined && target_type != Type::Struct) {
+									FLASH_LOG(Templates, Debug, "Template alias '", id.name(), 
+									          "' resolves to concrete type ", static_cast<int>(target_type));
+									dependent_arg.base_type = target_type;
+									dependent_arg.is_dependent = false;  // Not dependent - resolves to concrete type
+								}
+							}
 						}
 					}
 					
@@ -24939,16 +24956,12 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	
 	const TemplateVariableDeclarationNode& var_template = template_opt->as<TemplateVariableDeclarationNode>();
 	
-	// Generate unique name for the instantiation
+	// Generate unique name for the instantiation using TemplateTypeArg::toString()
+	// This ensures consistent naming with class template instantiations (includes CV qualifiers)
 	std::string instantiated_name = std::string(template_name);
 	for (const auto& arg : template_args) {
 		instantiated_name += "_";
-		instantiated_name += std::string(TemplateRegistry::typeToString(arg.base_type));
-		if (arg.is_rvalue_reference) instantiated_name += "_rvalref";
-		else if (arg.is_reference) instantiated_name += "_ref";
-		for (size_t i = 0; i < arg.pointer_depth; ++i) {
-			instantiated_name += "_ptr";
-		}
+		instantiated_name += arg.toString();
 	}
 	std::string_view persistent_name = StringBuilder().append(instantiated_name).commit();
 	
