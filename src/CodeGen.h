@@ -811,10 +811,25 @@ public:
 				ctor_decl_op.is_variadic = false;
 
 				// Generate mangled name for default constructor
+				// Use style-aware generateMangledName instead of MSVC-only generateMangledNameForConstructor
 				std::vector<TypeSpecifierNode> empty_params;  // Explicit type to avoid ambiguity
-				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledNameForConstructor(
-					StringTable::getStringView(type_info->name()),
-					empty_params  // no parameters
+				std::vector<std::string_view> empty_namespace_path;  // Explicit type to avoid ambiguity
+				std::string_view class_name = StringTable::getStringView(type_info->name());
+				// Extract the last component for func_name (handles nested classes like "Outer::Inner")
+				std::string_view func_name = class_name;
+				auto last_colon = class_name.rfind("::");
+				if (last_colon != std::string_view::npos) {
+					func_name = class_name.substr(last_colon + 2);
+				}
+				TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0);
+				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
+					func_name,
+					void_return,
+					empty_params,
+					false,  // not variadic
+					class_name,  // struct_name
+					empty_namespace_path,
+					Linkage::CPlusPlus
 				));
 
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), Token()));
@@ -2829,12 +2844,8 @@ private:
 		ctor_decl_op.is_inline = true;
 
 		// Generate mangled name for constructor
-		// Use the dedicated mangling function for constructors to ensure correct platform-specific mangling
-		// (e.g., MSVC uses ??0ClassName@... format)
-		ctor_decl_op.mangled_name = NameMangling::generateMangledNameForConstructor(
-			struct_name_for_ctor,
-			node.parameter_nodes()
-		);
+		// Use style-aware generateMangledNameFromNode which handles both MSVC and Itanium mangling
+		ctor_decl_op.mangled_name = NameMangling::generateMangledNameFromNode(node);
 		
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
