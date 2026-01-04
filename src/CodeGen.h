@@ -10260,8 +10260,10 @@ private:
 		}
 
 		// Special handling for pointer arithmetic (ptr + int or ptr - int)
-		if ((op == "+" || op == "-") && lhsSize == 64 && is_integer_type(rhsType)) {
-			// Left side is a pointer (64-bit), right side is integer
+		// Only apply if LHS is actually a pointer (has pointer_depth > 0)
+		// NOT for regular 64-bit integers like long, even though they are also 64 bits
+		if ((op == "+" || op == "-") && lhsSize == 64 && lhs_pointer_depth > 0 && is_integer_type(rhsType)) {
+			// Left side is a pointer (64-bit with pointer_depth > 0), right side is integer
 			// Result should be a pointer (64-bit)
 			// Need to scale the offset by sizeof(pointed-to-type)
 		
