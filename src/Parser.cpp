@@ -27306,14 +27306,56 @@ if (struct_type_info.getStructInfo()) {
 				// Fallback: if we have concrete template arguments available, try instantiating directly
 				if (!template_args_to_use.empty()) {
 					std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
-					std::string_view instantiated_name = instantiate_and_register_base_template(base_template_name, template_args_to_use);
-					if (!instantiated_name.empty()) {
-						base_template_name = instantiated_name;
+					
+					// Check if the base_template_name contains a member type suffix (e.g., "detail::select_base::type")
+					// This happens when the full qualified name is stored in base_template_name
+					std::string_view member_type_suffix;
+					std::string_view actual_template_name = base_template_name;
+					
+					// Find the last "::" that's not part of the template name
+					// For "detail::select_base::type", we want to split at the last "::" before "type"
+					size_t last_scope = base_template_name.rfind("::");
+					if (last_scope != std::string_view::npos && last_scope > 0) {
+						member_type_suffix = base_template_name.substr(last_scope + 2);
+						// Check if this looks like a member type (common names like "type", "value_type", etc.)
+						// Or check if the part before :: is a valid template name
+						std::string_view potential_template = base_template_name.substr(0, last_scope);
+						
+						// Only treat as member type if the potential template is a valid namespace::template pattern
+						if (potential_template.find("::") != std::string_view::npos) {
+							actual_template_name = potential_template;
+						} else {
+							// Single-level template, keep as-is
+							member_type_suffix = std::string_view{};
+						}
 					}
 					
-					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_template_name));
+					std::string_view instantiated_name = instantiate_and_register_base_template(actual_template_name, template_args_to_use);
+					if (!instantiated_name.empty()) {
+						actual_template_name = instantiated_name;
+					}
+					
+					// If we have a member type suffix, look it up from the instantiated template
+					if (!member_type_suffix.empty()) {
+						StringBuilder member_lookup_builder;
+						member_lookup_builder.append(actual_template_name);
+						member_lookup_builder.append("::");
+						member_lookup_builder.append(member_type_suffix);
+						std::string_view member_lookup_name = member_lookup_builder.commit();
+						
+						auto member_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(member_lookup_name));
+						if (member_type_it != gTypesByName.end()) {
+							struct_info->addBaseClass(member_lookup_name, member_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
+							FLASH_LOG(Templates, Debug, "Resolved deferred base with member type: ", member_lookup_name);
+							continue;
+						} else {
+							FLASH_LOG(Templates, Warning, "Could not find member type '", member_type_suffix, "' in instantiated template '", actual_template_name, "'");
+						}
+					}
+					
+					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(actual_template_name));
 					if (base_type_it != gTypesByName.end()) {
-						struct_info->addBaseClass(base_template_name, base_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
+						struct_info->addBaseClass(actual_template_name, base_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
 					}
 				}
 				continue;
