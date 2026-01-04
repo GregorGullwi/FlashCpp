@@ -10259,6 +10259,73 @@ private:
 			}
 		}
 
+		// Try to get pointer depth for RHS as well (for ptr - ptr case)
+		int rhs_pointer_depth = 0;
+		if (binaryOperatorNode.get_rhs().is<ExpressionNode>()) {
+			const ExpressionNode& rhs_expr = binaryOperatorNode.get_rhs().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(rhs_expr)) {
+				const auto& rhs_id = std::get<IdentifierNode>(rhs_expr);
+				auto symbol = symbol_table.lookup(rhs_id.name());
+				if (symbol && symbol->is<VariableDeclarationNode>()) {
+					const auto& var_decl = symbol->as<VariableDeclarationNode>();
+					const auto& decl = var_decl.declaration();
+					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					rhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+				} else if (symbol && symbol->is<DeclarationNode>()) {
+					const auto& decl = symbol->as<DeclarationNode>();
+					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					rhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+				}
+			}
+		}
+
+		// Special handling for pointer subtraction (ptr - ptr)
+		// Result is ptrdiff_t (number of elements between pointers)
+		if (op == "-" && lhs_pointer_depth > 0 && rhs_pointer_depth > 0) {
+			// Both sides are pointers - this is pointer difference
+			// C++ standard: (ptr1 - ptr2) / sizeof(*ptr1) gives element count
+			// Result type is ptrdiff_t (signed long, 64-bit on x64)
+			
+			// Step 1: Subtract the pointers (gives byte difference)
+			TempVar byte_diff = var_counter.next();
+			BinaryOp sub_op{
+				.lhs = { lhsType, 64, toIrValue(lhsIrOperands[2]) },
+				.rhs = { rhsType, 64, toIrValue(rhsIrOperands[2]) },
+				.result = byte_diff,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), binaryOperatorNode.get_token()));
+			
+			// Step 2: Determine element size (same logic as ptr + int)
+			int element_size;
+			if (lhs_pointer_depth > 1) {
+				element_size = 8;  // Multi-level pointer
+			} else {
+				switch (lhsType) {
+					case Type::Bool: element_size = 1; break;
+					case Type::Char: element_size = 1; break;
+					case Type::Short: element_size = 2; break;
+					case Type::Int: element_size = 4; break;
+					case Type::Long: element_size = 8; break;
+					case Type::Float: element_size = 4; break;
+					case Type::Double: element_size = 8; break;
+					case Type::Struct: element_size = 8; break;
+					default: element_size = 8; break;
+				}
+			}
+			
+			// Step 3: Divide byte difference by element size to get element count
+			TempVar result_var = var_counter.next();
+			BinaryOp div_op{
+				.lhs = { Type::Long, 64, byte_diff },
+				.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(div_op), binaryOperatorNode.get_token()));
+			
+			// Return result as Long (ptrdiff_t) with 64-bit size
+			return { Type::Long, 64, result_var, 0ULL };
+		}
+
 		// Special handling for pointer arithmetic (ptr + int or ptr - int)
 		// Only apply if LHS is actually a pointer (has pointer_depth > 0)
 		// NOT for regular 64-bit integers like long, even though they are also 64 bits
