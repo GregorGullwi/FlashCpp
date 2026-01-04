@@ -3736,17 +3736,28 @@ private:
 	RegToRegEncoding encodeRegToRegInstruction(X64Register reg_field, X64Register rm_field, bool include_rex_w = true) {
 		RegToRegEncoding result;
 		
-		// Start with base REX prefix
-		result.rex_prefix = include_rex_w ? 0x48 : 0x40; // REX.W or base REX
+		// Determine if we need REX prefix
+		bool needs_rex = include_rex_w; // Always need REX for 64-bit (REX.W)
+		
+		// Start with appropriate REX prefix
+		result.rex_prefix = include_rex_w ? 0x48 : 0x40; // REX.W for 64-bit, base REX for 32-bit
 		
 		// Set REX.R if reg_field (source in Reg field of ModR/M) is R8-R15
 		if (static_cast<uint8_t>(reg_field) >= 8) {
 			result.rex_prefix |= 0x04; // Set REX.R bit
+			needs_rex = true;
 		}
 		
 		// Set REX.B if rm_field (destination in R/M field of ModR/M) is R8-R15
 		if (static_cast<uint8_t>(rm_field) >= 8) {
 			result.rex_prefix |= 0x01; // Set REX.B bit
+			needs_rex = true;
+		}
+		
+		// If we don't need REX prefix (32-bit op with registers < 8), set to 0
+		// The caller should check if rex_prefix is 0 and skip emitting it
+		if (!needs_rex) {
+			result.rex_prefix = 0;
 		}
 		
 		// Build ModR/M byte: Mod=11 (register-to-register), Reg=reg_field[2:0], R/M=rm_field[2:0]
@@ -3781,8 +3792,8 @@ private:
 	// Helper function to emit a binary operation instruction (reg-to-reg)
 	void emitBinaryOpInstruction(uint8_t opcode, X64Register src_reg, X64Register dst_reg, int size_in_bits) {
 		// Determine if we need a REX prefix
-		bool needs_rex = (size_in_bits == 64);
-		uint8_t rex_prefix = (size_in_bits == 64) ? 0x48 : 0x40;
+		bool needs_rex = (size_in_bits == 64);  // Always need REX for 64-bit (REX.W)
+		uint8_t rex_prefix = (size_in_bits == 64) ? 0x48 : 0x40;  // REX.W for 64-bit, base REX for 32-bit
 		
 		// Check if registers need REX extensions
 		if (static_cast<uint8_t>(src_reg) >= 8) {
@@ -3992,19 +4003,42 @@ private:
 			ctx.result_physical_reg = allocateRegisterWithSpilling();
 
 			// Load the literal value into the register
-			// mov reg, imm64
-			uint8_t rex_prefix = 0x48; // REX.W
+			// Use the correct operand size for the move instruction
 			uint8_t reg_num = static_cast<uint8_t>(ctx.result_physical_reg);
 			
-			// For R8-R15, set REX.B bit
-			if (reg_num >= 8) {
-				rex_prefix |= 0x01; // Set REX.B
-				reg_num &= 0x07; // Use lower 3 bits for opcode
+			if (ctx.operand_size_in_bits == 64) {
+				// 64-bit: mov reg, imm64 with REX.W
+				uint8_t rex_prefix = 0x48; // REX.W
+				
+				// For R8-R15, set REX.B bit
+				if (reg_num >= 8) {
+					rex_prefix |= 0x01; // Set REX.B
+					reg_num &= 0x07; // Use lower 3 bits for opcode
+				}
+				
+				std::array<uint8_t, 10> movInst = { rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0 };
+				std::memcpy(&movInst[2], &lhs_value, sizeof(lhs_value));
+				textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+			} else {
+				// 32-bit (or smaller): mov r32, imm32
+				// Only use REX if we need extended registers (R8-R15)
+				bool needs_rex = (reg_num >= 8);
+				
+				if (needs_rex) {
+					uint8_t rex_prefix = 0x40; // Base REX (no REX.W for 32-bit)
+					rex_prefix |= 0x01; // Set REX.B
+					textSectionData.push_back(rex_prefix);
+					reg_num &= 0x07; // Use lower 3 bits for opcode
+				}
+				
+				// mov r32, imm32: opcode B8+r, imm32
+				textSectionData.push_back(static_cast<uint8_t>(0xB8 + reg_num));
+				uint32_t imm32 = static_cast<uint32_t>(lhs_value);
+				textSectionData.push_back(imm32 & 0xFF);
+				textSectionData.push_back((imm32 >> 8) & 0xFF);
+				textSectionData.push_back((imm32 >> 16) & 0xFF);
+				textSectionData.push_back((imm32 >> 24) & 0xFF);
 			}
-			
-			std::array<uint8_t, 10> movInst = { rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0 };
-			std::memcpy(&movInst[2], &lhs_value, sizeof(lhs_value));
-			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 		}
 		else if (instruction.isOperandType<double>(3)) {
 			// LHS is a floating-point literal value
@@ -4190,19 +4224,42 @@ private:
 			}
 
 			// Load the literal value into the register
-			// mov reg, imm64
-			uint8_t rex_prefix = 0x48; // REX.W
+			// Use the correct operand size for the move instruction
 			uint8_t reg_num = static_cast<uint8_t>(ctx.rhs_physical_reg);
 			
-			// For R8-R15, set REX.B bit
-			if (reg_num >= 8) {
-				rex_prefix |= 0x01; // Set REX.B
-				reg_num &= 0x07; // Use lower 3 bits for opcode
+			if (ctx.operand_size_in_bits == 64) {
+				// 64-bit: mov reg, imm64 with REX.W
+				uint8_t rex_prefix = 0x48; // REX.W
+				
+				// For R8-R15, set REX.B bit
+				if (reg_num >= 8) {
+					rex_prefix |= 0x01; // Set REX.B
+					reg_num &= 0x07; // Use lower 3 bits for opcode
+				}
+				
+				std::array<uint8_t, 10> movInst = { rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0 };
+				std::memcpy(&movInst[2], &rhs_value, sizeof(rhs_value));
+				textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+			} else {
+				// 32-bit (or smaller): mov r32, imm32
+				// Only use REX if we need extended registers (R8-R15)
+				bool needs_rex = (reg_num >= 8);
+				
+				if (needs_rex) {
+					uint8_t rex_prefix = 0x40; // Base REX (no REX.W for 32-bit)
+					rex_prefix |= 0x01; // Set REX.B
+					textSectionData.push_back(rex_prefix);
+					reg_num &= 0x07; // Use lower 3 bits for opcode
+				}
+				
+				// mov r32, imm32: opcode B8+r, imm32
+				textSectionData.push_back(static_cast<uint8_t>(0xB8 + reg_num));
+				uint32_t imm32 = static_cast<uint32_t>(rhs_value);
+				textSectionData.push_back(imm32 & 0xFF);
+				textSectionData.push_back((imm32 >> 8) & 0xFF);
+				textSectionData.push_back((imm32 >> 16) & 0xFF);
+				textSectionData.push_back((imm32 >> 24) & 0xFF);
 			}
-			
-			std::array<uint8_t, 10> movInst = { rex_prefix, static_cast<uint8_t>(0xB8 + reg_num), 0, 0, 0, 0, 0, 0, 0, 0 };
-			std::memcpy(&movInst[2], &rhs_value, sizeof(rhs_value));
-			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 		}
 		else if (std::holds_alternative<double>(bin_op.rhs.value)) {
 			// RHS is a floating-point literal value
@@ -10993,10 +11050,17 @@ private:
 				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 			}
 		} else {
-			// Integer addition: Use encodeRegToRegInstruction to properly handle R8-R15 registers
-			auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
-			std::array<uint8_t, 3> addInst = { encoding.rex_prefix, 0x01, encoding.modrm_byte };
-			textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
+			// Integer addition: Use correct register size based on operand size
+			// Pass include_rex_w=false for 32-bit operations
+			bool include_rex_w = (ctx.operand_size_in_bits == 64);
+			auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg, include_rex_w);
+			
+			// Only emit REX prefix if needed (will be 0 for 32-bit with regs < 8)
+			if (encoding.rex_prefix != 0) {
+				textSectionData.push_back(encoding.rex_prefix);
+			}
+			textSectionData.push_back(0x01); // ADD opcode
+			textSectionData.push_back(encoding.modrm_byte);
 		}
 		storeArithmeticResult(ctx);
 	}
@@ -11017,10 +11081,17 @@ private:
 				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 			}
 		} else {
-			// Integer subtraction: Use encodeRegToRegInstruction to properly handle R8-R15 registers
-			auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
-			std::array<uint8_t, 3> subInst = { encoding.rex_prefix, 0x29, encoding.modrm_byte };
-			textSectionData.insert(textSectionData.end(), subInst.begin(), subInst.end());
+			// Integer subtraction: Use correct register size based on operand size
+			// Pass include_rex_w=false for 32-bit operations
+			bool include_rex_w = (ctx.operand_size_in_bits == 64);
+			auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg, include_rex_w);
+			
+			// Only emit REX prefix if needed (will be 0 for 32-bit with regs < 8)
+			if (encoding.rex_prefix != 0) {
+				textSectionData.push_back(encoding.rex_prefix);
+			}
+			textSectionData.push_back(0x29); // SUB opcode
+			textSectionData.push_back(encoding.modrm_byte);
 		}
 		storeArithmeticResult(ctx);
 	}
@@ -11042,11 +11113,18 @@ private:
 			}
 		} else {
 			// Integer multiplication: IMUL r64, r/m64
-			// Use encodeRegToRegInstruction to properly handle R8-R15 registers
+			// Use correct register size based on operand size
 			// Note: For IMUL, the reg field is the destination (result) and rm is the source (rhs)
-			auto encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.rhs_physical_reg);
-			std::array<uint8_t, 4> imulInst = { encoding.rex_prefix, 0x0F, 0xAF, encoding.modrm_byte };
-			textSectionData.insert(textSectionData.end(), imulInst.begin(), imulInst.end());
+			bool include_rex_w = (ctx.operand_size_in_bits == 64);
+			auto encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.rhs_physical_reg, include_rex_w);
+			
+			// Only emit REX prefix if needed
+			if (encoding.rex_prefix != 0) {
+				textSectionData.push_back(encoding.rex_prefix);
+			}
+			textSectionData.push_back(0x0F);
+			textSectionData.push_back(0xAF);
+			textSectionData.push_back(encoding.modrm_byte);
 		}
 		storeArithmeticResult(ctx);
 	}
@@ -11068,22 +11146,37 @@ private:
 			}
 		} else {
 			// Integer division
-			// mov rax, result_reg (move dividend to RAX)
-			auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX);
-			std::array<uint8_t, 3> movInst = { mov_to_rax.rex_prefix, 0x89, mov_to_rax.modrm_byte };
-			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+			// Use correct register size based on operand size
+			bool include_rex_w = (ctx.operand_size_in_bits == 64);
 			
-			// cqo (sign extend RAX to RDX:RAX)
-			std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 };
-			textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
+			// mov rax, result_reg (move dividend to RAX)
+			auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX, include_rex_w);
+			if (mov_to_rax.rex_prefix != 0) {
+				textSectionData.push_back(mov_to_rax.rex_prefix);
+			}
+			textSectionData.push_back(0x89);
+			textSectionData.push_back(mov_to_rax.modrm_byte);
+			
+			// Sign extend based on operand size
+			if (ctx.operand_size_in_bits == 64) {
+				// cqo (sign extend RAX to RDX:RAX)
+				std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 };
+				textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
+			} else {
+				// cdq (sign extend EAX to EDX:EAX) - 32-bit
+				textSectionData.push_back(0x99);
+			}
 			
 			// idiv rhs_reg (divide RDX:RAX by rhs_reg, quotient in RAX)
-			emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.result_value.size_in_bits);
+			emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.operand_size_in_bits);
 			
 			// mov result_reg, rax (move quotient to result)
-			auto mov_from_rax = encodeRegToRegInstruction(X64Register::RAX, ctx.result_physical_reg);
-			std::array<uint8_t, 3> movResultInst = { mov_from_rax.rex_prefix, 0x89, mov_from_rax.modrm_byte };
-			textSectionData.insert(textSectionData.end(), movResultInst.begin(), movResultInst.end());
+			auto mov_from_rax = encodeRegToRegInstruction(X64Register::RAX, ctx.result_physical_reg, include_rex_w);
+			if (mov_from_rax.rex_prefix != 0) {
+				textSectionData.push_back(mov_from_rax.rex_prefix);
+			}
+			textSectionData.push_back(0x89);
+			textSectionData.push_back(mov_from_rax.modrm_byte);
 		}
 		
 		storeArithmeticResult(ctx);
@@ -11092,22 +11185,37 @@ private:
 	void handleModAssign(const IrInstruction& instruction) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "modulo assignment");
 		
-		// mov rax, result_reg (move dividend to RAX)
-		auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX);
-		std::array<uint8_t, 3> movInst = { mov_to_rax.rex_prefix, 0x89, mov_to_rax.modrm_byte };
-		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
+		// Use correct register size based on operand size
+		bool include_rex_w = (ctx.operand_size_in_bits == 64);
 		
-		// cqo (sign extend RAX to RDX:RAX)
-		std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 };
-		textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
+		// mov rax, result_reg (move dividend to RAX)
+		auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX, include_rex_w);
+		if (mov_to_rax.rex_prefix != 0) {
+			textSectionData.push_back(mov_to_rax.rex_prefix);
+		}
+		textSectionData.push_back(0x89);
+		textSectionData.push_back(mov_to_rax.modrm_byte);
+		
+		// Sign extend based on operand size
+		if (ctx.operand_size_in_bits == 64) {
+			// cqo (sign extend RAX to RDX:RAX)
+			std::array<uint8_t, 2> cqoInst = { 0x48, 0x99 };
+			textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
+		} else {
+			// cdq (sign extend EAX to EDX:EAX) - 32-bit
+			textSectionData.push_back(0x99);
+		}
 		
 		// idiv rhs_reg (divide RDX:RAX by rhs_reg, remainder in RDX)
-		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.result_value.size_in_bits);
+		emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, ctx.rhs_physical_reg, ctx.operand_size_in_bits);
 		
 		// mov result_reg, rdx (move remainder to result)
-		auto mov_from_rdx = encodeRegToRegInstruction(X64Register::RDX, ctx.result_physical_reg);
-		std::array<uint8_t, 3> movResultInst = { mov_from_rdx.rex_prefix, 0x89, mov_from_rdx.modrm_byte };
-		textSectionData.insert(textSectionData.end(), movResultInst.begin(), movResultInst.end());
+		auto mov_from_rdx = encodeRegToRegInstruction(X64Register::RDX, ctx.result_physical_reg, include_rex_w);
+		if (mov_from_rdx.rex_prefix != 0) {
+			textSectionData.push_back(mov_from_rdx.rex_prefix);
+		}
+		textSectionData.push_back(0x89);
+		textSectionData.push_back(mov_from_rdx.modrm_byte);
 		
 		storeArithmeticResult(ctx);
 	}
