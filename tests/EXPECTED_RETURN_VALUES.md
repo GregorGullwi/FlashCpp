@@ -8,11 +8,11 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-04 (after static constexpr and type alias fixes)
+**Last Run:** 2026-01-04 (after void_t SFINAE and pack expansion fixes)
 
 **Total files tested:** 817
-**Valid returns (matching expected):** 793 (up from 789)
-**Regressions (mismatches):** 11 (down from 15)
+**Valid returns (matching expected):** 794 (up from 793)
+**Regressions (mismatches):** 10 (down from 11)
 **Runtime crashes:** 13
 **Compile failures:** 0
 **Link failures:** 0
@@ -46,8 +46,8 @@ The following test files still have a mismatch between their expected return val
 | test_qualified_base_class_ret42.cpp | 42 | 0 | REGRESSION | Deferred template base with member type alias not resolved |
 | test_sizeof_template_param_default_ret4.cpp | 4 | 1 | REGRESSION | Template array size not substituted correctly |
 | test_std_header_features_ret0.cpp | 0 | 8 | REGRESSION | Type trait/constexpr evaluation |
-| test_template_disambiguation_pack_ret40.cpp | 40 | 20 | REGRESSION | Template specialization not selected |
-| test_void_t_positive_ret0.cpp | 0 | 42 | REGRESSION | SFINAE specialization not selected |
+| test_template_disambiguation_pack_ret40.cpp | 40 | 30 | REGRESSION | Function template specializations with different template args get same mangled name (sum<int> and sum<int,int> both mangle to _ZN2ns3sumEv) |
+| test_void_t_positive_ret0.cpp | 0 | 0 | FIXED | void_t SFINAE pattern now correctly detected |
 
 These values come from the 2026-01-04 run. When a regression is triaged, add a short note or link next to the entry to preserve context.
 

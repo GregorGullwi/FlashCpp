@@ -24958,12 +24958,13 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	
 	// Generate unique name for the instantiation using TemplateTypeArg::toString()
 	// This ensures consistent naming with class template instantiations (includes CV qualifiers)
-	std::string instantiated_name = std::string(template_name);
+	StringBuilder name_builder;
+	name_builder.append(template_name);
 	for (const auto& arg : template_args) {
-		instantiated_name += "_";
-		instantiated_name += arg.toString();
+		name_builder.append("_");
+		name_builder.append(arg.toString());
 	}
-	std::string_view persistent_name = StringBuilder().append(instantiated_name).commit();
+	std::string_view persistent_name = name_builder.commit();
 	
 	// Check if already instantiated
 	if (gSymbolTable.lookup(persistent_name).has_value()) {
