@@ -13399,6 +13399,7 @@ private:
 		// Step 1: Load base address into RAX
 		int64_t base_offset = 0;
 		bool base_is_reference = false;
+		bool base_is_pointer = false;  // For 'this' and other pointers
 		if (std::holds_alternative<StringHandle>(op.base)) {
 			// Variable name - look up its stack offset
 			StringHandle base_name = std::get<StringHandle>(op.base);
@@ -13409,6 +13410,13 @@ private:
 				return;
 			}
 			base_offset = it->second.offset;
+			
+			// Check if base is 'this' - it's a pointer, so we need to load its value
+			// instead of computing the address of the 'this' variable
+			std::string_view base_name_str = StringTable::getStringView(base_name);
+			if (base_name_str == "this") {
+				base_is_pointer = true;
+			}
 			
 			// Check if base is a reference - if so, we need to load the address it contains
 			// instead of computing the address of the variable itself
@@ -13424,8 +13432,8 @@ private:
 			base_is_reference = (ref_it != reference_stack_info_.end());
 		}
 		
-		if (base_is_reference) {
-			// Base is a reference - load the address it contains (MOV, not LEA)
+		if (base_is_reference || base_is_pointer) {
+			// Base is a reference or pointer - load the address it contains (MOV, not LEA)
 			emitMovFromFrame(X64Register::RAX, base_offset);
 		} else {
 			// Base is a regular variable - compute its address (LEA)
