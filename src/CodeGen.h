@@ -3787,7 +3787,7 @@ private:
 			}
 		});
 
-		// For blocks that only contain multiple variable declarations, don't enter a new scope
+		// For blocks that only contain two or more variable declarations, don't enter a new scope
 		// This handles comma-separated declarations like: int a = 1, b = 2;
 		// which the parser represents as a BlockNode containing multiple VariableDeclarationNodes
 		// Single variable declarations in blocks (e.g., { int x = 5; }) should create a scope
