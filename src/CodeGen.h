@@ -2844,8 +2844,16 @@ private:
 		ctor_decl_op.is_inline = true;
 
 		// Generate mangled name for constructor
-		// Use style-aware generateMangledNameFromNode which handles both MSVC and Itanium mangling
-		ctor_decl_op.mangled_name = NameMangling::generateMangledNameFromNode(node);
+		// For template instantiations, use struct_name_for_ctor which has the correct instantiated name
+		// (e.g., "Base_char" instead of "Base")
+		{
+			// Create a dummy TypeSpecifierNode for the return type (constructors return void)
+			TypeSpecifierNode return_type(Type::Void, TypeQualifier::None, 0);
+			std::vector<std::string_view> empty_namespace_path;
+			ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
+				ctor_function_name, return_type, node.parameter_nodes(),
+				false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus));
+		}
 		
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
 		// We don't add it here to avoid duplication
