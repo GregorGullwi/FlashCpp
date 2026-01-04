@@ -10241,6 +10241,7 @@ private:
 
 		// Try to get pointer depth for pointer arithmetic
 		int lhs_pointer_depth = 0;
+		const TypeSpecifierNode* lhs_type_node = nullptr;
 		if (binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
@@ -10251,43 +10252,90 @@ private:
 					const auto& decl = var_decl.declaration();
 					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 					lhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+					lhs_type_node = &type_node;
 				} else if (symbol && symbol->is<DeclarationNode>()) {
 					const auto& decl = symbol->as<DeclarationNode>();
 					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 					lhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+					lhs_type_node = &type_node;
 				}
 			}
+		}
+
+		// Try to get pointer depth for RHS as well (for ptr - ptr case)
+		int rhs_pointer_depth = 0;
+		if (binaryOperatorNode.get_rhs().is<ExpressionNode>()) {
+			const ExpressionNode& rhs_expr = binaryOperatorNode.get_rhs().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(rhs_expr)) {
+				const auto& rhs_id = std::get<IdentifierNode>(rhs_expr);
+				auto symbol = symbol_table.lookup(rhs_id.name());
+				if (symbol && symbol->is<VariableDeclarationNode>()) {
+					const auto& var_decl = symbol->as<VariableDeclarationNode>();
+					const auto& decl = var_decl.declaration();
+					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					rhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+				} else if (symbol && symbol->is<DeclarationNode>()) {
+					const auto& decl = symbol->as<DeclarationNode>();
+					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
+					rhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+				}
+			}
+		}
+
+		// Special handling for pointer subtraction (ptr - ptr)
+		// Result is ptrdiff_t (number of elements between pointers)
+		if (op == "-" && lhs_pointer_depth > 0 && rhs_pointer_depth > 0 && lhs_type_node) {
+			// Both sides are pointers - this is pointer difference
+			// C++ standard: (ptr1 - ptr2) / sizeof(*ptr1) gives element count
+			// Result type is ptrdiff_t (signed long, 64-bit on x64)
+			
+			// Step 1: Subtract the pointers (gives byte difference)
+			TempVar byte_diff = var_counter.next();
+			BinaryOp sub_op{
+				.lhs = { lhsType, 64, toIrValue(lhsIrOperands[2]) },
+				.rhs = { rhsType, 64, toIrValue(rhsIrOperands[2]) },
+				.result = byte_diff,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), binaryOperatorNode.get_token()));
+			
+			// Step 2: Determine element size using existing getSizeInBytes function
+			size_t element_size;
+			if (lhs_pointer_depth > 1) {
+				element_size = 8;  // Multi-level pointer: element is a pointer
+			} else {
+				// Single-level pointer: element size is sizeof(base_type)
+				element_size = getSizeInBytes(lhs_type_node->type(), lhs_type_node->type_index(), lhs_type_node->size_in_bits());
+			}
+			
+			// Step 3: Divide byte difference by element size to get element count
+			TempVar result_var = var_counter.next();
+			BinaryOp div_op{
+				.lhs = { Type::Long, 64, byte_diff },
+				.rhs = { Type::Int, 32, static_cast<unsigned long long>(element_size) },
+				.result = result_var,
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(div_op), binaryOperatorNode.get_token()));
+			
+			// Return result as Long (ptrdiff_t) with 64-bit size
+			return { Type::Long, 64, result_var, 0ULL };
 		}
 
 		// Special handling for pointer arithmetic (ptr + int or ptr - int)
 		// Only apply if LHS is actually a pointer (has pointer_depth > 0)
 		// NOT for regular 64-bit integers like long, even though they are also 64 bits
-		if ((op == "+" || op == "-") && lhsSize == 64 && lhs_pointer_depth > 0 && is_integer_type(rhsType)) {
+		if ((op == "+" || op == "-") && lhsSize == 64 && lhs_pointer_depth > 0 && is_integer_type(rhsType) && lhs_type_node) {
 			// Left side is a pointer (64-bit with pointer_depth > 0), right side is integer
 			// Result should be a pointer (64-bit)
 			// Need to scale the offset by sizeof(pointed-to-type)
 		
-			// Determine element size based on pointer depth:
-			// - int*   (pointer_depth=1): element_size = sizeof(int) = 4
-			// - int**  (pointer_depth=2): element_size = sizeof(int*) = 8
-			// - int*** (pointer_depth=3): element_size = sizeof(int**) = 8
-			int element_size;
+			// Determine element size using existing getSizeInBytes function
+			size_t element_size;
 			if (lhs_pointer_depth > 1) {
 				// Multi-level pointer: element is a pointer, so 8 bytes
 				element_size = 8;
 			} else {
-				// Single-level pointer: element size is the base type size
-				switch (lhsType) {
-					case Type::Bool: element_size = 1; break;
-					case Type::Char: element_size = 1; break;
-					case Type::Short: element_size = 2; break;
-					case Type::Int: element_size = 4; break;
-					case Type::Long: element_size = 8; break;
-					case Type::Float: element_size = 4; break;
-					case Type::Double: element_size = 8; break;
-					case Type::Struct: element_size = 8; break;  // Struct pointers
-					default: element_size = 8; break;  // Fallback for unknown types
-				}
+				// Single-level pointer: element size is sizeof(base_type)
+				element_size = getSizeInBytes(lhs_type_node->type(), lhs_type_node->type_index(), lhs_type_node->size_in_bits());
 			}
 		
 			// Scale the offset: offset_scaled = offset * element_size
@@ -10334,28 +10382,18 @@ private:
 
 		// Special handling for pointer compound assignment (ptr += int or ptr -= int)
 		// MUST be before type promotions to avoid truncating the pointer
-		if ((op == "+=" || op == "-=") && lhsSize == 64 && lhs_pointer_depth > 0 && is_integer_type(rhsType)) {
+		if ((op == "+=" || op == "-=") && lhsSize == 64 && lhs_pointer_depth > 0 && is_integer_type(rhsType) && lhs_type_node) {
 			// Left side is a pointer (64-bit), right side is integer
 			// Need to scale the offset by sizeof(pointed-to-type)
 			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_ARITH_DEBUG] Compound assignment: lhsSize={}, pointer_depth={}, rhsType={}", lhsSize, lhs_pointer_depth, static_cast<int>(rhsType));
 			
-			// Determine element size (same logic as regular pointer arithmetic)
-			int element_size;
+			// Determine element size using existing getSizeInBytes function
+			size_t element_size;
 			if (lhs_pointer_depth > 1) {
 				element_size = 8;  // Multi-level pointer
 			} else {
-				// Single-level pointer: element size is the base type size
-				switch (lhsType) {
-					case Type::Bool: element_size = 1; break;
-					case Type::Char: element_size = 1; break;
-					case Type::Short: element_size = 2; break;
-					case Type::Int: element_size = 4; break;
-					case Type::Long: element_size = 8; break;
-					case Type::Float: element_size = 4; break;
-					case Type::Double: element_size = 8; break;
-					case Type::Struct: element_size = 8; break;
-					default: element_size = 8; break;
-				}
+				// Single-level pointer: element size is sizeof(base_type)
+				element_size = getSizeInBytes(lhs_type_node->type(), lhs_type_node->type_index(), lhs_type_node->size_in_bits());
 			}
 			
 			// Scale the offset: offset_scaled = offset * element_size
