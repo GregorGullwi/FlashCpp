@@ -3736,17 +3736,28 @@ private:
 	RegToRegEncoding encodeRegToRegInstruction(X64Register reg_field, X64Register rm_field, bool include_rex_w = true) {
 		RegToRegEncoding result;
 		
-		// Start with base REX prefix
-		result.rex_prefix = include_rex_w ? 0x48 : 0x40; // REX.W or base REX
+		// Determine if we need REX prefix
+		bool needs_rex = include_rex_w; // Always need REX for 64-bit (REX.W)
+		
+		// Start with appropriate REX prefix
+		result.rex_prefix = include_rex_w ? 0x48 : 0x40; // REX.W for 64-bit, base REX for 32-bit
 		
 		// Set REX.R if reg_field (source in Reg field of ModR/M) is R8-R15
 		if (static_cast<uint8_t>(reg_field) >= 8) {
 			result.rex_prefix |= 0x04; // Set REX.R bit
+			needs_rex = true;
 		}
 		
 		// Set REX.B if rm_field (destination in R/M field of ModR/M) is R8-R15
 		if (static_cast<uint8_t>(rm_field) >= 8) {
 			result.rex_prefix |= 0x01; // Set REX.B bit
+			needs_rex = true;
+		}
+		
+		// If we don't need REX prefix (32-bit op with registers < 8), set to 0
+		// The caller should check if rex_prefix is 0 and skip emitting it
+		if (!needs_rex) {
+			result.rex_prefix = 0;
 		}
 		
 		// Build ModR/M byte: Mod=11 (register-to-register), Reg=reg_field[2:0], R/M=rm_field[2:0]
@@ -11039,10 +11050,17 @@ private:
 				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 			}
 		} else {
-			// Integer addition: Use encodeRegToRegInstruction to properly handle R8-R15 registers
-			auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
-			std::array<uint8_t, 3> addInst = { encoding.rex_prefix, 0x01, encoding.modrm_byte };
-			textSectionData.insert(textSectionData.end(), addInst.begin(), addInst.end());
+			// Integer addition: Use correct register size based on operand size
+			// Pass include_rex_w=false for 32-bit operations
+			bool include_rex_w = (ctx.operand_size_in_bits == 64);
+			auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg, include_rex_w);
+			
+			// Only emit REX prefix if needed (will be 0 for 32-bit with regs < 8)
+			if (encoding.rex_prefix != 0) {
+				textSectionData.push_back(encoding.rex_prefix);
+			}
+			textSectionData.push_back(0x01); // ADD opcode
+			textSectionData.push_back(encoding.modrm_byte);
 		}
 		storeArithmeticResult(ctx);
 	}
@@ -11063,10 +11081,17 @@ private:
 				textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 			}
 		} else {
-			// Integer subtraction: Use encodeRegToRegInstruction to properly handle R8-R15 registers
-			auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
-			std::array<uint8_t, 3> subInst = { encoding.rex_prefix, 0x29, encoding.modrm_byte };
-			textSectionData.insert(textSectionData.end(), subInst.begin(), subInst.end());
+			// Integer subtraction: Use correct register size based on operand size
+			// Pass include_rex_w=false for 32-bit operations
+			bool include_rex_w = (ctx.operand_size_in_bits == 64);
+			auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg, include_rex_w);
+			
+			// Only emit REX prefix if needed (will be 0 for 32-bit with regs < 8)
+			if (encoding.rex_prefix != 0) {
+				textSectionData.push_back(encoding.rex_prefix);
+			}
+			textSectionData.push_back(0x29); // SUB opcode
+			textSectionData.push_back(encoding.modrm_byte);
 		}
 		storeArithmeticResult(ctx);
 	}
