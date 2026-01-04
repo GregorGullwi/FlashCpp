@@ -16706,13 +16706,8 @@ ParseResult Parser::parse_while_loop() {
     }
 
     // Parse body (can be a block or a single statement)
-    ParseResult body_result;
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{"sv) {
-        body_result = parse_block();
-    } else {
-        body_result = parse_statement_or_declaration();
-    }
-
+    // Always use parse_statement_or_declaration to ensure proper scope management
+    ParseResult body_result = parse_statement_or_declaration();
     if (body_result.is_error()) {
         return body_result;
     }
@@ -16735,13 +16730,8 @@ ParseResult Parser::parse_do_while_loop() {
     }
 
     // Parse body (can be a block or a single statement)
-    ParseResult body_result;
-    if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
-        body_result = parse_block();
-    } else {
-        body_result = parse_statement_or_declaration();
-    }
-
+    // Always use parse_statement_or_declaration to ensure proper scope management
+    ParseResult body_result = parse_statement_or_declaration();
     if (body_result.is_error()) {
         return body_result;
     }
