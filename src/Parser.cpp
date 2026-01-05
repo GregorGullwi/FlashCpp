@@ -16339,13 +16339,49 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	}
 	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "{") {
 		// Handle braced initializer in expression context
-		// This is used for return statements like: return { .a = 5 };
-		// We need to infer the type from context (e.g., function return type)
+		// Examples:
+		//   return { .a = 5 };  // Aggregate initialization with return type
+		//   func({})            // Braced initializer as function argument (type inferred from parameter)
 		
+		// Check if we're parsing a function argument by looking at the expression context
+		// In a function call argument, braced initializers are valid and their type is inferred
+		// from the function parameter type. Since we're doing a single-pass parser and we might
+		// not have resolved the function yet, we just accept it as a placeholder.
+		
+		// For now, if we don't have a current_function_ context (which means we're not in a
+		// return statement), just parse it as an empty braced initializer placeholder.
+		// This handles cases like: decltype(func({})) in template default parameters
 		if (!current_function_) {
-			return ParseResult::error("Braced initializer in expression requires type context", *current_token_);
+			Token brace_token = *current_token_;
+			consume_token(); // consume '{'
+			
+			// Skip the contents of the braced initializer
+			// We need to match braces to find the closing '}'
+			int brace_depth = 1;
+			while (brace_depth > 0 && current_token_.has_value()) {
+				if (current_token_->value() == "{") {
+					brace_depth++;
+				} else if (current_token_->value() == "}") {
+					brace_depth--;
+				}
+				if (brace_depth > 0) {
+					consume_token();
+				}
+			}
+			
+			if (!consume_punctuator("}")) {
+				return ParseResult::error("Expected '}' to close braced initializer", *current_token_);
+			}
+			
+			// Create a placeholder literal node - the type will be inferred from context
+			// (e.g., function parameter type, variable declaration type, etc.)
+			// The actual value doesn't matter, only that it represents a braced initializer
+			NumericLiteralValue val = static_cast<unsigned long long>(0);
+			result = emplace_node<ExpressionNode>(NumericLiteralNode(brace_token, val, Type::Int, TypeQualifier::None, 32));
+			return ParseResult::success(*result);
 		}
 		
+		// We're in a function body (current_function_ is set)
 		// Get the return type from the current function
 		const DeclarationNode& func_decl = current_function_->decl_node();
 		const ASTNode& return_type_node = func_decl.type_node();
