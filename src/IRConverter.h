@@ -2638,7 +2638,7 @@ inline void emitAddImmToReg(std::vector<char>& textSectionData, X64Register reg,
 	if (imm == 0) return; // No-op
 	
 	uint8_t reg_bits = static_cast<uint8_t>(reg) & 0x07;
-	bool reg_extended = static_cast<uint8_t>(reg) >= static_cast<uint8_t>(X64Register::R8);
+	uint8_t reg_extended = static_cast<uint8_t>(reg) >= static_cast<uint8_t>(X64Register::R8);
 	
 	// REX.W with branchless B bit
 	uint8_t rex = 0x48 | reg_extended;
