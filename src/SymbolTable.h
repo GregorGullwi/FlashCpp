@@ -350,14 +350,7 @@ public:
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
 
-			// First, check direct symbols in this scope
-			auto symbolIt = scope.symbols.find(identifier);
-			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
-				// Return the first match for backward compatibility
-				return symbolIt->second[0];
-			}
-
-			// Second, check using declarations in this scope
+			// First, check using declarations in this scope (they introduce names into the current scope)
 			auto usingIt = scope.using_declarations.find(identifier);
 			if (usingIt != scope.using_declarations.end()) {
 				const auto& [namespace_path, original_name] = usingIt->second;
@@ -389,6 +382,13 @@ public:
 				if (result.has_value()) {
 					return result;
 				}
+			}
+
+			// Second, check direct symbols in this scope
+			auto symbolIt = scope.symbols.find(identifier);
+			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
+				// Return the first match for backward compatibility
+				return symbolIt->second[0];
 			}
 
 			// Third, check using directives in this scope
@@ -483,13 +483,7 @@ public:
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
 			
-			// First, check direct symbols in this scope
-			auto symbolIt = scope.symbols.find(identifier);
-			if (symbolIt != scope.symbols.end()) {
-				return symbolIt->second;
-			}
-			
-			// Second, check using declarations in this scope
+			// First, check using declarations in this scope
 			auto usingIt = scope.using_declarations.find(identifier);
 			if (usingIt != scope.using_declarations.end()) {
 				const auto& [namespace_path, original_name] = usingIt->second;
@@ -497,6 +491,12 @@ public:
 				if (!result.empty()) {
 					return result;
 				}
+			}
+			
+			// Second, check direct symbols in this scope
+			auto symbolIt = scope.symbols.find(identifier);
+			if (symbolIt != scope.symbols.end()) {
+				return symbolIt->second;
 			}
 			
 			// Third, check using directives in this scope
@@ -671,6 +671,16 @@ public:
 			std::string_view key = intern_string(local_name);
 			std::string_view orig_name = intern_string(original_name);
 			current_scope.using_declarations[key] = std::make_pair(namespace_path, orig_name);
+		}
+
+		// Also materialize the referenced symbol into the current scope for faster/unambiguous lookup
+		auto resolved = lookup_qualified(namespace_path, original_name);
+		if (resolved.has_value()) {
+			std::string_view key = intern_string(local_name);
+			auto sym_it = current_scope.symbols.find(key);
+			if (sym_it == current_scope.symbols.end()) {
+				current_scope.symbols[key] = std::vector<ASTNode>{ resolved.value() };
+			}
 		}
 	}
 

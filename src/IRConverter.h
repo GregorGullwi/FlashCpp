@@ -8992,8 +8992,87 @@ private:
 					// Check if return type is float/double
 					bool is_float_return = ret_op.return_type.has_value() && 
 					                        is_floating_point_type(ret_op.return_type.value());
+
+					bool handled_reference_return = false;
+					{
+						auto lv_info_opt = getTempVarLValueInfo(return_var);
+						auto return_meta = getTempVarMetadata(return_var);
+						FLASH_LOG(Codegen, Debug, "handleReturn: lvalue metadata present=", lv_info_opt.has_value(), ", returns_reference=", current_function_returns_reference_, ", is_address=", return_meta.is_address);
+						if (lv_info_opt.has_value() && (current_function_returns_reference_ || return_meta.is_address)) {
+							const LValueInfo& lv_info = lv_info_opt.value();
+							auto loadBaseAddress = [&](const std::variant<StringHandle, TempVar>& base, bool base_is_pointer) -> bool {
+								int base_offset = 0;
+								if (std::holds_alternative<StringHandle>(base)) {
+									auto base_name = std::get<StringHandle>(base);
+									const StackVariableScope* scope_with_var = nullptr;
+									for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
+										auto var_it = scope_it->variables.find(base_name);
+										if (var_it != scope_it->variables.end()) {
+											scope_with_var = &(*scope_it);
+											base_offset = var_it->second.offset;
+											break;
+										}
+									}
+									if (scope_with_var == nullptr) {
+										return false;
+									}
+								} else {
+									base_offset = getStackOffsetFromTempVar(std::get<TempVar>(base));
+								}
+
+								if (base_is_pointer) {
+									emitMovFromFrame(X64Register::RAX, base_offset);
+								} else {
+									emitLeaFromFrame(X64Register::RAX, base_offset);
+								}
+								return true;
+							};
+
+							switch (lv_info.kind) {
+								case LValueInfo::Kind::Indirect: {
+									if (loadBaseAddress(lv_info.base, true)) {
+										if (lv_info.offset != 0) {
+											emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
+										}
+										handled_reference_return = true;
+									}
+									break;
+								}
+								case LValueInfo::Kind::Direct: {
+									if (loadBaseAddress(lv_info.base, false)) {
+										if (lv_info.offset != 0) {
+											emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
+										}
+										handled_reference_return = true;
+									}
+									break;
+								}
+								case LValueInfo::Kind::Member: {
+									bool base_is_pointer = lv_info.is_pointer_to_member;
+									if (loadBaseAddress(lv_info.base, base_is_pointer)) {
+										if (!base_is_pointer) {
+											emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
+										} else if (lv_info.offset != 0) {
+											emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
+										}
+										handled_reference_return = true;
+									}
+									break;
+								}
+								default:
+									break;
+							}
+
+							if (handled_reference_return) {
+								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+							}
+						}
+					}
 					
-					if (it != current_scope.variables.end()) {
+					if (handled_reference_return) {
+						// Address already loaded into RAX for reference return
+					}
+					else if (it != current_scope.variables.end()) {
 						int var_offset = it->second.offset;
 						
 						// Ensure stack space is allocated for large structs being returned
