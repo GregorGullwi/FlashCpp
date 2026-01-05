@@ -15490,13 +15490,33 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								return ParseResult::success(*result);
 							}
 							
-							// Check for inherited member template function (e.g., __test<_Tp>(0) from <type_traits>)
-							// Template args already parsed at this point, so we need to check base classes
+							// Check for member template function (including current struct and inherited from base classes)
+							// Example: __helper<_Tp>({}) where __helper is in the same struct or base class
+							// Template args already parsed at this point
 							if (!struct_parsing_context_stack_.empty() && peek_token().has_value() && peek_token()->value() == "(") {
 								const auto& context = struct_parsing_context_stack_.back();
 								const StructDeclarationNode* struct_node = context.struct_node;
 								if (struct_node) {
 									StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+									
+									// First, check the current struct's member functions (including those parsed so far)
+									for (const auto& member_func_decl : struct_node->member_functions()) {
+										const ASTNode& func_node = member_func_decl.function_declaration;
+										// Check if this is a template function
+										if (func_node.is<TemplateFunctionDeclarationNode>()) {
+											const TemplateFunctionDeclarationNode& template_func = func_node.as<TemplateFunctionDeclarationNode>();
+											const FunctionDeclarationNode& func_decl = template_func.function_declaration().as<FunctionDeclarationNode>();
+											StringHandle func_name = StringTable::getOrInternStringHandle(func_decl.decl_node().identifier_token().value());
+											if (func_name == id_handle) {
+												FLASH_LOG(Parser, Debug, "Found member template function '", idenfifier_token.value(), "' in current struct");
+												gSymbolTable.insert(idenfifier_token.value(), func_node);
+												identifierType = func_node;
+												goto inherited_template_found;
+											}
+										}
+									}
+									
+									// If not found in current struct, check base classes
 									for (const auto& base : struct_node->base_classes()) {
 										auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
 										if (base_type_it != gTypesByName.end()) {
