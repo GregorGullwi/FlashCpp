@@ -6030,7 +6030,9 @@ private:
 			
 			for (size_t i = 0; i < call_op.args.size(); ++i) {
 				const auto& arg = call_op.args[i];
-				bool is_float_arg = is_floating_point_type(arg.type);
+				// Reference arguments (including rvalue references) are passed as pointers,
+				// so they should use integer registers, not floating-point registers
+				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference;
 				
 				// Determine if this argument goes on stack
 				bool goes_on_stack = variadic_needs_stack_args; // For Windows variadic: ALL args go on stack
@@ -6138,7 +6140,9 @@ private:
 				const auto& arg = call_op.args[i];
 				
 				// Determine if this is a floating-point argument
-				bool is_float_arg = is_floating_point_type(arg.type);
+				// Reference arguments (including rvalue references) are passed as pointers (addresses),
+				// so they should use integer registers regardless of the underlying type
+				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference;
 				
 				// Check if this argument fits in a register (accounting for param_shift)
 				bool use_register = false;
@@ -8587,6 +8591,8 @@ private:
 				auto param_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
 				auto param_size = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_SIZE);
 				auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_POINTER_DEPTH);
+				// Fetch is_reference early since it affects register selection (references use integer regs, not float regs)
+				bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
 
 				// Calculate parameter number using FunctionDeclLayout helper
 				size_t param_index_in_list = (paramIndex - FunctionDeclLayout::FIRST_PARAM_INDEX) / FunctionDeclLayout::OPERANDS_PER_PARAM;
@@ -8595,7 +8601,9 @@ private:
 				// Platform-specific and type-aware offset calculation
 				size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 				size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
-				bool is_float_param = (param_type == Type::Float || param_type == Type::Double) && param_pointer_depth == 0;
+				// Reference parameters (including rvalue references) are passed as pointers,
+				// so they should use integer registers regardless of the underlying type
+				bool is_float_param = (param_type == Type::Float || param_type == Type::Double) && param_pointer_depth == 0 && !is_reference;
 			
 				// Determine the register count threshold for this parameter type
 				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
@@ -8626,7 +8634,6 @@ private:
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
 				// Also track pointer parameters (T*) since they also contain addresses that need dereferencing
-				bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
 				if (is_reference || param_pointer_depth > 0) {
 					setReferenceInfo(offset, param_type, param_size, 
 						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE));
@@ -8699,7 +8706,9 @@ private:
 				// Platform-specific and type-aware offset calculation
 				size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 				size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
-				bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0;
+				// Reference parameters (including rvalue references) are passed as pointers,
+				// so they should use integer registers regardless of the underlying type
+				bool is_float_param = (param.type == Type::Float || param.type == Type::Double) && param.pointer_depth == 0 && !param.is_reference;
 			
 				// Determine the register count threshold for this parameter type
 				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
