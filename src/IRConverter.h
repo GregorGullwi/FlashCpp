@@ -4579,6 +4579,9 @@ private:
 		Type value_type = Type::Invalid;
 		int value_size_bits = 0;
 		bool is_rvalue_reference = false;
+		// When true (e.g., AddressOf results), this TempVar holds a raw address/pointer value,
+		// not a reference that should be implicitly dereferenced.
+		bool holds_address_only = false;
 	};
 	
 	// Helper function to set reference information in both storage systems
@@ -4588,7 +4591,8 @@ private:
 		reference_stack_info_[stack_offset] = ReferenceInfo{
 			.value_type = value_type,
 			.value_size_bits = value_size_bits,
-			.is_rvalue_reference = is_rvalue_ref
+			.is_rvalue_reference = is_rvalue_ref,
+			.holds_address_only = false
 		};
 		
 		// If we have a valid TempVar, also update its metadata
@@ -4617,7 +4621,8 @@ private:
 			return ReferenceInfo{
 				.value_type = getTempVarValueType(temp_var),
 				.value_size_bits = getTempVarValueSizeBits(temp_var),
-				.is_rvalue_reference = isTempVarRValueReference(temp_var)
+				.is_rvalue_reference = isTempVarRValueReference(temp_var),
+				.holds_address_only = false
 			};
 		}
 		
@@ -5961,11 +5966,23 @@ private:
 			
 			flushAllDirtyRegisters();
 			
+			// Determine effective return size; fall back to type size if not provided
+			int return_size_bits = call_op.return_size_in_bits;
+			if (return_size_bits == 0) {
+				int computed_size = get_type_size_bits(call_op.return_type);
+				if (computed_size > 0) {
+					return_size_bits = computed_size;
+				} else {
+					// Default to pointer size to ensure unique stack slot
+					return_size_bits = static_cast<int>(sizeof(void*) * 8);
+				}
+			}
+			
 			// Get result offset - use actual return size for proper stack allocation
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"handleFunctionCall: allocating result temp_{} with return_size_in_bits={}",
-				call_op.result.var_number, call_op.return_size_in_bits);
-			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number, call_op.return_size_in_bits);
+				call_op.result.var_number, return_size_bits);
+			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number, return_size_bits);
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"handleFunctionCall: result_offset={} for temp_{}",
 				result_offset, call_op.result.var_number);
@@ -6398,7 +6415,7 @@ private:
 				} else {
 					emitMovToFrameSized(
 						SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
-						SizedStackSlot{result_offset, call_op.return_size_in_bits, isSignedType(call_op.return_type)}  // dest
+						SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.return_type)}  // dest
 					);
 				}
 			} else if (call_op.uses_return_slot) {
@@ -8992,8 +9009,87 @@ private:
 					// Check if return type is float/double
 					bool is_float_return = ret_op.return_type.has_value() && 
 					                        is_floating_point_type(ret_op.return_type.value());
+
+					bool handled_reference_return = false;
+					{
+						auto lv_info_opt = getTempVarLValueInfo(return_var);
+						auto return_meta = getTempVarMetadata(return_var);
+						FLASH_LOG(Codegen, Debug, "handleReturn: lvalue metadata present=", lv_info_opt.has_value(), ", returns_reference=", current_function_returns_reference_, ", is_address=", return_meta.is_address);
+						if (lv_info_opt.has_value() && (current_function_returns_reference_ || return_meta.is_address)) {
+							const LValueInfo& lv_info = lv_info_opt.value();
+							auto loadBaseAddress = [&](const std::variant<StringHandle, TempVar>& base, bool base_is_pointer) -> bool {
+								int base_offset = 0;
+								if (std::holds_alternative<StringHandle>(base)) {
+									auto base_name = std::get<StringHandle>(base);
+									const StackVariableScope* scope_with_var = nullptr;
+									for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
+										auto var_it = scope_it->variables.find(base_name);
+										if (var_it != scope_it->variables.end()) {
+											scope_with_var = &(*scope_it);
+											base_offset = var_it->second.offset;
+											break;
+										}
+									}
+									if (scope_with_var == nullptr) {
+										return false;
+									}
+								} else {
+									base_offset = getStackOffsetFromTempVar(std::get<TempVar>(base));
+								}
+
+								if (base_is_pointer) {
+									emitMovFromFrame(X64Register::RAX, base_offset);
+								} else {
+									emitLeaFromFrame(X64Register::RAX, base_offset);
+								}
+								return true;
+							};
+
+							switch (lv_info.kind) {
+								case LValueInfo::Kind::Indirect: {
+									if (loadBaseAddress(lv_info.base, true)) {
+										if (lv_info.offset != 0) {
+											emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
+										}
+										handled_reference_return = true;
+									}
+									break;
+								}
+								case LValueInfo::Kind::Direct: {
+									if (loadBaseAddress(lv_info.base, false)) {
+										if (lv_info.offset != 0) {
+											emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
+										}
+										handled_reference_return = true;
+									}
+									break;
+								}
+								case LValueInfo::Kind::Member: {
+									bool base_is_pointer = lv_info.is_pointer_to_member;
+									if (loadBaseAddress(lv_info.base, base_is_pointer)) {
+										if (!base_is_pointer) {
+											emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
+										} else if (lv_info.offset != 0) {
+											emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
+										}
+										handled_reference_return = true;
+									}
+									break;
+								}
+								default:
+									break;
+							}
+
+							if (handled_reference_return) {
+								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+							}
+						}
+					}
 					
-					if (it != current_scope.variables.end()) {
+					if (handled_reference_return) {
+						// Address already loaded into RAX for reference return
+					}
+					else if (it != current_scope.variables.end()) {
 						int var_offset = it->second.offset;
 						
 						// Ensure stack space is allocated for large structs being returned
@@ -9006,7 +9102,7 @@ private:
 						// Check if this is a reference variable - if so, dereference it
 						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
 						auto ref_it = reference_stack_info_.find(var_offset);
-						if (ref_it != reference_stack_info_.end() && !current_function_returns_reference_) {
+						if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only && !current_function_returns_reference_) {
 							// This is a reference and function returns by value - load pointer and dereference
 							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing reference at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
@@ -13301,7 +13397,8 @@ private:
 			reference_stack_info_[result_offset] = ReferenceInfo{
 				.value_type = op.operand.type,
 				.value_size_bits = op.operand.size_in_bits,
-				.is_rvalue_reference = false  // AddressOf result is a pointer, not a reference
+				.is_rvalue_reference = false,  // AddressOf result is a pointer, not a reference
+				.holds_address_only = true
 			};
 			
 			return;

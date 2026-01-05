@@ -3495,6 +3495,7 @@ private:
 	void visitUsingDeclarationNode(const UsingDeclarationNode& node) {
 		// Using declarations don't generate IR - they import a specific name into the current scope
 		// Add the using declaration to the local symbol table (not gSymbolTable)
+		FLASH_LOG(Codegen, Debug, "Adding using declaration: ", node.identifier_name(), " from namespace size=", node.namespace_path().size());
 		symbol_table.add_using_declaration(
 			node.identifier_name(),
 			node.namespace_path(),
@@ -3626,6 +3627,28 @@ private:
 				in_return_statement_with_rvo_ = true;
 			}
 			
+			// Fast path: reference return of '*this' can directly return the this pointer
+			if (current_function_returns_reference_ && expr_opt->is<ExpressionNode>()) {
+				const auto& ret_expr = expr_opt->as<ExpressionNode>();
+				if (std::holds_alternative<UnaryOperatorNode>(ret_expr)) {
+					const auto& unary = std::get<UnaryOperatorNode>(ret_expr);
+					if (unary.op() == "*" && unary.get_operand().is<ExpressionNode>()) {
+						const auto& operand_expr = unary.get_operand().as<ExpressionNode>();
+						if (std::holds_alternative<IdentifierNode>(operand_expr)) {
+							const auto& ident = std::get<IdentifierNode>(operand_expr);
+							if (ident.name() == "this") {
+								ReturnOp ret_op;
+								ret_op.return_value = StringTable::getOrInternStringHandle("this");
+								ret_op.return_type = current_function_return_type_;
+								ret_op.return_size = current_function_return_size_;
+								ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
+								return;
+							}
+						}
+					}
+				}
+			}
+
 			// For reference return types, use LValueAddress context to get the address instead of the value
 			// This ensures "return *this" returns the address (this pointer), not the dereferenced value
 			ExpressionContext return_context = current_function_returns_reference_ 
