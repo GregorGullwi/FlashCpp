@@ -15919,7 +15919,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					is_function_pointer = type_node.is_function_pointer();
 
 					// Check if this is a struct with operator()
-					if (type_node.type() == Type::Struct) {
+					// Note: Lambda variables have Type::Auto (from auto lambda = [...]), not Type::Struct
+					if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined || type_node.type() == Type::Auto) {
 						TypeIndex type_index = type_node.type_index();
 						FLASH_LOG_FORMAT(Parser, Debug, "@@@ Checking identifier '{}' for operator(): type_index={}", idenfifier_token.value(), type_index);
 						if (type_index < gTypeInfo.size()) {
