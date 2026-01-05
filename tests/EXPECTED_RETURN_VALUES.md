@@ -13,9 +13,11 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Total files tested:** 826
 **Valid returns (matching expected):** 807
 **Regressions (mismatches):** 6 (down from 9)
-**Runtime crashes:** 17
+**Runtime crashes:** 17 (previously documented: 13, newly documented: 4 pre-existing)
 **Compile failures:** 0
 **Link failures:** 0
+
+Note: The 4 additional crashes (test_perfect_forwarding, test_rvo_cannot_apply, test_std_forward_observable, test_va_implementation) were pre-existing bugs that were not previously documented. These are NOT regressions introduced by recent commits - they were verified to crash with the original code before any changes.
 
 ## Fixed Regressions
 
@@ -78,6 +80,12 @@ The following test files crash at runtime (signal 11 - Segmentation Fault):
 11. test_operator_addressof_overload_baseline.cpp
 12. test_operator_addressof_resolved_ret100.cpp
 13. test_exceptions_nested.cpp
+14. test_perfect_forwarding.cpp
+15. test_rvo_cannot_apply.cpp
+16. test_std_forward_observable.cpp
+17. test_va_implementation.cpp
+
+Note: Tests 14-17 were pre-existing crashes that were missing from this documentation.
 
 ## Notes
 
