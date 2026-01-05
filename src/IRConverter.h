@@ -8591,7 +8591,7 @@ private:
 				auto param_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
 				auto param_size = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_SIZE);
 				auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_POINTER_DEPTH);
-				// Fetch is_reference early since it affects register selection
+				// Fetch is_reference early since it affects register selection (references use integer regs, not float regs)
 				bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
 
 				// Calculate parameter number using FunctionDeclLayout helper
