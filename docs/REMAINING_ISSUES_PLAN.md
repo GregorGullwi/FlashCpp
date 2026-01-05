@@ -324,7 +324,7 @@ Modified `emitLoadIndexIntoRCX()` in `src/IRConverter.h` to:
 
 **Files:**
 - `test_rvo_very_large_struct.cpp` - Large struct RVO/NRVO
-- `test_lambda_cpp20_comprehensive.cpp` - Advanced C++20 lambda features
+- `test_lambda_cpp20_comprehensive_ret135.cpp` - Advanced C++20 lambda features
 - `test_xvalue_all_casts.cpp` - xvalue handling across all cast types
 
 #### Issue 5a: Large Struct RVO/NRVO
@@ -363,7 +363,7 @@ System V AMD64 ABI has specific rules for returning large structs:
 
 **Implementation Steps (3-4 days):**
 ```
-1. Analyze specific test_lambda_cpp20_comprehensive.cpp failures
+1. Analyze specific test_lambda_cpp20_comprehensive_ret135.cpp failures
 2. Identify which C++20 feature is crashing
 3. Add support for that specific feature
 4. May require parser updates for C++20 lambda syntax

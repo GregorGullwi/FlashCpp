@@ -163,7 +163,7 @@ $expectedCompileFailures = @(
   "test_cstddef.cpp"
   "test_cstdio_puts.cpp"
   "test_cstdlib.cpp"
-  # test_lambda_cpp20_comprehensive.cpp - Now compiles with unsupported features commented out
+  # test_lambda_cpp20_comprehensive_ret135.cpp - Now compiles with unsupported features commented out
 )
 
 # Expected link failures - files that compile but have known link issues
