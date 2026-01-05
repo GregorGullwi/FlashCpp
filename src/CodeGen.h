@@ -809,28 +809,42 @@ public:
 				ctor_decl_op.return_pointer_depth = 0;
 				ctor_decl_op.linkage = Linkage::CPlusPlus;
 				ctor_decl_op.is_variadic = false;
+				// Trivial constructors are implicitly inline (like constructors defined inside class body)
+				ctor_decl_op.is_inline = true;
 
 				// Generate mangled name for default constructor
-				// Use style-aware generateMangledName instead of MSVC-only generateMangledNameForConstructor
+				// Use style-aware mangling that properly handles constructors for both MSVC and Itanium
 				std::vector<TypeSpecifierNode> empty_params;  // Explicit type to avoid ambiguity
 				std::vector<std::string_view> empty_namespace_path;  // Explicit type to avoid ambiguity
 				std::string_view class_name = StringTable::getStringView(type_info->name());
-				// Extract the last component for func_name (handles nested classes like "Outer::Inner")
-				std::string_view func_name = class_name;
-				auto last_colon = class_name.rfind("::");
-				if (last_colon != std::string_view::npos) {
-					func_name = class_name.substr(last_colon + 2);
+
+				// Use the appropriate mangling based on the style
+				if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::MSVC) {
+					// MSVC uses dedicated constructor mangling (??0ClassName@@...)
+					ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
+						NameMangling::generateMangledNameForConstructor(class_name, empty_params, empty_namespace_path)
+					);
+				} else if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
+					// Itanium uses regular mangling with class name as function name (produces C1 marker)
+					// Extract the last component for func_name (handles nested classes like "Outer::Inner")
+					std::string_view func_name = class_name;
+					auto last_colon = class_name.rfind("::");
+					if (last_colon != std::string_view::npos) {
+						func_name = class_name.substr(last_colon + 2);
+					}
+					TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0);
+					ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
+						func_name,
+						void_return,
+						empty_params,
+						false,  // not variadic
+						class_name,  // struct_name
+						empty_namespace_path,
+						Linkage::CPlusPlus
+					));
+				} else {
+					assert(false && "Unhandled name mangling type");
 				}
-				TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0);
-				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
-					func_name,
-					void_return,
-					empty_params,
-					false,  // not variadic
-					class_name,  // struct_name
-					empty_namespace_path,
-					Linkage::CPlusPlus
-				));
 
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(ctor_decl_op), Token()));
 				
@@ -2861,12 +2875,23 @@ private:
 		// For template instantiations, use struct_name_for_ctor which has the correct instantiated name
 		// (e.g., "Base_char" instead of "Base")
 		{
-			// Create a dummy TypeSpecifierNode for the return type (constructors return void)
-			TypeSpecifierNode return_type(Type::Void, TypeQualifier::None, 0);
 			std::vector<std::string_view> empty_namespace_path;
-			ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
-				ctor_function_name, return_type, node.parameter_nodes(),
-				false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus));
+
+			// Use the appropriate mangling based on the style
+			if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::MSVC) {
+				// MSVC uses dedicated constructor mangling (??0ClassName@@...)
+				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
+					NameMangling::generateMangledNameForConstructor(struct_name_for_ctor, node.parameter_nodes(), empty_namespace_path)
+				);
+			} else if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
+				// Itanium uses regular mangling with class name as function name (produces C1 marker)
+				TypeSpecifierNode return_type(Type::Void, TypeQualifier::None, 0);
+				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
+					ctor_function_name, return_type, node.parameter_nodes(),
+					false, struct_name_for_ctor, empty_namespace_path, Linkage::CPlusPlus));
+			} else {
+				assert(false && "Unhandled name mangling type");
+			}
 		}
 		
 		// Note: 'this' pointer is added implicitly by handleFunctionDecl for all member functions
