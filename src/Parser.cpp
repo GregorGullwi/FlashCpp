@@ -41,6 +41,7 @@ ConceptRegistry gConceptRegistry;
 static const std::unordered_set<std::string_view> type_keywords = {
 	"int"sv, "float"sv, "double"sv, "char"sv, "bool"sv, "void"sv,
 	"short"sv, "long"sv, "signed"sv, "unsigned"sv, "const"sv, "volatile"sv, "alignas"sv,
+	"auto"sv, "wchar_t"sv, "char8_t"sv, "char16_t"sv, "char32_t"sv, "decltype"sv,
 	// Microsoft-specific type keywords
 	"__int8"sv, "__int16"sv, "__int32"sv, "__int64"sv
 };
@@ -2587,58 +2588,77 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 
 		// Handle comma-separated declarations (e.g., int x, y, z;)
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
-			consume_token(); // consume ','
+		// When there are additional variables, collect them all in a BlockNode
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+			// Create a block to hold all declarations
+			auto [block_node, block_ref] = emplace_node_ref<BlockNode>();
+			
+			// Add the first declaration to the block
+			block_ref.add_statement_node(global_var_node);
+			
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+				consume_token(); // consume ','
 
-			// Parse the next variable name
-			auto next_identifier_token = consume_token();
-			if (!next_identifier_token.has_value() || next_identifier_token->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected identifier after comma in declaration list", *current_token_);
-			}
-
-			// Create a new DeclarationNode with the same type
-			auto next_decl_node = emplace_node<DeclarationNode>(
-				emplace_node<TypeSpecifierNode>(type_specifier),
-				*next_identifier_token
-			);
-
-			// Check for initialization
-			std::optional<ASTNode> next_initializer;
-			if (peek_token().has_value() && peek_token()->value() == "=") {
-				consume_token(); // consume '='
-
-				// Check if this is a brace initializer
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
-					ParseResult init_list_result = parse_brace_initializer(type_specifier);
-					if (init_list_result.is_error()) {
-						return init_list_result;
-					}
-					next_initializer = init_list_result.node();
-				} else {
-					// Regular expression initializer
-					auto init_expr = parse_expression();
-					if (init_expr.is_error()) {
-						return init_expr;
-					}
-					next_initializer = init_expr.node();
+				// Parse the next variable name
+				auto next_identifier_token = consume_token();
+				if (!next_identifier_token.has_value() || next_identifier_token->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected identifier after comma in declaration list", *current_token_);
 				}
+
+				// Create a new DeclarationNode with the same type
+				auto next_decl_node = emplace_node<DeclarationNode>(
+					emplace_node<TypeSpecifierNode>(type_specifier),
+					*next_identifier_token
+				);
+
+				// Check for initialization
+				std::optional<ASTNode> next_initializer;
+				if (peek_token().has_value() && peek_token()->value() == "=") {
+					consume_token(); // consume '='
+
+					// Check if this is a brace initializer
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+						ParseResult init_list_result = parse_brace_initializer(type_specifier);
+						if (init_list_result.is_error()) {
+							return init_list_result;
+						}
+						next_initializer = init_list_result.node();
+					} else {
+						// Regular expression initializer
+						auto init_expr = parse_expression();
+						if (init_expr.is_error()) {
+							return init_expr;
+						}
+						next_initializer = init_expr.node();
+					}
+				}
+
+				// Create a variable declaration node for this additional variable
+				auto [next_var_node, next_var_decl] = emplace_node_ref<VariableDeclarationNode>(
+					next_decl_node,
+					next_initializer
+				);
+				next_var_decl.set_is_constexpr(is_constexpr);
+				next_var_decl.set_is_constinit(is_constinit);
+
+				// Add to symbol table
+				if (!gSymbolTable.insert(next_identifier_token->value(), next_var_node)) {
+					return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *next_identifier_token);
+				}
+				
+				// Add to block
+				block_ref.add_statement_node(next_var_node);
 			}
 
-			// Create a variable declaration node for this additional variable
-			auto [next_var_node, next_var_decl] = emplace_node_ref<VariableDeclarationNode>(
-				next_decl_node,
-				next_initializer
-			);
-			next_var_decl.set_is_constexpr(is_constexpr);
-			next_var_decl.set_is_constinit(is_constinit);
-
-			// Add to symbol table
-			if (!gSymbolTable.insert(next_identifier_token->value(), next_var_node)) {
-				return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *next_identifier_token);
+			// Expect semicolon after all declarations
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after declaration", *current_token_);
 			}
+
+			return saved_position.success(block_node);
 		}
 
-		// Expect semicolon after all declarations
+		// Single declaration - expect semicolon
 		if (!consume_punctuator(";")) {
 			return ParseResult::error("Expected ';' after declaration", *current_token_);
 		}
@@ -9598,37 +9618,41 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"struct", &Parser::parse_struct_declaration},
 			{"class", &Parser::parse_struct_declaration},
 			{"union", &Parser::parse_struct_declaration},
-			{"static", &Parser::parse_variable_declaration},
-			{"extern", &Parser::parse_variable_declaration},
-			{"register", &Parser::parse_variable_declaration},
-			{"mutable", &Parser::parse_variable_declaration},
-			{"constexpr", &Parser::parse_variable_declaration},
-			{"constinit", &Parser::parse_variable_declaration},
-			{"consteval", &Parser::parse_variable_declaration},
-			{"int", &Parser::parse_variable_declaration},
-			{"float", &Parser::parse_variable_declaration},
-			{"double", &Parser::parse_variable_declaration},
-			{"char", &Parser::parse_variable_declaration},
-			{"wchar_t", &Parser::parse_variable_declaration},
-			{"char8_t", &Parser::parse_variable_declaration},
-			{"char16_t", &Parser::parse_variable_declaration},
-			{"char32_t", &Parser::parse_variable_declaration},
-			{"bool", &Parser::parse_variable_declaration},
+			// Route all declaration-starting keywords to parse_declaration_or_function_definition
+		// This ensures both variable and function declarations are handled correctly
+		// (fixes C++20 grammar compliance issue where type keywords were incorrectly
+		// routed to parse_variable_declaration, causing function declarations to be misparsed)
+			{"static", &Parser::parse_declaration_or_function_definition},
+			{"extern", &Parser::parse_declaration_or_function_definition},
+			{"register", &Parser::parse_declaration_or_function_definition},
+			{"mutable", &Parser::parse_declaration_or_function_definition},
+			{"constexpr", &Parser::parse_declaration_or_function_definition},
+			{"constinit", &Parser::parse_declaration_or_function_definition},
+			{"consteval", &Parser::parse_declaration_or_function_definition},
+			{"int", &Parser::parse_declaration_or_function_definition},
+			{"float", &Parser::parse_declaration_or_function_definition},
+			{"double", &Parser::parse_declaration_or_function_definition},
+			{"char", &Parser::parse_declaration_or_function_definition},
+			{"wchar_t", &Parser::parse_declaration_or_function_definition},
+			{"char8_t", &Parser::parse_declaration_or_function_definition},
+			{"char16_t", &Parser::parse_declaration_or_function_definition},
+			{"char32_t", &Parser::parse_declaration_or_function_definition},
+			{"bool", &Parser::parse_declaration_or_function_definition},
 			{"void", &Parser::parse_declaration_or_function_definition},
-			{"short", &Parser::parse_variable_declaration},
-			{"long", &Parser::parse_variable_declaration},
-			{"signed", &Parser::parse_variable_declaration},
-			{"unsigned", &Parser::parse_variable_declaration},
-			{"const", &Parser::parse_variable_declaration},
-			{"volatile", &Parser::parse_variable_declaration},
-			{"alignas", &Parser::parse_variable_declaration},
-			{"auto", &Parser::parse_variable_declaration},
-			{"decltype", &Parser::parse_variable_declaration},  // C++11 decltype type specifier
+			{"short", &Parser::parse_declaration_or_function_definition},
+			{"long", &Parser::parse_declaration_or_function_definition},
+			{"signed", &Parser::parse_declaration_or_function_definition},
+			{"unsigned", &Parser::parse_declaration_or_function_definition},
+			{"const", &Parser::parse_declaration_or_function_definition},
+			{"volatile", &Parser::parse_declaration_or_function_definition},
+			{"alignas", &Parser::parse_declaration_or_function_definition},
+			{"auto", &Parser::parse_declaration_or_function_definition},
+			{"decltype", &Parser::parse_declaration_or_function_definition},  // C++11 decltype type specifier
 			// Microsoft-specific type keywords
-			{"__int8", &Parser::parse_variable_declaration},
-			{"__int16", &Parser::parse_variable_declaration},
-			{"__int32", &Parser::parse_variable_declaration},
-			{"__int64", &Parser::parse_variable_declaration},
+			{"__int8", &Parser::parse_declaration_or_function_definition},
+			{"__int16", &Parser::parse_declaration_or_function_definition},
+			{"__int32", &Parser::parse_declaration_or_function_definition},
+			{"__int64", &Parser::parse_declaration_or_function_definition},
 			{"new", &Parser::parse_expression_statement},
 			{"delete", &Parser::parse_expression_statement},
 			{"static_cast", &Parser::parse_expression_statement},
@@ -11826,21 +11850,22 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 int Parser::get_operator_precedence(const std::string_view& op)
 {
 	// C++ operator precedence (higher number = higher precedence)
+	// Standard precedence order: Shift > Three-Way (<=>)  > Relational
 	static const std::unordered_map<std::string_view, int> precedence_map = {
-			// Multiplicative (precedence 16)
-			{"*", 16},  {"/", 16},  {"%", 16},
-			// Additive (precedence 15)
-			{"+", 15},  {"-", 15},
-			// Shift (precedence 14)
-			{"<<", 14}, {">>", 14},
+			// Multiplicative (precedence 17)
+			{"*", 17},  {"/", 17},  {"%", 17},
+			// Additive (precedence 16)
+			{"+", 16},  {"-", 16},
+			// Shift (precedence 15)
+			{"<<", 15}, {">>", 15},
+			// Spaceship/Three-way comparison (precedence 14) - C++20 standard compliant
+			{"<=>", 14},
 			// Relational (precedence 13)
 			{"<", 13},  {"<=", 13}, {">", 13},  {">=", 13},
 			// Equality (precedence 12)
 			{"==", 12}, {"!=", 12},
 			// Bitwise AND (precedence 11)
 			{"&", 11},
-			// Spaceship/Three-way comparison (precedence 10)
-			{"<=>", 10},
 			// Bitwise XOR (precedence 10)
 			{"^", 10},
 			// Bitwise OR (precedence 9)
@@ -16638,7 +16663,7 @@ ParseResult Parser::parse_for_loop() {
 
         // Check for ranged-for syntax: for (declaration : range_expression)
         if (consume_punctuator(":"sv)) {
-            // This is a ranged for loop
+            // This is a ranged for loop (without init-statement)
             if (!init_statement.has_value()) {
                 return ParseResult::error("Ranged for loop requires a loop variable declaration", *current_token_);
             }
@@ -16684,6 +16709,76 @@ ParseResult Parser::parse_for_loop() {
             return ParseResult::error("Expected ';' after for loop initialization", *current_token_);
         }
     }
+
+    // At this point, we've parsed the init statement (or it was empty) and consumed the first semicolon
+    // Now check for C++20 range-based for with init-statement: for (init; decl : range)
+    // This requires checking if the next part looks like a range declaration
+    
+    // Save position to potentially backtrack
+    SaveHandle range_check_pos = save_token_position();
+    
+    // Check if this could be a C++20 range-based for with init-statement
+    bool is_range_for_with_init = false;
+    std::optional<ASTNode> range_decl;
+    
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+        type_keywords.find(peek_token()->value()) != type_keywords.end()) {
+        // Try to parse as a range declaration
+        ParseResult decl_result = parse_variable_declaration();
+        if (!decl_result.is_error() && decl_result.node().has_value()) {
+            // Check if followed by ':'
+            if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+                peek_token()->value() == ":") {
+                is_range_for_with_init = true;
+                range_decl = decl_result.node();
+            }
+        }
+    }
+    
+    if (is_range_for_with_init) {
+        // This is a C++20 range-based for with init-statement
+        consume_punctuator(":"sv);  // consume the ':'
+        
+        // Parse the range expression
+        ParseResult range_result = parse_expression();
+        if (range_result.is_error()) {
+            return range_result;
+        }
+
+        auto range_expr = range_result.node();
+        if (!range_expr.has_value()) {
+            return ParseResult::error("Expected range expression in ranged for loop", *current_token_);
+        }
+
+        if (!consume_punctuator(")"sv)) {
+            return ParseResult::error("Expected ')' after ranged for loop range expression", *current_token_);
+        }
+
+        // Parse body (can be a block or a single statement)
+        ParseResult body_result;
+        if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+            body_result = parse_block();
+        } else {
+            body_result = parse_statement_or_declaration();
+        }
+
+        if (body_result.is_error()) {
+            return body_result;
+        }
+
+        auto body_node = body_result.node();
+        if (!body_node.has_value()) {
+            return ParseResult::error("Invalid ranged for loop body", *current_token_);
+        }
+
+        // Create ranged for statement with init-statement
+        return ParseResult::success(emplace_node<RangedForStatementNode>(
+            *range_decl, *range_expr, *body_node, init_statement
+        ));
+    }
+    
+    // Not a range-based for with init - restore position and continue with regular for loop
+    restore_token_position(range_check_pos);
 
     // Parse condition (optional: can be empty, defaults to true)
     std::optional<ASTNode> condition;

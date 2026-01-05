@@ -4373,6 +4373,15 @@ private:
 		//   for (int __i = 0; __i < array_size; ++__i) { int x = arr[__i]; body }
 		// For types with begin()/end(): for (int x : vec) { body } becomes:
 		//   for (auto __begin = vec.begin(), __end = vec.end(); __begin != __end; ++__begin) { int x = *__begin; body }
+		// C++20: for (init; decl : range) { body } first executes init, then the above
+
+		// C++20: Handle optional init-statement if present
+		if (node.has_init_statement()) {
+			auto init_stmt = node.get_init_statement();
+			if (init_stmt.has_value()) {
+				visit(*init_stmt);
+			}
+		}
 
 		// Generate unique labels and counter for this ranged for loop
 		static size_t ranged_for_counter = 0;
