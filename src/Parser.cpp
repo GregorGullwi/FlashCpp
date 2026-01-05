@@ -13566,15 +13566,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		const QualifiedIdentifierNode& qual_id = qualified_node.as<QualifiedIdentifierNode>();
 
 		// Try to look up the qualified identifier
-		// For global namespace (empty namespaces), we need to look in the global scope
+		// For global namespace (empty namespaces), lookup_qualified handles it correctly
+		// by looking in the global namespace (namespace_symbols_[empty_path])
 		std::optional<ASTNode> identifierType;
-		if (namespaces.empty()) {
-			// Global namespace - look up in global symbol table
-			identifierType = lookup_symbol(StringTable::getOrInternStringHandle(qual_id.name()));
-		} else {
-			// Qualified with namespace - use lookup_qualified
-			identifierType = lookup_symbol_qualified(qual_id.namespaces(), qual_id.name());
-		}
+		// Always use lookup_symbol_qualified - it handles both cases:
+		// - Empty namespaces (::identifier) -> looks in global namespace only
+		// - Non-empty namespaces (ns::identifier) -> looks in specified namespace
+		identifierType = lookup_symbol_qualified(qual_id.namespaces(), qual_id.name());
 
 		// Check if followed by '(' for function call
 		if (current_token_.has_value() && current_token_->value() == "(") {
