@@ -130,7 +130,7 @@ On Unix/Linux, `main()` return values are masked to 0-255 (8-bit). Values >255 a
    - `test_virtual_inheritance.cpp` (virtual inheritance diamond problem)
 
 4. **Lambda Features** (2 files) - Lambda code generation issues
-   - `test_lambda_cpp20_comprehensive.cpp` (advanced C++20 lambda features)
+   - `test_lambda_cpp20_comprehensive_ret135.cpp` (advanced C++20 lambda features)
    - `test_lambda_this_capture.cpp` (lambda body not generated correctly)
 
 5. **Advanced C++ Features** (remaining 9 files) - Complex features
