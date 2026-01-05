@@ -401,9 +401,10 @@ public:
 
 			// If we're in a namespace scope, also check namespace_symbols_ for symbols
 			// from other blocks of the same namespace (e.g., reopened namespace blocks)
-			// This needs to happen BEFORE checking parent/global scopes
+			// This needs to happen BEFORE checking parent/global scopes.
+			// We check the current accumulated namespace path, then pop one component
+			// to check progressively outer namespace paths in subsequent iterations.
 			if (scope.scope_type == ScopeType::Namespace && !full_ns_path.empty()) {
-				FLASH_LOG(Scope, Debug, "lookup('", identifier, "'): checking namespace_symbols_ for ns path with ", full_ns_path.size(), " components");
 				// Only check if we haven't already checked this path
 				bool already_checked = false;
 				for (const auto& checked : checked_ns_paths) {
@@ -431,7 +432,10 @@ public:
 					}
 				}
 				
-				// Pop the last namespace from the path for checking outer namespaces
+				// Pop the last namespace from the path to check progressively outer
+				// namespace scopes in subsequent iterations. This is intentional:
+				// when we encounter a namespace scope during reverse iteration, we want
+				// to check namespace_symbols_ for that specific namespace level.
 				full_ns_path.pop_back();
 			}
 		}
@@ -504,7 +508,9 @@ public:
 			}
 			
 			// If we're in a namespace scope, also check namespace_symbols_ for symbols
-			// from other blocks of the same namespace (e.g., reopened namespace blocks)
+			// from other blocks of the same namespace (e.g., reopened namespace blocks).
+			// We check the current accumulated namespace path, then pop one component
+			// to check progressively outer namespace paths in subsequent iterations.
 			if (scope.scope_type == ScopeType::Namespace && !full_ns_path.empty()) {
 				// Only check if we haven't already checked this path
 				bool already_checked = false;
@@ -531,7 +537,10 @@ public:
 					}
 				}
 				
-				// Pop the last namespace from the path for checking outer namespaces
+				// Pop the last namespace from the path to check progressively outer
+				// namespace scopes in subsequent iterations. This is intentional:
+				// when we encounter a namespace scope during reverse iteration, we want
+				// to check namespace_symbols_ for that specific namespace level.
 				full_ns_path.pop_back();
 			}
 		}
