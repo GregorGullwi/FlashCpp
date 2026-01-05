@@ -344,24 +344,16 @@ public:
 			}
 		}
 		
-		// DEBUG: Log the namespace path being used
-		if (!full_ns_path.empty()) {
-			FLASH_LOG(Scope, Debug, "lookup('", identifier, "'): full_ns_path has ", full_ns_path.size(), " components");
-		}
-		
 		// Track which namespace paths we've already checked in namespace_symbols_
 		std::vector<NamespacePath> checked_ns_paths;
 
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
-			
-			FLASH_LOG(Scope, Debug, "lookup('", identifier, "'): checking scope type=", static_cast<int>(scope.scope_type));
 
 			// First, check direct symbols in this scope
 			auto symbolIt = scope.symbols.find(identifier);
 			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
 				// Return the first match for backward compatibility
-				FLASH_LOG(Scope, Debug, "lookup('", identifier, "'): found in direct symbols");
 				return symbolIt->second[0];
 			}
 
@@ -424,7 +416,6 @@ public:
 				if (!already_checked) {
 					checked_ns_paths.push_back(full_ns_path);
 					auto ns_it = namespace_symbols_.find(full_ns_path);
-					FLASH_LOG(Scope, Debug, "lookup('", identifier, "'): namespace_symbols_ lookup result: ", (ns_it != namespace_symbols_.end() ? "found" : "not found"));
 					if (ns_it != namespace_symbols_.end()) {
 						for (const auto& [key, value_vec] : ns_it->second) {
 #if USE_OLD_STRING_APPROACH
@@ -433,7 +424,6 @@ public:
 							if (key.view() == identifier) {
 #endif
 								if (!value_vec.empty()) {
-									FLASH_LOG(Scope, Debug, "lookup('", identifier, "'): found in namespace_symbols_");
 									return value_vec[0];
 								}
 							}
