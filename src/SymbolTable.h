@@ -840,6 +840,21 @@ public:
 		return result;
 	}
 
+	// Get all using declarations from the current scope and all enclosing scopes
+	// Returns a map of local_name -> (namespace_path, original_name)
+	std::unordered_map<std::string_view, std::pair<std::vector<StringType<>>, std::string_view>> get_current_using_declarations() const {
+		std::unordered_map<std::string_view, std::pair<std::vector<StringType<>>, std::string_view>> result;
+		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
+			for (const auto& [local_name, target_info] : stackIt->using_declarations) {
+				// Only add if not already present (inner scopes shadow outer scopes)
+				if (result.find(local_name) == result.end()) {
+					result[local_name] = target_info;
+				}
+			}
+		}
+		return result;
+	}
+
 	// Lookup a nested class by qualified name (e.g., "Outer::Inner")
 	std::optional<ASTNode> lookup_nested_class(std::string_view outer_class, StringHandle inner_class) const {
 		// First find the outer class

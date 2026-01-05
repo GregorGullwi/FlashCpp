@@ -12,7 +12,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 **Total files tested:** 826
 **Valid returns (matching expected):** 807
-**Regressions (mismatches):** 6 (down from 9)
+**Regressions (mismatches):** 2 (down from 6 - fixed documentation issue)
 **Runtime crashes:** 17 (previously documented: 13, newly documented: 4 pre-existing)
 **Compile failures:** 0
 **Link failures:** 0
@@ -49,7 +49,7 @@ The following test files still have a mismatch between their expected return val
 |-----------|----------|--------|--------|------------|
 | test_covariant_return_ret180.cpp | 180 | crash (79) | REGRESSION | Virtual function covariant reference return causes segfault |
 | test_global_namespace_scope_ret1.cpp | 1 | 145 | PARTIAL FIX | `using ::var` declarations not working properly; explicit `::func()` calls fixed |
-| test_lambda_init_capture_demo_ret57.cpp | 57 | 73 | TEST ISSUE | File naming issue - clang returns 68, test says expected 68 |
+
 
 These values come from the 2026-01-05 run. When a regression is triaged, add a short note or link next to the entry to preserve context.
 

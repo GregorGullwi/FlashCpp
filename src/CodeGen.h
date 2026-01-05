@@ -7428,10 +7428,46 @@ private:
 			return { info.type, info.size_in_bits, result_temp, 0ULL };
 		}
 
-		// Try local symbol table (for local variables, parameters, etc.) BEFORE checking member variables
-		// This ensures constructor parameters shadow member variables in initializer expressions
-		std::optional<ASTNode> symbol = symbol_table.lookup(identifierNode.name());
+		// Check using declarations from local scope FIRST, before local symbol table lookup
+		// This handles cases like: using ::globalValue; return globalValue;
+		// where globalValue should resolve to the global namespace version even if there's
+		// a namespace-scoped version with the same name
+		std::optional<ASTNode> symbol;
 		bool is_global = false;
+		
+		FLASH_LOG(Codegen, Debug, "generateIdentifierIr for '", identifierNode.name(), "', global_symbol_table_=", (global_symbol_table_ != nullptr));
+		if (global_symbol_table_) {
+			auto using_declarations = symbol_table.get_current_using_declarations();
+			FLASH_LOG(Codegen, Debug, "Checking using declarations for identifier '", identifierNode.name(), "', found ", using_declarations.size(), " declarations");
+			for (const auto& [local_name, target_info] : using_declarations) {
+				FLASH_LOG(Codegen, Debug, "  Using declaration: local_name='", local_name, "'");
+				if (local_name == identifierNode.name()) {
+					const auto& [namespace_path, original_name] = target_info;
+					FLASH_LOG(Codegen, Debug, "  Matched! namespace_path size=", namespace_path.size(), ", original_name='", original_name, "'");
+					// Resolve using the global symbol table
+					if (namespace_path.empty()) {
+						// Empty namespace path means global namespace (::name)
+						std::vector<StringType<>> empty_ns_path;
+						symbol = global_symbol_table_->lookup_qualified(empty_ns_path, original_name);
+						FLASH_LOG(Codegen, Debug, "  Looked up in global namespace, found=", symbol.has_value());
+					} else {
+						symbol = global_symbol_table_->lookup_qualified(namespace_path, original_name);
+						FLASH_LOG(Codegen, Debug, "  Looked up in namespace, found=", symbol.has_value());
+					}
+					if (symbol.has_value()) {
+						is_global = true;
+						FLASH_LOG(Codegen, Debug, "  Resolved to global symbol");
+						break;
+					}
+				}
+			}
+		}
+		
+		// If not resolved via using declaration, try local symbol table (for local variables, parameters, etc.)
+		// This ensures constructor parameters shadow member variables in initializer expressions
+		if (!symbol.has_value()) {
+			symbol = symbol_table.lookup(identifierNode.name());
+		}
 
 		// If not found locally, try global symbol table (for enum values, global variables, namespace-scoped variables, etc.)
 		if (!symbol.has_value() && global_symbol_table_) {
@@ -7524,10 +7560,14 @@ private:
 			assert(false && "Expected symbol to exist");
 			return {};
 		}
+		
+		FLASH_LOG(Codegen, Debug, "Symbol found, is_global=", is_global, ", is<DeclarationNode>=", symbol->is<DeclarationNode>(), ", is<VariableDeclarationNode>=", symbol->is<VariableDeclarationNode>());
 
 		if (symbol->is<DeclarationNode>()) {
 			const auto& decl_node = symbol->as<DeclarationNode>();
 			const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+			
+			FLASH_LOG(Codegen, Debug, "Symbol is DeclarationNode, identifier_token='", decl_node.identifier_token().value(), "', is_global=", is_global);
 
 			// Check if this is an enum value (enumerator constant)
 			// IMPORTANT: References and pointers to enum are VARIABLES, not enumerator constants
