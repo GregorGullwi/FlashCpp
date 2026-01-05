@@ -1,5 +1,14 @@
 # Declaration Parsing Consolidation Plan
 
+## Implementation Progress
+
+| Phase | Status | Commit |
+|-------|--------|--------|
+| Phase 1: Extract Shared Specifier Parsing | ✅ Complete | e1b6a07 |
+| Phase 2: Add Function Detection to parse_variable_declaration | ✅ Complete | (this PR) |
+| Phase 3: Consolidate Initialization Handling | ⏳ Pending | - |
+| Phase 4: Full Unification (Optional) | ⏳ Pending | - |
+
 ## Executive Summary
 
 This document outlines a plan to consolidate the two parallel declaration parsing paths in FlashCpp's parser: `parse_declaration_or_function_definition()` and `parse_variable_declaration()`. The current dual-path architecture leads to code duplication, maintenance burden, and subtle parsing inconsistencies.
@@ -140,14 +149,33 @@ ParseResult Parser::parse_local_declaration_or_statement();
 
 ## Recommended Implementation Plan
 
-### Phase 1: Extract Shared Specifier Parsing (Low Risk)
+### Phase 1: Extract Shared Specifier Parsing (Low Risk) ✅ COMPLETE
+
+**Implementation Details:**
+- Created `DeclarationSpecifiers` struct in `ParserTypes.h`
+- Created `parse_declaration_specifiers()` helper in `Parser.cpp`
+- Updated `parse_declaration_or_function_definition()` to use helper
+- Updated `parse_variable_declaration()` to use helper
+- Eliminated ~45 lines of duplicated code
+- All 832 tests pass
 
 1. Create `DeclarationSpecifiers` struct
 2. Create `parse_declaration_specifiers()` helper
 3. Update both functions to use the helper
 4. **Test thoroughly** - this is a refactoring with no behavior change
 
-### Phase 2: Add Function Detection to parse_variable_declaration (Medium Risk)
+### Phase 2: Add Function Detection to parse_variable_declaration (Medium Risk) ✅ COMPLETE
+
+**Implementation Details:**
+- Created `looks_like_function_parameters()` helper that uses lookahead to distinguish:
+  - `int x()` - empty = function (prefer function)
+  - `int x(int y)` - starts with type = function params  
+  - `int x(10)` - literal = direct init
+  - `int x(a)` where `a` is a type = function params
+  - `int x(a)` where `a` is a variable = direct init
+- Updated `parse_variable_declaration()` to check for function params before direct init
+- If function detected, delegates to `parse_function_declaration()` with full body parsing
+- All 832 tests pass
 
 1. After parsing type and name, check if next token is `(`
 2. Use lookahead to distinguish function params from direct init:

@@ -1997,6 +1997,134 @@ FlashCpp::DeclarationSpecifiers Parser::parse_declaration_specifiers()
 	return specs;
 }
 
+// Phase 2 Consolidation: Lookahead to detect if '(' starts function parameters
+// vs direct initialization (e.g., `int x(10)` vs `int func(int y)`)
+// 
+// Returns true if current position is at '(' and it looks like function parameters:
+// - `int x()` - empty = function (prefer function over value-init variable)
+// - `int x(int y)` - starts with type = function params
+// - `int x(10)` - starts with literal/expression = direct init (return false)
+// - `int x(a)` where `a` is a type = function params (return true)
+// - `int x(a)` where `a` is a variable = direct init (return false)
+//
+// This uses lookahead without consuming tokens.
+bool Parser::looks_like_function_parameters()
+{
+	// Must be at '('
+	if (!peek_token().has_value() || peek_token()->value() != "(") {
+		return false;
+	}
+	
+	// Save current position for restoration
+	SaveHandle saved = save_token_position();
+	
+	consume_token();  // consume '('
+	
+	// Empty parens: `int x()` - prefer function
+	if (peek_token().has_value() && peek_token()->value() == ")") {
+		restore_token_position(saved);
+		return true;
+	}
+	
+	// Look at what's after '('
+	// If it starts with a type keyword, it's likely function parameters
+	// If it starts with a literal or identifier that's not a type, it's likely direct init
+	
+	if (peek_token().has_value()) {
+		Token::Type token_type = peek_token()->type();
+		std::string_view token_value = peek_token()->value();
+		
+		// Literals (numbers, strings) = direct initialization
+		if (token_type == Token::Type::Literal) {
+			restore_token_position(saved);
+			return false;
+		}
+		
+		// Type keywords = function parameters
+		static const std::unordered_set<std::string_view> type_keywords = {
+			"int", "float", "double", "char", "bool", "void",
+			"short", "long", "signed", "unsigned", "const", "volatile",
+			"auto", "decltype", "struct", "class", "enum", "union",
+			"wchar_t", "char8_t", "char16_t", "char32_t",
+			"__int8", "__int16", "__int32", "__int64"
+		};
+		
+		if (token_type == Token::Type::Keyword && type_keywords.count(token_value)) {
+			restore_token_position(saved);
+			return true;
+		}
+		
+		// For identifiers, we need to check if it's a known type
+		if (token_type == Token::Type::Identifier) {
+			StringHandle id_handle = StringTable::getOrInternStringHandle(token_value);
+			
+			// Check if this identifier is a known type in the type registry
+			auto type_iter = gTypesByName.find(id_handle);
+			if (type_iter != gTypesByName.end()) {
+				// It's a known type = function parameters
+				restore_token_position(saved);
+				return true;
+			}
+			
+			// Check if it's in current scope as a variable
+			auto symbol_lookup = gSymbolTable.lookup(token_value);
+			if (symbol_lookup.has_value()) {
+				// It's a variable = direct initialization
+				restore_token_position(saved);
+				return false;
+			}
+			
+			// Unknown identifier - check if next token gives us more context
+			// e.g., `int x(MyType y)` where 'y' is identifier = function param
+			// e.g., `int x(a + b)` where '+' follows = expression = direct init
+			SaveHandle inner_saved = save_token_position();
+			consume_token();  // consume the identifier
+			
+			if (peek_token().has_value()) {
+				std::string_view next_val = peek_token()->value();
+				// If followed by an identifier, it's likely `type name` = function param
+				if (peek_token()->type() == Token::Type::Identifier) {
+					restore_token_position(saved);
+					return true;
+				}
+				// If followed by `)` or `,` it could be either - check if identifier is uppercase (likely type)
+				if (next_val == ")" || next_val == ",") {
+					// Heuristic: if the identifier starts with uppercase, assume it's a type
+					// This handles common cases like `int x(MyClass)`
+					if (!token_value.empty() && std::isupper(static_cast<unsigned char>(token_value[0]))) {
+						restore_token_position(saved);
+						return true;
+					}
+				}
+				// If followed by operators (+, -, *, etc.) = expression = direct init
+				if (peek_token()->type() == Token::Type::Operator) {
+					restore_token_position(saved);
+					return false;
+				}
+				// If followed by pointer/reference declarators (* or &) = function param with pointer type
+				if (next_val == "*" || next_val == "&") {
+					restore_token_position(saved);
+					return true;
+				}
+			}
+			
+			restore_token_position(saved);
+			// Default to false for unknown identifiers (direct initialization)
+			return false;
+		}
+		
+		// Pointer/reference operators at start = likely function with complex return type
+		if (token_value == "*" || token_value == "&") {
+			restore_token_position(saved);
+			return true;
+		}
+	}
+	
+	restore_token_position(saved);
+	// Default: unknown, assume not function params
+	return false;
+}
+
 ParseResult Parser::parse_declaration_or_function_definition()
 {
 	ScopedTokenPosition saved_position(*this);
@@ -9906,6 +10034,108 @@ ParseResult Parser::parse_variable_declaration()
 
 	// Process the first declaration
 	std::optional<ASTNode> first_init_expr;
+
+	// Phase 2 Consolidation: Check if this looks like a function declaration
+	// before trying to parse as direct initialization
+	// e.g., `static int func() { return 0; }` in block scope should be parsed as function
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
+		if (looks_like_function_parameters()) {
+			// This is a function declaration, delegate to parse_function_declaration
+			FLASH_LOG(Parser, Debug, "parse_variable_declaration: Detected function declaration, delegating to parse_function_declaration");
+			
+			// Create AttributeInfo for calling convention
+			AttributeInfo attr_info;
+			attr_info.linkage = specs.linkage;
+			attr_info.calling_convention = specs.calling_convention;
+			
+			// Try to parse as function
+			ParseResult function_result = parse_function_declaration(first_decl, attr_info.calling_convention);
+			if (!function_result.is_error()) {
+				// Successfully parsed as function
+				if (auto func_node_ptr = function_result.node()) {
+					FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
+					if (attr_info.linkage == Linkage::DllImport || attr_info.linkage == Linkage::DllExport) {
+						func_node.set_linkage(attr_info.linkage);
+					}
+					func_node.set_is_constexpr(is_constexpr);
+					func_node.set_is_constinit(is_constinit);
+				}
+				
+				// Parse trailing specifiers
+				FlashCpp::MemberQualifiers member_quals;
+				FlashCpp::FunctionSpecifiers func_specs;
+				auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+				if (specs_result.is_error()) {
+					return specs_result;
+				}
+				
+				// Apply noexcept specifier
+				if (func_specs.is_noexcept) {
+					if (auto func_node_ptr = function_result.node()) {
+						FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
+						func_node.set_noexcept(true);
+						if (func_specs.noexcept_expr.has_value()) {
+							func_node.set_noexcept_expression(*func_specs.noexcept_expr);
+						}
+					}
+				}
+				
+				// Register function in symbol table
+				const Token& identifier_token = first_decl.identifier_token();
+				StringHandle func_name = StringTable::getOrInternStringHandle(identifier_token.value());
+				if (auto func_node = function_result.node()) {
+					if (!gSymbolTable.insert(func_name, *func_node)) {
+						return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
+					}
+				}
+				
+				// Check for declaration-only (;) vs function definition ({)
+				if (consume_punctuator(";")) {
+					return function_result;
+				}
+				
+				// Parse function body
+				if (peek_token().has_value() && peek_token()->value() == "{") {
+					// Enter function scope
+					FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
+					
+					// Add function parameters to symbol table
+					if (auto func_node_ptr = function_result.node()) {
+						FunctionDeclarationNode& func_decl = func_node_ptr->as<FunctionDeclarationNode>();
+						for (const ASTNode& param_node : func_decl.parameter_nodes()) {
+							if (param_node.is<VariableDeclarationNode>()) {
+								const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
+								const DeclarationNode& param_decl = var_decl.declaration();
+								gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
+							} else if (param_node.is<DeclarationNode>()) {
+								const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+								gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
+							}
+						}
+					}
+					
+					// Parse function body
+					ParseResult body_result = parse_block();
+					if (body_result.is_error()) {
+						return body_result;
+					}
+					
+					// Set function body
+					if (auto func_node_ptr = function_result.node()) {
+						FunctionDeclarationNode& func_decl = func_node_ptr->as<FunctionDeclarationNode>();
+						if (body_result.node().has_value()) {
+							func_decl.set_definition(*body_result.node());
+							// Deduce auto return types from function body
+							deduce_and_update_auto_return_type(func_decl);
+						}
+					}
+				}
+				
+				return function_result;
+			}
+			// If function parsing fails, fall through to try direct initialization
+		}
+	}
 
 	// Check for direct initialization with parentheses: Type var(args)
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
