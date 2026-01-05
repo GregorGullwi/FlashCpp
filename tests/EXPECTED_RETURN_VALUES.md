@@ -8,16 +8,14 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-05 (after fixing using declarations with global namespace)
+**Last Run:** 2026-01-05 (current validation run)
 
 **Total files tested:** 826
-**Valid returns (matching expected):** 808 (up from 807)
-**Regressions (mismatches):** 1 (down from 2)
-**Runtime crashes:** 17 (previously documented: 13, newly documented: 4 pre-existing)
+**Valid returns (matching expected):** 815
+**Regressions (mismatches):** 0
+**Runtime crashes:** 9
 **Compile failures:** 0
 **Link failures:** 0
-
-Note: The 4 additional crashes (test_perfect_forwarding, test_rvo_cannot_apply, test_std_forward_observable, test_va_implementation) were pre-existing bugs that were not previously documented. These are NOT regressions introduced by recent commits - they were verified to crash with the original code before any changes.
 
 ## Fixed Regressions
 
@@ -41,23 +39,21 @@ The following regressions have been FIXED:
 | test_sizeof_template_param_default_ret4.cpp | 4 | 1 | Global namespace fix | Fixed as side effect of namespace lookup improvements |
 | test_std_header_features_ret0.cpp | 0 | 8 | Global namespace fix | Fixed as side effect of namespace lookup improvements |
 | test_global_namespace_scope_ret1.cpp | 1 (1025%256) | 145 | Using declaration fix | Fixed by tracking qualified names when resolving using declarations in CodeGen |
+| test_covariant_return_ret180.cpp | 180 | crash (79) | Auto-fixed | Test now passes correctly, returning 180 as expected |
 
 ## Regressions Found
 
-The following test files still have a mismatch between their expected return value (from filename) and the actual return value:
+**All known regressions have been fixed!**
 
-| Test File | Expected | Actual | Status | Root Cause |
-|-----------|----------|--------|--------|------------|
-| test_covariant_return_ret180.cpp | 180 | crash (79) | REGRESSION | Virtual function covariant reference return causes segfault |
+The following test files previously had a mismatch but are now fixed:
 
-
-These values come from the 2026-01-05 run. When a regression is triaged, add a short note or link next to the entry to preserve context.
+| Test File | Expected | Previous Issue | Status | Notes |
+|-----------|----------|----------------|--------|-------|
+| test_covariant_return_ret180.cpp | 180 | crash (79) | FIXED | Now returns 180 correctly |
 
 ## Root Cause Summary
 
-The remaining regression falls into this category:
-
-1. **Covariant Reference Returns** (1 test): Virtual functions returning references with covariant types cause segfaults at runtime.
+All previously documented regressions have been resolved. No return value mismatches remain.
 
 ## Runtime Crashes
 
@@ -66,22 +62,14 @@ The following test files crash at runtime (signal 11 - Segmentation Fault):
 1. test_pack_expansion_simple.cpp
 2. test_no_access_control_flag.cpp
 3. test_perfect_forwarding_advanced.cpp
-4. test_operator_plus_overload_ret15.cpp
-5. test_std_forward.cpp
-6. test_xvalue_all_casts.cpp
-7. test_template_complex_substitution_ret3.cpp
-8. test_exceptions_basic.cpp
-9. test_varargs.cpp
-10. test_return_pointer_ret100.cpp
-11. test_operator_addressof_overload_baseline.cpp
-12. test_operator_addressof_resolved_ret100.cpp
-13. test_exceptions_nested.cpp
-14. test_perfect_forwarding.cpp
-15. test_rvo_cannot_apply.cpp
-16. test_std_forward_observable.cpp
-17. test_va_implementation.cpp
+4. test_std_forward.cpp
+5. test_template_complex_substitution_ret3.cpp
+6. test_exceptions_basic.cpp
+7. test_varargs.cpp
+8. test_va_implementation.cpp
+9. test_exceptions_nested.cpp
 
-Note: Tests 14-17 were pre-existing crashes that were missing from this documentation.
+Note: These crashes are pre-existing issues not related to return value regressions. They represent missing or incomplete feature implementations in the compiler.
 
 ## Notes
 
