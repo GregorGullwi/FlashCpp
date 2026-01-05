@@ -12580,10 +12580,27 @@ private:
 							int expr_size = std::get<int>(argumentIrOperands[1]);
 							TempVar expr_var = std::get<TempVar>(argumentIrOperands[2]);
 							
-							// If expr_size is 64 bits and it's a struct type, it's likely already an address
-							// (e.g., from a cast to rvalue reference like static_cast<Widget&&>(w1))
-							// In this case, just pass it through without taking another address
-							bool is_already_address = (expr_size == 64 && expr_type == Type::Struct);
+							// Check if the TempVar already holds an address
+							// This can happen when:
+							// 1. It's the result of a cast to reference (xvalue/lvalue)
+							// 2. It's a 64-bit struct (pointer to struct)
+							// 3. It has lvalue/xvalue metadata indicating it's already an address
+							bool is_already_address = false;
+							
+							// Check for xvalue/lvalue metadata (from reference casts)
+							auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
+							if (metadata_storage.hasMetadata(expr_var)) {
+								TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
+								if (metadata.category == ValueCategory::LValue ||
+								    metadata.category == ValueCategory::XValue) {
+									is_already_address = true;
+								}
+							}
+							
+							// Fallback heuristic: 64-bit struct type likely holds an address
+							if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
+								is_already_address = true;
+							}
 							
 							if (is_already_address) {
 								// Already an address - pass through
@@ -16835,7 +16852,16 @@ private:
 			addr_op.operand.value = std::get<StringHandle>(base);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
 		} else {
-			FLASH_LOG_FORMAT(Codegen, Debug, "{}: source is TempVar (stack location), using directly", cast_name);
+			// source is TempVar - it already holds an address, copy it to result_var
+			FLASH_LOG_FORMAT(Codegen, Debug, "{}: source is TempVar (address already computed), copying to result", cast_name);
+			const TempVar& source_var = std::get<TempVar>(base);
+			AssignmentOp assign_op;
+			assign_op.result = result_var;
+			assign_op.lhs = TypedValue{target_type, 64, result_var};  // 64-bit pointer dest
+			assign_op.rhs = TypedValue{target_type, 64, source_var};  // 64-bit pointer source
+			assign_op.is_pointer_store = false;
+			assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
 		}
 	}
 
