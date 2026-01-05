@@ -15490,13 +15490,33 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								return ParseResult::success(*result);
 							}
 							
-							// Check for inherited member template function (e.g., __test<_Tp>(0) from <type_traits>)
-							// Template args already parsed at this point, so we need to check base classes
+							// Check for member template function (including current struct and inherited from base classes)
+							// Example: __helper<_Tp>({}) where __helper is in the same struct or base class
+							// Template args already parsed at this point
 							if (!struct_parsing_context_stack_.empty() && peek_token().has_value() && peek_token()->value() == "(") {
 								const auto& context = struct_parsing_context_stack_.back();
 								const StructDeclarationNode* struct_node = context.struct_node;
 								if (struct_node) {
 									StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+									
+									// First, check the current struct's member functions (including those parsed so far)
+									for (const auto& member_func_decl : struct_node->member_functions()) {
+										const ASTNode& func_node = member_func_decl.function_declaration;
+										// Check if this is a template function
+										if (func_node.is<TemplateFunctionDeclarationNode>()) {
+											const TemplateFunctionDeclarationNode& template_func = func_node.as<TemplateFunctionDeclarationNode>();
+											const FunctionDeclarationNode& func_decl = template_func.function_declaration().as<FunctionDeclarationNode>();
+											StringHandle func_name = StringTable::getOrInternStringHandle(func_decl.decl_node().identifier_token().value());
+											if (func_name == id_handle) {
+												FLASH_LOG(Parser, Debug, "Found member template function '", idenfifier_token.value(), "' in current struct");
+												gSymbolTable.insert(idenfifier_token.value(), func_node);
+												identifierType = func_node;
+												goto inherited_template_found;
+											}
+										}
+									}
+									
+									// If not found in current struct, check base classes
 									for (const auto& base : struct_node->base_classes()) {
 										auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
 										if (base_type_it != gTypesByName.end()) {
@@ -16339,13 +16359,49 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	}
 	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "{") {
 		// Handle braced initializer in expression context
-		// This is used for return statements like: return { .a = 5 };
-		// We need to infer the type from context (e.g., function return type)
+		// Examples:
+		//   return { .a = 5 };  // Aggregate initialization with return type
+		//   func({})            // Braced initializer as function argument (type inferred from parameter)
 		
+		// Check if we're parsing a function argument by looking at the expression context
+		// In a function call argument, braced initializers are valid and their type is inferred
+		// from the function parameter type. Since we're doing a single-pass parser and we might
+		// not have resolved the function yet, we just accept it as a placeholder.
+		
+		// For now, if we don't have a current_function_ context (which means we're not in a
+		// return statement), just parse it as an empty braced initializer placeholder.
+		// This handles cases like: decltype(func({})) in template default parameters
 		if (!current_function_) {
-			return ParseResult::error("Braced initializer in expression requires type context", *current_token_);
+			Token brace_token = *current_token_;
+			consume_token(); // consume '{'
+			
+			// Skip the contents of the braced initializer
+			// We need to match braces to find the closing '}'
+			int brace_depth = 1;
+			while (brace_depth > 0 && current_token_.has_value()) {
+				if (current_token_->value() == "{") {
+					brace_depth++;
+				} else if (current_token_->value() == "}") {
+					brace_depth--;
+				}
+				if (brace_depth > 0) {
+					consume_token();
+				}
+			}
+			
+			if (!consume_punctuator("}")) {
+				return ParseResult::error("Expected '}' to close braced initializer", *current_token_);
+			}
+			
+			// Create a placeholder literal node - the type will be inferred from context
+			// (e.g., function parameter type, variable declaration type, etc.)
+			// The actual value doesn't matter, only that it represents a braced initializer
+			NumericLiteralValue val = static_cast<unsigned long long>(0);
+			result = emplace_node<ExpressionNode>(NumericLiteralNode(brace_token, val, Type::Int, TypeQualifier::None, 32));
+			return ParseResult::success(*result);
 		}
 		
+		// We're in a function body (current_function_ is set)
 		// Get the return type from the current function
 		const DeclarationNode& func_decl = current_function_->decl_node();
 		const ASTNode& return_type_node = func_decl.type_node();
