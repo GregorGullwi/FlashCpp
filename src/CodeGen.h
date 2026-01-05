@@ -4377,10 +4377,7 @@ private:
 
 		// C++20: Handle optional init-statement if present
 		if (node.has_init_statement()) {
-			auto init_stmt = node.get_init_statement();
-			if (init_stmt.has_value()) {
-				visit(*init_stmt);
-			}
+			visit(*node.get_init_statement());
 		}
 
 		// Generate unique labels and counter for this ranged for loop
