@@ -197,8 +197,8 @@ public:
 								if (new_func.get_definition().has_value() && !existing_func.get_definition().has_value()) {
 									existing_nodes[i] = node;
 									
-									// Also update the namespace_symbols_ map if we're in a namespace
-									if (current_scope.scope_type == ScopeType::Namespace) {
+									// Also update the namespace_symbols_ map if we're in a namespace or global scope
+									if (current_scope.scope_type == ScopeType::Namespace || current_scope.scope_type == ScopeType::Global) {
 										NamespacePath ns_path = build_current_namespace_path();
 										auto& ns_symbols = namespace_symbols_[ns_path];
 										StringType<32> key(identifier);
@@ -244,8 +244,9 @@ public:
 			existing_nodes.push_back(node);
 		}
 
-		// If we're in a namespace, also add to the persistent namespace map
-		if (current_scope.scope_type == ScopeType::Namespace) {
+		// If we're in a namespace or global scope, also add to the persistent namespace map
+		// For global scope, use an empty namespace path (represents ::identifier)
+		if (current_scope.scope_type == ScopeType::Namespace || current_scope.scope_type == ScopeType::Global) {
 			// Build the namespace path without string concatenation
 			NamespacePath ns_path = build_current_namespace_path();
 			auto& ns_symbols = namespace_symbols_[ns_path];
@@ -335,13 +336,16 @@ public:
 	}
 
 	std::optional<ASTNode> lookup(std::string_view identifier, ScopeHandle scope_limit_handle) const {
-		// Build the current namespace path once (for efficiency)
-		NamespacePath current_ns_path;
+		// Build the full current namespace path first
+		NamespacePath full_ns_path;
 		for (const auto& scope : symbol_table_stack_) {
 			if (scope.scope_type == ScopeType::Namespace) {
-				current_ns_path.push_back(scope.namespace_name);
+				full_ns_path.push_back(scope.namespace_name);
 			}
 		}
+		
+		// Track which namespace paths we've already checked in namespace_symbols_
+		std::vector<NamespacePath> checked_ns_paths;
 
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
@@ -394,24 +398,45 @@ public:
 					return result;
 				}
 			}
-		}
 
-		// If we're inside a namespace and haven't found the symbol yet,
-		// check the persistent namespace map for namespace-scoped variables
-		if (!current_ns_path.empty()) {
-			auto ns_it = namespace_symbols_.find(current_ns_path);
-			if (ns_it != namespace_symbols_.end()) {
-				for (const auto& [key, value_vec] : ns_it->second) {
+			// If we're in a namespace scope, also check namespace_symbols_ for symbols
+			// from other blocks of the same namespace (e.g., reopened namespace blocks)
+			// This needs to happen BEFORE checking parent/global scopes.
+			// We check the current accumulated namespace path, then pop one component
+			// to check progressively outer namespace paths in subsequent iterations.
+			if (scope.scope_type == ScopeType::Namespace && !full_ns_path.empty()) {
+				// Only check if we haven't already checked this path
+				bool already_checked = false;
+				for (const auto& checked : checked_ns_paths) {
+					if (checked == full_ns_path) {
+						already_checked = true;
+						break;
+					}
+				}
+				
+				if (!already_checked) {
+					checked_ns_paths.push_back(full_ns_path);
+					auto ns_it = namespace_symbols_.find(full_ns_path);
+					if (ns_it != namespace_symbols_.end()) {
+						for (const auto& [key, value_vec] : ns_it->second) {
 #if USE_OLD_STRING_APPROACH
-					if (key == std::string(identifier)) {
+							if (key == std::string(identifier)) {
 #else
-					if (key.view() == identifier) {
+							if (key.view() == identifier) {
 #endif
-						if (!value_vec.empty()) {
-							return value_vec[0];
+								if (!value_vec.empty()) {
+									return value_vec[0];
+								}
+							}
 						}
 					}
 				}
+				
+				// Pop the last namespace from the path to check progressively outer
+				// namespace scopes in subsequent iterations. This is intentional:
+				// when we encounter a namespace scope during reverse iteration, we want
+				// to check namespace_symbols_ for that specific namespace level.
+				full_ns_path.pop_back();
 			}
 		}
 
@@ -444,6 +469,17 @@ public:
 	}
 
 	std::vector<ASTNode> lookup_all(std::string_view identifier, ScopeHandle scope_limit_handle) const {
+		// Build the full current namespace path first
+		NamespacePath full_ns_path;
+		for (const auto& scope : symbol_table_stack_) {
+			if (scope.scope_type == ScopeType::Namespace) {
+				full_ns_path.push_back(scope.namespace_name);
+			}
+		}
+		
+		// Track which namespace paths we've already checked
+		std::vector<NamespacePath> checked_ns_paths;
+		
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
 			
@@ -469,6 +505,43 @@ public:
 				if (!result.empty()) {
 					return result;
 				}
+			}
+			
+			// If we're in a namespace scope, also check namespace_symbols_ for symbols
+			// from other blocks of the same namespace (e.g., reopened namespace blocks).
+			// We check the current accumulated namespace path, then pop one component
+			// to check progressively outer namespace paths in subsequent iterations.
+			if (scope.scope_type == ScopeType::Namespace && !full_ns_path.empty()) {
+				// Only check if we haven't already checked this path
+				bool already_checked = false;
+				for (const auto& checked : checked_ns_paths) {
+					if (checked == full_ns_path) {
+						already_checked = true;
+						break;
+					}
+				}
+				
+				if (!already_checked) {
+					checked_ns_paths.push_back(full_ns_path);
+					auto ns_it = namespace_symbols_.find(full_ns_path);
+					if (ns_it != namespace_symbols_.end()) {
+						for (const auto& [key, value_vec] : ns_it->second) {
+#if USE_OLD_STRING_APPROACH
+							if (key == std::string(identifier)) {
+#else
+							if (key.view() == identifier) {
+#endif
+								return value_vec;
+							}
+						}
+					}
+				}
+				
+				// Pop the last namespace from the path to check progressively outer
+				// namespace scopes in subsequent iterations. This is intentional:
+				// when we encounter a namespace scope during reverse iteration, we want
+				// to check namespace_symbols_ for that specific namespace level.
+				full_ns_path.pop_back();
 			}
 		}
 

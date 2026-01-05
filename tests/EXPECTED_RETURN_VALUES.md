@@ -8,14 +8,16 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-05 (after type template argument mangling fix)
+**Last Run:** 2026-01-05 (after global namespace scope resolution fix)
 
-**Total files tested:** 817
-**Valid returns (matching expected):** 795 (up from 794)
-**Regressions (mismatches):** 9 (down from 10)
-**Runtime crashes:** 13
+**Total files tested:** 826
+**Valid returns (matching expected):** 807
+**Regressions (mismatches):** 6 (down from 9)
+**Runtime crashes:** 17 (previously documented: 13, newly documented: 4 pre-existing)
 **Compile failures:** 0
 **Link failures:** 0
+
+Note: The 4 additional crashes (test_perfect_forwarding, test_rvo_cannot_apply, test_std_forward_observable, test_va_implementation) were pre-existing bugs that were not previously documented. These are NOT regressions introduced by recent commits - they were verified to crash with the original code before any changes.
 
 ## Fixed Regressions
 
@@ -35,6 +37,9 @@ The following regressions have been FIXED:
 | test_type_alias_fix_simple_ret42.cpp | 42 | 0 | (Already fixed) | Static constexpr was properly initialized |
 | test_void_t_positive_ret0.cpp | 0 | 42 | void_t SFINAE fix | Template aliases like void_t that resolve to concrete types now correctly detected during pattern matching |
 | test_template_disambiguation_pack_ret40.cpp | 40 | 20→30→40 | Type template arg mangling | Function template specializations now include type template args in mangled names (sum<int> → `_ZN2ns3sumIiEEv`, sum<int,int> → `_ZN2ns3sumIiiEEv`) |
+| test_qualified_base_class_ret42.cpp | 42 | 0 | Global namespace fix | Fixed by global namespace symbol lookup improvements |
+| test_sizeof_template_param_default_ret4.cpp | 4 | 1 | Global namespace fix | Fixed as side effect of namespace lookup improvements |
+| test_std_header_features_ret0.cpp | 0 | 8 | Global namespace fix | Fixed as side effect of namespace lookup improvements |
 
 ## Regressions Found
 
@@ -42,14 +47,9 @@ The following test files still have a mismatch between their expected return val
 
 | Test File | Expected | Actual | Status | Root Cause |
 |-----------|----------|--------|--------|------------|
-| test_covariant_return_ret180.cpp | 180 | crash | REGRESSION | Virtual function covariant return issue |
-| test_global_namespace_scope_ret1.cpp | 1 | 203 | EXPECTED | Global namespace resolution (sum=1025, 1025 % 256 = 1) |
+| test_covariant_return_ret180.cpp | 180 | crash (79) | REGRESSION | Virtual function covariant reference return causes segfault |
+| test_global_namespace_scope_ret1.cpp | 1 | 145 | PARTIAL FIX | `using ::var` declarations not working properly; explicit `::func()` calls fixed |
 | test_lambda_init_capture_demo_ret57.cpp | 57 | 73 | TEST ISSUE | File naming issue - clang returns 68, test says expected 68 |
-| test_qualified_base_class_ret42.cpp | 42 | 0 | REGRESSION | Deferred template base with member type alias not resolved |
-| test_sizeof_template_param_default_ret4.cpp | 4 | 1 | REGRESSION | Template array size not substituted correctly |
-| test_std_header_features_ret0.cpp | 0 | 8 | REGRESSION | Type trait/constexpr evaluation |
-| test_template_disambiguation_pack_ret40.cpp | 40 | 40 | FIXED | Function template specializations now get distinct mangled names with type template args |
-| test_void_t_positive_ret0.cpp | 0 | 0 | FIXED | void_t SFINAE pattern now correctly detected |
 
 These values come from the 2026-01-05 run. When a regression is triaged, add a short note or link next to the entry to preserve context.
 
@@ -57,13 +57,11 @@ These values come from the 2026-01-05 run. When a regression is triaged, add a s
 
 The remaining regressions fall into these categories:
 
-1. **Template Array Size Substitution** (1 test): Non-type template parameters used as array sizes are not being substituted correctly during template instantiation.
+1. **Covariant Reference Returns** (1 test): Virtual functions returning references with covariant types cause segfaults at runtime.
 
-2. **Deferred Template Base Resolution** (1 test): Template base classes with dependent type member aliases (e.g., `detail::select_base<T>::type`) are not being resolved correctly.
+2. **Using Declarations with Global Namespace** (1 test): `using ::identifier;` declarations don't properly shadow local namespace symbols when accessing variables.
 
-3. **Type Trait Evaluation** (1 test): Complex constexpr type traits are not being evaluated correctly.
-
-4. **Other** (1 test): Virtual function covariant returns cause runtime crashes.
+3. **Test File Naming Issue** (1 test): The expected return value in the filename doesn't match what clang returns.
 
 ## Runtime Crashes
 
@@ -82,6 +80,12 @@ The following test files crash at runtime (signal 11 - Segmentation Fault):
 11. test_operator_addressof_overload_baseline.cpp
 12. test_operator_addressof_resolved_ret100.cpp
 13. test_exceptions_nested.cpp
+14. test_perfect_forwarding.cpp
+15. test_rvo_cannot_apply.cpp
+16. test_std_forward_observable.cpp
+17. test_va_implementation.cpp
+
+Note: Tests 14-17 were pre-existing crashes that were missing from this documentation.
 
 ## Notes
 
