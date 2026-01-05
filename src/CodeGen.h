@@ -2262,9 +2262,24 @@ private:
 			? 64 
 			: static_cast<int>(ret_type_spec.size_in_bits());
 
-		// Clear current_struct_name_ if this is not a member function
-		// This prevents struct context from leaking into free functions
-		if (!node.is_member_function()) {
+		// Set or clear current_struct_name_ based on whether this is a member function
+		// This is critical for member variable lookup in generateIdentifierIr
+		if (node.is_member_function()) {
+			// For member functions, set current_struct_name_ from parent_struct_name
+			// This handles lazy-instantiated template member functions that are visited
+			// at the top level, not through visitStructDeclarationNode
+			std::string_view parent_name = node.parent_struct_name();
+			if (!parent_name.empty()) {
+				// Look up the struct type to get its canonical name (important for templates)
+				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(parent_name));
+				if (type_it != gTypesByName.end()) {
+					current_struct_name_ = type_it->second->name();
+				} else {
+					current_struct_name_ = StringTable::getOrInternStringHandle(parent_name);
+				}
+			}
+		} else {
+			// Clear current_struct_name_ to prevent struct context from leaking into free functions
 			current_struct_name_ = StringHandle();
 		}
 
@@ -13623,7 +13638,8 @@ private:
 			}
 			const auto& return_type = *return_type_ptr;
 			call_op.return_type = return_type.type();
-			call_op.return_size_in_bits = (return_type.pointer_depth() > 0) ? 64 : static_cast<int>(return_type.size_in_bits());
+			// For reference return types, use 64-bit size (pointer size) since references are returned as pointers
+			call_op.return_size_in_bits = (return_type.pointer_depth() > 0 || return_type.is_reference()) ? 64 : static_cast<int>(return_type.size_in_bits());
 			call_op.is_member_function = true;
 			
 			// Get the actual function declaration to check if it's variadic
@@ -15108,7 +15124,9 @@ private:
 		member_load.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
 
 		// When context is LValueAddress, skip the load and return address/metadata only
-		if (context == ExpressionContext::LValueAddress) {
+		// EXCEPTION: For reference members, we must emit MemberAccess to load the stored address
+		// because references store a pointer value that needs to be returned
+		if (context == ExpressionContext::LValueAddress && !member->is_reference) {
 			// Don't emit MemberAccess instruction (no load)
 			// Just return the metadata with the result temp var
 			// The metadata contains all information needed for store operations
