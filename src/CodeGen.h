@@ -7428,10 +7428,57 @@ private:
 			return { info.type, info.size_in_bits, result_temp, 0ULL };
 		}
 
-		// Try local symbol table (for local variables, parameters, etc.) BEFORE checking member variables
-		// This ensures constructor parameters shadow member variables in initializer expressions
-		std::optional<ASTNode> symbol = symbol_table.lookup(identifierNode.name());
+		// Check using declarations from local scope FIRST, before local symbol table lookup
+		// This handles cases like: using ::globalValue; return globalValue;
+		// where globalValue should resolve to the global namespace version even if there's
+		// a namespace-scoped version with the same name
+		std::optional<ASTNode> symbol;
 		bool is_global = false;
+		std::optional<StringHandle> resolved_qualified_name;  // Track the qualified name from using declaration
+		
+		if (global_symbol_table_) {
+			auto using_declarations = symbol_table.get_current_using_declarations();
+			for (const auto& [local_name, target_info] : using_declarations) {
+				if (local_name == identifierNode.name()) {
+					const auto& [namespace_path, original_name] = target_info;
+					
+					// Construct the qualified name for this symbol
+					// For empty namespace_path (global namespace), use just the original name
+					// For non-empty namespace_path, construct Namespace::...::name
+					if (namespace_path.empty()) {
+						resolved_qualified_name = StringTable::getOrInternStringHandle(original_name);
+					} else {
+						// Build qualified name: namespace1::namespace2::...::name
+						StringBuilder qualified_builder;
+						for (size_t i = 0; i < namespace_path.size(); ++i) {
+							if (i > 0) qualified_builder.append("::"sv);
+							qualified_builder.append(std::string_view(namespace_path[i]));
+						}
+						qualified_builder.append("::"sv).append(original_name);
+						resolved_qualified_name = StringTable::getOrInternStringHandle(qualified_builder.commit());
+					}
+					
+					// Resolve using the global symbol table
+					if (namespace_path.empty()) {
+						// Empty namespace path means global namespace (::name)
+						std::vector<StringType<>> empty_ns_path;
+						symbol = global_symbol_table_->lookup_qualified(empty_ns_path, original_name);
+					} else {
+						symbol = global_symbol_table_->lookup_qualified(namespace_path, original_name);
+					}
+					if (symbol.has_value()) {
+						is_global = true;
+						break;
+					}
+				}
+			}
+		}
+		
+		// If not resolved via using declaration, try local symbol table (for local variables, parameters, etc.)
+		// This ensures constructor parameters shadow member variables in initializer expressions
+		if (!symbol.has_value()) {
+			symbol = symbol_table.lookup(identifierNode.name());
+		}
 
 		// If not found locally, try global symbol table (for enum values, global variables, namespace-scoped variables, etc.)
 		if (!symbol.has_value() && global_symbol_table_) {
@@ -7564,14 +7611,19 @@ private:
 				op.result.size_in_bits = size_bits;
 				op.result.value = result_temp;
 				
-				// Check if this global has a mangled name (e.g., anonymous namespace variable)
-				// Phase 4: Using StringHandle for lookup
-				StringHandle simple_name_handle = StringTable::getOrInternStringHandle(identifierNode.name());
-				auto it = global_variable_names_.find(simple_name_handle);
-				if (it != global_variable_names_.end()) {
-					op.global_name = it->second;  // Use mangled StringHandle
+				// If we resolved this via a using declaration, use the resolved qualified name
+				// Otherwise, check if this global has a mangled name (e.g., anonymous namespace variable)
+				if (resolved_qualified_name.has_value()) {
+					op.global_name = *resolved_qualified_name;
 				} else {
-					op.global_name = StringTable::getOrInternStringHandle(identifierNode.name());  // Use simple name as StringHandle
+					// Phase 4: Using StringHandle for lookup
+					StringHandle simple_name_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+					auto it = global_variable_names_.find(simple_name_handle);
+					if (it != global_variable_names_.end()) {
+						op.global_name = it->second;  // Use mangled StringHandle
+					} else {
+						op.global_name = StringTable::getOrInternStringHandle(identifierNode.name());  // Use simple name as StringHandle
+					}
 				}
 				
 				op.is_array = is_array_type;  // Arrays need LEA to get address
@@ -7710,14 +7762,19 @@ private:
 				op.result.size_in_bits = size_bits;
 				op.result.value = result_temp;
 				
-				// Check if this global has a mangled name (e.g., anonymous namespace variable)
-				// Phase 4: Using StringHandle for lookup
-				StringHandle simple_name_handle = StringTable::getOrInternStringHandle(identifierNode.name());
-				auto it = global_variable_names_.find(simple_name_handle);
-				if (it != global_variable_names_.end()) {
-					op.global_name = it->second;  // Use mangled StringHandle
+				// If we resolved this via a using declaration, use the resolved qualified name
+				// Otherwise, check if this global has a mangled name (e.g., anonymous namespace variable)
+				if (resolved_qualified_name.has_value()) {
+					op.global_name = *resolved_qualified_name;
 				} else {
-					op.global_name = StringTable::getOrInternStringHandle(identifierNode.name());  // Use simple name as StringHandle
+					// Phase 4: Using StringHandle for lookup
+					StringHandle simple_name_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+					auto it = global_variable_names_.find(simple_name_handle);
+					if (it != global_variable_names_.end()) {
+						op.global_name = it->second;  // Use mangled StringHandle
+					} else {
+						op.global_name = StringTable::getOrInternStringHandle(identifierNode.name());  // Use simple name as StringHandle
+					}
 				}
 				
 				op.is_array = is_array_type;  // Arrays need LEA to get address
