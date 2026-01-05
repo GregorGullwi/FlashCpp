@@ -2385,6 +2385,8 @@ private:
 		generated_function_names_.insert(func_decl_op.mangled_name);
 
 		// Add parameters to function declaration
+		std::vector<CachedParamInfo> cached_params;
+		cached_params.reserve(node.parameter_nodes().size());
 		for (const auto& param : node.parameter_nodes()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
@@ -2412,7 +2414,19 @@ private:
 
 			func_decl_op.parameters.push_back(std::move(param_info));
 			var_counter.next();
+
+			CachedParamInfo cache_entry;
+			cache_entry.is_reference = param_type.is_reference();
+			cache_entry.is_rvalue_reference = param_type.is_rvalue_reference();
+			cache_entry.is_parameter_pack = param_decl.is_parameter_pack();
+			cached_params.push_back(cache_entry);
 		}
+
+		// Store cached parameter info keyed by mangled function name
+		StringHandle cache_key = func_decl_op.mangled_name.isValid()
+			? func_decl_op.mangled_name
+			: StringTable::getOrInternStringHandle(func_decl.identifier_token().value());
+		function_param_cache_[cache_key] = std::move(cached_params);
 
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), func_decl.identifier_token()));
 
@@ -11341,6 +11355,28 @@ private:
 		// Get the first argument (va_list variable)
 		ASTNode arg0 = functionCallNode.arguments()[0];
 		auto arg0_ir = visitExpressionNode(arg0.as<ExpressionNode>());
+		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
+		bool va_list_is_pointer = false;
+		StringHandle va_list_name_handle;
+		if (std::holds_alternative<IdentifierNode>(arg0.as<ExpressionNode>())) {
+			const auto& id = std::get<IdentifierNode>(arg0.as<ExpressionNode>());
+			va_list_name_handle = StringTable::getOrInternStringHandle(id.name());
+			if (auto sym = symbol_table.lookup(id.name())) {
+				if (sym->is<DeclarationNode>()) {
+					const auto& ty = sym->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					va_list_is_pointer = ty.pointer_depth() > 0;
+				} else if (sym->is<VariableDeclarationNode>()) {
+					const auto& ty = sym->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+					va_list_is_pointer = ty.pointer_depth() > 0;
+				}
+			}
+		}
+		// Fallback: treat as pointer when operand size is pointer sized (common for typedef char*)
+		if (!va_list_is_pointer && arg0_ir.size() >= 2) {
+			if (std::get<int>(arg0_ir[1]) == 64) {
+				va_list_is_pointer = true;
+			}
+		}
 		
 		// Get the second argument (last fixed parameter)
 		ASTNode arg1 = functionCallNode.arguments()[1];
@@ -11359,7 +11395,7 @@ private:
 		// - Windows (MSVC mangling): variadic args on stack, use &last_param + 8
 		// - Linux (Itanium mangling): variadic args in registers, initialize va_list structure
 		
-		if (context_->isItaniumMangling()) {
+		if (context_->isItaniumMangling() && !va_list_is_pointer) {
 			// Linux/System V AMD64 ABI: Use va_list structure
 			// The structure has already been initialized in the function prologue by IRConverter.
 			// We just need to assign the address of the va_list structure to the user's va_list variable.
@@ -11377,7 +11413,9 @@ private:
 			// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
 			// Get the va_list variable from arg0_ir[2]
 			std::variant<StringHandle, TempVar> va_list_var;
-			if (std::holds_alternative<TempVar>(arg0_ir[2])) {
+			if (va_list_name_handle.isValid()) {
+				va_list_var = va_list_name_handle;
+			} else if (std::holds_alternative<TempVar>(arg0_ir[2])) {
 				va_list_var = std::get<TempVar>(arg0_ir[2]);
 			} else if (std::holds_alternative<StringHandle>(arg0_ir[2])) {
 				va_list_var = std::get<StringHandle>(arg0_ir[2]);
@@ -11428,24 +11466,31 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
 			
 			// Assign to va_list variable
-			std::variant<StringHandle, TempVar> va_list_var;
-			if (std::holds_alternative<TempVar>(arg0_ir[2])) {
-				va_list_var = std::get<TempVar>(arg0_ir[2]);
+			AssignmentOp assign_op;
+			if (va_list_name_handle.isValid()) {
+				assign_op.result = va_list_name_handle;
+				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_name_handle};
+			} else if (std::holds_alternative<TempVar>(arg0_ir[2])) {
+				assign_op.result = std::get<TempVar>(arg0_ir[2]);
+				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(arg0_ir[2])};
 			} else if (std::holds_alternative<StringHandle>(arg0_ir[2])) {
-				va_list_var = std::get<StringHandle>(arg0_ir[2]);
+				assign_op.result = std::get<StringHandle>(arg0_ir[2]);
+				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(arg0_ir[2])};
 			} else {
 				FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
 				return {Type::Void, 0, 0ULL, 0ULL};
 			}
-			
-			AssignmentOp assign_op;
-			if (std::holds_alternative<StringHandle>(va_list_var)) {
-				assign_op.result = std::get<StringHandle>(va_list_var);
-				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
-			} else {
-			}
 			assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
+
+			// Ensure the user-visible va_list variable itself gets the pointer value (not just a temp)
+			if (va_list_name_handle.isValid()) {
+				AssignmentOp fix_assign;
+				fix_assign.result = va_list_name_handle;
+				fix_assign.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_name_handle};
+				fix_assign.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(fix_assign), functionCallNode.called_from()));
+			}
 		}
 		
 		// __builtin_va_start returns void
@@ -11842,45 +11887,51 @@ private:
 
 		// Get the function declaration to extract parameter types for mangling
 		std::string_view function_name = func_name_view;
+		bool has_precomputed_mangled = functionCallNode.has_mangled_name();
 		const FunctionDeclarationNode* matched_func_decl = nullptr;
 		
 		// Check if FunctionCallNode has a pre-computed mangled name (for namespace-scoped functions)
 		// If so, use it directly and skip the lookup logic
-		if (functionCallNode.has_mangled_name()) {
+		if (has_precomputed_mangled) {
 			function_name = functionCallNode.mangled_name();
 			FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name from FunctionCallNode: {}", function_name);
 			// We don't need to find matched_func_decl since we already have the mangled name
 			// The mangled name is sufficient for generating the call instruction
 		}
 
-		// Only do symbol table lookup if we don't have a pre-computed mangled name
-		if (!functionCallNode.has_mangled_name()) {
-			// Look up the function in the global symbol table to get all overloads
-			// Use global_symbol_table_ if available, otherwise fall back to local symbol_table
-			auto all_overloads = global_symbol_table_
-				? global_symbol_table_->lookup_all(decl_node.identifier_token().value())
-				: symbol_table.lookup_all(decl_node.identifier_token().value());
+		// Look up the function in the global symbol table to get all overloads
+		// Use global_symbol_table_ if available, otherwise fall back to local symbol_table
+		auto scoped_overloads = global_symbol_table_
+			? global_symbol_table_->lookup_all(decl_node.identifier_token().value())
+			: symbol_table.lookup_all(decl_node.identifier_token().value());
 
-			// Also try looking up in gSymbolTable directly for comparison
-			extern SymbolTable gSymbolTable;
-			auto gSymbolTable_overloads = gSymbolTable.lookup_all(decl_node.identifier_token().value());
+		// Also try looking up in gSymbolTable directly for comparison
+		extern SymbolTable gSymbolTable;
+		auto gSymbolTable_overloads = gSymbolTable.lookup_all(decl_node.identifier_token().value());
 
-			// Find the matching overload by comparing the DeclarationNode address
-			// This works because the FunctionCallNode holds a reference to the specific
-			// DeclarationNode that was selected by overload resolution
-			FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}", 
-				func_name_view, all_overloads.size(), gSymbolTable_overloads.size());
-			for (const auto& overload : all_overloads) {
-				if (overload.is<FunctionDeclarationNode>()) {
-					const FunctionDeclarationNode* overload_func_decl = &overload.as<FunctionDeclarationNode>();
-					const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
-					FLASH_LOG_FORMAT(Codegen, Debug, "  Checking overload at {}, looking for {}", 
-						(void*)overload_decl, (void*)&decl_node);
-					if (overload_decl == &decl_node) {
-						// Found the matching overload
-						matched_func_decl = overload_func_decl;
+		// Find the matching overload by comparing the DeclarationNode address
+		// This works because the FunctionCallNode holds a reference to the specific
+		// DeclarationNode that was selected by overload resolution
+		FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}", 
+			func_name_view, scoped_overloads.size(), gSymbolTable_overloads.size());
+		for (const auto& overload : scoped_overloads) {
+			const FunctionDeclarationNode* overload_func_decl = nullptr;
+			if (overload.is<FunctionDeclarationNode>()) {
+				overload_func_decl = &overload.as<FunctionDeclarationNode>();
+			} else if (overload.is<TemplateFunctionDeclarationNode>()) {
+				overload_func_decl = &overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
+			}
 
-						// Use pre-computed mangled name if available, otherwise generate it
+			if (overload_func_decl) {
+				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
+				FLASH_LOG_FORMAT(Codegen, Debug, "  Checking overload at {}, looking for {}", 
+					(void*)overload_decl, (void*)&decl_node);
+				if (overload_decl == &decl_node) {
+					// Found the matching overload
+					matched_func_decl = overload_func_decl;
+
+					// Use pre-computed mangled name if available, otherwise generate it
+					if (!has_precomputed_mangled) {
 						if (matched_func_decl->has_mangled_name()) {
 							function_name = matched_func_decl->mangled_name();
 							FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name: {}", function_name);
@@ -11888,17 +11939,22 @@ private:
 							function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
 							FLASH_LOG_FORMAT(Codegen, Debug, "Generated mangled name (no pre-computed): {}", function_name);
 						}
-						break;
 					}
+					break;
 				}
 			}
+		}
 	
-			// Fallback: if pointer comparison failed (e.g., for template instantiations),
-			// try to find the function by checking if there's only one overload with this name
-			if (!matched_func_decl && all_overloads.size() == 1 && all_overloads[0].is<FunctionDeclarationNode>()) {
-				matched_func_decl = &all_overloads[0].as<FunctionDeclarationNode>();
-		
-				// Use pre-computed mangled name if available, otherwise generate it
+		// Fallback: if pointer comparison failed (e.g., for template instantiations),
+		// try to find the function by checking if there's only one overload with this name
+		if (!matched_func_decl && scoped_overloads.size() == 1 &&
+		    (scoped_overloads[0].is<FunctionDeclarationNode>() || scoped_overloads[0].is<TemplateFunctionDeclarationNode>())) {
+			matched_func_decl = scoped_overloads[0].is<FunctionDeclarationNode>()
+				? &scoped_overloads[0].as<FunctionDeclarationNode>()
+				: &scoped_overloads[0].as<TemplateFunctionDeclarationNode>().function_decl_node();
+	
+			// Use pre-computed mangled name if available, otherwise generate it
+			if (!has_precomputed_mangled) {
 				if (matched_func_decl->has_mangled_name()) {
 					function_name = matched_func_decl->mangled_name();
 					FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name (fallback 1): {}", function_name);
@@ -11906,12 +11962,17 @@ private:
 					function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
 				}
 			}
+		}
 
-			// Additional fallback: check gSymbolTable directly (for member functions added during delayed parsing)
-			if (!matched_func_decl && gSymbolTable_overloads.size() == 1 && gSymbolTable_overloads[0].is<FunctionDeclarationNode>()) {
-				matched_func_decl = &gSymbolTable_overloads[0].as<FunctionDeclarationNode>();
-		
-				// Use pre-computed mangled name if available, otherwise generate it
+		// Additional fallback: check gSymbolTable directly (for member functions added during delayed parsing)
+		if (!matched_func_decl && gSymbolTable_overloads.size() == 1 &&
+		    (gSymbolTable_overloads[0].is<FunctionDeclarationNode>() || gSymbolTable_overloads[0].is<TemplateFunctionDeclarationNode>())) {
+			matched_func_decl = gSymbolTable_overloads[0].is<FunctionDeclarationNode>()
+				? &gSymbolTable_overloads[0].as<FunctionDeclarationNode>()
+				: &gSymbolTable_overloads[0].as<TemplateFunctionDeclarationNode>().function_decl_node();
+	
+			// Use pre-computed mangled name if available, otherwise generate it
+			if (!has_precomputed_mangled) {
 				if (matched_func_decl->has_mangled_name()) {
 					function_name = matched_func_decl->mangled_name();
 					FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name (fallback 2): {}", function_name);
@@ -11919,76 +11980,80 @@ private:
 					function_name = generateMangledNameForCall(*matched_func_decl, "", current_namespace_stack_);
 				}
 			}
+		}
 
-			// Final fallback: if we're in a member function, check the current struct's member functions
-			if (!matched_func_decl && current_struct_name_.isValid()) {
-				auto type_it = gTypesByName.find(current_struct_name_);
-				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
-					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-					if (struct_info) {
-						for (const auto& member_func : struct_info->member_functions) {
-							if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-								const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-								if (func_decl.decl_node().identifier_token().value() == func_name_view) {
-									// Found matching member function
-									matched_func_decl = &func_decl;
-								
-									// Use pre-computed mangled name if available, otherwise generate it
+		// Final fallback: if we're in a member function, check the current struct's member functions
+		if (!matched_func_decl && current_struct_name_.isValid()) {
+			auto type_it = gTypesByName.find(current_struct_name_);
+			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+				if (struct_info) {
+					for (const auto& member_func : struct_info->member_functions) {
+						if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+							const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+							if (func_decl.decl_node().identifier_token().value() == func_name_view) {
+								// Found matching member function
+								matched_func_decl = &func_decl;
+							
+								// Use pre-computed mangled name if available, otherwise generate it
+								if (!has_precomputed_mangled) {
 									if (matched_func_decl->has_mangled_name()) {
 										function_name = matched_func_decl->mangled_name();
 									} else if (matched_func_decl->linkage() != Linkage::C) {
 										function_name = generateMangledNameForCall(*matched_func_decl, StringTable::getStringView(current_struct_name_));
 									}
-									break;
 								}
+								break;
 							}
 						}
 					}
-				
-					// If not found in current struct, check base classes
-					if (!matched_func_decl && struct_info) {
-						// Search through base classes recursively
-						std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
-							for (const auto& base_spec : current_struct->base_classes) {
-								// Look up base class in gTypeInfo
-								if (base_spec.type_index < gTypeInfo.size()) {
-									const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
-									if (base_type_info.isStruct()) {
-										const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
-										if (base_struct_info) {
-											// Check member functions in base class
-											for (const auto& member_func : base_struct_info->member_functions) {
-												if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-													const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-													if (func_decl.decl_node().identifier_token().value() == func_name_view) {
-														// Found matching member function in base class
-														matched_func_decl = &func_decl;
-													
-														// Use pre-computed mangled name if available
+				}
+			
+				// If not found in current struct, check base classes
+				if (!matched_func_decl && struct_info) {
+					// Search through base classes recursively
+					std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
+						for (const auto& base_spec : current_struct->base_classes) {
+							// Look up base class in gTypeInfo
+							if (base_spec.type_index < gTypeInfo.size()) {
+								const TypeInfo& base_type_info = gTypeInfo[base_spec.type_index];
+								if (base_type_info.isStruct()) {
+									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+									if (base_struct_info) {
+										// Check member functions in base class
+										for (const auto& member_func : base_struct_info->member_functions) {
+											if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+												const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+												if (func_decl.decl_node().identifier_token().value() == func_name_view) {
+													// Found matching member function in base class
+													matched_func_decl = &func_decl;
+												
+													// Use pre-computed mangled name if available
+													if (!has_precomputed_mangled) {
 														if (matched_func_decl->has_mangled_name()) {
 															function_name = matched_func_decl->mangled_name();
 														} else if (matched_func_decl->linkage() != Linkage::C) {
 															// Generate mangled name with base class name
 															function_name = generateMangledNameForCall(*matched_func_decl, StringTable::getStringView(base_struct_info->getName()));
 														}
-														return; // Stop searching once found
 													}
+													return; // Stop searching once found
 												}
 											}
-											// Recursively search base classes of this base class
-											if (!matched_func_decl) {
-												searchBaseClasses(base_struct_info);
-											}
+										}
+										// Recursively search base classes of this base class
+										if (!matched_func_decl) {
+											searchBaseClasses(base_struct_info);
 										}
 									}
 								}
 							}
-						};
-						searchBaseClasses(struct_info);
-					}
+						}
+					};
+					searchBaseClasses(struct_info);
 				}
 			}
-		} // End of symbol table lookup (only if no pre-computed mangled name)
+		}
 	
 		// Always add the return variable and function name (mangled for overload resolution)
 		FLASH_LOG_FORMAT(Codegen, Debug, "Final function_name for call: '{}'", function_name);
@@ -12000,6 +12065,17 @@ private:
 		
 		irOperands.emplace_back(ret_var);
 		irOperands.emplace_back(StringTable::getOrInternStringHandle(function_name));
+
+		const std::vector<CachedParamInfo>* cached_param_list = nullptr;
+		{
+			StringHandle cache_key = functionCallNode.has_mangled_name()
+				? functionCallNode.mangled_name_handle()
+				: StringTable::getOrInternStringHandle(function_name);
+			auto cache_it = function_param_cache_.find(cache_key);
+			if (cache_it != function_param_cache_.end()) {
+				cached_param_list = &cache_it->second;
+			}
+		}
 
 		// Process arguments - match them with parameter types
 		size_t arg_index = 0;
@@ -12025,8 +12101,36 @@ private:
 		functionCallNode.arguments().visit([&](ASTNode argument) {
 			// Get the parameter type for this argument (if it exists)
 			const TypeSpecifierNode* param_type = nullptr;
+			const DeclarationNode* param_decl = nullptr;
 			if (arg_index < param_nodes.size() && param_nodes[arg_index].is<DeclarationNode>()) {
-				param_type = &param_nodes[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+				param_decl = &param_nodes[arg_index].as<DeclarationNode>();
+			} else if (!param_nodes.empty() && param_nodes.back().is<DeclarationNode>()) {
+				const auto& last_param = param_nodes.back().as<DeclarationNode>();
+				if (last_param.is_parameter_pack()) {
+					param_decl = &last_param;
+				}
+			}
+			if (param_decl) param_type = &param_decl->type_node().as<TypeSpecifierNode>();
+			
+			const CachedParamInfo* cached_param = nullptr;
+			if (cached_param_list && !cached_param_list->empty()) {
+				if (arg_index < cached_param_list->size()) {
+					cached_param = &(*cached_param_list)[arg_index];
+				} else if (cached_param_list->back().is_parameter_pack) {
+					cached_param = &cached_param_list->back();
+				}
+			}
+
+			bool param_is_ref_like = false;
+			bool param_is_rvalue_ref = false;
+			bool param_is_pack = param_decl && param_decl->is_parameter_pack();
+			if (param_type) {
+				param_is_ref_like = param_type->is_reference() || param_type->is_rvalue_reference();
+				param_is_rvalue_ref = param_type->is_rvalue_reference();
+			} else if (cached_param) {
+				param_is_ref_like = cached_param->is_reference || cached_param->is_rvalue_reference;
+				param_is_rvalue_ref = cached_param->is_rvalue_reference;
+				param_is_pack = cached_param->is_parameter_pack;
 			}
 			
 			// Special case: if argument is a reference identifier being passed to a reference parameter,
@@ -12034,7 +12138,7 @@ private:
 			// generating a Dereference operation (which would give us the value, not the address).
 			// For reference-to-reference passing, we just want to pass the variable name directly,
 			// and let the IRConverter use MOV to load the address stored in the reference.
-			if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference()) &&
+			if (param_is_ref_like &&
 			    std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 				const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 				std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
@@ -12070,7 +12174,7 @@ private:
 			
 			// If the parameter expects a reference, use LValueAddress context to avoid dereferencing
 			// This is needed for non-reference arguments being passed to reference parameters
-			if (param_type && param_type->is_reference()) {
+			if (param_is_ref_like) {
 				arg_context = ExpressionContext::LValueAddress;
 			}
 			
@@ -12242,7 +12346,7 @@ private:
 					irOperands.emplace_back(type_node.type());  // Element type (e.g., Char for char[])
 					irOperands.emplace_back(64);  // Pointer size is 64 bits on x64
 					irOperands.emplace_back(addr_var);
-				} else if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+				} else if (param_is_ref_like) {
 					// Parameter expects a reference - pass the address of the argument
 					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 						// Argument is already a reference - just pass it through
@@ -12294,7 +12398,7 @@ private:
 			} else {
 				// Not an identifier - could be a literal, expression result, etc.
 				// Check if parameter expects a reference and argument is a literal
-				if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+				if (param_is_ref_like) {
 					// Parameter expects a reference, but argument is not an identifier
 					// We need to materialize the value into a temporary and pass its address
 					
@@ -12439,11 +12543,21 @@ private:
 			TypedValue arg = toTypedValue(std::span<const IrOperand>(&irOperands[i], group_size));
 			
 			// Check if this parameter is a reference type
+			bool arg_param_is_ref = false;
 			if (matched_func_decl && arg_idx < param_nodes.size() && param_nodes[arg_idx].is<DeclarationNode>()) {
 				const TypeSpecifierNode& param_type = param_nodes[arg_idx].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				if (param_type.is_reference() || param_type.is_rvalue_reference()) {
-					arg.is_reference = true;
+				arg_param_is_ref = param_type.is_reference() || param_type.is_rvalue_reference();
+			} else if (cached_param_list && !cached_param_list->empty()) {
+				if (arg_idx < cached_param_list->size()) {
+					const auto& cached = (*cached_param_list)[arg_idx];
+					arg_param_is_ref = cached.is_reference || cached.is_rvalue_reference;
+				} else if (cached_param_list->back().is_parameter_pack) {
+					const auto& cached = cached_param_list->back();
+					arg_param_is_ref = cached.is_reference || cached.is_rvalue_reference;
 				}
+			}
+			if (arg_param_is_ref) {
+				arg.is_reference = true;
 			}
 			
 			call_op.args.push_back(arg);
@@ -17935,6 +18049,14 @@ private:
 	// Map from function name to deduced auto return type
 	// Key: function name (mangled), Value: deduced TypeSpecifierNode
 	std::unordered_map<std::string, TypeSpecifierNode> deduced_auto_return_types_;
+	
+	struct CachedParamInfo {
+		bool is_reference = false;
+		bool is_rvalue_reference = false;
+		bool is_parameter_pack = false;
+	};
+	// Cache parameter reference info by mangled function name to aid call-site lowering
+	std::unordered_map<StringHandle, std::vector<CachedParamInfo>> function_param_cache_;
 
 	// Collected lambdas for deferred generation
 	std::vector<LambdaInfo> collected_lambdas_;
