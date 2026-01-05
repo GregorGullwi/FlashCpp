@@ -59,6 +59,28 @@ struct StorageSpecifiers {
 	CallingConvention calling_convention = CallingConvention::Default;
 };
 
+// Phase 1 Consolidation: Combined declaration specifiers for shared parsing
+// Used by both parse_declaration_or_function_definition() and parse_variable_declaration()
+// Combines attributes, storage class, and constexpr/constinit/consteval specifiers
+struct DeclarationSpecifiers {
+	// Storage class specifier (static, extern, register, mutable)
+	StorageClass storage_class = StorageClass::None;
+	
+	// Constexpr/consteval/constinit specifiers
+	bool is_constexpr = false;
+	bool is_consteval = false;
+	bool is_constinit = false;
+	
+	// Inline specifier
+	bool is_inline = false;
+	
+	// Linkage info (from __declspec or extern "C")
+	Linkage linkage = Linkage::None;
+	
+	// Calling convention (from __cdecl, __stdcall, etc.)
+	CallingConvention calling_convention = CallingConvention::Default;
+};
+
 // Context for parsing a function (where it lives)
 struct FunctionParsingContext {
 	FunctionKind kind = FunctionKind::Free;

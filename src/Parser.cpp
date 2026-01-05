@@ -1938,55 +1938,86 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
     );
 }
 
-ParseResult Parser::parse_declaration_or_function_definition()
+// Phase 1 Consolidation: Parse declaration specifiers shared between
+// parse_declaration_or_function_definition() and parse_variable_declaration()
+// Handles: attributes ([[nodiscard]], __declspec), storage class (static, extern),
+// constexpr/constinit/consteval, inline specifiers
+FlashCpp::DeclarationSpecifiers Parser::parse_declaration_specifiers()
 {
-	ScopedTokenPosition saved_position(*this);
-	
-	FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+	FlashCpp::DeclarationSpecifiers specs;
 	
 	// Parse any attributes before the declaration ([[nodiscard]], __declspec(dllimport), __cdecl, etc.)
 	AttributeInfo attr_info = parse_attributes();
-
-	// Check for storage class and function specifier keywords
-	bool is_constexpr = false;
-	bool is_constinit = false;
-	bool is_consteval = false;
-	bool is_inline = false;
-	bool is_static = false;
-	bool is_extern = false;
-
-	while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+	specs.linkage = attr_info.linkage;
+	specs.calling_convention = attr_info.calling_convention;
+	
+	// Parse storage class specifiers and constexpr/constinit/consteval keywords
+	// These can appear in any order: "static constexpr", "constexpr static", etc.
+	bool done = false;
+	while (!done && peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 		std::string_view kw = peek_token()->value();
 		if (kw == "constexpr") {
-			is_constexpr = true;
+			specs.is_constexpr = true;
 			consume_token();
 		} else if (kw == "constinit") {
-			is_constinit = true;
+			specs.is_constinit = true;
 			consume_token();
 		} else if (kw == "consteval") {
-			is_consteval = true;
+			specs.is_consteval = true;
 			consume_token();
 		} else if (kw == "inline" || kw == "__inline" || kw == "__forceinline") {
-			is_inline = true;
+			specs.is_inline = true;
 			consume_token();
 		} else if (kw == "static") {
-			is_static = true;
+			specs.storage_class = StorageClass::Static;
 			consume_token();
 		} else if (kw == "extern") {
-			is_extern = true;
+			specs.storage_class = StorageClass::Extern;
+			consume_token();
+		} else if (kw == "register") {
+			specs.storage_class = StorageClass::Register;
+			consume_token();
+		} else if (kw == "mutable") {
+			specs.storage_class = StorageClass::Mutable;
 			consume_token();
 		} else {
-			break;
+			done = true;
 		}
 	}
 	
 	// Also skip any GCC attributes that might appear after storage class specifiers
 	skip_gcc_attributes();
 	
-	if (attr_info.calling_convention == CallingConvention::Default && 
+	// Apply last calling convention if none was explicitly specified
+	if (specs.calling_convention == CallingConvention::Default && 
 	    last_calling_convention_ != CallingConvention::Default) {
-		attr_info.calling_convention = last_calling_convention_;
+		specs.calling_convention = last_calling_convention_;
 	}
+	
+	return specs;
+}
+
+ParseResult Parser::parse_declaration_or_function_definition()
+{
+	ScopedTokenPosition saved_position(*this);
+	
+	FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+	
+	// Phase 1 Consolidation: Use shared specifier parsing helper
+	FlashCpp::DeclarationSpecifiers specs = parse_declaration_specifiers();
+	
+	// Extract values for backward compatibility (will be removed in later phases)
+	bool is_constexpr = specs.is_constexpr;
+	bool is_constinit = specs.is_constinit;
+	bool is_consteval = specs.is_consteval;
+	bool is_inline = specs.is_inline;
+	bool is_static = (specs.storage_class == StorageClass::Static);
+	bool is_extern = (specs.storage_class == StorageClass::Extern);
+	
+	// Create AttributeInfo for backward compatibility with existing code paths
+	AttributeInfo attr_info;
+	attr_info.linkage = specs.linkage;
+	attr_info.calling_convention = specs.calling_convention;
 
 	// Parse the type specifier and identifier (name)
 	// This will also extract any calling convention that appears after the type
@@ -9798,53 +9829,14 @@ ParseResult Parser::parse_statement_or_declaration()
 
 ParseResult Parser::parse_variable_declaration()
 {
-	// Check for constexpr/constinit keywords (C++11/C++20)
-	bool is_constexpr = false;
-	bool is_constinit = false;
+	// Phase 1 Consolidation: Use shared specifier parsing helper
+	FlashCpp::DeclarationSpecifiers specs = parse_declaration_specifiers();
 	
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-		std::string_view keyword = peek_token()->value();
-		if (keyword == "constexpr") {
-			is_constexpr = true;
-			consume_token();
-		} else if (keyword == "constinit") {
-			is_constinit = true;
-			consume_token();
-		}
-	}
-	
-	// Check for storage class specifier (static, extern, etc.)
-	StorageClass storage_class = StorageClass::None;
-	Linkage linkage = Linkage::None;
-
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-		std::string_view keyword = peek_token()->value();
-		if (keyword == "static") {
-			storage_class = StorageClass::Static;
-			consume_token();
-		} else if (keyword == "extern") {
-			storage_class = StorageClass::Extern;
-			consume_token();
-		} else if (keyword == "register") {
-			storage_class = StorageClass::Register;
-			consume_token();
-		} else if (keyword == "mutable") {
-			storage_class = StorageClass::Mutable;
-			consume_token();
-		}
-	}
-
-	// Check again for constexpr/constinit after storage class (handles "static constinit" order)
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-		std::string_view keyword = peek_token()->value();
-		if (keyword == "constexpr") {
-			is_constexpr = true;
-			consume_token();
-		} else if (keyword == "constinit") {
-			is_constinit = true;
-			consume_token();
-		}
-	}
+	// Extract values for backward compatibility (will be removed in later phases)
+	bool is_constexpr = specs.is_constexpr;
+	bool is_constinit = specs.is_constinit;
+	StorageClass storage_class = specs.storage_class;
+	Linkage linkage = specs.linkage;
 
 	// Parse the type specifier and identifier (name)
 	ParseResult type_and_name_result = parse_type_and_name();
