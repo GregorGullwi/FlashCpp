@@ -8,11 +8,11 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-04 (after static constexpr and type alias fixes)
+**Last Run:** 2026-01-05 (after type template argument mangling fix)
 
 **Total files tested:** 817
-**Valid returns (matching expected):** 793 (up from 789)
-**Regressions (mismatches):** 11 (down from 15)
+**Valid returns (matching expected):** 795 (up from 794)
+**Regressions (mismatches):** 9 (down from 10)
 **Runtime crashes:** 13
 **Compile failures:** 0
 **Link failures:** 0
@@ -33,6 +33,8 @@ The following regressions have been FIXED:
 | test_static_constexpr_pack_value_ret42.cpp | 42 | 0 | sizeof... pack expansion | Nested binary expressions with static_cast<int>(sizeof...(Ts)) were not handled |
 | test_inherited_type_alias_ret42.cpp | 42 | 0 | Self-referential type alias | Type alias `using type = bool_constant;` inside `bool_constant` now correctly points to instantiated type |
 | test_type_alias_fix_simple_ret42.cpp | 42 | 0 | (Already fixed) | Static constexpr was properly initialized |
+| test_void_t_positive_ret0.cpp | 0 | 42 | void_t SFINAE fix | Template aliases like void_t that resolve to concrete types now correctly detected during pattern matching |
+| test_template_disambiguation_pack_ret40.cpp | 40 | 20→30→40 | Type template arg mangling | Function template specializations now include type template args in mangled names (sum<int> → `_ZN2ns3sumIiEEv`, sum<int,int> → `_ZN2ns3sumIiiEEv`) |
 
 ## Regressions Found
 
@@ -46,26 +48,22 @@ The following test files still have a mismatch between their expected return val
 | test_qualified_base_class_ret42.cpp | 42 | 0 | REGRESSION | Deferred template base with member type alias not resolved |
 | test_sizeof_template_param_default_ret4.cpp | 4 | 1 | REGRESSION | Template array size not substituted correctly |
 | test_std_header_features_ret0.cpp | 0 | 8 | REGRESSION | Type trait/constexpr evaluation |
-| test_template_disambiguation_pack_ret40.cpp | 40 | 20 | REGRESSION | Template specialization not selected |
-| test_void_t_positive_ret0.cpp | 0 | 42 | REGRESSION | SFINAE specialization not selected |
+| test_template_disambiguation_pack_ret40.cpp | 40 | 40 | FIXED | Function template specializations now get distinct mangled names with type template args |
+| test_void_t_positive_ret0.cpp | 0 | 0 | FIXED | void_t SFINAE pattern now correctly detected |
 
-These values come from the 2026-01-04 run. When a regression is triaged, add a short note or link next to the entry to preserve context.
+These values come from the 2026-01-05 run. When a regression is triaged, add a short note or link next to the entry to preserve context.
 
 ## Root Cause Summary
 
 The remaining regressions fall into these categories:
 
-1. **Template Specialization Selection** (2 tests): Template specializations with explicit arguments are not being selected correctly. The primary template is called instead of the specialization.
+1. **Template Array Size Substitution** (1 test): Non-type template parameters used as array sizes are not being substituted correctly during template instantiation.
 
-2. **SFINAE Issues** (1 test): void_t SFINAE pattern doesn't select the correct specialization.
+2. **Deferred Template Base Resolution** (1 test): Template base classes with dependent type member aliases (e.g., `detail::select_base<T>::type`) are not being resolved correctly.
 
-3. **Template Array Size Substitution** (1 test): Non-type template parameters used as array sizes are not being substituted correctly during template instantiation.
+3. **Type Trait Evaluation** (1 test): Complex constexpr type traits are not being evaluated correctly.
 
-4. **Deferred Template Base Resolution** (1 test): Template base classes with dependent type member aliases (e.g., `detail::select_base<T>::type`) are not being resolved correctly.
-
-5. **Type Trait Evaluation** (1 test): Complex constexpr type traits are not being evaluated correctly.
-
-6. **Other** (1 test): Virtual function covariant returns cause runtime crashes.
+4. **Other** (1 test): Virtual function covariant returns cause runtime crashes.
 
 ## Runtime Crashes
 

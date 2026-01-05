@@ -21456,8 +21456,26 @@ if (struct_type_info.getStructInfo()) {
 				specialization_mangled_name = NameMangling::generateMangledNameWithTemplateArgs(
 					func_base_name, return_type, param_types, non_type_args, 
 					func_for_mangling.is_variadic(), "", ns_path);
+			} else if (!spec_template_args.empty()) {
+				// Use the version that includes TYPE template arguments in the mangled name
+				// This handles specializations like sum<int>, sum<int, int>
+				const DeclarationNode& decl = func_for_mangling.decl_node();
+				const TypeSpecifierNode& return_type = decl.type_node().as<TypeSpecifierNode>();
+				
+				// Build parameter type list
+				std::vector<TypeSpecifierNode> param_types;
+				for (const auto& param_node : func_for_mangling.parameter_nodes()) {
+					if (param_node.is<DeclarationNode>()) {
+						const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+						param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+					}
+				}
+				
+				specialization_mangled_name = NameMangling::generateMangledNameWithTypeTemplateArgs(
+					func_base_name, return_type, param_types, spec_template_args, 
+					func_for_mangling.is_variadic(), "", ns_path);
 			} else {
-				// Regular specialization without non-type template args
+				// Regular specialization without any template args (shouldn't happen but fallback)
 				specialization_mangled_name = 
 					NameMangling::generateMangledNameFromNode(func_for_mangling, ns_path);
 			}
@@ -23095,6 +23113,23 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							dependent_arg.type_index = type_it->second->type_index_;
 							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index, 
 							          " for identifier '", id.name(), "'");
+						} else {
+							// Check if this identifier is a template alias (like void_t)
+							// Template aliases may resolve to concrete types even when used with dependent arguments
+							auto alias_opt = gTemplateRegistry.lookup_alias_template(id.name());
+							if (alias_opt.has_value()) {
+								const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
+								Type target_type = alias_node.target_type_node().type();
+								
+								// If the alias always resolves to a concrete type (like void_t -> void),
+								// use that concrete type instead of marking as dependent
+								if (target_type != Type::UserDefined && target_type != Type::Struct) {
+									FLASH_LOG(Templates, Debug, "Template alias '", id.name(), 
+									          "' resolves to concrete type ", static_cast<int>(target_type));
+									dependent_arg.base_type = target_type;
+									dependent_arg.is_dependent = false;  // Not dependent - resolves to concrete type
+								}
+							}
 						}
 					}
 					
@@ -24939,18 +24974,15 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	
 	const TemplateVariableDeclarationNode& var_template = template_opt->as<TemplateVariableDeclarationNode>();
 	
-	// Generate unique name for the instantiation
-	std::string instantiated_name = std::string(template_name);
+	// Generate unique name for the instantiation using TemplateTypeArg::toString()
+	// This ensures consistent naming with class template instantiations (includes CV qualifiers)
+	StringBuilder name_builder;
+	name_builder.append(template_name);
 	for (const auto& arg : template_args) {
-		instantiated_name += "_";
-		instantiated_name += std::string(TemplateRegistry::typeToString(arg.base_type));
-		if (arg.is_rvalue_reference) instantiated_name += "_rvalref";
-		else if (arg.is_reference) instantiated_name += "_ref";
-		for (size_t i = 0; i < arg.pointer_depth; ++i) {
-			instantiated_name += "_ptr";
-		}
+		name_builder.append("_");
+		name_builder.append(arg.toString());
 	}
-	std::string_view persistent_name = StringBuilder().append(instantiated_name).commit();
+	std::string_view persistent_name = name_builder.commit();
 	
 	// Check if already instantiated
 	if (gSymbolTable.lookup(persistent_name).has_value()) {
@@ -30443,7 +30475,12 @@ ASTNode Parser::substituteTemplateParameters(
 			for (size_t i = 0; i < func_call.arguments().size(); ++i) {
 				substituted_args.push_back(substituteTemplateParameters(func_call.arguments()[i], template_params, template_args));
 			}
-			return emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from()));
+			ASTNode new_func_call = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from()));
+			// Copy mangled name if present (important for template instantiation)
+			if (func_call.has_mangled_name()) {
+				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()).set_mangled_name(func_call.mangled_name());
+			}
+			return new_func_call;
 		} else if (std::holds_alternative<MemberAccessNode>(expr)) {
 			const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
 			ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
@@ -30575,7 +30612,12 @@ ASTNode Parser::substituteTemplateParameters(
 
 		// For now, don't substitute the function declaration itself
 		// Create new function call with substituted arguments
-		return emplace_node<FunctionCallNode>(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from());
+		ASTNode new_func_call = emplace_node<FunctionCallNode>(const_cast<DeclarationNode&>(func_call.function_declaration()), std::move(substituted_args), func_call.called_from());
+		// Copy mangled name if present (important for template instantiation)
+		if (func_call.has_mangled_name()) {
+			new_func_call.as<FunctionCallNode>().set_mangled_name(func_call.mangled_name());
+		}
+		return new_func_call;
 
 	} else if (node.is<BinaryOperatorNode>()) {
 		// Handle binary operators
