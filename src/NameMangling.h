@@ -3,6 +3,7 @@
 #include "AstNodeTypes.h"
 #include "IRTypes.h"
 #include "ChunkedString.h"
+#include "TemplateRegistry.h"
 
 // =============================================================================
 // Name Mangling Utilities - Unified Architecture
@@ -456,6 +457,181 @@ inline void appendItaniumTemplateArgs(
 	output += 'E';  // End template args
 }
 
+// Encode TYPE template arguments in Itanium C++ ABI format
+// Format: I<template-args>E where each type arg uses the standard type encoding
+// For type template arguments like sum<int> -> I i E, sum<int, int> -> I i i E
+template<typename OutputType>
+inline void appendItaniumTypeTemplateArgs(
+	OutputType& output,
+	const std::vector<TemplateTypeArg>& type_args
+) {
+	if (type_args.empty()) return;
+	
+	output += 'I';  // Start template args
+	for (const auto& arg : type_args) {
+		if (arg.is_value) {
+			// Non-type template argument (value)
+			output += 'L';
+			// Use type code based on arg.base_type
+			switch (arg.base_type) {
+				case Type::Int: output += 'i'; break;
+				case Type::UnsignedInt: output += 'j'; break;
+				case Type::Long: output += 'l'; break;
+				case Type::UnsignedLong: output += 'm'; break;
+				case Type::LongLong: output += 'x'; break;
+				case Type::UnsignedLongLong: output += 'y'; break;
+				case Type::Bool: output += 'b'; break;
+				case Type::Char: output += 'c'; break;
+				default: output += 'i'; break;  // Default to int
+			}
+			output += std::to_string(arg.value);
+			output += 'E';
+		} else {
+			// Type template argument - encode the type
+			// Handle CV-qualifiers
+			if (arg.cv_qualifier == CVQualifier::Const) {
+				output += 'K';
+			} else if (arg.cv_qualifier == CVQualifier::Volatile) {
+				output += 'V';
+			} else if (arg.cv_qualifier == CVQualifier::ConstVolatile) {
+				output += 'K';
+				output += 'V';
+			}
+			
+			// Handle pointers
+			for (size_t i = 0; i < arg.pointer_depth; ++i) {
+				output += 'P';
+			}
+			
+			// Handle references
+			if (arg.is_rvalue_reference) {
+				output += 'O';  // rvalue reference
+			} else if (arg.is_reference) {
+				output += 'R';  // lvalue reference
+			}
+			
+			// Basic type code
+			switch (arg.base_type) {
+				case Type::Void:       output += 'v'; break;
+				case Type::Bool:       output += 'b'; break;
+				case Type::Char:       output += 'c'; break;
+				case Type::UnsignedChar: output += 'h'; break;
+				case Type::Short:      output += 's'; break;
+				case Type::UnsignedShort: output += 't'; break;
+				case Type::Int:        output += 'i'; break;
+				case Type::UnsignedInt: output += 'j'; break;
+				case Type::Long:       output += 'l'; break;
+				case Type::UnsignedLong: output += 'm'; break;
+				case Type::LongLong:   output += 'x'; break;
+				case Type::UnsignedLongLong: output += 'y'; break;
+				case Type::Float:      output += 'f'; break;
+				case Type::Double:     output += 'd'; break;
+				case Type::LongDouble: output += 'e'; break;
+				case Type::Struct:
+				case Type::UserDefined: {
+					// For structs/classes, use the struct name from gTypeInfo
+					if (arg.type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[arg.type_index];
+						auto struct_name = StringTable::getStringView(type_info.name());
+						output += std::to_string(struct_name.size());
+						output += struct_name;
+					} else {
+						output += 'v';  // fallback to void
+					}
+					break;
+				}
+				default: output += 'v'; break;  // Unknown type, use void
+			}
+		}
+	}
+	output += 'E';  // End template args
+}
+
+// Generate Itanium mangled name with TYPE template arguments
+// Used for template specializations like sum<int>, sum<int, int>
+template<typename OutputType>
+inline void generateItaniumMangledNameWithTypeTemplateArgs(
+	OutputType& output,
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	const std::vector<TemplateTypeArg>& type_template_args,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path
+) {
+	// Start with _Z prefix
+	output += "_Z";
+	
+	// Check if we have namespaces or struct (needs nested-name encoding)
+	bool has_nested_name = !struct_name.empty() || !namespace_path.empty();
+	bool is_std_only = namespace_path.size() == 1 && namespace_path[0] == "std" && struct_name.empty();
+	
+	if (has_nested_name && !is_std_only) {
+		// Use nested-name encoding: _ZN...E
+		output += 'N';
+		
+		// Add namespace parts
+		for (const auto& ns : namespace_path) {
+			if (ns.empty()) {
+				output += "12_GLOBAL__N_1";
+			} else if (ns == "std") {
+				output += "St";
+			} else {
+				output += std::to_string(ns.size());
+				output += ns;
+			}
+		}
+		
+		// Add struct name if present
+		if (!struct_name.empty()) {
+			size_t start = 0;
+			while (start < struct_name.size()) {
+				size_t end = struct_name.find("::", start);
+				if (end == std::string_view::npos) end = struct_name.size();
+				std::string_view component = struct_name.substr(start, end - start);
+				if (!component.empty()) {
+					output += std::to_string(component.size());
+					output += component;
+				}
+				start = (end == struct_name.size()) ? end : end + 2;
+			}
+		}
+		
+		// Add function name with type template args
+		output += std::to_string(func_name.size());
+		output += func_name;
+		
+		// Add type template arguments after function name
+		appendItaniumTypeTemplateArgs(output, type_template_args);
+		
+		// End nested-name
+		output += 'E';
+	} else if (is_std_only) {
+		output += "St";
+		output += std::to_string(func_name.size());
+		output += func_name;
+		appendItaniumTypeTemplateArgs(output, type_template_args);
+	} else {
+		// Simple function name with type template args
+		output += std::to_string(func_name.size());
+		output += func_name;
+		appendItaniumTypeTemplateArgs(output, type_template_args);
+	}
+	
+	// Add parameter types
+	if (param_types.empty() && !is_variadic) {
+		output += 'v';
+	} else {
+		for (const auto& param : param_types) {
+			appendItaniumTypeCode(output, param, true);
+		}
+		if (is_variadic) {
+			output += 'z';
+		}
+	}
+}
+
 // Generate Itanium mangled name with non-type template arguments
 // Used for template specializations like get<0>, get<1>
 template<typename OutputType>
@@ -821,6 +997,55 @@ inline MangledName generateMangledNameWithTemplateArgs(
 	}
 	return generateMangledNameWithTemplateArgs(func_name, return_type, param_types, 
 	                                           non_type_template_args, is_variadic, struct_name, ns_views);
+}
+
+// Generate mangled name with TYPE template arguments (e.g., sum<int>, sum<int, int>)
+// Used for function template specializations with type parameters
+inline MangledName generateMangledNameWithTypeTemplateArgs(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	const std::vector<TemplateTypeArg>& type_template_args,
+	bool is_variadic = false,
+	std::string_view struct_name = "",
+	const std::vector<std::string_view>& namespace_path = {}
+) {
+	if (func_name == "main") {
+		StringBuilder builder;
+		builder.append("main");
+		return MangledName(builder.commit());
+	}
+
+	// Use Itanium ABI for template specializations (most portable)
+	if (g_mangling_style == ManglingStyle::Itanium) {
+		StringBuilder builder;
+		generateItaniumMangledNameWithTypeTemplateArgs(builder, func_name, return_type, param_types,
+		                                               type_template_args, is_variadic, struct_name, namespace_path);
+		return MangledName(builder.commit());
+	}
+
+	// MSVC: Append template args to function name (simplified)
+	// Format: ?func_name<type1,type2>@...
+	StringBuilder name_with_args;
+	name_with_args.append(func_name);
+	if (!type_template_args.empty()) {
+		name_with_args.append("<");
+		for (size_t i = 0; i < type_template_args.size(); ++i) {
+			if (i > 0) name_with_args.append(",");
+			const auto& arg = type_template_args[i];
+			if (arg.is_value) {
+				name_with_args.append(static_cast<uint64_t>(arg.value));
+			} else {
+				// Append type name
+				name_with_args.append(arg.toString());
+			}
+		}
+		name_with_args.append(">");
+	}
+
+	// Fall back to regular mangling with modified name
+	return generateMangledName(name_with_args.commit(), return_type, param_types,
+	                           is_variadic, struct_name, namespace_path);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)

@@ -21456,8 +21456,26 @@ if (struct_type_info.getStructInfo()) {
 				specialization_mangled_name = NameMangling::generateMangledNameWithTemplateArgs(
 					func_base_name, return_type, param_types, non_type_args, 
 					func_for_mangling.is_variadic(), "", ns_path);
+			} else if (!spec_template_args.empty()) {
+				// Use the version that includes TYPE template arguments in the mangled name
+				// This handles specializations like sum<int>, sum<int, int>
+				const DeclarationNode& decl = func_for_mangling.decl_node();
+				const TypeSpecifierNode& return_type = decl.type_node().as<TypeSpecifierNode>();
+				
+				// Build parameter type list
+				std::vector<TypeSpecifierNode> param_types;
+				for (const auto& param_node : func_for_mangling.parameter_nodes()) {
+					if (param_node.is<DeclarationNode>()) {
+						const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+						param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
+					}
+				}
+				
+				specialization_mangled_name = NameMangling::generateMangledNameWithTypeTemplateArgs(
+					func_base_name, return_type, param_types, spec_template_args, 
+					func_for_mangling.is_variadic(), "", ns_path);
 			} else {
-				// Regular specialization without non-type template args
+				// Regular specialization without any template args (shouldn't happen but fallback)
 				specialization_mangled_name = 
 					NameMangling::generateMangledNameFromNode(func_for_mangling, ns_path);
 			}
