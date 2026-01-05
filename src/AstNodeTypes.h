@@ -2687,6 +2687,8 @@ enum class TypeTraitKind {
 	IsDestructible,
 	IsTriviallyDestructible,
 	IsNothrowDestructible,
+	HasTrivialDestructor,    // __has_trivial_destructor(T) - GCC/Clang intrinsic, equivalent to IsTriviallyDestructible
+	HasVirtualDestructor,    // __has_virtual_destructor(T) - check if type has virtual destructor
 	// Special traits
 	UnderlyingType,      // __underlying_type(T) - returns the underlying type of an enum
 	IsConstantEvaluated  // __is_constant_evaluated() - no arguments, returns bool

@@ -16424,6 +16424,63 @@ private:
 				}
 				break;
 
+			case TypeTraitKind::HasTrivialDestructor:
+				// __has_trivial_destructor(T) - GCC/Clang intrinsic, equivalent to IsTriviallyDestructible
+				// Scalar types are trivially destructible
+				if (isScalarType(type, is_reference, pointer_depth)) {
+					result = true;
+				}
+				// Class types: no virtual, no user-defined destructor
+				else if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				         !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info && !struct_info->is_union) {
+						// Trivially destructible if no vtable and no user-defined destructor
+						result = !struct_info->has_vtable && !struct_info->hasUserDefinedDestructor();
+					} else if (struct_info && struct_info->is_union) {
+						// Unions are trivially destructible if all members are
+						result = true;
+					}
+				}
+				break;
+
+			case TypeTraitKind::HasVirtualDestructor:
+				// __has_virtual_destructor(T) - Check if T has a virtual destructor
+				// Only class types can have virtual destructors
+				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&
+				    !is_reference && pointer_depth == 0) {
+					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+					const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (struct_info && !struct_info->is_union) {
+						// Check if the destructor is explicitly marked as virtual
+						// A class has a virtual destructor if:
+						// 1. Its destructor is declared virtual, or
+						// 2. It inherits from a base class with a virtual destructor
+						// For now, we check if the class has a vtable (which implies virtual methods)
+						// and if it has a user-defined destructor
+						result = struct_info->has_vtable && struct_info->hasUserDefinedDestructor();
+						
+						// If the class has a vtable but no explicit destructor, check base classes
+						if (!result && struct_info->has_vtable && !struct_info->base_classes.empty()) {
+							// Check if any base class has a virtual destructor
+							for (const auto& base : struct_info->base_classes) {
+								if (base.type_index < gTypeInfo.size()) {
+									const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+									if (base_struct_info && base_struct_info->has_vtable) {
+										// If base has vtable, it might have virtual destructor
+										// For simplicity, we assume presence of vtable indicates virtual destructor
+										result = true;
+										break;
+									}
+								}
+							}
+						}
+					}
+				}
+				break;
+
 			case TypeTraitKind::IsLayoutCompatible:
 				// __is_layout_compatible(T, U) - Check if T and U have the same layout
 				if (traitNode.has_second_type()) {
