@@ -13030,6 +13030,26 @@ private:
 					if (object_type.type() == Type::Auto) {
 						if (auto deduced = deduceLambdaClosureType(*symbol, object_decl->identifier_token())) {
 							object_type = *deduced;
+						} else if (current_lambda_context_.isActive() && object_type.is_rvalue_reference()) {
+							// For auto&& parameters inside lambdas (recursive lambda pattern),
+							// assume the parameter has the closure type of the current lambda.
+							// This handles: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
+							// where self's type is deduced to __lambda_N&& when called
+							auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
+							if (type_it != gTypesByName.end()) {
+								const TypeInfo* closure_type = type_it->second;
+								int closure_size = closure_type->getStructInfo()
+									? closure_type->getStructInfo()->total_size * 8
+									: 64;
+								object_type = TypeSpecifierNode(
+									Type::Struct,
+									closure_type->type_index_,
+									closure_size,
+									object_decl->identifier_token()
+								);
+								// Preserve rvalue reference flag
+								object_type.set_reference(true);
+							}
 						}
 					}
 				}
@@ -13604,6 +13624,25 @@ private:
 										if (type_node.type() == Type::Auto) {
 											if (auto deduced = deduceLambdaClosureType(*symbol, decl->identifier_token())) {
 												type_node = *deduced;
+											} else if (current_lambda_context_.isActive() && type_node.is_rvalue_reference()) {
+												// For auto&& parameters inside lambdas (recursive lambda pattern),
+												// assume the parameter has the closure type of the current lambda.
+												// This handles: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
+												auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
+												if (type_it != gTypesByName.end()) {
+													const TypeInfo* closure_type = type_it->second;
+													int closure_size = closure_type->getStructInfo()
+														? closure_type->getStructInfo()->total_size * 8
+														: 64;
+													type_node = TypeSpecifierNode(
+														Type::Struct,
+														closure_type->type_index_,
+														closure_size,
+														decl->identifier_token()
+													);
+													// Preserve rvalue reference flag
+													type_node.set_reference(true);
+												}
 											}
 										}
 										arg_types.push_back(type_node);
