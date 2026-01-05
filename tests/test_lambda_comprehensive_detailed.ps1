@@ -1,4 +1,4 @@
-# Test script specifically for test_lambda_cpp20_comprehensive.cpp
+# Test script specifically for test_lambda_cpp20_comprehensive_ret135.cpp
 # Compiles, links, and analyzes symbols to validate lambda implementation
 
 Write-Host "=============================================="
@@ -11,9 +11,9 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 Set-Location $RepoRoot
 
-$testFile = "tests\test_lambda_cpp20_comprehensive.cpp"
-$objFile = "test_lambda_cpp20_comprehensive.obj"
-$exeFile = "test_lambda_cpp20_comprehensive.exe"
+$testFile = "tests\test_lambda_cpp20_comprehensive_ret135.cpp"
+$objFile = "test_lambda_cpp20_comprehensive_ret135.obj"
+$exeFile = "test_lambda_cpp20_comprehensive_ret135.exe"
 
 # Find FlashCpp compiler
 $flashCppPath = ""

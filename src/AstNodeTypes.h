@@ -3230,19 +3230,24 @@ class RangedForStatementNode {
 public:
 	explicit RangedForStatementNode(ASTNode loop_variable_decl,
 		ASTNode range_expression,
-		ASTNode body_statement)
+		ASTNode body_statement,
+		std::optional<ASTNode> init_statement = std::nullopt)
 		: loop_variable_decl_(loop_variable_decl),
 		  range_expression_(range_expression),
-		  body_statement_(body_statement) {}
+		  body_statement_(body_statement),
+		  init_statement_(init_statement) {}
 
 	auto get_loop_variable_decl() const { return loop_variable_decl_; }
 	auto get_range_expression() const { return range_expression_; }
 	auto get_body_statement() const { return body_statement_; }
+	auto get_init_statement() const { return init_statement_; }
+	bool has_init_statement() const { return init_statement_.has_value(); }
 
 private:
 	ASTNode loop_variable_decl_;  // for (int x : range)
 	ASTNode range_expression_;     // the array or container to iterate over
 	ASTNode body_statement_;
+	std::optional<ASTNode> init_statement_;  // C++20: for (init; decl : range)
 };
 
 class BreakStatementNode {

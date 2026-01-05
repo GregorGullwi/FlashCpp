@@ -4373,6 +4373,12 @@ private:
 		//   for (int __i = 0; __i < array_size; ++__i) { int x = arr[__i]; body }
 		// For types with begin()/end(): for (int x : vec) { body } becomes:
 		//   for (auto __begin = vec.begin(), __end = vec.end(); __begin != __end; ++__begin) { int x = *__begin; body }
+		// C++20: for (init; decl : range) { body } first executes init, then the above
+
+		// C++20: Handle optional init-statement if present
+		if (node.has_init_statement()) {
+			visit(*node.get_init_statement());
+		}
 
 		// Generate unique labels and counter for this ranged for loop
 		static size_t ranged_for_counter = 0;
@@ -5397,54 +5403,89 @@ private:
 		if (node.initializer() && !decl.is_array()) {
 			const ASTNode& init_node = *node.initializer();
 
-			// Check if this is a brace initializer (InitializerListNode)
+				// Check if this is a brace initializer (InitializerListNode)
 			if (init_node.is<InitializerListNode>()) {
-				// Handle brace initialization for structs
 				const InitializerListNode& init_list = init_node.as<InitializerListNode>();
+				
+				// For scalar types with direct initialization like int v(10), 
+				// the InitializerListNode will have a single element. Handle this case.
+				if (type_node.type() != Type::Struct && init_list.initializers().size() == 1) {
+					// Direct initialization of scalar type: int v(10) or int v{10}
+					// Extract the single initializer and treat it as a regular expression initializer
+					const ASTNode& single_init = init_list.initializers()[0];
+					
+					// Visit the initializer expression to get its IR
+					auto init_operands = visitExpressionNode(single_init.as<ExpressionNode>());
+					
+					// Append the initializer operands
+					operands.insert(operands.end(), init_operands.begin(), init_operands.end());
+					
+					// Add to symbol table
+					if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
+						assert(false && "Expected identifier to be unique");
+					}
 
-				// Add to symbol table first
-				if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
-					assert(false && "Expected identifier to be unique");
-				}
+					// Generate VariableDecl with initializer
+					VariableDeclOp decl_op;
+					decl_op.type = type_node.type();
+					decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+					decl_op.var_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
+					decl_op.is_reference = type_node.is_reference();
+					decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
+					decl_op.is_array = decl.is_array();
+					if (operands.size() >= 10) {
+						TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 3));
+						decl_op.initializer = std::move(tv);
+					}
+					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
+					return;  // Done with scalar direct initialization
+				} else {
+					// Handle brace initialization for structs or multi-element initializers
+					
+					// Add to symbol table first
+					if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
+						assert(false && "Expected identifier to be unique");
+					}
 
-				// Add the variable declaration without initializer
-				VariableDeclOp decl_op;
-				decl_op.type = type_node.type();
-				decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
-				decl_op.var_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
-				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
-				decl_op.is_reference = type_node.is_reference();
-				decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
-				decl_op.is_array = decl.is_array();
-				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
+					// Add the variable declaration without initializer
+					VariableDeclOp decl_op;
+					decl_op.type = type_node.type();
+					decl_op.size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+					decl_op.var_name = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
+					decl_op.is_reference = type_node.is_reference();
+					decl_op.is_rvalue_reference = type_node.is_rvalue_reference();
+					decl_op.is_array = decl.is_array();
+					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
-				// Check if this struct has a constructor
-				if (type_node.type() == Type::Struct) {
-					TypeIndex type_index = type_node.type_index();
-					if (type_index < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_index];
-						if (type_info.struct_info_) {
-							const StructTypeInfo& struct_info = *type_info.struct_info_;
+					// Check if this struct has a constructor
+					if (type_node.type() == Type::Struct) {
+						TypeIndex type_index = type_node.type_index();
+						if (type_index < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index];
+							if (type_info.struct_info_) {
+								const StructTypeInfo& struct_info = *type_info.struct_info_;
 
-							// Check if this is an abstract class (only for non-pointer types)
-							if (struct_info.is_abstract && type_node.pointer_levels().empty()) {
-								FLASH_LOG(Codegen, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
-								assert(false && "Cannot instantiate abstract class");
-							}
+								// Check if this is an abstract class (only for non-pointer types)
+								if (struct_info.is_abstract && type_node.pointer_levels().empty()) {
+									FLASH_LOG(Codegen, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
+									assert(false && "Cannot instantiate abstract class");
+								}
 
-							const auto& initializers = init_list.initializers();
+								const auto& initializers = init_list.initializers();
 
-							// Check if this is a designated initializer list or aggregate initialization
-							// Designated initializers always use direct member initialization
-							bool use_direct_member_init = init_list.has_any_designated();
-							
-							// Check if there's a constructor that matches the number of initializers
-							// For aggregate initialization Point{1, 2}, we need a constructor with 2 parameters
-							// If no matching constructor exists, use direct member initialization
-							// Also consider constructors with default arguments
-							bool has_matching_constructor = false;
-							const ConstructorDeclarationNode* matching_ctor = nullptr;
-							if (!use_direct_member_init && struct_info.hasAnyConstructor()) {
+								// Check if this is a designated initializer list or aggregate initialization
+								// Designated initializers always use direct member initialization
+								bool use_direct_member_init = init_list.has_any_designated();
+								
+								// Check if there's a constructor that matches the number of initializers
+								// For aggregate initialization Point{1, 2}, we need a constructor with 2 parameters
+								// If no matching constructor exists, use direct member initialization
+								// Also consider constructors with default arguments
+								bool has_matching_constructor = false;
+								const ConstructorDeclarationNode* matching_ctor = nullptr;
+								if (!use_direct_member_init && struct_info.hasAnyConstructor()) {
 								size_t num_initializers = initializers.size();
 								for (const auto& func : struct_info.member_functions) {
 									if (func.is_constructor) {
@@ -5742,7 +5783,8 @@ private:
 							}
 						}
 					}
-				}
+					}  // end if (type_node.type() == Type::Struct)
+				}  // end else (struct initialization)
 				return; // Early return - we've already added the variable declaration
 			} else if (init_node.is<LambdaExpressionNode>()) {
 				// Lambda expression initializer (direct)
@@ -12574,10 +12616,27 @@ private:
 							int expr_size = std::get<int>(argumentIrOperands[1]);
 							TempVar expr_var = std::get<TempVar>(argumentIrOperands[2]);
 							
-							// If expr_size is 64 bits and it's a struct type, it's likely already an address
-							// (e.g., from a cast to rvalue reference like static_cast<Widget&&>(w1))
-							// In this case, just pass it through without taking another address
-							bool is_already_address = (expr_size == 64 && expr_type == Type::Struct);
+							// Check if the TempVar already holds an address
+							// This can happen when:
+							// 1. It's the result of a cast to reference (xvalue/lvalue)
+							// 2. It's a 64-bit struct (pointer to struct)
+							// 3. It has lvalue/xvalue metadata indicating it's already an address
+							bool is_already_address = false;
+							
+							// Check for xvalue/lvalue metadata (from reference casts)
+							auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
+							if (metadata_storage.hasMetadata(expr_var)) {
+								TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
+								if (metadata.category == ValueCategory::LValue ||
+								    metadata.category == ValueCategory::XValue) {
+									is_already_address = true;
+								}
+							}
+							
+							// Fallback heuristic: 64-bit struct type likely holds an address
+							if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
+								is_already_address = true;
+							}
 							
 							if (is_already_address) {
 								// Already an address - pass through
@@ -12971,6 +13030,26 @@ private:
 					if (object_type.type() == Type::Auto) {
 						if (auto deduced = deduceLambdaClosureType(*symbol, object_decl->identifier_token())) {
 							object_type = *deduced;
+						} else if (current_lambda_context_.isActive() && object_type.is_rvalue_reference()) {
+							// For auto&& parameters inside lambdas (recursive lambda pattern),
+							// assume the parameter has the closure type of the current lambda.
+							// This handles: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
+							// where self's type is deduced to __lambda_N&& when called
+							auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
+							if (type_it != gTypesByName.end()) {
+								const TypeInfo* closure_type = type_it->second;
+								int closure_size = closure_type->getStructInfo()
+									? closure_type->getStructInfo()->total_size * 8
+									: 64;
+								object_type = TypeSpecifierNode(
+									Type::Struct,
+									closure_type->type_index_,
+									closure_size,
+									object_decl->identifier_token()
+								);
+								// Preserve rvalue reference flag
+								object_type.set_reference(true);
+							}
 						}
 					}
 				}
@@ -13545,6 +13624,25 @@ private:
 										if (type_node.type() == Type::Auto) {
 											if (auto deduced = deduceLambdaClosureType(*symbol, decl->identifier_token())) {
 												type_node = *deduced;
+											} else if (current_lambda_context_.isActive() && type_node.is_rvalue_reference()) {
+												// For auto&& parameters inside lambdas (recursive lambda pattern),
+												// assume the parameter has the closure type of the current lambda.
+												// This handles: auto factorial = [](auto&& self, int n) { ... self(self, n-1); }
+												auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
+												if (type_it != gTypesByName.end()) {
+													const TypeInfo* closure_type = type_it->second;
+													int closure_size = closure_type->getStructInfo()
+														? closure_type->getStructInfo()->total_size * 8
+														: 64;
+													type_node = TypeSpecifierNode(
+														Type::Struct,
+														closure_type->type_index_,
+														closure_size,
+														decl->identifier_token()
+													);
+													// Preserve rvalue reference flag
+													type_node.set_reference(true);
+												}
 											}
 										}
 										arg_types.push_back(type_node);
@@ -16829,7 +16927,16 @@ private:
 			addr_op.operand.value = std::get<StringHandle>(base);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
 		} else {
-			FLASH_LOG_FORMAT(Codegen, Debug, "{}: source is TempVar (stack location), using directly", cast_name);
+			// source is TempVar - it already holds an address, copy it to result_var
+			FLASH_LOG_FORMAT(Codegen, Debug, "{}: source is TempVar (address already computed), copying to result", cast_name);
+			const TempVar& source_var = std::get<TempVar>(base);
+			AssignmentOp assign_op;
+			assign_op.result = result_var;
+			assign_op.lhs = TypedValue{target_type, 64, result_var};  // 64-bit pointer dest
+			assign_op.rhs = TypedValue{target_type, 64, source_var};  // 64-bit pointer source
+			assign_op.is_pointer_store = false;
+			assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
 		}
 	}
 

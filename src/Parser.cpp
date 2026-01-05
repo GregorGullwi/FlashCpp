@@ -41,6 +41,7 @@ ConceptRegistry gConceptRegistry;
 static const std::unordered_set<std::string_view> type_keywords = {
 	"int"sv, "float"sv, "double"sv, "char"sv, "bool"sv, "void"sv,
 	"short"sv, "long"sv, "signed"sv, "unsigned"sv, "const"sv, "volatile"sv, "alignas"sv,
+	"auto"sv, "wchar_t"sv, "char8_t"sv, "char16_t"sv, "char32_t"sv, "decltype"sv,
 	// Microsoft-specific type keywords
 	"__int8"sv, "__int16"sv, "__int32"sv, "__int64"sv
 };
@@ -2587,58 +2588,77 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		}
 
 		// Handle comma-separated declarations (e.g., int x, y, z;)
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
-			consume_token(); // consume ','
+		// When there are additional variables, collect them all in a BlockNode
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+			// Create a block to hold all declarations
+			auto [block_node, block_ref] = emplace_node_ref<BlockNode>();
+			
+			// Add the first declaration to the block
+			block_ref.add_statement_node(global_var_node);
+			
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+				consume_token(); // consume ','
 
-			// Parse the next variable name
-			auto next_identifier_token = consume_token();
-			if (!next_identifier_token.has_value() || next_identifier_token->type() != Token::Type::Identifier) {
-				return ParseResult::error("Expected identifier after comma in declaration list", *current_token_);
-			}
-
-			// Create a new DeclarationNode with the same type
-			auto next_decl_node = emplace_node<DeclarationNode>(
-				emplace_node<TypeSpecifierNode>(type_specifier),
-				*next_identifier_token
-			);
-
-			// Check for initialization
-			std::optional<ASTNode> next_initializer;
-			if (peek_token().has_value() && peek_token()->value() == "=") {
-				consume_token(); // consume '='
-
-				// Check if this is a brace initializer
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
-					ParseResult init_list_result = parse_brace_initializer(type_specifier);
-					if (init_list_result.is_error()) {
-						return init_list_result;
-					}
-					next_initializer = init_list_result.node();
-				} else {
-					// Regular expression initializer
-					auto init_expr = parse_expression();
-					if (init_expr.is_error()) {
-						return init_expr;
-					}
-					next_initializer = init_expr.node();
+				// Parse the next variable name
+				auto next_identifier_token = consume_token();
+				if (!next_identifier_token.has_value() || next_identifier_token->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected identifier after comma in declaration list", *current_token_);
 				}
+
+				// Create a new DeclarationNode with the same type
+				auto next_decl_node = emplace_node<DeclarationNode>(
+					emplace_node<TypeSpecifierNode>(type_specifier),
+					*next_identifier_token
+				);
+
+				// Check for initialization
+				std::optional<ASTNode> next_initializer;
+				if (peek_token().has_value() && peek_token()->value() == "=") {
+					consume_token(); // consume '='
+
+					// Check if this is a brace initializer
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+						ParseResult init_list_result = parse_brace_initializer(type_specifier);
+						if (init_list_result.is_error()) {
+							return init_list_result;
+						}
+						next_initializer = init_list_result.node();
+					} else {
+						// Regular expression initializer
+						auto init_expr = parse_expression();
+						if (init_expr.is_error()) {
+							return init_expr;
+						}
+						next_initializer = init_expr.node();
+					}
+				}
+
+				// Create a variable declaration node for this additional variable
+				auto [next_var_node, next_var_decl] = emplace_node_ref<VariableDeclarationNode>(
+					next_decl_node,
+					next_initializer
+				);
+				next_var_decl.set_is_constexpr(is_constexpr);
+				next_var_decl.set_is_constinit(is_constinit);
+
+				// Add to symbol table
+				if (!gSymbolTable.insert(next_identifier_token->value(), next_var_node)) {
+					return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *next_identifier_token);
+				}
+				
+				// Add to block
+				block_ref.add_statement_node(next_var_node);
 			}
 
-			// Create a variable declaration node for this additional variable
-			auto [next_var_node, next_var_decl] = emplace_node_ref<VariableDeclarationNode>(
-				next_decl_node,
-				next_initializer
-			);
-			next_var_decl.set_is_constexpr(is_constexpr);
-			next_var_decl.set_is_constinit(is_constinit);
-
-			// Add to symbol table
-			if (!gSymbolTable.insert(next_identifier_token->value(), next_var_node)) {
-				return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, *next_identifier_token);
+			// Expect semicolon after all declarations
+			if (!consume_punctuator(";")) {
+				return ParseResult::error("Expected ';' after declaration", *current_token_);
 			}
+
+			return saved_position.success(block_node);
 		}
 
-		// Expect semicolon after all declarations
+		// Single declaration - expect semicolon
 		if (!consume_punctuator(";")) {
 			return ParseResult::error("Expected ';' after declaration", *current_token_);
 		}
@@ -11826,21 +11846,22 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 int Parser::get_operator_precedence(const std::string_view& op)
 {
 	// C++ operator precedence (higher number = higher precedence)
+	// Standard precedence order: Shift > Three-Way (<=>)  > Relational
 	static const std::unordered_map<std::string_view, int> precedence_map = {
-			// Multiplicative (precedence 16)
-			{"*", 16},  {"/", 16},  {"%", 16},
-			// Additive (precedence 15)
-			{"+", 15},  {"-", 15},
-			// Shift (precedence 14)
-			{"<<", 14}, {">>", 14},
+			// Multiplicative (precedence 17)
+			{"*", 17},  {"/", 17},  {"%", 17},
+			// Additive (precedence 16)
+			{"+", 16},  {"-", 16},
+			// Shift (precedence 15)
+			{"<<", 15}, {">>", 15},
+			// Spaceship/Three-way comparison (precedence 14) - C++20 standard compliant
+			{"<=>", 14},
 			// Relational (precedence 13)
 			{"<", 13},  {"<=", 13}, {">", 13},  {">=", 13},
 			// Equality (precedence 12)
 			{"==", 12}, {"!=", 12},
 			// Bitwise AND (precedence 11)
 			{"&", 11},
-			// Spaceship/Three-way comparison (precedence 10)
-			{"<=>", 10},
 			// Bitwise XOR (precedence 10)
 			{"^", 10},
 			// Bitwise OR (precedence 9)
@@ -14963,9 +14984,47 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 			}
 
+			// Check if the identifier is a lambda variable
+			// Lambda variables should not be treated as function calls here,
+			// but should fall through to postfix operator parsing which will handle operator() calls
+			bool is_lambda_variable = false;
+			if (identifierType.has_value()) {
+				// Check if this is a variable declaration with a lambda type
+				if (identifierType->is<VariableDeclarationNode>()) {
+					const auto& var_decl = identifierType->as<VariableDeclarationNode>();
+					const DeclarationNode& decl = var_decl.declaration();
+					const ASTNode& type_node = decl.type_node();
+					if (type_node.is<TypeSpecifierNode>()) {
+						const auto& type_spec = type_node.as<TypeSpecifierNode>();
+						// Check if it's a struct type (lambdas are represented as structs)
+						if (type_spec.type() == Type::Struct) {
+							// Get the type index to look up the type name
+							TypeIndex type_idx = type_spec.type_index();
+							FLASH_LOG_FORMAT(Parser, Debug, "@@@ Checking if '{}' is lambda variable: type_idx={}, gTypeInfo.size()={}", 
+								idenfifier_token.value(), type_idx, gTypeInfo.size());
+							if (type_idx < gTypeInfo.size()) {
+								const TypeInfo& type_info = gTypeInfo[type_idx];
+								if (type_info.struct_info_) {
+									// Check if the struct name starts with "__lambda_"
+									std::string_view type_name = StringTable::getStringView(type_info.struct_info_->name);
+									FLASH_LOG_FORMAT(Parser, Debug, "@@@ Type name for '{}': '{}', starts_with __lambda_: {}", 
+										idenfifier_token.value(), type_name, type_name.starts_with("__lambda_"));
+									if (type_name.starts_with("__lambda_")) {
+										is_lambda_variable = true;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			
+			FLASH_LOG_FORMAT(Parser, Debug, "@@@ is_lambda_variable for '{}': {}", idenfifier_token.value(), is_lambda_variable);
+
 			// Check if this is a function call or constructor call (forward reference)
 			// Identifier already consumed at line 1621
-			if (consume_punctuator("("sv)) {
+			// Skip this check for lambda variables - they should be handled by postfix operator parsing
+			if (!is_lambda_variable && consume_punctuator("("sv)) {
 				// First, check if this is a type name (constructor call)
 				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(idenfifier_token.value()));
 				if (type_it != gTypesByName.end()) {
@@ -15235,6 +15294,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 			}
 			else {
+				// Lambda variables should create an identifier node and return immediately
+				// so postfix operator parsing can handle the operator() call
+				if (is_lambda_variable) {
+					result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+					return ParseResult::success(*result);
+				}
+				
 				// Not a function call - could be a template with `<` or just missing identifier
 				// Check if this might be a template: identifier<...>
 				// BUT: Don't attempt for regular variables (< could be comparison)
@@ -15834,28 +15900,40 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 			// Check if this looks like a function call
 			// Only consume '(' if the identifier is actually a function OR a function pointer OR has operator()
+			FLASH_LOG_FORMAT(Parser, Debug, "@@@ FUNCTION_CALL_CHECK for '{}', identifierType.has_value()={}", 
+				idenfifier_token.value(), identifierType.has_value());
 			bool is_function_decl = identifierType && (identifierType->is<FunctionDeclarationNode>() || identifierType->is<TemplateFunctionDeclarationNode>());
 			bool is_function_pointer = false;
 			bool has_operator_call = false;
 			if (identifierType) {
+				FLASH_LOG_FORMAT(Parser, Debug, "@@@ identifierType exists for '{}'", idenfifier_token.value());
 				const DeclarationNode* decl = get_decl_from_symbol(*identifierType);
 				if (decl) {
+					FLASH_LOG_FORMAT(Parser, Debug, "@@@ decl exists for '{}'", idenfifier_token.value());
 					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
+					FLASH_LOG_FORMAT(Parser, Debug, "@@@ type_node.type()={} for '{}'", static_cast<int>(type_node.type()), idenfifier_token.value());
 					is_function_pointer = type_node.is_function_pointer();
 
 					// Check if this is a struct with operator()
-					if (type_node.type() == Type::Struct) {
+					// Note: Lambda variables have Type::Auto (from auto lambda = [...]), not Type::Struct
+					if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined || type_node.type() == Type::Auto) {
 						TypeIndex type_index = type_node.type_index();
+						FLASH_LOG_FORMAT(Parser, Debug, "@@@ Checking identifier '{}' for operator(): type_index={}", idenfifier_token.value(), type_index);
 						if (type_index < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_index];
 							if (type_info.struct_info_) {
+								FLASH_LOG_FORMAT(Parser, Debug, "@@@ Struct '{}' has {} member functions", 
+									StringTable::getStringView(type_info.struct_info_->name), type_info.struct_info_->member_functions.size());
 								// Check if struct has operator()
 								for (const auto& member_func : type_info.struct_info_->member_functions) {
+									FLASH_LOG_FORMAT(Parser, Debug, "@@@ Member function: is_operator={}, symbol='{}'", 
+										member_func.is_operator_overload, member_func.operator_symbol);
 									if (member_func.is_operator_overload && member_func.operator_symbol == "()") {
 										has_operator_call = true;
 										break;
 									}
 								}
+								FLASH_LOG_FORMAT(Parser, Debug, "@@@ has_operator_call for '{}': {}", idenfifier_token.value(), has_operator_call);
 							}
 						}
 					}
@@ -16638,7 +16716,7 @@ ParseResult Parser::parse_for_loop() {
 
         // Check for ranged-for syntax: for (declaration : range_expression)
         if (consume_punctuator(":"sv)) {
-            // This is a ranged for loop
+            // This is a ranged for loop (without init-statement)
             if (!init_statement.has_value()) {
                 return ParseResult::error("Ranged for loop requires a loop variable declaration", *current_token_);
             }
@@ -16684,6 +16762,76 @@ ParseResult Parser::parse_for_loop() {
             return ParseResult::error("Expected ';' after for loop initialization", *current_token_);
         }
     }
+
+    // At this point, we've parsed the init statement (or it was empty) and consumed the first semicolon
+    // Now check for C++20 range-based for with init-statement: for (init; decl : range)
+    // This requires checking if the next part looks like a range declaration
+    
+    // Save position to potentially backtrack
+    SaveHandle range_check_pos = save_token_position();
+    
+    // Check if this could be a C++20 range-based for with init-statement
+    bool is_range_for_with_init = false;
+    std::optional<ASTNode> range_decl;
+    
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+        type_keywords.find(peek_token()->value()) != type_keywords.end()) {
+        // Try to parse as a range declaration
+        ParseResult decl_result = parse_variable_declaration();
+        if (!decl_result.is_error() && decl_result.node().has_value()) {
+            // Check if followed by ':'
+            if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+                peek_token()->value() == ":") {
+                is_range_for_with_init = true;
+                range_decl = decl_result.node();
+            }
+        }
+    }
+    
+    if (is_range_for_with_init) {
+        // This is a C++20 range-based for with init-statement
+        consume_punctuator(":"sv);  // consume the ':'
+        
+        // Parse the range expression
+        ParseResult range_result = parse_expression();
+        if (range_result.is_error()) {
+            return range_result;
+        }
+
+        auto range_expr = range_result.node();
+        if (!range_expr.has_value()) {
+            return ParseResult::error("Expected range expression in ranged for loop", *current_token_);
+        }
+
+        if (!consume_punctuator(")"sv)) {
+            return ParseResult::error("Expected ')' after ranged for loop range expression", *current_token_);
+        }
+
+        // Parse body (can be a block or a single statement)
+        ParseResult body_result;
+        if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+            body_result = parse_block();
+        } else {
+            body_result = parse_statement_or_declaration();
+        }
+
+        if (body_result.is_error()) {
+            return body_result;
+        }
+
+        auto body_node = body_result.node();
+        if (!body_node.has_value()) {
+            return ParseResult::error("Invalid ranged for loop body", *current_token_);
+        }
+
+        // Create ranged for statement with init-statement
+        return ParseResult::success(emplace_node<RangedForStatementNode>(
+            *range_decl, *range_expr, *body_node, init_statement
+        ));
+    }
+    
+    // Not a range-based for with init - restore position and continue with regular for loop
+    restore_token_position(range_check_pos);
 
     // Parse condition (optional: can be empty, defaults to true)
     std::optional<ASTNode> condition;

@@ -15,10 +15,10 @@ Analyzes object files using Windows `dumpbin.exe`.
 **Example:**
 ```powershell
 # Compile a test file
-.\x64\Debug\FlashCpp.exe tests\test_lambda_cpp20_comprehensive.cpp
+.\x64\Debug\FlashCpp.exe tests\test_lambda_cpp20_comprehensive_ret135.cpp
 
 # Analyze the generated object file
-.\tests\analyze_obj_symbols.ps1 test_lambda_cpp20_comprehensive.obj
+.\tests\analyze_obj_symbols.ps1 test_lambda_cpp20_comprehensive_ret135.obj
 ```
 
 **Output:**
@@ -38,7 +38,7 @@ Analyzes object files using `objdump` or `llvm-objdump`.
 **Example:**
 ```bash
 # If you have a COFF object file from FlashCpp
-./tests/analyze_obj_symbols.sh test_lambda_cpp20_comprehensive.obj
+./tests/analyze_obj_symbols.sh test_lambda_cpp20_comprehensive_ret135.obj
 
 # Works with both ELF and COFF formats
 ```
@@ -50,7 +50,7 @@ Analyzes object files using `objdump` or `llvm-objdump`.
 - Shows lambda-specific symbols
 
 ### 3. test_lambda_comprehensive_detailed.ps1 (Windows)
-Comprehensive test script specifically for test_lambda_cpp20_comprehensive.cpp.
+Comprehensive test script specifically for test_lambda_cpp20_comprehensive_ret135.cpp.
 
 **Usage:**
 ```powershell
@@ -58,7 +58,7 @@ Comprehensive test script specifically for test_lambda_cpp20_comprehensive.cpp.
 ```
 
 **What it does:**
-1. Compiles test_lambda_cpp20_comprehensive.cpp
+1. Compiles test_lambda_cpp20_comprehensive_ret135.cpp
 2. Analyzes object file symbols
 3. Counts lambda operator() and __invoke symbols
 4. Links the object file
@@ -105,12 +105,12 @@ To validate that lambda code is being generated correctly:
 
 ### Step 1: Compile
 ```powershell
-.\x64\Debug\FlashCpp.exe tests\test_lambda_cpp20_comprehensive.cpp
+.\x64\Debug\FlashCpp.exe tests\test_lambda_cpp20_comprehensive_ret135.cpp
 ```
 
 ### Step 2: Analyze Symbols
 ```powershell
-.\tests\analyze_obj_symbols.ps1 test_lambda_cpp20_comprehensive.obj
+.\tests\analyze_obj_symbols.ps1 test_lambda_cpp20_comprehensive_ret135.obj
 ```
 
 ### Step 3: Look for Lambda Symbols
@@ -139,7 +139,7 @@ Look at the "Undefined symbols" section. These need to be resolved during linkin
 **Cause:** Lambda code generation skipped or failed
 **Solution:** Check parser creates LambdaInfo correctly and calls code generation
 
-## Example: Analyzing test_lambda_cpp20_comprehensive.cpp
+## Example: Analyzing test_lambda_cpp20_comprehensive_ret135.cpp
 
 ```powershell
 # Full analysis
