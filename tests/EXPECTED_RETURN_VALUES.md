@@ -8,11 +8,11 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-05 (after global namespace scope resolution fix)
+**Last Run:** 2026-01-05 (after fixing using declarations with global namespace)
 
 **Total files tested:** 826
-**Valid returns (matching expected):** 807
-**Regressions (mismatches):** 2 (down from 6 - fixed documentation issue)
+**Valid returns (matching expected):** 808 (up from 807)
+**Regressions (mismatches):** 1 (down from 2)
 **Runtime crashes:** 17 (previously documented: 13, newly documented: 4 pre-existing)
 **Compile failures:** 0
 **Link failures:** 0
@@ -40,6 +40,7 @@ The following regressions have been FIXED:
 | test_qualified_base_class_ret42.cpp | 42 | 0 | Global namespace fix | Fixed by global namespace symbol lookup improvements |
 | test_sizeof_template_param_default_ret4.cpp | 4 | 1 | Global namespace fix | Fixed as side effect of namespace lookup improvements |
 | test_std_header_features_ret0.cpp | 0 | 8 | Global namespace fix | Fixed as side effect of namespace lookup improvements |
+| test_global_namespace_scope_ret1.cpp | 1 (1025%256) | 145 | Using declaration fix | Fixed by tracking qualified names when resolving using declarations in CodeGen |
 
 ## Regressions Found
 
@@ -48,20 +49,15 @@ The following test files still have a mismatch between their expected return val
 | Test File | Expected | Actual | Status | Root Cause |
 |-----------|----------|--------|--------|------------|
 | test_covariant_return_ret180.cpp | 180 | crash (79) | REGRESSION | Virtual function covariant reference return causes segfault |
-| test_global_namespace_scope_ret1.cpp | 1 | 145 | PARTIAL FIX | `using ::var` declarations not working properly; explicit `::func()` calls fixed |
 
 
 These values come from the 2026-01-05 run. When a regression is triaged, add a short note or link next to the entry to preserve context.
 
 ## Root Cause Summary
 
-The remaining regressions fall into these categories:
+The remaining regression falls into this category:
 
 1. **Covariant Reference Returns** (1 test): Virtual functions returning references with covariant types cause segfaults at runtime.
-
-2. **Using Declarations with Global Namespace** (1 test): `using ::identifier;` declarations don't properly shadow local namespace symbols when accessing variables.
-
-3. **Test File Naming Issue** (1 test): The expected return value in the filename doesn't match what clang returns.
 
 ## Runtime Crashes
 
