@@ -1588,6 +1588,7 @@ private:
 								"__is_constructible", "__is_trivially_constructible", "__is_nothrow_constructible",
 								"__is_assignable", "__is_trivially_assignable", "__is_nothrow_assignable",
 								"__is_destructible", "__is_trivially_destructible", "__is_nothrow_destructible",
+								"__has_trivial_destructor",  // GCC/Clang intrinsic, equivalent to __is_trivially_destructible
 								// Layout traits
 								"__is_layout_compatible", "__is_pointer_interconvertible_base_of",
 								// Constant evaluation

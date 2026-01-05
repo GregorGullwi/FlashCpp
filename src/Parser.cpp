@@ -13287,6 +13287,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			{"__is_destructible", {TypeTraitKind::IsDestructible, false, false, false}},
 			{"__is_trivially_destructible", {TypeTraitKind::IsTriviallyDestructible, false, false, false}},
 			{"__is_nothrow_destructible", {TypeTraitKind::IsNothrowDestructible, false, false, false}},
+			{"__has_trivial_destructor", {TypeTraitKind::HasTrivialDestructor, false, false, false}},
+			{"__has_virtual_destructor", {TypeTraitKind::HasVirtualDestructor, false, false, false}},
 			// C++20 layout compatibility traits (binary)
 			{"__is_layout_compatible", {TypeTraitKind::IsLayoutCompatible, true, false, false}},
 			{"__is_pointer_interconvertible_base_of", {TypeTraitKind::IsPointerInterconvertibleBaseOf, true, false, false}},
