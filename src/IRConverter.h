@@ -6230,6 +6230,25 @@ private:
 							should_pass_address = true;
 						}
 					}
+				} else if (arg.type == Type::Struct && std::holds_alternative<TempVar>(arg.value)) {
+					// Handle TempVar struct arguments for ABI-specific handling
+					if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+						// System V AMD64 ABI (Linux)
+						if (arg.size_in_bits > 128) {
+							// Struct > 16 bytes - pass by reference (address)
+							should_pass_address = true;
+						} else if (arg.size_in_bits > 64) {
+							// Struct 9-16 bytes - pass by value in TWO consecutive registers
+							is_two_register_struct = true;
+						}
+						// Else: Struct ≤8 bytes - pass by value in one register (default path)
+					} else {
+						// Windows x64 ABI
+						if (arg.size_in_bits > 64) {
+							// Large struct - pass by reference (address)
+							should_pass_address = true;
+						}
+					}
 				}
 				
 				if (should_pass_address && std::holds_alternative<StringHandle>(arg.value)) {
