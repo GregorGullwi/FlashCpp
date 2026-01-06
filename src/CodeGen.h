@@ -11356,8 +11356,8 @@ private:
 			TempVar current_offset = var_counter.next();
 			DereferenceOp load_offset;
 			load_offset.result = current_offset;
-			load_offset.pointer.type = Type::Int;  // Reading a 32-bit offset
-			load_offset.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+			load_offset.pointer.type = Type::UnsignedInt;  // Reading a 32-bit unsigned offset
+			load_offset.pointer.size_in_bits = 32;  // gp_offset/fp_offset is 32 bits
 			load_offset.pointer.pointer_depth = 1;
 			
 			if (is_float_type) {
@@ -11433,8 +11433,8 @@ private:
 			DereferenceOp read_value;
 			read_value.result = value;
 			read_value.pointer.type = requested_type;
-			read_value.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			read_value.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
+			read_value.pointer.size_in_bits = requested_size;  // Size of the value being read (e.g., 32 for int, 64 for long)
+			read_value.pointer.pointer_depth = 1;
 			read_value.pointer.value = arg_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_value), functionCallNode.called_from()));
 			
@@ -11511,7 +11511,7 @@ private:
 			DereferenceOp deref_value_op;
 			deref_value_op.result = value;
 			deref_value_op.pointer.type = requested_type;
-			deref_value_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+			deref_value_op.pointer.size_in_bits = requested_size;  // Size of the value being read (e.g., 32 for int, 64 for long)
 			deref_value_op.pointer.pointer_depth = 1;
 			deref_value_op.pointer.value = current_ptr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), functionCallNode.called_from()));
