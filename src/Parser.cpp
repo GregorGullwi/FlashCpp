@@ -23878,6 +23878,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						}
 						
 						template_args.push_back(dependent_arg);
+						
+						// Store the expression node for deferred base class resolution
+						// This is needed so that type trait expressions like __has_trivial_destructor(T)
+						// can be properly substituted and evaluated during template instantiation
+						if (out_type_nodes && expr_result.node().has_value()) {
+							out_type_nodes->push_back(*expr_result.node());
+						}
+						
 						discard_saved_token(arg_saved_pos);
 						
 						// Check for ',' or '>' after the expression (or after pack expansion)
@@ -27952,9 +27960,6 @@ if (struct_type_info.getStructInfo()) {
 			std::vector<TemplateTypeArg> resolved_args;
 			bool unresolved_arg = false;
 			for (const auto& arg_info : deferred_base.template_arguments) {
-				FLASH_LOG_FORMAT(Templates, Debug, "  Deferred arg: is_pack={}, is_TypeSpec={}, is_Expr={}, type_name={}",
-					arg_info.is_pack, arg_info.node.is<TypeSpecifierNode>(), arg_info.node.is<ExpressionNode>(),
-					arg_info.node.type_name());
 				// Pack expansion handling
 				if (arg_info.is_pack) {
 					// If the argument node references a template parameter pack, expand it
