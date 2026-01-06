@@ -2586,47 +2586,13 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// This is always safe since decl_node is a DeclarationNode with a TypeSpecifierNode
 		TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
 		
+		// Phase 3 Consolidation: Use shared copy initialization helper for = and = {} forms
 		if (peek_token().has_value() && peek_token()->value() == "=") {
-			consume_token(); // consume '='
-			
-			// Check if this is a brace initializer (e.g., Point p = {10, 20})
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
-				// If this is an array declaration, set the array info on type_specifier
-				// so parse_brace_initializer knows it's an array
-				if (decl_node.is_array()) {
-					std::optional<size_t> array_size_val;
-					if (decl_node.array_size().has_value()) {
-						// Try to evaluate the array size as a constant expression
-						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-						auto eval_result = ConstExpr::Evaluator::evaluate(*decl_node.array_size(), eval_ctx);
-						if (eval_result.success) {
-							array_size_val = static_cast<size_t>(eval_result.as_int());
-						}
-					}
-					type_specifier.set_array(true, array_size_val);
-				}
-				
-				// Parse brace initializer list
-				ParseResult init_list_result = parse_brace_initializer(type_specifier);
-				if (init_list_result.is_error()) {
-					return init_list_result;
-				}
-				initializer = init_list_result.node();
-				
-				// For unsized arrays, infer the size from the initializer list
-				if (decl_node.is_unsized_array() && initializer.has_value() && 
-				    initializer->is<InitializerListNode>()) {
-					const InitializerListNode& init_list = initializer->as<InitializerListNode>();
-					size_t inferred_size = init_list.initializers().size();
-					type_specifier.set_array(true, inferred_size);
-				}
+			auto init_result = parse_copy_initialization(decl_node, type_specifier);
+			if (init_result.has_value()) {
+				initializer = init_result;
 			} else {
-				// Regular expression initializer
-				auto init_expr = parse_expression();
-				if (init_expr.is_error()) {
-					return init_expr;
-				}
-				initializer = init_expr.node();
+				return ParseResult::error("Failed to parse initializer expression", *current_token_);
 			}
 		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
 			// Direct list initialization: Type var{args}
@@ -2638,6 +2604,8 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
 			// Constructor-style initialization: Type var(args)
 			// e.g., constexpr Point p1(10, 20);
+			// Note: For global scope, we create a ConstructorCallNode instead of InitializerListNode
+			// because the semantics are different (constructor call vs direct init)
 			Token identifier_token = decl_node.identifier_token();
 			Token paren_token = *peek_token(); // Save '(' token for called_from location
 			
@@ -2765,36 +2733,26 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				}
 
 				// Create a new DeclarationNode with the same type
-				auto next_decl_node = emplace_node<DeclarationNode>(
+				DeclarationNode& next_decl = emplace_node<DeclarationNode>(
 					emplace_node<TypeSpecifierNode>(type_specifier),
 					*next_identifier_token
-				);
+				).as<DeclarationNode>();
+				TypeSpecifierNode& next_type_spec = next_decl.type_node().as<TypeSpecifierNode>();
 
-				// Check for initialization
+				// Phase 3 Consolidation: Use shared copy initialization helper
 				std::optional<ASTNode> next_initializer;
 				if (peek_token().has_value() && peek_token()->value() == "=") {
-					consume_token(); // consume '='
-
-					// Check if this is a brace initializer
-					if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
-						ParseResult init_list_result = parse_brace_initializer(type_specifier);
-						if (init_list_result.is_error()) {
-							return init_list_result;
-						}
-						next_initializer = init_list_result.node();
+					auto init_result = parse_copy_initialization(next_decl, next_type_spec);
+					if (init_result.has_value()) {
+						next_initializer = init_result;
 					} else {
-						// Regular expression initializer
-						auto init_expr = parse_expression();
-						if (init_expr.is_error()) {
-							return init_expr;
-						}
-						next_initializer = init_expr.node();
+						return ParseResult::error("Failed to parse initializer expression", *current_token_);
 					}
 				}
 
 				// Create a variable declaration node for this additional variable
 				auto [next_var_node, next_var_decl] = emplace_node_ref<VariableDeclarationNode>(
-					next_decl_node,
+					emplace_node<DeclarationNode>(next_decl),
 					next_initializer
 				);
 				next_var_decl.set_is_constexpr(is_constexpr);
@@ -10137,124 +10095,29 @@ ParseResult Parser::parse_variable_declaration()
 		}
 	}
 
+	// Phase 3 Consolidation: Use shared initialization helpers
 	// Check for direct initialization with parentheses: Type var(args)
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
-		// Direct initialization with parentheses
-		consume_token(); // consume '('
-
-		// Create an InitializerListNode to hold the arguments
-		auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
-
-		// Parse argument list
-		while (true) {
-			// Check if we've reached the end
-			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ")") {
-				break;
-			}
-
-			ParseResult arg_result = parse_expression();
-			if (arg_result.is_error()) {
-				return arg_result;
-			}
-
-			if (auto arg_node = arg_result.node()) {
-				init_list_ref.add_initializer(*arg_node);
-			}
-
-			// Check for comma (more arguments) or closing paren
-			if (!consume_punctuator(",")) {
-				// No comma, so we expect a closing paren on the next iteration
-				break;
-			}
-		}
-
-		if (!consume_punctuator(")")) {
+		auto init_result = parse_direct_initialization();
+		if (init_result.has_value()) {
+			first_init_expr = init_result;
+			// After closing ), skip any trailing specifiers (this might be a function forward declaration)
+			// e.g., void func() noexcept; or void func() const;
+			skip_function_trailing_specifiers();
+		} else {
 			return ParseResult::error("Expected ')' after direct initialization arguments", *current_token_);
 		}
-
-		// After closing ), skip any trailing specifiers (this might be a function forward declaration)
-		// e.g., void func() noexcept; or void func() const;
-		skip_function_trailing_specifiers();
-
-		first_init_expr = init_list_node;
 	}
-	else if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
-		consume_token(); // consume the '=' operator
-
-		// Check if this is a brace initializer (e.g., Point p = {10, 20} or int arr[5] = {1, 2, 3, 4, 5})
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
-			// If this is an array declaration, set the array info on type_specifier
-			if (first_decl.is_array()) {
-				std::optional<size_t> array_size_val;
-				if (first_decl.array_size().has_value()) {
-					// Try to evaluate the array size as a constant expression
-					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-					auto eval_result = ConstExpr::Evaluator::evaluate(*first_decl.array_size(), eval_ctx);
-					if (eval_result.success) {
-						array_size_val = static_cast<size_t>(eval_result.as_int());
-					}
-				}
-				// Note: for unsized arrays (int arr[] = {...}), array_size_val will remain empty
-				// and will be set after parsing the initializer list
-				type_specifier.set_array(true, array_size_val);
-			}
-
-			// Parse brace initializer list
-			ParseResult init_list_result = parse_brace_initializer(type_specifier);
-			if (init_list_result.is_error()) {
-				return init_list_result;
-			}
-			first_init_expr = init_list_result.node();
-
-			// For unsized arrays, infer the size from the initializer list
-			if (first_decl.is_unsized_array() && first_init_expr.has_value() && 
-			    first_init_expr->is<InitializerListNode>()) {
-				const InitializerListNode& init_list = first_init_expr->as<InitializerListNode>();
-				size_t inferred_size = init_list.initializers().size();
-				type_specifier.set_array(true, inferred_size);
-			}
+	// Check for copy initialization: Type var = expr or Type var = {args}
+	else if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
+		auto init_result = parse_copy_initialization(first_decl, type_specifier);
+		if (init_result.has_value()) {
+			first_init_expr = init_result;
 		} else {
-			// Regular expression initializer
-			ParseResult init_expr_result = parse_expression();
-			if (init_expr_result.is_error()) {
-				return init_expr_result;
-			}
-			first_init_expr = init_expr_result.node();
-
-			// If the type is auto, deduce the type from the initializer
-			if (type_specifier.type() == Type::Auto && first_init_expr.has_value()) {
-				// IMPORTANT: Save the original reference and CV qualifiers before type deduction
-				// Auto type deduction replaces the entire TypeSpecifierNode, which would lose
-				// qualifiers set during parsing (e.g., const auto&, auto&&)
-				// We must preserve these to generate correct code for references
-				ReferenceQualifier original_ref_qual = type_specifier.reference_qualifier();
-				CVQualifier original_cv_qual = type_specifier.cv_qualifier();
-				
-				// Get the full type specifier from the initializer expression
-				auto deduced_type_spec_opt = get_expression_type(*first_init_expr);
-				if (deduced_type_spec_opt.has_value()) {
-					// Use the full deduced type specifier (preserves struct type index, etc.)
-					type_specifier = *deduced_type_spec_opt;
-					FLASH_LOG(Parser, Debug, "Deduced auto variable type from initializer: type=", 
-							  (int)type_specifier.type(), " size=", (int)type_specifier.size_in_bits());
-				} else {
-					// Fallback: deduce basic type
-					Type deduced_type = deduce_type_from_expression(*first_init_expr);
-					unsigned char deduced_size = get_type_size_bits(deduced_type);
-					type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, first_decl.identifier_token(), original_cv_qual);
-					FLASH_LOG(Parser, Debug, "Deduced auto variable type (fallback): type=", 
-							  (int)type_specifier.type(), " size=", (int)deduced_size);
-				}
-				
-				// Restore the original reference qualifier and CV qualifier (for const auto&, auto&, auto&& etc.)
-				type_specifier.set_reference_qualifier(original_ref_qual);
-				// Also ensure CV qualifier is preserved (especially for const auto&)
-				if (original_cv_qual != CVQualifier::None) {
-					type_specifier.set_cv_qualifier(original_cv_qual);
-				}
-			}
+			return ParseResult::error("Failed to parse initializer expression", *current_token_);
 		}
 	}
+	// Check for direct brace initialization: Type var{args}
 	else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
 		// Direct list initialization: Type var{args}
 		ParseResult init_list_result = parse_brace_initializer(type_specifier);
@@ -10332,6 +10195,145 @@ ParseResult Parser::parse_variable_declaration()
 	else {
 		// Single declaration - return it directly
 		return create_var_decl(first_decl, first_init_expr);
+	}
+}
+
+// Phase 3 Consolidation: Parse direct initialization with parentheses: Type var(args)
+// Returns the initializer node (InitializerListNode) or std::nullopt if not at '('
+// Assumes we're positioned at '(' when called
+std::optional<ASTNode> Parser::parse_direct_initialization()
+{
+	// Must be at '('
+	if (!peek_token().has_value() || peek_token()->value() != "(") {
+		return std::nullopt;
+	}
+	
+	consume_token(); // consume '('
+
+	// Create an InitializerListNode to hold the arguments
+	auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+
+	// Parse argument list
+	while (true) {
+		// Check if we've reached the end
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ")") {
+			break;
+		}
+
+		ParseResult arg_result = parse_expression();
+		if (arg_result.is_error()) {
+			// Return nullopt on error - caller should handle
+			return std::nullopt;
+		}
+
+		if (auto arg_node = arg_result.node()) {
+			init_list_ref.add_initializer(*arg_node);
+		}
+
+		// Check for comma (more arguments) or closing paren
+		if (!consume_punctuator(",")) {
+			// No comma, so we expect a closing paren on the next iteration
+			break;
+		}
+	}
+
+	if (!consume_punctuator(")")) {
+		// Return nullopt on error - caller should handle
+		return std::nullopt;
+	}
+
+	return init_list_node;
+}
+
+// Phase 3 Consolidation: Parse copy initialization: Type var = expr or Type var = {args}
+// Returns the initializer expression/list node or std::nullopt if not at '='
+// Also handles auto type deduction and array size inference
+std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier)
+{
+	// Must be at '='
+	if (!peek_token().has_value() || peek_token()->value() != "=") {
+		return std::nullopt;
+	}
+	
+	consume_token(); // consume '='
+
+	// Check if this is a brace initializer (e.g., Point p = {10, 20} or int arr[5] = {1, 2, 3, 4, 5})
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+		// If this is an array declaration, set the array info on type_specifier
+		if (decl_node.is_array()) {
+			std::optional<size_t> array_size_val;
+			if (decl_node.array_size().has_value()) {
+				// Try to evaluate the array size as a constant expression
+				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+				auto eval_result = ConstExpr::Evaluator::evaluate(*decl_node.array_size(), eval_ctx);
+				if (eval_result.success) {
+					array_size_val = static_cast<size_t>(eval_result.as_int());
+				}
+			}
+			// Note: for unsized arrays (int arr[] = {...}), array_size_val will remain empty
+			// and will be set after parsing the initializer list
+			type_specifier.set_array(true, array_size_val);
+		}
+
+		// Parse brace initializer list
+		ParseResult init_list_result = parse_brace_initializer(type_specifier);
+		if (init_list_result.is_error()) {
+			return std::nullopt;
+		}
+		
+		auto initializer = init_list_result.node();
+
+		// For unsized arrays, infer the size from the initializer list
+		if (decl_node.is_unsized_array() && initializer.has_value() && 
+		    initializer->is<InitializerListNode>()) {
+			const InitializerListNode& init_list = initializer->as<InitializerListNode>();
+			size_t inferred_size = init_list.initializers().size();
+			type_specifier.set_array(true, inferred_size);
+		}
+		
+		return initializer;
+	} else {
+		// Regular expression initializer
+		ParseResult init_expr_result = parse_expression();
+		if (init_expr_result.is_error()) {
+			return std::nullopt;
+		}
+		auto initializer = init_expr_result.node();
+
+		// If the type is auto, deduce the type from the initializer
+		if (type_specifier.type() == Type::Auto && initializer.has_value()) {
+			// IMPORTANT: Save the original reference and CV qualifiers before type deduction
+			// Auto type deduction replaces the entire TypeSpecifierNode, which would lose
+			// qualifiers set during parsing (e.g., const auto&, auto&&)
+			// We must preserve these to generate correct code for references
+			ReferenceQualifier original_ref_qual = type_specifier.reference_qualifier();
+			CVQualifier original_cv_qual = type_specifier.cv_qualifier();
+			
+			// Get the full type specifier from the initializer expression
+			auto deduced_type_spec_opt = get_expression_type(*initializer);
+			if (deduced_type_spec_opt.has_value()) {
+				// Use the full deduced type specifier (preserves struct type index, etc.)
+				type_specifier = *deduced_type_spec_opt;
+				FLASH_LOG(Parser, Debug, "Deduced auto variable type from initializer: type=", 
+						  (int)type_specifier.type(), " size=", (int)type_specifier.size_in_bits());
+			} else {
+				// Fallback: deduce basic type
+				Type deduced_type = deduce_type_from_expression(*initializer);
+				unsigned char deduced_size = get_type_size_bits(deduced_type);
+				type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, decl_node.identifier_token(), original_cv_qual);
+				FLASH_LOG(Parser, Debug, "Deduced auto variable type (fallback): type=", 
+						  (int)type_specifier.type(), " size=", (int)deduced_size);
+			}
+			
+			// Restore the original reference qualifier and CV qualifier (for const auto&, auto&, auto&& etc.)
+			type_specifier.set_reference_qualifier(original_ref_qual);
+			// Also ensure CV qualifier is preserved (especially for const auto&)
+			if (original_cv_qual != CVQualifier::None) {
+				type_specifier.set_cv_qualifier(original_cv_qual);
+			}
+		}
+		
+		return initializer;
 	}
 }
 

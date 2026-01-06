@@ -615,6 +615,9 @@ public:  // Public methods for template instantiation
         ParseResult parse_variable_declaration();
         FlashCpp::DeclarationSpecifiers parse_declaration_specifiers();  // Phase 1: Shared specifier parsing
         bool looks_like_function_parameters();  // Phase 2: Detect if '(' starts function params vs direct init
+        // Phase 3: Consolidated initialization helpers
+        std::optional<ASTNode> parse_direct_initialization();  // Parse Type var(args) - returns initializer node
+        std::optional<ASTNode> parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier);  // Parse Type var = expr or Type var = {args}
         ParseResult parse_extern_block(Linkage linkage);  // Parse extern "C" { ... } block
         ParseResult parse_brace_initializer(const TypeSpecifierNode& type_specifier);  // Add brace initializer parser
         ParseResult parse_for_loop();  // Add this line

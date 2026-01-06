@@ -5,8 +5,8 @@
 | Phase | Status | Commit |
 |-------|--------|--------|
 | Phase 1: Extract Shared Specifier Parsing | ✅ Complete | e1b6a07 |
-| Phase 2: Add Function Detection to parse_variable_declaration | ✅ Complete | (this PR) |
-| Phase 3: Consolidate Initialization Handling | ⏳ Pending | - |
+| Phase 2: Add Function Detection to parse_variable_declaration | ✅ Complete | e34f3c2 |
+| Phase 3: Consolidate Initialization Handling | ✅ Complete | (this PR) |
 | Phase 4: Full Unification (Optional) | ⏳ Pending | - |
 
 ## Executive Summary
@@ -185,12 +185,22 @@ ParseResult Parser::parse_local_declaration_or_statement();
 3. If function detected, delegate to function parsing logic
 4. **Test with edge cases**: `int x(int)`, `int x(())`, `int x(a)` where `a` is a type
 
-### Phase 3: Consolidate Initialization Handling (Medium Risk)
+### Phase 3: Consolidate Initialization Handling (Medium Risk) ✅ COMPLETE
+
+**Implementation Details:**
+- Created `parse_direct_initialization()` helper for `Type var(args)` form
+- Created `parse_copy_initialization()` helper for `Type var = expr` and `Type var = {args}` forms
+- The existing `parse_brace_initializer()` handles direct brace init `Type var{args}`
+- Updated `parse_variable_declaration()` to use the shared helpers
+- Updated `parse_declaration_or_function_definition()` to use `parse_copy_initialization()` for copy and copy-list init forms
+- Updated comma-separated declaration handling to use `parse_copy_initialization()`
+- Auto type deduction and array size inference handled within `parse_copy_initialization()`
+- All 832 tests pass
 
 1. Extract initialization parsing to shared helpers:
-   - `parse_direct_initialization()`
-   - `parse_brace_initialization()`  
-   - `parse_copy_initialization()`
+   - `parse_direct_initialization()` - parses `Type var(args)`
+   - `parse_brace_initialization()` - already existed as `parse_brace_initializer()`
+   - `parse_copy_initialization()` - parses `Type var = expr` and `Type var = {args}`
 2. Both main functions call these helpers
 3. **Test all initialization forms**
 
