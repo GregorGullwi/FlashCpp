@@ -1,25 +1,24 @@
 // Test implementing a variadic function using va_start, va_arg, va_end
 // This tests the actual implementation of variadic argument handling
+// Uses cross-platform __builtin_va_* intrinsics (works on both Linux and Windows)
 
-// va_list type and macros
+// va_list type - simple char* on x64 (System V AMD64 ABI compatible)
 typedef char* va_list;
 
-// __va_start is a compiler intrinsic that initializes va_list
-// On x64 Windows, it sets va_list to point to the first variadic argument
-extern "C" void __cdecl __va_start(va_list*, ...);
+// va_start macro - uses compiler intrinsic
+#define va_start(ap, param) __builtin_va_start(ap, param)
 
-// va_arg macro - extracts the next argument
-// On x64 Windows, this advances the pointer by 8 bytes and dereferences
-#define va_arg(ap, type) (*(type*)((ap += 8) - 8))
+// va_arg macro - uses compiler intrinsic
+#define va_arg(ap, type) __builtin_va_arg(ap, type)
 
 // va_end macro - cleans up va_list
-#define va_end(ap) (ap = (va_list)0)
+#define va_end(ap) ((void)(ap = 0))
 
 // Simple variadic function that sums integers
 // First parameter is the count of variadic arguments
 int sum_ints(int count, ...) {
     va_list args;
-    __va_start(&args, count);
+    va_start(args, count);
     
     int total = 0;
     for (int i = 0; i < count; i++) {

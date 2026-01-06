@@ -9383,9 +9383,10 @@ private:
 						int var_offset = it->second.offset;
 						
 						// Check if this is a reference variable - if so, dereference it
+						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
 						auto ref_it = reference_stack_info_.find(var_offset);
-						if (ref_it != reference_stack_info_.end()) {
-							// This is a reference - load pointer and dereference
+						if (ref_it != reference_stack_info_.end() && !current_function_returns_reference_) {
+							// This is a reference and function does not return a reference - load pointer and dereference to get value
 							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
 							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
@@ -9393,6 +9394,12 @@ private:
 							int value_size_bytes = ref_it->second.value_size_bits / 8;
 							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 							// Value is now in RAX, ready to return
+						} else if (ref_it != reference_stack_info_.end() && current_function_returns_reference_) {
+							// This is a reference and function returns a reference - return the address itself
+							FLASH_LOG(Codegen, Debug, "handleReturn: Returning named reference address '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
+							X64Register ptr_reg = X64Register::RAX;
+							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer (address)
+							// Address is now in RAX, ready to return
 						} else {
 							// Not a reference - normal variable return
 							// Get the actual size of the variable being returned
