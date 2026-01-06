@@ -8546,6 +8546,43 @@ ParseResult Parser::parse_type_specifier()
 			}
 		}
 
+		// Check if the identifier is a template parameter (e.g., _Tp in template<typename _Tp>)
+		// This must be checked BEFORE looking up in gTypesByName to handle patterns like:
+		// __has_trivial_destructor(_Tp) where _Tp is a template parameter
+		if (parsing_template_body_ && !current_template_param_names_.empty()) {
+			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
+			for (const auto& param_name : current_template_param_names_) {
+				if (param_name == type_name_handle) {
+					// This is a template parameter - create a dependent type placeholder
+					// Look up the TypeInfo for this parameter (it should have been registered when
+					// the template parameters were parsed)
+					auto param_type_it = gTypesByName.find(param_name);
+					if (param_type_it != gTypesByName.end()) {
+						TypeIndex param_type_idx = param_type_it->second->type_index_;
+						FLASH_LOG_FORMAT(Templates, Debug, 
+							"parse_type_specifier: '{}' is a template parameter, returning dependent type at index {}", 
+							type_name, param_type_idx);
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							Type::UserDefined, param_type_idx, 0, type_name_token, cv_qualifier));
+					} else {
+						// Template parameter not yet in gTypesByName - create a placeholder
+						// This can happen when parsing the template parameter list itself
+						FLASH_LOG_FORMAT(Templates, Debug, 
+							"parse_type_specifier: '{}' is a template parameter (not yet registered), creating placeholder", 
+							type_name);
+						auto& type_info = gTypeInfo.emplace_back();
+						type_info.type_ = Type::UserDefined;
+						type_info.type_index_ = gTypeInfo.size() - 1;
+						type_info.type_size_ = 0;  // Unknown size for dependent type
+						type_info.name_ = type_name_handle;
+						gTypesByName[type_name_handle] = &type_info;
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
+					}
+				}
+			}
+		}
+
 		// Check if this is a registered struct type
 		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
@@ -23276,6 +23313,223 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		return try_evaluate_constant_expression(init_node);
 	}
 	
+	// Handle type trait expressions (e.g., __has_trivial_destructor(T), __is_class(T))
+	// These are compile-time boolean expressions used in template metaprogramming
+	if (std::holds_alternative<TypeTraitExprNode>(expr)) {
+		const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
+		
+		// Get the type(s) this trait is being applied to
+		if (!trait_expr.has_type()) {
+			// No-argument traits like __is_constant_evaluated
+			if (trait_expr.kind() == TypeTraitKind::IsConstantEvaluated) {
+				// We're evaluating in a constant context, so return true
+				return ConstantValue{1, Type::Bool};
+			}
+			return std::nullopt;
+		}
+		
+		const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
+		
+		// Evaluate the type trait based on the type
+		// Most traits need to check properties of the target type in gTypeInfo
+		TypeIndex type_idx = type_spec.type_index();
+		Type base_type = type_spec.type();
+		
+		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating type trait {} on type index {} (base_type={})", 
+			static_cast<int>(trait_expr.kind()), type_idx, static_cast<int>(base_type));
+		
+		// Helper lambda to get TypeInfo if available
+		auto get_type_info = [&]() -> const TypeInfo* {
+			if (type_idx < gTypeInfo.size()) {
+				return &gTypeInfo[type_idx];
+			}
+			return nullptr;
+		};
+		
+		// Helper lambda to get StructTypeInfo if available
+		auto get_struct_info = [&]() -> const StructTypeInfo* {
+			const TypeInfo* ti = get_type_info();
+			return ti ? ti->getStructInfo() : nullptr;
+		};
+		
+		// Helper lambda to check if struct has user-defined destructor
+		auto has_user_destructor = [&]() -> bool {
+			const StructTypeInfo* struct_info = get_struct_info();
+			if (!struct_info) return false;
+			// Check if any member function is a destructor
+			for (const auto& mf : struct_info->member_functions) {
+				if (mf.is_destructor) {
+					return true;
+				}
+			}
+			return false;
+		};
+		
+		// Helper lambda to check if struct has user-defined constructor
+		auto has_user_constructor = [&]() -> bool {
+			const StructTypeInfo* struct_info = get_struct_info();
+			if (!struct_info) return false;
+			// Check if any member function is a constructor
+			for (const auto& mf : struct_info->member_functions) {
+				if (mf.is_constructor) {
+					return true;
+				}
+			}
+			return false;
+		};
+		
+		bool result = false;
+		
+		switch (trait_expr.kind()) {
+			// Trivially destructible traits
+			case TypeTraitKind::HasTrivialDestructor:
+			case TypeTraitKind::IsTriviallyDestructible: {
+				// A type is trivially destructible if:
+				// 1. It's a scalar type (int, float, pointer, etc.)
+				// 2. It's a class with no user-declared destructor and all members are trivially destructible
+				if (base_type == Type::Struct || base_type == Type::UserDefined) {
+					// Check if the struct has a user-defined destructor
+					result = !has_user_destructor();
+					FLASH_LOG_FORMAT(Templates, Debug, "Type is struct, has_destructor={}, result={}", 
+						has_user_destructor(), result);
+				} else {
+					// Scalar types (int, float, pointers, etc.) are trivially destructible
+					result = true;
+				}
+				break;
+			}
+			
+			case TypeTraitKind::IsClass: {
+				// A type is a class if it's a struct/class (not enum, not union)
+				const StructTypeInfo* struct_info = get_struct_info();
+				result = (base_type == Type::Struct || base_type == Type::UserDefined) && 
+				         struct_info && !struct_info->is_union;
+				break;
+			}
+			
+			case TypeTraitKind::IsVoid:
+				result = (base_type == Type::Void);
+				break;
+				
+			case TypeTraitKind::IsIntegral:
+				result = (base_type == Type::Bool || base_type == Type::Char || 
+				          base_type == Type::UnsignedChar || base_type == Type::Short ||
+				          base_type == Type::UnsignedShort || base_type == Type::Int ||
+				          base_type == Type::UnsignedInt || base_type == Type::Long ||
+				          base_type == Type::UnsignedLong || base_type == Type::LongLong ||
+				          base_type == Type::UnsignedLongLong);
+				break;
+				
+			case TypeTraitKind::IsFloatingPoint:
+				result = (base_type == Type::Float || base_type == Type::Double);
+				break;
+				
+			case TypeTraitKind::IsPointer:
+				result = (type_spec.pointer_depth() > 0 && !type_spec.is_reference());
+				break;
+				
+			case TypeTraitKind::IsReference:
+				result = type_spec.is_reference() || type_spec.is_lvalue_reference();
+				break;
+				
+			case TypeTraitKind::IsLvalueReference:
+				result = type_spec.is_lvalue_reference();
+				break;
+				
+			case TypeTraitKind::IsRvalueReference:
+				result = type_spec.is_rvalue_reference();
+				break;
+				
+			case TypeTraitKind::IsConst:
+				result = (type_spec.cv_qualifier() == CVQualifier::Const ||
+				          type_spec.cv_qualifier() == CVQualifier::ConstVolatile);
+				break;
+				
+			case TypeTraitKind::IsVolatile:
+				result = (type_spec.cv_qualifier() == CVQualifier::Volatile ||
+				          type_spec.cv_qualifier() == CVQualifier::ConstVolatile);
+				break;
+				
+			case TypeTraitKind::IsTrivial:
+			case TypeTraitKind::IsPod:
+			case TypeTraitKind::IsTriviallyCopyable: {
+				// For now, treat non-struct types as trivial
+				if (base_type != Type::Struct && base_type != Type::UserDefined) {
+					result = true;
+				} else {
+					// A struct is trivial if it has no user-defined special functions
+					result = !has_user_destructor() && !has_user_constructor();
+				}
+				break;
+			}
+			
+			case TypeTraitKind::IsEnum: {
+				const TypeInfo* ti = get_type_info();
+				result = ti && ti->isEnum();
+				break;
+			}
+			
+			case TypeTraitKind::IsUnion: {
+				const StructTypeInfo* struct_info = get_struct_info();
+				result = struct_info && struct_info->is_union;
+				break;
+			}
+			
+			case TypeTraitKind::IsEmpty: {
+				const StructTypeInfo* struct_info = get_struct_info();
+				result = struct_info && struct_info->total_size == 0;
+				break;
+			}
+			
+			case TypeTraitKind::IsPolymorphic: {
+				const StructTypeInfo* struct_info = get_struct_info();
+				result = struct_info && struct_info->has_vtable;
+				break;
+			}
+			
+			case TypeTraitKind::IsAbstract: {
+				const StructTypeInfo* struct_info = get_struct_info();
+				result = struct_info && struct_info->is_abstract;
+				break;
+			}
+			
+			case TypeTraitKind::IsFinal: {
+				const StructTypeInfo* struct_info = get_struct_info();
+				result = struct_info && struct_info->is_final;
+				break;
+			}
+			
+			case TypeTraitKind::HasVirtualDestructor: {
+				const StructTypeInfo* struct_info = get_struct_info();
+				if (struct_info) {
+					// Check if any destructor member function is virtual
+					for (const auto& mf : struct_info->member_functions) {
+						if (mf.is_destructor && mf.is_virtual) {
+							result = true;
+							break;
+						}
+					}
+				}
+				break;
+			}
+			
+			case TypeTraitKind::IsDestructible: {
+				// Most types are destructible unless they're incomplete or have deleted destructor
+				// For simplicity, return true for complete types
+				result = true;
+				break;
+			}
+			
+			default:
+				// For unhandled traits, return nullopt to indicate we can't evaluate
+				FLASH_LOG_FORMAT(Templates, Debug, "Unhandled type trait kind: {}", static_cast<int>(trait_expr.kind()));
+				return std::nullopt;
+		}
+		
+		FLASH_LOG_FORMAT(Templates, Debug, "Type trait evaluation result: {}", result);
+		return ConstantValue{result ? 1 : 0, Type::Bool};
+	}
+	
 	return std::nullopt;
 }
 
@@ -23525,7 +23779,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				                               (is_simple_identifier && followed_by_array_declarator);
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
-				    (peek_token()->value() == "," || peek_token()->value() == ">" || peek_token()->value() == "...")) {
+				    (peek_token()->value() == "," || peek_token()->value() == ">" || peek_token()->value() == ">>" || peek_token()->value() == "...")) {
 					// Check if this is actually a concrete type (not a template parameter)
 					// If it's a concrete struct or type alias, we should fall through to type parsing instead
 					bool is_concrete_type = false;
@@ -27698,6 +27952,9 @@ if (struct_type_info.getStructInfo()) {
 			std::vector<TemplateTypeArg> resolved_args;
 			bool unresolved_arg = false;
 			for (const auto& arg_info : deferred_base.template_arguments) {
+				FLASH_LOG_FORMAT(Templates, Debug, "  Deferred arg: is_pack={}, is_TypeSpec={}, is_Expr={}, type_name={}",
+					arg_info.is_pack, arg_info.node.is<TypeSpecifierNode>(), arg_info.node.is<ExpressionNode>(),
+					arg_info.node.type_name());
 				// Pack expansion handling
 				if (arg_info.is_pack) {
 					// If the argument node references a template parameter pack, expand it
@@ -27803,12 +28060,61 @@ if (struct_type_info.getStructInfo()) {
 				}
 				
 				if (arg_info.node.is<ExpressionNode>()) {
-					// Try to evaluate non-type template argument after substitution
-					if (auto value = try_evaluate_constant_expression(arg_info.node)) {
-						TemplateTypeArg val_arg(value->value, value->type);
-						val_arg.is_pack = arg_info.is_pack;
-						resolved_args.push_back(val_arg);
-						continue;
+					const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
+					
+					// Special handling for TypeTraitExprNode - need to substitute template parameters
+					if (std::holds_alternative<TypeTraitExprNode>(expr)) {
+						const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
+						
+						// Create a substituted version of the type trait
+						if (trait_expr.has_type()) {
+							const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
+							
+							// Check if the type needs substitution
+							Type base_type = type_spec.type();
+							TypeIndex type_idx = type_spec.type_index();
+							bool substituted = false;
+							TypeSpecifierNode substituted_type_spec = type_spec;
+							
+							if ((base_type == Type::UserDefined || base_type == Type::Struct) && type_idx < gTypeInfo.size()) {
+								std::string_view type_name = StringTable::getStringView(gTypeInfo[type_idx].name());
+								auto subst_it = name_substitution_map.find(type_name);
+								if (subst_it != name_substitution_map.end()) {
+									// Substitute the type
+									const TemplateTypeArg& subst = subst_it->second;
+									substituted_type_spec = TypeSpecifierNode(
+										subst.base_type,
+										subst.type_index,
+										0,  // size will be looked up
+										Token(),
+										type_spec.cv_qualifier()
+									);
+									substituted = true;
+									FLASH_LOG_FORMAT(Templates, Debug, "Substituted type '{}' with type_index {} for type trait evaluation",
+										type_name, subst.type_index);
+								}
+							}
+							
+							// Create substituted type trait node and evaluate
+							ASTNode subst_type_node = emplace_node<TypeSpecifierNode>(substituted_type_spec);
+							ASTNode subst_trait_node = emplace_node<ExpressionNode>(
+								TypeTraitExprNode(trait_expr.kind(), subst_type_node, trait_expr.trait_token()));
+							
+							if (auto value = try_evaluate_constant_expression(subst_trait_node)) {
+								TemplateTypeArg val_arg(value->value, value->type);
+								val_arg.is_pack = arg_info.is_pack;
+								resolved_args.push_back(val_arg);
+								continue;
+							}
+						}
+					} else {
+						// Try to evaluate non-type template argument after substitution
+						if (auto value = try_evaluate_constant_expression(arg_info.node)) {
+							TemplateTypeArg val_arg(value->value, value->type);
+							val_arg.is_pack = arg_info.is_pack;
+							resolved_args.push_back(val_arg);
+							continue;
+						}
 					}
 				}
 				
