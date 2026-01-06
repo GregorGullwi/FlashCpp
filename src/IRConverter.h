@@ -8574,18 +8574,19 @@ private:
 			param_offset_adjustment++;  // Shift regular parameters by 1 more
 		}
 
+		// Use separate counters for integer and float parameter registers (System V AMD64 ABI)
+		// For member functions, 'this' was already added above and consumed index 0,
+		// so we start counting from param_offset_adjustment (which is 1 for member functions)
+		// These counters are used to compute gp_offset/fp_offset for variadic functions
+		size_t int_param_reg_index = param_offset_adjustment;
+		size_t float_param_reg_index = 0;
+		
 		// First pass: collect all parameter information
 		if (!instruction.hasTypedPayload()) {
 			// Operand-based path: extract parameters from operands
 			size_t paramIndex = FunctionDeclLayout::FIRST_PARAM_INDEX;
 			// Clear reference parameter tracking from previous function
 			reference_stack_info_.clear();
-			
-			// Use separate counters for integer and float parameter registers (System V AMD64 ABI)
-			// For member functions, 'this' was already added above and consumed index 0,
-			// so we start counting from param_offset_adjustment (which is 1 for member functions)
-			size_t int_param_reg_index = param_offset_adjustment;
-			size_t float_param_reg_index = 0;
 			
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
 				auto param_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
@@ -8693,11 +8694,10 @@ private:
 			const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
 			reference_stack_info_.clear();
 		
-			// Use separate counters for integer and float parameter registers (System V AMD64 ABI)
-			// For member functions, 'this' was already added above and consumed index 0,
-			// so we start counting from param_offset_adjustment (which is 1 for member functions)
-			size_t int_param_reg_index = param_offset_adjustment;
-			size_t float_param_reg_index = 0;
+			// Reset counters for this code path (they start at param_offset_adjustment for int, 0 for float)
+			// The counters were already declared before the if/else block
+			int_param_reg_index = param_offset_adjustment;
+			float_param_reg_index = 0;
 		
 			for (size_t i = 0; i < func_decl.parameters.size(); ++i) {
 				const auto& param = func_decl.parameters[i];
@@ -8895,19 +8895,29 @@ private:
 				// Initialize the va_list structure fields directly in the function prologue
 				// This avoids IR complexity with pointer arithmetic and dereferencing
 				// Structure layout (24 bytes total):
-				//   unsigned int gp_offset;       // offset 0 (4 bytes): Start at 8 (skip RDI which holds first fixed param)
-				//   unsigned int fp_offset;       // offset 4 (4 bytes): Start at 48 (start of XMM area)
+				//   unsigned int gp_offset;       // offset 0 (4 bytes): Skip fixed integer parameters in registers
+				//   unsigned int fp_offset;       // offset 4 (4 bytes): Skip fixed float parameters in registers  
 				//   void *overflow_arg_area;      // offset 8 (8 bytes): NULL for now (not used for register args)
 				//   void *reg_save_area;          // offset 16 (8 bytes): Pointer to register save area base
+				
+				// Calculate gp_offset: skip registers used by fixed integer parameters
+				// Each integer register slot is 8 bytes, capped at 6 (INT_REG_COUNT)
+				size_t fixed_int_params = std::min(int_param_reg_index, static_cast<size_t>(INT_REG_COUNT));
+				int initial_gp_offset = static_cast<int>(fixed_int_params * 8);
+				
+				// Calculate fp_offset: skip registers used by fixed float parameters
+				// Float registers start at offset 48 (after integer registers), each is 16 bytes, capped at 8
+				size_t fixed_float_params = std::min(float_param_reg_index, static_cast<size_t>(8));
+				int initial_fp_offset = INT_REG_AREA_SIZE + static_cast<int>(fixed_float_params * 16);
 				
 				// Load va_list structure base address into RAX
 				emitLeaFromFrame(X64Register::RAX, va_list_struct_base);
 				
-				// Store gp_offset = 8 at [RAX + 0]
-				emitMovDwordPtrImmToRegOffset(X64Register::RAX, 0, 8);
+				// Store gp_offset at [RAX + 0]
+				emitMovDwordPtrImmToRegOffset(X64Register::RAX, 0, initial_gp_offset);
 				
-				// Store fp_offset = 48 at [RAX + 4]
-				emitMovDwordPtrImmToRegOffset(X64Register::RAX, 4, INT_REG_AREA_SIZE);
+				// Store fp_offset at [RAX + 4]
+				emitMovDwordPtrImmToRegOffset(X64Register::RAX, 4, initial_fp_offset);
 				
 				// Store overflow_arg_area = 0 at [RAX + 8]
 				emitMovQwordPtrImmToRegOffset(X64Register::RAX, 8, 0);
