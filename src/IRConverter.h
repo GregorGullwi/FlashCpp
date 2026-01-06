@@ -3967,7 +3967,7 @@ private:
 						}
 					}
 					
-					if (ref_it != reference_stack_info_.end()) {
+					if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only) {
 						// This is a reference - load the pointer first, then dereference
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
 						// Load the pointer into the register
@@ -3988,6 +3988,11 @@ private:
 							assert(false && "Unsupported reference value size");
 						}
 						textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
+					} else if (ref_it != reference_stack_info_.end() && ref_it->second.holds_address_only) {
+						// This holds an address value directly (from addressof) - load without dereferencing
+						ctx.result_physical_reg = allocateRegisterWithSpilling();
+						auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
+						textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 					} else {
 						// Not a reference, load normally with correct size
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
