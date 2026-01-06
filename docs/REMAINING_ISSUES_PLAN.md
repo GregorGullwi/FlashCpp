@@ -62,10 +62,10 @@ This document outlines a comprehensive plan to address the remaining runtime iss
 - ✅ **Struct arguments (≤8 bytes)**: WORKING
   - sum_points(3, p1, p2, p3) = 21 ✓ (8-byte Point structs)
   - Fixed handleDereference to copy struct values > 64 bits
-- ⚠️ **Struct arguments (9-16 bytes)**: NOT WORKING - passed by pointer instead of by value
-  - System V AMD64 ABI requires 9-16 byte structs in two consecutive registers
-  - Current implementation passes them by pointer, which doesn't match ABI
-  - Would require significant changes to function call argument passing
+- ✅ **Struct arguments (9-16 bytes)**: WORKING
+  - sum_points3d(2, p1, p2) = 36 ✓ (16-byte Point3D structs)
+  - Implemented two-register struct passing per System V AMD64 ABI
+  - 12-byte structs also work correctly
 
 **Impact:** 
 - ✅ Variadic function declarations and parsing work correctly on Linux (System V AMD64 ABI)
@@ -73,9 +73,9 @@ This document outlines a comprehensive plan to address the remaining runtime iss
 - ✅ **va_arg now works for integer arguments including overflow to stack**
 - ✅ **va_arg now works for floating-point arguments including overflow to stack**
 - ✅ **va_arg now works for small struct arguments (≤8 bytes)**
-- ⚠️ Struct arguments 9-16 bytes don't work (passed by pointer instead of value)
+- ✅ **va_arg now works for large struct arguments (9-16 bytes) using two consecutive registers**
 
-**Status:** ✅ Phase 5 complete - integer, float, and small struct args working
+**Status:** ✅ Phase 5 fully complete - integer, float, small struct, and large struct args all working
 
 ---
 
@@ -266,21 +266,23 @@ Exception handling requires complex runtime support:
 ✅ 3. Added struct copy support in handleDereference:
    - Structs > 64 bits now copied correctly in 8-byte chunks
    - Required for va_arg with struct types
+
+✅ 4. Added two-register struct support (9-16 byte structs):
+   - System V AMD64 ABI: pass in TWO consecutive integer registers
+   - Modified handleFunctionCall to detect 9-16 byte structs
+   - Load first 8 bytes into first register, second 8 bytes into second register
+   - Updated register allocation to consume two registers for such structs
 ```
 
-**Testing Results (Phase 5 Complete):**
+**Testing Results (Phase 5 Fully Complete):**
 - ✅ sum_doubles(3, 1.0, 2.0, 3.0) = 6.0
 - ✅ sum_many_doubles(10, 1.0...10.0) = 55.0 (overflow works!)
 - ✅ sum_mixed(3, 1.5, 2.5, 3.0) = 7.0 (int+double mixed)
 - ✅ sum_alternating(3, (1,0.5), (2,1.5), (3,2.5)) = 10.5 (alternating int/double)
 - ✅ sum_points(3, p1, p2, p3) = 21 (8-byte struct args)
+- ✅ sum_points3d(2, p1, p2) = 36 (16-byte struct args)
 
-**Known Limitation:**
-- ⚠️ Structs 9-16 bytes passed by pointer instead of by value (ABI mismatch)
-  - System V AMD64 requires two consecutive registers for 9-16 byte structs
-  - Would require significant refactoring of function call argument passing
-
-**Status:** ✅ **Phase 5 complete** (integer, float, and small struct args with overflow support)
+**Status:** ✅ **Phase 5 fully complete** (integer, float, small struct, and large struct args all working)
 
 ---
 
@@ -598,6 +600,6 @@ cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh
 ---
 
 *Document Created: 2025-12-22*  
-*Last Updated: 2026-01-06 (Variadic functions: Phase 5 complete - int, float, and small struct args working)*  
+*Last Updated: 2026-01-06 (Variadic functions: Phase 5 fully complete - int, float, small struct, and large struct args all working)*  
 *For: FlashCpp Compiler Development*  
-*Status: Implementation Phase - Variadic Arguments Phase 5 Complete (integer, float, and small struct args)*
+*Status: Implementation Phase - Variadic Arguments Phase 5 Fully Complete (all argument types working)*
