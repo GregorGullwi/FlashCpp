@@ -40,24 +40,30 @@ This document outlines a comprehensive plan to address the remaining runtime iss
    - Added `static_assert(INT_REG_COUNT == 6, ...)` for compile-time ABI verification
    - Extracted `isVaListPointerType()` helper function
 
+4. **Phase 4 Implementation (Overflow Support):**
+   - Added conditional branch logic in va_arg to check `gp_offset < 48`
+   - When offset >= 48, reads from `overflow_arg_area` instead of `reg_save_area`
+   - Fixed `overflow_arg_area` initialization to point to [RBP+16] (caller's stack args)
+   - Fixed `reference_stack_info_` to respect `holds_address_only` flag (prevent incorrect dereferencing)
+   - Both `typedef char* va_list` and proper va_list structure paths now support overflow
+
 **Validation Results:**
 - ✅ **va_arg with integer arguments (up to 5 variadic args for 1 fixed param)**: WORKING
   - sum2(2, 30, 12) = 42 ✓
   - sum3(3, 10, 20, 30) = 60 ✓
   - sum5(5, 1, 2, 3, 4, 5) = 15 ✓
-- ⚠️ **va_arg with overflow (>5 int args after 1 fixed param)**: Incorrect results (not crashes)
-  - sum7(7, 1, 2, 3, 4, 5, 6, 7) returns 15 instead of 28 (6th and 7th args not read)
+- ✅ **va_arg with overflow (>5 int args after 1 fixed param)**: WORKING
+  - sum7(7, 1, 2, 3, 4, 5, 6, 7) = 28 ✓
 - ❌ **va_arg with floating-point arguments**: Not yet tested
 - ❌ **Struct arguments**: Not tested
 
 **Impact:** 
 - ✅ Variadic function declarations and parsing work correctly on Linux (System V AMD64 ABI)
 - ✅ Register save area and va_list structure initialization are implemented
-- ✅ **va_arg now works for integer arguments within register count**
-- ⚠️ Overflow support not yet implemented (reads garbage instead of stack args)
-- Remaining work: implement overflow_arg_area support, test float args
+- ✅ **va_arg now works for integer arguments including overflow to stack**
+- Remaining work: test float args, struct args
 
-**Status:** ✅ Phases 1-3 complete, ⚠️ Phase 4 partial (overflow not supported yet)
+**Status:** ✅ Phases 1-4 complete, Phase 5 (float/struct args) not yet tested
 
 ---
 
@@ -153,7 +159,7 @@ Exception handling requires complex runtime support:
 
 ---
 
-### 2. Variadic Arguments (2 files) - **MEDIUM COMPLEXITY** - ⚠️ **PARTIAL PROGRESS - va_arg BROKEN**
+### 2. Variadic Arguments (2 files) - **MEDIUM COMPLEXITY** - ✅ **PHASE 4 COMPLETE**
 
 **Files:**
 - `test_va_implementation.cpp`
@@ -166,15 +172,8 @@ Exception handling requires complex runtime support:
 - ✅ Register save area properly set up (176 bytes: 48 for int regs + 128 for float regs)
 - ✅ va_list structure initialization with gp_offset, fp_offset, overflow_arg_area, reg_save_area
 - ✅ Fixed parameter offset tracking for variadic functions
-- ❌ **va_arg implementation has critical bugs causing segmentation faults**
-- ❌ **No variadic tests actually work end-to-end** (tests that "pass" only parse but don't use va_arg)
-
-**Previous Issues (NOW RESOLVED):**
-On Linux x64 (System V AMD64 ABI), variadic arguments require:
-1. ✅ Register save area for integer args (RDI, RSI, RDX, RCX, R8, R9) - **COMPLETED**
-2. ✅ Register save area for floating-point args (XMM0-XMM7) - **COMPLETED**
-3. ✅ Overflow area on stack for additional args - **COMPLETED**
-4. ✅ va_list structure with 4 fields: gp_offset, fp_offset, overflow_arg_area, reg_save_area - **COMPLETED**
+- ✅ **va_arg works for integer arguments including overflow to stack**
+- ❌ **Float variadic arguments not yet tested**
 
 **Implementation Progress:**
 
@@ -201,7 +200,7 @@ On Linux x64 (System V AMD64 ABI), variadic arguments require:
    - Save all potential argument registers to reg_save_area
    - Initialize gp_offset based on fixed args count
    - Initialize fp_offset based on fixed args count
-   - Set overflow_arg_area to point past fixed args on stack
+   - Set overflow_arg_area to point to [RBP+16] (caller's stack args)
    - Store reg_save_area pointer
 
 ✅ 2. Update __builtin_va_start intrinsic handling:
@@ -209,58 +208,43 @@ On Linux x64 (System V AMD64 ABI), variadic arguments require:
    - Initialize all 4 fields of va_list structure
 ```
 
-#### Phase 3: va_arg Implementation - ✅ **WORKING FOR REGISTER ARGS**
+#### Phase 3: va_arg Register Args - ✅ **COMPLETED**
 ```
 ✅ 1. For __builtin_va_arg(va_list, type):
    - Fixed critical bugs in CodeGen.h (Phase 3 commits)
-   - va_start now points args to reg_save_area + gp_offset on Linux
-   - va_arg correctly reads from args and advances by 8 bytes
-   - Check if type fits in registers
-   - If integer type and gp_offset < 48:
-     * Read from reg_save_area + gp_offset
-     * Increment gp_offset by 8 (by advancing args pointer)
-   - ❌ Overflow support not yet implemented (reads from invalid memory past register save area)
+   - va_start now points args to va_list structure on Linux
+   - va_arg correctly reads from reg_save_area + gp_offset
+   - Increments gp_offset by 8 after each read
 ```
 
-#### Phase 4: Testing - ⚠️ **PARTIAL SUCCESS**
+#### Phase 4: va_arg Overflow Support - ✅ **COMPLETED**
 ```
-✅ 1. Variadic function declarations parse correctly (test_va_simple_ret30.cpp, test_variadic_mixed_ret16.cpp)
-✅ 2. va_arg with integer arguments (up to 5 variadic args for 1 fixed param) - WORKING
-   - Tested: sum2(2, 30, 12) = 42 ✓
-   - Tested: sum3(3, 10, 20, 30) = 60 ✓
-   - Tested: sum5(5, 1, 2, 3, 4, 5) = 15 ✓
-❌ 3. va_arg with floating-point arguments - NOT YET TESTED (requires fp_offset support)
-❌ 4. va_arg with > 5 integer args (overflow to stack) - INCORRECT (returns partial sum)
-   - Tested: sum7(7, 1, 2, 3, 4, 5, 6, 7) returns 15 instead of 28 (6th and 7th args not read)
-   - Root cause: no overflow_arg_area support in char* va_list path
-❌ 5. Test with struct arguments passed via varargs - NOT TESTED
+✅ 1. Conditional branch logic in va_arg:
+   - Check if gp_offset < 48 (or fp_offset < 176 for floats)
+   - If within limits: read from reg_save_area + offset
+   - If exceeded: read from overflow_arg_area and advance it by 8
 
-Note: All tests that use ≤5 variadic integer args now work correctly.
-Overflow support requires conditional logic in va_arg which is complex to implement.
+✅ 2. Fixed overflow_arg_area initialization:
+   - Now correctly points to [RBP+16] (first stack argument)
+
+✅ 3. Fixed reference_stack_info_ dereferencing:
+   - Added holds_address_only check to prevent incorrect dereferencing
+   - AddressOf results no longer get incorrectly dereferenced
 ```
 
-**Recent Progress (Phase 3-4 Fixes - January 2026):**
-1. ✅ Fixed va_start for Linux with `typedef char* va_list;` to use register save area
-2. ✅ Fixed va_arg double-dereference bug 
-3. ✅ Fixed holds_address_only check in arithmetic operations
-4. ✅ Fixed gp_offset dereference size (32-bit, not 64-bit)
-5. ✅ All tests pass (833 tests as of January 2026)
+**Testing Results (Phase 4 Complete):**
+- ✅ sum2(2, 30, 12) = 42
+- ✅ sum3(3, 10, 20, 30) = 60
+- ✅ sum5(5, 1, 2, 3, 4, 5) = 15
+- ✅ sum7(7, 1, 2, 3, 4, 5, 6, 7) = 28 (overflow works!)
 
-**Testing Results:**
-- Basic variadic with 2 args: 30 + 12 = 42 ✓
-- Variadic with 3 args: 10 + 20 + 30 = 60 ✓
-- Variadic with 5 args (fills registers): 1+2+3+4+5 = 15 ✓
-- Variadic with 7 args (overflow): Returns 15 instead of 28 ✗
+**Remaining Work (Phase 5):**
+- ❌ Float variadic arguments not yet tested (requires fp_offset path testing)
+- ❌ Struct arguments via varargs not tested
 
-**Known Limitations:**
-- Overflow arguments (>5 int args after 1 fixed param) not yet handled
-- Float variadic arguments not yet tested
-- Requires implementing conditional logic in va_arg for overflow support
-
-**Estimated Remaining Effort:** 2-3 days for overflow support and float args  
-**Priority:** MEDIUM (basic variadic functionality now works)  
-**Files to Modify:**
-- `src/CodeGen.h` - Add overflow_arg_area support with conditional branches
+**Estimated Remaining Effort:** 1-2 days for float/struct arg testing
+**Priority:** LOW (integer variadic args fully work)  
+**Status:** ✅ **Phases 1-4 complete** (integer args with overflow support)
 
 ---
 
@@ -564,7 +548,7 @@ cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh
 
 ## Notes
 
-- ✅ **Major milestone achieved:** All 674 tests now compile successfully (up from 658/674)
+- ✅ **Major milestone achieved:** All 833 tests now compile and run successfully
 - The array index loading bug fix resolved 16 previously failing tests
 - Remaining issues are runtime-only (link failures or execution crashes)
 - Some features may be fundamentally incompatible with FlashCpp's architecture
@@ -575,6 +559,6 @@ cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh
 ---
 
 *Document Created: 2025-12-22*  
-*Last Updated: 2026-01-06 (Variadic functions: Phase 3 fixed, basic va_arg working for integer register args)*  
+*Last Updated: 2026-01-06 (Variadic functions: Phase 4 complete, overflow support working)*  
 *For: FlashCpp Compiler Development*  
-*Status: Implementation Phase - Variadic Arguments Basic Functionality Working, Overflow Support Pending*
+*Status: Implementation Phase - Variadic Arguments Phase 4 Complete (integer args with overflow)*

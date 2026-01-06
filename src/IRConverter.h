@@ -8928,8 +8928,12 @@ private:
 				// Store fp_offset at [RAX + 4]
 				emitMovDwordPtrImmToRegOffset(X64Register::RAX, 4, initial_fp_offset);
 				
-				// Store overflow_arg_area = 0 at [RAX + 8]
-				emitMovQwordPtrImmToRegOffset(X64Register::RAX, 8, 0);
+				// Store overflow_arg_area at [RAX + 8]
+				// For System V AMD64 ABI, overflow arguments are passed on the stack
+				// by the caller. They start at [RBP+16] (after saved RBP and return address).
+				// LEA RCX, [RBP + 16] then store to [RAX + 8]
+				emitLeaFromFrame(X64Register::RCX, 16);  // overflow args are at RBP+16
+				emitMovQwordPtrRegToRegOffset(X64Register::RAX, 8, X64Register::RCX);
 				
 				// Store reg_save_area pointer at [RAX + 16]
 				// Load register save area address into RCX
@@ -11797,8 +11801,9 @@ private:
 				int32_t rhs_offset = it->second.offset;
 				
 				// Check if RHS is a reference - if so, dereference it (unless explicitly disabled)
+				// Skip dereferencing if holds_address_only is true (AddressOf results)
 				auto rhs_ref_it = reference_stack_info_.find(rhs_offset);
-				if (rhs_ref_it != reference_stack_info_.end() && op.dereference_rhs_references) {
+				if (rhs_ref_it != reference_stack_info_.end() && op.dereference_rhs_references && !rhs_ref_it->second.holds_address_only) {
 					// RHS is a reference - load pointer and dereference
 					X64Register ptr_reg = allocateRegisterWithSpilling();
 					emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
@@ -11848,7 +11853,7 @@ private:
 				}
 			}
 			
-			if (rhs_ref_it != reference_stack_info_.end() && op.dereference_rhs_references) {
+			if (rhs_ref_it != reference_stack_info_.end() && op.dereference_rhs_references && !rhs_ref_it->second.holds_address_only) {
 				// RHS is a reference - load pointer and dereference
 				X64Register ptr_reg = allocateRegisterWithSpilling();
 				emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
