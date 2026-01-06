@@ -11219,6 +11219,37 @@ private:
 		return {arg_type, arg_size, abs_result, 0ULL};
 	}
 	
+	// Helper constant for pointer size detection
+	static constexpr int POINTER_SIZE_BITS = 64;
+	
+	// Helper function to detect if a va_list argument is a simple pointer type
+	// (e.g., typedef char* va_list;) vs the proper System V AMD64 va_list structure
+	// Returns true if va_list is a pointer type, false otherwise
+	bool isVaListPointerType(const ASTNode& arg, const std::vector<IrOperand>& ir_result) const {
+		// Check if the argument is an identifier with pointer type
+		if (arg.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg.as<ExpressionNode>())) {
+			const auto& id = std::get<IdentifierNode>(arg.as<ExpressionNode>());
+			if (auto sym = symbol_table.lookup(id.name())) {
+				if (sym->is<DeclarationNode>()) {
+					const auto& ty = sym->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					if (ty.pointer_depth() > 0) return true;
+				} else if (sym->is<VariableDeclarationNode>()) {
+					const auto& ty = sym->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+					if (ty.pointer_depth() > 0) return true;
+				}
+			}
+		}
+		
+		// Fallback: treat as pointer when operand size is pointer sized (common for typedef char*)
+		if (ir_result.size() >= 2 && std::holds_alternative<int>(ir_result[1])) {
+			if (std::get<int>(ir_result[1]) == POINTER_SIZE_BITS) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
 	// Generate IR for __builtin_va_arg intrinsic
 	// __builtin_va_arg(va_list, type) - reads the current value and advances the appropriate offset
 	std::vector<IrOperand> generateVaArgIntrinsic(const FunctionCallNode& functionCallNode) {
@@ -11291,25 +11322,7 @@ private:
 		
 		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
 		// This must match the detection logic in generateVaStartIntrinsic
-		bool va_list_is_pointer = false;
-		if (arg0.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg0.as<ExpressionNode>())) {
-			const auto& id = std::get<IdentifierNode>(arg0.as<ExpressionNode>());
-			if (auto sym = symbol_table.lookup(id.name())) {
-				if (sym->is<DeclarationNode>()) {
-					const auto& ty = sym->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-					va_list_is_pointer = ty.pointer_depth() > 0;
-				} else if (sym->is<VariableDeclarationNode>()) {
-					const auto& ty = sym->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-					va_list_is_pointer = ty.pointer_depth() > 0;
-				}
-			}
-		}
-		// Fallback: treat as pointer when operand size is pointer sized (common for typedef char*)
-		if (!va_list_is_pointer && va_list_ir.size() >= 2) {
-			if (std::get<int>(va_list_ir[1]) == 64) {
-				va_list_is_pointer = true;
-			}
-		}
+		bool va_list_is_pointer = isVaListPointerType(arg0, va_list_ir);
 		
 		if (context_->isItaniumMangling() && !va_list_is_pointer) {
 			// Linux/System V AMD64 ABI: Use va_list structure
@@ -11537,28 +11550,16 @@ private:
 		// Get the first argument (va_list variable)
 		ASTNode arg0 = functionCallNode.arguments()[0];
 		auto arg0_ir = visitExpressionNode(arg0.as<ExpressionNode>());
-		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
-		bool va_list_is_pointer = false;
+		
+		// Get the va_list variable name (needed for assignment later)
 		StringHandle va_list_name_handle;
 		if (std::holds_alternative<IdentifierNode>(arg0.as<ExpressionNode>())) {
 			const auto& id = std::get<IdentifierNode>(arg0.as<ExpressionNode>());
 			va_list_name_handle = StringTable::getOrInternStringHandle(id.name());
-			if (auto sym = symbol_table.lookup(id.name())) {
-				if (sym->is<DeclarationNode>()) {
-					const auto& ty = sym->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-					va_list_is_pointer = ty.pointer_depth() > 0;
-				} else if (sym->is<VariableDeclarationNode>()) {
-					const auto& ty = sym->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-					va_list_is_pointer = ty.pointer_depth() > 0;
-				}
-			}
 		}
-		// Fallback: treat as pointer when operand size is pointer sized (common for typedef char*)
-		if (!va_list_is_pointer && arg0_ir.size() >= 2) {
-			if (std::get<int>(arg0_ir[1]) == 64) {
-				va_list_is_pointer = true;
-			}
-		}
+		
+		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
+		bool va_list_is_pointer = isVaListPointerType(arg0, arg0_ir);
 		
 		// Get the second argument (last fixed parameter)
 		ASTNode arg1 = functionCallNode.arguments()[1];
@@ -11670,7 +11671,7 @@ private:
 				DereferenceOp load_gp_offset;
 				load_gp_offset.result = gp_offset;
 				load_gp_offset.pointer.type = Type::UnsignedInt;
-				load_gp_offset.pointer.size_in_bits = 32;  // gp_offset is 32-bit unsigned int
+				load_gp_offset.pointer.size_in_bits = 32;  // Dereference reads a 32-bit value (gp_offset field)
 				load_gp_offset.pointer.pointer_depth = 1;
 				load_gp_offset.pointer.value = va_struct_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_gp_offset), functionCallNode.called_from()));
