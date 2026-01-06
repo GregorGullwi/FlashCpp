@@ -8549,7 +8549,10 @@ ParseResult Parser::parse_type_specifier()
 		// Check if the identifier is a template parameter (e.g., _Tp in template<typename _Tp>)
 		// This must be checked BEFORE looking up in gTypesByName to handle patterns like:
 		// __has_trivial_destructor(_Tp) where _Tp is a template parameter
-		if (parsing_template_body_ && !current_template_param_names_.empty()) {
+		// IMPORTANT: Skip this check during SFINAE context (in_sfinae_context_), because in that case
+		// the template parameters have been substituted with concrete types in gTypesByName, and we
+		// should use the substituted types instead of creating dependent type placeholders.
+		if (parsing_template_body_ && !current_template_param_names_.empty() && !in_sfinae_context_) {
 			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
 			for (const auto& param_name : current_template_param_names_) {
 				if (param_name == type_name_handle) {
