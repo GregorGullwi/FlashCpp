@@ -8,6 +8,19 @@
 
 namespace FlashCpp {
 
+// Phase 4: Declaration context for unified parsing
+// Specifies the context in which a declaration appears, which affects
+// what forms are legal and how they're interpreted
+enum class DeclarationContext {
+	Auto,           // Infer from current scope
+	TopLevel,       // Global/namespace scope
+	BlockScope,     // Inside function body
+	ClassMember,    // Inside class/struct
+	ForInit,        // for(HERE; ...; ...)
+	IfInit,         // if(HERE; condition)
+	SwitchInit,     // switch(HERE; condition)
+};
+
 // Result of parsing a parameter list
 struct ParsedParameterList {
 	std::vector<ASTNode> parameters;

@@ -2125,6 +2125,61 @@ bool Parser::looks_like_function_parameters()
 	return false;
 }
 
+// Phase 4: Unified declaration parsing
+// This is the single entry point for parsing all declarations (variables and functions)
+// It delegates to the appropriate specialized parsing function based on context
+ParseResult Parser::parse_declaration(FlashCpp::DeclarationContext context)
+{
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration: Starting, context={}, current token: {}", 
+		static_cast<int>(context),
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+	
+	// Determine actual context if Auto
+	FlashCpp::DeclarationContext effective_context = context;
+	if (context == FlashCpp::DeclarationContext::Auto) {
+		// Infer from current scope type
+		ScopeType current_scope = gSymbolTable.get_current_scope_type();
+		switch (current_scope) {
+			case ScopeType::Global:
+			case ScopeType::Namespace:
+				effective_context = FlashCpp::DeclarationContext::TopLevel;
+				break;
+			case ScopeType::Function:
+			case ScopeType::Block:
+				effective_context = FlashCpp::DeclarationContext::BlockScope;
+				break;
+			default:
+				effective_context = FlashCpp::DeclarationContext::BlockScope;
+				break;
+		}
+	}
+	
+	// Delegate to appropriate specialized parser based on context
+	switch (effective_context) {
+		case FlashCpp::DeclarationContext::TopLevel:
+			// Top-level uses parse_declaration_or_function_definition
+			// It handles: function definitions, global variables, out-of-line member functions
+			return parse_declaration_or_function_definition();
+			
+		case FlashCpp::DeclarationContext::BlockScope:
+		case FlashCpp::DeclarationContext::ForInit:
+		case FlashCpp::DeclarationContext::IfInit:
+		case FlashCpp::DeclarationContext::SwitchInit:
+			// Block scope uses parse_variable_declaration
+			// It handles: local variables, direct init, structured bindings, and now also
+			// function declarations (delegated via Phase 2's looks_like_function_parameters)
+			return parse_variable_declaration();
+			
+		case FlashCpp::DeclarationContext::ClassMember:
+			// Class member declarations are handled by parse_struct_declaration
+			// This shouldn't be called directly for class members
+			return ParseResult::error("Class member declarations should use parse_struct_declaration", *current_token_);
+			
+		default:
+			return ParseResult::error("Unknown declaration context", *current_token_);
+	}
+}
+
 ParseResult Parser::parse_declaration_or_function_definition()
 {
 	ScopedTokenPosition saved_position(*this);
