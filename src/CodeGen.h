@@ -11219,6 +11219,37 @@ private:
 		return {arg_type, arg_size, abs_result, 0ULL};
 	}
 	
+	// Helper constant for pointer size detection
+	static constexpr int POINTER_SIZE_BITS = 64;
+	
+	// Helper function to detect if a va_list argument is a simple pointer type
+	// (e.g., typedef char* va_list;) vs the proper System V AMD64 va_list structure
+	// Returns true if va_list is a pointer type, false otherwise
+	bool isVaListPointerType(const ASTNode& arg, const std::vector<IrOperand>& ir_result) const {
+		// Check if the argument is an identifier with pointer type
+		if (arg.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg.as<ExpressionNode>())) {
+			const auto& id = std::get<IdentifierNode>(arg.as<ExpressionNode>());
+			if (auto sym = symbol_table.lookup(id.name())) {
+				if (sym->is<DeclarationNode>()) {
+					const auto& ty = sym->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+					if (ty.pointer_depth() > 0) return true;
+				} else if (sym->is<VariableDeclarationNode>()) {
+					const auto& ty = sym->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
+					if (ty.pointer_depth() > 0) return true;
+				}
+			}
+		}
+		
+		// Fallback: treat as pointer when operand size is pointer sized (common for typedef char*)
+		if (ir_result.size() >= 2 && std::holds_alternative<int>(ir_result[1])) {
+			if (std::get<int>(ir_result[1]) == POINTER_SIZE_BITS) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+	
 	// Generate IR for __builtin_va_arg intrinsic
 	// __builtin_va_arg(va_list, type) - reads the current value and advances the appropriate offset
 	std::vector<IrOperand> generateVaArgIntrinsic(const FunctionCallNode& functionCallNode) {
@@ -11289,7 +11320,11 @@ private:
 			return {Type::Void, 0, 0ULL, 0ULL};
 		}
 		
-		if (context_->isItaniumMangling()) {
+		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
+		// This must match the detection logic in generateVaStartIntrinsic
+		bool va_list_is_pointer = isVaListPointerType(arg0, va_list_ir);
+		
+		if (context_->isItaniumMangling() && !va_list_is_pointer) {
 			// Linux/System V AMD64 ABI: Use va_list structure
 			// va_list points to a structure with:
 			//   unsigned int gp_offset;      (offset 0)
@@ -11321,8 +11356,8 @@ private:
 			TempVar current_offset = var_counter.next();
 			DereferenceOp load_offset;
 			load_offset.result = current_offset;
-			load_offset.pointer.type = Type::Int;  // Reading a 32-bit offset
-			load_offset.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+			load_offset.pointer.type = Type::UnsignedInt;  // Reading a 32-bit unsigned offset
+			load_offset.pointer.size_in_bits = 32;  // gp_offset/fp_offset is 32 bits
 			load_offset.pointer.pointer_depth = 1;
 			
 			if (is_float_type) {
@@ -11352,6 +11387,37 @@ private:
 			
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_offset), functionCallNode.called_from()));
 			
+			// Phase 4: Overflow support - check if offset >= limit and use overflow_arg_area if so
+			// For integers: gp_offset limit is 48 (6 registers * 8 bytes)
+			// For floats: fp_offset limit is 176 (48 + 8 registers * 16 bytes)
+			static size_t va_arg_counter = 0;
+			size_t current_va_arg = va_arg_counter++;
+			auto reg_path_label = StringTable::createStringHandle(StringBuilder().append("va_arg_reg_").append(current_va_arg));
+			auto overflow_path_label = StringTable::createStringHandle(StringBuilder().append("va_arg_overflow_").append(current_va_arg));
+			auto va_arg_end_label = StringTable::createStringHandle(StringBuilder().append("va_arg_end_").append(current_va_arg));
+			
+			// Allocate result variable that will be assigned in both paths
+			TempVar value = var_counter.next();
+			
+			// Compare current_offset < limit (48 for int, 176 for float)
+			unsigned long long offset_limit = is_float_type ? 176ULL : 48ULL;
+			TempVar cmp_result = var_counter.next();
+			BinaryOp compare_op;
+			compare_op.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
+			compare_op.rhs = TypedValue{Type::UnsignedInt, 32, offset_limit};
+			compare_op.result = cmp_result;
+			ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(compare_op), functionCallNode.called_from()));
+			
+			// Conditional branch: if (current_offset < limit) goto reg_path else goto overflow_path
+			CondBranchOp cond_branch;
+			cond_branch.label_true = reg_path_label;
+			cond_branch.label_false = overflow_path_label;
+			cond_branch.condition = TypedValue{Type::Bool, 1, cmp_result};
+			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), functionCallNode.called_from()));
+			
+			// ============ REGISTER PATH ============
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = reg_path_label}, functionCallNode.called_from()));
+			
 			// Step 4: Load reg_save_area pointer (at offset 16)
 			TempVar reg_save_area_field_addr = var_counter.next();
 			BinaryOp reg_save_addr;
@@ -11373,7 +11439,7 @@ private:
 			load_reg_save_ptr.result = reg_save_area_ptr;
 			load_reg_save_ptr.pointer.type = Type::UnsignedLongLong;
 			load_reg_save_ptr.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			load_reg_save_ptr.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
+			load_reg_save_ptr.pointer.pointer_depth = 1;
 			load_reg_save_ptr.pointer.value = materialized_reg_save_addr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), functionCallNode.called_from()));
 			
@@ -11394,19 +11460,23 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(compute_addr), functionCallNode.called_from()));
 			
 			// Step 6: Read the value at arg_addr
-			TempVar value = var_counter.next();
-			DereferenceOp read_value;
-			read_value.result = value;
-			read_value.pointer.type = requested_type;
-			read_value.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			read_value.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
-			read_value.pointer.value = arg_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_value), functionCallNode.called_from()));
+			TempVar reg_value = var_counter.next();
+			DereferenceOp read_reg_value;
+			read_reg_value.result = reg_value;
+			read_reg_value.pointer.type = requested_type;
+			read_reg_value.pointer.size_in_bits = requested_size;
+			read_reg_value.pointer.pointer_depth = 1;
+			read_reg_value.pointer.value = arg_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_reg_value), functionCallNode.called_from()));
+			
+			// Assign to result variable
+			AssignmentOp assign_reg_result;
+			assign_reg_result.result = value;
+			assign_reg_result.lhs = TypedValue{requested_type, requested_size, value};
+			assign_reg_result.rhs = TypedValue{requested_type, requested_size, reg_value};
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_reg_result), functionCallNode.called_from()));
 			
 			// Step 7: Increment the offset by 8 bytes (or 16 for floats in XMM regs) and store back
-			// Instead of creating a separate TempVar for new_offset, compute and store directly
-			
-			// First, compute new_offset = current_offset + increment
 			TempVar new_offset = var_counter.next();
 			BinaryOp increment_offset;
 			increment_offset.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
@@ -11415,7 +11485,6 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), functionCallNode.called_from()));
 			
 			// Step 8: Store updated offset back to the appropriate field in the structure
-			// Use Assignment to ensure new_offset is materialized before DereferenceStore reads it
 			TempVar materialized_offset = var_counter.next();
 			AssignmentOp materialize;
 			materialize.result = materialized_offset;
@@ -11436,7 +11505,6 @@ private:
 				fp_store_addr_calc.result = fp_offset_store_addr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_store_addr_calc), functionCallNode.called_from()));
 				
-				// Materialize the address before using it in DereferenceStore
 				TempVar materialized_addr = var_counter.next();
 				AssignmentOp materialize_addr;
 				materialize_addr.result = materialized_addr;
@@ -11452,57 +11520,329 @@ private:
 			store_offset.value = TypedValue{Type::UnsignedInt, 32, materialized_offset};
 			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_offset), functionCallNode.called_from()));
 			
+			// Jump to end
+			ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = va_arg_end_label}, functionCallNode.called_from()));
+			
+			// ============ OVERFLOW PATH ============
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = overflow_path_label}, functionCallNode.called_from()));
+			
+			// Load overflow_arg_area pointer (at offset 8)
+			TempVar overflow_field_addr = var_counter.next();
+			BinaryOp overflow_addr_calc;
+			overflow_addr_calc.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
+			overflow_addr_calc.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+			overflow_addr_calc.result = overflow_field_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(overflow_addr_calc), functionCallNode.called_from()));
+			
+			// Materialize before dereferencing
+			TempVar materialized_overflow_addr = var_counter.next();
+			AssignmentOp materialize_overflow;
+			materialize_overflow.result = materialized_overflow_addr;
+			materialize_overflow.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_overflow_addr};
+			materialize_overflow.rhs = TypedValue{Type::UnsignedLongLong, 64, overflow_field_addr};
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_overflow), functionCallNode.called_from()));
+			
+			TempVar overflow_ptr = var_counter.next();
+			DereferenceOp load_overflow_ptr;
+			load_overflow_ptr.result = overflow_ptr;
+			load_overflow_ptr.pointer.type = Type::UnsignedLongLong;
+			load_overflow_ptr.pointer.size_in_bits = 64;
+			load_overflow_ptr.pointer.pointer_depth = 1;
+			load_overflow_ptr.pointer.value = materialized_overflow_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_overflow_ptr), functionCallNode.called_from()));
+			
+			// Read value from overflow_arg_area
+			TempVar overflow_value = var_counter.next();
+			DereferenceOp read_overflow_value;
+			read_overflow_value.result = overflow_value;
+			read_overflow_value.pointer.type = requested_type;
+			read_overflow_value.pointer.size_in_bits = requested_size;
+			read_overflow_value.pointer.pointer_depth = 1;
+			read_overflow_value.pointer.value = overflow_ptr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_overflow_value), functionCallNode.called_from()));
+			
+			// Assign to result variable
+			AssignmentOp assign_overflow_result;
+			assign_overflow_result.result = value;
+			assign_overflow_result.lhs = TypedValue{requested_type, requested_size, value};
+			assign_overflow_result.rhs = TypedValue{requested_type, requested_size, overflow_value};
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_overflow_result), functionCallNode.called_from()));
+			
+			// Advance overflow_arg_area by 8 bytes
+			TempVar new_overflow_ptr = var_counter.next();
+			BinaryOp advance_overflow;
+			advance_overflow.lhs = TypedValue{Type::UnsignedLongLong, 64, overflow_ptr};
+			advance_overflow.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+			advance_overflow.result = new_overflow_ptr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(advance_overflow), functionCallNode.called_from()));
+			
+			// Store updated overflow_arg_area back to structure
+			DereferenceStoreOp store_overflow;
+			store_overflow.pointer.type = Type::UnsignedLongLong;
+			store_overflow.pointer.size_in_bits = 64;
+			store_overflow.pointer.pointer_depth = 1;
+			store_overflow.pointer.value = materialized_overflow_addr;
+			store_overflow.value = TypedValue{Type::UnsignedLongLong, 64, new_overflow_ptr};
+			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_overflow), functionCallNode.called_from()));
+			
+			// ============ END LABEL ============
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = va_arg_end_label}, functionCallNode.called_from()));
+			
 			return {requested_type, requested_size, value};
 			
 		} else {
-			// Windows/MSVC ABI: Simple pointer-based approach
-			// va_list is a char*, advance by 8 bytes
+			// Windows/MSVC ABI or Linux with simple char* va_list
+			// On Linux: va_start now points to the va_list structure, so use structure-based approach
+			// On Windows: va_list is a simple pointer, use pointer-based approach
 			
-			// Step 1: Dereference va_list to get the current pointer value
-			TempVar current_ptr = var_counter.next();
-			DereferenceOp deref_ptr_op;
-			deref_ptr_op.result = current_ptr;
-			deref_ptr_op.pointer.type = Type::UnsignedLongLong;
-			deref_ptr_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			deref_ptr_op.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
-			// Convert std::variant<StringHandle, TempVar> to IrValue
-			if (std::holds_alternative<StringHandle>(va_list_var)) {
-				deref_ptr_op.pointer.value = std::get<StringHandle>(va_list_var);
+			if (context_->isItaniumMangling()) {
+				// Linux/System V AMD64: char* va_list now points to va_list structure
+				// Use the same structure-based approach with overflow support
+				
+				// Step 1: Load the va_list pointer (points to va_list structure)
+				TempVar va_list_struct_ptr = var_counter.next();
+				AssignmentOp load_ptr_op;
+				load_ptr_op.result = va_list_struct_ptr;
+				load_ptr_op.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
+				if (std::holds_alternative<StringHandle>(va_list_var)) {
+					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
+				} else {
+					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+				}
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_ptr_op), functionCallNode.called_from()));
+				
+				// Load gp_offset from structure (offset 0)
+				TempVar current_offset = var_counter.next();
+				DereferenceOp load_offset;
+				load_offset.result = current_offset;
+				load_offset.pointer.type = Type::UnsignedInt;
+				load_offset.pointer.size_in_bits = 32;
+				load_offset.pointer.pointer_depth = 1;
+				load_offset.pointer.value = va_list_struct_ptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_offset), functionCallNode.called_from()));
+				
+				// Phase 4: Overflow support with conditional branch
+				static size_t va_arg_ptr_counter = 0;
+				size_t current_va_arg = va_arg_ptr_counter++;
+				auto reg_path_label = StringTable::createStringHandle(StringBuilder().append("va_arg_ptr_reg_").append(current_va_arg));
+				auto overflow_path_label = StringTable::createStringHandle(StringBuilder().append("va_arg_ptr_overflow_").append(current_va_arg));
+				auto va_arg_end_label = StringTable::createStringHandle(StringBuilder().append("va_arg_ptr_end_").append(current_va_arg));
+				
+				// Allocate result variable
+				TempVar value = var_counter.next();
+				
+				// Compare current_offset < 48
+				TempVar cmp_result = var_counter.next();
+				BinaryOp compare_op;
+				compare_op.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
+				compare_op.rhs = TypedValue{Type::UnsignedInt, 32, 48ULL};
+				compare_op.result = cmp_result;
+				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(compare_op), functionCallNode.called_from()));
+				
+				// Conditional branch
+				CondBranchOp cond_branch;
+				cond_branch.label_true = reg_path_label;
+				cond_branch.label_false = overflow_path_label;
+				cond_branch.condition = TypedValue{Type::Bool, 1, cmp_result};
+				ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), functionCallNode.called_from()));
+				
+				// ============ REGISTER PATH ============
+				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = reg_path_label}, functionCallNode.called_from()));
+				
+				// Load reg_save_area pointer (at offset 16)
+				TempVar reg_save_area_field_addr = var_counter.next();
+				BinaryOp reg_save_addr;
+				reg_save_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
+				reg_save_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, 16ULL};
+				reg_save_addr.result = reg_save_area_field_addr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(reg_save_addr), functionCallNode.called_from()));
+				
+				TempVar materialized_reg_save_addr = var_counter.next();
+				AssignmentOp materialize_reg;
+				materialize_reg.result = materialized_reg_save_addr;
+				materialize_reg.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_reg_save_addr};
+				materialize_reg.rhs = TypedValue{Type::UnsignedLongLong, 64, reg_save_area_field_addr};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_reg), functionCallNode.called_from()));
+				
+				TempVar reg_save_area_ptr = var_counter.next();
+				DereferenceOp load_reg_save_ptr;
+				load_reg_save_ptr.result = reg_save_area_ptr;
+				load_reg_save_ptr.pointer.type = Type::UnsignedLongLong;
+				load_reg_save_ptr.pointer.size_in_bits = 64;
+				load_reg_save_ptr.pointer.pointer_depth = 1;
+				load_reg_save_ptr.pointer.value = materialized_reg_save_addr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), functionCallNode.called_from()));
+				
+				// Compute address: reg_save_area + current_offset
+				TempVar offset_64 = var_counter.next();
+				AssignmentOp convert_offset;
+				convert_offset.result = offset_64;
+				convert_offset.lhs = TypedValue{Type::UnsignedLongLong, 64, offset_64};
+				convert_offset.rhs = TypedValue{Type::UnsignedInt, 32, current_offset};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(convert_offset), functionCallNode.called_from()));
+				
+				TempVar arg_addr = var_counter.next();
+				BinaryOp compute_addr;
+				compute_addr.lhs = TypedValue{Type::UnsignedLongLong, 64, reg_save_area_ptr};
+				compute_addr.rhs = TypedValue{Type::UnsignedLongLong, 64, offset_64};
+				compute_addr.result = arg_addr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(compute_addr), functionCallNode.called_from()));
+				
+				// Read value
+				TempVar reg_value = var_counter.next();
+				DereferenceOp read_reg_value;
+				read_reg_value.result = reg_value;
+				read_reg_value.pointer.type = requested_type;
+				read_reg_value.pointer.size_in_bits = requested_size;
+				read_reg_value.pointer.pointer_depth = 1;
+				read_reg_value.pointer.value = arg_addr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_reg_value), functionCallNode.called_from()));
+				
+				// Assign to result
+				AssignmentOp assign_reg_result;
+				assign_reg_result.result = value;
+				assign_reg_result.lhs = TypedValue{requested_type, requested_size, value};
+				assign_reg_result.rhs = TypedValue{requested_type, requested_size, reg_value};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_reg_result), functionCallNode.called_from()));
+				
+				// Increment gp_offset
+				TempVar new_offset = var_counter.next();
+				BinaryOp increment_offset;
+				increment_offset.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
+				increment_offset.rhs = TypedValue{Type::UnsignedInt, 32, 8ULL};
+				increment_offset.result = new_offset;
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), functionCallNode.called_from()));
+				
+				TempVar materialized_offset = var_counter.next();
+				AssignmentOp materialize_off;
+				materialize_off.result = materialized_offset;
+				materialize_off.lhs = TypedValue{Type::UnsignedInt, 32, materialized_offset};
+				materialize_off.rhs = TypedValue{Type::UnsignedInt, 32, new_offset};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_off), functionCallNode.called_from()));
+				
+				DereferenceStoreOp store_offset;
+				store_offset.pointer.type = Type::UnsignedInt;
+				store_offset.pointer.size_in_bits = 64;
+				store_offset.pointer.pointer_depth = 1;
+				store_offset.pointer.value = va_list_struct_ptr;
+				store_offset.value = TypedValue{Type::UnsignedInt, 32, materialized_offset};
+				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_offset), functionCallNode.called_from()));
+				
+				// Jump to end
+				ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = va_arg_end_label}, functionCallNode.called_from()));
+				
+				// ============ OVERFLOW PATH ============
+				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = overflow_path_label}, functionCallNode.called_from()));
+				
+				// Load overflow_arg_area (at offset 8)
+				TempVar overflow_field_addr = var_counter.next();
+				BinaryOp overflow_addr_calc;
+				overflow_addr_calc.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_struct_ptr};
+				overflow_addr_calc.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+				overflow_addr_calc.result = overflow_field_addr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(overflow_addr_calc), functionCallNode.called_from()));
+				
+				TempVar materialized_overflow_addr = var_counter.next();
+				AssignmentOp materialize_overflow;
+				materialize_overflow.result = materialized_overflow_addr;
+				materialize_overflow.lhs = TypedValue{Type::UnsignedLongLong, 64, materialized_overflow_addr};
+				materialize_overflow.rhs = TypedValue{Type::UnsignedLongLong, 64, overflow_field_addr};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_overflow), functionCallNode.called_from()));
+				
+				TempVar overflow_ptr = var_counter.next();
+				DereferenceOp load_overflow_ptr;
+				load_overflow_ptr.result = overflow_ptr;
+				load_overflow_ptr.pointer.type = Type::UnsignedLongLong;
+				load_overflow_ptr.pointer.size_in_bits = 64;
+				load_overflow_ptr.pointer.pointer_depth = 1;
+				load_overflow_ptr.pointer.value = materialized_overflow_addr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_overflow_ptr), functionCallNode.called_from()));
+				
+				// Read value from overflow area
+				TempVar overflow_value = var_counter.next();
+				DereferenceOp read_overflow_value;
+				read_overflow_value.result = overflow_value;
+				read_overflow_value.pointer.type = requested_type;
+				read_overflow_value.pointer.size_in_bits = requested_size;
+				read_overflow_value.pointer.pointer_depth = 1;
+				read_overflow_value.pointer.value = overflow_ptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_overflow_value), functionCallNode.called_from()));
+				
+				// Assign to result
+				AssignmentOp assign_overflow_result;
+				assign_overflow_result.result = value;
+				assign_overflow_result.lhs = TypedValue{requested_type, requested_size, value};
+				assign_overflow_result.rhs = TypedValue{requested_type, requested_size, overflow_value};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_overflow_result), functionCallNode.called_from()));
+				
+				// Advance overflow_arg_area by 8
+				TempVar new_overflow_ptr = var_counter.next();
+				BinaryOp advance_overflow;
+				advance_overflow.lhs = TypedValue{Type::UnsignedLongLong, 64, overflow_ptr};
+				advance_overflow.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+				advance_overflow.result = new_overflow_ptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(advance_overflow), functionCallNode.called_from()));
+				
+				DereferenceStoreOp store_overflow;
+				store_overflow.pointer.type = Type::UnsignedLongLong;
+				store_overflow.pointer.size_in_bits = 64;
+				store_overflow.pointer.pointer_depth = 1;
+				store_overflow.pointer.value = materialized_overflow_addr;
+				store_overflow.value = TypedValue{Type::UnsignedLongLong, 64, new_overflow_ptr};
+				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_overflow), functionCallNode.called_from()));
+				
+				// ============ END LABEL ============
+				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = va_arg_end_label}, functionCallNode.called_from()));
+				
+				return {requested_type, requested_size, value};
+				
 			} else {
-				deref_ptr_op.pointer.value = std::get<TempVar>(va_list_var);
+				// Windows/MSVC ABI: Simple pointer-based approach
+				// va_list is a char* that directly holds the address of the next variadic argument
+				
+				// Step 1: Load the current pointer value from va_list variable
+				TempVar current_ptr = var_counter.next();
+				AssignmentOp load_ptr_op;
+				load_ptr_op.result = current_ptr;
+				load_ptr_op.lhs = TypedValue{Type::UnsignedLongLong, 64, current_ptr};
+				if (std::holds_alternative<StringHandle>(va_list_var)) {
+					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
+				} else {
+					load_ptr_op.rhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+				}
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_ptr_op), functionCallNode.called_from()));
+				
+				// Step 2: Read the value at the current pointer
+				TempVar value = var_counter.next();
+				DereferenceOp deref_value_op;
+				deref_value_op.result = value;
+				deref_value_op.pointer.type = requested_type;
+				deref_value_op.pointer.size_in_bits = requested_size;
+				deref_value_op.pointer.pointer_depth = 1;
+				deref_value_op.pointer.value = current_ptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), functionCallNode.called_from()));
+				
+				// Step 3: Advance va_list by 8 bytes
+				TempVar next_ptr = var_counter.next();
+				BinaryOp add_op;
+				add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, current_ptr};
+				add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+				add_op.result = next_ptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
+				
+				// Step 4: Store the updated pointer back to va_list
+				AssignmentOp assign_op;
+				assign_op.result = var_counter.next();  // unused but required
+				if (std::holds_alternative<TempVar>(va_list_var)) {
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+				} else {
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
+				}
+				assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, next_ptr};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
+				
+				return {requested_type, requested_size, value};
 			}
-			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_ptr_op), functionCallNode.called_from()));
-			
-			// Step 2: Read the value at the current pointer
-			TempVar value = var_counter.next();
-			DereferenceOp deref_value_op;
-			deref_value_op.result = value;
-			deref_value_op.pointer.type = requested_type;
-			deref_value_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-			deref_value_op.pointer.pointer_depth = 1;  // TODO: Verify pointer depth
-			deref_value_op.pointer.value = current_ptr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), functionCallNode.called_from()));
-			
-			// Step 3: Advance va_list by 8 bytes
-			TempVar next_ptr = var_counter.next();
-			BinaryOp add_op;
-			add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, current_ptr};
-			add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
-			add_op.result = next_ptr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
-			
-			// Step 4: Store the updated pointer back to va_list
-			AssignmentOp assign_op;
-			assign_op.result = var_counter.next();  // unused but required
-			if (std::holds_alternative<TempVar>(va_list_var)) {
-				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
-			} else {
-				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
-			}
-			assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, next_ptr};
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
-			
-			return {requested_type, requested_size, value};
 		}
 	}
 	
@@ -11517,28 +11857,16 @@ private:
 		// Get the first argument (va_list variable)
 		ASTNode arg0 = functionCallNode.arguments()[0];
 		auto arg0_ir = visitExpressionNode(arg0.as<ExpressionNode>());
-		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
-		bool va_list_is_pointer = false;
+		
+		// Get the va_list variable name (needed for assignment later)
 		StringHandle va_list_name_handle;
 		if (std::holds_alternative<IdentifierNode>(arg0.as<ExpressionNode>())) {
 			const auto& id = std::get<IdentifierNode>(arg0.as<ExpressionNode>());
 			va_list_name_handle = StringTable::getOrInternStringHandle(id.name());
-			if (auto sym = symbol_table.lookup(id.name())) {
-				if (sym->is<DeclarationNode>()) {
-					const auto& ty = sym->as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-					va_list_is_pointer = ty.pointer_depth() > 0;
-				} else if (sym->is<VariableDeclarationNode>()) {
-					const auto& ty = sym->as<VariableDeclarationNode>().declaration().type_node().as<TypeSpecifierNode>();
-					va_list_is_pointer = ty.pointer_depth() > 0;
-				}
-			}
 		}
-		// Fallback: treat as pointer when operand size is pointer sized (common for typedef char*)
-		if (!va_list_is_pointer && arg0_ir.size() >= 2) {
-			if (std::get<int>(arg0_ir[1]) == 64) {
-				va_list_is_pointer = true;
-			}
-		}
+		
+		// Detect if the user's va_list is a pointer type (e.g., typedef char* va_list;)
+		bool va_list_is_pointer = isVaListPointerType(arg0, arg0_ir);
 		
 		// Get the second argument (last fixed parameter)
 		ASTNode arg1 = functionCallNode.arguments()[1];
@@ -11598,60 +11926,89 @@ private:
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(final_assign), functionCallNode.called_from()));
 			
 		} else {
-			// Windows/MSVC ABI: Compute &last_param + 8
-			TempVar last_param_addr = var_counter.next();
+			// va_list is a simple char* pointer type (typedef char* va_list;)
+			// On Windows: variadic args are on the stack, so use &last_param + 8
+			// On Linux: variadic args are in registers saved to reg_save_area, point there instead
 			
-			// Generate AddressOf IR for the last parameter
-			AddressOfOp addr_op;
-			addr_op.result = last_param_addr;
-			// Get the type of the last parameter from the symbol table
-			auto param_symbol = symbol_table.lookup(last_param_name);
-			if (!param_symbol.has_value()) {
-				FLASH_LOG(Codegen, Error, "Parameter '", last_param_name, "' not found in __builtin_va_start");
-				return {Type::Void, 0, 0ULL, 0ULL};
-			}
-			const DeclarationNode& param_decl = param_symbol->as<DeclarationNode>();
-			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-			
-			addr_op.operand.type = param_type.type();
-			addr_op.operand.size_in_bits = static_cast<int>(param_type.size_in_bits());
-			addr_op.operand.pointer_depth = param_type.pointer_depth();
-			addr_op.operand.value = StringTable::getOrInternStringHandle(last_param_name);
-			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
-			
-			// Add 8 bytes (64 bits) to get to the next parameter slot
-			TempVar va_start_addr = var_counter.next();
-			BinaryOp add_op;
-			add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, last_param_addr};
-			add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
-			add_op.result = va_start_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
-			
-			// Assign to va_list variable
-			AssignmentOp assign_op;
+			std::variant<StringHandle, TempVar> va_list_var;
 			if (va_list_name_handle.isValid()) {
-				assign_op.result = va_list_name_handle;
-				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_name_handle};
+				va_list_var = va_list_name_handle;
 			} else if (std::holds_alternative<TempVar>(arg0_ir[2])) {
-				assign_op.result = std::get<TempVar>(arg0_ir[2]);
-				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(arg0_ir[2])};
+				va_list_var = std::get<TempVar>(arg0_ir[2]);
 			} else if (std::holds_alternative<StringHandle>(arg0_ir[2])) {
-				assign_op.result = std::get<StringHandle>(arg0_ir[2]);
-				assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(arg0_ir[2])};
+				va_list_var = std::get<StringHandle>(arg0_ir[2]);
 			} else {
 				FLASH_LOG(Codegen, Error, "__builtin_va_start first argument must be a variable or temp");
 				return {Type::Void, 0, 0ULL, 0ULL};
 			}
-			assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
-
-			// Ensure the user-visible va_list variable itself gets the pointer value (not just a temp)
-			if (va_list_name_handle.isValid()) {
-				AssignmentOp fix_assign;
-				fix_assign.result = va_list_name_handle;
-				fix_assign.lhs = TypedValue{Type::UnsignedLongLong, 64, va_list_name_handle};
-				fix_assign.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
-				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(fix_assign), functionCallNode.called_from()));
+			
+			if (context_->isItaniumMangling()) {
+				// Linux/System V AMD64: Use va_list structure internally even for char* va_list
+				// Phase 4: Point to the va_list structure so va_arg can access gp_offset and overflow_arg_area
+				// This enables proper overflow support when >5 variadic int args are passed
+				
+				// Get address of va_list structure
+				TempVar va_struct_addr = var_counter.next();
+				AddressOfOp va_struct_op;
+				va_struct_op.result = va_struct_addr;
+				va_struct_op.operand.type = Type::Char;
+				va_struct_op.operand.size_in_bits = 8;
+				va_struct_op.operand.pointer_depth = 0;
+				va_struct_op.operand.value = StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv);
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(va_struct_op), functionCallNode.called_from()));
+				
+				// Assign to va_list variable
+				AssignmentOp assign_op;
+				if (std::holds_alternative<StringHandle>(va_list_var)) {
+					assign_op.result = std::get<StringHandle>(va_list_var);
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
+				} else {
+					assign_op.result = std::get<TempVar>(va_list_var);
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+				}
+				assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_struct_addr};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
+			} else {
+				// Windows/MSVC ABI: Compute &last_param + 8 (variadic args are on stack)
+				TempVar last_param_addr = var_counter.next();
+				
+				// Generate AddressOf IR for the last parameter
+				AddressOfOp addr_op;
+				addr_op.result = last_param_addr;
+				// Get the type of the last parameter from the symbol table
+				auto param_symbol = symbol_table.lookup(last_param_name);
+				if (!param_symbol.has_value()) {
+					FLASH_LOG(Codegen, Error, "Parameter '", last_param_name, "' not found in __builtin_va_start");
+					return {Type::Void, 0, 0ULL, 0ULL};
+				}
+				const DeclarationNode& param_decl = param_symbol->as<DeclarationNode>();
+				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+				
+				addr_op.operand.type = param_type.type();
+				addr_op.operand.size_in_bits = static_cast<int>(param_type.size_in_bits());
+				addr_op.operand.pointer_depth = param_type.pointer_depth();
+				addr_op.operand.value = StringTable::getOrInternStringHandle(last_param_name);
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
+				
+				// Add 8 bytes (64 bits) to get to the next parameter slot
+				TempVar va_start_addr = var_counter.next();
+				BinaryOp add_op;
+				add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, last_param_addr};
+				add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+				add_op.result = va_start_addr;
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
+				
+				// Assign to va_list variable
+				AssignmentOp assign_op;
+				if (std::holds_alternative<StringHandle>(va_list_var)) {
+					assign_op.result = std::get<StringHandle>(va_list_var);
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<StringHandle>(va_list_var)};
+				} else {
+					assign_op.result = std::get<TempVar>(va_list_var);
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, std::get<TempVar>(va_list_var)};
+				}
+				assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, va_start_addr};
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
 			}
 		}
 		
