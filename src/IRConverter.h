@@ -9386,7 +9386,7 @@ private:
 						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
 						auto ref_it = reference_stack_info_.find(var_offset);
 						if (ref_it != reference_stack_info_.end() && !current_function_returns_reference_) {
-							// This is a reference and function returns by value - load pointer and dereference
+							// This is a reference and function does not return a reference - load pointer and dereference to get value
 							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
 							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer

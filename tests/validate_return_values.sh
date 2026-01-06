@@ -94,8 +94,12 @@ for base in "${TEST_FILES[@]}"; do
     
     rm -f "$obj" "$exe"
     
-    # Compile
-    compile_output=$(timeout 30 ./x64/Debug/FlashCpp "$f" 2>&1)
+    # Compile (with special flags for certain tests)
+    extra_flags=()
+    if [ "$base" == "test_no_access_control_flag.cpp" ]; then
+        extra_flags+=("-fno-access-control")
+    fi
+    compile_output=$(timeout 30 ./x64/Debug/FlashCpp "${extra_flags[@]}" "$f" 2>&1)
     compile_exit=$?
     
     # Check for compiler crash
