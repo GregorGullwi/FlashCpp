@@ -12,7 +12,7 @@ This document outlines a comprehensive plan to address the remaining runtime iss
 
 ## Recent Progress
 
-### ✅ Variadic Functions - Significant Progress (January 2026)
+### ⚠️ Variadic Functions - Partial Progress (January 2026)
 
 **Issue:** System V AMD64 ABI variadic function implementation was incomplete, lacking proper register save area and va_list structure setup.
 
@@ -34,12 +34,23 @@ This document outlines a comprehensive plan to address the remaining runtime iss
    - Added `static_assert(INT_REG_COUNT == 6, ...)` for compile-time ABI verification
    - Improved code maintainability and bug detection
 
-**Impact:** 
-- Basic variadic functions now work on Linux (System V AMD64 ABI)
-- Tests like `test_va_simple_ret30.cpp` and `test_variadic_mixed_ret16.cpp` compile, link, and run successfully
-- Remaining work: comprehensive testing of edge cases (overflow args, struct args, complex float scenarios)
+**Validation Results (Testing Points 3-5):**
+Upon thorough testing as requested, discovered critical issues:
+- ❌ **va_arg with integer arguments**: All tests crash with segmentation fault (tested 3, 6, 10 int args)
+- ❌ **va_arg with floating-point arguments**: Crashes with segmentation fault (tested double args)
+- ❌ **va_arg with overflow (>6 int args)**: Crashes with segmentation fault (tested 10 int args)
+- ❌ **Struct arguments**: Not tested due to prerequisite failures
 
-**Status:** ✅ Phases 1-2 complete, Phase 3 mostly complete, Phase 4 partially complete
+**Root Cause:**
+Tests that appear to "pass" (like `test_va_simple_ret30.cpp` and `test_variadic_mixed_ret16.cpp`) only parse variadic function declarations but never actually call `va_arg`. The `va_arg` implementation in IRConverter.h has critical bugs causing runtime crashes.
+
+**Impact:** 
+- ✅ Variadic function declarations and parsing work correctly on Linux (System V AMD64 ABI)
+- ✅ Register save area and va_list structure initialization are implemented
+- ❌ **va_arg has critical bugs - all runtime tests crash with segmentation faults**
+- Remaining work: debug and fix va_arg implementation, then test edge cases
+
+**Status:** ✅ Phases 1-2 complete, ❌ Phase 3 has critical bugs, ❌ Phase 4 blocked by Phase 3 failures
 
 ---
 
@@ -135,7 +146,7 @@ Exception handling requires complex runtime support:
 
 ---
 
-### 2. Variadic Arguments (2 files) - **MEDIUM COMPLEXITY** - ✅ **SIGNIFICANT PROGRESS**
+### 2. Variadic Arguments (2 files) - **MEDIUM COMPLEXITY** - ⚠️ **PARTIAL PROGRESS - va_arg BROKEN**
 
 **Files:**
 - `test_va_implementation.cpp`
@@ -148,7 +159,8 @@ Exception handling requires complex runtime support:
 - ✅ Register save area properly set up (176 bytes: 48 for int regs + 128 for float regs)
 - ✅ va_list structure initialization with gp_offset, fp_offset, overflow_arg_area, reg_save_area
 - ✅ Fixed parameter offset tracking for variadic functions
-- ⚠️ va_arg implementation may need runtime testing and refinement
+- ❌ **va_arg implementation has critical bugs causing segmentation faults**
+- ❌ **No variadic tests actually work end-to-end** (tests that "pass" only parse but don't use va_arg)
 
 **Previous Issues (NOW RESOLVED):**
 On Linux x64 (System V AMD64 ABI), variadic arguments require:
@@ -190,10 +202,11 @@ On Linux x64 (System V AMD64 ABI), variadic arguments require:
    - Initialize all 4 fields of va_list structure
 ```
 
-#### Phase 3: va_arg Implementation - ⚠️ **IN PROGRESS / NEEDS TESTING**
+#### Phase 3: va_arg Implementation - ❌ **NOT WORKING**
 ```
-⚠️ 1. For __builtin_va_arg(va_list, type):
-   - Implementation exists in IRConverter.h
+❌ 1. For __builtin_va_arg(va_list, type):
+   - Implementation exists in IRConverter.h but has critical bugs
+   - Currently causes segmentation faults when used
    - Check if type fits in registers
    - If integer type and gp_offset < 48:
      * Read from reg_save_area + gp_offset
@@ -204,16 +217,19 @@ On Linux x64 (System V AMD64 ABI), variadic arguments require:
    - Otherwise:
      * Read from overflow_arg_area
      * Increment overflow_arg_area by aligned size
-   - Requires thorough runtime testing to verify correctness
+   - **CRITICAL**: Implementation crashes on all tested scenarios
 ```
 
-#### Phase 4: Testing - ⚠️ **PARTIALLY COMPLETE**
+#### Phase 4: Testing - ❌ **INCOMPLETE - va_arg NOT WORKING**
 ```
-✅ 1. Test with integer arguments only (test_va_simple_ret30.cpp passes)
-✅ 2. Test with mixed arguments (test_variadic_mixed_ret16.cpp passes)
-⚠️ 3. Test with floating-point arguments - needs verification
-⚠️ 4. Test with > 6 integer or > 8 FP arguments (overflow) - needs verification
-⚠️ 5. Test with struct arguments passed via varargs - needs verification
+✅ 1. Variadic function declarations parse correctly (test_va_simple_ret30.cpp, test_variadic_mixed_ret16.cpp)
+❌ 2. va_arg with integer arguments - CRASHES (tested with 3-10 int args, all segfault)
+❌ 3. va_arg with floating-point arguments - CRASHES (tested with double args, segfaults)
+❌ 4. va_arg with > 6 integer or > 8 FP arguments (overflow) - CRASHES (tested with 10 int args, segfaults)
+❌ 5. Test with struct arguments passed via varargs - NOT TESTED (prerequisite tests failing)
+
+Note: Tests that "pass" only parse variadic functions but don't actually call va_arg.
+The va_arg implementation has critical bugs that cause segmentation faults at runtime.
 ```
 
 **Recent Progress (Latest Commit):**
@@ -222,8 +238,16 @@ The last commit addressed code review feedback by adding:
 2. ✅ `FLOAT_REG_COUNT` constant instead of magic number for better code clarity
 3. ✅ These changes improve code maintainability and catch potential bugs at compile time
 
-**Estimated Remaining Effort:** 1-2 days for comprehensive testing and fixing edge cases  
-**Priority:** MEDIUM-HIGH (common C++ feature, mostly working)  
+**Testing Results:**
+Upon validation, the variadic implementation has critical issues:
+- Tests that appear to "pass" only declare variadic functions but don't use va_arg
+- All attempts to actually call va_arg result in segmentation faults
+- Tested scenarios: 3-10 integer args, floating-point args, overflow args - all crash
+- The va_start and register save area setup appears correct
+- The va_arg implementation has bugs that need debugging and fixing
+
+**Estimated Remaining Effort:** 3-5 days for debugging and fixing va_arg implementation, then comprehensive testing  
+**Priority:** MEDIUM-HIGH (common C++ feature, infrastructure in place but va_arg broken)  
 **Files to Modify:**
 - `src/IRConverter.h` - Fix va_start/va_arg implementation
 - `src/CodeGen.h` - May need ABI-specific register handling
@@ -443,12 +467,12 @@ Likely dynamic_cast with RTTI or complex cast scenarios
    - **FIXED:** Modified `emitLoadIndexIntoRCX()` to use size-appropriate mov instructions
    - **Impact:** All 674 tests now compile and link successfully
 
-### Phase 1: High Priority Runtime Features (1-2 weeks) - **IN PROGRESS**
-1. ~~**Variadic Arguments** (4 days)~~ - ⚠️ **MOSTLY COMPLETE** (3/4 phases done, 1-2 days remaining for edge case testing)
+### Phase 1: High Priority Runtime Features (2-3 weeks) - **IN PROGRESS**
+1. ~~**Variadic Arguments** (4 days)~~ - ⚠️ **PARTIAL PROGRESS** (Phases 1-2 complete, Phase 3 broken, 3-5 days remaining for debugging and testing)
    - ✅ Phase 1: va_list structure implementation
    - ✅ Phase 2: va_start implementation  
-   - ⚠️ Phase 3: va_arg implementation (needs thorough testing)
-   - ⚠️ Phase 4: Comprehensive testing (partially complete)
+   - ❌ Phase 3: va_arg implementation (has critical bugs causing segfaults)
+   - ❌ Phase 4: Comprehensive testing (blocked by Phase 3 failures)
 2. **Exceptions** (5-8 days) - Common feature, currently crashes at runtime
 
 ### Phase 2: Advanced Features (2-3 weeks)
@@ -459,7 +483,7 @@ Likely dynamic_cast with RTTI or complex cast scenarios
 5. **Advanced Lambda Features** (3-4 days) - Modern C++, crashes at runtime
 6. **Complex Cast Scenarios** (2-3 days) - Edge cases, crashes at runtime
 
-**Total Estimated Effort:** 19-30 days for remaining 9 test files with runtime issues (reduced from 22-32 days due to variadic progress)
+**Total Estimated Effort:** 21-33 days for remaining 9 test files with runtime issues (adjusted from 19-30 days after discovering va_arg bugs)
 
 ---
 
@@ -541,6 +565,6 @@ cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh
 ---
 
 *Document Created: 2025-12-22*  
-*Last Updated: 2026-01-06 (Variadic functions: added register save area, va_list structure, FLOAT_REG_COUNT constant, and static_assert)*  
+*Last Updated: 2026-01-06 (Variadic functions: validated points 3-5, discovered va_arg implementation has critical bugs)*  
 *For: FlashCpp Compiler Development*  
-*Status: Implementation Phase - Variadic Arguments Mostly Complete*
+*Status: Implementation Phase - Variadic Arguments Infrastructure Complete, va_arg Broken*
