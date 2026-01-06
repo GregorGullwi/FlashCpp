@@ -2,14 +2,9 @@
 // This tests __has_trivial_destructor(T) being used as a template argument
 // Expected return value: 42
 
-template<bool>
+template<bool B>
 struct bool_constant {
-    static constexpr bool value = true;
-};
-
-template<>
-struct bool_constant<false> {
-    static constexpr bool value = false;
+    static constexpr bool value = B;
 };
 
 // Test using a type trait intrinsic as template argument  
