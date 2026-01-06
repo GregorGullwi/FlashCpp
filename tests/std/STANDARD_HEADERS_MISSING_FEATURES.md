@@ -4,6 +4,14 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 6, 2026 - Type Trait Intrinsics in Template Arguments)**:
+- ✅ **Type trait intrinsics as template arguments** - Patterns like `bool_constant<__has_trivial_destructor(T)>` now work correctly
+- ✅ **Template parameter recognition in type specifier** - Identifiers like `_Tp` are now recognized as template parameters during template body parsing
+- ✅ **`>>` token handling in nested templates** - Dependent expressions followed by nested template closing tokens (`>>`) are now properly handled
+- ✅ **TypeTraitExprNode compile-time evaluation** - Type traits like `__has_trivial_destructor`, `__is_class`, etc. can now be evaluated at compile time
+- ✅ **Template parameter substitution for deferred base classes** - Type trait expressions in deferred base class arguments are now properly substituted
+- 🎯 **All 838 tests passing!**
+
 **UPDATE (January 3, 2026 - Pack Expansion in Variadic Type Traits)**:
 - ✅ **Pack expansion in variadic type traits** - Patterns like `__is_constructible(_Tp, _Args...)` now parse correctly
 - ✅ **Member type alias reference modifiers** - `using type = _Tp&;` and `using type = _Tp&&;` now work in struct/class member context
