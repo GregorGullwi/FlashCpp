@@ -54,16 +54,21 @@ This document outlines a comprehensive plan to address the remaining runtime iss
   - sum5(5, 1, 2, 3, 4, 5) = 15 ✓
 - ✅ **va_arg with overflow (>5 int args after 1 fixed param)**: WORKING
   - sum7(7, 1, 2, 3, 4, 5, 6, 7) = 28 ✓
-- ❌ **va_arg with floating-point arguments**: Not yet tested
-- ❌ **Struct arguments**: Not tested
+- ✅ **va_arg with floating-point arguments**: WORKING (Phase 5 complete)
+  - Fixed fp_offset handling in char* va_list path
+  - sum_doubles(3, 1.0, 2.0, 3.0) = 6.0 ✓
+  - sum_many_doubles(10, ...) = 55.0 ✓ (overflow to stack works)
+  - Mixed int/double varargs work correctly ✓
+- ❌ **Struct arguments**: Not yet tested
 
 **Impact:** 
 - ✅ Variadic function declarations and parsing work correctly on Linux (System V AMD64 ABI)
 - ✅ Register save area and va_list structure initialization are implemented
 - ✅ **va_arg now works for integer arguments including overflow to stack**
-- Remaining work: test float args, struct args
+- ✅ **va_arg now works for floating-point arguments including overflow to stack**
+- Remaining work: test struct args
 
-**Status:** ✅ Phases 1-4 complete, Phase 5 (float/struct args) not yet tested
+**Status:** ✅ Phases 1-5 complete (integer and float args with overflow), struct args not tested
 
 ---
 
@@ -238,13 +243,28 @@ Exception handling requires complex runtime support:
 - ✅ sum5(5, 1, 2, 3, 4, 5) = 15
 - ✅ sum7(7, 1, 2, 3, 4, 5, 6, 7) = 28 (overflow works!)
 
-**Remaining Work (Phase 5):**
-- ❌ Float variadic arguments not yet tested (requires fp_offset path testing)
+#### Phase 5: Float Variadic Arguments - ✅ **COMPLETED**
+```
+✅ 1. Fixed fp_offset handling in char* va_list path:
+   - Modified generateVaArgIntrinsic() to handle float types in Itanium char* va_list code path
+   - Load fp_offset from va_list structure offset 4 (instead of gp_offset at offset 0)
+   - Use overflow limit 176 for floats (instead of 48 for integers)
+   - Increment fp_offset by 16 (XMM register size) instead of 8
+   - Store updated fp_offset back to offset 4
+```
+
+**Testing Results (Phase 5 Complete):**
+- ✅ sum_doubles(3, 1.0, 2.0, 3.0) = 6.0
+- ✅ sum_many_doubles(10, 1.0...10.0) = 55.0 (overflow works!)
+- ✅ sum_mixed(3, 1.5, 2.5, 3.0) = 7.0 (int+double mixed)
+- ✅ sum_alternating(3, (1,0.5), (2,1.5), (3,2.5)) = 10.5 (alternating int/double)
+
+**Remaining Work (Phase 6):**
 - ❌ Struct arguments via varargs not tested
 
-**Estimated Remaining Effort:** 1-2 days for float/struct arg testing
-**Priority:** LOW (integer variadic args fully work)  
-**Status:** ✅ **Phases 1-4 complete** (integer args with overflow support)
+**Estimated Remaining Effort:** 0.5-1 days for struct arg testing
+**Priority:** LOW (integer and float variadic args fully work)  
+**Status:** ✅ **Phases 1-5 complete** (integer and float args with overflow support)
 
 ---
 
@@ -559,6 +579,6 @@ cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh
 ---
 
 *Document Created: 2025-12-22*  
-*Last Updated: 2026-01-06 (Variadic functions: Phase 4 complete, overflow support working)*  
+*Last Updated: 2026-01-06 (Variadic functions: Phase 5 complete, float args with overflow working)*  
 *For: FlashCpp Compiler Development*  
-*Status: Implementation Phase - Variadic Arguments Phase 4 Complete (integer args with overflow)*
+*Status: Implementation Phase - Variadic Arguments Phase 5 Complete (integer and float args with overflow)*
