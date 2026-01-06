@@ -515,6 +515,12 @@ private:
         // Used when building instantiated template names (e.g., "is_arithmetic_int")
         static void append_type_name_suffix(StringBuilder& sb, const TemplateTypeArg& arg);
         
+        // Phase 4: Unified declaration parsing
+        // This is the single entry point for parsing all declarations (variables and functions)
+        // Context determines what forms are legal and how they're interpreted
+        ParseResult parse_declaration(FlashCpp::DeclarationContext context = FlashCpp::DeclarationContext::Auto);
+        
+        // Legacy functions - now implemented as wrappers around parse_declaration()
         ParseResult parse_declaration_or_function_definition();
         ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default);
         ParseResult parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);  // Phase 1: Unified parameter list parsing
@@ -613,6 +619,11 @@ public:  // Public methods for template instantiation
         ParseResult parse_block();
         ParseResult parse_statement_or_declaration();
         ParseResult parse_variable_declaration();
+        FlashCpp::DeclarationSpecifiers parse_declaration_specifiers();  // Phase 1: Shared specifier parsing
+        bool looks_like_function_parameters();  // Phase 2: Detect if '(' starts function params vs direct init
+        // Phase 3: Consolidated initialization helpers
+        std::optional<ASTNode> parse_direct_initialization();  // Parse Type var(args) - returns initializer node
+        std::optional<ASTNode> parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier);  // Parse Type var = expr or Type var = {args}
         ParseResult parse_extern_block(Linkage linkage);  // Parse extern "C" { ... } block
         ParseResult parse_brace_initializer(const TypeSpecifierNode& type_specifier);  // Add brace initializer parser
         ParseResult parse_for_loop();  // Add this line

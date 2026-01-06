@@ -8,6 +8,19 @@
 
 namespace FlashCpp {
 
+// Phase 4: Declaration context for unified parsing
+// Specifies the context in which a declaration appears, which affects
+// what forms are legal and how they're interpreted
+enum class DeclarationContext {
+	Auto,           // Infer from current scope
+	TopLevel,       // Global/namespace scope
+	BlockScope,     // Inside function body
+	ClassMember,    // Inside class/struct
+	ForInit,        // for(HERE; ...; ...)
+	IfInit,         // if(HERE; condition)
+	SwitchInit,     // switch(HERE; condition)
+};
+
 // Result of parsing a parameter list
 struct ParsedParameterList {
 	std::vector<ASTNode> parameters;
@@ -56,6 +69,28 @@ struct StorageSpecifiers {
 	bool is_constinit = false;
 	bool is_extern = false;
 	Linkage linkage = Linkage::None;
+	CallingConvention calling_convention = CallingConvention::Default;
+};
+
+// Phase 1 Consolidation: Combined declaration specifiers for shared parsing
+// Used by both parse_declaration_or_function_definition() and parse_variable_declaration()
+// Combines attributes, storage class, and constexpr/constinit/consteval specifiers
+struct DeclarationSpecifiers {
+	// Storage class specifier (static, extern, register, mutable)
+	StorageClass storage_class = StorageClass::None;
+	
+	// Constexpr/consteval/constinit specifiers
+	bool is_constexpr = false;
+	bool is_consteval = false;
+	bool is_constinit = false;
+	
+	// Inline specifier
+	bool is_inline = false;
+	
+	// Linkage info (from __declspec or extern "C")
+	Linkage linkage = Linkage::None;
+	
+	// Calling convention (from __cdecl, __stdcall, etc.)
 	CallingConvention calling_convention = CallingConvention::Default;
 };
 
