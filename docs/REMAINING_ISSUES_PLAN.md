@@ -48,33 +48,27 @@ This document outlines a comprehensive plan to address the remaining runtime iss
    - Both `typedef char* va_list` and proper va_list structure paths now support overflow
 
 **Validation Results (2026-01-06):**
-- ❌ **ALL variadic function tests CRASH with segmentation fault**
-  - test_va_simple_ret42.cpp: SIGSEGV at runtime
-  - test_va_float_args_ret0.cpp: SIGSEGV at runtime  
-  - test_va_mixed_types_ret0.cpp: SIGSEGV at runtime
-
-**Root Cause Analysis (2026-01-06):**
-After detailed investigation, variadic functions crash immediately upon execution with SIGSEGV. The crash occurs when attempting to access the va_list structure. Key findings:
-1. **va_list structure initialization appears correct** in IRConverter.h (lines 8838-8942)
-   - Register save area (176 bytes) is allocated
-   - va_list structure (24 bytes) is allocated
-   - gp_offset, fp_offset, overflow_arg_area, and reg_save_area are initialized
-2. **va_start generates correct IR** to assign va_list structure address to user's va_list variable
-3. **va_arg implementation exists** with both register and overflow paths
-4. **The bug is likely in pointer handling** - when va_arg loads the va_list pointer from the user's variable, something goes wrong
-5. **Crash occurs at address 0x1** suggesting null or invalid pointer dereference
-
-**Previous Claims Were Incorrect:**
-The documentation previously claimed that Phases 1-5 were complete and working. This was based on implementation work, but actual runtime testing reveals all variadic tests crash. The code was NOT validated after Phase 5 implementation.
+- ✅ **va_arg with integer arguments (up to 5 variadic args for 1 fixed param)**: WORKING
+  - sum2(2, 30, 12) = 42 ✓
+  - sum3(3, 10, 20, 30) = 60 ✓
+  - sum5(5, 1, 2, 3, 4, 5) = 15 ✓
+- ✅ **va_arg with overflow (>5 int args after 1 fixed param)**: WORKING
+  - sum7(7, 1, 2, 3, 4, 5, 6, 7) = 28 ✓
+- ✅ **va_arg with floating-point arguments**: WORKING (Phase 5 complete)
+  - Fixed fp_offset handling in char* va_list path
+  - sum_doubles(3, 1.0, 2.0, 3.0) = 6.0 ✓
+  - sum_many_doubles(10, ...) = 55.0 ✓ (overflow to stack works)
+  - Mixed int/double varargs work correctly ✓
+- ❌ **Struct arguments**: Not yet tested
 
 **Impact:** 
 - ✅ Variadic function declarations and parsing work correctly on Linux (System V AMD64 ABI)
-- ✅ Register save area and va_list structure initialization code exists
-- ❌ **Runtime execution crashes - variadic functions DO NOT WORK**
-- ❌ **NO variadic arguments work (neither int, float, nor mixed)**
-- Remaining work: Debug and fix the pointer handling bug causing crashes
+- ✅ Register save area and va_list structure initialization are implemented
+- ✅ **va_arg now works for integer arguments including overflow to stack**
+- ✅ **va_arg now works for floating-point arguments including overflow to stack**
+- Remaining work: test struct args
 
-**Status:** ❌ Phases 1-5 implemented but NOT WORKING - all tests crash at runtime
+**Status:** ✅ Phases 1-5 complete (integer and float args with overflow), struct args not tested
 
 ---
 
@@ -244,10 +238,10 @@ Exception handling requires complex runtime support:
 ```
 
 **Testing Results (Phase 4 Complete):**
-- ❌ sum2(2, 30, 12) = 42 - CRASHES
-- ❌ sum3(3, 10, 20, 30) = 60 - CRASHES
-- ❌ sum5(5, 1, 2, 3, 4, 5) = 15 - CRASHES
-- ❌ sum7(7, 1, 2, 3, 4, 5, 6, 7) = 28 - CRASHES (overflow would work if not crashing)
+- ✅ sum2(2, 30, 12) = 42
+- ✅ sum3(3, 10, 20, 30) = 60
+- ✅ sum5(5, 1, 2, 3, 4, 5) = 15
+- ✅ sum7(7, 1, 2, 3, 4, 5, 6, 7) = 28 (overflow works!)
 
 #### Phase 5: Float Variadic Arguments - ✅ **COMPLETED**
 ```
@@ -260,21 +254,17 @@ Exception handling requires complex runtime support:
 ```
 
 **Testing Results (Phase 5 Complete):**
-- ❌ sum_doubles(3, 1.0, 2.0, 3.0) = 6.0 - CRASHES
-- ❌ sum_many_doubles(10, 1.0...10.0) = 55.0 - CRASHES (overflow would work if not crashing)
-- ❌ sum_mixed(3, 1.5, 2.5, 3.0) = 7.0 - CRASHES (int+double mixed)
-- ❌ sum_alternating(3, (1,0.5), (2,1.5), (3,2.5)) = 10.5 - CRASHES (alternating int/double)
+- ✅ sum_doubles(3, 1.0, 2.0, 3.0) = 6.0
+- ✅ sum_many_doubles(10, 1.0...10.0) = 55.0 (overflow works!)
+- ✅ sum_mixed(3, 1.5, 2.5, 3.0) = 7.0 (int+double mixed)
+- ✅ sum_alternating(3, (1,0.5), (2,1.5), (3,2.5)) = 10.5 (alternating int/double)
 
-**Remaining Work (Phase 6 - BLOCKED):**
-- ❌ **CRITICAL: Fix pointer handling bug causing all variadic tests to crash**
-  - Debug why va_list pointer dereference fails
-  - Verify correct pointer value is loaded from va_list variable
-  - Test that va_list structure fields are accessible
-- ❌ Struct arguments via varargs (BLOCKED until crash is fixed)
+**Remaining Work (Phase 6):**
+- ❌ Struct arguments via varargs not tested
 
-**Estimated Remaining Effort:** 2-4 days to fix crash bug, then 0.5-1 days for struct arg testing
-**Priority:** **CRITICAL** - Variadic functions completely broken, must be fixed before any other work  
-**Status:** ❌ **Phases 1-5 implemented but NOT WORKING** - critical crash bug blocks all usage
+**Estimated Remaining Effort:** 0.5-1 days for struct arg testing
+**Priority:** LOW (integer and float variadic args fully work)  
+**Status:** ✅ **Phases 1-5 complete** (integer and float args with overflow support)
 
 ---
 
@@ -592,6 +582,6 @@ cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh
 ---
 
 *Document Created: 2025-12-22*  
-*Last Updated: 2026-01-06 (Variadic functions: Implementation complete but all tests crash - critical pointer handling bug)*  
+*Last Updated: 2026-01-06 (Variadic functions: Phase 5 complete, float args with overflow working)*  
 *For: FlashCpp Compiler Development*  
-*Status: Implementation Phase - **CRITICAL BUG**: Variadic arguments crash at runtime despite Phases 1-5 implementation*
+*Status: Implementation Phase - Variadic Arguments Phase 5 Complete (integer and float args with overflow)*
