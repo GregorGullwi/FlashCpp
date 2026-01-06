@@ -6039,6 +6039,14 @@ private:
 				// so they should use integer registers, not floating-point registers
 				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference;
 				
+				// Check if this is a two-register struct (System V AMD64 ABI: 9-16 byte structs)
+				bool is_two_reg_struct = false;
+				if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+					if (arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference) {
+						is_two_reg_struct = true;
+					}
+				}
+				
 				// Determine if this argument goes on stack
 				bool goes_on_stack = variadic_needs_stack_args; // For Windows variadic: ALL args go on stack
 				if (!goes_on_stack) {
@@ -6048,17 +6056,20 @@ private:
 						}
 						temp_float_idx++;
 					} else {
-						if (temp_int_idx >= max_int_regs) {
+						// For two-register structs, need two consecutive int registers
+						size_t regs_needed = is_two_reg_struct ? 2 : 1;
+						if (temp_int_idx + regs_needed > max_int_regs) {
 							goes_on_stack = true;
 						}
-						temp_int_idx++;
+						temp_int_idx += regs_needed;
 					}
 				} else {
 					// Still need to increment counters for variadic functions
 					if (is_float_arg) {
 						temp_float_idx++;
 					} else {
-						temp_int_idx++;
+						size_t regs_needed = is_two_reg_struct ? 2 : 1;
+						temp_int_idx += regs_needed;
 					}
 				}
 				
@@ -6149,6 +6160,14 @@ private:
 				// so they should use integer registers regardless of the underlying type
 				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference;
 				
+				// Check if this is a two-register struct (System V AMD64 ABI: 9-16 byte structs)
+				bool is_potential_two_reg_struct = false;
+				if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+					if (arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference) {
+						is_potential_two_reg_struct = true;
+					}
+				}
+				
 				// Check if this argument fits in a register (accounting for param_shift)
 				bool use_register = false;
 				if (is_float_arg) {
@@ -6156,7 +6175,9 @@ private:
 						use_register = true;
 					}
 				} else {
-					if (int_reg_index < max_int_regs) {
+					// For two-register structs, need two consecutive int registers
+					size_t regs_needed = is_potential_two_reg_struct ? 2 : 1;
+					if (int_reg_index + regs_needed <= max_int_regs) {
 						use_register = true;
 					}
 				}
@@ -6175,9 +6196,15 @@ private:
 				
 				// Special handling for passing addresses (this pointer or large struct references)
 				// For member functions: first arg is always "this" pointer (pass address)
-				// For structs: small structs (≤8 bytes) are passed by VALUE, large structs by reference
-				// UNLESS the parameter is explicitly a reference type
+				// System V AMD64 ABI (Linux): 
+				//   - Structs ≤8 bytes: pass by value in one register
+				//   - Structs 9-16 bytes: pass by value in TWO consecutive registers
+				//   - Structs >16 bytes: pass by pointer
+				// x64 Windows ABI:
+				//   - Structs of 1, 2, 4, or 8 bytes: pass by value in one register
+				//   - All other structs: pass by pointer
 				bool should_pass_address = false;
+				bool is_two_register_struct = false;  // For System V AMD64 ABI 9-16 byte structs
 				if (call_op.is_member_function && i == 0) {
 					// First argument of member function is always "this" pointer
 					should_pass_address = true;
@@ -6185,11 +6212,42 @@ private:
 					// Parameter is explicitly a reference - always pass by address
 					should_pass_address = true;
 				} else if (arg.type == Type::Struct && std::holds_alternative<StringHandle>(arg.value)) {
-					// Check struct size - only pass by address if larger than 8 bytes
-					// x64 Windows ABI: structs of 1, 2, 4, or 8 bytes are passed by value in registers
-					if (arg.size_in_bits > 64) {
-						// Large struct - pass by reference (address)
-						should_pass_address = true;
+					// Check struct size for ABI-specific handling
+					if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+						// System V AMD64 ABI (Linux)
+						if (arg.size_in_bits > 128) {
+							// Struct > 16 bytes - pass by reference (address)
+							should_pass_address = true;
+						} else if (arg.size_in_bits > 64) {
+							// Struct 9-16 bytes - pass by value in TWO consecutive registers
+							is_two_register_struct = true;
+						}
+						// Else: Struct ≤8 bytes - pass by value in one register (default path)
+					} else {
+						// Windows x64 ABI
+						if (arg.size_in_bits > 64) {
+							// Large struct - pass by reference (address)
+							should_pass_address = true;
+						}
+					}
+				} else if (arg.type == Type::Struct && std::holds_alternative<TempVar>(arg.value)) {
+					// Handle TempVar struct arguments for ABI-specific handling
+					if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+						// System V AMD64 ABI (Linux)
+						if (arg.size_in_bits > 128) {
+							// Struct > 16 bytes - pass by reference (address)
+							should_pass_address = true;
+						} else if (arg.size_in_bits > 64) {
+							// Struct 9-16 bytes - pass by value in TWO consecutive registers
+							is_two_register_struct = true;
+						}
+						// Else: Struct ≤8 bytes - pass by value in one register (default path)
+					} else {
+						// Windows x64 ABI
+						if (arg.size_in_bits > 64) {
+							// Large struct - pass by reference (address)
+							should_pass_address = true;
+						}
 					}
 				}
 				
@@ -6207,6 +6265,27 @@ private:
 					} else {
 						// Variable is not a reference - take its address with LEA
 						emitLEAFromFrame(textSectionData, target_reg, object_offset);
+					}
+					continue;
+				}
+				
+				// Handle System V AMD64 ABI: Structs 9-16 bytes passed in TWO consecutive registers
+				if (is_two_register_struct && std::holds_alternative<StringHandle>(arg.value)) {
+					StringHandle object_name_handle = std::get<StringHandle>(arg.value);
+					int object_offset = variable_scopes.back().variables[object_name_handle].offset;
+					
+					// Load first 8 bytes into target_reg (already allocated)
+					emitMovFromFrame(target_reg, object_offset);
+					
+					// Check if we have a second register available
+					if (int_reg_index < max_int_regs) {
+						// Load second 8 bytes into next integer register
+						X64Register second_reg = getIntParamReg<TWriterClass>(int_reg_index++);
+						emitMovFromFrame(second_reg, object_offset + 8);
+					} else {
+						// No second register available - need to spill to stack
+						// This case should be rare in practice
+						FLASH_LOG(Codegen, Warning, "Two-register struct has no second register available");
 					}
 					continue;
 				}
@@ -6233,6 +6312,25 @@ private:
 					} else {
 						// Variable holds an object value - take its address with LEA
 						emitLeaFromFrame(target_reg, var_offset);
+					}
+					continue;
+				}
+				
+				// Handle System V AMD64 ABI: TempVar structs 9-16 bytes passed in TWO consecutive registers
+				if (is_two_register_struct && std::holds_alternative<TempVar>(arg.value)) {
+					const auto& temp_var = std::get<TempVar>(arg.value);
+					int var_offset = getStackOffsetFromTempVar(temp_var);
+					
+					// Load first 8 bytes into target_reg (already allocated)
+					emitMovFromFrame(target_reg, var_offset);
+					
+					// Check if we have a second register available
+					if (int_reg_index < max_int_regs) {
+						// Load second 8 bytes into next integer register
+						X64Register second_reg = getIntParamReg<TWriterClass>(int_reg_index++);
+						emitMovFromFrame(second_reg, var_offset + 8);
+					} else {
+						FLASH_LOG(Codegen, Warning, "Two-register TempVar struct has no second register available");
 					}
 					continue;
 				}
@@ -13706,6 +13804,58 @@ private:
 				// Store the XMM value to the result location
 				int32_t result_offset = getStackOffsetFromTempVar(op.result);
 				emitFloatMovToFrame(xmm_reg, result_offset, is_float);
+				return;
+			}
+
+			// Handle struct types (values > 64 bits) by doing a multi-step memory copy
+			if (value_size > 64 && op.pointer.pointer_depth <= 1) {
+				int32_t result_offset = getStackOffsetFromTempVar(op.result);
+				int struct_size_bytes = (value_size + 7) / 8;
+				
+				// Copy from [ptr_reg] to [rbp + result_offset] in 8-byte chunks
+				for (int offset = 0; offset < struct_size_bytes; ) {
+					if (offset + 8 <= struct_size_bytes) {
+						// Copy 8 bytes
+						X64Register temp_reg = allocateRegisterWithSpilling();
+						emitMovFromMemory(temp_reg, ptr_reg, offset, 8);
+						emitMovToFrameSized(
+							SizedRegister{temp_reg, 64, false},
+							SizedStackSlot{result_offset + offset, 64, false}
+						);
+						regAlloc.release(temp_reg);
+						offset += 8;
+					} else if (offset + 4 <= struct_size_bytes) {
+						// Copy 4 bytes
+						X64Register temp_reg = allocateRegisterWithSpilling();
+						emitMovFromMemory(temp_reg, ptr_reg, offset, 4);
+						emitMovToFrameSized(
+							SizedRegister{temp_reg, 32, false},
+							SizedStackSlot{result_offset + offset, 32, false}
+						);
+						regAlloc.release(temp_reg);
+						offset += 4;
+					} else if (offset + 2 <= struct_size_bytes) {
+						// Copy 2 bytes
+						X64Register temp_reg = allocateRegisterWithSpilling();
+						emitMovFromMemory(temp_reg, ptr_reg, offset, 2);
+						emitMovToFrameSized(
+							SizedRegister{temp_reg, 16, false},
+							SizedStackSlot{result_offset + offset, 16, false}
+						);
+						regAlloc.release(temp_reg);
+						offset += 2;
+					} else {
+						// Copy 1 byte
+						X64Register temp_reg = allocateRegisterWithSpilling();
+						emitMovFromMemory(temp_reg, ptr_reg, offset, 1);
+						emitMovToFrameSized(
+							SizedRegister{temp_reg, 8, false},
+							SizedStackSlot{result_offset + offset, 8, false}
+						);
+						regAlloc.release(temp_reg);
+						offset += 1;
+					}
+				}
 				return;
 			}
 
