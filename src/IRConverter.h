@@ -8871,6 +8871,10 @@ private:
 					X64Register::R9    // Offset 40
 				};
 				constexpr size_t INT_REG_COUNT = sizeof(int_regs) / sizeof(int_regs[0]);
+				static_assert(INT_REG_COUNT == 6, "System V AMD64 ABI has exactly 6 integer argument registers");
+				
+				// Number of XMM registers saved in register save area (System V AMD64 ABI)
+				constexpr size_t FLOAT_REG_COUNT = 8;
 				
 				for (size_t i = 0; i < INT_REG_COUNT; ++i) {
 					int32_t offset = reg_save_area_base + static_cast<int32_t>(i * 8);
@@ -8882,7 +8886,7 @@ private:
 				
 				// Save all float registers: XMM0-XMM7 at offsets 48-175
 				// Use full 16 bytes per register for proper alignment
-				for (size_t i = 0; i < 8; ++i) {
+				for (size_t i = 0; i < FLOAT_REG_COUNT; ++i) {
 					X64Register xmm_reg = static_cast<X64Register>(static_cast<int>(X64Register::XMM0) + i);
 					int32_t offset = reg_save_area_base + INT_REG_AREA_SIZE + static_cast<int32_t>(i * 16);
 					emitMovdquToFrame(xmm_reg, offset);
@@ -8906,8 +8910,8 @@ private:
 				int initial_gp_offset = static_cast<int>(fixed_int_params * 8);
 				
 				// Calculate fp_offset: skip registers used by fixed float parameters
-				// Float registers start at offset 48 (after integer registers), each is 16 bytes, capped at 8
-				size_t fixed_float_params = std::min(float_param_reg_index, static_cast<size_t>(8));
+				// Float registers start at offset 48 (after integer registers), each is 16 bytes
+				size_t fixed_float_params = std::min(float_param_reg_index, FLOAT_REG_COUNT);
 				int initial_fp_offset = INT_REG_AREA_SIZE + static_cast<int>(fixed_float_params * 16);
 				
 				// Load va_list structure base address into RAX
