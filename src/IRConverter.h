@@ -13709,6 +13709,58 @@ private:
 				return;
 			}
 
+			// Handle struct types (values > 64 bits) by doing a multi-step memory copy
+			if (value_size > 64 && op.pointer.pointer_depth <= 1) {
+				int32_t result_offset = getStackOffsetFromTempVar(op.result);
+				int struct_size_bytes = (value_size + 7) / 8;
+				
+				// Copy from [ptr_reg] to [rbp + result_offset] in 8-byte chunks
+				for (int offset = 0; offset < struct_size_bytes; ) {
+					if (offset + 8 <= struct_size_bytes) {
+						// Copy 8 bytes
+						X64Register temp_reg = allocateRegisterWithSpilling();
+						emitMovFromMemory(temp_reg, ptr_reg, offset, 8);
+						emitMovToFrameSized(
+							SizedRegister{temp_reg, 64, false},
+							SizedStackSlot{result_offset + offset, 64, false}
+						);
+						regAlloc.release(temp_reg);
+						offset += 8;
+					} else if (offset + 4 <= struct_size_bytes) {
+						// Copy 4 bytes
+						X64Register temp_reg = allocateRegisterWithSpilling();
+						emitMovFromMemory(temp_reg, ptr_reg, offset, 4);
+						emitMovToFrameSized(
+							SizedRegister{temp_reg, 32, false},
+							SizedStackSlot{result_offset + offset, 32, false}
+						);
+						regAlloc.release(temp_reg);
+						offset += 4;
+					} else if (offset + 2 <= struct_size_bytes) {
+						// Copy 2 bytes
+						X64Register temp_reg = allocateRegisterWithSpilling();
+						emitMovFromMemory(temp_reg, ptr_reg, offset, 2);
+						emitMovToFrameSized(
+							SizedRegister{temp_reg, 16, false},
+							SizedStackSlot{result_offset + offset, 16, false}
+						);
+						regAlloc.release(temp_reg);
+						offset += 2;
+					} else {
+						// Copy 1 byte
+						X64Register temp_reg = allocateRegisterWithSpilling();
+						emitMovFromMemory(temp_reg, ptr_reg, offset, 1);
+						emitMovToFrameSized(
+							SizedRegister{temp_reg, 8, false},
+							SizedStackSlot{result_offset + offset, 8, false}
+						);
+						regAlloc.release(temp_reg);
+						offset += 1;
+					}
+				}
+				return;
+			}
+
 			// Track which register holds the dereferenced value (may differ from ptr_reg for MOVZX)
 			X64Register value_reg = ptr_reg;
 

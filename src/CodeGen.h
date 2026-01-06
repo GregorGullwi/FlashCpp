@@ -11399,12 +11399,19 @@ private:
 			// Allocate result variable that will be assigned in both paths
 			TempVar value = var_counter.next();
 			
+			// Calculate the slot size for integer types based on the type size
+			// For floats: 16 bytes (XMM register), for integers: round up to 8-byte boundary
+			// System V AMD64 ABI: structs up to 16 bytes use 1-2 register slots
+			unsigned long long slot_size = is_float_type ? 16ULL : ((requested_size + 63) / 64) * 8;
+			
 			// Compare current_offset < limit (48 for int, 176 for float)
+			// For larger types, we need to check if there's enough space for the full type
 			unsigned long long offset_limit = is_float_type ? 176ULL : 48ULL;
 			TempVar cmp_result = var_counter.next();
 			BinaryOp compare_op;
 			compare_op.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
-			compare_op.rhs = TypedValue{Type::UnsignedInt, 32, offset_limit};
+			// Adjust limit: need to have slot_size bytes remaining
+			compare_op.rhs = TypedValue{Type::UnsignedInt, 32, offset_limit - slot_size + 8};
 			compare_op.result = cmp_result;
 			ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(compare_op), functionCallNode.called_from()));
 			
@@ -11476,11 +11483,12 @@ private:
 			assign_reg_result.rhs = TypedValue{requested_type, requested_size, reg_value};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_reg_result), functionCallNode.called_from()));
 			
-			// Step 7: Increment the offset by 8 bytes (or 16 for floats in XMM regs) and store back
+			// Step 7: Increment the offset by slot_size and store back
+			// slot_size is 16 for floats (XMM regs), or rounded up to 8-byte boundary for integers/structs
 			TempVar new_offset = var_counter.next();
 			BinaryOp increment_offset;
 			increment_offset.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
-			increment_offset.rhs = TypedValue{Type::UnsignedInt, 32, is_float_type ? 16ULL : 8ULL};
+			increment_offset.rhs = TypedValue{Type::UnsignedInt, 32, slot_size};
 			increment_offset.result = new_offset;
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), functionCallNode.called_from()));
 			
@@ -11568,11 +11576,13 @@ private:
 			assign_overflow_result.rhs = TypedValue{requested_type, requested_size, overflow_value};
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_overflow_result), functionCallNode.called_from()));
 			
-			// Advance overflow_arg_area by 8 bytes
+			// Advance overflow_arg_area by the actual stack argument size (always 8 bytes on x64 stack)
+			// Note: slot_size is for register save area; stack always uses 8-byte slots
+			unsigned long long overflow_advance = (requested_size + 63) / 64 * 8;  // Round up to 8-byte boundary
 			TempVar new_overflow_ptr = var_counter.next();
 			BinaryOp advance_overflow;
 			advance_overflow.lhs = TypedValue{Type::UnsignedLongLong, 64, overflow_ptr};
-			advance_overflow.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+			advance_overflow.rhs = TypedValue{Type::UnsignedLongLong, 64, overflow_advance};
 			advance_overflow.result = new_overflow_ptr;
 			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(advance_overflow), functionCallNode.called_from()));
 			
@@ -11654,12 +11664,18 @@ private:
 				// Allocate result variable
 				TempVar value = var_counter.next();
 				
+				// Calculate the slot size for integer types based on the type size
+				// For floats: 16 bytes (XMM register), for integers: round up to 8-byte boundary
+				unsigned long long slot_size = is_float_type ? 16ULL : ((requested_size + 63) / 64) * 8;
+				
 				// Compare current_offset < limit (48 for int, 176 for float)
+				// For larger types, we need to check if there's enough space for the full type
 				unsigned long long offset_limit = is_float_type ? 176ULL : 48ULL;
 				TempVar cmp_result = var_counter.next();
 				BinaryOp compare_op;
 				compare_op.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
-				compare_op.rhs = TypedValue{Type::UnsignedInt, 32, offset_limit};
+				// Adjust limit: need to have slot_size bytes remaining
+				compare_op.rhs = TypedValue{Type::UnsignedInt, 32, offset_limit - slot_size + 8};
 				compare_op.result = cmp_result;
 				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(compare_op), functionCallNode.called_from()));
 				
@@ -11729,11 +11745,11 @@ private:
 				assign_reg_result.rhs = TypedValue{requested_type, requested_size, reg_value};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_reg_result), functionCallNode.called_from()));
 				
-				// Increment gp_offset by 8, or fp_offset by 16
+				// Increment gp_offset by slot_size, or fp_offset by 16
 				TempVar new_offset = var_counter.next();
 				BinaryOp increment_offset;
 				increment_offset.lhs = TypedValue{Type::UnsignedInt, 32, current_offset};
-				increment_offset.rhs = TypedValue{Type::UnsignedInt, 32, is_float_type ? 16ULL : 8ULL};
+				increment_offset.rhs = TypedValue{Type::UnsignedInt, 32, slot_size};
 				increment_offset.result = new_offset;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), functionCallNode.called_from()));
 				
@@ -11819,11 +11835,12 @@ private:
 				assign_overflow_result.rhs = TypedValue{requested_type, requested_size, overflow_value};
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_overflow_result), functionCallNode.called_from()));
 				
-				// Advance overflow_arg_area by 8
+				// Advance overflow_arg_area by the actual stack argument size (always 8 bytes per slot on x64 stack)
+				unsigned long long overflow_advance = (requested_size + 63) / 64 * 8;  // Round up to 8-byte boundary
 				TempVar new_overflow_ptr = var_counter.next();
 				BinaryOp advance_overflow;
 				advance_overflow.lhs = TypedValue{Type::UnsignedLongLong, 64, overflow_ptr};
-				advance_overflow.rhs = TypedValue{Type::UnsignedLongLong, 64, 8ULL};
+				advance_overflow.rhs = TypedValue{Type::UnsignedLongLong, 64, overflow_advance};
 				advance_overflow.result = new_overflow_ptr;
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(advance_overflow), functionCallNode.called_from()));
 				

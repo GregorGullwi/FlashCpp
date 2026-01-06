@@ -59,16 +59,23 @@ This document outlines a comprehensive plan to address the remaining runtime iss
   - sum_doubles(3, 1.0, 2.0, 3.0) = 6.0 ✓
   - sum_many_doubles(10, ...) = 55.0 ✓ (overflow to stack works)
   - Mixed int/double varargs work correctly ✓
-- ❌ **Struct arguments**: Not yet tested
+- ✅ **Struct arguments (≤8 bytes)**: WORKING
+  - sum_points(3, p1, p2, p3) = 21 ✓ (8-byte Point structs)
+  - Fixed handleDereference to copy struct values > 64 bits
+- ⚠️ **Struct arguments (9-16 bytes)**: NOT WORKING - passed by pointer instead of by value
+  - System V AMD64 ABI requires 9-16 byte structs in two consecutive registers
+  - Current implementation passes them by pointer, which doesn't match ABI
+  - Would require significant changes to function call argument passing
 
 **Impact:** 
 - ✅ Variadic function declarations and parsing work correctly on Linux (System V AMD64 ABI)
 - ✅ Register save area and va_list structure initialization are implemented
 - ✅ **va_arg now works for integer arguments including overflow to stack**
 - ✅ **va_arg now works for floating-point arguments including overflow to stack**
-- Remaining work: test struct args
+- ✅ **va_arg now works for small struct arguments (≤8 bytes)**
+- ⚠️ Struct arguments 9-16 bytes don't work (passed by pointer instead of value)
 
-**Status:** ✅ Phases 1-5 complete (integer and float args with overflow), struct args not tested
+**Status:** ✅ Phase 5 complete - integer, float, and small struct args working
 
 ---
 
@@ -251,6 +258,14 @@ Exception handling requires complex runtime support:
    - Use overflow limit 176 for floats (instead of 48 for integers)
    - Increment fp_offset by 16 (XMM register size) instead of 8
    - Store updated fp_offset back to offset 4
+
+✅ 2. Fixed overflow path stack slot calculation:
+   - Overflow area uses 8-byte slots, not register slot sizes
+   - Float overflow now correctly advances by 8 bytes instead of 16
+
+✅ 3. Added struct copy support in handleDereference:
+   - Structs > 64 bits now copied correctly in 8-byte chunks
+   - Required for va_arg with struct types
 ```
 
 **Testing Results (Phase 5 Complete):**
@@ -258,13 +273,14 @@ Exception handling requires complex runtime support:
 - ✅ sum_many_doubles(10, 1.0...10.0) = 55.0 (overflow works!)
 - ✅ sum_mixed(3, 1.5, 2.5, 3.0) = 7.0 (int+double mixed)
 - ✅ sum_alternating(3, (1,0.5), (2,1.5), (3,2.5)) = 10.5 (alternating int/double)
+- ✅ sum_points(3, p1, p2, p3) = 21 (8-byte struct args)
 
-**Remaining Work (Phase 6):**
-- ❌ Struct arguments via varargs not tested
+**Known Limitation:**
+- ⚠️ Structs 9-16 bytes passed by pointer instead of by value (ABI mismatch)
+  - System V AMD64 requires two consecutive registers for 9-16 byte structs
+  - Would require significant refactoring of function call argument passing
 
-**Estimated Remaining Effort:** 0.5-1 days for struct arg testing
-**Priority:** LOW (integer and float variadic args fully work)  
-**Status:** ✅ **Phases 1-5 complete** (integer and float args with overflow support)
+**Status:** ✅ **Phase 5 complete** (integer, float, and small struct args with overflow support)
 
 ---
 
@@ -571,7 +587,7 @@ cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh
 
 ## Notes
 
-- ✅ **Major milestone achieved:** All 833 tests now compile and run successfully
+- ✅ **Major milestone achieved:** All 836 tests now compile and run successfully
 - The array index loading bug fix resolved 16 previously failing tests
 - Remaining issues are runtime-only (link failures or execution crashes)
 - Some features may be fundamentally incompatible with FlashCpp's architecture
@@ -582,6 +598,6 @@ cd /home/runner/work/FlashCpp/FlashCpp && ./tests/validate_return_values.sh
 ---
 
 *Document Created: 2025-12-22*  
-*Last Updated: 2026-01-06 (Variadic functions: Phase 5 complete, float args with overflow working)*  
+*Last Updated: 2026-01-06 (Variadic functions: Phase 5 complete - int, float, and small struct args working)*  
 *For: FlashCpp Compiler Development*  
-*Status: Implementation Phase - Variadic Arguments Phase 5 Complete (integer and float args with overflow)*
+*Status: Implementation Phase - Variadic Arguments Phase 5 Complete (integer, float, and small struct args)*
