@@ -23330,6 +23330,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	);
 
 	// Parse struct body (members, methods, etc.)
+	// For template member structs, we defer full member parsing until instantiation
+	// This matches C++ semantics where template members are not instantiated until needed
+	// We skip the body to avoid parsing errors with dependent names and types
 	AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
 	
 	while (peek_token().has_value() && peek_token()->value() != "}") {
@@ -23348,8 +23351,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 		}
 
-		// Parse member declaration - for now, just skip to semicolon
-		// TODO: Full member parsing if needed
+		// Skip member declarations - proper parsing would be done during instantiation
+		// This avoids issues with dependent types that can't be resolved until template arguments are known
 		int brace_depth = 0;
 		while (peek_token().has_value()) {
 			std::string_view token_val = peek_token()->value();
