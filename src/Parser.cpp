@@ -7970,14 +7970,13 @@ ParseResult Parser::parse_type_specifier()
 							
 							// Look up the instantiated type - need to determine the final template name
 							// If we went through alias chaining, use the struct name from the instantiated class
-							std::string instantiated_name_str;
+							std::string_view instantiated_name;;
 							if (instantiated_class->is<StructDeclarationNode>()) {
 								StringHandle name_handle = instantiated_class->as<StructDeclarationNode>().name();
-								instantiated_name_str = std::string(StringTable::getStringView(name_handle));
+								instantiated_name_str = StringTable::getStringView(name_handle);
 							} else {
-								instantiated_name_str = std::string(get_instantiated_class_name(alias_node.target_template_name(), substituted_args));
+								instantiated_name_str = get_instantiated_class_name(alias_node.target_template_name(), substituted_args);
 							}
-							std::string_view instantiated_name = instantiated_name_str;
 							
 							// Find the type by scanning gTypeInfo (safer than using gTypesByName pointer)
 							TypeIndex type_idx = 0;
