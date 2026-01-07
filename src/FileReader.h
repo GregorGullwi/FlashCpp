@@ -1592,7 +1592,7 @@ private:
 								"__is_reference", "__is_arithmetic", "__is_fundamental",
 								"__is_object", "__is_scalar", "__is_compound",
 								// Type relationship traits
-								"__is_base_of", "__is_same", "__is_convertible",
+								"__is_base_of", "__is_same", "__is_convertible", "__is_nothrow_convertible",
 								// Type property traits
 								"__is_polymorphic", "__is_final", "__is_abstract", "__is_empty",
 								"__is_aggregate", "__is_standard_layout",

@@ -16331,6 +16331,47 @@ private:
 				}
 				break;
 
+			case TypeTraitKind::IsNothrowConvertible:
+				// __is_nothrow_convertible(From, To) - Same as IsConvertible but for nothrow conversions
+				// For now, use the same logic as IsConvertible (conservative approximation)
+				if (traitNode.has_second_type()) {
+					const ASTNode& second_type_node = traitNode.second_type_node();
+					if (second_type_node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& to_spec = second_type_node.as<TypeSpecifierNode>();
+						const TypeSpecifierNode& from_spec = type_spec;
+						
+						Type from_type = from_spec.type();
+						Type to_type = to_spec.type();
+						bool from_is_ref = from_spec.is_reference();
+						bool to_is_ref = to_spec.is_reference();
+						size_t from_ptr_depth = from_spec.pointer_depth();
+						size_t to_ptr_depth = to_spec.pointer_depth();
+						
+						// Same type is always nothrow convertible
+						if (from_type == to_type && from_is_ref == to_is_ref && 
+						    from_ptr_depth == to_ptr_depth && 
+						    from_spec.type_index() == to_spec.type_index()) {
+							result = true;
+						}
+						// Arithmetic types are nothrow convertible to each other
+						else if (isArithmeticType(from_type) && isArithmeticType(to_type) &&
+						         !from_is_ref && !to_is_ref && 
+						         from_ptr_depth == 0 && to_ptr_depth == 0) {
+							result = true;
+						}
+						// Pointers with same depth and compatible types
+						else if (from_ptr_depth > 0 && to_ptr_depth > 0 && 
+						         from_ptr_depth == to_ptr_depth && !from_is_ref && !to_is_ref) {
+							result = (from_type == to_type || from_spec.type_index() == to_spec.type_index());
+						}
+						// nullptr_t is nothrow convertible to any pointer type
+						else if (from_type == Type::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
+							result = true;
+						}
+					}
+				}
+				break;
+
 			case TypeTraitKind::IsPolymorphic:
 				// A polymorphic class has at least one virtual function
 				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size() &&

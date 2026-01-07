@@ -2656,6 +2656,7 @@ enum class TypeTraitKind {
 	IsBaseOf,
 	IsSame,
 	IsConvertible,      // __is_convertible(From, To) - check if From can convert to To
+	IsNothrowConvertible,  // __is_nothrow_convertible(From, To) - check if From can convert to To without throwing
 	IsAssignable,
 	IsTriviallyAssignable,
 	IsNothrowAssignable,
@@ -2725,6 +2726,7 @@ public:
 		return kind_ == TypeTraitKind::IsBaseOf ||
 		       kind_ == TypeTraitKind::IsSame ||
 		       kind_ == TypeTraitKind::IsConvertible ||
+		       kind_ == TypeTraitKind::IsNothrowConvertible ||
 		       kind_ == TypeTraitKind::IsAssignable ||
 		       kind_ == TypeTraitKind::IsTriviallyAssignable ||
 		       kind_ == TypeTraitKind::IsNothrowAssignable ||
@@ -2770,6 +2772,7 @@ public:
 			case TypeTraitKind::IsBaseOf: return "__is_base_of";
 			case TypeTraitKind::IsSame: return "__is_same";
 			case TypeTraitKind::IsConvertible: return "__is_convertible";
+			case TypeTraitKind::IsNothrowConvertible: return "__is_nothrow_convertible";
 			case TypeTraitKind::IsConst: return "__is_const";
 			case TypeTraitKind::IsVolatile: return "__is_volatile";
 			case TypeTraitKind::IsSigned: return "__is_signed";

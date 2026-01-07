@@ -7888,7 +7888,65 @@ ParseResult Parser::parse_type_specifier()
 						}
 						
 						// Instantiate the target template with substituted arguments
-						auto instantiated_class = try_instantiate_class_template(alias_node.target_template_name(), substituted_args);
+						// First check if the target is itself a template alias (alias chaining)
+						auto target_alias_opt = gTemplateRegistry.lookup_alias_template(alias_node.target_template_name());
+						std::optional<ASTNode> instantiated_class;
+						
+						if (target_alias_opt.has_value()) {
+							// Target is a template alias - resolve it recursively
+							FLASH_LOG(Parser, Debug, "Target '", alias_node.target_template_name(), "' is a template alias - resolving recursively");
+							
+							const TemplateAliasNode& target_alias = target_alias_opt->as<TemplateAliasNode>();
+							
+							if (target_alias.is_deferred()) {
+								// Recursively instantiate through the target alias
+								// Build the substituted args for the target alias
+								const auto& target_param_names = target_alias.template_param_names();
+								const auto& target_target_args = target_alias.target_template_args();
+								std::vector<TemplateTypeArg> nested_substituted_args;
+								
+								for (size_t i = 0; i < target_target_args.size(); ++i) {
+									const ASTNode& arg_node = target_target_args[i];
+									
+									if (arg_node.is<TypeSpecifierNode>()) {
+										const TypeSpecifierNode& arg_type = arg_node.as<TypeSpecifierNode>();
+										
+										// Check if this arg references a parameter of the target alias
+										bool is_target_param = false;
+										size_t target_param_idx = 0;
+										
+										Token arg_token = arg_type.token();
+										if (arg_token.type() == Token::Type::Identifier) {
+											std::string_view arg_token_value = arg_token.value();
+											for (size_t j = 0; j < target_param_names.size(); ++j) {
+												if (arg_token_value == target_param_names[j].view()) {
+													is_target_param = true;
+													target_param_idx = j;
+													break;
+												}
+											}
+										}
+										
+										if (is_target_param && target_param_idx < substituted_args.size()) {
+											// Substitute with the argument we already substituted
+											nested_substituted_args.push_back(substituted_args[target_param_idx]);
+										} else {
+											// Keep the concrete type
+											nested_substituted_args.push_back(TemplateTypeArg(arg_type));
+										}
+									}
+								}
+								
+								FLASH_LOG(Parser, Debug, "Nested instantiation: '", target_alias.target_template_name(), "' with ", nested_substituted_args.size(), " args");
+								instantiated_class = try_instantiate_class_template(target_alias.target_template_name(), nested_substituted_args);
+							} else {
+								// Non-deferred target alias - fall back to regular class template instantiation
+								instantiated_class = try_instantiate_class_template(alias_node.target_template_name(), substituted_args);
+							}
+						} else {
+							// Target is a class template - instantiate directly
+							instantiated_class = try_instantiate_class_template(alias_node.target_template_name(), substituted_args);
+						}
 						
 						if (instantiated_class.has_value()) {
 							// Add to AST if it's a struct
@@ -7896,8 +7954,16 @@ ParseResult Parser::parse_type_specifier()
 								ast_nodes_.push_back(*instantiated_class);
 							}
 							
-							// Look up the instantiated type
-							std::string_view instantiated_name = get_instantiated_class_name(alias_node.target_template_name(), substituted_args);
+							// Look up the instantiated type - need to determine the final template name
+							// If we went through alias chaining, use the struct name from the instantiated class
+							std::string instantiated_name_str;
+							if (instantiated_class->is<StructDeclarationNode>()) {
+								StringHandle name_handle = instantiated_class->as<StructDeclarationNode>().name();
+								instantiated_name_str = std::string(StringTable::getStringView(name_handle));
+							} else {
+								instantiated_name_str = std::string(get_instantiated_class_name(alias_node.target_template_name(), substituted_args));
+							}
+							std::string_view instantiated_name = instantiated_name_str;
 							
 							// Find the type by scanning gTypeInfo (safer than using gTypesByName pointer)
 							TypeIndex type_idx = 0;
@@ -13598,6 +13664,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			{"__is_base_of", {TypeTraitKind::IsBaseOf, true, false, false}},
 			{"__is_same", {TypeTraitKind::IsSame, true, false, false}},
 			{"__is_convertible", {TypeTraitKind::IsConvertible, true, false, false}},
+			{"__is_nothrow_convertible", {TypeTraitKind::IsNothrowConvertible, true, false, false}},
 			// Type properties
 			{"__is_polymorphic", {TypeTraitKind::IsPolymorphic, false, false, false}},
 			{"__is_final", {TypeTraitKind::IsFinal, false, false, false}},
@@ -23784,6 +23851,59 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				type_node.add_cv_qualifier(CVQualifier::Volatile);
 			} else {
 				break;
+			}
+		}
+
+		// Check for pointer-to-array syntax: T(*)[] or T(*)[N]
+		// This is the syntax used for pointer-to-array types in template arguments
+		// e.g., is_convertible<_FromElementType(*)[], _ToElementType(*)[]>
+		if (peek_token().has_value() && peek_token()->value() == "(") {
+			SaveHandle paren_saved_pos = save_token_position();
+			consume_token(); // consume '('
+			
+			if (peek_token().has_value() && peek_token()->value() == "*") {
+				consume_token(); // consume '*'
+				
+				if (peek_token().has_value() && peek_token()->value() == ")") {
+					consume_token(); // consume ')'
+					
+					// Now we should see [] for pointer-to-array
+					if (peek_token().has_value() && peek_token()->value() == "[") {
+						consume_token(); // consume '['
+						
+						// Optional array size
+						std::optional<size_t> ptr_array_size;
+						if (peek_token().has_value() && peek_token()->value() != "]") {
+							auto size_result = parse_expression(0, ExpressionContext::TemplateArgument);
+							if (!size_result.is_error() && size_result.node().has_value()) {
+								if (auto const_size = try_evaluate_constant_expression(*size_result.node())) {
+									if (const_size->value >= 0) {
+										ptr_array_size = static_cast<size_t>(const_size->value);
+									}
+								}
+							}
+						}
+						
+						if (consume_punctuator("]")) {
+							// Successfully parsed T(*)[] or T(*)[N]
+							// This is a pointer to array - add pointer level and mark as array
+							type_node.add_pointer_level(CVQualifier::None);
+							type_node.set_array(true, ptr_array_size);
+							discard_saved_token(paren_saved_pos);
+							FLASH_LOG(Parser, Debug, "Parsed pointer-to-array type T(*)[]");
+						} else {
+							restore_token_position(paren_saved_pos);
+						}
+					} else {
+						// Just (*) without [] - this is a pointer type, not pointer-to-array
+						// Actually this is rare, restore for now
+						restore_token_position(paren_saved_pos);
+					}
+				} else {
+					restore_token_position(paren_saved_pos);
+				}
+			} else {
+				restore_token_position(paren_saved_pos);
 			}
 		}
 
