@@ -23464,6 +23464,47 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					}
 					continue;
 				}
+				// Handle static members (including static constexpr with initializers)
+				if (keyword == "static") {
+					consume_token(); // consume 'static'
+					
+					// Check if it's const or constexpr
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+						std::string_view kw = peek_token()->value();
+						if (kw == "const" || kw == "constexpr" || kw == "inline") {
+							consume_token();
+						} else {
+							break;
+						}
+					}
+					
+					// Parse type and name
+					auto type_and_name_result = parse_type_and_name();
+					if (type_and_name_result.is_error()) {
+						return type_and_name_result;
+					}
+					
+					// Check for initialization (e.g., = sizeof(T))
+					if (peek_token().has_value() && peek_token()->value() == "=") {
+						consume_token(); // consume '='
+						
+						// Parse the initializer expression
+						auto init_result = parse_expression();
+						if (init_result.is_error()) {
+							return init_result;
+						}
+						// We parse but don't store the initializer for partial specializations
+					}
+					
+					// Expect semicolon
+					if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected ';' after static member declaration", *current_token_);
+					}
+					
+					// For partial specializations, we just skip static members
+					// Full instantiation will handle them properly
+					continue;
+				}
 			}
 			
 			// Parse member declaration (data member or function)
@@ -23588,6 +23629,47 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				if (keyword == "public") current_access = AccessSpecifier::Public;
 				else if (keyword == "private") current_access = AccessSpecifier::Private;
 				else if (keyword == "protected") current_access = AccessSpecifier::Protected;
+				continue;
+			}
+			// Handle static members (including static constexpr with initializers)
+			if (keyword == "static") {
+				consume_token(); // consume 'static'
+				
+				// Check if it's const or constexpr
+				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+					std::string_view kw = peek_token()->value();
+					if (kw == "const" || kw == "constexpr" || kw == "inline") {
+						consume_token();
+					} else {
+						break;
+					}
+				}
+				
+				// Parse type and name
+				auto type_and_name_result = parse_type_and_name();
+				if (type_and_name_result.is_error()) {
+					return type_and_name_result;
+				}
+				
+				// Check for initialization (e.g., = sizeof(T))
+				if (peek_token().has_value() && peek_token()->value() == "=") {
+					consume_token(); // consume '='
+					
+					// Parse the initializer expression
+					auto init_result = parse_expression();
+					if (init_result.is_error()) {
+						return init_result;
+					}
+					// We parse but don't store the initializer for member templates
+				}
+				
+				// Expect semicolon
+				if (!consume_punctuator(";")) {
+					return ParseResult::error("Expected ';' after static member declaration", *current_token_);
+				}
+				
+				// For member templates, we just skip static members
+				// Full instantiation will handle them properly
 				continue;
 			}
 		}
