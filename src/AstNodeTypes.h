@@ -2161,13 +2161,13 @@ struct StaticMemberDecl {
 	size_t size;                  // Size in bytes
 	size_t alignment;             // Alignment requirement
 	AccessSpecifier access;       // Access specifier (public/private/protected)
-	std::optional<ASTNode> initializer;  // Optional initializer expression
+	std::optional<ASTNode> initializer;  // AST node for initializer expression (e.g., sizeof(T)), used for template parameter substitution during instantiation
 	bool is_const;                // Whether member is const
 
-	StaticMemberDecl(StringHandle n, Type t, TypeIndex tidx, size_t sz, size_t align, 
-	                 AccessSpecifier acc, std::optional<ASTNode> init, bool is_c)
-		: name(n), type(t), type_index(tidx), size(sz), alignment(align), 
-		  access(acc), initializer(init), is_const(is_c) {}
+	StaticMemberDecl(StringHandle name, Type type, TypeIndex type_index, size_t size, size_t alignment, 
+	                 AccessSpecifier access, std::optional<ASTNode> initializer, bool is_const)
+		: name(name), type(type), type_index(type_index), size(size), alignment(alignment), 
+		  access(access), initializer(initializer), is_const(is_const) {}
 };
 
 class StructDeclarationNode {
