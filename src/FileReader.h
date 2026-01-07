@@ -226,6 +226,27 @@ static std::unordered_map<char, CharInfo> char_info_table = {
 	{'~', {Operator::BitwiseNot, false}},
 };
 
+// Values follow the C++ feature-test macro convention (YYYYMM) for each attribute's availability
+static const std::unordered_map<std::string_view, long> has_cpp_attribute_versions = {
+	{ "deprecated", 201309 },
+	{ "fallthrough", 201603 },
+	{ "likely", 201803 },
+	{ "unlikely", 201803 },
+	{ "maybe_unused", 201603 },
+	{ "no_unique_address", 201803 },
+	{ "nodiscard", 201907 },
+	{ "noreturn", 200809 },
+};
+
+static std::string_view extractNameBetweenParens(std::string_view sv) {
+	auto start = sv.find('(');
+	auto end = sv.rfind(')');
+	if (start != std::string_view::npos && end != std::string_view::npos && end > start) {
+		return sv.substr(start + 1, end - start - 1);
+	}
+	return {};
+}
+
 static size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) {
 	int nesting = 1;
 	size_t pos = opening_pos + 1;
@@ -1557,12 +1578,7 @@ private:
 						// Extract the builtin name from __has_builtin(__name)
 						long exists = 0;
 						std::string_view keyword_sv(keyword);
-						
-						// Find the builtin name between parentheses
-						auto start = keyword_sv.find('(');
-						auto end = keyword_sv.rfind(')');
-						if (start != std::string_view::npos && end != std::string_view::npos && end > start) {
-							std::string_view builtin_name = keyword_sv.substr(start + 1, end - start - 1);
+						if (auto builtin_name = extractNameBetweenParens(keyword_sv); !builtin_name.empty()) {
 							
 							// Set of all supported type trait and other compiler builtins
 							// This must match the builtins supported in Parser.cpp
@@ -1616,6 +1632,19 @@ private:
 							}
 						}
 						values.push(exists);
+					}
+					else if (keyword.find("__has_cpp_attribute") == 0) {
+						long version = 0;
+						std::string_view keyword_sv(keyword);
+						if (auto attribute_name = extractNameBetweenParens(keyword_sv); !attribute_name.empty()) {
+							if (auto it = has_cpp_attribute_versions.find(attribute_name); it != has_cpp_attribute_versions.end()) {
+								version = it->second;
+							}
+							if (settings_.isVerboseMode()) {
+								std::cout << "__has_cpp_attribute(" << attribute_name << ") = " << version << std::endl;
+							}
+						}
+						values.push(version);
 					}
 					else {
 						// Unknown __ identifier (like __cpp_exceptions, __SANITIZE_THREAD__, etc.)
