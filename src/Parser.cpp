@@ -23370,8 +23370,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		}
 		
 		// Qualify with parent struct name
+		std::string_view pattern_name_str = pattern_name.commit();
 		auto qualified_pattern_name = StringTable::getOrInternStringHandle(
-			StringBuilder().append(struct_node.name()).append("::"sv).append(pattern_name.commit()));
+			StringBuilder().append(struct_node.name()).append("::"sv).append(pattern_name_str));
 		
 		// Create a struct node for this partial specialization
 		auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
