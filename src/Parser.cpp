@@ -8,6 +8,7 @@
 #include "NameMangling.h"
 #include "TemplateProfilingStats.h"
 #include "ExpressionSubstitutor.h"
+#include "TypeTraitEvaluator.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -23318,6 +23319,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	
 	// Handle type trait expressions (e.g., __has_trivial_destructor(T), __is_class(T))
 	// These are compile-time boolean expressions used in template metaprogramming
+	// Uses shared evaluateTypeTrait() from TypeTraitEvaluator.h for consistency with CodeGen.h
 	if (std::holds_alternative<TypeTraitExprNode>(expr)) {
 		const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
 		
@@ -23333,204 +23335,49 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		
 		const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
 		
-		// Evaluate the type trait based on the type
-		// Most traits need to check properties of the target type in gTypeInfo
+		// Extract type properties needed for evaluation
 		TypeIndex type_idx = type_spec.type_index();
 		Type base_type = type_spec.type();
+		bool is_reference = type_spec.is_reference();
+		bool is_rvalue_reference = type_spec.is_rvalue_reference();
+		bool is_lvalue_reference = type_spec.is_lvalue_reference();
+		size_t pointer_depth = type_spec.pointer_depth();
+		CVQualifier cv_qualifier = type_spec.cv_qualifier();
+		bool is_array = type_spec.is_array();
+		std::optional<size_t> array_size = type_spec.array_size();
 		
 		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating type trait {} on type index {} (base_type={})", 
 			static_cast<int>(trait_expr.kind()), type_idx, static_cast<int>(base_type));
 		
-		// Helper lambda to get TypeInfo if available
-		auto get_type_info = [&]() -> const TypeInfo* {
-			if (type_idx < gTypeInfo.size()) {
-				return &gTypeInfo[type_idx];
-			}
-			return nullptr;
-		};
+		// Get TypeInfo and StructTypeInfo for the type
+		const TypeInfo* type_info = (type_idx < gTypeInfo.size()) ? &gTypeInfo[type_idx] : nullptr;
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		
-		// Helper lambda to get StructTypeInfo if available
-		auto get_struct_info = [&]() -> const StructTypeInfo* {
-			const TypeInfo* ti = get_type_info();
-			return ti ? ti->getStructInfo() : nullptr;
-		};
+		// Use shared evaluation function from TypeTraitEvaluator.h
+		TypeTraitResult eval_result = evaluateTypeTrait(
+			trait_expr.kind(),
+			base_type,
+			type_idx,
+			is_reference,
+			is_rvalue_reference,
+			is_lvalue_reference,
+			pointer_depth,
+			cv_qualifier,
+			is_array,
+			array_size,
+			type_info,
+			struct_info
+		);
 		
-		// Helper lambda to check if struct has user-defined destructor
-		auto has_user_destructor = [&]() -> bool {
-			const StructTypeInfo* struct_info = get_struct_info();
-			if (!struct_info) return false;
-			// Check if any member function is a destructor
-			for (const auto& mf : struct_info->member_functions) {
-				if (mf.is_destructor) {
-					return true;
-				}
-			}
-			return false;
-		};
-		
-		// Helper lambda to check if struct has user-defined constructor
-		auto has_user_constructor = [&]() -> bool {
-			const StructTypeInfo* struct_info = get_struct_info();
-			if (!struct_info) return false;
-			// Check if any member function is a constructor
-			for (const auto& mf : struct_info->member_functions) {
-				if (mf.is_constructor) {
-					return true;
-				}
-			}
-			return false;
-		};
-		
-		bool result = false;
-		
-		switch (trait_expr.kind()) {
-			// Trivially destructible traits
-			case TypeTraitKind::HasTrivialDestructor:
-			case TypeTraitKind::IsTriviallyDestructible: {
-				// A type is trivially destructible if:
-				// 1. It's a scalar type (int, float, pointer, etc.)
-				// 2. It's a class with no user-declared destructor and all members are trivially destructible
-				if (base_type == Type::Struct || base_type == Type::UserDefined) {
-					// Check if the struct has a user-defined destructor
-					result = !has_user_destructor();
-					FLASH_LOG_FORMAT(Templates, Debug, "Type is struct, has_destructor={}, result={}", 
-						has_user_destructor(), result);
-				} else {
-					// Scalar types (int, float, pointers, etc.) are trivially destructible
-					result = true;
-				}
-				break;
-			}
-			
-			case TypeTraitKind::IsClass: {
-				// A type is a class if it's a struct/class (not enum, not union)
-				const StructTypeInfo* struct_info = get_struct_info();
-				result = (base_type == Type::Struct || base_type == Type::UserDefined) && 
-				         struct_info && !struct_info->is_union;
-				break;
-			}
-			
-			case TypeTraitKind::IsVoid:
-				result = (base_type == Type::Void);
-				break;
-				
-			case TypeTraitKind::IsIntegral:
-				result = (base_type == Type::Bool || base_type == Type::Char || 
-				          base_type == Type::UnsignedChar || base_type == Type::Short ||
-				          base_type == Type::UnsignedShort || base_type == Type::Int ||
-				          base_type == Type::UnsignedInt || base_type == Type::Long ||
-				          base_type == Type::UnsignedLong || base_type == Type::LongLong ||
-				          base_type == Type::UnsignedLongLong);
-				break;
-				
-			case TypeTraitKind::IsFloatingPoint:
-				result = (base_type == Type::Float || base_type == Type::Double);
-				break;
-				
-			case TypeTraitKind::IsPointer:
-				result = (type_spec.pointer_depth() > 0 && !type_spec.is_reference());
-				break;
-				
-			case TypeTraitKind::IsReference:
-				result = type_spec.is_reference() || type_spec.is_lvalue_reference();
-				break;
-				
-			case TypeTraitKind::IsLvalueReference:
-				result = type_spec.is_lvalue_reference();
-				break;
-				
-			case TypeTraitKind::IsRvalueReference:
-				result = type_spec.is_rvalue_reference();
-				break;
-				
-			case TypeTraitKind::IsConst:
-				result = (type_spec.cv_qualifier() == CVQualifier::Const ||
-				          type_spec.cv_qualifier() == CVQualifier::ConstVolatile);
-				break;
-				
-			case TypeTraitKind::IsVolatile:
-				result = (type_spec.cv_qualifier() == CVQualifier::Volatile ||
-				          type_spec.cv_qualifier() == CVQualifier::ConstVolatile);
-				break;
-				
-			case TypeTraitKind::IsTrivial:
-			case TypeTraitKind::IsPod:
-			case TypeTraitKind::IsTriviallyCopyable: {
-				// For now, treat non-struct types as trivial
-				if (base_type != Type::Struct && base_type != Type::UserDefined) {
-					result = true;
-				} else {
-					// A struct is trivial if it has no user-defined special functions
-					result = !has_user_destructor() && !has_user_constructor();
-				}
-				break;
-			}
-			
-			case TypeTraitKind::IsEnum: {
-				const TypeInfo* ti = get_type_info();
-				result = ti && ti->isEnum();
-				break;
-			}
-			
-			case TypeTraitKind::IsUnion: {
-				const StructTypeInfo* struct_info = get_struct_info();
-				result = struct_info && struct_info->is_union;
-				break;
-			}
-			
-			case TypeTraitKind::IsEmpty: {
-				const StructTypeInfo* struct_info = get_struct_info();
-				result = struct_info && struct_info->total_size == 0;
-				break;
-			}
-			
-			case TypeTraitKind::IsPolymorphic: {
-				const StructTypeInfo* struct_info = get_struct_info();
-				result = struct_info && struct_info->has_vtable;
-				break;
-			}
-			
-			case TypeTraitKind::IsAbstract: {
-				const StructTypeInfo* struct_info = get_struct_info();
-				result = struct_info && struct_info->is_abstract;
-				break;
-			}
-			
-			case TypeTraitKind::IsFinal: {
-				const StructTypeInfo* struct_info = get_struct_info();
-				result = struct_info && struct_info->is_final;
-				break;
-			}
-			
-			case TypeTraitKind::HasVirtualDestructor: {
-				const StructTypeInfo* struct_info = get_struct_info();
-				if (struct_info) {
-					// Check if any destructor member function is virtual
-					for (const auto& mf : struct_info->member_functions) {
-						if (mf.is_destructor && mf.is_virtual) {
-							result = true;
-							break;
-						}
-					}
-				}
-				break;
-			}
-			
-			case TypeTraitKind::IsDestructible: {
-				// Most types are destructible unless they're incomplete or have deleted destructor
-				// For simplicity, return true for complete types
-				result = true;
-				break;
-			}
-			
-			default:
-				// For unhandled traits, return nullopt to indicate we can't evaluate
-				FLASH_LOG_FORMAT(Templates, Debug, "Unhandled type trait kind: {}", static_cast<int>(trait_expr.kind()));
-				return std::nullopt;
+		if (!eval_result.success) {
+			// Trait requires special handling (binary trait, etc.) or is not supported
+			FLASH_LOG_FORMAT(Templates, Debug, "Type trait {} requires special handling or is not supported", 
+				static_cast<int>(trait_expr.kind()));
+			return std::nullopt;
 		}
 		
-		FLASH_LOG_FORMAT(Templates, Debug, "Type trait evaluation result: {}", result);
-		return ConstantValue{result ? 1 : 0, Type::Bool};
+		FLASH_LOG_FORMAT(Templates, Debug, "Type trait evaluation result: {}", eval_result.value);
+		return ConstantValue{eval_result.value ? 1 : 0, Type::Bool};
 	}
 	
 	return std::nullopt;

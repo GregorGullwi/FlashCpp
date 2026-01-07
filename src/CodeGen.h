@@ -9,6 +9,7 @@
 #include "NameMangling.h"
 #include "ConstExprEvaluator.h"
 #include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
 #include <type_traits>
 #include <variant>
 #include <vector>
