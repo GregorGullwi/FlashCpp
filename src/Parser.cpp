@@ -14757,6 +14757,40 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							found_as_type_alias = true;
 						}
 					}
+					
+					// If still not found, check for member type aliases in the current struct/class being parsed
+					// This handles cases like: using inner_type = int; using outer_type = wrapper<inner_type>;
+					if (!found_as_type_alias) {
+						// Try member_function_context_stack_ first (for code inside member function bodies)
+						if (!member_function_context_stack_.empty()) {
+							const auto& ctx = member_function_context_stack_.back();
+							if (ctx.struct_node != nullptr) {
+								for (const auto& alias : ctx.struct_node->type_aliases()) {
+									if (alias.alias_name == identifier_handle) {
+										FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as member type alias in current struct (member func context)", 
+											idenfifier_token.value());
+										found_as_type_alias = true;
+										break;
+									}
+								}
+							}
+						}
+						
+						// Then try struct_parsing_context_stack_ (for code inside struct body, e.g., type alias definitions)
+						if (!found_as_type_alias && !struct_parsing_context_stack_.empty()) {
+							const auto& ctx = struct_parsing_context_stack_.back();
+							if (ctx.struct_node != nullptr) {
+								for (const auto& alias : ctx.struct_node->type_aliases()) {
+									if (alias.alias_name == identifier_handle) {
+										FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as member type alias in current struct (struct parsing context)", 
+											idenfifier_token.value());
+										found_as_type_alias = true;
+										break;
+									}
+								}
+							}
+						}
+					}
 				}
 			}
 		}
