@@ -1592,7 +1592,7 @@ private:
 								"__is_reference", "__is_arithmetic", "__is_fundamental",
 								"__is_object", "__is_scalar", "__is_compound",
 								// Type relationship traits
-								"__is_base_of", "__is_same", "__is_convertible",
+								"__is_base_of", "__is_same", "__is_convertible", "__is_nothrow_convertible",
 								// Type property traits
 								"__is_polymorphic", "__is_final", "__is_abstract", "__is_empty",
 								"__is_aggregate", "__is_standard_layout",
@@ -1614,11 +1614,11 @@ private:
 								// Builtin functions
 								"__builtin_addressof", "__builtin_unreachable", "__builtin_assume",
 								"__builtin_expect", "__builtin_launder",
-								// Type modification (added for <type_traits> support)
-								"__remove_cv", "__remove_cvref", "__remove_reference",
-								"__add_lvalue_reference", "__add_rvalue_reference",
-								"__add_pointer", "__decay",
-								"__make_signed", "__make_unsigned",
+								// Type modification - NOT YET IMPLEMENTED, using template fallbacks
+								// "__remove_cv", "__remove_cvref", "__remove_reference",
+								// "__add_lvalue_reference", "__add_rvalue_reference",
+								// "__add_pointer", "__decay",
+								// "__make_signed", "__make_unsigned",
 								// Type inspection
 								"__underlying_type",
 								// Pack and tuple support

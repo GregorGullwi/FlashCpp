@@ -384,6 +384,7 @@ inline TypeTraitResult evaluateTypeTrait(
 		case TypeTraitKind::IsBaseOf:
 		case TypeTraitKind::IsSame:
 		case TypeTraitKind::IsConvertible:
+		case TypeTraitKind::IsNothrowConvertible:
 		case TypeTraitKind::IsAssignable:
 		case TypeTraitKind::IsTriviallyAssignable:
 		case TypeTraitKind::IsNothrowAssignable:
