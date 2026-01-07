@@ -2881,6 +2881,20 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		// For example: using type = _Tp&; or using RvalueRef = T&&;
 		TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 		
+		// Parse postfix cv-qualifiers: _Tp const, _Tp volatile, _Tp const volatile
+		// This is the C++ postfix const/volatile syntax used in standard library headers
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			if (peek_token()->value() == "const") {
+				consume_token();
+				type_spec.add_cv_qualifier(CVQualifier::Const);
+			} else if (peek_token()->value() == "volatile") {
+				consume_token();
+				type_spec.add_cv_qualifier(CVQualifier::Volatile);
+			} else {
+				break;
+			}
+		}
+		
 		// Parse pointer declarators: * [const] [volatile] *...
 		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
 		       peek_token()->value() == "*") {
@@ -25527,7 +25541,62 @@ std::string_view Parser::instantiate_and_register_base_template(
 	std::string_view& base_class_name, 
 	const std::vector<TemplateTypeArg>& template_args) {
 	
-	// Check if the base class is a template
+	// First check if the base class is a template alias (like bool_constant)
+	auto alias_entry = gTemplateRegistry.lookup_alias_template(base_class_name);
+	if (alias_entry.has_value()) {
+		FLASH_LOG(Parser, Debug, "Base class '", base_class_name, "' is a template alias - resolving");
+		
+		const TemplateAliasNode& alias_node = alias_entry->as<TemplateAliasNode>();
+		
+		if (alias_node.is_deferred()) {
+			// Deferred template alias - need to substitute template arguments
+			const auto& param_names = alias_node.template_param_names();
+			const auto& target_template_args = alias_node.target_template_args();
+			std::vector<TemplateTypeArg> substituted_args;
+			
+			// For each argument in the target template
+			for (size_t i = 0; i < target_template_args.size(); ++i) {
+				const ASTNode& arg_node = target_template_args[i];
+				
+				if (arg_node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& arg_type = arg_node.as<TypeSpecifierNode>();
+					
+					// Check if this arg references a parameter of the alias template
+					bool is_alias_param = false;
+					size_t alias_param_idx = 0;
+					
+					Token arg_token = arg_type.token();
+					if (arg_token.type() == Token::Type::Identifier) {
+						std::string_view arg_token_value = arg_token.value();
+						for (size_t j = 0; j < param_names.size(); ++j) {
+							if (arg_token_value == param_names[j].view()) {
+								is_alias_param = true;
+								alias_param_idx = j;
+								break;
+							}
+						}
+					}
+					
+					if (is_alias_param && alias_param_idx < template_args.size()) {
+						substituted_args.push_back(template_args[alias_param_idx]);
+					} else {
+						substituted_args.push_back(TemplateTypeArg(arg_type));
+					}
+				}
+			}
+			
+			// Now recursively instantiate the target template
+			// The target might itself be a template alias (chain of aliases)
+			std::string_view target_name(alias_node.target_template_name());
+			std::string_view instantiated_name = instantiate_and_register_base_template(target_name, substituted_args);
+			if (!instantiated_name.empty()) {
+				base_class_name = instantiated_name;
+				return instantiated_name;
+			}
+		}
+	}
+	
+	// Check if the base class is a template class
 	auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
 	if (template_entry) {
 		// Try to instantiate the base template
