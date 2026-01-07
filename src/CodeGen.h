@@ -16368,6 +16368,25 @@ private:
 						else if (from_type == Type::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
 							result = true;
 						}
+						// Derived to base conversion for class types (nothrow if no virtual base)
+						else if (from_type == Type::Struct && to_type == Type::Struct &&
+						         !from_is_ref && !to_is_ref && 
+						         from_ptr_depth == 0 && to_ptr_depth == 0 &&
+						         from_spec.type_index() < gTypeInfo.size() &&
+						         to_spec.type_index() < gTypeInfo.size()) {
+							// Check if from_type is derived from to_type
+							const TypeInfo& from_info = gTypeInfo[from_spec.type_index()];
+							const StructTypeInfo* from_struct = from_info.getStructInfo();
+							if (from_struct) {
+								for (const auto& base_class : from_struct->base_classes) {
+									if (base_class.type_index == to_spec.type_index()) {
+										// Base class found - nothrow if not virtual
+										result = !base_class.is_virtual;
+										break;
+									}
+								}
+							}
+						}
 					}
 				}
 				break;
