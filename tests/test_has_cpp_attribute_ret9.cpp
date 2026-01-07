@@ -54,10 +54,8 @@ int has_unknown = 1;
 int has_unknown = 0;
 #endif
 
-constexpr int expected_supported_attributes = 9;
-
 int main() {
-	static_assert(expected_supported_attributes == 9, "Update the expected count when adding attributes");
+	// Sum of attribute checks verifies __has_cpp_attribute results for all cases above
 	return has_deprecated + has_fallthrough + has_likely +
 		has_unlikely + has_maybe_unused + has_no_unique_address +
 		has_nodiscard + has_noreturn + has_unknown;
