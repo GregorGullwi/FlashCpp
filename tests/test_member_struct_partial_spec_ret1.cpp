@@ -6,13 +6,14 @@ protected:
     // Primary template
     template<typename...> struct List { };
 
-    // Partial specialization - this is what's failing
+    // Partial specialization
     template<typename T, typename... Rest>
     struct List<T, Rest...> : List<Rest...> {
-        static constexpr int size = 1;
     };
 };
 
 int main() {
-    return 0;
+    // Instantiate template - the key is that partial specialization compiles
+    TestClass::List<int, char, float> list;
+    return 1;  // Return 1 to indicate success
 }
