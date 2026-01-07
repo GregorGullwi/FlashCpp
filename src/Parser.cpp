@@ -23330,9 +23330,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	);
 
 	// Parse struct body (members, methods, etc.)
-	// For template member structs, we defer full member parsing until instantiation
-	// This matches C++ semantics where template members are not instantiated until needed
-	// We skip the body to avoid parsing errors with dependent names and types
+	// For template member structs, parse members but don't instantiate dependent types yet
+	// This matches C++ semantics where template members are parsed but not instantiated until needed
+	StructDeclarationNode& member_struct_ref = member_struct_node.as<StructDeclarationNode>();
 	AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
 	
 	while (peek_token().has_value() && peek_token()->value() != "}") {
@@ -23351,21 +23351,75 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 		}
 
-		// Skip member declarations - proper parsing would be done during instantiation
-		// This avoids issues with dependent types that can't be resolved until template arguments are known
-		int brace_depth = 0;
-		while (peek_token().has_value()) {
-			std::string_view token_val = peek_token()->value();
-			if (token_val == "{") brace_depth++;
-			else if (token_val == "}") {
-				if (brace_depth == 0) break;
-				brace_depth--;
+		// Parse member declaration (data member or function)
+		auto member_result = parse_type_and_name();
+		if (member_result.is_error()) {
+			return member_result;
+		}
+		
+		if (!member_result.node().has_value()) {
+			return ParseResult::error("Expected member declaration", *peek_token());
+		}
+		
+		// Check if this is a member function (has '(') or data member (has ';')
+		if (peek_token().has_value() && peek_token()->value() == "(") {
+			// Member function
+			DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
+			
+			// Parse function declaration with parameters
+			auto func_result = parse_function_declaration(decl_node);
+			if (func_result.is_error()) {
+				return func_result;
 			}
-			else if (token_val == ";" && brace_depth == 0) {
+			
+			if (!func_result.node().has_value()) {
+				return ParseResult::error("Failed to create function declaration node", *peek_token());
+			}
+			
+			FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+			
+			// Create member function node
+			auto [member_func_node, member_func_ref] =
+				emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_name);
+			
+			// Copy parameters
+			for (const auto& param : func_decl.parameter_nodes()) {
+				member_func_ref.add_parameter_node(param);
+			}
+			
+			// Parse trailing specifiers
+			FlashCpp::MemberQualifiers member_quals;
+			FlashCpp::FunctionSpecifiers func_specs;
+			auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+			if (specs_result.is_error()) {
+				return specs_result;
+			}
+			
+			// Handle function body or semicolon
+			if (peek_token().has_value() && peek_token()->value() == "{") {
+				// Parse function body
+				auto body_result = parse_block();
+				if (body_result.is_error()) {
+					return body_result;
+				}
+				
+				if (body_result.node().has_value()) {
+					// Generate mangled name and set definition
+					compute_and_set_mangled_name(member_func_ref);
+					member_func_ref.set_definition(*body_result.node());
+				}
+			} else if (peek_token().has_value() && peek_token()->value() == ";") {
 				consume_token(); // consume ';'
-				break;
 			}
-			consume_token();
+			
+			// Add member function to struct
+			member_struct_ref.add_member_function(member_func_node, current_access);
+		} else if (peek_token().has_value() && peek_token()->value() == ";") {
+			// Data member
+			consume_token(); // consume ';'
+			member_struct_ref.add_member(*member_result.node(), current_access, std::nullopt);
+		} else {
+			return ParseResult::error("Expected '(' or ';' after member declaration", *peek_token());
 		}
 	}
 
