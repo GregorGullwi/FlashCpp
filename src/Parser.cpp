@@ -23245,17 +23245,170 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	return saved_position.success();
 }
 
+// Parse member struct/class template: template<typename T> struct Name { ... };
+ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_node, AccessSpecifier access) {
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'template' keyword
+	if (!consume_keyword("template")) {
+		return ParseResult::error("Expected 'template' keyword", *peek_token());
+	}
+
+	// Expect '<' to start template parameter list
+	if (!peek_token().has_value() || peek_token()->value() != "<") {
+		return ParseResult::error("Expected '<' after 'template' keyword", *current_token_);
+	}
+	consume_token(); // consume '<'
+
+	// Parse template parameter list
+	std::vector<ASTNode> template_params;
+	std::vector<std::string_view> template_param_names;
+
+	auto param_list_result = parse_template_parameter_list(template_params);
+	if (param_list_result.is_error()) {
+		return param_list_result;
+	}
+
+	// Extract parameter names for later lookup
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			template_param_names.push_back(param.as<TemplateParameterNode>().name());
+		}
+	}
+
+	// Expect '>' to close template parameter list
+	if (!peek_token().has_value() || peek_token()->value() != ">") {
+		return ParseResult::error("Expected '>' after template parameter list", *current_token_);
+	}
+	consume_token(); // consume '>'
+
+	// Temporarily add template parameters to type system using RAII scope guard
+	FlashCpp::TemplateParameterScope template_scope;
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			if (tparam.kind() == TemplateParameterKind::Type) {
+				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(tparam.name()), Type::UserDefined, gTypeInfo.size());
+				gTypesByName.emplace(type_info.name(), &type_info);
+				template_scope.addParameter(&type_info);
+			}
+		}
+	}
+
+	// Expect 'struct' or 'class' keyword
+	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Keyword ||
+	    (peek_token()->value() != "struct" && peek_token()->value() != "class")) {
+		return ParseResult::error("Expected 'struct' or 'class' after template parameter list", *current_token_);
+	}
+	
+	bool is_class = (peek_token()->value() == "class");
+	Token struct_keyword_token = *peek_token();
+	consume_token(); // consume 'struct' or 'class'
+
+	// Parse the struct name
+	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+		return ParseResult::error("Expected struct/class name after 'struct'/'class' keyword", *current_token_);
+	}
+	Token struct_name_token = *peek_token();
+	std::string_view struct_name = struct_name_token.value();
+	consume_token(); // consume struct name
+
+	// Expect '{' to start struct body
+	if (!peek_token().has_value() || peek_token()->value() != "{") {
+		return ParseResult::error("Expected '{' to start struct body", *current_token_);
+	}
+	consume_token(); // consume '{'
+
+	// Create the struct declaration node
+	// Member structs are prefixed with parent struct name for uniqueness
+	auto qualified_name = StringTable::getOrInternStringHandle(
+		StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
+	
+	auto member_struct_node = emplace_node<StructDeclarationNode>(
+		qualified_name, 
+		is_class
+	);
+
+	// Parse struct body (members, methods, etc.)
+	AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
+	
+	while (peek_token().has_value() && peek_token()->value() != "}") {
+		// Check for access specifiers
+		if (peek_token()->type() == Token::Type::Keyword) {
+			std::string_view keyword = peek_token()->value();
+			if (keyword == "public" || keyword == "private" || keyword == "protected") {
+				consume_token(); // consume access specifier
+				if (!consume_punctuator(":")) {
+					return ParseResult::error("Expected ':' after access specifier", *current_token_);
+				}
+				if (keyword == "public") current_access = AccessSpecifier::Public;
+				else if (keyword == "private") current_access = AccessSpecifier::Private;
+				else if (keyword == "protected") current_access = AccessSpecifier::Protected;
+				continue;
+			}
+		}
+
+		// Parse member declaration - for now, just skip to semicolon
+		// TODO: Full member parsing if needed
+		int brace_depth = 0;
+		while (peek_token().has_value()) {
+			std::string_view token_val = peek_token()->value();
+			if (token_val == "{") brace_depth++;
+			else if (token_val == "}") {
+				if (brace_depth == 0) break;
+				brace_depth--;
+			}
+			else if (token_val == ";" && brace_depth == 0) {
+				consume_token(); // consume ';'
+				break;
+			}
+			consume_token();
+		}
+	}
+
+	// Expect '}' to close struct body
+	if (!peek_token().has_value() || peek_token()->value() != "}") {
+		return ParseResult::error("Expected '}' to close struct body", *current_token_);
+	}
+	consume_token(); // consume '}'
+
+	// Expect ';' to end struct declaration
+	if (!consume_punctuator(";")) {
+		return ParseResult::error("Expected ';' after struct declaration", *current_token_);
+	}
+
+	// Create template struct node (using TemplateClassDeclarationNode which handles both struct and class)
+	auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
+		std::move(template_params),
+		std::move(template_param_names),
+		member_struct_node
+	);
+
+	// Register the template in the global registry with qualified name
+	gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_struct_node);
+	
+	// Also register with simple name for lookups within the parent struct
+	gTemplateRegistry.registerTemplate(struct_name, template_struct_node);
+
+	FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template: {}", StringTable::getStringView(qualified_name));
+
+	// template_scope automatically cleans up template parameters when it goes out of scope
+
+	return saved_position.success();
+}
+
 // Helper: Parse member template keyword - performs lookahead to detect whether 'template' introduces
 // a member template alias or member function template, then dispatches to the appropriate parser.
 // This eliminates code duplication across regular struct, full specialization, and partial specialization parsing.
 ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access) {
-	// Look ahead to determine if this is a template alias or template function
+	// Look ahead to determine if this is a template alias, struct/class template, or function template
 	SaveHandle lookahead_pos = save_token_position();
 	
 	consume_token(); // consume 'template'
 	
 	// Skip template parameter list to find what comes after
 	bool is_template_alias = false;
+	bool is_struct_or_class_template = false;
 	if (peek_token().has_value() && peek_token()->value() == "<") {
 		consume_token(); // consume '<'
 		
@@ -23275,6 +23428,8 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 			std::string_view next_keyword = peek_token()->value();
 			if (next_keyword == "using") {
 				is_template_alias = true;
+			} else if (next_keyword == "struct" || next_keyword == "class") {
+				is_struct_or_class_template = true;
 			}
 		}
 	}
@@ -23285,6 +23440,9 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 	if (is_template_alias) {
 		// This is a member template alias
 		return parse_member_template_alias(struct_node, access);
+	} else if (is_struct_or_class_template) {
+		// This is a member struct/class template
+		return parse_member_struct_template(struct_node, access);
 	} else {
 		// This is a member function template
 		return parse_member_function_template(struct_node, access);
