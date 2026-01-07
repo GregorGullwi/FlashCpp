@@ -27933,14 +27933,35 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeIndex substituted_type_index = static_member.type_index;
 				size_t substituted_size = static_member.size;
 				
+				// Use proper template parameter matching by name (like substitute_template_parameter does)
 				if (static_member.type == Type::UserDefined && !template_args.empty()) {
-					// Substitute with concrete type from template_args
-					substituted_type = template_args[0].base_type;
-					substituted_type_index = template_args[0].type_index;
-					substituted_size = get_type_size_bits(substituted_type) / 8;
+					// Get the type name from gTypeInfo to match against template parameters
+					std::string_view type_name;
+					if (static_member.type_index < gTypeInfo.size() && static_member.type_index > 0) {
+						type_name = StringTable::getStringView(gTypeInfo[static_member.type_index].name());
+					}
+					
+					// Try to find which template parameter this type corresponds to
+					if (!type_name.empty()) {
+						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+							if (template_params[i].is<TemplateParameterNode>()) {
+								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+								if (tparam.name() == type_name) {
+									// Found a match! Substitute with the concrete type
+									const TemplateTypeArg& arg = template_args[i];
+									substituted_type = arg.base_type;
+									substituted_type_index = arg.type_index;
+									substituted_size = get_type_size_bits(substituted_type) / 8;
+									FLASH_LOG(Templates, Debug, "Substituted static member type '", type_name, 
+									          "' with template arg at index ", i);
+									break;
+								}
+							}
+						}
+					}
 				}
 				
-				// Handle sizeof(T) in initializers
+				// Handle sizeof(T) in initializers using proper template parameter matching
 				std::optional<ASTNode> substituted_initializer = static_member.initializer;
 				if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
 					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
@@ -27953,10 +27974,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (sizeof_expr.is_type() && sizeof_expr.type_or_expr().is<TypeSpecifierNode>()) {
 							const TypeSpecifierNode& sizeof_type_spec = sizeof_expr.type_or_expr().as<TypeSpecifierNode>();
 							
-							// Check if sizeof operand is a template parameter that needs substitution
-							if (sizeof_type_spec.type() == Type::UserDefined && !template_args.empty()) {
-								// Substitute with concrete type and compute size
-								Type concrete_type = template_args[0].base_type;
+							// Use substitute_template_parameter for proper parameter matching
+							auto [concrete_type, concrete_type_index] = substitute_template_parameter(
+								sizeof_type_spec, template_params, template_args);
+							
+							// Only substitute if the type was actually a template parameter
+							if (concrete_type != sizeof_type_spec.type() || concrete_type_index != sizeof_type_spec.type_index()) {
 								size_t concrete_size = get_type_size_bits(concrete_type) / 8;
 								
 								// Create a numeric literal with the sizeof value
