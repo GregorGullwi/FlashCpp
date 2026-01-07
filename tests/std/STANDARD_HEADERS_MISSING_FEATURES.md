@@ -4,11 +4,20 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 7, 2026 - Member Struct Template Partial Specialization)**:
+- ✅ **Member struct template partial specialization** - Basic support now implemented!
+- 🎯 **`<type_traits>` progresses from line 1841 to line 1845!** (4 more lines)
+- ✅ **Pattern detection and registration** - Patterns like `struct _List<_Tp, _Up...> : _List<_Up...>` now parse correctly
+- ✅ **Unique pattern naming** - Generated names with modifiers (P for pointer, R for reference, etc.)
+- ⚠️ **New blocker at line 1845** - Partial specialization with non-type value parameter (e.g., `struct __select<_Sz, _List<_Uint, _UInts...>, true>`)
+- ⚠️ **Base class inheritance in partial specializations** - Currently simplified (consumes tokens until `{`)
+- 🎯 **Test case created**: `test_member_struct_partial_spec_ret0.cpp` - ✅ COMPILES!
+
 **UPDATE (January 7, 2026 - Member Struct/Class Templates)**:
 - ✅ **Member struct/class templates** - Template struct and class declarations are now supported as class members
 - ✅ **Unnamed variadic template parameters in class context** - Patterns like `template<typename...> struct _List { };` now work
 - 🎯 **`<type_traits>` progresses from line 1838 to line 1841!** 
-- ⚠️ **New blocker at line 1841** - Partial specialization of member templates (e.g., `struct _List<_Tp, _Up...> : _List<_Up...>`) - different feature needed
+- ✅ **Partial specialization of member templates** - Basic support implemented (January 7, 2026 evening)
 - ⚠️ **Member struct templates with function bodies** - Still need work on parsing members within nested template structs
 - 🎯 **All 838 tests passing!**
 
@@ -199,6 +208,84 @@ int main() {
 ## Recent Progress (December 2024)
 
 ### ✅ Completed Features
+
+#### 0a. Member Struct Template Partial Specialization (January 7, 2026 - Evening)
+**Status**: ✅ **NEWLY IMPLEMENTED** (Basic Support)
+
+**What Was Missing**: FlashCpp supported member struct templates (primary templates) but could not parse partial specializations of those member templates. Partial specialization is a C++11 feature that allows specializing a template for a subset of type patterns.
+
+**The Problem**: Patterns like the following would fail to parse:
+```cpp
+class Container {
+    // Primary template - ✅ WORKED (since morning of January 7)
+    template<typename...> 
+    struct List { };
+    
+    // Partial specialization - ❌ FAILED: "Expected '{' to start struct body"
+    template<typename T, typename... Rest>
+    struct List<T, Rest...> : List<Rest...> {
+        static constexpr int size = 1;
+    };
+};
+```
+
+The parser's `parse_member_struct_template()` expected `{` immediately after the struct name, but in a partial specialization, `<` appears first to specify the pattern (e.g., `List<T, Rest...>`).
+
+**Implementation**: 
+- Modified `parse_member_struct_template()` (src/Parser.cpp line 23308+) to detect partial specialization
+- After parsing the struct name, check if next token is `<` (indicating partial specialization)
+- If partial specialization detected:
+  - Parse template argument pattern using `parse_explicit_template_arguments()`
+  - Generate unique pattern name with modifiers (P=pointer, R=reference, RR=rvalue ref, C=const, V=volatile, A=array, etc.)
+  - Parse base class list (currently simplified - consumes tokens until `{`)
+  - Parse struct body with simple member parsing (data members with/without initializers)
+  - Register pattern with `TemplateRegistry.registerSpecializationPattern()`
+- If not partial specialization, continue with primary template parsing
+
+**Pattern Name Generation**:
+```cpp
+List<T*>          → List_pattern_TP
+List<T**>         → List_pattern_TPP
+List<T&>          → List_pattern_TR
+List<T&&>         → List_pattern_TRR
+List<const T*>    → List_pattern_PC
+List<T, Rest...>  → List_pattern__
+```
+
+**Test Cases**:
+```cpp
+// Basic partial specialization - ✅ NOW COMPILES!
+class TestClass {
+protected:
+    template<typename...> struct List { };
+    
+    template<typename T, typename... Rest>
+    struct List<T, Rest...> : List<Rest...> {
+        static constexpr int size = 1;
+    };
+};
+```
+
+**Impact**: 
+- **Unblocks `<type_traits>` line 1841!** 🎉
+- `<type_traits>` now progresses from line 1841 to line 1845 (4 more lines)
+- Standard library can now use partial specialization for member template metaprogramming
+- Test case: `tests/test_member_struct_partial_spec_ret0.cpp` ✅ COMPILES AND RUNS!
+
+**Known Limitations**:
+- Base class inheritance in partial specializations is simplified (just consumes tokens)
+- Member function bodies in partial specializations not yet fully tested
+- Partial specializations with non-type value parameters (e.g., `struct X<T, true>`) - next blocker at line 1845
+
+**Files Modified:**
+- `src/Parser.cpp` - Extended `parse_member_struct_template()` with partial specialization detection and handling (200+ lines added)
+- `tests/test_member_struct_partial_spec_ret0.cpp` - Test case for member struct template partial specialization ✅
+
+**Current Blocker**: Line 1845 encounters partial specialization with non-type value parameter:
+```cpp
+template<size_t _Sz, typename _Uint, typename... _UInts>
+struct __select<_Sz, _List<_Uint, _UInts...>, true>  // ← 'true' is a value, not a type
+```
 
 #### 0. Member Struct/Class Templates (January 7, 2026)
 **Status**: ✅ **NEWLY IMPLEMENTED**
