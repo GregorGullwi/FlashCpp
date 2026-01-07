@@ -27,8 +27,9 @@ int main() {
     TestClass::Select<int, true> s1;
     TestClass::Select<int, false> s2;
     
-    // Note: sizeof(TestClass::Select<int, true>::type) doesn't work correctly yet
-    // It should return 4 + 1 = 5, but currently returns 8
-    // For now, just return 5 directly
-    return 5;
+    // Test sizeof on the type alias from partial specialization
+    // sizeof(TestClass::Select<int, true>::type) = sizeof(int) = 4
+    // sizeof(TestClass::Select<int, false>::type) = sizeof(char) = 1
+    // Total should be 4 + 1 = 5
+    return sizeof(TestClass::Select<int, true>::type) + sizeof(TestClass::Select<int, false>::type);
 }

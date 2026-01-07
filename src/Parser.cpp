@@ -23455,12 +23455,35 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				// Handle member type alias (using) declarations
 				if (keyword == "using") {
 					consume_token(); // consume 'using'
-					// Just consume tokens until ';' - we don't need to fully process type aliases in partial specializations
-					while (peek_token().has_value() && peek_token()->value() != ";") {
-						consume_token();
+					
+					// Parse the alias name
+					if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+						return ParseResult::error("Expected alias name after 'using'", *current_token_);
 					}
+					std::string_view alias_name = peek_token()->value();
+					consume_token(); // consume alias name
+					
+					// Expect '='
+					if (!peek_token().has_value() || peek_token()->value() != "=") {
+						return ParseResult::error("Expected '=' after alias name", *current_token_);
+					}
+					consume_token(); // consume '='
+					
+					// Parse the aliased type
+					auto type_result = parse_type_specifier();
+					if (type_result.is_error()) {
+						return type_result;
+					}
+					
+					// Expect ';'
 					if (!consume_punctuator(";")) {
 						return ParseResult::error("Expected ';' after using declaration", *current_token_);
+					}
+					
+					// Store the type alias in the struct
+					if (type_result.node().has_value()) {
+						StringHandle alias_name_handle = StringTable::getOrInternStringHandle(alias_name);
+						member_struct_ref.add_type_alias(alias_name_handle, *type_result.node(), current_access);
 					}
 					continue;
 				}
@@ -23469,9 +23492,18 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					consume_token(); // consume 'static'
 					
 					// Check if it's const or constexpr
+					bool is_const = false;
+					bool is_constexpr = false;
 					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 						std::string_view kw = peek_token()->value();
-						if (kw == "const" || kw == "constexpr" || kw == "inline") {
+						if (kw == "const") {
+							is_const = true;
+							consume_token();
+						} else if (kw == "constexpr") {
+							is_constexpr = true;
+							is_const = true; // constexpr implies const
+							consume_token();
+						} else if (kw == "inline") {
 							consume_token();
 						} else {
 							break;
@@ -23485,6 +23517,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					}
 					
 					// Check for initialization (e.g., = sizeof(T))
+					std::optional<ASTNode> init_expr_opt;
 					if (peek_token().has_value() && peek_token()->value() == "=") {
 						consume_token(); // consume '='
 						
@@ -23493,7 +23526,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						if (init_result.is_error()) {
 							return init_result;
 						}
-						// We parse but don't store the initializer for partial specializations
+						if (init_result.node().has_value()) {
+							init_expr_opt = *init_result.node();
+						}
 					}
 					
 					// Expect semicolon
@@ -23501,8 +23536,28 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						return ParseResult::error("Expected ';' after static member declaration", *current_token_);
 					}
 					
-					// For partial specializations, we just skip static members
-					// Full instantiation will handle them properly
+					// Store the static member in the struct (as a pattern for instantiation)
+					if (type_and_name_result.node().has_value()) {
+						const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
+						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+						
+						// Calculate size and alignment for the static member
+						size_t static_member_size = get_type_size_bits(type_spec.type()) / 8;
+						size_t static_member_alignment = get_type_alignment(type_spec.type(), static_member_size);
+						
+						// Add to struct's static members
+						StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+						member_struct_ref.add_static_member(
+							static_member_name_handle,
+							type_spec.type(),
+							type_spec.type_index(),
+							static_member_size,
+							static_member_alignment,
+							current_access,
+							init_expr_opt,
+							is_const
+						);
+					}
 					continue;
 				}
 			}
@@ -27218,12 +27273,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Found a matching pattern - we need to instantiate it with concrete types
 			const ASTNode& pattern_node = *pattern_match_opt;
 		
-		if (!pattern_node.is<StructDeclarationNode>()) {
-			FLASH_LOG(Templates, Error, "Pattern node is not a StructDeclarationNode");
+		// Handle both StructDeclarationNode (top-level partial specialization) and
+		// TemplateClassDeclarationNode (member template partial specialization)
+		const StructDeclarationNode* pattern_struct_ptr = nullptr;
+		if (pattern_node.is<StructDeclarationNode>()) {
+			pattern_struct_ptr = &pattern_node.as<StructDeclarationNode>();
+		} else if (pattern_node.is<TemplateClassDeclarationNode>()) {
+			// Member template partial specialization - extract the inner struct
+			pattern_struct_ptr = &pattern_node.as<TemplateClassDeclarationNode>().class_decl_node();
+		} else {
+			FLASH_LOG(Templates, Error, "Pattern node is not a StructDeclarationNode or TemplateClassDeclarationNode");
 			return std::nullopt;
 		}
 		
-		const StructDeclarationNode& pattern_struct = pattern_node.as<StructDeclarationNode>();
+		const StructDeclarationNode& pattern_struct = *pattern_struct_ptr;
 		FLASH_LOG(Templates, Debug, "Pattern struct name: ", pattern_struct.name());
 		
 		// Register the mapping from instantiated name to pattern name
@@ -27237,7 +27300,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (patterns_it != gTemplateRegistry.specialization_patterns_.end()) {
 			// Find the matching pattern to get its template params
 			for (const auto& pattern : patterns_it->second) {
-				if (&pattern.specialized_node.as<StructDeclarationNode>() == &pattern_struct) {
+				// Handle both StructDeclarationNode and TemplateClassDeclarationNode patterns
+				const StructDeclarationNode* spec_struct_ptr = nullptr;
+				if (pattern.specialized_node.is<StructDeclarationNode>()) {
+					spec_struct_ptr = &pattern.specialized_node.as<StructDeclarationNode>();
+				} else if (pattern.specialized_node.is<TemplateClassDeclarationNode>()) {
+					spec_struct_ptr = &pattern.specialized_node.as<TemplateClassDeclarationNode>().class_decl_node();
+				}
+				if (spec_struct_ptr && spec_struct_ptr == &pattern_struct) {
 					pattern_template_params = pattern.template_params;
 					break;
 				}
@@ -27846,6 +27916,74 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 		
+		// Also copy static members from the pattern AST node (for member template partial specializations)
+		// These may not have been added to StructTypeInfo yet
+		if (!pattern_struct.static_members().empty()) {
+			FLASH_LOG(Templates, Debug, "Copying ", pattern_struct.static_members().size(), " static members from pattern AST node");
+			for (const auto& static_member : pattern_struct.static_members()) {
+				FLASH_LOG(Templates, Debug, "Copying static member from AST: ", StringTable::getStringView(static_member.name));
+				
+				// Check if already added from StructTypeInfo
+				if (struct_info->findStaticMember(static_member.name) != nullptr) {
+					continue;  // Already added
+				}
+				
+				// Substitute type if it's a template parameter
+				Type substituted_type = static_member.type;
+				TypeIndex substituted_type_index = static_member.type_index;
+				size_t substituted_size = static_member.size;
+				
+				if (static_member.type == Type::UserDefined && !template_args.empty()) {
+					// Substitute with concrete type from template_args
+					substituted_type = template_args[0].base_type;
+					substituted_type_index = template_args[0].type_index;
+					substituted_size = get_type_size_bits(substituted_type) / 8;
+				}
+				
+				// Handle sizeof(T) in initializers
+				std::optional<ASTNode> substituted_initializer = static_member.initializer;
+				if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
+					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
+					
+					// Handle SizeofExprNode (sizeof(T))
+					if (std::holds_alternative<SizeofExprNode>(expr)) {
+						const SizeofExprNode& sizeof_expr = std::get<SizeofExprNode>(expr);
+						
+						// Check if sizeof operand is a type (sizeof(T)) vs expression
+						if (sizeof_expr.is_type() && sizeof_expr.type_or_expr().is<TypeSpecifierNode>()) {
+							const TypeSpecifierNode& sizeof_type_spec = sizeof_expr.type_or_expr().as<TypeSpecifierNode>();
+							
+							// Check if sizeof operand is a template parameter that needs substitution
+							if (sizeof_type_spec.type() == Type::UserDefined && !template_args.empty()) {
+								// Substitute with concrete type and compute size
+								Type concrete_type = template_args[0].base_type;
+								size_t concrete_size = get_type_size_bits(concrete_type) / 8;
+								
+								// Create a numeric literal with the sizeof value
+								std::string_view size_str = StringBuilder().append(static_cast<uint64_t>(concrete_size)).commit();
+								Token num_token(Token::Type::Literal, size_str, 0, 0, 0);
+								substituted_initializer = emplace_node<ExpressionNode>(
+									NumericLiteralNode(num_token, static_cast<unsigned long long>(concrete_size), Type::Int, TypeQualifier::None, 32)
+								);
+								FLASH_LOG(Templates, Debug, "Substituted sizeof(T) with ", concrete_size);
+							}
+						}
+					}
+				}
+				
+				struct_info->addStaticMember(
+					static_member.name,
+					substituted_type,
+					substituted_type_index,
+					substituted_size,
+					static_member.alignment,
+					static_member.access,
+					substituted_initializer,
+					static_member.is_const
+				);
+			}
+		}
+		
 		// Finalize the struct layout
 		if (!pattern_struct.base_classes().empty()) {
 			struct_info->finalizeWithBases();
@@ -27863,7 +28001,14 @@ if (struct_type_info.getStructInfo()) {
 		auto patterns_it_for_alias = gTemplateRegistry.specialization_patterns_.find(std::string(template_name));
 		if (patterns_it_for_alias != gTemplateRegistry.specialization_patterns_.end()) {
 			for (const auto& pattern : patterns_it_for_alias->second) {
-				if (&pattern.specialized_node.as<StructDeclarationNode>() == &pattern_struct) {
+				// Handle both StructDeclarationNode and TemplateClassDeclarationNode patterns
+				const StructDeclarationNode* spec_struct_ptr_alias = nullptr;
+				if (pattern.specialized_node.is<StructDeclarationNode>()) {
+					spec_struct_ptr_alias = &pattern.specialized_node.as<StructDeclarationNode>();
+				} else if (pattern.specialized_node.is<TemplateClassDeclarationNode>()) {
+					spec_struct_ptr_alias = &pattern.specialized_node.as<TemplateClassDeclarationNode>().class_decl_node();
+				}
+				if (spec_struct_ptr_alias && spec_struct_ptr_alias == &pattern_struct) {
 					pattern_args = pattern.pattern_args;
 					break;
 				}
