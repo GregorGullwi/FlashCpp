@@ -238,6 +238,15 @@ static const std::unordered_map<std::string_view, long> has_cpp_attribute_versio
 	{ "noreturn", 200809 },
 };
 
+static std::string_view extractNameBetweenParens(std::string_view sv) {
+	auto start = sv.find('(');
+	auto end = sv.rfind(')');
+	if (start != std::string_view::npos && end != std::string_view::npos && end > start) {
+		return sv.substr(start + 1, end - start - 1);
+	}
+	return {};
+}
+
 static size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) {
 	int nesting = 1;
 	size_t pos = opening_pos + 1;
@@ -1549,16 +1558,6 @@ private:
 				std::string keyword;
 				iss >> keyword;
 				if (keyword.find("__") == 0) {	// __ is reserved for the compiler
-					std::string_view keyword_sv(keyword);
-					auto extractNameBetweenParens = [](std::string_view sv) -> std::string_view {
-						auto start = sv.find('(');
-						auto end = sv.rfind(')');
-						if (start != std::string_view::npos && end != std::string_view::npos && end > start) {
-							return sv.substr(start + 1, end - start - 1);
-						}
-						return {};
-					};
-
 					if (keyword.find("__has_include") == 0) {
 						long exists = 0;
 						std::string_view include_name(keyword.data() + "__has_include(<"sv.length());
@@ -1578,6 +1577,7 @@ private:
 						// __has_builtin(__builtin_name) - check if a compiler builtin is supported
 						// Extract the builtin name from __has_builtin(__name)
 						long exists = 0;
+						std::string_view keyword_sv(keyword);
 						if (auto builtin_name = extractNameBetweenParens(keyword_sv); !builtin_name.empty()) {
 							
 							// Set of all supported type trait and other compiler builtins
@@ -1635,6 +1635,7 @@ private:
 					}
 					else if (keyword.find("__has_cpp_attribute") == 0) {
 						long version = 0;
+						std::string_view keyword_sv(keyword);
 						if (auto attribute_name = extractNameBetweenParens(keyword_sv); !attribute_name.empty()) {
 							if (auto it = has_cpp_attribute_versions.find(attribute_name); it != has_cpp_attribute_versions.end()) {
 								version = it->second;
