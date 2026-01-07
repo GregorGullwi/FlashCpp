@@ -2883,17 +2883,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		
 		// Parse postfix cv-qualifiers: _Tp const, _Tp volatile, _Tp const volatile
 		// This is the C++ postfix const/volatile syntax used in standard library headers
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-			if (peek_token()->value() == "const") {
-				consume_token();
-				type_spec.add_cv_qualifier(CVQualifier::Const);
-			} else if (peek_token()->value() == "volatile") {
-				consume_token();
-				type_spec.add_cv_qualifier(CVQualifier::Volatile);
-			} else {
-				break;
-			}
-		}
+		CVQualifier cv_qualifier = parse_cv_qualifiers();
+		type_spec.add_cv_qualifier(cv_qualifier);
 		
 		// Parse pointer declarators: * [const] [volatile] *...
 		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
