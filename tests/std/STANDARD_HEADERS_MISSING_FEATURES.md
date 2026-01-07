@@ -4,6 +4,13 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 7, 2026 - Identifier Lookup Improvements)**:
+- ✅ **Namespace-qualified type alias lookup** - Type aliases like `size_t` are now found when used inside `namespace std` (registered as `std::size_t`)
+- ✅ **Reference declarators in template arguments** - Patterns like `declval<_Tp&>()` now recognize `_Tp` followed by `&` or `&&`
+- ✅ **Member type aliases as template arguments** - Type aliases defined in a struct can be used as template args in later member definitions
+- 🎯 **All 838 tests passing!**
+- ⚠️ **`<type_traits>` progress** - More patterns parse, but still encounters errors at line ~1838 (ternary expressions with template member access)
+
 **UPDATE (January 6, 2026 - Type Trait Intrinsics in Template Arguments)**:
 - ✅ **Type trait intrinsics as template arguments** - Patterns like `bool_constant<__has_trivial_destructor(T)>` now work correctly
 - ✅ **Template parameter recognition in type specifier** - Identifiers like `_Tp` are now recognized as template parameters during template body parsing

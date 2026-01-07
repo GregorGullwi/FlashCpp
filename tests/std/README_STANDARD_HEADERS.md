@@ -72,12 +72,20 @@ See [`STANDARD_HEADERS_MISSING_FEATURES.md`](./STANDARD_HEADERS_MISSING_FEATURES
 
 The main features preventing standard header compilation:
 
-1. **Conversion operators** (`operator T()`)
-2. **Advanced constexpr support**
+1. **Conversion operators** (`operator T()`) - ✅ Implemented
+2. **Advanced constexpr support** - ⚠️ Partially implemented
 3. **Template instantiation optimization** (causes timeouts)
-4. **Type traits compiler intrinsics** (`__is_same`, etc.)
+4. **Type traits compiler intrinsics** (`__is_same`, etc.) - ✅ Implemented
 5. **Exception handling infrastructure**
 6. **Allocator support**
+
+### Recent Fixes (January 2026)
+
+1. **Namespace-qualified type alias lookup** - Type aliases like `size_t` are now correctly found when used inside `namespace std`, even when registered as `std::size_t` in the type table.
+
+2. **Reference declarators in template arguments** - Patterns like `declval<_Tp&>()` now correctly recognize `_Tp` as a template parameter when followed by `&` or `&&`.
+
+3. **Member type aliases as template arguments** - Type aliases defined within a struct/class can now be used as template arguments in subsequent member definitions (e.g., `using outer = wrapper<inner_type>` where `inner_type` is defined earlier in the same struct).
 
 ## Test File Characteristics
 

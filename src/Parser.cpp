@@ -14697,6 +14697,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		if (!current_template_param_names_.empty()) {
 			// Template-aware lookup: checks if identifier is a template parameter first
 			identifierType = gSymbolTable.lookup(StringTable::getOrInternStringHandle(idenfifier_token.value()), gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+			FLASH_LOG_FORMAT(Parser, Debug, "Template-aware lookup for '{}', template_params_count={}", idenfifier_token.value(), current_template_param_names_.size());
 		} else {
 			identifierType = lookup_symbol(StringTable::getOrInternStringHandle(idenfifier_token.value()));
 		}
@@ -14715,11 +14716,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Check gTypesByName if identifier is followed by :: (qualified name) or ( (constructor call)
 			bool should_check_types = (peek == "::" || peek == "(");
 			
-			// In template argument context, also check for ',' or '>' or '<' since type aliases
-			// and template class names are commonly used as template arguments
-			// (e.g., first_t<false_type, ...>, __or_<is_reference<T>, is_function<T>>)
+			// In template argument context, also check for various tokens that indicate a type context.
+			// Type aliases and template class names are commonly used as template arguments
+			// (e.g., first_t<false_type, ...>, __or_<is_reference<T>, is_function<T>>, declval<_Tp&>())
+			// The '&' and '&&' handle reference type declarators like T& or T&&
 			if (!should_check_types && context == ExpressionContext::TemplateArgument) {
-				should_check_types = (peek == "," || peek == ">" || peek == ">>" || peek == "<");
+				should_check_types = (peek == "," || peek == ">" || peek == ">>" || peek == "<" || 
+				                      peek == "&" || peek == "&&");
 			}
 			
 			if (should_check_types) {
@@ -14731,6 +14734,63 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					found_as_type_alias = true;
 					// Mark that we found it as a type so it can be used for type references
 					// The actual type info will be retrieved later when needed
+				} else {
+					// Try namespace-qualified lookup: if we're inside a namespace, the type alias
+					// might be registered with a qualified name (e.g., "std::size_t")
+					auto current_ns_path = gSymbolTable.build_current_namespace_path();
+					if (!current_ns_path.empty()) {
+						StringBuilder qualified_name_builder;
+						for (const auto& ns : current_ns_path) {
+#if USE_OLD_STRING_APPROACH
+							qualified_name_builder.append(ns);
+#else
+							qualified_name_builder.append(ns.view());
+#endif
+							qualified_name_builder.append("::");
+						}
+						qualified_name_builder.append(idenfifier_token.value());
+						StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+						auto qualified_type_it = gTypesByName.find(qualified_handle);
+						if (qualified_type_it != gTypesByName.end()) {
+							FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as namespace-qualified type alias '{}' in gTypesByName", 
+								idenfifier_token.value(), StringTable::getStringView(qualified_handle));
+							found_as_type_alias = true;
+						}
+					}
+					
+					// If still not found, check for member type aliases in the current struct/class being parsed
+					// This handles cases like: using inner_type = int; using outer_type = wrapper<inner_type>;
+					if (!found_as_type_alias) {
+						// Try member_function_context_stack_ first (for code inside member function bodies)
+						if (!member_function_context_stack_.empty()) {
+							const auto& ctx = member_function_context_stack_.back();
+							if (ctx.struct_node != nullptr) {
+								for (const auto& alias : ctx.struct_node->type_aliases()) {
+									if (alias.alias_name == identifier_handle) {
+										FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as member type alias in current struct (member func context)", 
+											idenfifier_token.value());
+										found_as_type_alias = true;
+										break;
+									}
+								}
+							}
+						}
+						
+						// Then try struct_parsing_context_stack_ (for code inside struct body, e.g., type alias definitions)
+						if (!found_as_type_alias && !struct_parsing_context_stack_.empty()) {
+							const auto& ctx = struct_parsing_context_stack_.back();
+							if (ctx.struct_node != nullptr) {
+								for (const auto& alias : ctx.struct_node->type_aliases()) {
+									if (alias.alias_name == identifier_handle) {
+										FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as member type alias in current struct (struct parsing context)", 
+											idenfifier_token.value());
+										found_as_type_alias = true;
+										break;
+									}
+								}
+							}
+						}
+					}
 				}
 			}
 		}
