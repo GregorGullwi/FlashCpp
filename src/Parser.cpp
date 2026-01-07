@@ -8,6 +8,7 @@
 #include "NameMangling.h"
 #include "TemplateProfilingStats.h"
 #include "ExpressionSubstitutor.h"
+#include "TypeTraitEvaluator.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -8542,6 +8543,46 @@ ParseResult Parser::parse_type_specifier()
 					}
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(
 						Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+				}
+			}
+		}
+
+		// Check if the identifier is a template parameter (e.g., _Tp in template<typename _Tp>)
+		// This must be checked BEFORE looking up in gTypesByName to handle patterns like:
+		// __has_trivial_destructor(_Tp) where _Tp is a template parameter
+		// IMPORTANT: Skip this check during SFINAE context (in_sfinae_context_), because in that case
+		// the template parameters have been substituted with concrete types in gTypesByName, and we
+		// should use the substituted types instead of creating dependent type placeholders.
+		if (parsing_template_body_ && !current_template_param_names_.empty() && !in_sfinae_context_) {
+			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
+			for (const auto& param_name : current_template_param_names_) {
+				if (param_name == type_name_handle) {
+					// This is a template parameter - create a dependent type placeholder
+					// Look up the TypeInfo for this parameter (it should have been registered when
+					// the template parameters were parsed)
+					auto param_type_it = gTypesByName.find(param_name);
+					if (param_type_it != gTypesByName.end()) {
+						TypeIndex param_type_idx = param_type_it->second->type_index_;
+						FLASH_LOG_FORMAT(Templates, Debug, 
+							"parse_type_specifier: '{}' is a template parameter, returning dependent type at index {}", 
+							type_name, param_type_idx);
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							Type::UserDefined, param_type_idx, 0, type_name_token, cv_qualifier));
+					} else {
+						// Template parameter not yet in gTypesByName - create a placeholder
+						// This can happen when parsing the template parameter list itself
+						FLASH_LOG_FORMAT(Templates, Debug, 
+							"parse_type_specifier: '{}' is a template parameter (not yet registered), creating placeholder", 
+							type_name);
+						auto& type_info = gTypeInfo.emplace_back();
+						type_info.type_ = Type::UserDefined;
+						type_info.type_index_ = gTypeInfo.size() - 1;
+						type_info.type_size_ = 0;  // Unknown size for dependent type
+						type_info.name_ = type_name_handle;
+						gTypesByName[type_name_handle] = &type_info;
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
+					}
 				}
 			}
 		}
@@ -23276,6 +23317,46 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		return try_evaluate_constant_expression(init_node);
 	}
 	
+	// Handle type trait expressions (e.g., __has_trivial_destructor(T), __is_class(T))
+	// These are compile-time boolean expressions used in template metaprogramming
+	// Uses shared evaluateTypeTrait() from TypeTraitEvaluator.h for consistency with CodeGen.h
+	if (std::holds_alternative<TypeTraitExprNode>(expr)) {
+		const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
+		
+		// Get the type(s) this trait is being applied to
+		if (!trait_expr.has_type()) {
+			// No-argument traits like __is_constant_evaluated
+			if (trait_expr.kind() == TypeTraitKind::IsConstantEvaluated) {
+				// We're evaluating in a constant context, so return true
+				return ConstantValue{1, Type::Bool};
+			}
+			return std::nullopt;
+		}
+		
+		const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
+		TypeIndex type_idx = type_spec.type_index();
+		
+		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating type trait {} on type index {} (base_type={})", 
+			static_cast<int>(trait_expr.kind()), type_idx, static_cast<int>(type_spec.type()));
+		
+		// Get TypeInfo and StructTypeInfo for the type
+		const TypeInfo* type_info = (type_idx < gTypeInfo.size()) ? &gTypeInfo[type_idx] : nullptr;
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		
+		// Use shared evaluation function from TypeTraitEvaluator.h (overload that takes TypeSpecifierNode)
+		TypeTraitResult eval_result = evaluateTypeTrait(trait_expr.kind(), type_spec, type_info, struct_info);
+		
+		if (!eval_result.success) {
+			// Trait requires special handling (binary trait, etc.) or is not supported
+			FLASH_LOG_FORMAT(Templates, Debug, "Type trait {} requires special handling or is not supported", 
+				static_cast<int>(trait_expr.kind()));
+			return std::nullopt;
+		}
+		
+		FLASH_LOG_FORMAT(Templates, Debug, "Type trait evaluation result: {}", eval_result.value);
+		return ConstantValue{eval_result.value ? 1 : 0, Type::Bool};
+	}
+	
 	return std::nullopt;
 }
 
@@ -23525,7 +23606,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				                               (is_simple_identifier && followed_by_array_declarator);
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
-				    (peek_token()->value() == "," || peek_token()->value() == ">" || peek_token()->value() == "...")) {
+				    (peek_token()->value() == "," || peek_token()->value() == ">" || peek_token()->value() == ">>" || peek_token()->value() == "...")) {
 					// Check if this is actually a concrete type (not a template parameter)
 					// If it's a concrete struct or type alias, we should fall through to type parsing instead
 					bool is_concrete_type = false;
@@ -23624,6 +23705,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						}
 						
 						template_args.push_back(dependent_arg);
+						
+						// Store the expression node for deferred base class resolution
+						// This is needed so that type trait expressions like __has_trivial_destructor(T)
+						// can be properly substituted and evaluated during template instantiation
+						if (out_type_nodes && expr_result.node().has_value()) {
+							out_type_nodes->push_back(*expr_result.node());
+						}
+						
 						discard_saved_token(arg_saved_pos);
 						
 						// Check for ',' or '>' after the expression (or after pack expansion)
@@ -27803,12 +27892,61 @@ if (struct_type_info.getStructInfo()) {
 				}
 				
 				if (arg_info.node.is<ExpressionNode>()) {
-					// Try to evaluate non-type template argument after substitution
-					if (auto value = try_evaluate_constant_expression(arg_info.node)) {
-						TemplateTypeArg val_arg(value->value, value->type);
-						val_arg.is_pack = arg_info.is_pack;
-						resolved_args.push_back(val_arg);
-						continue;
+					const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
+					
+					// Special handling for TypeTraitExprNode - need to substitute template parameters
+					if (std::holds_alternative<TypeTraitExprNode>(expr)) {
+						const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
+						
+						// Create a substituted version of the type trait
+						if (trait_expr.has_type()) {
+							const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
+							
+							// Check if the type needs substitution
+							Type base_type = type_spec.type();
+							TypeIndex type_idx = type_spec.type_index();
+							bool substituted = false;
+							TypeSpecifierNode substituted_type_spec = type_spec;
+							
+							if ((base_type == Type::UserDefined || base_type == Type::Struct) && type_idx < gTypeInfo.size()) {
+								std::string_view type_name = StringTable::getStringView(gTypeInfo[type_idx].name());
+								auto subst_it = name_substitution_map.find(type_name);
+								if (subst_it != name_substitution_map.end()) {
+									// Substitute the type
+									const TemplateTypeArg& subst = subst_it->second;
+									substituted_type_spec = TypeSpecifierNode(
+										subst.base_type,
+										subst.type_index,
+										0,  // size will be looked up
+										Token(),
+										type_spec.cv_qualifier()
+									);
+									substituted = true;
+									FLASH_LOG_FORMAT(Templates, Debug, "Substituted type '{}' with type_index {} for type trait evaluation",
+										type_name, subst.type_index);
+								}
+							}
+							
+							// Create substituted type trait node and evaluate
+							ASTNode subst_type_node = emplace_node<TypeSpecifierNode>(substituted_type_spec);
+							ASTNode subst_trait_node = emplace_node<ExpressionNode>(
+								TypeTraitExprNode(trait_expr.kind(), subst_type_node, trait_expr.trait_token()));
+							
+							if (auto value = try_evaluate_constant_expression(subst_trait_node)) {
+								TemplateTypeArg val_arg(value->value, value->type);
+								val_arg.is_pack = arg_info.is_pack;
+								resolved_args.push_back(val_arg);
+								continue;
+							}
+						}
+					} else {
+						// Try to evaluate non-type template argument after substitution
+						if (auto value = try_evaluate_constant_expression(arg_info.node)) {
+							TemplateTypeArg val_arg(value->value, value->type);
+							val_arg.is_pack = arg_info.is_pack;
+							resolved_args.push_back(val_arg);
+							continue;
+						}
 					}
 				}
 				

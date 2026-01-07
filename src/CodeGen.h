@@ -9,6 +9,7 @@
 #include "NameMangling.h"
 #include "ConstExprEvaluator.h"
 #include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -16206,127 +16207,13 @@ private:
 		bool is_reference = type_spec.is_reference();
 		bool is_rvalue_reference = type_spec.is_rvalue_reference();
 		size_t pointer_depth = type_spec.pointer_depth();
+		
+		// Get TypeInfo and StructTypeInfo for use by shared evaluator and binary traits
+		const TypeInfo* type_info = (type_spec.type_index() < gTypeInfo.size()) ? &gTypeInfo[type_spec.type_index()] : nullptr;
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 
+		// Handle binary traits that require a second type argument
 		switch (traitNode.kind()) {
-			case TypeTraitKind::IsVoid:
-				result = (type == Type::Void && !is_reference && pointer_depth == 0);
-				break;
-
-			case TypeTraitKind::IsNullptr:
-				// nullptr_t type check
-				result = (type == Type::Nullptr && !is_reference && pointer_depth == 0);
-				break;
-
-			case TypeTraitKind::IsIntegral:
-				// Integral types: bool, char, short, int, long, long long and their unsigned variants
-				result = (type == Type::Bool ||
-				         type == Type::Char ||
-				         type == Type::Short || type == Type::Int || type == Type::Long || type == Type::LongLong ||
-				         type == Type::UnsignedChar || type == Type::UnsignedShort || type == Type::UnsignedInt ||
-				         type == Type::UnsignedLong || type == Type::UnsignedLongLong)
-				         && !is_reference && pointer_depth == 0;
-				break;
-
-			case TypeTraitKind::IsFloatingPoint:
-				result = (type == Type::Float || type == Type::Double || type == Type::LongDouble)
-				         && !is_reference && pointer_depth == 0;
-				break;
-
-			case TypeTraitKind::IsArray:
-				// Array type checking - uses the is_array flag in TypeSpecifierNode
-				result = type_spec.is_array() && !is_reference && pointer_depth == 0;
-				break;
-
-			case TypeTraitKind::IsPointer:
-				result = (pointer_depth > 0) && !is_reference;
-				break;
-
-			case TypeTraitKind::IsLvalueReference:
-				result = is_reference && !is_rvalue_reference;
-				break;
-
-			case TypeTraitKind::IsRvalueReference:
-				result = is_rvalue_reference;
-				break;
-
-			case TypeTraitKind::IsMemberObjectPointer:
-				// Member object pointer type (pointer to data member: int MyClass::*)
-				result = (type == Type::MemberObjectPointer && !is_reference && pointer_depth == 0);
-				break;
-
-			case TypeTraitKind::IsMemberFunctionPointer:
-				// Member function pointer type should not have any reference/pointer qualifiers
-				result = (type == Type::MemberFunctionPointer && !is_reference && pointer_depth == 0);
-				break;
-
-			case TypeTraitKind::IsEnum:
-				// Enum type should not have any reference/pointer qualifiers
-				result = (type == Type::Enum && !is_reference && pointer_depth == 0);
-				break;
-
-			case TypeTraitKind::IsUnion:
-				// Check if the type is a union using is_union field in StructTypeInfo
-				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
-					result = struct_info && struct_info->is_union && !is_reference && pointer_depth == 0;
-				} else {
-					result = false;
-				}
-				break;
-
-			case TypeTraitKind::IsClass:
-				// A class is a struct or class type that is NOT a union
-				if (type == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
-					result = struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0;
-				} else {
-					result = false;
-				}
-				break;
-
-			case TypeTraitKind::IsFunction:
-				// A function type (not a pointer to function, not a reference)
-				result = (type == Type::Function && !is_reference && pointer_depth == 0);
-				break;
-
-			case TypeTraitKind::IsReference:
-				// __is_reference - lvalue reference OR rvalue reference
-				result = is_reference | is_rvalue_reference;
-				break;
-
-			case TypeTraitKind::IsArithmetic:
-				// __is_arithmetic - integral or floating point
-				result = isArithmeticType(type) & !is_reference & (pointer_depth == 0);
-				break;
-
-			case TypeTraitKind::IsFundamental:
-				// __is_fundamental - void, nullptr_t, arithmetic types
-				result = isFundamentalType(type) & !is_reference & (pointer_depth == 0);
-				break;
-
-			case TypeTraitKind::IsObject:
-				// __is_object - not function, not reference, not void
-				result = (type != Type::Function) & (type != Type::Void) & !is_reference & !is_rvalue_reference;
-				break;
-
-			case TypeTraitKind::IsScalar:
-				// __is_scalar - arithmetic, pointer, enum, member pointer, or nullptr
-				result = (isArithmeticType(type) |
-			          (type == Type::Enum) | (type == Type::Nullptr) |
-			          (type == Type::MemberObjectPointer) | (type == Type::MemberFunctionPointer) |
-			          (pointer_depth > 0))
-			          & !is_reference;
-				break;
-
-			case TypeTraitKind::IsCompound:
-				// __is_compound - array, function, pointer, reference, class, union, enum, member pointer
-				// Basically anything that's not fundamental
-				// Branchless: use bitwise NOT and AND to avoid branching
-				result = !(isFundamentalType(type) & !is_reference & (pointer_depth == 0));
-				break;
-
 			case TypeTraitKind::IsBaseOf:
 				// __is_base_of(Base, Derived) - Check if Base is a base class of Derived
 				if (traitNode.has_second_type()) {
@@ -17090,7 +16977,15 @@ private:
 				break;
 
 			default:
-				result = false;
+				// For all other unary type traits, use the shared evaluator from TypeTraitEvaluator.h
+				{
+					TypeTraitResult eval_result = evaluateTypeTrait(traitNode.kind(), type_spec, type_info, struct_info);
+					if (eval_result.success) {
+						result = eval_result.value;
+					} else {
+						result = false;
+					}
+				}
 				break;
 		}
 
