@@ -1617,6 +1617,34 @@ private:
 						}
 						values.push(exists);
 					}
+					else if (keyword.find("__has_cpp_attribute") == 0) {
+						long version = 0;
+						std::string_view keyword_sv(keyword);
+						auto start = keyword_sv.find('(');
+						auto end = keyword_sv.rfind(')');
+						if (start != std::string_view::npos && end != std::string_view::npos && end > start) {
+							std::string_view attribute_name = keyword_sv.substr(start + 1, end - start - 1);
+
+							static const std::unordered_map<std::string_view, long> attribute_versions = {
+								{ "deprecated", 201309 },
+								{ "fallthrough", 201603 },
+								{ "likely", 201803 },
+								{ "unlikely", 201803 },
+								{ "maybe_unused", 201603 },
+								{ "no_unique_address", 201803 },
+								{ "nodiscard", 201907 },
+								{ "noreturn", 200809 },
+							};
+
+							if (auto it = attribute_versions.find(attribute_name); it != attribute_versions.end()) {
+								version = it->second;
+							}
+							if (settings_.isVerboseMode()) {
+								std::cout << "__has_cpp_attribute(" << attribute_name << ") = " << version << std::endl;
+							}
+						}
+						values.push(version);
+					}
 					else {
 						// Unknown __ identifier (like __cpp_exceptions, __SANITIZE_THREAD__, etc.)
 						// Treat as 0 (undefined) per C++ preprocessor rules
