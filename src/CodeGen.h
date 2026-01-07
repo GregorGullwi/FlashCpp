@@ -8003,6 +8003,22 @@ private:
 			auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
 			FLASH_LOG(Codegen, Debug, "generateQualifiedIdentifierIr: struct_or_enum_name='", struct_or_enum_name, "', found=", (struct_type_it != gTypesByName.end()));
 			
+			// If not found directly, try with full qualified name (all namespaces joined)
+			// This handles member template specializations like MakeUnsigned::List_int_char
+			if (struct_type_it == gTypesByName.end() && namespaces.size() > 1) {
+				StringBuilder qualified_name_builder;
+				for (size_t i = 0; i < namespaces.size(); ++i) {
+					if (i > 0) qualified_name_builder.append("::");
+					qualified_name_builder.append(std::string_view(namespaces[i]));
+				}
+				std::string_view full_qualified_name = qualified_name_builder.commit();
+				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(full_qualified_name));
+				if (struct_type_it != gTypesByName.end()) {
+					struct_or_enum_name = std::string(full_qualified_name);
+					FLASH_LOG(Codegen, Debug, "Found struct with full qualified name: ", full_qualified_name);
+				}
+			}
+			
 			// If not found directly, try with default template argument suffix "_void"
 			// This handles cases like has_type<T>::value where T has a default = void argument
 			if (struct_type_it == gTypesByName.end()) {

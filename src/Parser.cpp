@@ -23624,17 +23624,17 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			return ParseResult::error("Expected ';' after struct declaration", *current_token_);
 		}
 		
-		// Create template struct node for the partial specialization
-		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
-			std::move(template_params),
-			std::move(template_param_names),
-			member_struct_node
-		);
-		
-		// Register the partial specialization pattern
+		// Register the partial specialization pattern FIRST (before moving template_params)
 		// For member struct templates, we need to store the pattern with the parent struct name
 		auto qualified_simple_name = StringTable::getOrInternStringHandle(
 			StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
+		
+		// Create template struct node for the partial specialization
+		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
+			template_params,  // Copy, don't move yet
+			template_param_names,  // Copy, don't move yet
+			member_struct_node
+		);
 		
 		gTemplateRegistry.registerSpecializationPattern(
 			StringTable::getStringView(qualified_simple_name),
