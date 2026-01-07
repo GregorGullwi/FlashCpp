@@ -23313,6 +23313,36 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	std::string_view struct_name = struct_name_token.value();
 	consume_token(); // consume struct name
 
+	// Check if this is a forward declaration (template<...> struct Name;)
+	if (peek_token().has_value() && peek_token()->value() == ";") {
+		consume_token(); // consume ';'
+		// For forward declarations, we just register the template without a body
+		// Create a minimal struct node
+		auto qualified_name = StringTable::getOrInternStringHandle(
+			StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
+		
+		auto forward_struct_node = emplace_node<StructDeclarationNode>(
+			qualified_name,
+			is_class
+		);
+		
+		// Create template struct node for the forward declaration
+		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
+			std::move(template_params),
+			std::move(template_param_names),
+			forward_struct_node
+		);
+		
+		// Register the template
+		gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_name), template_struct_node);
+		gTemplateRegistry.registerTemplate(struct_name, template_struct_node);
+		
+		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template forward declaration: {}", 
+			StringTable::getStringView(qualified_name));
+		
+		return saved_position.success();
+	}
+
 	// Check if this is a partial specialization by looking for '<' after the struct name
 	// e.g., template<typename T, typename... Rest> struct List<T, Rest...> : List<Rest...> { };
 	bool is_partial_specialization = false;
@@ -23338,6 +23368,13 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		for (const auto& arg : pattern_args) {
 			// Add modifiers to make pattern unique
 			pattern_name.append("_"sv);
+			
+			// Handle non-type value parameters (e.g., true, false, 42)
+			if (arg.is_value) {
+				pattern_name.append("V"sv).append(arg.value);
+				continue;
+			}
+			
 			// Add pointer markers
 			for (size_t i = 0; i < arg.pointer_depth; ++i) {
 				pattern_name.append("P"sv);
@@ -23413,6 +23450,18 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					if (keyword == "public") current_access = AccessSpecifier::Public;
 					else if (keyword == "private") current_access = AccessSpecifier::Private;
 					else if (keyword == "protected") current_access = AccessSpecifier::Protected;
+					continue;
+				}
+				// Handle member type alias (using) declarations
+				if (keyword == "using") {
+					consume_token(); // consume 'using'
+					// Just consume tokens until ';' - we don't need to fully process type aliases in partial specializations
+					while (peek_token().has_value() && peek_token()->value() != ";") {
+						consume_token();
+					}
+					if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected ';' after using declaration", *current_token_);
+					}
 					continue;
 				}
 			}
