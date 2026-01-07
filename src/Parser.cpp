@@ -23333,44 +23333,45 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Generate a unique name for the pattern template
 		// We use the template parameter names + modifiers to create unique pattern names
 		// E.g., List<T*> -> ParentClass::List_pattern_TP
-		std::string pattern_name = std::string(struct_name) + "_pattern";
+		StringBuilder pattern_name;
+		pattern_name.append(struct_name).append("_pattern"sv);
 		for (const auto& arg : pattern_args) {
 			// Add modifiers to make pattern unique
-			pattern_name += "_";
+			pattern_name.append("_"sv);
 			// Add pointer markers
 			for (size_t i = 0; i < arg.pointer_depth; ++i) {
-				pattern_name += "P";
+				pattern_name.append("P"sv);
 			}
 			// Add array marker
 			if (arg.is_array) {
-				pattern_name += "A";
+				pattern_name.append("A"sv);
 				if (arg.array_size.has_value()) {
-					pattern_name += "[" + std::to_string(*arg.array_size) + "]";
+					pattern_name.append("["sv).append(static_cast<int64_t>(*arg.array_size)).append("]"sv);
 				}
 			}
 			if (arg.member_pointer_kind == MemberPointerKind::Object) {
-				pattern_name += "MPO";
+				pattern_name.append("MPO"sv);
 			} else if (arg.member_pointer_kind == MemberPointerKind::Function) {
-				pattern_name += "MPF";
+				pattern_name.append("MPF"sv);
 			}
 			// Add reference markers
 			if (arg.is_rvalue_reference) {
-				pattern_name += "RR";
+				pattern_name.append("RR"sv);
 			} else if (arg.is_reference) {
-				pattern_name += "R";
+				pattern_name.append("R"sv);
 			}
 			// Add const/volatile markers
 			if ((static_cast<uint8_t>(arg.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0) {
-				pattern_name += "C";
+				pattern_name.append("C"sv);
 			}
 			if ((static_cast<uint8_t>(arg.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0) {
-				pattern_name += "V";
+				pattern_name.append("V"sv);
 			}
 		}
 		
 		// Qualify with parent struct name
 		auto qualified_pattern_name = StringTable::getOrInternStringHandle(
-			StringBuilder().append(struct_node.name()).append("::"sv).append(pattern_name));
+			StringBuilder().append(struct_node.name()).append("::"sv).append(pattern_name.commit()));
 		
 		// Create a struct node for this partial specialization
 		auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
