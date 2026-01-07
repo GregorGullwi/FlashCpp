@@ -226,6 +226,18 @@ static std::unordered_map<char, CharInfo> char_info_table = {
 	{'~', {Operator::BitwiseNot, false}},
 };
 
+// Values follow the standard YYYYMM version numbers for each attribute's availability
+static const std::unordered_map<std::string_view, long> has_cpp_attribute_versions = {
+	{ "deprecated", 201309 },
+	{ "fallthrough", 201603 },
+	{ "likely", 201803 },
+	{ "unlikely", 201803 },
+	{ "maybe_unused", 201603 },
+	{ "no_unique_address", 201803 },
+	{ "nodiscard", 201907 },
+	{ "noreturn", 200809 },
+};
+
 static size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) {
 	int nesting = 1;
 	size_t pos = opening_pos + 1;
@@ -1625,19 +1637,7 @@ private:
 						if (start != std::string_view::npos && end != std::string_view::npos && end > start) {
 							std::string_view attribute_name = keyword_sv.substr(start + 1, end - start - 1);
 
-							// Values follow the standard YYYYMM version numbers for each attribute's availability
-							static const std::unordered_map<std::string_view, long> attribute_versions = {
-								{ "deprecated", 201309 },
-								{ "fallthrough", 201603 },
-								{ "likely", 201803 },
-								{ "unlikely", 201803 },
-								{ "maybe_unused", 201603 },
-								{ "no_unique_address", 201803 },
-								{ "nodiscard", 201907 },
-								{ "noreturn", 200809 },
-							};
-
-							if (auto it = attribute_versions.find(attribute_name); it != attribute_versions.end()) {
+							if (auto it = has_cpp_attribute_versions.find(attribute_name); it != has_cpp_attribute_versions.end()) {
 								version = it->second;
 							}
 							if (settings_.isVerboseMode()) {
