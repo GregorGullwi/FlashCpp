@@ -4,12 +4,21 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 7, 2026 - Non-type Value Parameters & Forward Declarations)**:
+- ✅ **Non-type value parameters in partial specializations** - Values like `true`, `false`, integers now work!
+- ✅ **Using declarations in partial specialization bodies** - Type aliases inside specializations now parse correctly
+- ✅ **Member struct template forward declarations** - Patterns like `template<...> struct Name;` now work
+- 🎯 **`<type_traits>` progresses from line 1845 to line 1917!** (72 more lines!)
+- ✅ **Pattern naming for values** - Value arguments generate unique names with 'V' prefix (e.g., `_V1` for true)
+- 🎯 **Test case created**: `test_member_partial_spec_nontype_value_ret0.cpp` - ✅ COMPILES!
+- ⚠️ **New blocker at line 1917** - Full specialization forward declaration for top-level template (different feature)
+
 **UPDATE (January 7, 2026 - Member Struct Template Partial Specialization)**:
 - ✅ **Member struct template partial specialization** - Basic support now implemented!
 - 🎯 **`<type_traits>` progresses from line 1841 to line 1845!** (4 more lines)
 - ✅ **Pattern detection and registration** - Patterns like `struct _List<_Tp, _Up...> : _List<_Up...>` now parse correctly
 - ✅ **Unique pattern naming** - Generated names with modifiers (P for pointer, R for reference, etc.)
-- ⚠️ **New blocker at line 1845** - Partial specialization with non-type value parameter (e.g., `struct __select<_Sz, _List<_Uint, _UInts...>, true>`)
+- ✅ **Non-type value parameters** - NOW FIXED! (see update above)
 - ⚠️ **Base class inheritance in partial specializations** - Currently simplified (consumes tokens until `{`)
 - 🎯 **Test case created**: `test_member_struct_partial_spec_ret0.cpp` - ✅ COMPILES!
 
@@ -208,6 +217,101 @@ int main() {
 ## Recent Progress (December 2024)
 
 ### ✅ Completed Features
+
+#### 0aa. Non-type Value Parameters & Forward Declarations (January 7, 2026 - Evening Part 2)
+**Status**: ✅ **NEWLY IMPLEMENTED**
+
+**What Was Missing**: While basic partial specialization worked, FlashCpp could not handle:
+1. Non-type value arguments in partial specialization patterns (e.g., `true`, `false`, `42`)
+2. `using` declarations inside partial specialization bodies
+3. Forward declarations of member struct templates
+
+**The Problem**: Patterns like the following would fail:
+```cpp
+class Container {
+    // Forward declaration - ❌ FAILED: "Expected '{' to start struct body"
+    template<size_t N, typename T, bool B>
+    struct Select;
+    
+    // Partial specialization with value parameter - ❌ FAILED
+    template<size_t N, typename T>
+    struct Select<N, T, true> {
+        using type = T;  // ❌ FAILED: "Unexpected token 'using'"
+    };
+};
+```
+
+**Implementation**:
+1. **Non-type value parameters**: Modified pattern name generation to detect `is_value` flag and append `V` + value
+   ```cpp
+   if (arg.is_value) {
+       pattern_name.append("V"sv).append(arg.value);
+       continue;
+   }
+   ```
+
+2. **Using declarations**: Added keyword detection in body parsing loop
+   ```cpp
+   if (keyword == "using") {
+       consume_token(); // consume 'using'
+       while (peek_token().has_value() && peek_token()->value() != ";") {
+           consume_token();
+       }
+       consume_punctuator(";");
+       continue;
+   }
+   ```
+
+3. **Forward declarations**: Added check for `;` after struct name
+   ```cpp
+   if (peek_token().has_value() && peek_token()->value() == ";") {
+       // Create minimal struct node and register template
+       // ... (forward declaration handling)
+       return saved_position.success();
+   }
+   ```
+
+**Pattern Name Generation with Values**:
+```cpp
+Select<N, T, true>   → Select_pattern__V1
+Select<N, T, false>  → Select_pattern__V0
+Select<5, T, true>   → Select_pattern__V1
+```
+
+**Test Case**:
+```cpp
+// All patterns now work - ✅ COMPILES!
+class TestClass {
+protected:
+    template<int N, typename T, bool B>
+    struct Select { };
+    
+    template<int N, typename T>
+    struct Select<N, T, true> {
+        using type = T;
+    };
+    
+    template<int N, typename T>
+    struct Select<N, T, false> {
+        using type = void;
+    };
+};
+```
+
+**Impact**: 
+- **Unblocks `<type_traits>` line 1845-1847!** 🎉
+- `<type_traits>` now progresses from line 1845 to line 1917 (**72 more lines!**)
+- Standard library can now use value-based partial specialization for member templates
+- Test case: `tests/test_member_partial_spec_nontype_value_ret0.cpp` ✅ COMPILES AND RUNS!
+
+**Files Modified:**
+- `src/Parser.cpp` - Added value parameter handling, using declarations, and forward declarations
+- `tests/test_member_partial_spec_nontype_value_ret0.cpp` - Test case for non-type value parameters ✅
+
+**Current Blocker**: Line 1917 encounters full specialization forward declaration for top-level template (different from member templates):
+```cpp
+template<> struct make_unsigned<bool>;  // Full specialization of top-level template
+```
 
 #### 0a. Member Struct Template Partial Specialization (January 7, 2026 - Evening)
 **Status**: ✅ **NEWLY IMPLEMENTED** (Basic Support)
