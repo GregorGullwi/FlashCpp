@@ -55,6 +55,8 @@ int has_unknown = 0;
 #endif
 
 int main() {
-	return has_deprecated + has_fallthrough + has_likely + has_unlikely + has_maybe_unused +
-		has_no_unique_address + has_nodiscard + has_noreturn + has_unknown;
+	// Sum of the nine checks above should be 9 when all expected attributes are supported
+	return has_deprecated + has_fallthrough + has_likely +
+		has_unlikely + has_maybe_unused + has_no_unique_address +
+		has_nodiscard + has_noreturn + has_unknown;
 }

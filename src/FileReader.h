@@ -1625,6 +1625,7 @@ private:
 						if (start != std::string_view::npos && end != std::string_view::npos && end > start) {
 							std::string_view attribute_name = keyword_sv.substr(start + 1, end - start - 1);
 
+							// Values follow the standard YYYYMM version numbers for each attribute's availability
 							static const std::unordered_map<std::string_view, long> attribute_versions = {
 								{ "deprecated", 201309 },
 								{ "fallthrough", 201603 },
