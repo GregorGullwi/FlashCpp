@@ -545,6 +545,7 @@ private:
        ParseResult parse_requires_expression();   // NEW: Parse C++20 requires expressions
         ParseResult parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member function templates
         ParseResult parse_member_template_alias(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member template aliases
+        ParseResult parse_member_struct_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member struct/class templates
         ParseResult parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access);  // Helper: Detect and parse member template alias or function
         // Phase 6: Shared helper for template function declaration parsing
         // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)

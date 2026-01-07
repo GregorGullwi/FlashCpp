@@ -87,6 +87,8 @@ The main features preventing standard header compilation:
 
 3. **Member type aliases as template arguments** - Type aliases defined within a struct/class can now be used as template arguments in subsequent member definitions (e.g., `using outer = wrapper<inner_type>` where `inner_type` is defined earlier in the same struct).
 
+4. **Member struct/class templates** (January 7, 2026) - Template struct and class declarations are now supported as class members, including unnamed variadic parameter packs. This fixes `<type_traits>` compilation blocker at line 1838 where `template<typename...> struct _List { };` is used inside a class. Empty member struct templates now parse correctly. **Note**: Member struct templates with function bodies still need work.
+
 ## Test File Characteristics
 
 All test files:

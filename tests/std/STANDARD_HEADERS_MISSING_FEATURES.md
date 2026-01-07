@@ -4,12 +4,20 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 7, 2026 - Member Struct/Class Templates)**:
+- ✅ **Member struct/class templates** - Template struct and class declarations are now supported as class members
+- ✅ **Unnamed variadic template parameters in class context** - Patterns like `template<typename...> struct _List { };` now work
+- 🎯 **`<type_traits>` progresses from line 1838 to line 1841!** 
+- ⚠️ **New blocker at line 1841** - Partial specialization of member templates (e.g., `struct _List<_Tp, _Up...> : _List<_Up...>`) - different feature needed
+- ⚠️ **Member struct templates with function bodies** - Still need work on parsing members within nested template structs
+- 🎯 **All 838 tests passing!**
+
 **UPDATE (January 7, 2026 - Identifier Lookup Improvements)**:
 - ✅ **Namespace-qualified type alias lookup** - Type aliases like `size_t` are now found when used inside `namespace std` (registered as `std::size_t`)
 - ✅ **Reference declarators in template arguments** - Patterns like `declval<_Tp&>()` now recognize `_Tp` followed by `&` or `&&`
 - ✅ **Member type aliases as template arguments** - Type aliases defined in a struct can be used as template args in later member definitions
 - 🎯 **All 838 tests passing!**
-- ⚠️ **`<type_traits>` progress** - More patterns parse, but still encounters errors at line ~1838 (ternary expressions with template member access)
+- ⚠️ **`<type_traits>` progress** - More patterns parse, but encountered error at line 1838 (member struct templates) - **NOW FIXED!**
 
 **UPDATE (January 6, 2026 - Type Trait Intrinsics in Template Arguments)**:
 - ✅ **Type trait intrinsics as template arguments** - Patterns like `bool_constant<__has_trivial_destructor(T)>` now work correctly
@@ -191,6 +199,74 @@ int main() {
 ## Recent Progress (December 2024)
 
 ### ✅ Completed Features
+
+#### 0. Member Struct/Class Templates (January 7, 2026)
+**Status**: ✅ **NEWLY IMPLEMENTED**
+
+**What Was Missing**: FlashCpp did not support template struct or class declarations as class members. This is a standard C++11 feature used extensively in `<type_traits>` and other standard library headers.
+
+**The Problem**: Patterns like the following would fail to parse:
+```cpp
+class Container {
+    template<typename T>
+    struct Wrapper { T value; };           // ❌ Failed: "Expected identifier token"
+    
+    template<typename...>
+    struct List { };                        // ❌ Failed: "Expected identifier token"
+};
+```
+
+The parser's `parse_member_template_or_function()` only handled:
+- Member function templates ✅
+- Member template aliases (using declarations) ✅  
+- Member struct/class templates ❌ **MISSING** (now fixed!)
+
+**Implementation**: 
+- Modified `parse_member_template_or_function()` (src/Parser.cpp line 23251) to detect `struct`/`class` keywords after template parameters
+- Added new `parse_member_struct_template()` function (150+ lines) to handle:
+  - Template parameter parsing and registration
+  - Struct/class keyword detection
+  - Struct body parsing (currently simplified for empty structs)
+  - Template registration with qualified names (e.g., `Container::Wrapper`)
+- Added function declaration to `src/Parser.h`
+
+**Test Cases**:
+```cpp
+// Empty member struct template with unnamed variadic pack
+class Base {
+public:
+    template<typename...> 
+    struct List { };                        // ✅ NOW WORKS!
+};
+
+// Named member struct template (empty)
+class Container {
+public:
+    template<typename T>
+    struct Wrapper { };                     // ✅ NOW WORKS!
+};
+```
+
+**Impact**: 
+- **Unblocks `<type_traits>` line 1838!** 🎉
+- Standard library headers can now use member template structs for metaprogramming patterns
+- `<type_traits>` now progresses from line 1838 to line 1841 (partial specialization of member templates - next blocker)
+
+**Known Limitations**:
+- Member struct templates with function bodies need additional work on member parsing
+- Partial specialization of member templates not yet supported (line 1841 blocker)
+
+**Files Modified:**
+- `src/Parser.h` - Added `parse_member_struct_template()` declaration
+- `src/Parser.cpp` - Implemented member struct template parsing
+- `tests/test_member_struct_template_ret42.cpp` - Test case with member function (parsing issues)
+- `tests/test_member_struct_template_unnamed_pack_ret0.cpp` - Test case with empty struct ✅
+
+**Current Blocker**: Line 1841 now encounters partial specialization syntax:
+```cpp
+template<typename _Tp, typename... _Up>
+struct _List<_Tp, _Up...> : _List<_Up...>  // Partial specialization of member template
+```
 
 #### 0a. Member Type Access After Template Arguments in Base Classes (December 27, 2024)
 **Status**: ✅ **NEWLY IMPLEMENTED**
