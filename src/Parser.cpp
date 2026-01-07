@@ -23313,6 +23313,196 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	std::string_view struct_name = struct_name_token.value();
 	consume_token(); // consume struct name
 
+	// Check if this is a partial specialization by looking for '<' after the struct name
+	// e.g., template<typename T, typename... Rest> struct List<T, Rest...> : List<Rest...> { };
+	bool is_partial_specialization = false;
+	if (peek_token().has_value() && peek_token()->value() == "<") {
+		is_partial_specialization = true;
+	}
+
+	// Handle partial specialization of member struct template
+	if (is_partial_specialization) {
+		// Parse the specialization pattern: <T, Rest...>, etc.
+		auto pattern_args_opt = parse_explicit_template_arguments();
+		if (!pattern_args_opt.has_value()) {
+			return ParseResult::error("Expected template argument pattern in partial specialization", *current_token_);
+		}
+		
+		std::vector<TemplateTypeArg> pattern_args = *pattern_args_opt;
+		
+		// Generate a unique name for the pattern template
+		// We use the template parameter names + modifiers to create unique pattern names
+		// E.g., List<T*> -> ParentClass::List_pattern_TP
+		std::string pattern_name = std::string(struct_name) + "_pattern";
+		for (const auto& arg : pattern_args) {
+			// Add modifiers to make pattern unique
+			pattern_name += "_";
+			// Add pointer markers
+			for (size_t i = 0; i < arg.pointer_depth; ++i) {
+				pattern_name += "P";
+			}
+			// Add array marker
+			if (arg.is_array) {
+				pattern_name += "A";
+				if (arg.array_size.has_value()) {
+					pattern_name += "[" + std::to_string(*arg.array_size) + "]";
+				}
+			}
+			if (arg.member_pointer_kind == MemberPointerKind::Object) {
+				pattern_name += "MPO";
+			} else if (arg.member_pointer_kind == MemberPointerKind::Function) {
+				pattern_name += "MPF";
+			}
+			// Add reference markers
+			if (arg.is_rvalue_reference) {
+				pattern_name += "RR";
+			} else if (arg.is_reference) {
+				pattern_name += "R";
+			}
+			// Add const/volatile markers
+			if ((static_cast<uint8_t>(arg.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0) {
+				pattern_name += "C";
+			}
+			if ((static_cast<uint8_t>(arg.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0) {
+				pattern_name += "V";
+			}
+		}
+		
+		// Qualify with parent struct name
+		auto qualified_pattern_name = StringTable::getOrInternStringHandle(
+			StringBuilder().append(struct_node.name()).append("::"sv).append(pattern_name));
+		
+		// Create a struct node for this partial specialization
+		auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
+			qualified_pattern_name,
+			is_class
+		);
+		
+		// Parse base class list if present (e.g., : List<Rest...>)
+		if (peek_token().has_value() && peek_token()->value() == ":") {
+			consume_token();  // consume ':'
+			
+			// For now, we'll skip base class parsing for member struct templates
+			// to keep the implementation simple. We just consume tokens until '{'
+			// TODO: Implement full base class parsing for member struct template partial specializations
+			while (peek_token().has_value() && peek_token()->value() != "{") {
+				consume_token();
+			}
+		}
+		
+		// Expect '{' to start struct body
+		if (!peek_token().has_value() || peek_token()->value() != "{") {
+			return ParseResult::error("Expected '{' to start struct body", *current_token_);
+		}
+		consume_token(); // consume '{'
+		
+		// Parse struct body with simple member parsing
+		AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
+		
+		while (peek_token().has_value() && peek_token()->value() != "}") {
+			// Check for access specifiers
+			if (peek_token()->type() == Token::Type::Keyword) {
+				std::string_view keyword = peek_token()->value();
+				if (keyword == "public" || keyword == "private" || keyword == "protected") {
+					consume_token(); // consume access specifier
+					if (!consume_punctuator(":")) {
+						return ParseResult::error("Expected ':' after access specifier", *current_token_);
+					}
+					if (keyword == "public") current_access = AccessSpecifier::Public;
+					else if (keyword == "private") current_access = AccessSpecifier::Private;
+					else if (keyword == "protected") current_access = AccessSpecifier::Protected;
+					continue;
+				}
+			}
+			
+			// Parse member declaration (data member or function)
+			auto member_result = parse_type_and_name();
+			if (member_result.is_error()) {
+				return member_result;
+			}
+			
+			if (!member_result.node().has_value()) {
+				return ParseResult::error("Expected member declaration", *peek_token());
+			}
+			
+			// Check if this is a member function (has '(') or data member (has ';' or '=')
+			if (peek_token().has_value() && peek_token()->value() == ";") {
+				// Simple data member
+				consume_token(); // consume ';'
+				member_struct_ref.add_member(*member_result.node(), current_access, std::nullopt);
+			} else if (peek_token().has_value() && peek_token()->value() == "=") {
+				// Data member with initializer
+				consume_token(); // consume '='
+				// Parse initializer expression
+				auto init_result = parse_expression(2, ExpressionContext::Normal);
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				if (!consume_punctuator(";")) {
+					return ParseResult::error("Expected ';' after member initializer", *current_token_);
+				}
+				member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
+			} else {
+				// Skip other complex cases for now (member functions, etc.)
+				// Just consume tokens until we hit ';' or '}'
+				int brace_depth = 0;
+				while (peek_token().has_value()) {
+					if (peek_token()->value() == "{") {
+						brace_depth++;
+						consume_token();
+					} else if (peek_token()->value() == "}") {
+						if (brace_depth == 0) {
+							break;  // End of struct body
+						}
+						brace_depth--;
+						consume_token();
+					} else if (peek_token()->value() == ";" && brace_depth == 0) {
+						consume_token();
+						break;
+					} else {
+						consume_token();
+					}
+				}
+			}
+		}
+		
+		// Expect '}' to close struct body
+		if (!peek_token().has_value() || peek_token()->value() != "}") {
+			return ParseResult::error("Expected '}' to close struct body", *current_token_);
+		}
+		consume_token(); // consume '}'
+		
+		// Expect ';' to end struct declaration
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after struct declaration", *current_token_);
+		}
+		
+		// Create template struct node for the partial specialization
+		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
+			std::move(template_params),
+			std::move(template_param_names),
+			member_struct_node
+		);
+		
+		// Register the partial specialization pattern
+		// For member struct templates, we need to store the pattern with the parent struct name
+		auto qualified_simple_name = StringTable::getOrInternStringHandle(
+			StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
+		
+		gTemplateRegistry.registerSpecializationPattern(
+			StringTable::getStringView(qualified_simple_name),
+			template_params,
+			pattern_args,
+			template_struct_node
+		);
+		
+		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template partial specialization: {} with pattern", 
+			StringTable::getStringView(qualified_pattern_name));
+		
+		return saved_position.success();
+	}
+
+	// Not a partial specialization - continue with primary template parsing
 	// Expect '{' to start struct body
 	if (!peek_token().has_value() || peek_token()->value() != "{") {
 		return ParseResult::error("Expected '{' to start struct body", *current_token_);
