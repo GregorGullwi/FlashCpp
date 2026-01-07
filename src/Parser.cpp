@@ -23334,40 +23334,17 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		}
 		
 		const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
-		
-		// Extract type properties needed for evaluation
 		TypeIndex type_idx = type_spec.type_index();
-		Type base_type = type_spec.type();
-		bool is_reference = type_spec.is_reference();
-		bool is_rvalue_reference = type_spec.is_rvalue_reference();
-		bool is_lvalue_reference = type_spec.is_lvalue_reference();
-		size_t pointer_depth = type_spec.pointer_depth();
-		CVQualifier cv_qualifier = type_spec.cv_qualifier();
-		bool is_array = type_spec.is_array();
-		std::optional<size_t> array_size = type_spec.array_size();
 		
 		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating type trait {} on type index {} (base_type={})", 
-			static_cast<int>(trait_expr.kind()), type_idx, static_cast<int>(base_type));
+			static_cast<int>(trait_expr.kind()), type_idx, static_cast<int>(type_spec.type()));
 		
 		// Get TypeInfo and StructTypeInfo for the type
 		const TypeInfo* type_info = (type_idx < gTypeInfo.size()) ? &gTypeInfo[type_idx] : nullptr;
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		
-		// Use shared evaluation function from TypeTraitEvaluator.h
-		TypeTraitResult eval_result = evaluateTypeTrait(
-			trait_expr.kind(),
-			base_type,
-			type_idx,
-			is_reference,
-			is_rvalue_reference,
-			is_lvalue_reference,
-			pointer_depth,
-			cv_qualifier,
-			is_array,
-			array_size,
-			type_info,
-			struct_info
-		);
+		// Use shared evaluation function from TypeTraitEvaluator.h (overload that takes TypeSpecifierNode)
+		TypeTraitResult eval_result = evaluateTypeTrait(trait_expr.kind(), type_spec, type_info, struct_info);
 		
 		if (!eval_result.success) {
 			// Trait requires special handling (binary trait, etc.) or is not supported

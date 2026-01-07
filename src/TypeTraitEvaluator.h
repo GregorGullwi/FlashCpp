@@ -402,3 +402,27 @@ inline TypeTraitResult evaluateTypeTrait(
 	
 	return TypeTraitResult{true, result};
 }
+
+// Convenience overload that takes a TypeSpecifierNode directly
+// This extracts all the necessary fields and calls the main evaluateTypeTrait function
+inline TypeTraitResult evaluateTypeTrait(
+	TypeTraitKind kind,
+	const TypeSpecifierNode& type_spec,
+	const TypeInfo* type_info,
+	const StructTypeInfo* struct_info
+) {
+	return evaluateTypeTrait(
+		kind,
+		type_spec.type(),
+		type_spec.type_index(),
+		type_spec.is_reference(),
+		type_spec.is_rvalue_reference(),
+		type_spec.is_lvalue_reference(),
+		type_spec.pointer_depth(),
+		type_spec.cv_qualifier(),
+		type_spec.is_array(),
+		type_spec.array_size(),
+		type_info,
+		struct_info
+	);
+}
