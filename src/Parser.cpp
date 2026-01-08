@@ -2922,10 +2922,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		StringHandle qualified_alias_name = alias_name;
 		if (struct_ref) {
 			StringBuilder qualified_builder;
-			qualified_builder.append(struct_ref->name());
-			qualified_builder.append("::");
-			qualified_builder.append(alias_name);
-			qualified_alias_name = StringTable::getOrInternStringHandle(qualified_builder.commit());
+			qualified_alias_name = StringTable::getOrInternStringHandle(
+				buildQualifiedName(qualified_builder, std::vector<std::string_view>{StringTable::getStringView(struct_ref->name())}, StringTable::getStringView(alias_name)));
 		}
 		
 		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, final_type_spec.type(), gTypeInfo.size());
@@ -3456,10 +3454,9 @@ ParseResult Parser::parse_struct_declaration()
 		// Use the qualified name (e.g., "Outer::Inner") for the TypeInfo entry
 		const auto& context = struct_parsing_context_stack_.back();
 		// Build the qualified name using StringBuilder for a persistent allocation
-		qualified_struct_name = StringTable::getOrInternStringHandle(StringBuilder()
-			.append(context.struct_name)
-			.append("::")
-			.append(struct_name));
+		StringBuilder sb;
+		qualified_struct_name = StringTable::getOrInternStringHandle(
+			buildQualifiedName(sb, std::vector<std::string_view>{context.struct_name}, StringTable::getStringView(struct_name)));
 		type_name = qualified_struct_name;
 	}
 
@@ -3477,16 +3474,7 @@ ParseResult Parser::parse_struct_declaration()
 		auto parent_path = current_namespace_path;
 		parent_path.pop_back();
 		StringBuilder sb;
-		for (size_t i = 0; i < parent_path.size(); ++i) {
-#if USE_OLD_STRING_APPROACH
-			sb.append(parent_path[i]);
-#else
-			sb.append(parent_path[i].view());
-#endif
-			sb.append("::");
-		}
-		sb.append(StringTable::getStringView(struct_name));
-		auto parent_handle = StringTable::getOrInternStringHandle(sb.commit());
+		auto parent_handle = StringTable::getOrInternStringHandle(buildQualifiedName(sb, parent_path, StringTable::getStringView(struct_name)));
 		if (gTypesByName.find(parent_handle) == gTypesByName.end()) {
 			gTypesByName.emplace(parent_handle, &struct_type_info);
 		}
@@ -6528,15 +6516,7 @@ ParseResult Parser::parse_typedef_declaration()
 	if (!namespace_path.empty()) {
 		// Build qualified name: ns1::ns2::alias_name using StringBuilder
 		StringBuilder sb;
-		for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-			sb.append(ns).append("::");
-#else
-			sb.append(ns.view()).append("::");
-#endif
-		}
-		sb.append(alias_name);
-		qualified_alias_name = sb.commit();
+		qualified_alias_name = buildQualifiedName(sb, namespace_path, alias_name);
 	} else {
 		qualified_alias_name = alias_name;
 	}
@@ -7163,15 +7143,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	} else {
 		// using ns1::ns2::identifier; - build qualified name
 		StringBuilder sb;
-		for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-			sb.append(ns).append("::");
-#else
-			sb.append(ns.view()).append("::");
-#endif
-		}
-		sb.append(identifier_token.value());
-		source_type_name = StringTable::getOrInternStringHandle(sb.commit());
+		source_type_name = StringTable::getOrInternStringHandle(buildQualifiedName(sb, namespace_path, identifier_token.value()));
 	}
 	
 	// Look up the type in gTypesByName
@@ -7198,15 +7170,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	if (!current_namespace_path.empty()) {
 		// Build qualified name for the target: std::identifier
 		StringBuilder target_sb;
-		for (const auto& ns : current_namespace_path) {
-#if USE_OLD_STRING_APPROACH
-			target_sb.append(ns).append("::");
-#else
-			target_sb.append(ns.view()).append("::");
-#endif
-		}
-		target_sb.append(identifier_token.value());
-		StringHandle target_type_name = StringTable::getOrInternStringHandle(target_sb.commit());
+		StringHandle target_type_name = StringTable::getOrInternStringHandle(buildQualifiedName(target_sb, current_namespace_path, identifier_token.value()));
 		
 		// Check if target name is already registered (avoid duplicates)
 		if (gTypesByName.find(target_type_name) == gTypesByName.end()) {
