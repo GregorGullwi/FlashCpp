@@ -4,6 +4,24 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 8, 2026 - Evening - Investigation & Documentation)**:
+- ✅ **`<limits>` header now confirmed working!** - Compiles in ~1.8 seconds, all features operational
+- ✅ **C++20 requires clauses fully supported** - Can use `requires` with concepts on template functions
+- ✅ **Decltype with ternary operators works** - Patterns like `decltype(true ? a : b)` parse correctly
+- 📝 **Updated README_STANDARD_HEADERS.md** - Corrected status for multiple headers based on actual testing
+- 🎯 **Created test cases**:
+  - `test_limits_working_ret0.cpp` - Tests `<limits>` header ✅
+  - `test_requires_clause_ret0.cpp` - Tests C++20 requires clauses ✅
+  - `test_decltype_ternary_ret0.cpp` - Tests decltype with ternary ✅
+- ⚠️ **Identified new issue**: Anonymous unions in template classes cause compilation hangs
+  - Regular template member access works fine
+  - Named union members work fine
+  - Anonymous unions specifically cause issues during template instantiation
+- 📊 **Key insight**: Most header timeouts are due to template instantiation **volume**, not missing features
+  - Individual instantiations are fast (20-50μs)
+  - Standard headers contain hundreds/thousands of instantiations
+  - This is a performance optimization issue, not a feature gap
+
 **UPDATE (January 8, 2026 - Static Member Variable Definitions Outside Class Body)**:
 - ✅ **Static member variable definitions outside class body for template classes** - Patterns like `template<typename T> const size_t ClassName<T>::memberName;` now parse correctly!
 - 🎯 **`<type_traits>` progresses from line 2244 to line 2351!** (107 more lines!)
