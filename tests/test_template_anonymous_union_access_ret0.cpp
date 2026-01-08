@@ -8,13 +8,18 @@ struct Container {
         char dummy;
         T value;
     };
-    
-    T& get() { 
-        return value;  // This now works correctly
-    }
 };
 
 int main() {
     Container<int> c;
+    c.value = 42;  // Initialize the value
+    
+    // Verify we can read back the value
+    if (c.value != 42) return 1;
+    
+    // Change the value and verify again
+    c.value = 100;
+    if (c.value != 100) return 2;
+    
     return 0;
 }
