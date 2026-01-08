@@ -20261,6 +20261,40 @@ ParseResult Parser::parse_template_declaration() {
 
 			std::vector<TemplateTypeArg> template_args = *template_args_opt;
 
+			// Check for forward declaration: template<> struct ClassName<Args>;
+			if (peek_token().has_value() && peek_token()->value() == ";") {
+				consume_token(); // consume ';'
+				
+				// For forward declarations, just register the type name and return
+				// The instantiated name includes the template arguments
+				auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
+				
+				// Create a minimal struct node
+				auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
+					instantiated_name,
+					is_class
+				);
+				
+				// Register the type so it can be referenced later
+				add_struct_type(instantiated_name);
+				
+				// Register the specialization with the template registry
+				gTemplateRegistry.registerSpecialization(
+					std::string(template_name),
+					template_args,
+					struct_node
+				);
+				
+				FLASH_LOG_FORMAT(Templates, Debug, "Registered forward declaration for specialization: {}", 
+				                 StringTable::getStringView(instantiated_name));
+				
+				// Reset parsing context flags
+				parsing_template_class_ = false;
+				parsing_template_body_ = false;
+				
+				return saved_position.success(struct_node);
+			}
+
 			// Now parse the class body as a regular struct
 			// But we need to give it a unique name that includes the template arguments
 			auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
