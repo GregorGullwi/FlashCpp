@@ -917,4 +917,132 @@ private:
 	}
 };
 
+// ============================================================================
+// Qualified Name Builder Utilities
+// ============================================================================
+// These functions consolidate the repeated pattern of building qualified names
+// by joining namespace components with "::" and appending a final identifier.
+// 
+// They replace scattered code like:
+//   StringBuilder sb;
+//   for (const auto& ns : namespace_path) { sb.append(ns).append("::"); }
+//   sb.append(name);
+//   std::string_view qualified = sb.commit();
+// ============================================================================
+
+/**
+ * @brief Build a qualified name from a NamespacePath and a final identifier.
+ * Returns a string_view committed to the global chunked string allocator.
+ * 
+ * Example: buildQualifiedName({"std", "chrono"}, "seconds") -> "std::chrono::seconds"
+ */
+inline std::string_view buildQualifiedName(const NamespacePath& namespace_path, std::string_view name) {
+	if (namespace_path.empty()) {
+		return name;
+	}
+	
+	StringBuilder sb;
+	for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+		sb.append(ns).append("::");
+#else
+		sb.append(ns.view()).append("::");
+#endif
+	}
+	sb.append(name);
+	return sb.commit();
+}
+
+/**
+ * @brief Build a qualified name from a NamespacePath and a StringHandle identifier.
+ */
+inline std::string_view buildQualifiedName(const NamespacePath& namespace_path, StringHandle name) {
+	return buildQualifiedName(namespace_path, StringTable::getStringView(name));
+}
+
+/**
+ * @brief Build a qualified name from a vector of string_views (e.g., from QualifiedIdentifierNode::namespaces())
+ * and a final identifier.
+ * 
+ * Example: buildQualifiedName({"std", "chrono"}, "seconds") -> "std::chrono::seconds"
+ */
+template<typename StringContainer>
+inline std::string_view buildQualifiedNameFromStrings(const StringContainer& namespaces, std::string_view name) {
+	if (namespaces.empty()) {
+		return name;
+	}
+	
+	StringBuilder sb;
+	for (const auto& ns : namespaces) {
+#if USE_OLD_STRING_APPROACH
+		sb.append(ns).append("::");
+#else
+		sb.append(ns.view()).append("::");
+#endif
+	}
+	sb.append(name);
+	return sb.commit();
+}
+
+/**
+ * @brief Build a full qualified name by joining all namespace components with "::".
+ * This is used when you have multiple components and want to join them all.
+ * 
+ * Example: buildFullQualifiedName({"A", "B", "C"}) -> "A::B::C"
+ * (Note: different from buildQualifiedName which adds "::" between namespaces AND before the name)
+ */
+template<typename StringContainer>
+inline std::string_view buildFullQualifiedName(const StringContainer& components) {
+	if (components.empty()) {
+		return "";
+	}
+	
+	if (components.size() == 1) {
+#if USE_OLD_STRING_APPROACH
+		return std::string_view(components[0]);
+#else
+		return components[0].view();
+#endif
+	}
+	
+	StringBuilder sb;
+	bool first = true;
+	for (const auto& component : components) {
+		if (!first) {
+			sb.append("::");
+		}
+		first = false;
+#if USE_OLD_STRING_APPROACH
+		sb.append(component);
+#else
+		sb.append(component.view());
+#endif
+	}
+	return sb.commit();
+}
+
+/**
+ * @brief Overload of buildFullQualifiedName for raw string containers (vector<std::string_view>)
+ */
+inline std::string_view buildFullQualifiedNameRaw(const std::vector<std::string_view>& components) {
+	if (components.empty()) {
+		return "";
+	}
+	
+	if (components.size() == 1) {
+		return components[0];
+	}
+	
+	StringBuilder sb;
+	bool first = true;
+	for (const auto& component : components) {
+		if (!first) {
+			sb.append("::");
+		}
+		first = false;
+		sb.append(component);
+	}
+	return sb.commit();
+}
+
 extern SymbolTable gSymbolTable;
