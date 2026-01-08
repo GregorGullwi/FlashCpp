@@ -28021,37 +28021,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				
 				// Substitute type if it's a template parameter
-				Type substituted_type = static_member.type;
-				TypeIndex substituted_type_index = static_member.type_index;
-				size_t substituted_size = static_member.size;
+				// Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
+				TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+				original_type_spec.set_type_index(static_member.type_index);
 				
-				// Use proper template parameter matching by name (like substitute_template_parameter does)
-				if (static_member.type == Type::UserDefined && !template_args.empty()) {
-					// Get the type name from gTypeInfo to match against template parameters
-					std::string_view type_name;
-					if (static_member.type_index < gTypeInfo.size() && static_member.type_index > 0) {
-						type_name = StringTable::getStringView(gTypeInfo[static_member.type_index].name());
-					}
-					
-					// Try to find which template parameter this type corresponds to
-					if (!type_name.empty()) {
-						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-							if (template_params[i].is<TemplateParameterNode>()) {
-								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-								if (tparam.name() == type_name) {
-									// Found a match! Substitute with the concrete type
-									const TemplateTypeArg& arg = template_args[i];
-									substituted_type = arg.base_type;
-									substituted_type_index = arg.type_index;
-									substituted_size = get_type_size_bits(substituted_type) / 8;
-									FLASH_LOG(Templates, Debug, "Substituted static member type '", type_name, 
-									          "' with template arg at index ", i);
-									break;
-								}
-							}
-						}
-					}
-				}
+				// Use substitute_template_parameter for consistent template parameter matching
+				auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+					original_type_spec, template_params, template_args);
+				
+				size_t substituted_size = get_type_size_bits(substituted_type) / 8;
 				
 				// Handle sizeof(T) in initializers using proper template parameter matching
 				std::optional<ASTNode> substituted_initializer = static_member.initializer;
@@ -29407,45 +29385,23 @@ if (struct_type_info.getStructInfo()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 				
-				// Create a substituted type specifier
+				// Use substitute_template_parameter for consistent template parameter matching
+				// This handles pointer levels, qualifiers, and all type transformations correctly
+				auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+					type_spec, template_params, template_args_to_use);
+				
+				// Create a substituted type specifier with the substituted type
 				TypeSpecifierNode substituted_type_spec(
-					type_spec.type(),
+					substituted_type,
 					type_spec.qualifier(),
-					type_spec.size_in_bits(),
+					get_type_size_bits(substituted_type),
 					Token()  // Empty token
 				);
+				substituted_type_spec.set_type_index(substituted_type_index);
 				
 				// Copy pointer levels from the original type specifier
 				for (const auto& ptr_level : type_spec.pointer_levels()) {
 					substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
-				}
-				
-				// Substitute template parameters in the base type
-				if (substituted_type_spec.type() == Type::UserDefined) {
-					TypeIndex type_idx = substituted_type_spec.type_index();
-					if (type_idx < gTypeInfo.size()) {
-						const TypeInfo& type_info = gTypeInfo[type_idx];
-						std::string_view type_name = StringTable::getStringView(type_info.name());
-						
-						// Try to find which template parameter this is
-						for (size_t i = 0; i < template_params.size(); ++i) {
-							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-							if (tparam.name() == type_name) {
-								// This is a template parameter - substitute with concrete type
-								substituted_type_spec = TypeSpecifierNode(
-									template_args_to_use[i].base_type,
-									TypeQualifier::None,
-									get_type_size_bits(template_args_to_use[i].base_type),
-									Token()
-								);
-								// Copy pointer levels to the new type specifier
-								for (const auto& ptr_level : type_spec.pointer_levels()) {
-									substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
-								}
-								break;
-							}
-						}
-					}
 				}
 				
 				// Add member to the nested struct info
@@ -29584,16 +29540,15 @@ if (struct_type_info.getStructInfo()) {
 						          "' now points to instantiated type '", instantiated_name, "' (index ", inst_idx, ")");
 					}
 				} else {
-					// Try to find which template parameter this is
-					for (size_t i = 0; i < template_params.size(); ++i) {
-						const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-						if (tparam.name() == type_name) {
-							// This is a template parameter - substitute with concrete type
-							substituted_type = template_args_to_use[i].base_type;
-							substituted_type_index = template_args_to_use[i].type_index;
-							substituted_size = get_type_size_bits(substituted_type);
-							break;
-						}
+					// Use substitute_template_parameter for consistent template parameter matching
+					auto [subst_type, subst_type_index] = substitute_template_parameter(
+						alias_type_spec, template_params, template_args_to_use);
+					
+					// Only apply substitution if the type was actually a template parameter
+					if (subst_type != alias_type_spec.type() || subst_type_index != alias_type_spec.type_index()) {
+						substituted_type = subst_type;
+						substituted_type_index = subst_type_index;
+						substituted_size = get_type_size_bits(substituted_type);
 					}
 				}
 			}
