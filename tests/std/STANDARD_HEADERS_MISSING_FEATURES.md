@@ -4,7 +4,18 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
-**UPDATE (January 8, 2026 - Evening - Critical Bug Found)**:
+**UPDATE (January 8, 2026 - Evening - Part 2: Anonymous Union Bug FIXED!)**:
+- ✅ **FIXED: Anonymous union member access now works!** 🎉
+  - **Fix**: Modified Parser.cpp to properly flatten anonymous union members into parent struct
+  - **Impact**: Unblocks anonymous unions in `<optional>` and similar patterns
+  - **Implementation**: Anonymous union members are now added directly to parent struct's member list during parsing
+  - **Test cases updated**:
+    - `test_anonymous_union_member_access_ret0.cpp` - **NOW PASSES** ✅ (was hanging)
+    - `test_template_anonymous_union_access_ret0.cpp` - **NOW PASSES** ✅ (was "Missing identifier" error)
+  - **Remaining issue**: Named unions (e.g., `union {...} data;`) still cause segfaults in codegen
+  - **Commit**: Parser.cpp lines 4172-4243 - implemented anonymous union member flattening
+
+**UPDATE (January 8, 2026 - Evening - Part 1: Critical Bug Found)**:
 - 🐛 **CRITICAL BUG: Union member access causes infinite loop/hang** ❌
   - **Bug**: Accessing union members (named or anonymous) in structs causes compilation to hang indefinitely
   - **Impact**: Completely blocks `<optional>`, `<variant>`, and any code using unions with member access

@@ -160,7 +160,56 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 8, 2026 - Evening)
+## Latest Investigation (January 8, 2026 - Evening - Part 2)
+
+### Anonymous Union Bug Fixed! 🎉
+
+**Fix Implemented:** Anonymous union members are now properly flattened into the parent struct during parsing.
+
+**What Changed:**
+- Modified Parser.cpp line 4172-4197 to parse anonymous union members instead of skipping them
+- Anonymous union members are now added directly to the parent struct's member list
+- This allows proper member lookup in both regular structs and template classes
+
+**Test Results:**
+- ✅ `test_anonymous_union_member_access_ret0.cpp` - **NOW PASSES** (was hanging)
+- ✅ `test_template_anonymous_union_access_ret0.cpp` - **NOW PASSES** (was "Missing identifier" error)
+- ⚠️ `test_union_member_access_fail.cpp` - **Still fails** (named unions with member access cause segfault)
+
+**Examples:**
+```cpp
+// ✅ This now works!
+template<typename T>
+struct Container {
+    union {
+        char dummy;
+        T value;
+    };
+    T& get() { return value; }  // Works now!
+};
+
+// ✅ This also works!
+struct MyStruct {
+    union {
+        int i;
+        float f;
+    };
+};
+MyStruct s;
+s.i = 42;  // Works now!
+
+// ⚠️ Named unions still have issues
+struct S {
+    union { int i; } data;  // Named union member
+};
+S s;
+s.data.i = 42;  // Still causes segfault
+```
+
+**Remaining Issue:**
+Named unions (where the union itself has a member name like `union {...} data;`) still cause segfaults during codegen. This is a separate issue from anonymous unions and requires different handling.
+
+## Latest Investigation (January 8, 2026 - Evening - Part 1)
 
 ### Critical Bug Found: Union Member Access Causes Compilation Hangs
 
@@ -173,30 +222,7 @@ During investigation of union support, discovered a **critical bug** that causes
 - This affects BOTH regular structs and template classes
 - This is the root cause blocking `<optional>` and `<variant>` headers
 
-**Test Results:**
-- ✅ `test_anonymous_union_declaration_ret0.cpp` - Declaration works
-- ✅ `test_named_union_declaration_ret0.cpp` - Declaration works
-- ✅ `test_template_anonymous_union_declaration_ret0.cpp` - Template declaration works
-- ❌ `test_union_member_access_fail.cpp` - **HANGS** when accessing `s.data.i`
-- ❌ `test_anonymous_union_member_access_fail.cpp` - **HANGS** when accessing `s.i`
-- ❌ `test_template_anonymous_union_access_fail.cpp` - Gives "Missing identifier" error (doesn't hang)
-
-**Examples:**
-```cpp
-// ✅ This works - declaration only
-struct MyStruct {
-    union { int i; float f; } data;
-};
-
-// ❌ This HANGS during compilation
-int main() {
-    MyStruct s;
-    s.data.i = 42;  // Compilation hangs here
-    return 0;
-}
-```
-
-The bug appears to be in the parser or codegen when processing member access to union fields. Further investigation needed to find the infinite loop location.
+**UPDATE:** This bug has been **partially fixed**! Anonymous unions now work. See section above.
 
 ## Latest Investigation (January 8, 2026 - Afternoon)
 
