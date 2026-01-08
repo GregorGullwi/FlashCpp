@@ -4,6 +4,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "TemplateRegistry.h"  // For TemplateArgument (canonical definition)
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
@@ -31,61 +32,8 @@ struct SourceLocation {
 		: file(std::move(f)), line(l), column(c) {}
 };
 
-// Template argument for instantiation
-struct TemplateArgument {
-	enum class Kind {
-		Type,      // Type argument (e.g., int, float)
-		Value,     // Non-type value argument (e.g., 42, true)
-		Template   // Template template argument
-	};
-	
-	Kind kind;
-	Type type;                // For type arguments
-	TypeIndex type_index;     // For complex type arguments
-	unsigned long long value; // For value arguments
-	
-	// Constructor for type arguments
-	static TemplateArgument makeType(Type t, TypeIndex idx = 0) {
-		TemplateArgument arg;
-		arg.kind = Kind::Type;
-		arg.type = t;
-		arg.type_index = idx;
-		arg.value = 0;
-		return arg;
-	}
-	
-	// Constructor for value arguments
-	static TemplateArgument makeValue(unsigned long long v, Type t = Type::Int) {
-		TemplateArgument arg;
-		arg.kind = Kind::Value;
-		arg.type = t;
-		arg.type_index = 0;
-		arg.value = v;
-		return arg;
-	}
-	
-	// Hash for use in maps
-	size_t hash() const {
-		size_t h = std::hash<int>{}(static_cast<int>(kind));
-		h ^= std::hash<int>{}(static_cast<int>(type)) << 1;
-		h ^= std::hash<TypeIndex>{}(type_index) << 2;
-		h ^= std::hash<unsigned long long>{}(value) << 3;
-		return h;
-	}
-	
-	bool operator==(const TemplateArgument& other) const {
-		if (kind != other.kind) return false;
-		switch (kind) {
-			case Kind::Type:
-				return type == other.type && type_index == other.type_index;
-			case Kind::Value:
-				return value == other.value && type == other.type;
-			case Kind::Template:
-				return type_index == other.type_index;
-		}
-		return false;
-	}
-};
+// Note: TemplateArgument is now defined in TemplateRegistry.h (canonical version)
+// The duplicate definition has been removed as part of Task 3 consolidation
 
 // Key for identifying unique instantiations
 struct InstantiationKey {

@@ -33,6 +33,84 @@ enum class MemberPointerKind : uint8_t {
 	Function
 };
 
+/**
+ * Template Argument Type System
+ * ==============================
+ * 
+ * This file defines three related but distinct types for representing template arguments:
+ * 
+ * 1. TemplateArgumentValue: Basic type+index+value triple for simple contexts
+ *    - Lightweight representation with Type, TypeIndex, and value fields
+ *    - Use when you need a simple container for type and value information
+ *    - Distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
+ * 
+ * 2. TemplateArgument: For function template deduction and instantiation tracking
+ *    - Supports Type, Value, and Template template parameters (Kind enum)
+ *    - Has both legacy (type_value) and modern (type_specifier) type representation
+ *    - Includes TypeIndex for complex types (added in consolidation Task 2)
+ *    - Has hash() and operator==() for use in containers (e.g., InstantiationQueue)
+ *    - Use for: function template deduction, mangling, instantiation tracking
+ * 
+ * 3. TemplateTypeArg: Rich type representation for template instantiation
+ *    - Complete qualifiers: const, volatile, reference, pointer, array
+ *    - Supports dependent types, parameter packs, and member pointers
+ *    - Most comprehensive - used by substitute_template_parameter()
+ *    - Use for: pattern matching, specialization selection, template instantiation
+ * 
+ * Conversion Functions:
+ *   - toTemplateTypeArg(TemplateArgument) -> TemplateTypeArg
+ *   - toTemplateArgument(TemplateTypeArg) -> TemplateArgument
+ *   These provide explicit, type-safe conversions preserving all type information
+ * 
+ * Design Rationale:
+ *   - Keeping types separate maintains clarity of purpose
+ *   - TemplateTypeArg's complexity not needed in all contexts
+ *   - TemplateArgument's template template parameter support not needed in TemplateTypeArg
+ *   - Conversion functions make interoperability straightforward
+ * 
+ * History:
+ *   - Original: Duplicate TemplateArgument in TemplateRegistry.h and InstantiationQueue.h
+ *   - Consolidation (Tasks 1-4): Unified into single TemplateArgument with TypeIndex support
+ *   - See docs/TEMPLATE_ARGUMENT_CONSOLIDATION_PLAN.md for full details
+ */
+
+// Basic type+index+value triple for template arguments
+// Provides a lightweight representation that can be reused across different contexts
+// This is distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
+struct TemplateArgumentValue {
+	Type type = Type::Invalid;
+	TypeIndex type_index = 0;
+	int64_t value = 0;
+	
+	// Factory methods
+	static TemplateArgumentValue makeType(Type t, TypeIndex idx = 0) {
+		TemplateArgumentValue v;
+		v.type = t;
+		v.type_index = idx;
+		return v;
+	}
+	
+	static TemplateArgumentValue makeValue(int64_t val, Type value_type = Type::Int) {
+		TemplateArgumentValue v;
+		v.type = value_type;
+		v.value = val;
+		return v;
+	}
+	
+	bool operator==(const TemplateArgumentValue& other) const {
+		return type == other.type && 
+		       type_index == other.type_index && 
+		       value == other.value;
+	}
+	
+	size_t hash() const {
+		size_t h = std::hash<int>{}(static_cast<int>(type));
+		h ^= std::hash<TypeIndex>{}(type_index) << 1;
+		h ^= std::hash<int64_t>{}(value) << 2;
+		return h;
+	}
+};
+
 // Full type representation for template arguments
 // Captures base type, references, pointers, cv-qualifiers, etc.
 // Can also represent non-type template parameters (values)
@@ -303,16 +381,18 @@ struct TemplateArgument {
 	};
 	
 	Kind kind;
-	Type type_value;  // For type arguments (legacy - enum only)
+	Type type_value;  // For type arguments (legacy - enum only, kept for backwards compatibility)
+	TypeIndex type_index = 0;  // For type arguments - index into gTypeInfo for complex types (NEW in Task 2)
 	int64_t int_value;  // For non-type integer arguments
 	Type value_type;  // For non-type arguments: the type of the value (bool, int, etc.)
 	std::string template_name;  // For template template arguments (name of the template)
 	std::optional<TypeSpecifierNode> type_specifier;  // Full type info including references, pointers, CV qualifiers
 	
-	static TemplateArgument makeType(Type t) {
+	static TemplateArgument makeType(Type t, TypeIndex idx = 0) {
 		TemplateArgument arg;
 		arg.kind = Kind::Type;
 		arg.type_value = t;
+		arg.type_index = idx;  // Store TypeIndex for complex types
 		return arg;
 	}
 	
@@ -320,6 +400,7 @@ struct TemplateArgument {
 		TemplateArgument arg;
 		arg.kind = Kind::Type;
 		arg.type_value = type_spec.type();  // Keep legacy field populated
+		arg.type_index = type_spec.type_index();  // Extract and store TypeIndex
 		arg.type_specifier = type_spec;
 		return arg;
 	}
@@ -338,7 +419,143 @@ struct TemplateArgument {
 		arg.template_name = std::string(template_name);
 		return arg;
 	}
+	
+	// Hash for use in maps (needed for InstantiationQueue)
+	size_t hash() const {
+		size_t h = std::hash<int>{}(static_cast<int>(kind));
+		h ^= std::hash<int>{}(static_cast<int>(type_value)) << 1;
+		h ^= std::hash<TypeIndex>{}(type_index) << 2;
+		h ^= std::hash<int64_t>{}(int_value) << 3;
+		return h;
+	}
+	
+	// Equality operator (needed for InstantiationQueue)
+	bool operator==(const TemplateArgument& other) const {
+		if (kind != other.kind) return false;
+		switch (kind) {
+			case Kind::Type:
+				return type_value == other.type_value && type_index == other.type_index;
+			case Kind::Value:
+				return int_value == other.int_value && value_type == other.value_type;
+			case Kind::Template:
+				return template_name == other.template_name;
+		}
+		return false;
+	}
 };
+
+/**
+ * Conversion Helper Functions
+ * ============================
+ * 
+ * These functions provide explicit, type-safe conversions between TemplateArgument
+ * and TemplateTypeArg. They preserve as much type information as possible during
+ * the conversion.
+ * 
+ * Usage Examples:
+ *   // Convert TemplateArgument to TemplateTypeArg
+ *   TemplateArgument arg = TemplateArgument::makeType(Type::Int, 0);
+ *   TemplateTypeArg type_arg = toTemplateTypeArg(arg);
+ * 
+ *   // Convert TemplateTypeArg to TemplateArgument
+ *   TemplateTypeArg type_arg;
+ *   type_arg.base_type = Type::Float;
+ *   TemplateArgument arg = toTemplateArgument(type_arg);
+ */
+
+/**
+ * Convert TemplateArgument to TemplateTypeArg
+ * 
+ * Extracts type information from TemplateArgument and creates a TemplateTypeArg.
+ * - If arg has type_specifier (modern path): Extracts full type info including
+ *   references, pointers, cv-qualifiers, and arrays
+ * - If arg lacks type_specifier (legacy path): Uses basic type_value and type_index
+ * - For value arguments: Sets is_value=true and copies the value
+ * - Template template parameters are not directly supported in TemplateTypeArg
+ * 
+ * @param arg The TemplateArgument to convert
+ * @return TemplateTypeArg with extracted type information
+ */
+inline TemplateTypeArg toTemplateTypeArg(const TemplateArgument& arg) {
+	TemplateTypeArg result;
+	
+	if (arg.kind == TemplateArgument::Kind::Type) {
+		if (arg.type_specifier.has_value()) {
+			// Modern path: use full type info from TypeSpecifierNode
+			const auto& ts = *arg.type_specifier;
+			result.base_type = ts.type();
+			result.type_index = ts.type_index();
+			result.is_reference = ts.is_reference();
+			result.is_rvalue_reference = ts.is_rvalue_reference();
+			result.pointer_depth = ts.pointer_levels().size();
+			result.cv_qualifier = ts.cv_qualifier();
+			result.is_array = ts.is_array();
+			if (ts.is_array() && ts.array_size().has_value()) {
+				result.array_size = ts.array_size();
+			}
+			// Note: member_pointer_kind not stored in TypeSpecifierNode, defaults to None
+		} else {
+			// Legacy path: use basic type info only
+			result.base_type = arg.type_value;
+			result.type_index = arg.type_index;
+			// Other fields remain at default values
+		}
+	} else if (arg.kind == TemplateArgument::Kind::Value) {
+		result.is_value = true;
+		result.value = arg.int_value;
+		result.base_type = arg.value_type;
+	}
+	// Template template parameters: not directly supported in TemplateTypeArg
+	
+	return result;
+}
+
+/**
+ * Convert TemplateTypeArg to TemplateArgument
+ * 
+ * Creates a TemplateArgument with a TypeSpecifierNode containing complete type
+ * information from the TemplateTypeArg.
+ * - For value arguments: Creates TemplateArgument with makeValue()
+ * - For type arguments: Creates TypeSpecifierNode with all qualifiers:
+ *   - CV-qualifiers (const, volatile)
+ *   - Pointer levels
+ *   - Reference type (lvalue or rvalue)
+ *   - Array dimensions
+ * - Returns TemplateArgument with embedded TypeSpecifierNode (modern representation)
+ * 
+ * @param arg The TemplateTypeArg to convert
+ * @return TemplateArgument with complete type information
+ */
+inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
+	if (arg.is_value) {
+		// Non-type template parameter
+		return TemplateArgument::makeValue(arg.value, arg.base_type);
+	} else {
+		// Type template parameter - create TypeSpecifierNode for full info
+		TypeSpecifierNode ts(arg.base_type, TypeQualifier::None, 
+		                    get_type_size_bits(arg.base_type), Token(), arg.cv_qualifier);
+		ts.set_type_index(arg.type_index);
+		
+		// Add pointer levels
+		for (size_t i = 0; i < arg.pointer_depth; ++i) {
+			ts.add_pointer_level(CVQualifier::None);
+		}
+		
+		// Set reference type
+		if (arg.is_reference) {
+			ts.set_reference(false);  // lvalue reference
+		} else if (arg.is_rvalue_reference) {
+			ts.set_reference(true);   // rvalue reference
+		}
+		
+		// Set array info if present
+		if (arg.is_array) {
+			ts.set_array(true, arg.array_size);
+		}
+		
+		return TemplateArgument::makeTypeSpecifier(ts);
+	}
+}
 
 // Out-of-line template member function definition
 struct OutOfLineMemberFunction {
