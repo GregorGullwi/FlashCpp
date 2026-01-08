@@ -4,19 +4,32 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 8, 2026 - Evening - Critical Bug Found)**:
+- 🐛 **CRITICAL BUG: Union member access causes infinite loop/hang** ❌
+  - **Bug**: Accessing union members (named or anonymous) in structs causes compilation to hang indefinitely
+  - **Impact**: Completely blocks `<optional>`, `<variant>`, and any code using unions with member access
+  - **Status**: Union declarations work fine, but ANY member access causes hang
+  - **Test cases created**:
+    - `test_union_member_access_fail.cpp` - Accessing `s.data.i` causes hang ❌
+    - `test_anonymous_union_member_access_fail.cpp` - Accessing `s.i` causes hang ❌
+    - `test_template_anonymous_union_access_fail.cpp` - "Missing identifier" error (doesn't hang) ❌
+    - `test_anonymous_union_declaration_ret0.cpp` - Declaration works ✅
+    - `test_named_union_declaration_ret0.cpp` - Declaration works ✅
+    - `test_template_anonymous_union_declaration_ret0.cpp` - Template declaration works ✅
+  - **Root cause**: Likely infinite loop in parser or codegen when processing member access chains to union fields
+  - **Workaround**: None - unions cannot be used with member access at all
+
 **UPDATE (January 8, 2026 - Evening - Investigation & Documentation)**:
 - ✅ **`<limits>` header now confirmed working!** - Compiles in ~1.8 seconds, all features operational
 - ✅ **C++20 requires clauses fully supported** - Can use `requires` with concepts on template functions
 - ✅ **Decltype with ternary operators works** - Patterns like `decltype(true ? a : b)` parse correctly
+- ✅ **Floating-point arithmetic bug fixed** - Fixed critical bug in `storeArithmeticResult()` that caused float/double operations to return garbage
 - 📝 **Updated README_STANDARD_HEADERS.md** - Corrected status for multiple headers based on actual testing
 - 🎯 **Created test cases**:
   - `test_limits_working_ret0.cpp` - Tests `<limits>` header ✅
   - `test_requires_clause_ret0.cpp` - Tests C++20 requires clauses ✅
   - `test_decltype_ternary_ret0.cpp` - Tests decltype with ternary ✅
-- ⚠️ **Identified new issue**: Anonymous unions in template classes cause compilation hangs
-  - Regular template member access works fine
-  - Named union members work fine
-  - Anonymous unions specifically cause issues during template instantiation
+  - `test_float_multiply_concept_ret0.cpp` - Tests float arithmetic fix ✅
 - 📊 **Key insight**: Most header timeouts are due to template instantiation **volume**, not missing features
   - Individual instantiations are fast (20-50μs)
   - Standard headers contain hundreds/thousands of instantiations

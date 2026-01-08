@@ -160,7 +160,45 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 8, 2026)
+## Latest Investigation (January 8, 2026 - Evening)
+
+### Critical Bug Found: Union Member Access Causes Compilation Hangs
+
+During investigation of union support, discovered a **critical bug** that causes the compiler to hang indefinitely:
+
+**Bug Details:**
+- ❌ **Accessing union members (named or anonymous) in structs causes infinite loop**
+- ✅ Declaring unions works fine
+- ❌ But any attempt to read or write union member fields causes compilation to hang
+- This affects BOTH regular structs and template classes
+- This is the root cause blocking `<optional>` and `<variant>` headers
+
+**Test Results:**
+- ✅ `test_anonymous_union_declaration_ret0.cpp` - Declaration works
+- ✅ `test_named_union_declaration_ret0.cpp` - Declaration works
+- ✅ `test_template_anonymous_union_declaration_ret0.cpp` - Template declaration works
+- ❌ `test_union_member_access_fail.cpp` - **HANGS** when accessing `s.data.i`
+- ❌ `test_anonymous_union_member_access_fail.cpp` - **HANGS** when accessing `s.i`
+- ❌ `test_template_anonymous_union_access_fail.cpp` - Gives "Missing identifier" error (doesn't hang)
+
+**Examples:**
+```cpp
+// ✅ This works - declaration only
+struct MyStruct {
+    union { int i; float f; } data;
+};
+
+// ❌ This HANGS during compilation
+int main() {
+    MyStruct s;
+    s.data.i = 42;  // Compilation hangs here
+    return 0;
+}
+```
+
+The bug appears to be in the parser or codegen when processing member access to union fields. Further investigation needed to find the infinite loop location.
+
+## Latest Investigation (January 8, 2026 - Afternoon)
 
 ### Key Findings
 
@@ -181,12 +219,10 @@ As FlashCpp gains more C++ features:
    - Standard headers contain hundreds to thousands of template instantiations
    - This is a performance optimization issue, not a feature gap
 
-4. **Union member access in template classes has issues** ⚠️
-   - Anonymous unions in template classes cause compilation hangs
-   - Example: `union { char dummy; T value_; }` inside `template<typename T> class Container`
-   - This may block full `<optional>` and `<variant>` support
-   - Named union members accessed via explicit paths work fine
-   - Issue appears to be related to member lookup during template instantiation
+4. **Floating-point arithmetic bug fixed** ✅
+   - Fixed critical bug where float/double operations returned garbage
+   - Bug was in `storeArithmeticResult()` not storing XMM register results to memory
+   - All floating-point arithmetic now works correctly
 
 ### What Actually Works
 
@@ -199,13 +235,22 @@ Based on testing, the following features are confirmed working:
 - ✅ Member access in regular template classes (non-union)
 - ✅ Decltype with ternary operators
 - ✅ Static constexpr members in template classes
+- ✅ Floating-point arithmetic (multiply, divide, add, subtract)
+- ✅ Union declarations (both named and anonymous)
+- ✅ Anonymous unions in template classes (declaration only)
+
+### What Doesn't Work
+
+- ❌ **Accessing union members causes compilation to hang** (critical bug)
+- ❌ Anonymous union member access in templates gives "Missing identifier" error
+- ⏱️ Many headers timeout due to template instantiation volume
 
 ### Recommendations
 
 1. **For immediate productivity**: Use `<limits>` header which now works!
-2. **For optional-like types**: Use explicit union member names or avoid anonymous unions in templates
+2. **For optional-like types**: **Cannot use unions** - critical bug causes hangs
 3. **For template performance**: Consider breaking up large template hierarchies or using explicit instantiations where possible
-4. **Documentation updates**: The table above has been updated to reflect actual status
+4. **Union support**: Avoid using unions with member access until bug is fixed
 
 ## Related Files
 
