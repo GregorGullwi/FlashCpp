@@ -71,13 +71,18 @@ This document outlines the plan to consolidate duplicate `TemplateArgument` stru
 
 ## Consolidation Tasks
 
-### Task 1: Create TemplateArgumentValue Helper Struct
+### Task 1: Create TemplateArgumentValue Helper Struct ✅ COMPLETED
+
+**Status:** ✅ Implemented and tested (commit 8cee950 + current)
 
 **Goal:** Extract the type+value pattern into a reusable abstraction (different from existing `TypedValue` which is IR-specific)
 
 **Implementation:**
+Added to TemplateRegistry.h before TemplateTypeArg (line 36):
 ```cpp
-// In TemplateRegistry.h (before TemplateTypeArg)
+// Basic type+index+value triple for template arguments
+// Provides a lightweight representation that can be reused across different contexts
+// This is distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
 struct TemplateArgumentValue {
     Type type = Type::Invalid;
     TypeIndex type_index = 0;
@@ -113,6 +118,12 @@ struct TemplateArgumentValue {
 };
 ```
 
+**Verification:**
+- ✅ Build successful with clang++
+- ✅ All 845 tests pass
+- ✅ All 12 fail tests correctly fail
+- ✅ No new warnings
+
 **Benefits:**
 - Reusable across multiple structures
 - Consistent representation of type+index+value triple
@@ -120,6 +131,8 @@ struct TemplateArgumentValue {
 - Simplifies conversion functions
 
 ### Task 2: Enhance TemplateRegistry.h TemplateArgument
+
+**Status:** 🔲 Not started
 
 **Goal:** Add missing `TypeIndex` field to the canonical TemplateArgument to eliminate need for separate InstantiationQueue version
 

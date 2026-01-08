@@ -33,6 +33,43 @@ enum class MemberPointerKind : uint8_t {
 	Function
 };
 
+// Basic type+index+value triple for template arguments
+// Provides a lightweight representation that can be reused across different contexts
+// This is distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
+struct TemplateArgumentValue {
+	Type type = Type::Invalid;
+	TypeIndex type_index = 0;
+	int64_t value = 0;
+	
+	// Factory methods
+	static TemplateArgumentValue makeType(Type t, TypeIndex idx = 0) {
+		TemplateArgumentValue v;
+		v.type = t;
+		v.type_index = idx;
+		return v;
+	}
+	
+	static TemplateArgumentValue makeValue(int64_t val, Type value_type = Type::Int) {
+		TemplateArgumentValue v;
+		v.type = value_type;
+		v.value = val;
+		return v;
+	}
+	
+	bool operator==(const TemplateArgumentValue& other) const {
+		return type == other.type && 
+		       type_index == other.type_index && 
+		       value == other.value;
+	}
+	
+	size_t hash() const {
+		size_t h = std::hash<int>{}(static_cast<int>(type));
+		h ^= std::hash<TypeIndex>{}(type_index) << 1;
+		h ^= std::hash<int64_t>{}(value) << 2;
+		return h;
+	}
+};
+
 // Full type representation for template arguments
 // Captures base type, references, pointers, cv-qualifiers, etc.
 // Can also represent non-type template parameters (values)
