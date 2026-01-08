@@ -11606,7 +11606,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 	}
 
-	// Check for 'alignof' keyword
+	// Check for 'alignof' or '__alignof__' keyword
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "alignof"sv) {
 		// Handle alignof operator: alignof(type) or alignof(expression)
 		Token alignof_token = *current_token_;
@@ -11644,6 +11644,52 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			if (!consume_punctuator(")")) {
 				discard_saved_token(saved_pos);
 				return ParseResult::error("Expected ')' after alignof expression", *current_token_);
+			}
+			discard_saved_token(saved_pos);
+			auto alignof_expr = emplace_node<ExpressionNode>(
+				AlignofExprNode::from_expression(*expr_result.node(), alignof_token));
+			return ParseResult::success(alignof_expr);
+		}
+	}
+
+	// Check for '__alignof__' (GCC/Clang extension, treated as identifier but works like alignof)
+	if (current_token_->type() == Token::Type::Identifier && current_token_->value() == "__alignof__"sv) {
+		// Handle __alignof__ operator: __alignof__(type) or __alignof__(expression)
+		Token alignof_token = *current_token_;
+		consume_token(); // consume '__alignof__'
+
+		if (!consume_punctuator("("sv)) {
+			return ParseResult::error("Expected '(' after '__alignof__'", *current_token_);
+		}
+
+		// Try to parse as a type first
+		SaveHandle saved_pos = save_token_position();
+		ParseResult type_result = parse_type_specifier();
+
+		// Check if this is really a type by seeing if ')' follows
+		bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
+		                                 peek_token().has_value() && peek_token()->value() == ")";
+		
+		if (is_type_followed_by_paren) {
+			// Successfully parsed as type and ')' follows
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after __alignof__ type", *current_token_);
+			}
+			discard_saved_token(saved_pos);
+			auto alignof_expr = emplace_node<ExpressionNode>(AlignofExprNode(*type_result.node(), alignof_token));
+			return ParseResult::success(alignof_expr);
+		}
+		else {
+			// Not a type (or doesn't look like one), try parsing as expression
+			restore_token_position(saved_pos);
+			ParseResult expr_result = parse_expression();
+			if (expr_result.is_error()) {
+				discard_saved_token(saved_pos);
+				return ParseResult::error("Expected type or expression after '__alignof__('", *current_token_);
+			}
+			if (!consume_punctuator(")")) {
+				discard_saved_token(saved_pos);
+				return ParseResult::error("Expected ')' after __alignof__ expression", *current_token_);
 			}
 			discard_saved_token(saved_pos);
 			auto alignof_expr = emplace_node<ExpressionNode>(
