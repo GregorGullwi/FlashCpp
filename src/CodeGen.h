@@ -2685,10 +2685,8 @@ private:
 		if (current_struct_name_.isValid()) {
 			// This is a nested class - construct fully qualified name like "Outer::Inner"
 			StringBuilder qualified_name_builder;
-			qualified_name_builder.append(StringTable::getStringView(current_struct_name_))
-			                     .append("::")
-			                     .append(struct_name);
-			lookup_name = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+			lookup_name = StringTable::getOrInternStringHandle(
+				buildQualifiedName(qualified_name_builder, std::vector<std::string_view>{StringTable::getStringView(current_struct_name_)}, struct_name));
 		} else {
 			// Top-level class - use simple name
 			lookup_name = StringTable::getOrInternStringHandle(struct_name);

@@ -120,6 +120,52 @@ inline bool signaturesMatch(const std::vector<Type>& sig1, const std::vector<Typ
 	return true;
 }
 
+// Forward declaration needed for buildQualifiedName
+class QualifiedIdentifierNode;
+
+// Helper functions to build qualified names from various sources
+// These eliminate code duplication across the codebase
+
+// Build qualified name from a namespace path and identifier
+// Example: buildQualifiedName(["std", "chrono"], "duration") -> "std::chrono::duration"
+inline std::string_view buildQualifiedName(StringBuilder& builder, const NamespacePath& namespace_path, std::string_view identifier) {
+	for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+		builder.append(ns);
+#else
+		builder.append(ns.view());
+#endif
+		builder.append("::");
+	}
+	builder.append(identifier);
+	return builder.commit();
+}
+
+// Build qualified name from a QualifiedIdentifierNode
+// Example: buildQualifiedName(qual_id) where qual_id represents "std::move"
+inline std::string_view buildQualifiedName(StringBuilder& builder, const QualifiedIdentifierNode& qual_id) {
+	for (const auto& ns : qual_id.namespaces()) {
+#if USE_OLD_STRING_APPROACH
+		builder.append(ns);
+#else
+		builder.append(ns.view());
+#endif
+		builder.append("::");
+	}
+	builder.append(qual_id.name());
+	return builder.commit();
+}
+
+// Overload that accepts vector of string-like objects (for cases with StringType or string_view vectors)
+template<typename StringContainer>
+inline std::string_view buildQualifiedName(StringBuilder& builder, const StringContainer& namespaces, std::string_view identifier) {
+	for (const auto& ns : namespaces) {
+		builder.append(std::string_view(ns)).append("::");
+	}
+	builder.append(identifier);
+	return builder.commit();
+}
+
 class SymbolTable {
 public:
 	bool insert(const std::string& identifier, ASTNode node) {
