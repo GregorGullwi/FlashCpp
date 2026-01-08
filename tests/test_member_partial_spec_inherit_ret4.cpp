@@ -21,9 +21,7 @@ int main() {
     MakeUnsigned::List<int> list1;
     MakeUnsigned::List<int, char> list2;
     
-    // Note: Direct access to MakeUnsigned::List<int, char>::size has naming issues
-    // where the struct is registered with qualified name but lookup uses unqualified name.
-    // This requires deeper changes to the template instantiation naming infrastructure.
-    // For now, return expected value (sizeof(int) = 4) directly.
-    return 4;
+    // Test direct access to static constexpr member via qualified name
+    // sizeof(int) = 4
+    return MakeUnsigned::List<int, char>::size;
 }

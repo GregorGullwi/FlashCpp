@@ -14285,12 +14285,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		std::vector<ASTNode> template_arg_nodes;  // Store the actual expression nodes
 		if (current_token_.has_value() && current_token_->value() == "<") {
 			// Build the qualified name from namespaces using StringBuilder
+			// Use commit() to get a stable string_view that won't be invalidated
 			StringBuilder qualified_name_builder;
 			for (const auto& ns : qual_id.namespaces()) {
 				qualified_name_builder.append(ns).append("::");
 			}
 			qualified_name_builder.append(qual_id.name());
-			std::string_view qualified_name = qualified_name_builder.preview();
+			std::string_view qualified_name = qualified_name_builder.commit();  // commit() for stable string_view
 			
 			// Phase 1: Always try to parse template arguments speculatively
 			// C++20 spec: After :: in qualified-id, '<' is always template argument delimiter
@@ -14299,7 +14300,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			if (template_args.has_value()) {
 				FLASH_LOG_FORMAT(Parser, Debug, "Successfully parsed {} template arguments for '{}'", template_args->size(), qualified_name);
-				qualified_name_builder.reset();
 				
 				// Try to instantiate the template with these arguments
 				// Note: try_instantiate_class_template returns nullopt on success (type registered in gTypesByName)
@@ -23636,8 +23636,18 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			member_struct_node
 		);
 		
+		// Register pattern under qualified name (MakeUnsigned::List)
 		gTemplateRegistry.registerSpecializationPattern(
 			StringTable::getStringView(qualified_simple_name),
+			template_params,
+			pattern_args,
+			template_struct_node
+		);
+		
+		// Also register pattern under simple name (List) for consistency with primary template
+		// This ensures patterns are found regardless of whether qualified or simple name is used
+		gTemplateRegistry.registerSpecializationPattern(
+			struct_name,
 			template_params,
 			pattern_args,
 			template_struct_node
