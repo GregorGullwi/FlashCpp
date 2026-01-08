@@ -18802,7 +18802,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 				std::string_view member_part = type_name.substr(sep_pos + 2);
 				auto build_resolved_handle = [](std::string_view base, std::string_view member) {
 					StringBuilder sb;
-					return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
+					return StringTable::getOrInternStringHandle(buildQualifiedName(sb, std::vector<std::string_view>{base}, member));
 				};
 				
 				bool replaced = false;
@@ -23215,7 +23215,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Register the alias template with qualified name (ClassName::AliasName)
 	StringBuilder sb;
-	std::string_view qualified_name = sb.append(struct_node.name()).append("::").append(alias_name).commit();
+	std::string_view qualified_name = buildQualifiedName(sb, std::vector<std::string_view>{StringTable::getStringView(struct_node.name())}, alias_name);
 	gTemplateRegistry.register_alias_template(std::string(qualified_name), alias_node);
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", qualified_name);
@@ -25126,15 +25126,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		if (!namespace_path.empty()) {
 			// Build the fully-qualified name by prepending the current namespace path
 			StringBuilder sb;
-			for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-				sb.append(ns).append("::");
-#else
-				sb.append(StringTable::getStringView(ns)).append("::");
-#endif
-			}
-			sb.append(template_name);
-			std::string_view qualified_name_view = sb.commit();
+			std::string_view qualified_name_view = buildQualifiedName(sb, namespace_path, template_name);
 			// Note: qualified_name_view points to StringBuilder's internal buffer,
 			// which is valid for the duration of this function. The lookup only
 			// needs the string_view temporarily, so no std::string allocation needed.
@@ -25730,7 +25722,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		std::string_view member_part = type_name.substr(sep_pos + 2);
 		auto build_resolved_handle = [](std::string_view base, std::string_view member) {
 			StringBuilder sb;
-			return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
+			return StringTable::getOrInternStringHandle(buildQualifiedName(sb, std::vector<std::string_view>{base}, member));
 		};
 		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: type_name=", type_name,
 		          " base_part=", base_part, " member_part=", member_part,
