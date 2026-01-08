@@ -127,7 +127,8 @@ class QualifiedIdentifierNode;
 // These eliminate code duplication across the codebase
 
 // Helper to append a StringType element (handles USE_OLD_STRING_APPROACH)
-template<size_t N = 0>
+// Default size matches StringType<> default of 32 from StackString.h
+template<size_t N = 32>
 inline void appendStringType(StringBuilder& builder, const StringType<N>& str) {
 #if USE_OLD_STRING_APPROACH
 	builder.append(str);
@@ -165,17 +166,23 @@ inline std::string_view buildQualifiedName(StringBuilder& builder, const Qualifi
 	return builder.commit();
 }
 
-// Template overload that accepts vector of string-like objects (for cases with StringType or string_view vectors)
-// Handles USE_OLD_STRING_APPROACH if elements are StringType, otherwise uses string_view conversion
+// Template overload for containers of string-like objects
+// Accepts containers like std::vector<std::string_view>, std::vector<StringType<>>, etc.
+// Elements must be convertible to std::string_view or have a view() method (for StringType)
 template<typename StringContainer>
 inline std::string_view buildQualifiedName(StringBuilder& builder, const StringContainer& namespaces, std::string_view identifier) {
 	for (const auto& ns : namespaces) {
-		// Check if this is a StringType by trying to call view() method
-		if constexpr (requires { ns.view(); }) {
-			// It's a StringType - use the helper
+		// Check if element is a StringType by checking for both view() method and matching type name pattern
+		// This is more specific than just checking for view() to avoid false matches with other types
+		using ElementType = std::decay_t<decltype(ns)>;
+		if constexpr (requires { ns.view(); } && 
+		              (std::is_same_v<ElementType, StringType<>> || 
+		               std::is_same_v<ElementType, StringType<32>> ||
+		               std::is_same_v<ElementType, StringType<64>>)) {
+			// It's a StringType - use the helper that handles USE_OLD_STRING_APPROACH
 			appendStringType(builder, ns);
 		} else {
-			// It's something else (likely string_view or convertible to it)
+			// It's something else (string_view or convertible to it)
 			builder.append(std::string_view(ns));
 		}
 		builder.append("::");
