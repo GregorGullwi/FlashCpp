@@ -8,8 +8,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 # Build the compiler if not built
-if [ ! -f "x64/Debug/FlashCpp" ]; then
-    make main CXX=clang++ 2>&1
+if [ ! -f "x64/Release/FlashCpp" ]; then
+    make release CXX=clang++ 2>&1
 fi
 
 # Auto-detect include paths by querying the compiler
@@ -143,7 +143,7 @@ echo "FlashCpp Standard Header Support Test Report"
 echo "=============================================="
 echo ""
 echo "Date: $(date)"
-echo "FlashCpp built: $(stat -c '%y' x64/Debug/FlashCpp 2>/dev/null || echo 'unknown')"
+echo "FlashCpp built: $(stat -c '%y' x64/Release/FlashCpp 2>/dev/null || echo 'unknown')"
 echo "GCC version: $(g++ --version | head -1)"
 echo ""
 

@@ -69,14 +69,14 @@ BENCHMARK_TARGET := $(BENCHMARK_DIR)/benchmark$(EXE_EXT)
 $(MAIN_TARGET): $(MAIN_SOURCES)
 	@echo "Building main executable (Debug) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(DEBUG_DIR) 2>nul || $(MKDIR) $(DEBUG_DIR) || true
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -O3 -o $@ $^
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -O1 -o $@ $^
 	@echo "Built: $@"
 
 # Build release executable
 $(RELEASE_TARGET): $(MAIN_SOURCES)
 	@echo "Building main executable (Release) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(RELEASE_DIR) 2>nul || $(MKDIR) $(RELEASE_DIR) || true
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -O3 -o $@ $^
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DFLASHCPP_LOG_LEVEL=1 -O3 -o $@ $^
 	@echo "Built: $@"
 
 # Build test executable

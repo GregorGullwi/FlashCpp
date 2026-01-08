@@ -7,9 +7,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
 # Build if needed
-if [ ! -f "x64/Debug/FlashCpp" ]; then
+if [ ! -f "x64/Release/FlashCpp" ]; then
     echo "Building FlashCpp..."
-    make main CXX=clang++ > /dev/null 2>&1 || { echo "Build failed"; exit 1; }
+    make release CXX=clang++ > /dev/null 2>&1 || { echo "Build failed"; exit 1; }
 fi
 
 # Auto-detect include paths
@@ -59,7 +59,7 @@ for test_file in "${TEST_FILES[@]}"; do
     rm -f "$obj_file"
     
     # Run with 10 second timeout
-    timeout 10 ./x64/Debug/FlashCpp "$test_path" $INCLUDE_PATHS > /tmp/flashcpp_test.log 2>&1
+    timeout 10 ./x64/Release/FlashCpp "$test_path" $INCLUDE_PATHS > /tmp/flashcpp_test.log 2>&1
     exit_code=$?
     
     if [ $exit_code -eq 124 ]; then
