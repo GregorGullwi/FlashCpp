@@ -1,17 +1,22 @@
-// Test case: Accessing union members causes infinite loop/hang
-// Status: ❌ FAILS - Compilation hangs indefinitely
-// Bug: Member access to union fields in structs causes parser/codegen to hang
-// This is a critical bug that needs investigation
+// Test case: Named union member access (union with a member name)
+// Status: ❌ NOT SUPPORTED - Named unions are not implemented
+// Error: "Expected type name after 'struct', 'class', or 'union'"
+//
+// Named unions like `union {...} data;` require creating a nested union type
+// and then a member of that type. This is more complex than anonymous unions
+// and is not currently supported by the parser.
+//
+// Workaround: Use anonymous unions or separate the union declaration from the member
 
 struct MyStruct {
     union {
         int i;
         float f;
-    } data;
+    } data;  // 'data' makes this a named union member
 };
 
 int main() {
     MyStruct s;
-    s.data.i = 42;  // This line causes the hang
+    s.data.i = 42;  // This doesn't work - named unions not supported
     return s.data.i == 42 ? 0 : 1;
 }

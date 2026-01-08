@@ -4170,12 +4170,13 @@ ParseResult Parser::parse_struct_declaration()
 				consume_token(); // consume 'struct', 'class', or 'union'
 				
 				if (peek_token().has_value() && peek_token()->value() == "{") {
-					// Pattern 1: Anonymous union/struct as a member
-					// Parse and flatten its members into the parent struct
+					// Could be Pattern 1 (anonymous union: union {...};) or named union (union {...} data;)
+					// We need to parse the union and check if there's a member name after the closing '}'
 					
 					consume_token(); // consume '{'
 					
-					// Parse anonymous union/struct members and add them directly to parent struct
+					// Parse union members into a temporary list
+					std::vector<ASTNode> union_members;
 					while (peek_token().has_value() && peek_token()->value() != "}") {
 						// Parse member type
 						auto member_type_result = parse_type_specifier();
@@ -4184,7 +4185,7 @@ ParseResult Parser::parse_struct_declaration()
 						}
 						
 						if (!member_type_result.node().has_value()) {
-							return ParseResult::error("Expected type specifier in anonymous union member", *current_token_);
+							return ParseResult::error("Expected type specifier in union member", *current_token_);
 						}
 						
 						// Handle pointer declarators
@@ -4199,51 +4200,65 @@ ParseResult Parser::parse_struct_declaration()
 						// Parse member name
 						auto member_name_token = peek_token();
 						if (!member_name_token.has_value() || member_name_token->type() != Token::Type::Identifier) {
-							return ParseResult::error("Expected member name in anonymous union", member_name_token.value_or(Token()));
+							return ParseResult::error("Expected member name in union", member_name_token.value_or(Token()));
 						}
 						consume_token(); // consume the member name
 						
-						// Create member declaration and add directly to parent struct
+						// Create member declaration
 						auto member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), *member_name_token);
-						struct_ref.add_member(member_decl_node, current_access, std::nullopt);
+						union_members.push_back(member_decl_node);
 						
 						// Handle comma-separated declarations
 						while (peek_token().has_value() && peek_token()->value() == ",") {
 							consume_token(); // consume ','
 							auto next_name = consume_token();
 							if (!next_name.has_value() || next_name->type() != Token::Type::Identifier) {
-								return ParseResult::error("Expected member name after comma in anonymous union", *current_token_);
+								return ParseResult::error("Expected member name after comma in union", *current_token_);
 							}
 							auto next_decl = emplace_node<DeclarationNode>(
 								emplace_node<TypeSpecifierNode>(member_type_spec),
 								*next_name
 							);
-							struct_ref.add_member(next_decl, current_access, std::nullopt);
+							union_members.push_back(next_decl);
 						}
 						
 						// Expect semicolon
 						if (!consume_punctuator(";")) {
-							return ParseResult::error("Expected ';' after anonymous union member", *current_token_);
+							return ParseResult::error("Expected ';' after union member", *current_token_);
 						}
 					}
 					
 					// Consume closing brace
 					if (!consume_punctuator("}")) {
-						return ParseResult::error("Expected '}' after anonymous union members", *peek_token());
+						return ParseResult::error("Expected '}' after union members", *peek_token());
 					}
 					
-					// After the closing '}', there should be a member name or semicolon
-					// Consume until we hit a semicolon
-					while (peek_token().has_value() && peek_token()->value() != ";") {
-						consume_token();
+					// Check if there's a member name after the '}'
+					bool is_anonymous = true;
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+						// This is a named union like: union {...} data;
+						// Do NOT flatten members - let normal parsing handle it as a nested struct
+						is_anonymous = false;
+						restore_token_position(saved_pos);
+						// Fall through to normal member parsing
+					} else {
+						// This is truly anonymous: union {...};
+						// Flatten members into parent struct
+						for (const auto& member : union_members) {
+							struct_ref.add_member(member, current_access, std::nullopt);
+						}
+						
+						// Consume semicolon
+						if (peek_token().has_value() && peek_token()->value() == ";") {
+							consume_token();
+						}
+						
+						discard_saved_token(saved_pos);
+						continue;  // Skip to next member
 					}
-					if (peek_token().has_value() && peek_token()->value() == ";") {
-						consume_token();
-					}
-					
-					discard_saved_token(saved_pos);
-					continue;  // Skip to next member
-				} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+				}
+				
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 					// Could be pattern 2 or 3
 					consume_token(); // consume the identifier (struct name)
 					

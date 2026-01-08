@@ -160,6 +160,55 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
+## Latest Investigation (January 8, 2026 - Evening - Part 3)
+
+### Additional Union Testing and Named Union Investigation
+
+**Named Union Investigation:**
+Named unions (e.g., `union {...} data;`) are **not currently supported** by the parser. The parser doesn't have infrastructure to handle inline union type declarations with member names. This would require:
+1. Creating an anonymous nested union type
+2. Creating a member of that type
+3. Properly handling member access chains like `s.data.i`
+
+This is a missing language feature, not a bug. Implementing this would require significant parser changes.
+
+**Nested Union and Struct Testing:**
+- ✅ `test_union_with_struct_ret0.cpp` - Unions can contain struct members
+- ✅ `test_struct_with_union_ret0.cpp` - Structs can contain union types
+- ❌ `test_nested_union_ret0.cpp` - Nested anonymous unions not supported (parser error)
+
+**Test Results Summary:**
+```
+✅ Anonymous unions in structs
+✅ Anonymous unions in templates
+✅ Unions containing structs
+✅ Structs containing unions
+❌ Named unions (not implemented)
+❌ Nested anonymous unions (not implemented)
+❌ Arrays in anonymous unions (parser error)
+```
+
+**Workarounds for named unions:**
+```cpp
+// Instead of this (doesn't work):
+struct S {
+    union { int i; } data;
+    void set(int v) { data.i = v; }
+};
+
+// Use this (works):
+struct S {
+    union { int i; };  // Anonymous union
+    void set(int v) { i = v; }  // Direct access
+};
+
+// Or this (works):
+union Data { int i; };
+struct S {
+    Data data;  // Separate type
+};
+```
+
 ## Latest Investigation (January 8, 2026 - Evening - Part 2)
 
 ### Anonymous Union Bug Fixed! 🎉
@@ -167,14 +216,15 @@ As FlashCpp gains more C++ features:
 **Fix Implemented:** Anonymous union members are now properly flattened into the parent struct during parsing.
 
 **What Changed:**
-- Modified Parser.cpp line 4172-4197 to parse anonymous union members instead of skipping them
+- Modified Parser.cpp line 4172-4245 to parse anonymous union members instead of skipping them
 - Anonymous union members are now added directly to the parent struct's member list
+- Added check to distinguish anonymous unions (`union {...};`) from named unions (`union {...} data;`)
 - This allows proper member lookup in both regular structs and template classes
 
 **Test Results:**
 - ✅ `test_anonymous_union_member_access_ret0.cpp` - **NOW PASSES** (was hanging)
 - ✅ `test_template_anonymous_union_access_ret0.cpp` - **NOW PASSES** (was "Missing identifier" error)
-- ⚠️ `test_union_member_access_fail.cpp` - **Still fails** (named unions with member access cause segfault)
+- ❌ `test_union_member_access_fail.cpp` - **Not supported** (named unions not implemented)
 
 **Examples:**
 ```cpp
@@ -198,16 +248,16 @@ struct MyStruct {
 MyStruct s;
 s.i = 42;  // Works now!
 
-// ⚠️ Named unions still have issues
+// ❌ Named unions are not implemented
 struct S {
     union { int i; } data;  // Named union member
 };
 S s;
-s.data.i = 42;  // Still causes segfault
+s.data.i = 42;  // Parser error: not supported
 ```
 
-**Remaining Issue:**
-Named unions (where the union itself has a member name like `union {...} data;`) still cause segfaults during codegen. This is a separate issue from anonymous unions and requires different handling.
+**Status of Named Unions:**
+Named unions are a missing language feature that requires parser infrastructure changes. This is not a bug that can be easily fixed - it requires implementing support for inline anonymous type declarations with member names.
 
 ## Latest Investigation (January 8, 2026 - Evening - Part 1)
 
