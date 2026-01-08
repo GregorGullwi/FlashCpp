@@ -474,7 +474,7 @@ public:
 
 					// Build the qualified name for deduplication
 					StringBuilder qualified_name_sb;
-					qualified_name_sb.append(type_name).append("::").append(StringTable::getStringView(static_member.getName()));
+					qualified_name_sb.append(type_name).append("::").append(static_member.getName());
 					std::string_view qualified_name = qualified_name_sb.commit();
 					StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
 					

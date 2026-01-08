@@ -960,6 +960,14 @@ inline std::string_view buildQualifiedName(const NamespacePath& namespace_path, 
 	return buildQualifiedName(namespace_path, StringTable::getStringView(name));
 }
 
+inline StringHandle buildQualifiedNameHandle(const NamespacePath& namespace_path, std::string_view name) {
+	return StringTable::getOrInternStringHandle(buildQualifiedName(namespace_path, name));
+}
+
+inline StringHandle buildQualifiedNameHandle(const NamespacePath& namespace_path, StringHandle name) {
+	return buildQualifiedNameHandle(namespace_path, StringTable::getStringView(name));
+}
+
 /**
  * @brief Build a qualified name from a container of string-like types
  * (e.g., from QualifiedIdentifierNode::namespaces()) and a final identifier.

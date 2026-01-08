@@ -3476,17 +3476,7 @@ ParseResult Parser::parse_struct_declaration()
 	if (!current_namespace_path.empty() && !inline_namespace_stack_.empty() && inline_namespace_stack_.back() && !parsing_template_class_) {
 		auto parent_path = current_namespace_path;
 		parent_path.pop_back();
-		StringBuilder sb;
-		for (size_t i = 0; i < parent_path.size(); ++i) {
-#if USE_OLD_STRING_APPROACH
-			sb.append(parent_path[i]);
-#else
-			sb.append(parent_path[i].view());
-#endif
-			sb.append("::");
-		}
-		sb.append(StringTable::getStringView(struct_name));
-		auto parent_handle = StringTable::getOrInternStringHandle(sb.commit());
+		auto parent_handle = buildQualifiedNameHandle(parent_path, struct_name);
 		if (gTypesByName.find(parent_handle) == gTypesByName.end()) {
 			gTypesByName.emplace(parent_handle, &struct_type_info);
 		}
@@ -7153,16 +7143,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		source_type_name = StringTable::getOrInternStringHandle(identifier_token.value());
 	} else {
 		// using ns1::ns2::identifier; - build qualified name
-		StringBuilder sb;
-		for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-			sb.append(ns).append("::");
-#else
-			sb.append(ns.view()).append("::");
-#endif
-		}
-		sb.append(identifier_token.value());
-		source_type_name = StringTable::getOrInternStringHandle(sb.commit());
+		source_type_name = buildQualifiedNameHandle(namespace_path, identifier_token.value());
 	}
 	
 	// Look up the type in gTypesByName
@@ -7188,16 +7169,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	auto current_namespace_path = gSymbolTable.build_current_namespace_path();
 	if (!current_namespace_path.empty()) {
 		// Build qualified name for the target: std::identifier
-		StringBuilder target_sb;
-		for (const auto& ns : current_namespace_path) {
-#if USE_OLD_STRING_APPROACH
-			target_sb.append(ns).append("::");
-#else
-			target_sb.append(ns.view()).append("::");
-#endif
-		}
-		target_sb.append(identifier_token.value());
-		StringHandle target_type_name = StringTable::getOrInternStringHandle(target_sb.commit());
+		StringHandle target_type_name = buildQualifiedNameHandle(current_namespace_path, identifier_token.value());
 		
 		// Check if target name is already registered (avoid duplicates)
 		if (gTypesByName.find(target_type_name) == gTypesByName.end()) {
@@ -25137,16 +25109,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		auto namespace_path = gSymbolTable.build_current_namespace_path();
 		if (!namespace_path.empty()) {
 			// Build the fully-qualified name by prepending the current namespace path
-			StringBuilder sb;
-			for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-				sb.append(ns).append("::");
-#else
-				sb.append(StringTable::getStringView(ns)).append("::");
-#endif
-			}
-			sb.append(template_name);
-			std::string_view qualified_name_view = sb.commit();
+			std::string_view qualified_name_view = buildQualifiedName(namespace_path, template_name);
 			// Note: qualified_name_view points to StringBuilder's internal buffer,
 			// which is valid for the duration of this function. The lookup only
 			// needs the string_view temporarily, so no std::string allocation needed.
