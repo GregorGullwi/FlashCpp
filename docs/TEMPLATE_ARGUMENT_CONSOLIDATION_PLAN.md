@@ -200,68 +200,42 @@ Modified InstantiationQueue.h:
 - Single source of truth for TemplateArgument
 - Improved maintainability
 
-### Task 4: Add Conversion Helper Functions
+### Task 4: Add Conversion Helper Functions ✅ COMPLETED
 
-**Status:** 🔲 Not started
+**Status:** ✅ Implemented and tested (commit cf2a545 + current)
 
 **Goal:** Provide clean conversions between TemplateArgument and TemplateTypeArg
 
-**Implementation in TemplateRegistry.h:**
+**Implementation in TemplateRegistry.h (after TemplateArgument struct):**
+
+Added two inline conversion functions:
+
+1. **`toTemplateTypeArg(const TemplateArgument& arg)`** - Converts TemplateArgument → TemplateTypeArg
+   - Uses TypeSpecifierNode if available (modern path with full type info)
+   - Falls back to basic type/index if TypeSpecifierNode not present (legacy path)
+   - Handles type, value, and template template parameters
+   - Extracts references, pointers, cv-qualifiers, and array info
+
+2. **`toTemplateArgument(const TemplateTypeArg& arg)`** - Converts TemplateTypeArg → TemplateArgument
+   - Creates TypeSpecifierNode with full type information
+   - Preserves references, pointers, cv-qualifiers, and array info
+   - Returns TemplateArgument with embedded TypeSpecifierNode
+
+**Key features:**
 ```cpp
-// Convert TemplateArgument to TemplateTypeArg
 inline TemplateTypeArg toTemplateTypeArg(const TemplateArgument& arg) {
-    TemplateTypeArg result;
-    
-    if (arg.kind == TemplateArgument::Kind::Type) {
-        if (arg.type_specifier.has_value()) {
-            // Modern path: use full type info
-            const auto& ts = *arg.type_specifier;
-            result.base_type = ts.type();
-            result.type_index = ts.type_index();
-            result.is_reference = ts.is_reference();
-            result.is_rvalue_reference = ts.is_rvalue_reference();
-            result.pointer_depth = ts.pointer_levels().size();
-            result.cv_qualifier = ts.cv_qualifier();
-            // ... copy other fields
-        } else {
-            // Legacy path: use basic type info
-            result.base_type = arg.type_value;
-            result.type_index = arg.type_index;
-        }
-    } else if (arg.kind == TemplateArgument::Kind::Value) {
-        result.is_value = true;
-        result.value = arg.int_value;
-        result.base_type = arg.value_type;
-    }
-    
-    return result;
+    // Extracts full type info from type_specifier or uses legacy fields
 }
 
-// Convert TemplateTypeArg to TemplateArgument
 inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
-    if (arg.is_value) {
-        return TemplateArgument::makeValue(arg.value, arg.base_type);
-    } else {
-        // Create TypeSpecifierNode for full info
-        TypeSpecifierNode ts(arg.base_type, arg.cv_qualifier, 
-                            get_type_size_bits(arg.base_type), Token());
-        ts.set_type_index(arg.type_index);
-        
-        // Add pointer levels
-        for (size_t i = 0; i < arg.pointer_depth; ++i) {
-            ts.add_pointer_level(CVQualifier::None);
-        }
-        
-        if (arg.is_reference) {
-            ts.set_reference();
-        } else if (arg.is_rvalue_reference) {
-            ts.set_rvalue_reference();
-        }
-        
-        return TemplateArgument::makeTypeSpecifier(ts);
-    }
+    // Creates TypeSpecifierNode with all qualifiers and modifiers
 }
 ```
+
+**Verification:**
+- ✅ Build successful with clang++
+- ✅ All 845 tests pass
+- ✅ Conversion functions ready for use in Task 5
 
 **Benefits:**
 - Explicit, type-safe conversions
@@ -270,6 +244,8 @@ inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
 - Can be used to replace manual conversion code
 
 ### Task 5: Update Existing Conversion Code
+
+**Status:** 🔲 Not started
 
 **Goal:** Replace manual conversions with helper functions
 

@@ -403,6 +403,76 @@ struct TemplateArgument {
 	}
 };
 
+// Conversion helper functions between TemplateArgument and TemplateTypeArg
+// Provides type-safe, explicit conversions for interoperability
+
+// Convert TemplateArgument to TemplateTypeArg
+inline TemplateTypeArg toTemplateTypeArg(const TemplateArgument& arg) {
+	TemplateTypeArg result;
+	
+	if (arg.kind == TemplateArgument::Kind::Type) {
+		if (arg.type_specifier.has_value()) {
+			// Modern path: use full type info from TypeSpecifierNode
+			const auto& ts = *arg.type_specifier;
+			result.base_type = ts.type();
+			result.type_index = ts.type_index();
+			result.is_reference = ts.is_reference();
+			result.is_rvalue_reference = ts.is_rvalue_reference();
+			result.pointer_depth = ts.pointer_levels().size();
+			result.cv_qualifier = ts.cv_qualifier();
+			result.is_array = ts.is_array();
+			if (ts.is_array() && ts.array_size().has_value()) {
+				result.array_size = ts.array_size();
+			}
+			// Note: member_pointer_kind not stored in TypeSpecifierNode, defaults to None
+		} else {
+			// Legacy path: use basic type info only
+			result.base_type = arg.type_value;
+			result.type_index = arg.type_index;
+			// Other fields remain at default values
+		}
+	} else if (arg.kind == TemplateArgument::Kind::Value) {
+		result.is_value = true;
+		result.value = arg.int_value;
+		result.base_type = arg.value_type;
+	}
+	// Template template parameters: not directly supported in TemplateTypeArg
+	
+	return result;
+}
+
+// Convert TemplateTypeArg to TemplateArgument
+inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
+	if (arg.is_value) {
+		// Non-type template parameter
+		return TemplateArgument::makeValue(arg.value, arg.base_type);
+	} else {
+		// Type template parameter - create TypeSpecifierNode for full info
+		TypeSpecifierNode ts(arg.base_type, TypeQualifier::None, 
+		                    get_type_size_bits(arg.base_type), Token(), arg.cv_qualifier);
+		ts.set_type_index(arg.type_index);
+		
+		// Add pointer levels
+		for (size_t i = 0; i < arg.pointer_depth; ++i) {
+			ts.add_pointer_level(CVQualifier::None);
+		}
+		
+		// Set reference type
+		if (arg.is_reference) {
+			ts.set_reference(false);  // lvalue reference
+		} else if (arg.is_rvalue_reference) {
+			ts.set_reference(true);   // rvalue reference
+		}
+		
+		// Set array info if present
+		if (arg.is_array) {
+			ts.set_array(true, arg.array_size);
+		}
+		
+		return TemplateArgument::makeTypeSpecifier(ts);
+	}
+}
+
 // Out-of-line template member function definition
 struct OutOfLineMemberFunction {
 	std::vector<ASTNode> template_params;  // Template parameters (e.g., <typename T>)
