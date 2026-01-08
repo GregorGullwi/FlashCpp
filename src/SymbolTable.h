@@ -961,10 +961,14 @@ inline std::string_view buildQualifiedName(const NamespacePath& namespace_path, 
 }
 
 /**
- * @brief Build a qualified name from a vector of string_views (e.g., from QualifiedIdentifierNode::namespaces())
- * and a final identifier.
+ * @brief Build a qualified name from a container of string-like types
+ * (e.g., from QualifiedIdentifierNode::namespaces()) and a final identifier.
  * 
- * Example: buildQualifiedName({"std", "chrono"}, "seconds") -> "std::chrono::seconds"
+ * Note: This template exists separately from buildQualifiedName(NamespacePath, ...) because
+ * the element type access differs based on USE_OLD_STRING_APPROACH preprocessor setting.
+ * The duplication is intentional to handle both std::string and StackString<> element types.
+ * 
+ * Example: buildQualifiedNameFromStrings({"std", "chrono"}, "seconds") -> "std::chrono::seconds"
  */
 template<typename StringContainer>
 inline std::string_view buildQualifiedNameFromStrings(const StringContainer& namespaces, std::string_view name) {
@@ -989,7 +993,7 @@ inline std::string_view buildQualifiedNameFromStrings(const StringContainer& nam
  * This is used when you have multiple components and want to join them all.
  * 
  * Example: buildFullQualifiedName({"A", "B", "C"}) -> "A::B::C"
- * (Note: different from buildQualifiedName which adds "::" between namespaces AND before the name)
+ * (Note: different from buildQualifiedName which appends "::" after each namespace before the name)
  */
 template<typename StringContainer>
 inline std::string_view buildFullQualifiedName(const StringContainer& components) {
@@ -1017,30 +1021,6 @@ inline std::string_view buildFullQualifiedName(const StringContainer& components
 #else
 		sb.append(component.view());
 #endif
-	}
-	return sb.commit();
-}
-
-/**
- * @brief Overload of buildFullQualifiedName for raw string containers (vector<std::string_view>)
- */
-inline std::string_view buildFullQualifiedNameRaw(const std::vector<std::string_view>& components) {
-	if (components.empty()) {
-		return "";
-	}
-	
-	if (components.size() == 1) {
-		return components[0];
-	}
-	
-	StringBuilder sb;
-	bool first = true;
-	for (const auto& component : components) {
-		if (!first) {
-			sb.append("::");
-		}
-		first = false;
-		sb.append(component);
 	}
 	return sb.commit();
 }
