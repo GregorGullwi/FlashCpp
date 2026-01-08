@@ -4170,37 +4170,95 @@ ParseResult Parser::parse_struct_declaration()
 				continue;
 			}
 
-			// Check for nested class/struct/union declaration
+			// Check for nested class/struct/union declaration or anonymous union
 			if (keyword == "class" || keyword == "struct" || keyword == "union") {
 				// Peek ahead to determine if this is:
-				// 1. Anonymous struct/union: struct { ... } member;
+				// 1. Anonymous struct/union: struct { ... };
 				// 2. Nested struct declaration: struct Name { ... };
 				// 3. Member with struct type: struct Name member; or struct Name *ptr;
 				SaveHandle saved_pos = save_token_position();
-				consume_token(); // consume 'struct', 'class', or 'union'
+				auto union_or_struct_keyword = consume_token(); // consume 'struct', 'class', or 'union'
+				bool is_union_keyword = (union_or_struct_keyword->value() == "union");
 				
 				if (peek_token().has_value() && peek_token()->value() == "{") {
 					// Pattern 1: Anonymous union/struct as a member
-					// Skip the entire anonymous union/struct block
-					// This is a minimal implementation - full support would require flattening members into the parent struct
+					// Parse and flatten members
+					consume_token(); // consume '{'
 					
-					int brace_depth = 0;
-					do {
-						if (peek_token()->value() == "{") {
-							brace_depth++;
-						} else if (peek_token()->value() == "}") {
-							brace_depth--;
+					// Parse all members of the anonymous union
+					while (peek_token().has_value() && peek_token()->value() != "}") {
+						// Parse member type
+						auto anon_member_type_result = parse_type_specifier();
+						if (anon_member_type_result.is_error()) {
+							return anon_member_type_result;
 						}
-						consume_token();
-					} while (peek_token().has_value() && brace_depth > 0);
-					
-					// After the closing '}', there should be a member name or semicolon
-					// Consume until we hit a semicolon
-					while (peek_token().has_value() && peek_token()->value() != ";") {
-						consume_token();
+						
+						if (!anon_member_type_result.node().has_value()) {
+							return ParseResult::error("Expected type specifier in anonymous union", *current_token_);
+						}
+						
+						// Handle pointer declarators
+						TypeSpecifierNode& anon_member_type_spec = anon_member_type_result.node()->as<TypeSpecifierNode>();
+						while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+						       peek_token()->value() == "*") {
+							consume_token(); // consume '*'
+							CVQualifier ptr_cv = parse_cv_qualifiers();
+							anon_member_type_spec.add_pointer_level(ptr_cv);
+						}
+						
+						// Parse member name
+						auto anon_member_name_token = peek_token();
+						if (!anon_member_name_token.has_value() || anon_member_name_token->type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected member name in anonymous union", anon_member_name_token.value_or(Token()));
+						}
+						consume_token(); // consume the member name
+						
+						// Check for array declarator
+						std::vector<ASTNode> anon_array_dimensions;
+						while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+						       peek_token()->value() == "[") {
+							consume_token(); // consume '['
+							
+							// Parse the array size expression
+							ParseResult size_result = parse_expression();
+							if (size_result.is_error()) {
+								return size_result;
+							}
+							anon_array_dimensions.push_back(*size_result.node());
+							
+							// Expect closing ']'
+							if (!peek_token().has_value() || peek_token()->type() != Token::Type::Punctuator ||
+							    peek_token()->value() != "]") {
+								return ParseResult::error("Expected ']' after array size", *current_token_);
+							}
+							consume_token(); // consume ']'
+						}
+						
+						// Create member declaration
+						ASTNode anon_member_decl_node;
+						if (!anon_array_dimensions.empty()) {
+							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), *anon_member_name_token, std::move(anon_array_dimensions));
+						} else {
+							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), *anon_member_name_token);
+						}
+						
+						// Add to current struct
+						struct_ref.add_member(anon_member_decl_node, current_access, std::nullopt);
+						
+						// Expect semicolon
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after anonymous union member", *current_token_);
+						}
 					}
-					if (peek_token().has_value() && peek_token()->value() == ";") {
-						consume_token();
+					
+					// Expect closing brace
+					if (!consume_punctuator("}")) {
+						return ParseResult::error("Expected '}' after anonymous union members", *peek_token());
+					}
+					
+					// Expect semicolon after anonymous union
+					if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected ';' after anonymous union", *current_token_);
 					}
 					
 					discard_saved_token(saved_pos);
@@ -6255,32 +6313,98 @@ ParseResult Parser::parse_typedef_declaration()
 		AccessSpecifier current_access = AccessSpecifier::Public;
 
 		while (peek_token().has_value() && peek_token()->value() != "}") {
-			// Check for anonymous union/struct (union { ... } member_name;)
+			// Check for anonymous union/struct (union { ... };)
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
 			    (peek_token()->value() == "union" || peek_token()->value() == "struct")) {
 				// Peek ahead to see if this is anonymous (followed by '{')
 				SaveHandle saved_pos = save_token_position();
-				consume_token(); // consume 'union' or 'struct'
+				auto union_or_struct_keyword = consume_token(); // consume 'union' or 'struct'
+				bool is_union = (union_or_struct_keyword->value() == "union");
 				
 				if (peek_token().has_value() && peek_token()->value() == "{") {
-					// Anonymous union/struct - skip it for now
-					// Full implementation would parse and flatten members
-					int brace_depth = 0;
-					do {
-						if (peek_token()->value() == "{") {
-							brace_depth++;
-						} else if (peek_token()->value() == "}") {
-							brace_depth--;
-						}
-						consume_token();
-					} while (peek_token().has_value() && brace_depth > 0);
+					// Anonymous union/struct - parse and flatten members
+					consume_token(); // consume '{'
 					
-					// Skip to semicolon
-					while (peek_token().has_value() && peek_token()->value() != ";") {
-						consume_token();
+					// Parse all members of the anonymous union
+					std::vector<StructMemberDecl> anon_members;
+					while (peek_token().has_value() && peek_token()->value() != "}") {
+						// Parse member type
+						auto anon_member_type_result = parse_type_specifier();
+						if (anon_member_type_result.is_error()) {
+							return anon_member_type_result;
+						}
+						
+						if (!anon_member_type_result.node().has_value()) {
+							return ParseResult::error("Expected type specifier in anonymous union", *current_token_);
+						}
+						
+						// Handle pointer declarators
+						TypeSpecifierNode& anon_member_type_spec = anon_member_type_result.node()->as<TypeSpecifierNode>();
+						while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+						       peek_token()->value() == "*") {
+							consume_token(); // consume '*'
+							CVQualifier ptr_cv = parse_cv_qualifiers();
+							anon_member_type_spec.add_pointer_level(ptr_cv);
+						}
+						
+						// Parse member name
+						auto anon_member_name_token = peek_token();
+						if (!anon_member_name_token.has_value() || anon_member_name_token->type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected member name in anonymous union", anon_member_name_token.value_or(Token()));
+						}
+						consume_token(); // consume the member name
+						
+						// Check for array declarator
+						std::vector<ASTNode> anon_array_dimensions;
+						while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+						       peek_token()->value() == "[") {
+							consume_token(); // consume '['
+							
+							// Parse the array size expression
+							ParseResult size_result = parse_expression();
+							if (size_result.is_error()) {
+								return size_result;
+							}
+							anon_array_dimensions.push_back(*size_result.node());
+							
+							// Expect closing ']'
+							if (!peek_token().has_value() || peek_token()->type() != Token::Type::Punctuator ||
+							    peek_token()->value() != "]") {
+								return ParseResult::error("Expected ']' after array size", *current_token_);
+							}
+							consume_token(); // consume ']'
+						}
+						
+						// Create member declaration
+						ASTNode anon_member_decl_node;
+						if (!anon_array_dimensions.empty()) {
+							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), *anon_member_name_token, std::move(anon_array_dimensions));
+						} else {
+							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), *anon_member_name_token);
+						}
+						anon_members.push_back({anon_member_decl_node, current_access, std::nullopt});
+						
+						// Expect semicolon
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after anonymous union member", *current_token_);
+						}
 					}
-					if (peek_token().has_value() && peek_token()->value() == ";") {
-						consume_token();
+					
+					// Expect closing brace
+					if (!consume_punctuator("}")) {
+						return ParseResult::error("Expected '}' after anonymous union members", *peek_token());
+					}
+					
+					// Expect semicolon after anonymous union
+					if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected ';' after anonymous union", *current_token_);
+					}
+					
+					// Flatten anonymous union members into parent struct
+					// All members of an anonymous union share the same offset
+					for (const auto& anon_member : anon_members) {
+						members.push_back(anon_member);
+						struct_ref.add_member(anon_member.declaration, anon_member.access, anon_member.default_initializer);
 					}
 					
 					discard_saved_token(saved_pos);
