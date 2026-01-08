@@ -28025,31 +28025,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeIndex substituted_type_index = static_member.type_index;
 				size_t substituted_size = static_member.size;
 				
-				// Use proper template parameter matching by name (like substitute_template_parameter does)
-				if (static_member.type == Type::UserDefined && !template_args.empty()) {
-					// Get the type name from gTypeInfo to match against template parameters
-					std::string_view type_name;
-					if (static_member.type_index < gTypeInfo.size() && static_member.type_index > 0) {
-						type_name = StringTable::getStringView(gTypeInfo[static_member.type_index].name());
-					}
+				if (!template_args.empty()) {
+					TypeSpecifierNode type_spec(
+						static_member.type,
+						static_member.type_index,
+						static_cast<int>(static_member.size * 8)
+					);
 					
-					// Try to find which template parameter this type corresponds to
-					if (!type_name.empty()) {
-						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-							if (template_params[i].is<TemplateParameterNode>()) {
-								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-								if (tparam.name() == type_name) {
-									// Found a match! Substitute with the concrete type
-									const TemplateTypeArg& arg = template_args[i];
-									substituted_type = arg.base_type;
-									substituted_type_index = arg.type_index;
-									substituted_size = get_type_size_bits(substituted_type) / 8;
-									FLASH_LOG(Templates, Debug, "Substituted static member type '", type_name, 
-									          "' with template arg at index ", i);
-									break;
-								}
-							}
-						}
+					auto [new_type, new_type_index] = substitute_template_parameter(
+						type_spec,
+						template_params,
+						template_args
+					);
+					
+					substituted_type = new_type;
+					substituted_type_index = new_type_index;
+					
+					if (substituted_type != static_member.type || substituted_type_index != static_member.type_index) {
+						substituted_size = get_type_size_bits(substituted_type) / 8;
+						FLASH_LOG(Templates, Debug, "Substituted static member type with template argument; new type_index=", substituted_type_index);
 					}
 				}
 				
