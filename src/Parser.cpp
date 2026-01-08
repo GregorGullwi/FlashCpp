@@ -5216,15 +5216,18 @@ ParseResult Parser::parse_struct_declaration()
 		}
 
 		// For array members, multiply element size by array count
-		if (decl.is_array() && decl.array_size().has_value()) {
-			// Evaluate the array size expression to get the count
+		// Handle all dimensions for multidimensional arrays
+		if (decl.is_array() && !decl.array_dimensions().empty()) {
 			ConstExpr::EvaluationContext ctx(gSymbolTable);
-			auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
-			
-			if (eval_result.success) {
-				size_t array_count = static_cast<size_t>(eval_result.as_int());
-				member_size *= array_count;
-				referenced_size_bits *= array_count;
+			for (const auto& dimension : decl.array_dimensions()) {
+				// Evaluate each array dimension expression to get the count
+				auto eval_result = ConstExpr::Evaluator::evaluate(dimension, ctx);
+				
+				if (eval_result.success) {
+					size_t array_count = static_cast<size_t>(eval_result.as_int());
+					member_size *= array_count;
+					referenced_size_bits *= array_count;
+				}
 			}
 		}
 
@@ -5248,7 +5251,8 @@ ParseResult Parser::parse_struct_declaration()
 			member_decl.default_initializer,
 			is_ref_member,
 			is_rvalue_ref_member,
-			referenced_size_bits
+			referenced_size_bits,
+			decl.is_array()  // Pass the is_array flag
 		);
 	}
 
