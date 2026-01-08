@@ -69,14 +69,14 @@ BENCHMARK_TARGET := $(BENCHMARK_DIR)/benchmark$(EXE_EXT)
 $(MAIN_TARGET): $(MAIN_SOURCES)
 	@echo "Building main executable (Debug) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(DEBUG_DIR) 2>nul || $(MKDIR) $(DEBUG_DIR) || true
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -o $@ $^
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -g -O3 -o $@ $^
 	@echo "Built: $@"
 
 # Build release executable
 $(RELEASE_TARGET): $(MAIN_SOURCES)
 	@echo "Building main executable (Release) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(RELEASE_DIR) 2>nul || $(MKDIR) $(RELEASE_DIR) || true
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -O2 -o $@ $^
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -O3 -o $@ $^
 	@echo "Built: $@"
 
 # Build test executable
@@ -90,7 +90,7 @@ $(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.c
 $(BENCHMARK_TARGET): $(SRCDIR)/benchmark.cpp
 	@echo "Building benchmark executable for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(BENCHMARK_DIR) 2>nul || $(MKDIR) $(BENCHMARK_DIR) || true
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LLVM_LIBS)
+	$(CXX) $(CXXFLAGS) -o -O3 $@ $^ $(LLVM_LIBS)
 	@echo "Built: $@"
 
 # Phony targets
