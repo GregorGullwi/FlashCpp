@@ -21,7 +21,10 @@ int main() {
     MakeUnsigned::List<int> list1;
     MakeUnsigned::List<int, char> list2;
     
-    // Test direct access to static constexpr member via qualified name
-    // sizeof(int) = 4
-    return MakeUnsigned::List<int, char>::size;
+    // Test decltype on static constexpr member via qualified name
+    // decltype(MakeUnsigned::List<int, char>::size) is int (constexpr int)
+    decltype(MakeUnsigned::List<int, char>::size) result = MakeUnsigned::List<int, char>::size;
+    
+    // sizeof(int) = 4, so result should be 4
+    return result;
 }

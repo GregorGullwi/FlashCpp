@@ -19263,7 +19263,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		
 		if (!namespaces.empty()) {
 			// Get the struct name (last namespace component is usually the template instantiation)
-			std::string struct_name(namespaces.back());
+			std::string_view struct_name = namespaces.back();
 			
 			// Try to find the struct in gTypesByName
 			auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
