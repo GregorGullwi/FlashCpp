@@ -126,15 +126,28 @@ class QualifiedIdentifierNode;
 // Helper functions to build qualified names from various sources
 // These eliminate code duplication across the codebase
 
+// Helper to append a StringType element (handles USE_OLD_STRING_APPROACH)
+template<size_t N = 0>
+inline void appendStringType(StringBuilder& builder, const StringType<N>& str) {
+#if USE_OLD_STRING_APPROACH
+	builder.append(str);
+#else
+	builder.append(str.view());
+#endif
+}
+
+// Simple two-component qualified name builder (for common case like "Outer::Inner")
+// Example: buildQualifiedName("Outer", "Inner") -> "Outer::Inner"
+inline std::string_view buildQualifiedName(StringBuilder& builder, std::string_view component1, std::string_view component2) {
+	builder.append(component1).append("::").append(component2);
+	return builder.commit();
+}
+
 // Build qualified name from a namespace path and identifier
 // Example: buildQualifiedName(["std", "chrono"], "duration") -> "std::chrono::duration"
 inline std::string_view buildQualifiedName(StringBuilder& builder, const NamespacePath& namespace_path, std::string_view identifier) {
 	for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-		builder.append(ns);
-#else
-		builder.append(ns.view());
-#endif
+		appendStringType(builder, ns);
 		builder.append("::");
 	}
 	builder.append(identifier);
@@ -145,22 +158,27 @@ inline std::string_view buildQualifiedName(StringBuilder& builder, const Namespa
 // Example: buildQualifiedName(qual_id) where qual_id represents "std::move"
 inline std::string_view buildQualifiedName(StringBuilder& builder, const QualifiedIdentifierNode& qual_id) {
 	for (const auto& ns : qual_id.namespaces()) {
-#if USE_OLD_STRING_APPROACH
-		builder.append(ns);
-#else
-		builder.append(ns.view());
-#endif
+		appendStringType(builder, ns);
 		builder.append("::");
 	}
 	builder.append(qual_id.name());
 	return builder.commit();
 }
 
-// Overload that accepts vector of string-like objects (for cases with StringType or string_view vectors)
+// Template overload that accepts vector of string-like objects (for cases with StringType or string_view vectors)
+// Handles USE_OLD_STRING_APPROACH if elements are StringType, otherwise uses string_view conversion
 template<typename StringContainer>
 inline std::string_view buildQualifiedName(StringBuilder& builder, const StringContainer& namespaces, std::string_view identifier) {
 	for (const auto& ns : namespaces) {
-		builder.append(std::string_view(ns)).append("::");
+		// Check if this is a StringType by trying to call view() method
+		if constexpr (requires { ns.view(); }) {
+			// It's a StringType - use the helper
+			appendStringType(builder, ns);
+		} else {
+			// It's something else (likely string_view or convertible to it)
+			builder.append(std::string_view(ns));
+		}
+		builder.append("::");
 	}
 	builder.append(identifier);
 	return builder.commit();

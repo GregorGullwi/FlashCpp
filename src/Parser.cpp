@@ -2923,7 +2923,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		if (struct_ref) {
 			StringBuilder qualified_builder;
 			qualified_alias_name = StringTable::getOrInternStringHandle(
-				buildQualifiedName(qualified_builder, std::vector<std::string_view>{StringTable::getStringView(struct_ref->name())}, StringTable::getStringView(alias_name)));
+				buildQualifiedName(qualified_builder, StringTable::getStringView(struct_ref->name()), StringTable::getStringView(alias_name)));
 		}
 		
 		auto& alias_type_info = gTypeInfo.emplace_back(qualified_alias_name, final_type_spec.type(), gTypeInfo.size());
@@ -3456,7 +3456,7 @@ ParseResult Parser::parse_struct_declaration()
 		// Build the qualified name using StringBuilder for a persistent allocation
 		StringBuilder sb;
 		qualified_struct_name = StringTable::getOrInternStringHandle(
-			buildQualifiedName(sb, std::vector<std::string_view>{context.struct_name}, StringTable::getStringView(struct_name)));
+			buildQualifiedName(sb, context.struct_name, StringTable::getStringView(struct_name)));
 		type_name = qualified_struct_name;
 	}
 
@@ -18631,7 +18631,7 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 	// First try direct lookup with qualified name
 	StringBuilder qualified_name_builder;
 	std::string_view qualified_name = buildQualifiedName(qualified_name_builder, 
-		std::vector<std::string_view>{StringTable::getStringView(struct_name)}, StringTable::getStringView(member_name));
+		StringTable::getStringView(struct_name), StringTable::getStringView(member_name));
 	
 	auto direct_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
 	if (direct_it != gTypesByName.end()) {
@@ -18802,7 +18802,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 				std::string_view member_part = type_name.substr(sep_pos + 2);
 				auto build_resolved_handle = [](std::string_view base, std::string_view member) {
 					StringBuilder sb;
-					return StringTable::getOrInternStringHandle(buildQualifiedName(sb, std::vector<std::string_view>{base}, member));
+					return StringTable::getOrInternStringHandle(buildQualifiedName(sb, base, member));
 				};
 				
 				bool replaced = false;
@@ -23215,7 +23215,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Register the alias template with qualified name (ClassName::AliasName)
 	StringBuilder sb;
-	std::string_view qualified_name = buildQualifiedName(sb, std::vector<std::string_view>{StringTable::getStringView(struct_node.name())}, alias_name);
+	std::string_view qualified_name = buildQualifiedName(sb, StringTable::getStringView(struct_node.name()), alias_name);
 	gTemplateRegistry.register_alias_template(std::string(qualified_name), alias_node);
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", qualified_name);
@@ -25722,7 +25722,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		std::string_view member_part = type_name.substr(sep_pos + 2);
 		auto build_resolved_handle = [](std::string_view base, std::string_view member) {
 			StringBuilder sb;
-			return StringTable::getOrInternStringHandle(buildQualifiedName(sb, std::vector<std::string_view>{base}, member));
+			return StringTable::getOrInternStringHandle(buildQualifiedName(sb, base, member));
 		};
 		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: type_name=", type_name,
 		          " base_part=", base_part, " member_part=", member_part,
@@ -26915,7 +26915,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Build the full qualified name (e.g., "wrapper_int::type")
 		StringBuilder qualified_name_builder;
 		std::string_view qualified_name = buildQualifiedName(qualified_name_builder, 
-			std::vector<std::string_view>{instantiated_base_name}, member_name);
+			instantiated_base_name, member_name);
 		
 		FLASH_LOG(Templates, Debug, "Looking up resolved type: ", qualified_name);
 		
