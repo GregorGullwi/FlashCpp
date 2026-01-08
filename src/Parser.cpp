@@ -19254,6 +19254,50 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const auto& dtor_call = std::get<PseudoDestructorCallNode>(expr);
 		return TypeSpecifierNode(Type::Void, TypeQualifier::None, 0, dtor_call.type_name_token());
 	}
+	else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+		// For qualified identifiers like MakeUnsigned::List<int, char>::size
+		// We need to look up the type of the static member
+		const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
+		const auto& namespaces = qual_id.namespaces();
+		std::string_view member_name = qual_id.name();
+		
+		if (!namespaces.empty()) {
+			// Get the struct name (last namespace component is usually the template instantiation)
+			std::string struct_name(namespaces.back());
+			
+			// Try to find the struct in gTypesByName
+			auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+			
+			// If not found directly, try building full qualified name
+			if (struct_type_it == gTypesByName.end() && namespaces.size() > 1) {
+				StringBuilder qualified_name_builder;
+				for (size_t i = 0; i < namespaces.size(); ++i) {
+					if (i > 0) qualified_name_builder.append("::");
+					qualified_name_builder.append(std::string_view(namespaces[i]));
+				}
+				std::string_view full_qualified_name = qualified_name_builder.commit();
+				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(full_qualified_name));
+			}
+			
+			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
+				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+				if (struct_info) {
+					// Look for static member
+					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(
+						StringTable::getOrInternStringHandle(std::string(member_name)));
+					if (static_member && owner_struct) {
+						// Found the static member - return its type
+						TypeSpecifierNode member_type(static_member->type, TypeQualifier::None, static_member->size * 8);
+						member_type.set_type_index(static_member->type_index);
+						if (static_member->is_const) {
+							member_type.set_cv_qualifier(CVQualifier::Const);
+						}
+						return member_type;
+					}
+				}
+			}
+		}
+	}
 	// Add more cases as needed
 
 	return std::nullopt;
