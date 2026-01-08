@@ -31970,6 +31970,28 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		return true;  // Successfully parsed out-of-line static member variable definition
 	}
 	
+	// Check if this is a static member variable definition without initializer (;)
+	// Pattern: template<typename T> Type ClassName<T>::member;
+	if (peek_token().has_value() && peek_token()->value() == ";") {
+		consume_token();  // consume ';'
+		
+		// Register the static member variable definition without initializer
+		// This is used for providing storage for static constexpr members declared in the class
+		OutOfLineMemberVariable out_of_line_var;
+		out_of_line_var.template_params = template_params;
+		out_of_line_var.member_name = StringTable::getOrInternStringHandle(function_name_token.value());  // Actually the variable name
+		out_of_line_var.type_node = return_type_node;               // Actually the variable type
+		// No initializer for this case
+		out_of_line_var.template_param_names = template_param_names;
+		
+		gTemplateRegistry.registerOutOfLineMemberVariable(class_name, std::move(out_of_line_var));
+		
+		FLASH_LOG(Templates, Debug, "Registered out-of-class static member variable definition (no initializer): ", 
+		          class_name, "::", function_name_token.value());
+		
+		return true;  // Successfully parsed out-of-line static member variable definition
+	}
+	
 	// Parse parameter list for member function
 	if (!peek_token().has_value() || peek_token()->value() != "(") {
 		return std::nullopt;  // Error - expected '(' for function definition
