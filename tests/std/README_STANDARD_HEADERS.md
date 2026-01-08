@@ -87,7 +87,11 @@ The main features preventing standard header compilation:
 
 3. **Member type aliases as template arguments** - Type aliases defined within a struct/class can now be used as template arguments in subsequent member definitions (e.g., `using outer = wrapper<inner_type>` where `inner_type` is defined earlier in the same struct).
 
-4. **Member struct/class templates** (January 7, 2026) - Template struct and class declarations are now supported as class members, including unnamed variadic parameter packs. This fixes `<type_traits>` compilation blocker at line 1838 where `template<typename...> struct _List { };` is used inside a class. Empty member struct templates now parse correctly. **Note**: Member struct templates with function bodies still need work.
+4. **Member struct/class templates** (January 7, 2026 - Morning) - Template struct and class declarations are now supported as class members, including unnamed variadic parameter packs. This fixes `<type_traits>` compilation blocker at line 1838 where `template<typename...> struct _List { };` is used inside a class. Empty member struct templates now parse correctly. **Note**: Member struct templates with function bodies still need work.
+
+5. **Member struct template partial specialization** (January 7, 2026 - Evening Part 1) - Basic support for partial specialization of member struct templates. Patterns like `template<typename T, typename... Rest> struct List<T, Rest...> : List<Rest...> { };` now parse correctly. This advances `<type_traits>` from line 1841 to line 1845. Unique pattern names are generated with modifiers (P=pointer, R=reference, etc.). Test case `test_member_struct_partial_spec_ret0.cpp` successfully compiles!
+
+6. **Non-type value parameters & forward declarations** (January 7, 2026 - Evening Part 2) - Extended partial specialization support to handle non-type value arguments (e.g., `struct Select<N, T, true>` where `true` is a boolean value). Added support for `using` declarations in partial specialization bodies and forward declarations of member struct templates (`template<...> struct Name;`). This **advances `<type_traits>` from line 1845 to line 1917 (72 more lines!)**. Pattern names now include value markers (e.g., `_V1` for true). Test case `test_member_partial_spec_nontype_value_ret0.cpp` successfully compiles! **Next blocker**: Full specialization forward declaration for top-level templates at line 1917.
 
 ## Test File Characteristics
 

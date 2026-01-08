@@ -2153,6 +2153,23 @@ struct TypeAliasDecl {
 		: alias_name(name), type_node(type), access(acc) {}
 };
 
+// Static member declaration (for AST storage in templates/partial specializations)
+struct StaticMemberDecl {
+	StringHandle name;            // The member name
+	Type type;                    // The member type
+	TypeIndex type_index;         // Type index for user-defined types
+	size_t size;                  // Size in bytes
+	size_t alignment;             // Alignment requirement
+	AccessSpecifier access;       // Access specifier (public/private/protected)
+	std::optional<ASTNode> initializer;  // AST node for initializer expression (e.g., sizeof(T)), used for template parameter substitution during instantiation
+	bool is_const;                // Whether member is const
+
+	StaticMemberDecl(StringHandle name, Type type, TypeIndex type_index, size_t size, size_t alignment, 
+	                 AccessSpecifier access, std::optional<ASTNode> initializer, bool is_const)
+		: name(name), type(type), type_index(type_index), size(size), alignment(alignment), 
+		  access(access), initializer(initializer), is_const(is_const) {}
+};
+
 class StructDeclarationNode {
 public:
 	explicit StructDeclarationNode(StringHandle name, bool is_class = false)
@@ -2255,6 +2272,16 @@ public:
 		return type_aliases_;
 	}
 
+	// Static member support (for template/partial specialization AST storage)
+	void add_static_member(StringHandle name, Type type, TypeIndex type_index, size_t size, size_t alignment,
+	                       AccessSpecifier access, std::optional<ASTNode> initializer, bool is_const) {
+		static_members_.emplace_back(name, type, type_index, size, alignment, access, initializer, is_const);
+	}
+
+	const std::vector<StaticMemberDecl>& static_members() const {
+		return static_members_;
+	}
+
 	void set_enclosing_class(StructDeclarationNode* enclosing) {
 		enclosing_class_ = enclosing;
 	}
@@ -2285,6 +2312,7 @@ private:
 	std::vector<ASTNode> friend_declarations_;  // Friend declarations
 	std::vector<ASTNode> nested_classes_;  // Nested classes
 	std::vector<TypeAliasDecl> type_aliases_;  // Type aliases (using X = Y;)
+	std::vector<StaticMemberDecl> static_members_;  // Static members (for templates)
 	StructDeclarationNode* enclosing_class_ = nullptr;  // Enclosing class (if nested)
 	bool is_class_;  // true for class, false for struct
 	bool is_final_ = false;  // true if declared with 'final' keyword
