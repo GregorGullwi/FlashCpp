@@ -340,16 +340,18 @@ struct TemplateArgument {
 	};
 	
 	Kind kind;
-	Type type_value;  // For type arguments (legacy - enum only)
+	Type type_value;  // For type arguments (legacy - enum only, kept for backwards compatibility)
+	TypeIndex type_index = 0;  // For type arguments - index into gTypeInfo for complex types (NEW in Task 2)
 	int64_t int_value;  // For non-type integer arguments
 	Type value_type;  // For non-type arguments: the type of the value (bool, int, etc.)
 	std::string template_name;  // For template template arguments (name of the template)
 	std::optional<TypeSpecifierNode> type_specifier;  // Full type info including references, pointers, CV qualifiers
 	
-	static TemplateArgument makeType(Type t) {
+	static TemplateArgument makeType(Type t, TypeIndex idx = 0) {
 		TemplateArgument arg;
 		arg.kind = Kind::Type;
 		arg.type_value = t;
+		arg.type_index = idx;  // Store TypeIndex for complex types
 		return arg;
 	}
 	
@@ -357,6 +359,7 @@ struct TemplateArgument {
 		TemplateArgument arg;
 		arg.kind = Kind::Type;
 		arg.type_value = type_spec.type();  // Keep legacy field populated
+		arg.type_index = type_spec.type_index();  // Extract and store TypeIndex
 		arg.type_specifier = type_spec;
 		return arg;
 	}
@@ -374,6 +377,29 @@ struct TemplateArgument {
 		arg.kind = Kind::Template;
 		arg.template_name = std::string(template_name);
 		return arg;
+	}
+	
+	// Hash for use in maps (needed for InstantiationQueue)
+	size_t hash() const {
+		size_t h = std::hash<int>{}(static_cast<int>(kind));
+		h ^= std::hash<int>{}(static_cast<int>(type_value)) << 1;
+		h ^= std::hash<TypeIndex>{}(type_index) << 2;
+		h ^= std::hash<int64_t>{}(int_value) << 3;
+		return h;
+	}
+	
+	// Equality operator (needed for InstantiationQueue)
+	bool operator==(const TemplateArgument& other) const {
+		if (kind != other.kind) return false;
+		switch (kind) {
+			case Kind::Type:
+				return type_value == other.type_value && type_index == other.type_index;
+			case Kind::Value:
+				return int_value == other.int_value && value_type == other.value_type;
+			case Kind::Template:
+				return template_name == other.template_name;
+		}
+		return false;
 	}
 };
 

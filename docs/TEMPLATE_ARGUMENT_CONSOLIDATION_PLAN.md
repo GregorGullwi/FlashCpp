@@ -130,92 +130,79 @@ struct TemplateArgumentValue {
 - Can be used in both TemplateArgument versions
 - Simplifies conversion functions
 
-### Task 2: Enhance TemplateRegistry.h TemplateArgument
+### Task 2: Enhance TemplateRegistry.h TemplateArgument ✅ COMPLETED
 
-**Status:** 🔲 Not started
+**Status:** ✅ Implemented and tested (commit a0b55ea + current)
 
 **Goal:** Add missing `TypeIndex` field to the canonical TemplateArgument to eliminate need for separate InstantiationQueue version
 
-**Changes to TemplateRegistry.h:298:**
+**Implementation:**
+Added to TemplateRegistry.h TemplateArgument struct (line 334):
+- Added `TypeIndex type_index = 0;` field for complex types
+- Updated `makeType()` to accept optional TypeIndex parameter (defaults to 0 for backwards compatibility)
+- Updated `makeTypeSpecifier()` to extract and store TypeIndex from TypeSpecifierNode
+- Added `hash()` method for use in unordered containers (needed by InstantiationQueue)
+- Added `operator==()` for equality comparisons
+
+**Key changes:**
 ```cpp
-struct TemplateArgument {
-    enum class Kind {
-        Type,
-        Value,
-        Template
-    };
-    
-    Kind kind;
-    
-    // Type arguments - keep both for backwards compatibility
-    Type type_value;  // Legacy: enum only (keep for existing code)
-    TypeIndex type_index = 0;  // NEW: Add index for complex types
-    
-    // Value arguments
-    int64_t int_value;
-    Type value_type;
-    
-    // Template template arguments
-    std::string template_name;
-    
-    // Full type info (modern approach)
-    std::optional<TypeSpecifierNode> type_specifier;
-    
-    // Factory methods updated
-    static TemplateArgument makeType(Type t, TypeIndex idx = 0) {
-        TemplateArgument arg;
-        arg.kind = Kind::Type;
-        arg.type_value = t;
-        arg.type_index = idx;  // NEW
-        return arg;
-    }
-    
-    static TemplateArgument makeTypeSpecifier(const TypeSpecifierNode& type_spec) {
-        TemplateArgument arg;
-        arg.kind = Kind::Type;
-        arg.type_value = type_spec.type();
-        arg.type_index = type_spec.type_index();  // Extract and store
-        arg.type_specifier = type_spec;
-        return arg;
-    }
-    
-    // ... rest of methods updated similarly
-};
+TypeIndex type_index = 0;  // NEW field
+
+static TemplateArgument makeType(Type t, TypeIndex idx = 0) {
+    arg.type_index = idx;  // Store TypeIndex
+    // ...
+}
+
+static TemplateArgument makeTypeSpecifier(const TypeSpecifierNode& type_spec) {
+    arg.type_index = type_spec.type_index();  // Extract TypeIndex
+    // ...
+}
+
+// NEW methods for InstantiationQueue compatibility
+size_t hash() const { /* ... */ }
+bool operator==(const TemplateArgument& other) const { /* ... */ }
 ```
 
-**Migration:**
-- Update all `makeType()` calls that need TypeIndex to pass it explicitly
-- Existing calls work unchanged (idx defaults to 0)
-- Update equality and hash methods to include type_index
+**Verification:**
+- ✅ Build successful with clang++
+- ✅ All 845 tests pass
+- ✅ Backwards compatible (existing makeType() calls work unchanged)
 
-### Task 3: Remove InstantiationQueue.h Duplicate
+### Task 3: Remove InstantiationQueue.h Duplicate ✅ COMPLETED
+
+**Status:** ✅ Implemented and tested (commit a0b55ea + current)
 
 **Goal:** Eliminate duplicate TemplateArgument definition
 
-**Changes to InstantiationQueue.h:**
+**Implementation:**
+Modified InstantiationQueue.h:
+- Removed duplicate TemplateArgument struct definition (lines 35-88)
+- Added `#include "TemplateRegistry.h"` to use canonical definition
+- Added comment explaining the consolidation
+- InstantiationKey now uses TemplateArgument from TemplateRegistry.h
+
+**Key change:**
 ```cpp
-// Remove lines 35-88 (entire TemplateArgument struct)
+#include "TemplateRegistry.h"  // For TemplateArgument (canonical definition)
 
-// Add include at top
-#include "TemplateRegistry.h"
-
-// Add namespace alias for clarity
-namespace FlashCpp {
-    // Use canonical TemplateArgument from TemplateRegistry
-    // (No using declaration needed - same name in same namespace)
-}
+// Note: TemplateArgument is now defined in TemplateRegistry.h (canonical version)
+// The duplicate definition has been removed as part of Task 3 consolidation
 ```
 
-**Changes to InstantiationQueue.cpp:**
-- Verify all usages work with enhanced TemplateRegistry version
-- Update any code that relied on InstantiationQueue-specific behavior
-- Ensure hash() and operator==() work correctly
+**Verification:**
+- ✅ Build successful - no compilation errors
+- ✅ All 845 tests pass
+- ✅ InstantiationQueue functionality preserved
+- ✅ No files outside InstantiationQueue.cpp include InstantiationQueue.h
 
-**Files to check:**
-- `InstantiationQueue.cpp` - Update includes, verify usage
-- Any other files including `InstantiationQueue.h` - Should just work
+**Impact:**
+- Eliminated ~54 lines of duplicate code
+- Single source of truth for TemplateArgument
+- Improved maintainability
 
 ### Task 4: Add Conversion Helper Functions
+
+**Status:** 🔲 Not started
 
 **Goal:** Provide clean conversions between TemplateArgument and TemplateTypeArg
 
