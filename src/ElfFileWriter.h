@@ -716,48 +716,101 @@ public:
 		// Generate LSDA if function has exception handling
 		if (fde_info.has_exception_handling) {
 			LSDAGenerator::FunctionLSDAInfo lsda_info;
-			
-			// Convert each try block to LSDA format
-			for (const auto& try_block : try_blocks) {
+
+			// The Itanium C++ ABI requires call site entries for ALL code regions in the function,
+			// not just try blocks. We need to generate entries for:
+			// 1. Code before the first try block (landing_pad=0, action=0)
+			// 2. Each try block (landing_pad=handler, action=action_index)
+			// 3. Code between try blocks (landing_pad=0, action=0)
+			// 4. Code after the last try block, up to the first landing pad (landing_pad=0, action=0)
+			//
+			// IMPORTANT: The call site table should NOT cover the landing pads (catch handlers) themselves!
+			// Landing pads are exception handlers and should not be in the call site table.
+
+			// Sort try blocks by start offset to process them in order
+			std::vector<ObjectFileWriter::TryBlockInfo> sorted_try_blocks = try_blocks;
+			std::sort(sorted_try_blocks.begin(), sorted_try_blocks.end(),
+			         [](const auto& a, const auto& b) { return a.try_start_offset < b.try_start_offset; });
+
+			// Find the minimum landing pad offset (first catch handler)
+			uint32_t min_landing_pad_offset = fde_info.function_length;
+			for (const auto& try_block : sorted_try_blocks) {
+				for (const auto& handler : try_block.catch_handlers) {
+					if (handler.handler_offset < min_landing_pad_offset) {
+						min_landing_pad_offset = handler.handler_offset;
+					}
+				}
+			}
+
+			uint32_t current_offset = 0;  // Start of function
+			uint32_t function_end_offset = min_landing_pad_offset;  // End at first landing pad, not end of function
+
+			for (const auto& try_block : sorted_try_blocks) {
+				// Add call site entry for code BEFORE this try block (if any)
+				if (current_offset < try_block.try_start_offset) {
+					LSDAGenerator::TryRegionInfo no_handler_region;
+					no_handler_region.try_start_offset = current_offset;
+					no_handler_region.try_length = try_block.try_start_offset - current_offset;
+					no_handler_region.landing_pad_offset = 0;  // No handler
+					// no_handler_region.catch_handlers is empty, so action=0
+					lsda_info.try_regions.push_back(no_handler_region);
+				}
+
+				// Add call site entry for the try block itself
 				LSDAGenerator::TryRegionInfo try_region;
 				try_region.try_start_offset = try_block.try_start_offset;
 				try_region.try_length = try_block.try_end_offset - try_block.try_start_offset;
-				
+
 				// Use first handler's offset as landing pad (they're all at the same location)
 				if (!try_block.catch_handlers.empty()) {
 					try_region.landing_pad_offset = try_block.catch_handlers[0].handler_offset;
 				}
-				
+
 				// Convert catch handlers
 				for (const auto& handler : try_block.catch_handlers) {
 					LSDAGenerator::CatchHandlerInfo catch_info;
 					catch_info.type_index = handler.type_index;
 					catch_info.is_catch_all = handler.is_catch_all;
-					
+
 					// Generate typeinfo symbol name from type name
 					// For now, use a simple mapping for built-in types
 					if (!handler.is_catch_all && !handler.type_name.empty()) {
 						catch_info.typeinfo_symbol = get_typeinfo_symbol(handler.type_name);
-						
+
 						// Add to type table if not already present
 						if (std::find(lsda_info.type_table.begin(), lsda_info.type_table.end(),
 						             catch_info.typeinfo_symbol) == lsda_info.type_table.end()) {
 							lsda_info.type_table.push_back(catch_info.typeinfo_symbol);
 						}
 					}
-					
+
 					try_region.catch_handlers.push_back(catch_info);
 				}
-				
+
 				lsda_info.try_regions.push_back(try_region);
+
+				// Update current_offset to the end of this try block
+				current_offset = try_block.try_end_offset;
 			}
-			
+
+			// Add call site entry for code AFTER the last try block (if any)
+			if (current_offset < function_end_offset) {
+				LSDAGenerator::TryRegionInfo no_handler_region;
+				no_handler_region.try_start_offset = current_offset;
+				no_handler_region.try_length = function_end_offset - current_offset;
+				no_handler_region.landing_pad_offset = 0;  // No handler
+				// no_handler_region.catch_handlers is empty, so action=0
+				lsda_info.try_regions.push_back(no_handler_region);
+			}
+
 			// Use the already-stored function symbol string to avoid creating another copy
 			function_lsda_map_[fde_info.function_symbol] = lsda_info;
-			
+
 			if (g_enable_debug_output) {
-				std::cerr << "Function " << mangled_name << " has " << try_blocks.size() 
-				         << " try blocks - will need LSDA" << std::endl;
+				std::cerr << "[ELF] Function " << mangled_name << " (length=" << fde_info.function_length
+				         << ") has " << try_blocks.size()
+				         << " try blocks, generated " << lsda_info.try_regions.size()
+				         << " call site entries" << std::endl;
 			}
 		}
 	}
@@ -976,7 +1029,7 @@ public:
 		if (cie_has_lsda) {
 			// Augmentation data length (4 bytes for LSDA pointer)
 			DwarfCFI::appendULEB128(eh_frame_data, 4);
-			
+
 			if (fde_info.has_exception_handling) {
 				// LSDA pointer (PC-relative to .gcc_except_table)
 				// Record offset for relocation
@@ -1095,6 +1148,9 @@ public:
 			generate_eh_frame_fde(eh_frame_data, cie_offset, fde_info, has_exception_handlers);
 		}
 		
+		// Add zero terminator (4 bytes of 0) to mark end of .eh_frame
+		for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
+		
 		// Create .eh_frame section
 		auto* eh_frame_section = elf_writer_.sections.add(".eh_frame");
 		eh_frame_section->set_type(ELFIO::SHT_PROGBITS);
@@ -1203,6 +1259,11 @@ public:
 				}
 				
 				// Add R_X86_64_PC32 relocation for LSDA pointer (pcrel|sdata4 encoding)
+				if (g_enable_debug_output) {
+					std::cerr << "[DEBUG] LSDA relocation for " << fde_info.function_symbol
+					         << ": offset=" << fde_info.lsda_pointer_offset
+					         << " lsda_offset=" << fde_info.lsda_offset << std::endl;
+				}
 				rela_accessor->add_entry(fde_info.lsda_pointer_offset,
 				                        static_cast<ELFIO::Elf_Word>(gcc_except_table_sym_index),
 				                        ELFIO::R_X86_64_PC32,
@@ -1299,16 +1360,16 @@ public:
 			fde_info.lsda_offset = lsda_offset;
 			
 			auto result = generator.generate(it->second);
-			
+
 			// Adjust relocation offsets to be relative to .gcc_except_table start
 			for (const auto& [offset, symbol] : result.type_table_relocations) {
 				all_type_table_relocations.push_back({lsda_offset + offset, symbol});
 			}
-			
-			gcc_except_table_data.insert(gcc_except_table_data.end(), 
+
+			gcc_except_table_data.insert(gcc_except_table_data.end(),
 			                            result.data.begin(), result.data.end());
 		}
-		
+
 		// Create .gcc_except_table section
 		auto* except_section = elf_writer_.sections.add(".gcc_except_table");
 		except_section->set_type(ELFIO::SHT_PROGBITS);
@@ -1329,8 +1390,50 @@ public:
 			                    ELFIO::STV_HIDDEN, except_section->get_index());
 		}
 		
-		// Create .rela.gcc_except_table for type_info relocations if needed
+		// For indirect encoding (0x9b), we need to:
+		// 1. Create a .data section with 8-byte entries for each typeinfo pointer
+		// 2. Add R_X86_64_64 relocations from .data to typeinfo symbols
+		// 3. Add R_X86_64_PC32 relocations from LSDA type table to .data entries
+		if (g_enable_debug_output) {
+			std::cerr << "[DEBUG] all_type_table_relocations.size() = " << all_type_table_relocations.size() << std::endl;
+		}
 		if (!all_type_table_relocations.empty()) {
+			// Create .data section for typeinfo pointer storage (8 bytes per entry)
+			std::vector<uint8_t> typeinfo_data(all_type_table_relocations.size() * 8, 0);
+
+			auto* typeinfo_data_section = elf_writer_.sections.add(".data");
+			typeinfo_data_section->set_type(ELFIO::SHT_PROGBITS);
+			typeinfo_data_section->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
+			typeinfo_data_section->set_addr_align(8);
+			typeinfo_data_section->set_data(reinterpret_cast<const char*>(typeinfo_data.data()),
+			                               typeinfo_data.size());
+
+			// Add .data section symbol (needed for LSDA relocations)
+			// Use STB_WEAK instead of STB_LOCAL to avoid symbol ordering issues
+			// (local symbols must come before global ones, but we're adding this late)
+			auto* sym_accessor = getSymbolAccessor();
+			ELFIO::Elf_Xword data_section_sym_index = 0;
+			if (sym_accessor && string_accessor_) {
+				sym_accessor->add_symbol(*string_accessor_, ".data",
+				                        0, 0, ELFIO::STB_WEAK, ELFIO::STT_SECTION,
+				                        ELFIO::STV_HIDDEN, typeinfo_data_section->get_index());
+				data_section_sym_index = sym_accessor->get_symbols_num() - 1;
+			}
+
+			// Create .rela.data for typeinfo R_X86_64_64 relocations
+			auto* rela_data = elf_writer_.sections.add(".rela.data");
+			rela_data->set_type(ELFIO::SHT_RELA);
+			rela_data->set_flags(ELFIO::SHF_INFO_LINK);
+			rela_data->set_info(typeinfo_data_section->get_index());
+			rela_data->set_link(symtab_section_->get_index());
+			rela_data->set_addr_align(8);
+			rela_data->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
+
+			auto rela_data_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
+				elf_writer_, rela_data
+			);
+
+			// Create .rela.gcc_except_table for LSDA type table R_X86_64_PC32 relocations
 			auto* rela_except_table = elf_writer_.sections.add(".rela.gcc_except_table");
 			rela_except_table->set_type(ELFIO::SHT_RELA);
 			rela_except_table->set_flags(ELFIO::SHF_INFO_LINK);
@@ -1338,18 +1441,17 @@ public:
 			rela_except_table->set_link(symtab_section_->get_index());
 			rela_except_table->set_addr_align(8);
 			rela_except_table->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
-			
-			auto rela_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
+
+			auto rela_except_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
 				elf_writer_, rela_except_table
 			);
-			
-			for (const auto& [offset, symbol] : all_type_table_relocations) {
-				// Add the type_info symbol if it doesn't exist (undefined external)
-				// First check if it already exists
+
+			uint32_t data_offset = 0;
+			for (const auto& [lsda_offset, symbol] : all_type_table_relocations) {
+				// Find or add the typeinfo symbol
 				bool found = false;
-				ELFIO::Elf_Xword sym_index = 0;
-				
-				auto* sym_accessor = getSymbolAccessor();
+				ELFIO::Elf_Xword typeinfo_sym_index = 0;
+
 				if (sym_accessor) {
 					ELFIO::Elf_Xword sym_count = sym_accessor->get_symbols_num();
 					for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
@@ -1359,31 +1461,38 @@ public:
 						unsigned char sym_bind, sym_type;
 						ELFIO::Elf_Half sym_section;
 						unsigned char sym_other;
-						
+
 						sym_accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind,
 						                        sym_type, sym_section, sym_other);
-						
+
 						if (sym_name == symbol) {
-							sym_index = i;
+							typeinfo_sym_index = i;
 							found = true;
 							break;
 						}
 					}
-					
+
 					if (!found) {
 						// Add as undefined external symbol
-						// Order: string_accessor, name, value, size, bind, type, other, section_index
 						sym_accessor->add_symbol(*string_accessor_, symbol.c_str(),
 						                        0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE,
 						                        ELFIO::STV_DEFAULT, 0);
-						sym_index = sym_accessor->get_symbols_num() - 1;
+						typeinfo_sym_index = sym_accessor->get_symbols_num() - 1;
 					}
-					
-					// Add R_X86_64_32 relocation for udata4 (absolute) encoding
-					rela_accessor->add_entry(offset,
-					                        static_cast<ELFIO::Elf_Word>(sym_index),
-					                        ELFIO::R_X86_64_32,
-					                        0);
+
+					// Add R_X86_64_64 relocation from .data to typeinfo symbol
+					rela_data_accessor->add_entry(data_offset,
+					                             static_cast<ELFIO::Elf_Word>(typeinfo_sym_index),
+					                             ELFIO::R_X86_64_64,
+					                             0);
+
+					// Add R_X86_64_PC32 relocation from LSDA type table to .data entry
+					rela_except_accessor->add_entry(lsda_offset,
+					                               static_cast<ELFIO::Elf_Word>(data_section_sym_index),
+					                               ELFIO::R_X86_64_PC32,
+					                               static_cast<ELFIO::Elf_Sxword>(data_offset));
+
+					data_offset += 8;  // Each typeinfo pointer is 8 bytes
 				}
 			}
 		}

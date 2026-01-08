@@ -1,3 +1,8 @@
+# [SUPERSEDED] MSVC SEH Exception Handling Implementation Guide
+
+> [!WARNING]
+> This document is outdated and superded by `EXCEPTION_HANDLING_PLAN.md`. Please refer to the plan for the current implementation status and roadmap.
+
 # MSVC SEH Exception Handling Implementation Guide
 
 This document provides detailed guidance on implementing MSVC-compatible Structured Exception Handling (SEH) code generation for the FlashCpp compiler's exception handling features.

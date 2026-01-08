@@ -5532,22 +5532,31 @@ private:
 	void emitLeaRipRelativeWithRelocation(X64Register dest, std::string_view symbol_name) {
 		uint8_t rex = 0x48; // REX.W
 		if (static_cast<uint8_t>(dest) >= 8) rex |= 0x04;
-		
+
 		textSectionData.push_back(rex);
 		textSectionData.push_back(0x8D); // LEA r64, m
-		
+
 		// ModR/M: mod=00, reg=dest, r/m=101 (RIP-relative)
 		uint8_t modrm = 0x05;
 		modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
 		textSectionData.push_back(modrm);
-		
-		// LEA uses RIP-relative addressing, different from CALL's rel32 (can't use emitCall here)
+
+		// LEA uses RIP-relative addressing for data symbols
+		// Use R_X86_64_PC32 (not PLT32) for data references like typeinfo
 		size_t relocation_offset = textSectionData.size();
 		textSectionData.push_back(0x00);
 		textSectionData.push_back(0x00);
 		textSectionData.push_back(0x00);
 		textSectionData.push_back(0x00);
-		writer.add_relocation(relocation_offset, std::string(symbol_name));
+
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			// For ELF: Use R_X86_64_PC32 for data symbols (typeinfo, vtables, etc.)
+			// PLT32 is only for function calls
+			writer.add_relocation(relocation_offset, std::string(symbol_name), 2 /* R_X86_64_PC32 */);
+		} else {
+			// For COFF: Use default relocation type
+			writer.add_relocation(relocation_offset, std::string(symbol_name));
+		}
 	}
 
 	// Helper to emit MOV reg, [RIP + disp32] for integer loads
@@ -9532,6 +9541,16 @@ private:
 
 		// pop rbp (restore caller's base pointer)
 		textSectionData.push_back(0x5D);
+
+		// Track CFI: After pop rbp, CFA = RSP+8 (back to call site state)
+		// This CFI instruction describes the state AFTER pop rbp executes
+		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			current_function_cfi_.push_back({
+				ElfFileWriter::CFIInstruction::POP_RBP,
+				static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
+				0
+			});
+		}
 
 		// ret (return to caller)
 		textSectionData.push_back(0xC3);

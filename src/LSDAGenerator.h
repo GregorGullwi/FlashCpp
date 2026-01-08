@@ -5,6 +5,8 @@
 #include <vector>
 #include <cstdint>
 #include <string>
+#include <iostream>
+#include <iomanip>
 
 // LSDA (Language Specific Data Area) Generator
 // Generates the .gcc_except_table section data for exception handling
@@ -50,6 +52,12 @@ public:
 	};
 	
 	// Generate LSDA binary data for a function
+	//
+	// KNOWN LIMITATION: Currently only generates call site entries for try blocks.
+	// The Itanium C++ ABI requires call site entries for ALL code regions in the function,
+	// including code before/after try blocks. This causes the personality routine to fail
+	// when searching for handlers. To fix this, we need to track all code regions and
+	// generate call site entries that cover the entire function from start to finish.
 	LSDAGenerationResult generate(const FunctionLSDAInfo& info) {
 		LSDAGenerationResult result;
 		std::vector<uint8_t>& lsda_data = result.data;
@@ -75,45 +83,59 @@ public:
 		
 		// Append action table
 		DwarfCFI::appendVector(lsda_data, action_table_data);
-		
+
 		// Compute type table start offset
 		uint32_t type_table_start = static_cast<uint32_t>(lsda_data.size());
-		
+
 		// Append type table
 		DwarfCFI::appendVector(lsda_data, type_table_data);
-		
+
 		// Adjust relocation offsets to be relative to LSDA start
 		for (const auto& [offset, symbol] : type_table_relocs) {
 			result.type_table_relocations.push_back({type_table_start + offset, symbol});
 		}
-		
+
 		return result;
 	}
 
 private:
 	// Encode LSDA header
-	void encode_header(std::vector<uint8_t>& data, size_t type_table_size, 
+	void encode_header(std::vector<uint8_t>& data, size_t type_table_size,
 	                  size_t call_site_table_size, size_t action_table_size) {
 		// LPStart encoding (landing pad base)
 		// 0xff = omitted (we use function-relative offsets)
 		data.push_back(DwarfCFI::DW_EH_PE_omit);
-		
+
 		// TType encoding (type table encoding)
-		// Use udata4 (0x03 = absolute 4-byte) to match GCC's encoding.
-		// This uses R_X86_64_32 relocations for type_info pointers.
-		// GCC generates this encoding for static/non-PIE executables.
-		data.push_back(DwarfCFI::DW_EH_PE_udata4);
-		
-		// TType base offset (offset from this field to the start of the type table)
-		// Includes: size of this ULEB itself + call_site_encoding + call_site_table_size_uleb +
-		//           call_site_table + action_table
-		uint64_t ttype_base = 1 + DwarfCFI::encodeULEB128(call_site_table_size).size() +
-		                      call_site_table_size + action_table_size;
+		// Use indirect|pcrel|sdata4 (0x9b) to match GCC/Clang
+		// 0x9b = DW_EH_PE_indirect (0x80) | DW_EH_PE_pcrel (0x10) | DW_EH_PE_sdata4 (0x0b)
+		// This means type table entries are PC-relative pointers to .data entries
+		// that contain the actual type_info addresses (via R_X86_64_64 relocations)
+		data.push_back(0x9b);
+
+		// TType base offset (offset from end of this field to end of type table)
+		// This value points to the END of the type table because type_info
+		// pointers are read in REVERSE order (type filter 1 is at end-4, 2 at end-8, etc.)
+		// The offset is calculated from the byte AFTER this ULEB128 field.
+		//
+		// After the TType base ULEB128, we have:
+		// - Call site encoding (1 byte)
+		// - Call site table size (ULEB128, variable length)
+		// - Call site table data
+		// - Action table data
+		// - Type table data
+		//
+		// We need to calculate the size of the call site table size ULEB128 first
+		auto cs_size_uleb = DwarfCFI::encodeULEB128(call_site_table_size);
+		size_t cs_size_uleb_len = cs_size_uleb.size();
+
+		// Total offset from after TType base to end of type table
+		uint64_t ttype_base = 1 + cs_size_uleb_len + call_site_table_size + action_table_size + type_table_size;
 		DwarfCFI::appendULEB128(data, ttype_base);
-		
+
 		// Call site table encoding
 		data.push_back(DwarfCFI::DW_EH_PE_uleb128);
-		
+
 		// Call site table size
 		DwarfCFI::appendULEB128(data, call_site_table_size);
 	}
@@ -126,11 +148,18 @@ private:
 			// - Length (ULEB128)
 			// - Landing pad offset (ULEB128) - 0 if no handler
 			// - Action offset (ULEB128) - 1-based index into action table, 0 for no action
-			
+
+			if (g_enable_debug_output) {
+				std::cerr << "[LSDA] Call site: start=" << try_region.try_start_offset
+				         << " len=" << try_region.try_length
+				         << " lpad=" << try_region.landing_pad_offset
+				         << " action=" << (try_region.catch_handlers.empty() ? 0 : 1) << std::endl;
+			}
+
 			DwarfCFI::appendULEB128(data, try_region.try_start_offset);
 			DwarfCFI::appendULEB128(data, try_region.try_length);
 			DwarfCFI::appendULEB128(data, try_region.landing_pad_offset);
-			
+
 			// Action index: 1-based index into action table
 			// For now, use 1 for first try block (will be refined)
 			DwarfCFI::appendULEB128(data, try_region.catch_handlers.empty() ? 0 : 1);
@@ -148,44 +177,51 @@ private:
 		// - Positive N: catch clause, match type at index N (1-based) in type table
 		// - Zero: cleanup action (no type matching, always executed during unwind)
 		// - Negative: exception specification filter (NOT used for regular catch clauses)
-		
-		// For now, generate simple action entries for each try region
+
+		// Generate action entries for each try region
+		// Note: For now, we only support one catch handler per try block
+		// Multiple catch handlers would require chaining actions
 		for (const auto& try_region : info.try_regions) {
-			for (size_t i = 0; i < try_region.catch_handlers.size(); ++i) {
-				const auto& handler = try_region.catch_handlers[i];
-				
-				if (handler.is_catch_all) {
-					// Catch-all (catch(...)): type filter = 0 means cleanup
-					// Actually, for catch(...), we use type filter that matches any exception
-					// The personality routine treats filter 0 as cleanup (not catch-all)
-					// For true catch-all, we need a type filter that always matches
-					// Looking at GCC output: it uses filter > 0 pointing to a 0 type entry
-					// But simpler approach: -1 as exception spec that matches all
-					DwarfCFI::appendSLEB128(data, 0);  // 0 = cleanup, will run for any exception
+			if (try_region.catch_handlers.empty()) {
+				continue;  // No handlers, no action entry needed
+			}
+
+			// For simplicity, only handle the first catch handler
+			// TODO: Support multiple catch handlers with action chaining
+			const auto& handler = try_region.catch_handlers[0];
+
+			if (handler.is_catch_all) {
+				// Catch-all (catch(...)): type filter = 0 means cleanup
+				// Actually, for catch(...), we use type filter that matches any exception
+				// The personality routine treats filter 0 as cleanup (not catch-all)
+				// For true catch-all, we need a type filter that always matches
+				// Looking at GCC output: it uses filter > 0 pointing to a 0 type entry
+				// But simpler approach: -1 as exception spec that matches all
+				DwarfCFI::appendSLEB128(data, 0);  // 0 = cleanup, will run for any exception
+			} else {
+				// Find type index in type table (0-based)
+				int type_index = find_type_index(info.type_table, handler.typeinfo_symbol);
+				if (type_index < 0) {
+					// Type not found in type table - treat as catch-all
+					// This shouldn't happen but handle gracefully
+					DwarfCFI::appendSLEB128(data, 0);
 				} else {
-					// Find type index in type table (0-based)
-					int type_index = find_type_index(info.type_table, handler.typeinfo_symbol);
-					if (type_index < 0) {
-						// Type not found in type table - treat as catch-all
-						// This shouldn't happen but handle gracefully
-						DwarfCFI::appendSLEB128(data, 0);
-					} else {
-						// Type filter is POSITIVE and 1-based for catch clauses
-						// So index 0 in type table -> filter 1, index 1 -> filter 2, etc.
-						DwarfCFI::appendSLEB128(data, type_index + 1);
+					// Type filter is POSITIVE and 1-based for catch clauses
+					// So index 0 in type table -> filter 1, index 1 -> filter 2, etc.
+					int filter = type_index + 1;
+					if (g_enable_debug_output) {
+						std::cerr << "[DEBUG] Action table: type_index=" << type_index
+						         << " filter=" << filter << std::endl;
 					}
-				}
-				
-				// Next action: 0 for last handler, else offset to next
-				// For simplicity, chain handlers with offset = size of previous entry
-				if (i + 1 < try_region.catch_handlers.size()) {
-					// Size of this entry (type_filter + next_action, both SLEB128)
-					// Approximate as 2 bytes for now (will be refined)
-					DwarfCFI::appendSLEB128(data, 2);
-				} else {
-					DwarfCFI::appendSLEB128(data, 0);  // Last action
+					DwarfCFI::appendSLEB128(data, filter);
 				}
 			}
+
+			// Next action: always 0 for now (no chaining)
+			DwarfCFI::appendSLEB128(data, 0);
+		}
+		if (g_enable_debug_output) {
+			std::cerr << "[DEBUG] Action table size: " << data.size() << " bytes" << std::endl;
 		}
 	}
 	
@@ -194,15 +230,23 @@ private:
 	                      std::vector<std::pair<uint32_t, std::string>>& relocations) {
 		// Type table contains type_info pointers in reverse order
 		// (type filter 1 refers to last entry, 2 to second-to-last, etc.)
-		// Using udata4 encoding: each entry is a 4-byte absolute address
-		
+		//
+		// Using pcrel|sdata4|indirect (0x9b) encoding:
+		// Each entry is a 4-byte PC-relative signed offset that points to a GOT-like
+		// entry containing the actual type_info address.
+		// The relocation type should be R_X86_64_PC32.
+		//
+		// NOTE: Type table is read from the END backwards. Type filter 1 is at
+		// base_offset - 4, filter 2 at base_offset - 8, etc.
+
+		// Iterate in FORWARD order (they will be accessed in reverse via negative indices)
 		for (const auto& typeinfo_symbol : info.type_table) {
 			// Record relocation for this type_info pointer
 			uint32_t offset = static_cast<uint32_t>(data.size());
 			relocations.push_back({offset, typeinfo_symbol});
-			
-			// Each entry is a 4-byte absolute address (udata4)
-			// Placeholder - will be filled by linker via R_X86_64_32 relocation
+
+			// Each entry is a 4-byte PC-relative pointer (sdata4)
+			// Placeholder - will be filled by linker via R_X86_64_PC32 relocation
 			for (int i = 0; i < 4; ++i) {
 				data.push_back(0);
 			}
