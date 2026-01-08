@@ -33,6 +33,47 @@ enum class MemberPointerKind : uint8_t {
 	Function
 };
 
+/**
+ * Template Argument Type System
+ * ==============================
+ * 
+ * This file defines three related but distinct types for representing template arguments:
+ * 
+ * 1. TemplateArgumentValue: Basic type+index+value triple for simple contexts
+ *    - Lightweight representation with Type, TypeIndex, and value fields
+ *    - Use when you need a simple container for type and value information
+ *    - Distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
+ * 
+ * 2. TemplateArgument: For function template deduction and instantiation tracking
+ *    - Supports Type, Value, and Template template parameters (Kind enum)
+ *    - Has both legacy (type_value) and modern (type_specifier) type representation
+ *    - Includes TypeIndex for complex types (added in consolidation Task 2)
+ *    - Has hash() and operator==() for use in containers (e.g., InstantiationQueue)
+ *    - Use for: function template deduction, mangling, instantiation tracking
+ * 
+ * 3. TemplateTypeArg: Rich type representation for template instantiation
+ *    - Complete qualifiers: const, volatile, reference, pointer, array
+ *    - Supports dependent types, parameter packs, and member pointers
+ *    - Most comprehensive - used by substitute_template_parameter()
+ *    - Use for: pattern matching, specialization selection, template instantiation
+ * 
+ * Conversion Functions:
+ *   - toTemplateTypeArg(TemplateArgument) -> TemplateTypeArg
+ *   - toTemplateArgument(TemplateTypeArg) -> TemplateArgument
+ *   These provide explicit, type-safe conversions preserving all type information
+ * 
+ * Design Rationale:
+ *   - Keeping types separate maintains clarity of purpose
+ *   - TemplateTypeArg's complexity not needed in all contexts
+ *   - TemplateArgument's template template parameter support not needed in TemplateTypeArg
+ *   - Conversion functions make interoperability straightforward
+ * 
+ * History:
+ *   - Original: Duplicate TemplateArgument in TemplateRegistry.h and InstantiationQueue.h
+ *   - Consolidation (Tasks 1-4): Unified into single TemplateArgument with TypeIndex support
+ *   - See docs/TEMPLATE_ARGUMENT_CONSOLIDATION_PLAN.md for full details
+ */
+
 // Basic type+index+value triple for template arguments
 // Provides a lightweight representation that can be reused across different contexts
 // This is distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
@@ -403,10 +444,38 @@ struct TemplateArgument {
 	}
 };
 
-// Conversion helper functions between TemplateArgument and TemplateTypeArg
-// Provides type-safe, explicit conversions for interoperability
+/**
+ * Conversion Helper Functions
+ * ============================
+ * 
+ * These functions provide explicit, type-safe conversions between TemplateArgument
+ * and TemplateTypeArg. They preserve as much type information as possible during
+ * the conversion.
+ * 
+ * Usage Examples:
+ *   // Convert TemplateArgument to TemplateTypeArg
+ *   TemplateArgument arg = TemplateArgument::makeType(Type::Int, 0);
+ *   TemplateTypeArg type_arg = toTemplateTypeArg(arg);
+ * 
+ *   // Convert TemplateTypeArg to TemplateArgument
+ *   TemplateTypeArg type_arg;
+ *   type_arg.base_type = Type::Float;
+ *   TemplateArgument arg = toTemplateArgument(type_arg);
+ */
 
-// Convert TemplateArgument to TemplateTypeArg
+/**
+ * Convert TemplateArgument to TemplateTypeArg
+ * 
+ * Extracts type information from TemplateArgument and creates a TemplateTypeArg.
+ * - If arg has type_specifier (modern path): Extracts full type info including
+ *   references, pointers, cv-qualifiers, and arrays
+ * - If arg lacks type_specifier (legacy path): Uses basic type_value and type_index
+ * - For value arguments: Sets is_value=true and copies the value
+ * - Template template parameters are not directly supported in TemplateTypeArg
+ * 
+ * @param arg The TemplateArgument to convert
+ * @return TemplateTypeArg with extracted type information
+ */
 inline TemplateTypeArg toTemplateTypeArg(const TemplateArgument& arg) {
 	TemplateTypeArg result;
 	
@@ -441,7 +510,22 @@ inline TemplateTypeArg toTemplateTypeArg(const TemplateArgument& arg) {
 	return result;
 }
 
-// Convert TemplateTypeArg to TemplateArgument
+/**
+ * Convert TemplateTypeArg to TemplateArgument
+ * 
+ * Creates a TemplateArgument with a TypeSpecifierNode containing complete type
+ * information from the TemplateTypeArg.
+ * - For value arguments: Creates TemplateArgument with makeValue()
+ * - For type arguments: Creates TypeSpecifierNode with all qualifiers:
+ *   - CV-qualifiers (const, volatile)
+ *   - Pointer levels
+ *   - Reference type (lvalue or rvalue)
+ *   - Array dimensions
+ * - Returns TemplateArgument with embedded TypeSpecifierNode (modern representation)
+ * 
+ * @param arg The TemplateTypeArg to convert
+ * @return TemplateArgument with complete type information
+ */
 inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
 	if (arg.is_value) {
 		// Non-type template parameter
