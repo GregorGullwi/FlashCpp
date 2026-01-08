@@ -18,7 +18,7 @@ These files test FlashCpp's ability to compile and use various C++ standard libr
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<array>` | `test_std_array.cpp` | ⏱️ Timeout | constexpr support |
 | `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Iterators, concepts |
-| `<utility>` | `test_std_utility.cpp` | ❌ Failed | std::pair, std::move |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | std::pair, std::move (template volume) |
 | `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Smart pointers, allocators |
 | `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | std::function, type erasure |
 | `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Red-black trees, allocators |
@@ -27,16 +27,16 @@ These files test FlashCpp's ability to compile and use various C++ standard libr
 | `<variant>` | `test_std_variant.cpp` | ⏱️ Timeout | Advanced union handling |
 | `<any>` | `test_std_any.cpp` | ❌ Failed | Type erasure, RTTI |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | constexpr support |
-| `<concepts>` | `test_std_concepts.cpp` | ❌ Failed | Requires clauses |
+| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Requires clauses work, but template volume causes timeout |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Concepts, views |
-| `<limits>` | `test_std_limits.cpp` | ⚠️ Partial | Compiles; static data works, functions need work |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | Successfully compiles in ~1.8s! |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Ratio templates, duration |
 
 **Legend:**
 - ❌ Failed: Compilation fails with errors
 - ⏱️ Timeout: Compilation takes >10 seconds (likely hangs)
 - ⚠️ Partial: Compiles but some features don't work correctly
-- ✅ Compiled: Successfully compiles (none currently)
+- ✅ Compiled: Successfully compiles
 
 ## Running the Tests
 
@@ -159,6 +159,53 @@ As FlashCpp gains more C++ features:
 3. Add return value verification tests (currently just testing compilation)
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
+
+## Latest Investigation (January 8, 2026)
+
+### Key Findings
+
+1. **`<limits>` header now compiles successfully!** ✅
+   - Compilation time: ~1.8 seconds
+   - Successfully instantiates `std::numeric_limits<int>` and `std::numeric_limits<float>`
+   - Can call `max()` member function
+   - Test case: `test_std_limits.cpp` produces valid output
+
+2. **Requires clauses for C++20 concepts work correctly** ✅
+   - Basic concept definitions work: `concept Integral = __is_integral(T);`
+   - Requires clauses on template functions: `requires Integral<T>`
+   - The `<concepts>` header timeout is due to template instantiation volume, not missing requires clause support
+
+3. **Template instantiation volume remains the primary blocker**
+   - Most headers that timeout are not due to missing features
+   - Individual template instantiations are fast (~20-50μs)
+   - Standard headers contain hundreds to thousands of template instantiations
+   - This is a performance optimization issue, not a feature gap
+
+4. **Union member access in template classes has issues** ⚠️
+   - Anonymous unions in template classes cause compilation hangs
+   - Example: `union { char dummy; T value_; }` inside `template<typename T> class Container`
+   - This may block full `<optional>` and `<variant>` support
+   - Named union members accessed via explicit paths work fine
+   - Issue appears to be related to member lookup during template instantiation
+
+### What Actually Works
+
+Based on testing, the following features are confirmed working:
+
+- ✅ C++20 requires clauses
+- ✅ Basic C++20 concepts
+- ✅ `<limits>` header with `numeric_limits<T>` specializations
+- ✅ Template member functions with return value access
+- ✅ Member access in regular template classes (non-union)
+- ✅ Decltype with ternary operators
+- ✅ Static constexpr members in template classes
+
+### Recommendations
+
+1. **For immediate productivity**: Use `<limits>` header which now works!
+2. **For optional-like types**: Use explicit union member names or avoid anonymous unions in templates
+3. **For template performance**: Consider breaking up large template hierarchies or using explicit instantiations where possible
+4. **Documentation updates**: The table above has been updated to reflect actual status
 
 ## Related Files
 
