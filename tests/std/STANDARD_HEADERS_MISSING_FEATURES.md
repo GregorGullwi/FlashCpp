@@ -4,6 +4,13 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 8, 2026 - Template Full Specialization Forward Declarations)**:
+- ✅ **Template full specialization forward declarations** - Patterns like `template<> struct make_unsigned<bool>;` now work!
+- 🎯 **`<type_traits>` progresses from line 1917 to line 2180!** (263 more lines!)
+- ✅ **Forward declaration parsing** - Parser detects `;` after template arguments and registers specialization
+- 🎯 **Test case created**: `test_template_full_spec_forward_decl_ret0.cpp` - ✅ COMPILES AND RUNS!
+- ⚠️ **New blocker at line 2180** - `__alignof__` with typename expression in template parameter defaults
+
 **UPDATE (January 7, 2026 - Non-type Value Parameters & Forward Declarations)**:
 - ✅ **Non-type value parameters in partial specializations** - Values like `true`, `false`, integers now work!
 - ✅ **Using declarations in partial specialization bodies** - Type aliases inside specializations now parse correctly
@@ -11,7 +18,6 @@ This document lists the missing features in FlashCpp that prevent successful com
 - 🎯 **`<type_traits>` progresses from line 1845 to line 1917!** (72 more lines!)
 - ✅ **Pattern naming for values** - Value arguments generate unique names with 'V' prefix (e.g., `_V1` for true)
 - 🎯 **Test case created**: `test_member_partial_spec_nontype_value_ret0.cpp` - ✅ COMPILES!
-- ⚠️ **New blocker at line 1917** - Full specialization forward declaration for top-level template (different feature)
 
 **UPDATE (January 7, 2026 - Member Struct Template Partial Specialization)**:
 - ✅ **Member struct template partial specialization** - Basic support now implemented!
@@ -308,9 +314,80 @@ protected:
 - `src/Parser.cpp` - Added value parameter handling, using declarations, and forward declarations
 - `tests/test_member_partial_spec_nontype_value_ret0.cpp` - Test case for non-type value parameters ✅
 
-**Current Blocker**: Line 1917 encounters full specialization forward declaration for top-level template (different from member templates):
+#### 0aaa. Template Full Specialization Forward Declarations (January 8, 2026)
+**Status**: ✅ **NEWLY IMPLEMENTED**
+
+**What Was Missing**: FlashCpp could handle full template specializations with bodies, but not forward declarations. Forward declarations are important in the standard library to declare specializations that are intentionally left undefined (e.g., for types that shouldn't be used with certain templates).
+
+**The Problem**: Patterns like the following would fail:
 ```cpp
-template<> struct make_unsigned<bool>;  // Full specialization of top-level template
+template<typename T>
+struct make_unsigned {
+    using type = T;
+};
+
+// Forward declaration without body - ❌ FAILED: "Expected '{' after class name in specialization"
+template<> struct make_unsigned<bool>;
+```
+
+The parser expected `{` after parsing the template arguments, but forward declarations use `;` instead.
+
+**Implementation**:
+1. **Semicolon detection**: After parsing template arguments in full specialization, check for `;`
+   ```cpp
+   if (peek_token().has_value() && peek_token()->value() == ";") {
+       consume_token(); // consume ';'
+       // Handle as forward declaration
+   }
+   ```
+
+2. **Minimal registration**: For forward declarations, create a minimal struct node and register it
+   ```cpp
+   auto instantiated_name = StringTable::getOrInternStringHandle(
+       get_instantiated_class_name(template_name, template_args));
+   
+   auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
+       instantiated_name, is_class);
+   
+   add_struct_type(instantiated_name);
+   gTemplateRegistry.registerSpecialization(
+       std::string(template_name), template_args, struct_node);
+   ```
+
+3. **Early return**: Skip body parsing and return immediately after registration
+
+**Test Case**:
+```cpp
+// Forward declarations now work - ✅ COMPILES!
+template<typename T>
+struct Container {
+    T value;
+};
+
+// Forward declaration of full specialization
+template<> struct Container<bool>;
+template<> struct Container<const bool>;
+
+// Can use the forward-declared type in pointer/reference contexts
+void test_func(Container<bool>* ptr) {
+    // Just testing that forward declaration parses
+}
+```
+
+**Impact**: 
+- **Unblocks `<type_traits>` line 1917-1920!** 🎉
+- `<type_traits>` now progresses from line 1917 to line 2180 (**263 more lines!**)
+- Standard library can now declare intentionally undefined specializations
+- Test case: `tests/test_template_full_spec_forward_decl_ret0.cpp` ✅ COMPILES, LINKS, AND RUNS!
+
+**Files Modified:**
+- `src/Parser.cpp` - Added forward declaration detection and handling in full specialization parsing
+- `tests/test_template_full_spec_forward_decl_ret0.cpp` - Test case for forward declarations ✅
+
+**Current Blocker**: Line 2180 encounters `__alignof__` with typename expression in template parameter defaults:
+```cpp
+template<std::size_t _Len,
+    std::size_t _Align = __alignof__(typename __aligned_storage_msa<_Len>::__type)>
 ```
 
 #### 0a. Member Struct Template Partial Specialization (January 7, 2026 - Evening)
