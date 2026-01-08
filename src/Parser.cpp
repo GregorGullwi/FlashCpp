@@ -11606,14 +11606,18 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 	}
 
-	// Check for 'alignof' keyword
-	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "alignof"sv) {
-		// Handle alignof operator: alignof(type) or alignof(expression)
+	// Check for 'alignof' keyword or '__alignof__' identifier (GCC/Clang extension)
+	bool is_alignof_keyword = current_token_->type() == Token::Type::Keyword && current_token_->value() == "alignof"sv;
+	bool is_alignof_extension = current_token_->type() == Token::Type::Identifier && current_token_->value() == "__alignof__"sv;
+	
+	if (is_alignof_keyword || is_alignof_extension) {
+		// Handle alignof/alignof operator: alignof(type) or alignof(expression)
 		Token alignof_token = *current_token_;
-		consume_token(); // consume 'alignof'
+		std::string_view alignof_name = current_token_->value();
+		consume_token(); // consume 'alignof' or '__alignof__'
 
 		if (!consume_punctuator("("sv)) {
-			return ParseResult::error("Expected '(' after 'alignof'", *current_token_);
+			return ParseResult::error("Expected '(' after '" + std::string(alignof_name) + "'", *current_token_);
 		}
 
 		// Try to parse as a type first
@@ -11627,7 +11631,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		if (is_type_followed_by_paren) {
 			// Successfully parsed as type and ')' follows
 			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' after alignof type", *current_token_);
+				return ParseResult::error("Expected ')' after " + std::string(alignof_name) + " type", *current_token_);
 			}
 			discard_saved_token(saved_pos);
 			auto alignof_expr = emplace_node<ExpressionNode>(AlignofExprNode(*type_result.node(), alignof_token));
@@ -11639,11 +11643,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			ParseResult expr_result = parse_expression();
 			if (expr_result.is_error()) {
 				discard_saved_token(saved_pos);
-				return ParseResult::error("Expected type or expression after 'alignof('", *current_token_);
+				return ParseResult::error("Expected type or expression after '" + std::string(alignof_name) + "('", *current_token_);
 			}
 			if (!consume_punctuator(")")) {
 				discard_saved_token(saved_pos);
-				return ParseResult::error("Expected ')' after alignof expression", *current_token_);
+				return ParseResult::error("Expected ')' after " + std::string(alignof_name) + " expression", *current_token_);
 			}
 			discard_saved_token(saved_pos);
 			auto alignof_expr = emplace_node<ExpressionNode>(
@@ -20260,6 +20264,40 @@ ParseResult Parser::parse_template_declaration() {
 			}
 
 			std::vector<TemplateTypeArg> template_args = *template_args_opt;
+
+			// Check for forward declaration: template<> struct ClassName<Args>;
+			if (peek_token().has_value() && peek_token()->value() == ";") {
+				consume_token(); // consume ';'
+				
+				// For forward declarations, just register the type name and return
+				// The instantiated name includes the template arguments
+				auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
+				
+				// Create a minimal struct node
+				auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
+					instantiated_name,
+					is_class
+				);
+				
+				// Register the type so it can be referenced later
+				add_struct_type(instantiated_name);
+				
+				// Register the specialization with the template registry
+				gTemplateRegistry.registerSpecialization(
+					std::string(template_name),
+					template_args,
+					struct_node
+				);
+				
+				FLASH_LOG_FORMAT(Templates, Debug, "Registered forward declaration for specialization: {}", 
+				                 StringTable::getStringView(instantiated_name));
+				
+				// Reset parsing context flags
+				parsing_template_class_ = false;
+				parsing_template_body_ = false;
+				
+				return saved_position.success(struct_node);
+			}
 
 			// Now parse the class body as a regular struct
 			// But we need to give it a unique name that includes the template arguments

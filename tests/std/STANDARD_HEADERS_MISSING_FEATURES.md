@@ -4,6 +4,20 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 8, 2026 - __alignof__ Operator)**:
+- ✅ **__alignof__ operator support** - GCC/Clang extension now works as identifier!
+- 🎯 **`<type_traits>` progresses from line 2180 to line 2244!** (64 more lines!)
+- ✅ **Works with typename** - Supports complex type expressions like `typename T::type`
+- 🎯 **Test case created**: `test_alignof_extension_ret0.cpp` - ✅ COMPILES AND RUNS!
+- 📊 **Session total**: 327 lines of progress (from line 1917 to 2244)!
+- ⚠️ **New blocker at line 2244** - Static member variable definitions outside class body for template classes
+
+**UPDATE (January 8, 2026 - Template Full Specialization Forward Declarations)**:
+- ✅ **Template full specialization forward declarations** - Patterns like `template<> struct make_unsigned<bool>;` now work!
+- 🎯 **`<type_traits>` progresses from line 1917 to line 2180!** (263 more lines!)
+- ✅ **Forward declaration parsing** - Parser detects `;` after template arguments and registers specialization
+- 🎯 **Test case created**: `test_template_full_spec_forward_decl_ret0.cpp` - ✅ COMPILES AND RUNS!
+
 **UPDATE (January 7, 2026 - Non-type Value Parameters & Forward Declarations)**:
 - ✅ **Non-type value parameters in partial specializations** - Values like `true`, `false`, integers now work!
 - ✅ **Using declarations in partial specialization bodies** - Type aliases inside specializations now parse correctly
@@ -11,7 +25,6 @@ This document lists the missing features in FlashCpp that prevent successful com
 - 🎯 **`<type_traits>` progresses from line 1845 to line 1917!** (72 more lines!)
 - ✅ **Pattern naming for values** - Value arguments generate unique names with 'V' prefix (e.g., `_V1` for true)
 - 🎯 **Test case created**: `test_member_partial_spec_nontype_value_ret0.cpp` - ✅ COMPILES!
-- ⚠️ **New blocker at line 1917** - Full specialization forward declaration for top-level template (different feature)
 
 **UPDATE (January 7, 2026 - Member Struct Template Partial Specialization)**:
 - ✅ **Member struct template partial specialization** - Basic support now implemented!
@@ -308,10 +321,140 @@ protected:
 - `src/Parser.cpp` - Added value parameter handling, using declarations, and forward declarations
 - `tests/test_member_partial_spec_nontype_value_ret0.cpp` - Test case for non-type value parameters ✅
 
-**Current Blocker**: Line 1917 encounters full specialization forward declaration for top-level template (different from member templates):
+#### 0aaa. Template Full Specialization Forward Declarations (January 8, 2026)
+**Status**: ✅ **NEWLY IMPLEMENTED**
+
+**What Was Missing**: FlashCpp could handle full template specializations with bodies, but not forward declarations. Forward declarations are important in the standard library to declare specializations that are intentionally left undefined (e.g., for types that shouldn't be used with certain templates).
+
+**The Problem**: Patterns like the following would fail:
 ```cpp
-template<> struct make_unsigned<bool>;  // Full specialization of top-level template
+template<typename T>
+struct make_unsigned {
+    using type = T;
+};
+
+// Forward declaration without body - ❌ FAILED: "Expected '{' after class name in specialization"
+template<> struct make_unsigned<bool>;
 ```
+
+The parser expected `{` after parsing the template arguments, but forward declarations use `;` instead.
+
+**Implementation**:
+1. **Semicolon detection**: After parsing template arguments in full specialization, check for `;`
+   ```cpp
+   if (peek_token().has_value() && peek_token()->value() == ";") {
+       consume_token(); // consume ';'
+       // Handle as forward declaration
+   }
+   ```
+
+2. **Minimal registration**: For forward declarations, create a minimal struct node and register it
+   ```cpp
+   auto instantiated_name = StringTable::getOrInternStringHandle(
+       get_instantiated_class_name(template_name, template_args));
+   
+   auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
+       instantiated_name, is_class);
+   
+   add_struct_type(instantiated_name);
+   gTemplateRegistry.registerSpecialization(
+       std::string(template_name), template_args, struct_node);
+   ```
+
+3. **Early return**: Skip body parsing and return immediately after registration
+
+**Test Case**:
+```cpp
+// Forward declarations now work - ✅ COMPILES!
+template<typename T>
+struct Container {
+    T value;
+};
+
+// Forward declaration of full specialization
+template<> struct Container<bool>;
+template<> struct Container<const bool>;
+
+// Can use the forward-declared type in pointer/reference contexts
+void test_func(Container<bool>* ptr) {
+    // Just testing that forward declaration parses
+}
+```
+
+**Impact**: 
+- **Unblocks `<type_traits>` line 1917-1920!** 🎉
+- `<type_traits>` now progresses from line 1917 to line 2180 (**263 more lines!**)
+- Standard library can now declare intentionally undefined specializations
+- Test case: `tests/test_template_full_spec_forward_decl_ret0.cpp` ✅ COMPILES, LINKS, AND RUNS!
+
+**Files Modified:**
+- `src/Parser.cpp` - Added forward declaration detection and handling in full specialization parsing
+- `tests/test_template_full_spec_forward_decl_ret0.cpp` - Test case for forward declarations ✅
+
+#### 0aaaa. __alignof__ Operator (January 8, 2026)
+**Status**: ✅ **NEWLY IMPLEMENTED**
+
+**What Was Missing**: FlashCpp supported the standard `alignof` keyword but not the GCC/Clang extension `__alignof__`, which is commonly used in standard library headers for portability. Since `__alignof__` is lexed as an identifier rather than a keyword, it was not recognized.
+
+**The Problem**: Patterns like the following would fail:
+```cpp
+template<std::size_t _Len,
+    std::size_t _Align = __alignof__(typename __aligned_storage_msa<_Len>::__type)>
+struct aligned_storage {
+    // ...
+};
+```
+
+Error: "Expected expression after '=' in template parameter default"
+
+**Implementation**:
+1. **Identifier detection**: Added check for `__alignof__` as identifier (Token::Type::Identifier)
+   ```cpp
+   if (current_token_->type() == Token::Type::Identifier && 
+       current_token_->value() == "__alignof__"sv) {
+       // Handle like alignof
+   }
+   ```
+
+2. **Reuse alignof logic**: The implementation mirrors the existing `alignof` handling:
+   - Try parsing as a type first
+   - If that fails, parse as an expression
+   - Create AlignofExprNode with the parsed content
+
+3. **Works with typename**: Properly handles complex type expressions like `typename T::type`
+
+**Test Case**:
+```cpp
+// Basic __alignof__ usage - ✅ WORKS!
+unsigned long a1 = __alignof__(int);
+unsigned long a2 = __alignof__(Aligned8);
+
+// With typename in template context - ✅ WORKS!
+template<typename T, 
+         unsigned long Align = __alignof__(typename Wrapper<T>::type)>
+struct WithAlignment {
+    static constexpr unsigned long alignment = Align;
+};
+```
+
+**Impact**: 
+- **Unblocks `<type_traits>` line 2180!** 🎉
+- `<type_traits>` now progresses from line 2180 to line 2244 (**64 more lines!**)
+- **Total progress**: From line 1917 to line 2244 (**327 lines in this session!**)
+- Standard library can use GCC/Clang portability extensions
+- Test case: `tests/test_alignof_extension_ret0.cpp` ✅ COMPILES, LINKS, AND RUNS!
+
+**Files Modified:**
+- `src/Parser.cpp` - Added `__alignof__` handling as identifier with same logic as `alignof`
+- `tests/test_alignof_extension_ret0.cpp` - Test case for __alignof__ operator ✅
+
+**Current Blocker**: Line 2244 encounters static member variable definition outside class body for template class:
+```cpp
+template <size_t _Len, typename... _Types>
+    const size_t aligned_union<_Len, _Types...>::alignment_value;
+```
+
+This is a definition of a static member variable that was declared inside the template class. Requires support for out-of-class static member variable definitions with template syntax.
 
 #### 0a. Member Struct Template Partial Specialization (January 7, 2026 - Evening)
 **Status**: ✅ **NEWLY IMPLEMENTED** (Basic Support)
