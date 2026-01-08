@@ -301,6 +301,7 @@ struct StructMember {
 	bool is_reference;      // True if member is an lvalue reference
 	bool is_rvalue_reference; // True if member is an rvalue reference
 	bool is_array;          // True if member is an array
+	std::vector<size_t> array_dimensions;  // Array dimensions if is_array is true
 	std::optional<ASTNode> default_initializer;  // C++11 default member initializer
 
 	StructMember(StringHandle n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align,
@@ -309,11 +310,12 @@ struct StructMember {
 	            bool is_ref = false,
 	            bool is_rvalue_ref = false,
 	            size_t ref_size_bits = 0,
-	            bool is_arr = false)
+	            bool is_arr = false,
+	            std::vector<size_t> arr_dims = {})
 		: name(n), type(t), type_index(tidx), offset(off), size(sz),
 		  referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
 		  access(acc), is_reference(is_ref), is_rvalue_reference(is_rvalue_ref),
-		  is_array(is_arr), default_initializer(std::move(init)) {}
+		  is_array(is_arr), array_dimensions(std::move(arr_dims)), default_initializer(std::move(init)) {}
 	
 	StringHandle getName() const {
 		return name;
@@ -549,7 +551,8 @@ struct StructTypeInfo {
 	               bool is_reference,
 	               bool is_rvalue_reference,
 	               size_t referenced_size_bits,
-	               bool is_array = false) {
+	               bool is_array = false,
+	               std::vector<size_t> array_dimensions = {}) {
 		// Apply pack alignment if specified
 		// Pack alignment limits the maximum alignment of members
 		size_t effective_alignment = member_alignment;
@@ -566,7 +569,7 @@ struct StructTypeInfo {
 		}
 		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment,
 			              access, std::move(default_initializer), is_reference, is_rvalue_reference,
-			              referenced_size_bits, is_array);
+			              referenced_size_bits, is_array, std::move(array_dimensions));
 
 		// Update struct size and alignment
 		total_size = offset + member_size;

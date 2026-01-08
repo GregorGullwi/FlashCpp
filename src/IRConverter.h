@@ -12220,14 +12220,15 @@ private:
 		
 		// Phase 5 Optimization: Use value category metadata for LEA vs MOV decision
 		// For struct types, always use LEA (original behavior)
+		// For arrays (intermediate subscripts on multidimensional arrays), use LEA to compute address
 		// For primitive lvalues, we could use LEA but need to handle dereferencing correctly
-		// For now, only optimize struct types to avoid breaking existing code
+		// For now, only optimize struct types and array results to avoid breaking existing code
 		bool result_is_lvalue = isTempVarLValue(result_var);
-		bool optimize_lea = is_struct;  // Conservative: only struct types for now
+		bool optimize_lea = is_struct || op.result_is_array;  // Use LEA for structs and array results
 		
 		FLASH_LOG_FORMAT(Codegen, Debug, 
-			"ArrayAccess: is_struct={} is_lvalue={} optimize_lea={}",
-			is_struct, result_is_lvalue, optimize_lea);
+			"ArrayAccess: is_struct={} is_lvalue={} result_is_array={} optimize_lea={}",
+			is_struct, result_is_lvalue, op.result_is_array, optimize_lea);
 		
 		// For floating-point, we'll use XMM0 for the loaded value
 		// For integers and struct addresses, we allocate a general-purpose register
@@ -12471,16 +12472,20 @@ private:
 		if (is_floating_point) {
 			emitFloatMovToFrame(X64Register::XMM0, static_cast<int32_t>(result_offset), is_float);
 		} else {
+			// When optimize_lea is true, we have an address (64 bits)
+			// When optimize_lea is false, we have the actual value (element_size_bits)
+			int store_size_bits = optimize_lea ? 64 : element_size_bits;
 			emitMovToFrameSized(
 				SizedRegister{base_reg, 64, false},  // source: 64-bit register
-				SizedStackSlot{static_cast<int32_t>(result_offset), 64, false}  // dest: 64-bit
+				SizedStackSlot{static_cast<int32_t>(result_offset), store_size_bits, false}  // dest: actual size
 			);
 		}
 		
 		// Phase 5: Mark the result temp var as holding a pointer/reference when using LEA
 		// This allows subsequent operations to properly handle the address
+		// For array results (intermediate subscripts on multidimensional arrays), mark as address-only
 		if (optimize_lea) {
-			setReferenceInfo(result_offset, element_type, element_size_bits, false, result_var);
+			setReferenceInfo(result_offset, element_type, element_size_bits, false, result_var, op.result_is_array);
 		}
 		
 		// Release the base register

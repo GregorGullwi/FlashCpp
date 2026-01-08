@@ -14709,17 +14709,29 @@ private:
 										Type element_type = member->type;
 										int element_size_bits = static_cast<int>(member->size * 8);
 										
-										// For array members, member->size is the total size, we need element size
-										// This is a simplified assumption - we need better array type info
-										// For now, assume arrays of primitives and compute element size
-										int array_length = 1;  // Default if not an array
-										// TODO: Get actual array length from type info
-										// For now, use a heuristic: if size is larger than element type, it's an array
-										int base_element_size = get_type_size_bits(element_type);  // Use existing helper
-										
-										if (base_element_size > 0 && element_size_bits > base_element_size) {
-											// It's an array
-											element_size_bits = base_element_size;
+										// For array members, compute the proper element size based on dimensions
+										// For multidimensional arrays, the first subscript produces an array of remaining dimensions
+										bool result_is_array = false;
+										if (member->is_array && !member->array_dimensions.empty()) {
+											// Calculate element size based on array dimensions
+											// For int matrix[3][3], first subscript gives int[3] (12 bytes)
+											int base_element_size = get_type_size_bits(element_type);
+											if (base_element_size > 0) {
+												// Start with base element size
+												size_t computed_element_size = base_element_size / 8;  // Convert to bytes
+												
+												// Multiply by all dimensions except the first
+												for (size_t i = 1; i < member->array_dimensions.size(); ++i) {
+													computed_element_size *= member->array_dimensions[i];
+												}
+												
+												element_size_bits = static_cast<int>(computed_element_size * 8);
+												
+												// If there are more dimensions after the first, result is still an array
+												if (member->array_dimensions.size() > 1) {
+													result_is_array = true;
+												}
+											}
 										}
 
 										// Create a temporary variable for the result
@@ -14746,6 +14758,7 @@ private:
 										payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
 										payload.member_offset = static_cast<int64_t>(member->offset);
 										payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
+										payload.result_is_array = result_is_array;  // Mark if result is an array (array decay)
 										
 										// Set index as TypedValue
 										payload.index.type = std::get<Type>(index_operands[0]);
@@ -14765,7 +14778,8 @@ private:
 											return { element_type, element_size_bits, result_var, 0ULL };
 										}
 
-										// Create instruction with typed payload (Load context - default)
+										// Create instruction with typed payload
+										// If result_is_array, this will generate LEA (address), not MOV (load)
 										ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 										// Return the result with the element type
@@ -14966,6 +14980,57 @@ private:
 		payload.element_size_in_bits = element_size_bits;
 		payload.member_offset = 0;  // Not a member array
 		payload.is_pointer_to_array = is_pointer_to_array;
+		payload.result_is_array = false;  // Default: result is not an array
+		
+		// Check if the array being subscripted is a multidimensional array member
+		// If so, determine if the result is still an array (intermediate subscript)
+		if (std::holds_alternative<TempVar>(array_operands[2])) {
+			TempVar array_temp = std::get<TempVar>(array_operands[2]);
+			if (auto lv_info = getTempVarLValueInfo(array_temp)) {
+				if (lv_info->kind == LValueInfo::Kind::Member && lv_info->member_name.has_value()) {
+					// This is a member array access
+					// Look up the struct and member to get dimension information
+					if (std::holds_alternative<StringHandle>(lv_info->base)) {
+						StringHandle base_name = std::get<StringHandle>(lv_info->base);
+						auto base_symbol = symbol_table.lookup(base_name);
+						if (base_symbol.has_value()) {
+							const DeclarationNode* decl_ptr = nullptr;
+							if (base_symbol->is<DeclarationNode>()) {
+								decl_ptr = &base_symbol->as<DeclarationNode>();
+							} else if (base_symbol->is<VariableDeclarationNode>()) {
+								decl_ptr = &base_symbol->as<VariableDeclarationNode>().declaration();
+							}
+							
+							if (decl_ptr && is_struct_type(decl_ptr->type_node().as<TypeSpecifierNode>().type())) {
+								size_t type_index = decl_ptr->type_node().as<TypeSpecifierNode>().type_index();
+								if (type_index < gTypeInfo.size()) {
+									const TypeInfo& type_info = gTypeInfo[type_index];
+									if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+										if (const StructMember* member = struct_info->findMemberRecursive(lv_info->member_name.value())) {
+											// Check if this is a multidimensional array
+											if (member->is_array && member->array_dimensions.size() > 1) {
+												// Result is still an array (has remaining dimensions)
+												payload.result_is_array = true;
+												
+												// Recalculate element_size_bits based on remaining dimensions
+												int base_element_size = get_type_size_bits(member->type);
+												if (base_element_size > 0) {
+													size_t computed_size = base_element_size / 8;
+													for (size_t i = 1; i < member->array_dimensions.size(); ++i) {
+														computed_size *= member->array_dimensions[i];
+													}
+													payload.element_size_in_bits = static_cast<int>(computed_size * 8);
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 		
 		// Set array (either variable name or temp)
 		if (std::holds_alternative<StringHandle>(array_operands[2])) {
