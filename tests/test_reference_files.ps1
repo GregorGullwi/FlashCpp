@@ -163,7 +163,6 @@ $expectedCompileFailures = @(
   "test_cstddef.cpp"
   "test_cstdio_puts.cpp"
   "test_cstdlib.cpp"
-  # test_lambda_cpp20_comprehensive_ret135.cpp - Now compiles with unsupported features commented out
 )
 
 # Expected link failures - files that compile but have known link issues
@@ -175,10 +174,6 @@ $expectedLinkFailures = @(
     # Self-contained ABI tests (link on Linux but fail on Windows)
     "test_mixed_abi.cpp"
     "test_linux_abi.cpp"  # Tests 6 integer params (Linux ABI specific)
-    "test_full_spec_inherit.cpp"          # Demonstrates full specialization inheritance parsing (Priority 8b: implicit constructor issue)
-    "test_full_spec_inherit_simple.cpp"   # Demonstrates full specialization inheritance parsing (Priority 8b: implicit constructor issue)
-    # Virtual destructor symbol generation issue on MSVC
-    "test_xvalue_all_casts.cpp"           # Missing virtual destructor symbol (??1Base@@QAE@XZ) on MSVC
 )
 
 # Results tracking
