@@ -18,7 +18,7 @@ These files test FlashCpp's ability to compile and use various C++ standard libr
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<array>` | `test_std_array.cpp` | ⏱️ Timeout | constexpr support |
 | `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Iterators, concepts |
-| `<utility>` | `test_std_utility.cpp` | ❌ Failed | std::pair, std::move |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | std::pair, std::move (template volume) |
 | `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Smart pointers, allocators |
 | `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | std::function, type erasure |
 | `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Red-black trees, allocators |
@@ -27,16 +27,16 @@ These files test FlashCpp's ability to compile and use various C++ standard libr
 | `<variant>` | `test_std_variant.cpp` | ⏱️ Timeout | Advanced union handling |
 | `<any>` | `test_std_any.cpp` | ❌ Failed | Type erasure, RTTI |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | constexpr support |
-| `<concepts>` | `test_std_concepts.cpp` | ❌ Failed | Requires clauses |
+| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Requires clauses work, but template volume causes timeout |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Concepts, views |
-| `<limits>` | `test_std_limits.cpp` | ⚠️ Partial | Compiles; static data works, functions need work |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | Successfully compiles in ~1.8s! |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Ratio templates, duration |
 
 **Legend:**
 - ❌ Failed: Compilation fails with errors
 - ⏱️ Timeout: Compilation takes >10 seconds (likely hangs)
 - ⚠️ Partial: Compiles but some features don't work correctly
-- ✅ Compiled: Successfully compiles (none currently)
+- ✅ Compiled: Successfully compiles
 
 ## Running the Tests
 
@@ -159,6 +159,174 @@ As FlashCpp gains more C++ features:
 3. Add return value verification tests (currently just testing compilation)
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
+
+## Latest Investigation (January 8, 2026 - Evening - Part 3)
+
+### Additional Union Testing and Named Union Investigation
+
+**Named Union Investigation:**
+Named unions (e.g., `union {...} data;`) are **not currently supported** by the parser. The parser doesn't have infrastructure to handle inline union type declarations with member names. This would require:
+1. Creating an anonymous nested union type
+2. Creating a member of that type
+3. Properly handling member access chains like `s.data.i`
+
+This is a missing language feature, not a bug. Implementing this would require significant parser changes.
+
+**Nested Union and Struct Testing:**
+- ✅ `test_union_with_struct_ret0.cpp` - Unions can contain struct members
+- ✅ `test_struct_with_union_ret0.cpp` - Structs can contain union types
+- ❌ `test_nested_union_ret0.cpp` - Nested anonymous unions not supported (parser error)
+
+**Test Results Summary:**
+```
+✅ Anonymous unions in structs
+✅ Anonymous unions in templates
+✅ Unions containing structs
+✅ Structs containing unions
+❌ Named unions (not implemented)
+❌ Nested anonymous unions (not implemented)
+❌ Arrays in anonymous unions (parser error)
+```
+
+**Workarounds for named unions:**
+```cpp
+// Instead of this (doesn't work):
+struct S {
+    union { int i; } data;
+    void set(int v) { data.i = v; }
+};
+
+// Use this (works):
+struct S {
+    union { int i; };  // Anonymous union
+    void set(int v) { i = v; }  // Direct access
+};
+
+// Or this (works):
+union Data { int i; };
+struct S {
+    Data data;  // Separate type
+};
+```
+
+## Latest Investigation (January 8, 2026 - Evening - Part 2)
+
+### Anonymous Union Bug Fixed! 🎉
+
+**Fix Implemented:** Anonymous union members are now properly flattened into the parent struct during parsing.
+
+**What Changed:**
+- Modified Parser.cpp line 4172-4245 to parse anonymous union members instead of skipping them
+- Anonymous union members are now added directly to the parent struct's member list
+- Added check to distinguish anonymous unions (`union {...};`) from named unions (`union {...} data;`)
+- This allows proper member lookup in both regular structs and template classes
+
+**Test Results:**
+- ✅ `test_anonymous_union_member_access_ret0.cpp` - **NOW PASSES** (was hanging)
+- ✅ `test_template_anonymous_union_access_ret0.cpp` - **NOW PASSES** (was "Missing identifier" error)
+- ❌ `test_union_member_access_fail.cpp` - **Not supported** (named unions not implemented)
+
+**Examples:**
+```cpp
+// ✅ This now works!
+template<typename T>
+struct Container {
+    union {
+        char dummy;
+        T value;
+    };
+    T& get() { return value; }  // Works now!
+};
+
+// ✅ This also works!
+struct MyStruct {
+    union {
+        int i;
+        float f;
+    };
+};
+MyStruct s;
+s.i = 42;  // Works now!
+
+// ❌ Named unions are not implemented
+struct S {
+    union { int i; } data;  // Named union member
+};
+S s;
+s.data.i = 42;  // Parser error: not supported
+```
+
+**Status of Named Unions:**
+Named unions are a missing language feature that requires parser infrastructure changes. This is not a bug that can be easily fixed - it requires implementing support for inline anonymous type declarations with member names.
+
+## Latest Investigation (January 8, 2026 - Evening - Part 1)
+
+### Critical Bug Found: Union Member Access Causes Compilation Hangs
+
+During investigation of union support, discovered a **critical bug** that causes the compiler to hang indefinitely:
+
+**Bug Details:**
+- ❌ **Accessing union members (named or anonymous) in structs causes infinite loop**
+- ✅ Declaring unions works fine
+- ❌ But any attempt to read or write union member fields causes compilation to hang
+- This affects BOTH regular structs and template classes
+- This is the root cause blocking `<optional>` and `<variant>` headers
+
+**UPDATE:** This bug has been **partially fixed**! Anonymous unions now work. See section above.
+
+## Latest Investigation (January 8, 2026 - Afternoon)
+
+### Key Findings
+
+1. **`<limits>` header now compiles successfully!** ✅
+   - Compilation time: ~1.8 seconds
+   - Successfully instantiates `std::numeric_limits<int>` and `std::numeric_limits<float>`
+   - Can call `max()` member function
+   - Test case: `test_std_limits.cpp` produces valid output
+
+2. **Requires clauses for C++20 concepts work correctly** ✅
+   - Basic concept definitions work: `concept Integral = __is_integral(T);`
+   - Requires clauses on template functions: `requires Integral<T>`
+   - The `<concepts>` header timeout is due to template instantiation volume, not missing requires clause support
+
+3. **Template instantiation volume remains the primary blocker**
+   - Most headers that timeout are not due to missing features
+   - Individual template instantiations are fast (~20-50μs)
+   - Standard headers contain hundreds to thousands of template instantiations
+   - This is a performance optimization issue, not a feature gap
+
+4. **Floating-point arithmetic bug fixed** ✅
+   - Fixed critical bug where float/double operations returned garbage
+   - Bug was in `storeArithmeticResult()` not storing XMM register results to memory
+   - All floating-point arithmetic now works correctly
+
+### What Actually Works
+
+Based on testing, the following features are confirmed working:
+
+- ✅ C++20 requires clauses
+- ✅ Basic C++20 concepts
+- ✅ `<limits>` header with `numeric_limits<T>` specializations
+- ✅ Template member functions with return value access
+- ✅ Member access in regular template classes (non-union)
+- ✅ Decltype with ternary operators
+- ✅ Static constexpr members in template classes
+- ✅ Floating-point arithmetic (multiply, divide, add, subtract)
+- ✅ Union declarations (both named and anonymous)
+- ✅ Anonymous unions in template classes (declaration only)
+
+### What Doesn't Work
+
+- ❌ **Accessing union members causes compilation to hang** (critical bug)
+- ❌ Anonymous union member access in templates gives "Missing identifier" error
+- ⏱️ Many headers timeout due to template instantiation volume
+
+### Recommendations
+
+1. **For immediate productivity**: Use `<limits>` header which now works!
+2. **For optional-like types**: **Cannot use unions** - critical bug causes hangs
+3. **For template performance**: Consider breaking up large template hierarchies or using explicit instantiations where possible
+4. **Union support**: Avoid using unions with member access until bug is fixed
 
 ## Related Files
 

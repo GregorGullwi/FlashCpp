@@ -4490,6 +4490,12 @@ private:
 						}
 					}
 					// Result is already in the correct register, no move needed
+					// For floating-point types, we MUST also write to memory even when register is correct
+					// because the return handling will load from memory (XMM registers aren't fully tracked)
+					if (is_float_type) {
+						bool is_single_precision = (ctx.result_value.type == Type::Float);
+						emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
+					}
 					// Can release source register since result is now tracked in the destination register
 					should_release_source = true;
 				}
