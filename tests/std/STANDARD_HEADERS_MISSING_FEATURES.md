@@ -4,13 +4,20 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
-**UPDATE (January 8, 2026 - __alignof__ Operator)**:
+**UPDATE (January 8, 2026 - Static Member Variable Definitions Outside Class Body)**:
+- ✅ **Static member variable definitions outside class body for template classes** - Patterns like `template<typename T> const size_t ClassName<T>::memberName;` now parse correctly!
+- 🎯 **`<type_traits>` progresses from line 2244 to line 2351!** (107 more lines!)
+- ✅ **No initializer support** - Handles definitions without initializers (storage-only definitions)
+- ✅ **Works with template parameters** - Correctly parses template parameter lists
+- 🎯 **Test case created**: `test_template_static_member_outofline_ret42.cpp` - ✅ COMPILES!
+- 📊 **Session total**: 434 lines of progress (from line 1917 to 2351)!
+- ⚠️ **New blocker at line 2351** - decltype expression evaluation with ternary operator
+
+**UPDATE (January 8, 2026 - __alignof__ Operator - Morning)**:
 - ✅ **__alignof__ operator support** - GCC/Clang extension now works as identifier!
 - 🎯 **`<type_traits>` progresses from line 2180 to line 2244!** (64 more lines!)
 - ✅ **Works with typename** - Supports complex type expressions like `typename T::type`
 - 🎯 **Test case created**: `test_alignof_extension_ret0.cpp` - ✅ COMPILES AND RUNS!
-- 📊 **Session total**: 327 lines of progress (from line 1917 to 2244)!
-- ⚠️ **New blocker at line 2244** - Static member variable definitions outside class body for template classes
 
 **UPDATE (January 8, 2026 - Template Full Specialization Forward Declarations)**:
 - ✅ **Template full specialization forward declarations** - Patterns like `template<> struct make_unsigned<bool>;` now work!
@@ -448,13 +455,83 @@ struct WithAlignment {
 - `src/Parser.cpp` - Added `__alignof__` handling as identifier with same logic as `alignof`
 - `tests/test_alignof_extension_ret0.cpp` - Test case for __alignof__ operator ✅
 
-**Current Blocker**: Line 2244 encounters static member variable definition outside class body for template class:
+#### 0aaaaa. Static Member Variable Definitions Outside Class Body (January 8, 2026 - Afternoon)
+**Status**: ✅ **NEWLY IMPLEMENTED**
+
+**What Was Missing**: FlashCpp supported out-of-class member function definitions for template classes, but could not parse out-of-class static member variable definitions without initializers. This pattern is common in standard library headers where a static constexpr member is declared (with initializer) inside the class and then defined (without initializer) outside to provide storage.
+
+**The Problem**: Patterns like the following would fail to parse:
 ```cpp
-template <size_t _Len, typename... _Types>
-    const size_t aligned_union<_Len, _Types...>::alignment_value;
+template<typename T>
+struct Container {
+    static constexpr int value = 42;  // Declaration with initializer
+};
+
+// Out-of-class definition without initializer - ❌ FAILED
+template<typename T>
+constexpr int Container<T>::value;
 ```
 
-This is a definition of a static member variable that was declared inside the template class. Requires support for out-of-class static member variable definitions with template syntax.
+Error: "Expected type specifier" - The parser would try to parse this as a function or variable template, not recognizing it as a static member definition.
+
+**Implementation**:
+1. **Extended `try_parse_out_of_line_template_member()`**: This function already handled out-of-class member functions and static members with initializers. Added a new check for semicolon (`;`) after the member name.
+
+2. **Semicolon detection**: After parsing `ClassName<Args>::memberName`, check for `;`
+   ```cpp
+   // Check if this is a static member variable definition without initializer (;)
+   // Pattern: template<typename T> Type ClassName<T>::member;
+   if (peek_token().has_value() && peek_token()->value() == ";") {
+       consume_token();  // consume ';'
+       // Register the static member variable definition...
+   }
+   ```
+
+3. **Registration**: Creates `OutOfLineMemberVariable` structure and registers it with the template registry
+   ```cpp
+   OutOfLineMemberVariable out_of_line_var;
+   out_of_line_var.template_params = template_params;
+   out_of_line_var.member_name = StringTable::getOrInternStringHandle(member_name);
+   out_of_line_var.type_node = type_node;
+   // No initializer for this case
+   out_of_line_var.template_param_names = template_param_names;
+   gTemplateRegistry.registerOutOfLineMemberVariable(class_name, std::move(out_of_line_var));
+   ```
+
+**Test Case**:
+```cpp
+// Now compiles successfully - ✅ WORKS!
+template<typename T>
+struct Container {
+    static constexpr int value = 42;
+};
+
+// Out-of-class definition
+template<typename T>
+constexpr int Container<T>::value;
+
+int main() {
+    return Container<int>::value;  // Should return 42
+}
+```
+
+**Impact**: 
+- **Unblocks `<type_traits>` line 2244!** 🎉
+- `<type_traits>` now progresses from line 2244 to line 2351 (**107 more lines!**)
+- **Total session progress**: 434 lines (from line 1917 to 2351)!
+- Standard library can now use standard C++ pattern for static member storage
+- Test case: `tests/test_template_static_member_outofline_ret42.cpp` ✅ COMPILES!
+
+**Files Modified:**
+- `src/Parser.cpp` - Extended `try_parse_out_of_line_template_member()` to handle definitions without initializers
+- `tests/test_template_static_member_outofline_ret42.cpp` - Test case for static member out-of-line definition ✅
+
+**Current Blocker**: Line 2351 encounters decltype expression evaluation issue:
+```cpp
+= decltype(true ? std::declval<_Tp>() : std::declval<_Up>());
+```
+
+This requires proper evaluation of ternary operators within decltype expressions, which is more complex as it involves type deduction from conditional expressions.
 
 #### 0a. Member Struct Template Partial Specialization (January 7, 2026 - Evening)
 **Status**: ✅ **NEWLY IMPLEMENTED** (Basic Support)
