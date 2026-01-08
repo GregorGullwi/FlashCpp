@@ -21,9 +21,10 @@ int main() {
     MakeUnsigned::List<int> list1;
     MakeUnsigned::List<int, char> list2;
     
-    // Note: Accessing static constexpr members via decltype or direct access not yet working correctly
-    // decltype(list2)::size would be ideal but FlashCpp doesn't support decltype in expression context
-    // MakeUnsigned::List<int, char>::size doesn't evaluate correctly (returns 48 instead of 4)
-    // For now, just return 4 directly to match the expected sizeof(int)
-    return 4;
+    // Test decltype on static constexpr member via qualified name
+    // decltype(MakeUnsigned::List<int, char>::size) is int (constexpr int)
+    decltype(MakeUnsigned::List<int, char>::size) result = MakeUnsigned::List<int, char>::size;
+    
+    // sizeof(int) = 4, so result should be 4
+    return result;
 }
