@@ -3476,17 +3476,7 @@ ParseResult Parser::parse_struct_declaration()
 	if (!current_namespace_path.empty() && !inline_namespace_stack_.empty() && inline_namespace_stack_.back() && !parsing_template_class_) {
 		auto parent_path = current_namespace_path;
 		parent_path.pop_back();
-		StringBuilder sb;
-		for (size_t i = 0; i < parent_path.size(); ++i) {
-#if USE_OLD_STRING_APPROACH
-			sb.append(parent_path[i]);
-#else
-			sb.append(parent_path[i].view());
-#endif
-			sb.append("::");
-		}
-		sb.append(StringTable::getStringView(struct_name));
-		auto parent_handle = StringTable::getOrInternStringHandle(sb.commit());
+		auto parent_handle = buildQualifiedNameHandle(parent_path, struct_name);
 		if (gTypesByName.find(parent_handle) == gTypesByName.end()) {
 			gTypesByName.emplace(parent_handle, &struct_type_info);
 		}
@@ -6836,17 +6826,8 @@ ParseResult Parser::parse_typedef_declaration()
 	std::string_view qualified_alias_name;
 	auto namespace_path = gSymbolTable.build_current_namespace_path();
 	if (!namespace_path.empty()) {
-		// Build qualified name: ns1::ns2::alias_name using StringBuilder
-		StringBuilder sb;
-		for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-			sb.append(ns).append("::");
-#else
-			sb.append(ns.view()).append("::");
-#endif
-		}
-		sb.append(alias_name);
-		qualified_alias_name = sb.commit();
+		// Build qualified name: ns1::ns2::alias_name
+		qualified_alias_name = buildQualifiedName(namespace_path, alias_name);
 	} else {
 		qualified_alias_name = alias_name;
 	}
@@ -7472,16 +7453,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		source_type_name = StringTable::getOrInternStringHandle(identifier_token.value());
 	} else {
 		// using ns1::ns2::identifier; - build qualified name
-		StringBuilder sb;
-		for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-			sb.append(ns).append("::");
-#else
-			sb.append(ns.view()).append("::");
-#endif
-		}
-		sb.append(identifier_token.value());
-		source_type_name = StringTable::getOrInternStringHandle(sb.commit());
+		source_type_name = buildQualifiedNameHandle(namespace_path, identifier_token.value());
 	}
 	
 	// Look up the type in gTypesByName
@@ -7507,16 +7479,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	auto current_namespace_path = gSymbolTable.build_current_namespace_path();
 	if (!current_namespace_path.empty()) {
 		// Build qualified name for the target: std::identifier
-		StringBuilder target_sb;
-		for (const auto& ns : current_namespace_path) {
-#if USE_OLD_STRING_APPROACH
-			target_sb.append(ns).append("::");
-#else
-			target_sb.append(ns.view()).append("::");
-#endif
-		}
-		target_sb.append(identifier_token.value());
-		StringHandle target_type_name = StringTable::getOrInternStringHandle(target_sb.commit());
+		StringHandle target_type_name = buildQualifiedNameHandle(current_namespace_path, identifier_token.value());
 		
 		// Check if target name is already registered (avoid duplicates)
 		if (gTypesByName.find(target_type_name) == gTypesByName.end()) {
@@ -13445,17 +13408,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				// If symbol not found and we're not in extern "C", try template instantiation
 				if (!decl_ptr && current_linkage_ != Linkage::C) {
 					// Build qualified template name (e.g., "std::move")
-					StringBuilder qualified_name_builder;
-					for (const auto& ns : namespaces) {
-#if USE_OLD_STRING_APPROACH
-						qualified_name_builder.append(ns);
-#else
-						qualified_name_builder.append(ns.view());
-#endif
-						qualified_name_builder.append("::");
-					}
-					qualified_name_builder.append(final_identifier.value());
-					std::string_view qualified_name = qualified_name_builder.commit();
+					std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 					
 					// Extract argument types for template instantiation
 					std::vector<TypeSpecifierNode> arg_types;
@@ -14339,17 +14292,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// If not found and we're not in extern "C", try template instantiation
 			if (!identifierType && current_linkage_ != Linkage::C) {
 				// Build qualified template name (e.g., "::move" or "::std::move")
-				StringBuilder qualified_name_builder;
-				for (const auto& ns : namespaces) {
-#if USE_OLD_STRING_APPROACH
-					qualified_name_builder.append(ns);
-#else
-					qualified_name_builder.append(ns.view());
-#endif
-					qualified_name_builder.append("::");
-				}
-				qualified_name_builder.append(qual_id.name());
-				std::string_view qualified_name = qualified_name_builder.commit();
+				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
 				
 				// Extract argument types for template instantiation
 				std::vector<TypeSpecifierNode> arg_types;
@@ -14598,14 +14541,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		std::optional<std::vector<TemplateTypeArg>> template_args;
 		std::vector<ASTNode> template_arg_nodes;  // Store the actual expression nodes
 		if (current_token_.has_value() && current_token_->value() == "<") {
-			// Build the qualified name from namespaces using StringBuilder
-			// Use commit() to get a stable string_view that won't be invalidated
-			StringBuilder qualified_name_builder;
-			for (const auto& ns : qual_id.namespaces()) {
-				qualified_name_builder.append(ns).append("::");
-			}
-			qualified_name_builder.append(qual_id.name());
-			std::string_view qualified_name = qualified_name_builder.commit();  // commit() for stable string_view
+			// Build the qualified name from namespaces
+			std::string_view qualified_name = buildQualifiedNameFromStrings(qual_id.namespaces(), qual_id.name());
 			
 			// Phase 1: Always try to parse template arguments speculatively
 			// C++20 spec: After :: in qualified-id, '<' is always template argument delimiter
@@ -14768,8 +14705,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 				// Template instantiation succeeded
 				// Don't return early - let it fall through to normal lookup which will find the instantiated type
-			} else {
-				qualified_name_builder.reset();
 			}
 			// Not a template - let it fall through to be parsed as operator<
 		}
@@ -14875,17 +14810,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			if ((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) && 
 			    current_linkage_ != Linkage::C) {
 				// Build qualified template name
-				StringBuilder qualified_name_builder;
-				for (const auto& ns : qual_id.namespaces()) {
-#if USE_OLD_STRING_APPROACH
-					qualified_name_builder.append(ns);
-#else
-					qualified_name_builder.append(ns.view());
-#endif
-					qualified_name_builder.append("::");
-				}
-				qualified_name_builder.append(qual_id.name());
-				std::string_view qualified_name = qualified_name_builder.commit();
+				std::string_view qualified_name = buildQualifiedNameFromStrings(qual_id.namespaces(), qual_id.name());
 				
 				// Phase 1 C++20: If we have explicit template arguments, use them instead of deducing
 				if (template_args.has_value() && !template_args->empty()) {
@@ -15053,17 +14978,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// might be registered with a qualified name (e.g., "std::size_t")
 					auto current_ns_path = gSymbolTable.build_current_namespace_path();
 					if (!current_ns_path.empty()) {
-						StringBuilder qualified_name_builder;
-						for (const auto& ns : current_ns_path) {
-#if USE_OLD_STRING_APPROACH
-							qualified_name_builder.append(ns);
-#else
-							qualified_name_builder.append(ns.view());
-#endif
-							qualified_name_builder.append("::");
-						}
-						qualified_name_builder.append(idenfifier_token.value());
-						StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+						std::string_view qualified_name_str = buildQualifiedName(current_ns_path, idenfifier_token.value());
+						StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name_str);
 						auto qualified_type_it = gTypesByName.find(qualified_handle);
 						if (qualified_type_it != gTypesByName.end()) {
 							FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as namespace-qualified type alias '{}' in gTypesByName", 
@@ -15240,17 +15156,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// If not found and we're not in extern "C", try template instantiation
 				if (!identifierType.has_value() && current_linkage_ != Linkage::C) {
 					// Build qualified template name
-					StringBuilder qualified_name_builder;
-					for (const auto& ns : qual_id.namespaces()) {
-#if USE_OLD_STRING_APPROACH
-						qualified_name_builder.append(ns);
-#else
-						qualified_name_builder.append(ns.view());
-#endif
-						qualified_name_builder.append("::");
-					}
-					qualified_name_builder.append(qual_id.name());
-					std::string_view qualified_name = qualified_name_builder.commit();
+					std::string_view qualified_name = buildQualifiedNameFromStrings(qual_id.namespaces(), qual_id.name());
 					
 					// Extract argument types for template instantiation
 					std::vector<TypeSpecifierNode> arg_types;
@@ -19024,9 +18930,9 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 	
 	// First try direct lookup with qualified name
 	StringBuilder qualified_name_builder;
-	qualified_name_builder.append(StringTable::getStringView(struct_name));
-	qualified_name_builder.append("::"sv);
-	qualified_name_builder.append(StringTable::getStringView(member_name));
+	qualified_name_builder.append(StringTable::getStringView(struct_name))
+	                     .append("::")
+	                     .append(StringTable::getStringView(member_name));
 	std::string_view qualified_name = qualified_name_builder.commit();
 	
 	auto direct_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
@@ -19584,12 +19490,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			
 			// If not found directly, try building full qualified name
 			if (struct_type_it == gTypesByName.end() && namespaces.size() > 1) {
-				StringBuilder qualified_name_builder;
-				for (size_t i = 0; i < namespaces.size(); ++i) {
-					if (i > 0) qualified_name_builder.append("::");
-					qualified_name_builder.append(std::string_view(namespaces[i]));
-				}
-				std::string_view full_qualified_name = qualified_name_builder.commit();
+				std::string_view full_qualified_name = buildFullQualifiedName(namespaces);
 				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(full_qualified_name));
 			}
 			
@@ -22454,17 +22355,8 @@ if (struct_type_info.getStructInfo()) {
 			// Register the specialization with the template registry
 			// This makes it available when the template is instantiated with these args
 			// Build the qualified name including current namespace path
-			StringBuilder qualified_name_builder;
 			auto namespace_path = gSymbolTable.build_current_namespace_path();
-			for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-				qualified_name_builder.append(ns).append("::");
-#else
-				qualified_name_builder.append(StringTable::getStringView(ns)).append("::");
-#endif
-			}
-			qualified_name_builder.append(func_base_name);
-			std::string_view qualified_specialization_name = qualified_name_builder.commit();
+			std::string_view qualified_specialization_name = buildQualifiedName(namespace_path, func_base_name);
 			
 			ASTNode func_node_copy = *func_result.node();
 			
@@ -22561,12 +22453,7 @@ if (struct_type_info.getStructInfo()) {
 		// If in a namespace, also register with qualified name for namespace-qualified lookups
 		auto namespace_path = gSymbolTable.build_current_namespace_path();
 		if (!namespace_path.empty()) {
-			StringBuilder qualified_name_builder;
-			for (const auto& ns : namespace_path) {
-				qualified_name_builder.append(ns).append("::");
-			}
-			qualified_name_builder.append(simple_name);
-			std::string_view qualified_name = qualified_name_builder.commit();
+			std::string_view qualified_name = buildQualifiedName(namespace_path, simple_name);
 			FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
 			gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
 		}
@@ -22624,12 +22511,7 @@ if (struct_type_info.getStructInfo()) {
 		// If in a namespace, also register with qualified name for namespace-qualified lookups
 		auto namespace_path = gSymbolTable.build_current_namespace_path();
 		if (!namespace_path.empty()) {
-			StringBuilder qualified_name_builder;
-			for (const auto& ns : namespace_path) {
-				qualified_name_builder.append(ns).append("::");
-			}
-			qualified_name_builder.append(simple_name);
-			std::string_view qualified_name = qualified_name_builder.commit();
+			std::string_view qualified_name = buildQualifiedName(namespace_path, simple_name);
 			FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
 			gTemplateRegistry.registerTemplate(qualified_name, template_class_node);
 		}
@@ -25537,16 +25419,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		auto namespace_path = gSymbolTable.build_current_namespace_path();
 		if (!namespace_path.empty()) {
 			// Build the fully-qualified name by prepending the current namespace path
-			StringBuilder sb;
-			for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-				sb.append(ns).append("::");
-#else
-				sb.append(StringTable::getStringView(ns)).append("::");
-#endif
-			}
-			sb.append(template_name);
-			std::string_view qualified_name_view = sb.commit();
+			std::string_view qualified_name_view = buildQualifiedName(namespace_path, template_name);
 			// Note: qualified_name_view points to StringBuilder's internal buffer,
 			// which is valid for the duration of this function. The lookup only
 			// needs the string_view temporarily, so no std::string allocation needed.
@@ -27334,7 +27207,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Build the full qualified name (e.g., "wrapper_int::type")
 		StringBuilder qualified_name_builder;
-		qualified_name_builder.append(instantiated_base_name).append("::").append(member_name);
+		qualified_name_builder.append(instantiated_base_name)
+		                     .append("::")
+		                     .append(member_name);
 		std::string_view qualified_name = qualified_name_builder.commit();
 		
 		FLASH_LOG(Templates, Debug, "Looking up resolved type: ", qualified_name);

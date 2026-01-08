@@ -474,7 +474,7 @@ public:
 
 					// Build the qualified name for deduplication
 					StringBuilder qualified_name_sb;
-					qualified_name_sb.append(type_name).append("::").append(StringTable::getStringView(static_member.getName()));
+					qualified_name_sb.append(type_name).append("::").append(static_member.getName());
 					std::string_view qualified_name = qualified_name_sb.commit();
 					StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
 					
@@ -8006,12 +8006,7 @@ private:
 			// If not found directly, try with full qualified name (all namespaces joined)
 			// This handles member template specializations like MakeUnsigned::List_int_char
 			if (struct_type_it == gTypesByName.end() && namespaces.size() > 1) {
-				StringBuilder qualified_name_builder;
-				for (size_t i = 0; i < namespaces.size(); ++i) {
-					if (i > 0) qualified_name_builder.append("::");
-					qualified_name_builder.append(std::string_view(namespaces[i]));
-				}
-				std::string_view full_qualified_name = qualified_name_builder.commit();
+				std::string_view full_qualified_name = buildFullQualifiedName(namespaces);
 				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(full_qualified_name));
 				if (struct_type_it != gTypesByName.end()) {
 					struct_or_enum_name = std::string(full_qualified_name);
