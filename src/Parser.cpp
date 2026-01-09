@@ -4172,8 +4172,60 @@ ParseResult Parser::parse_struct_declaration()
 				
 				if (peek_token().has_value() && peek_token()->value() == "{") {
 					// Pattern 1: Anonymous union/struct as a member
-					// Parse and flatten members
+					// Handle properly by adding members at the same offset
 					consume_token(); // consume '{'
+					
+					// Calculate where the anonymous union should start in the parent struct
+					// We need to account for members that have already been parsed
+					// Note: We're adding union members directly to struct_info, but other members
+					// will be added during the layout phase. To get the correct offset, we need to
+					// simulate what the layout phase will do for already-parsed members.
+					size_t union_offset = 0;
+					
+					// Calculate offset by processing already-parsed members (those in struct_ref before the union)
+					for (const auto& existing_member : struct_ref.members()) {
+						const DeclarationNode& decl = existing_member.declaration.as<DeclarationNode>();
+						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+						
+						auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
+						
+						// For struct types, get size from struct type info
+						if (type_spec.type() == Type::Struct && !type_spec.is_pointer() && !type_spec.is_reference()) {
+							for (const auto& ti : gTypeInfo) {
+								if (ti.type_index_ == type_spec.type_index()) {
+									if (ti.getStructInfo()) {
+										member_size = ti.getStructInfo()->total_size;
+										member_alignment = ti.getStructInfo()->total_size;
+									}
+									break;
+								}
+							}
+						}
+						
+						// For arrays, multiply by array size
+						if (decl.is_array()) {
+							for (const auto& dim_expr : decl.array_dimensions()) {
+								ConstExpr::EvaluationContext ctx(gSymbolTable);
+								auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+								if (eval_result.success && eval_result.as_int() > 0) {
+									member_size *= static_cast<size_t>(eval_result.as_int());
+								}
+							}
+						}
+						
+						// Apply pack alignment
+						size_t effective_alignment = member_alignment;
+						if (struct_info->pack_alignment > 0 && struct_info->pack_alignment < member_alignment) {
+							effective_alignment = struct_info->pack_alignment;
+						}
+						
+						// Align and add size
+						union_offset = ((union_offset + effective_alignment - 1) & ~(effective_alignment - 1));
+						union_offset += member_size;
+					}
+					
+					size_t union_max_size = 0;
+					size_t union_alignment = 1;
 					
 					// Parse all members of the anonymous union
 					while (peek_token().has_value() && peek_token()->value() != "}") {
@@ -4317,22 +4369,102 @@ ParseResult Parser::parse_struct_declaration()
 							consume_token(); // consume ']'
 						}
 						
-						// Create member declaration
-						ASTNode anon_member_decl_node;
-						if (!anon_array_dimensions.empty()) {
-							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), *anon_member_name_token, std::move(anon_array_dimensions));
-						} else {
-							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), *anon_member_name_token);
+						// Calculate member size and alignment
+						auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(anon_member_type_spec);
+						size_t referenced_size_bits = anon_member_type_spec.size_in_bits();
+						
+						// For struct types, get size and alignment from the struct type info
+						if (anon_member_type_spec.type() == Type::Struct && !anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference()) {
+							const TypeInfo* member_type_info = nullptr;
+							for (const auto& ti : gTypeInfo) {
+								if (ti.type_index_ == anon_member_type_spec.type_index()) {
+									member_type_info = &ti;
+									break;
+								}
+							}
+							if (member_type_info && member_type_info->getStructInfo()) {
+								member_size = member_type_info->getStructInfo()->total_size;
+								referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
+								member_alignment = member_type_info->getStructInfo()->alignment;
+							}
 						}
 						
-						// Add to current struct
-						struct_ref.add_member(anon_member_decl_node, current_access, std::nullopt);
+						// For array members, multiply element size by array count and collect dimensions
+						bool is_array = false;
+						std::vector<size_t> array_dimensions;
+						if (!anon_array_dimensions.empty()) {
+							is_array = true;
+							for (const auto& dim_expr : anon_array_dimensions) {
+								ConstExpr::EvaluationContext ctx(gSymbolTable);
+								auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+								if (eval_result.success && eval_result.as_int() > 0) {
+									size_t dim_size = static_cast<size_t>(eval_result.as_int());
+									array_dimensions.push_back(dim_size);
+									member_size *= dim_size;
+									referenced_size_bits *= dim_size;
+								}
+							}
+						}
+						
+						// Track union size and alignment
+						union_max_size = std::max(union_max_size, member_size);
+						union_alignment = std::max(union_alignment, member_alignment);
+						
+						// Add member directly to parent struct's StructTypeInfo at the union offset
+						// This ensures all union members have the same offset (overlapping)
+						bool is_ref_member = anon_member_type_spec.is_reference();
+						bool is_rvalue_ref_member = anon_member_type_spec.is_rvalue_reference();
+						if (is_ref_member) {
+							referenced_size_bits = referenced_size_bits ? referenced_size_bits : (anon_member_type_spec.size_in_bits());
+						}
+						
+						StringHandle member_name_handle = StringTable::getOrInternStringHandle(anon_member_name_token->value());
+						
+						// Manually create and add the member with the fixed union offset
+						// Apply pack alignment if specified
+						size_t effective_alignment = member_alignment;
+						if (struct_info->pack_alignment > 0 && struct_info->pack_alignment < member_alignment) {
+							effective_alignment = struct_info->pack_alignment;
+						}
+						
+						// Calculate proper aligned offset for the union
+						size_t aligned_union_offset = ((union_offset + effective_alignment - 1) & ~(effective_alignment - 1));
+						
+						// Add member at the aligned union offset
+						struct_info->members.emplace_back(
+							member_name_handle,
+							anon_member_type_spec.type(),
+							anon_member_type_spec.type_index(),
+							aligned_union_offset,  // All union members at same offset
+							member_size,
+							effective_alignment,
+							AccessSpecifier::Public,  // Anonymous union members are always public
+							std::nullopt,  // No default initializer
+							is_ref_member,
+							is_rvalue_ref_member,
+							referenced_size_bits,
+							is_array,
+							array_dimensions
+						);
+						
+						// Update struct alignment to account for this member
+						struct_info->alignment = std::max(struct_info->alignment, effective_alignment);
 						
 						// Expect semicolon
 						if (!consume_punctuator(";")) {
 							return ParseResult::error("Expected ';' after anonymous union member", *current_token_);
 						}
 					}
+					
+					// Update parent struct's total_size to account for the union
+					// The union takes up space equal to its largest member
+					size_t effective_union_alignment = union_alignment;
+					if (struct_info->pack_alignment > 0 && struct_info->pack_alignment < union_alignment) {
+						effective_union_alignment = struct_info->pack_alignment;
+					}
+					size_t aligned_union_offset = ((union_offset + effective_union_alignment - 1) & ~(effective_union_alignment - 1));
+					struct_info->total_size = aligned_union_offset + union_max_size;
+					struct_info->alignment = std::max(struct_info->alignment, effective_union_alignment);
 					
 					// Expect closing brace
 					if (!consume_punctuator("}")) {
