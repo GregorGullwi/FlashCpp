@@ -30878,6 +30878,37 @@ if (struct_type_info.getStructInfo()) {
 					mem_func.access
 				);
 			}
+		} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+			// Member template functions should be copied to the instantiated class as-is
+			// They are themselves templates and will be instantiated when called
+			const TemplateFunctionDeclarationNode& template_func = 
+				mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
+			
+			FLASH_LOG(Templates, Debug, "Copying member template function to instantiated class");
+			
+			// Add the member template function to the instantiated struct
+			instantiated_struct_ref.add_member_function(
+				mem_func.function_declaration,
+				mem_func.access
+			);
+			
+			// Also register the member template function in the global template registry
+			// with the instantiated class name
+			const FunctionDeclarationNode& func_decl = 
+				template_func.function_declaration().as<FunctionDeclarationNode>();
+			const DeclarationNode& decl_node = func_decl.decl_node();
+			
+			// Register with qualified name (InstantiatedClassName::functionName)
+			StringBuilder qualified_name_builder;
+			qualified_name_builder.append(StringTable::getStringView(instantiated_name))
+			                     .append("::")
+			                     .append(decl_node.identifier_token().value());
+			std::string_view qualified_name = qualified_name_builder.commit();
+			
+			gTemplateRegistry.registerTemplate(qualified_name, mem_func.function_declaration);
+			
+			// Also register with simple name for unqualified lookups
+			gTemplateRegistry.registerTemplate(decl_node.identifier_token().value(), mem_func.function_declaration);
 		} else {
 			FLASH_LOG(Templates, Error, "Unknown member function type in template instantiation: ", 
 			          mem_func.function_declaration.type_name());
