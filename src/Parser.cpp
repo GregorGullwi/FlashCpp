@@ -19350,6 +19350,84 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 	return nullptr;
 }
 
+// Helper: Look up a template function including inherited ones from base classes
+const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struct_name, std::string_view template_name, int depth) {
+	// Prevent infinite recursion with a reasonable depth limit
+	constexpr int kMaxInheritanceDepth = 100;
+	if (depth > kMaxInheritanceDepth) {
+		FLASH_LOG_FORMAT(Templates, Warning, "lookup_inherited_template: max depth exceeded for '{}::{}'", 
+		                 StringTable::getStringView(struct_name), template_name);
+		return nullptr;
+	}
+	
+	FLASH_LOG_FORMAT(Templates, Debug, "lookup_inherited_template: looking for '{}::{}' ", 
+	                 StringTable::getStringView(struct_name), template_name);
+	
+	// First try direct lookup with qualified name (ClassName::functionName)
+	StringBuilder qualified_name_builder;
+	qualified_name_builder.append(StringTable::getStringView(struct_name))
+	                     .append("::")
+	                     .append(template_name);
+	std::string_view qualified_name = qualified_name_builder.commit();
+	
+	const std::vector<ASTNode>* direct_templates = gTemplateRegistry.lookupAllTemplates(qualified_name);
+	if (direct_templates != nullptr && !direct_templates->empty()) {
+		FLASH_LOG_FORMAT(Templates, Debug, "Found direct template function '{}'", qualified_name);
+		return direct_templates;
+	}
+	
+	// Not found directly, look up the struct and search its base classes
+	auto struct_it = gTypesByName.find(struct_name);
+	if (struct_it == gTypesByName.end()) {
+		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' not found in gTypesByName", StringTable::getStringView(struct_name));
+		return nullptr;
+	}
+	
+	const TypeInfo* struct_type_info = struct_it->second;
+	
+	// If this is a type alias (no struct_info_), resolve the underlying type
+	if (!struct_type_info->struct_info_) {
+		// This might be a type alias - try to find the actual struct type
+		// Type aliases have a type_index that points to the underlying type
+		if (struct_type_info->type_index_ < gTypeInfo.size() && 
+		    struct_type_info->type_index_ != static_cast<TypeIndex>(struct_it->second - &gTypeInfo[0])) {
+			// The type_index points to a different type - follow the alias
+			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_];
+			if (underlying_type.struct_info_) {
+				StringHandle underlying_name = underlying_type.name();
+				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias", 
+				                 StringTable::getStringView(struct_name), StringTable::getStringView(underlying_name));
+				return lookup_inherited_template(underlying_name, template_name, depth + 1);
+			}
+		}
+		FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has no struct_info_ and couldn't resolve alias", StringTable::getStringView(struct_name));
+		return nullptr;
+	}
+	
+	// Search base classes recursively
+	const StructTypeInfo* struct_info = struct_type_info->struct_info_.get();
+	FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has {} base classes", StringTable::getStringView(struct_name), struct_info->base_classes.size());
+	for (const auto& base_class : struct_info->base_classes) {
+		// Skip deferred base classes (they haven't been resolved yet)
+		if (base_class.is_deferred) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Skipping deferred base class '{}'", base_class.name);
+			continue;
+		}
+		
+		FLASH_LOG_FORMAT(Templates, Debug, "Checking base class '{}'", base_class.name);
+		// Recursively look up in base class - convert base_class.name to StringHandle for performance
+		StringHandle base_name_handle = StringTable::getOrInternStringHandle(base_class.name);
+		const std::vector<ASTNode>* base_result = lookup_inherited_template(base_name_handle, template_name, depth + 1);
+		if (base_result != nullptr && !base_result->empty()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Found inherited template function '{}::{}' via base class '{}'",
+			                 StringTable::getStringView(struct_name), template_name, base_class.name);
+			return base_result;
+		}
+	}
+	
+	return nullptr;
+}
+
 // Helper: Validate and add a base class (consolidates lookup, validation, and registration)
 ParseResult Parser::validate_and_add_base_class(
 	std::string_view base_class_name,
@@ -25785,6 +25863,23 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				recursion_depth, template_name, qualified_name_view);
 			
 			all_templates = gTemplateRegistry.lookupAllTemplates(qualified_name_view);
+		}
+	}
+	
+	// If still not found, check if we're inside a struct and look for inherited template functions
+	if ((!all_templates || all_templates->empty()) && !struct_parsing_context_stack_.empty()) {
+		// Get the current struct context
+		const auto& current_struct_context = struct_parsing_context_stack_.back();
+		StringHandle current_struct_name = StringTable::getOrInternStringHandle(current_struct_context.struct_name);
+		
+		FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Template '{}' not found, checking inherited templates from struct '{}'",
+			recursion_depth, template_name, current_struct_context.struct_name);
+		
+		all_templates = lookup_inherited_template(current_struct_name, template_name);
+		
+		if (all_templates && !all_templates->empty()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Found {} inherited template overload(s) for '{}'",
+				recursion_depth, all_templates->size(), template_name);
 		}
 	}
 	

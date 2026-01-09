@@ -753,6 +753,19 @@ public:  // Public methods for template instantiation
             );
         }
 
+        // Helper: Look up a template function including inherited ones from base classes
+        // Returns the vector of all template overloads if found, nullptr otherwise
+        // Uses depth limit to prevent infinite recursion in malformed input
+        const std::vector<ASTNode>* lookup_inherited_template(StringHandle struct_name, std::string_view template_name, int depth = 0);
+        // Convenience overload for string_view parameters
+        const std::vector<ASTNode>* lookup_inherited_template(std::string_view struct_name, std::string_view template_name, int depth = 0) {
+            return lookup_inherited_template(
+                StringTable::getOrInternStringHandle(struct_name),
+                template_name,
+                depth
+            );
+        }
+
         // Substitute template parameter in a type specification
         // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
         std::pair<Type, TypeIndex> substitute_template_parameter(
