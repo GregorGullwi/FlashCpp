@@ -4403,7 +4403,30 @@ ParseResult Parser::parse_struct_declaration()
 						return ParseResult::error("Expected '}' after anonymous union members", *peek_token());
 					}
 					
-					// Expect semicolon after anonymous union
+					// Check if this is a named anonymous struct/union: struct { ... } member_name;
+					// vs true anonymous struct/union: struct { ... };
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+						// This is a named anonymous struct/union (e.g., struct { int x; } point;)
+						// Treat it as a normal member declaration
+						
+						// Note: For now, we handle this as a regular member with an anonymous struct/union type.
+						// A better approach would be to create an actual anonymous type and a member of that type,
+						// but that requires more extensive changes to the type system.
+						
+						// For now, restore position and let it be handled by the general member parsing logic
+						restore_token_position(saved_pos);
+						
+						// We need to parse this as: keyword { members } identifier;
+						// But the general parsing logic doesn't handle inline struct definitions yet.
+						// So for now, report an error indicating this feature is not yet supported.
+						return ParseResult::error(
+							"Named anonymous struct/union (e.g., 'struct { ... } member;') is not yet supported. "
+							"Use a named struct declaration instead: 'struct TypeName { ... }; TypeName member;'",
+							*peek_token()
+						);
+					}
+					
+					// True anonymous struct/union - expect semicolon
 					if (!consume_punctuator(";")) {
 						return ParseResult::error("Expected ';' after anonymous union", *current_token_);
 					}
