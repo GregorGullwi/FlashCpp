@@ -335,6 +335,11 @@ private:
         };
         std::vector<StructParsingContext> struct_parsing_context_stack_;
 
+        // Store parsed explicit template arguments for cross-function access
+        // This allows template arguments parsed in one function (e.g., parse_primary_expression)
+        // to be accessible in another function (e.g., parse_postfix_expression) for template instantiation
+        std::optional<std::vector<TemplateTypeArg>> pending_explicit_template_args_;
+
         // Handle-based save/restore to avoid cursor position collisions
         // Each save gets a unique handle from a static incrementing counter
         using SaveHandle = size_t;

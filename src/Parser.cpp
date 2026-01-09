@@ -16346,6 +16346,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					auto explicit_template_args = parse_explicit_template_arguments();
 					
 					if (explicit_template_args.has_value()) {
+						// Store parsed template args in member variable for cross-function access
+						pending_explicit_template_args_ = explicit_template_args;
+						
 						// Successfully parsed template arguments
 						// Now check for :: to handle Template<T>::member syntax
 						if (peek_token().has_value() && peek_token()->value() == "::") {
@@ -17214,12 +17217,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							
 							// If we successfully extracted all argument types, perform overload resolution
 							if (arg_types.size() == args.size()) {
-								// If explicit template arguments were provided, use them directly
+								// Check for explicit template arguments: either from local variable or pending member variable
+								std::optional<std::vector<TemplateTypeArg>> effective_template_args;
 								if (explicit_template_args.has_value()) {
+									effective_template_args = explicit_template_args;
+								} else if (pending_explicit_template_args_.has_value()) {
+									effective_template_args = pending_explicit_template_args_;
+									// Clear the pending args after using them
+									pending_explicit_template_args_.reset();
+								}
+								
+								// If explicit template arguments were provided, use them directly
+								if (effective_template_args.has_value()) {
 									// Check if any template arguments are dependent (contain template parameters)
 									// In that case, we cannot instantiate the template now - it will be done at instantiation time
 									bool has_dependent_template_args = false;
-									for (const auto& targ : *explicit_template_args) {
+									for (const auto& targ : *effective_template_args) {
 										if (targ.is_dependent) {
 											has_dependent_template_args = true;
 											break;
@@ -17229,7 +17242,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// Skip template instantiation in extern "C" contexts - C has no templates
 									std::optional<ASTNode> instantiated_func;
 									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
-										instantiated_func = try_instantiate_template_explicit(idenfifier_token.value(), *explicit_template_args);
+										instantiated_func = try_instantiate_template_explicit(idenfifier_token.value(), *effective_template_args);
 									}
 									if (instantiated_func.has_value()) {
 										// Successfully instantiated template
