@@ -16347,7 +16347,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					
 					if (explicit_template_args.has_value()) {
 						// Store parsed template args in member variable for cross-function access
-						pending_explicit_template_args_ = explicit_template_args;
+						// ONLY if the next token is '(' (function call) or '::' (qualified name that might lead to function call)
+						// For other cases (brace init, etc.), the args will be consumed locally
+						if (peek_token().has_value() && (peek_token()->value() == "(" || peek_token()->value() == "::")) {
+							pending_explicit_template_args_ = explicit_template_args;
+						}
 						
 						// Successfully parsed template arguments
 						// Now check for :: to handle Template<T>::member syntax
@@ -16471,6 +16475,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
 							const auto& qualified_node = qualified_node_ast.as<QualifiedIdentifierNode>();
 							result = emplace_node<ExpressionNode>(qualified_node);
+							// Clear pending template args since they were used for this qualified identifier
+							pending_explicit_template_args_.reset();
 							return ParseResult::success(*result);
 						}
 						
