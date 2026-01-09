@@ -14502,10 +14502,14 @@ private:
 			current = &inner.array_expr().as<ExpressionNode>();
 		}
 		
+		FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Collected {} indices", indices_reversed.size());
+		
 		// The base should be a member access (obj.member)
 		if (std::holds_alternative<MemberAccessNode>(*current)) {
 			const MemberAccessNode& base_member = std::get<MemberAccessNode>(*current);
 			result.member_name = base_member.member_name();
+			FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found MemberAccessNode, member_name={}", 
+				std::string(result.member_name));
 			
 			// Get the object
 			if (base_member.object().is<ExpressionNode>()) {
@@ -14513,20 +14517,46 @@ private:
 				if (std::holds_alternative<IdentifierNode>(obj_expr)) {
 					const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
 					result.object_name = object_ident.name();
+					FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: object_name={}", std::string(result.object_name));
 					
 					// Look up the object to get struct type
 					std::optional<ASTNode> symbol = symbol_table.lookup(result.object_name);
-					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-						const auto& decl_node = symbol->as<DeclarationNode>();
-						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
+					FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: symbol.has_value()={}", symbol.has_value());
+					if (symbol.has_value()) {
+						FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: symbol->is<DeclarationNode>()={}", symbol->is<DeclarationNode>());
+						FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: symbol->is<VariableDeclarationNode>()={}", symbol->is<VariableDeclarationNode>());
+					}
+					// Try both DeclarationNode and VariableDeclarationNode
+					const DeclarationNode* decl_node = nullptr;
+					if (symbol.has_value()) {
+						if (symbol->is<DeclarationNode>()) {
+							decl_node = &symbol->as<DeclarationNode>();
+						} else if (symbol->is<VariableDeclarationNode>()) {
+							decl_node = &symbol->as<VariableDeclarationNode>().declaration();
+						}
+					}
+					
+					if (decl_node) {
+						const auto& type_node = decl_node->type_node().as<TypeSpecifierNode>();
+						
+						FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found decl, is_struct={}, type_index={}", 
+							is_struct_type(type_node.type()), type_node.type_index());
 						
 						if (is_struct_type(type_node.type()) && type_node.type_index() < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
 							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+								FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Struct has {} members", struct_info->members.size());
+								
 								const StructMember* member = struct_info->findMemberRecursive(
 									StringTable::getOrInternStringHandle(std::string(result.member_name)));
+								
+								FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: findMemberRecursive returned {}", (member != nullptr));
+								
 								if (member) {
 									result.member_info = member;
+									
+									FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: member->is_array={}, array_dimensions.size()={}", 
+										member->is_array, member->array_dimensions.size());
 									
 									// Reverse the indices so they're in order from outermost to innermost
 									result.indices.reserve(indices_reversed.size());
@@ -14539,6 +14569,10 @@ private:
 									                  !member->array_dimensions.empty() &&
 									                  (member->array_dimensions.size() == result.indices.size()) &&
 									                  (result.indices.size() > 1);
+									
+									FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: is_valid={} (is_array={}, dim_size={}, indices_size={}, indices>1={})",
+										result.is_valid, member->is_array, member->array_dimensions.size(), 
+										result.indices.size(), (result.indices.size() > 1));
 								}
 							}
 						}
