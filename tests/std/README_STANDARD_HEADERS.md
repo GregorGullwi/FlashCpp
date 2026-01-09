@@ -160,6 +160,59 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
+## Latest Investigation (January 9, 2026 - Named Anonymous Unions/Structs)
+
+### Improved Error Reporting for Named Anonymous Struct/Union Pattern
+
+**Issue Identified:** Multiple standard library headers (`<type_traits>`, `<utility>`, `<cstdio>`) use the named anonymous struct/union pattern:
+```cpp
+struct Container {
+    union {
+        int i;
+        float f;
+    } data;  // ← Named anonymous union member
+};
+```
+
+**Current Status:**
+- ❌ This pattern is **not supported** (confirmed known limitation)
+- ✅ **Improved**: Better error message now explains the issue and suggests workarounds
+- **Distinction**: This is different from the recently-added support for "named unions with member names" (`union Data { ... } data;`)
+  - ✅ `union Data { int i; } data;` - **WORKS** (named union type with member name) - Added in commit f0e5a18
+  - ❌ `union { int i; } data;` - **NOT SUPPORTED** (anonymous union type with member name)
+
+**Blockers:**
+- `/usr/include/c++/14/type_traits:2162` - Uses `struct __attribute__((__aligned__)) { } __align;`
+- `/usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h:20` - Uses `union { ... } __value;`
+
+**Implementation Requirements:**
+This feature would require:
+1. Creating an implicit anonymous struct/union type during parsing
+2. Creating a member of that anonymous type
+3. Handling member access chains (e.g., `container.data.field`)
+4. Potentially modifying the type system to support inline anonymous type definitions
+
+**Test Cases Created:**
+- `tests/test_named_anonymous_struct_ret42.cpp` - Documents the unsupported pattern for structs
+- `tests/test_named_anonymous_union_ret42.cpp` - Documents the unsupported pattern for unions
+
+**Workarounds:**
+```cpp
+// Option 1: Use a named type
+union Data { int i; float f; };
+struct Container {
+    Data data;  // Works!
+};
+
+// Option 2: Use true anonymous union (flatten members)
+struct Container {
+    union {
+        int i;
+        float f;
+    };  // No member name - members accessible as container.i, container.f
+};
+```
+
 ## Latest Investigation (January 8, 2026 - Evening - Part 3)
 
 ### Additional Union Testing and Named Union Investigation

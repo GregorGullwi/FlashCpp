@@ -4,6 +4,22 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 9, 2026 - Named Anonymous Unions/Structs - Error Reporting Improvement)**:
+- ✅ **Improved error reporting for named anonymous struct/union pattern**
+  - **Pattern**: `struct { int x; } member_name;` or `union { int i; } data;`
+  - **Status**: Still not supported, but now provides clear error message with workarounds
+  - **Distinction clarified**: 
+    - ✅ `union Data { int i; } data;` - **SUPPORTED** (named union type, added in commit f0e5a18)
+    - ❌ `union { int i; } data;` - **NOT SUPPORTED** (anonymous union type with member name)
+  - **Impact**: Blocks multiple standard headers:
+    - `/usr/include/c++/14/type_traits:2162` - `struct __attribute__((__aligned__)) { } __align;`
+    - `/usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h:20` - `union { ... } __value;`
+  - **Test cases created**:
+    - `tests/test_named_anonymous_struct_ret42.cpp` - Documents pattern for structs ❌
+    - `tests/test_named_anonymous_union_ret42.cpp` - Documents pattern for unions ❌
+  - **Workaround**: Use named types or true anonymous unions (see README)
+  - **Implementation complexity**: High - requires inline anonymous type creation and member access chain handling
+
 **UPDATE (January 8, 2026 - Evening - Part 2: Anonymous Union Bug FIXED!)**:
 - ✅ **FIXED: Anonymous union member access now works!** 🎉
   - **Fix**: Modified Parser.cpp to properly flatten anonymous union members into parent struct
