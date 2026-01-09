@@ -4173,48 +4173,39 @@ ParseResult Parser::parse_struct_declaration()
 				auto union_or_struct_keyword = consume_token(); // consume 'struct', 'class', or 'union'
 				bool is_union_keyword = (union_or_struct_keyword->value() == "union");
 				
-				if (peek_token().has_value() && peek_token()->value() == "{") {
-					// Pattern 1: Anonymous union/struct or named anonymous union/struct as a member
-					consume_token(); // consume '{'
-					
-					// Save the position of the opening brace to potentially reparse
-					SaveHandle brace_start_pos = save_token_position();
-					
-					// Peek ahead to check if this is:
-					// - True anonymous union/struct: struct { ... };
-					// - Named anonymous union/struct: struct { ... } member_name;
-					// We need to scan to the closing brace and check what follows
-					int brace_depth = 1;
-					bool is_named_anonymous = false;
-					while (peek_token().has_value() && brace_depth > 0) {
-						if (peek_token()->value() == "{") {
-							brace_depth++;
-						} else if (peek_token()->value() == "}") {
-							brace_depth--;
-							if (brace_depth == 0) {
-								// Found the closing brace, check what follows
-								consume_token(); // consume '}'
-								if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-									is_named_anonymous = true;
-								}
-								break;
-							}
-						}
-						consume_token();
-					}
-					
-					// Restore position to parse the members
-					restore_token_position(brace_start_pos);
-					
-					if (is_named_anonymous) {
+			if (peek_token().has_value() && peek_token()->value() == "{") {
+				// Pattern 1: Anonymous union/struct or named anonymous union/struct as a member
+				
+				// Save the position before the opening brace
+				SaveHandle brace_start_pos = save_token_position();
+				
+				// Peek ahead to check if this is:
+				// - True anonymous union/struct: struct { ... };
+				// - Named anonymous union/struct: struct { ... } member_name;
+				// Skip to the closing brace and check what follows
+				skip_balanced_braces();
+				bool is_named_anonymous = false;
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+					is_named_anonymous = true;
+				}
+				
+				// Restore position to the opening brace to parse the members
+				restore_token_position(brace_start_pos);
+				
+				// Now consume the opening brace
+				consume_token(); // consume '{'
+				
+				if (is_named_anonymous) {
 						// Named anonymous struct/union: struct { int x; } member_name;
 						// Create an anonymous type and parse members into it
 						
 						// Generate a unique name for the anonymous struct/union type
 						static int anonymous_type_counter = 0;
-						std::string anon_type_name = "__anonymous_" + 
-							std::string(is_union_keyword ? "union_" : "struct_") + 
-							std::to_string(anonymous_type_counter++);
+						std::string_view anon_type_name = StringBuilder()
+							.append("__anonymous_")
+							.append(is_union_keyword ? "union_" : "struct_")
+							.append(static_cast<int64_t>(anonymous_type_counter++))
+							.commit();
 						StringHandle anon_type_name_handle = StringTable::getOrInternStringHandle(anon_type_name);
 						
 						// Create the anonymous struct/union type
@@ -4260,23 +4251,23 @@ ParseResult Parser::parse_struct_declaration()
 							// Calculate member size and alignment
 							auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
 							
-// Add member to the anonymous type
-StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name_token->value());
-anon_struct_info->members.push_back(StructMember{
-member_name_handle,
-member_type_spec.type(),
-member_type_spec.type_index(),
-0,  // offset will be calculated below
-member_size,
-member_alignment,
-AccessSpecifier::Public,
-std::nullopt,  // no default initializer
-false,  // is_reference
-false,  // is_rvalue_reference
-0,      // referenced_size_bits
-false,  // is_array
-{}      // array_dimensions
-});
+							// Add member to the anonymous type
+							StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name_token->value());
+							anon_struct_info->members.push_back(StructMember{
+								member_name_handle,
+								member_type_spec.type(),
+								member_type_spec.type_index(),
+								0,  // offset will be calculated below
+								member_size,
+								member_alignment,
+								AccessSpecifier::Public,
+								std::nullopt,  // no default initializer
+								false,  // is_reference
+								false,  // is_rvalue_reference
+								0,      // referenced_size_bits
+								false,  // is_array
+								{}      // array_dimensions
+							});
 							
 							// Expect semicolon
 							if (!consume_punctuator(";")) {
@@ -4368,7 +4359,6 @@ false,  // is_array
 					
 					// True anonymous union/struct: struct { ... };
 					// Store the union info for processing during layout phase
-					consume_token(); // consume '{'
 					
 					// Mark the position where this anonymous union appears in the member list
 					size_t union_marker_index = struct_ref.members().size();
