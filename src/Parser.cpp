@@ -4449,6 +4449,18 @@ ParseResult Parser::parse_struct_declaration()
 									gTypesByName.emplace(qualified_name, nested_type_it->second);
 								}
 							}
+							
+							// Handle any variable declarators parsed after the nested declaration
+							// e.g., "union Data { ... } data;" - the "data" member should be added
+							for (auto& var_node : pending_struct_variables_) {
+								// Extract the declaration node from the VariableDeclarationNode wrapper
+								auto& var_decl_node = var_node.as<VariableDeclarationNode>();
+								auto decl_node = var_decl_node.declaration_node();
+								
+								// Add as a member of the outer struct
+								struct_ref.add_member(decl_node, current_access, std::nullopt);
+							}
+							pending_struct_variables_.clear();
 						}
 
 						continue;  // Skip to next member
