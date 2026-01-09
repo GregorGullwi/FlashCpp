@@ -15487,7 +15487,8 @@ private:
 					}
 				}
 				
-				// If this is arrow access (->), the nested result is a pointer that needs dereferencing
+				// If this is arrow access (->), the nested result represents a pointer that needs 
+				// dereferencing for the final member access (e.g., obj.ptr_member->field)
 				if (is_arrow) {
 					is_pointer_dereference = true;
 				}
