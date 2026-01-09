@@ -160,6 +160,45 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
+## Latest Investigation (January 9, 2026 - Named Anonymous Unions/Structs)
+
+### ✅ IMPLEMENTED: Named Anonymous Struct/Union Pattern Support
+
+**Pattern Now Supported:** Multiple standard library headers (`<type_traits>`, `<utility>`, `<cstdio>`) use the named anonymous struct/union pattern:
+```cpp
+struct Container {
+    union {
+        int i;
+        float f;
+    } data;  // ← Named anonymous union member - NOW WORKS!
+};
+```
+
+**Current Status:**
+- ✅ This pattern is **NOW FULLY SUPPORTED** (implemented in commits f86fce8, 44d188b, 25ce897)
+- ✅ Creates implicit anonymous types during parsing
+- ✅ Handles member access chains (e.g., `container.data.field`)
+- **Distinction**: This is different from named union types with member names
+  - ✅ `union Data { int i; } data;` - **WORKS** (named union type with member name) - Added in commit f0e5a18
+  - ✅ `union { int i; } data;` - **NOW WORKS** (anonymous union type with member name) - Added in commits f86fce8-25ce897
+
+**Previously Blocking Headers - Now Unblocked:**
+- ✅ `/usr/include/c++/14/type_traits:2162` - `struct __attribute__((__aligned__)) { } __align;` - Parses successfully
+- ✅ `/usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h:20` - `union { ... } __value;` - Parses successfully
+
+**Implementation Details:**
+1. ✅ Creates implicit anonymous struct/union types with unique generated names
+2. ✅ Parses members directly into the anonymous type
+3. ✅ Calculates proper layout (unions: overlapping, structs: sequential)
+4. ✅ Supports multiple comma-separated declarators (e.g., `} a, b, c;`)
+5. ✅ Uses `skip_balanced_braces()` for efficient peek-ahead detection
+
+**Test Cases - All Passing:**
+- ✅ `tests/test_named_anonymous_struct_ret42.cpp` - Returns 42 correctly
+- ✅ `tests/test_named_anonymous_union_ret42.cpp` - Returns 42 correctly
+- ✅ `tests/test_nested_anonymous_union_ret15.cpp` - Returns 15 correctly
+- ✅ `tests/test_nested_union_ret0.cpp` - Returns 0 correctly
+
 ## Latest Investigation (January 8, 2026 - Evening - Part 3)
 
 ### Additional Union Testing and Named Union Investigation
