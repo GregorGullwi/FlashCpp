@@ -2090,16 +2090,16 @@ private:
 
 // Anonymous union member information - stored during parsing, processed during layout
 struct AnonymousUnionMemberInfo {
-	StringHandle member_name;
-	Type member_type;
-	TypeIndex type_index;
-	size_t member_size;
-	size_t member_alignment;
-	size_t referenced_size_bits;
-	bool is_reference;
-	bool is_rvalue_reference;
-	bool is_array;
-	std::vector<size_t> array_dimensions;
+	StringHandle member_name;            // Name of the union member
+	Type member_type;                    // Base type of the member
+	TypeIndex type_index;                // Type index for struct types
+	size_t member_size;                  // Size in bytes (including array size if applicable)
+	size_t member_alignment;             // Alignment requirement in bytes
+	size_t referenced_size_bits;         // Size in bits of referenced type (for references)
+	bool is_reference;                   // True if member is a reference
+	bool is_rvalue_reference;            // True if member is an rvalue reference
+	bool is_array;                       // True if member is an array
+	std::vector<size_t> array_dimensions; // Dimension sizes for multidimensional arrays (e.g., {3, 3} for int[3][3])
 	
 	AnonymousUnionMemberInfo(StringHandle name, Type type, TypeIndex tidx, size_t size, size_t align,
 	                         size_t ref_size_bits, bool is_ref, bool is_rvalue_ref, bool is_arr,
@@ -2113,7 +2113,7 @@ struct AnonymousUnionMemberInfo {
 struct AnonymousUnionInfo {
 	size_t member_index_in_ast;  // Index in members_ vector where this union appears
 	std::vector<AnonymousUnionMemberInfo> union_members;
-	bool is_union;  // true for union, false for struct (anonymous struct not yet supported)
+	bool is_union;  // true for union (anonymous struct would be false, but not yet implemented)
 	
 	AnonymousUnionInfo(size_t index, bool is_u) : member_index_in_ast(index), is_union(is_u) {}
 };
@@ -2323,10 +2323,13 @@ public:
 		anonymous_unions_.emplace_back(member_index, is_union);
 	}
 	
+	// Add a member to the most recently created anonymous union
+	// Must be called after add_anonymous_union_marker()
 	void add_anonymous_union_member(StringHandle member_name, Type member_type, TypeIndex type_index,
 	                                 size_t member_size, size_t member_alignment, size_t referenced_size_bits,
 	                                 bool is_reference, bool is_rvalue_reference, bool is_array,
 	                                 std::vector<size_t> array_dimensions) {
+		// Add to the last anonymous union that was created
 		if (!anonymous_unions_.empty()) {
 			anonymous_unions_.back().union_members.emplace_back(
 				member_name, member_type, type_index, member_size, member_alignment,
@@ -2334,6 +2337,8 @@ public:
 				std::move(array_dimensions)
 			);
 		}
+		// Note: If anonymous_unions_ is empty, this is a programming error in the parser
+		// The parser should always call add_anonymous_union_marker() before adding members
 	}
 	
 	const std::vector<AnonymousUnionInfo>& anonymous_unions() const {
