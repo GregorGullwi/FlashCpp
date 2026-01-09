@@ -12337,8 +12337,10 @@ private:
 			TempVar index_var = std::get<TempVar>(op.index.value);
 			int64_t index_var_offset = getStackOffsetFromTempVar(index_var);
 			
-			// Allocate a second register for the index
-			X64Register index_reg = allocateRegisterWithSpilling();
+			// Allocate a second register for the index, excluding base_reg to avoid conflicts
+			X64Register index_reg = allocateRegisterWithSpilling(base_reg);
+			FLASH_LOG_FORMAT(Codegen, Debug, "ArrayAccess TempVar: base_reg={}, index_reg={}, array_base_offset={}, index_var_offset={}",
+				static_cast<int>(base_reg), static_cast<int>(index_reg), array_base_offset, index_var_offset);
 
 			// Calculate index size in bytes from size_in_bits
 			int index_size_bytes = op.index.size_in_bits / 8;

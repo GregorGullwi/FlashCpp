@@ -14476,6 +14476,114 @@ private:
 		bool is_valid = false;
 	};
 
+	// Helper struct for multidimensional member array access  
+	struct MultiDimMemberArrayAccess {
+		std::string_view object_name;
+		std::string_view member_name;
+		std::vector<ASTNode> indices;  // Indices from outermost to innermost
+		const StructMember* member_info = nullptr;
+		bool is_valid = false;
+	};
+
+	// Helper function to collect all indices from a chain of ArraySubscriptNodes for member arrays
+	// For obj.arr[i][j][k], returns {object="obj", member="arr", indices=[i, j, k]}
+	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript) {
+		MultiDimMemberArrayAccess result;
+		std::vector<ASTNode> indices_reversed;
+		const ExpressionNode* current = &subscript.array_expr().as<ExpressionNode>();
+		
+		// Collect the outermost index first
+		indices_reversed.push_back(subscript.index_expr());
+		
+		// Walk down the chain of ArraySubscriptNodes
+		while (std::holds_alternative<ArraySubscriptNode>(*current)) {
+			const ArraySubscriptNode& inner = std::get<ArraySubscriptNode>(*current);
+			indices_reversed.push_back(inner.index_expr());
+			current = &inner.array_expr().as<ExpressionNode>();
+		}
+		
+		FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Collected {} indices", indices_reversed.size());
+		
+		// The base should be a member access (obj.member)
+		if (std::holds_alternative<MemberAccessNode>(*current)) {
+			const MemberAccessNode& base_member = std::get<MemberAccessNode>(*current);
+			result.member_name = base_member.member_name();
+			FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found MemberAccessNode, member_name={}", 
+				std::string(result.member_name));
+			
+			// Get the object
+			if (base_member.object().is<ExpressionNode>()) {
+				const ExpressionNode& obj_expr = base_member.object().as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(obj_expr)) {
+					const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
+					result.object_name = object_ident.name();
+					FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: object_name={}", std::string(result.object_name));
+					
+					// Look up the object to get struct type
+					std::optional<ASTNode> symbol = symbol_table.lookup(result.object_name);
+					FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: symbol.has_value()={}", symbol.has_value());
+					if (symbol.has_value()) {
+						FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: symbol->is<DeclarationNode>()={}", symbol->is<DeclarationNode>());
+						FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: symbol->is<VariableDeclarationNode>()={}", symbol->is<VariableDeclarationNode>());
+					}
+					// Try both DeclarationNode and VariableDeclarationNode
+					const DeclarationNode* decl_node = nullptr;
+					if (symbol.has_value()) {
+						if (symbol->is<DeclarationNode>()) {
+							decl_node = &symbol->as<DeclarationNode>();
+						} else if (symbol->is<VariableDeclarationNode>()) {
+							decl_node = &symbol->as<VariableDeclarationNode>().declaration();
+						}
+					}
+					
+					if (decl_node) {
+						const auto& type_node = decl_node->type_node().as<TypeSpecifierNode>();
+						
+						FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found decl, is_struct={}, type_index={}", 
+							is_struct_type(type_node.type()), type_node.type_index());
+						
+						if (is_struct_type(type_node.type()) && type_node.type_index() < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
+							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+								FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Struct has {} members", struct_info->members.size());
+								
+								const StructMember* member = struct_info->findMemberRecursive(
+									StringTable::getOrInternStringHandle(std::string(result.member_name)));
+								
+								FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: findMemberRecursive returned {}", (member != nullptr));
+								
+								if (member) {
+									result.member_info = member;
+									
+									FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: member->is_array={}, array_dimensions.size()={}", 
+										member->is_array, member->array_dimensions.size());
+									
+									// Reverse the indices so they're in order from outermost to innermost
+									result.indices.reserve(indices_reversed.size());
+									for (auto it = indices_reversed.rbegin(); it != indices_reversed.rend(); ++it) {
+										result.indices.push_back(*it);
+									}
+									
+									// Valid if member is a multidimensional array with matching indices
+									result.is_valid = member->is_array && 
+									                  !member->array_dimensions.empty() &&
+									                  (member->array_dimensions.size() == result.indices.size()) &&
+									                  (result.indices.size() > 1);
+									
+									FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: is_valid={} (is_array={}, dim_size={}, indices_size={}, indices>1={})",
+										result.is_valid, member->is_array, member->array_dimensions.size(), 
+										result.indices.size(), (result.indices.size() > 1));
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		return result;
+	}
+
 	// Helper function to collect all indices from a chain of ArraySubscriptNodes
 	// For arr[i][j][k], returns {base="arr", indices=[i, j, k]}
 	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript) {
@@ -14534,7 +14642,113 @@ private:
 		// Check for multidimensional array access pattern (arr[i][j])
 		// If the array expression is itself an ArraySubscriptNode, we have a multidimensional access
 		const ExpressionNode& array_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
+		FLASH_LOG_FORMAT(Codegen, Debug, "generateArraySubscriptIr: array_expr is ArraySubscriptNode = {}",
+			std::holds_alternative<ArraySubscriptNode>(array_expr));
 		if (std::holds_alternative<ArraySubscriptNode>(array_expr)) {
+			// First check if this is a multidimensional member array access (obj.arr[i][j])
+			auto member_multi_dim = collectMultiDimMemberArrayIndices(arraySubscriptNode);
+			FLASH_LOG_FORMAT(Codegen, Debug, "Member multidim check: is_valid={}", member_multi_dim.is_valid);
+			
+			if (member_multi_dim.is_valid && member_multi_dim.member_info) {
+				FLASH_LOG(Codegen, Debug, "Flattening multidimensional member array access!");
+				// We have a valid multidimensional member array access
+				// For obj.arr[M][N] accessed as obj.arr[i][j], compute flat_index = i*N + j
+				
+				const StructMember* member = member_multi_dim.member_info;
+				Type element_type = member->type;
+				int base_element_size = get_type_size_bits(element_type);
+				
+				// Get all dimension sizes
+				const std::vector<size_t>& dim_sizes = member->array_dimensions;
+				
+				// Compute strides: stride[k] = product of dimensions after k
+				std::vector<size_t> strides(dim_sizes.size());
+				strides.back() = 1;
+				for (int k = static_cast<int>(dim_sizes.size()) - 2; k >= 0; --k) {
+					strides[k] = strides[k + 1] * dim_sizes[k + 1];
+				}
+				
+				// Generate code to compute flat index
+				auto idx0_operands = visitExpressionNode(member_multi_dim.indices[0].as<ExpressionNode>());
+				TempVar flat_index = var_counter.next();
+				
+				if (strides[0] == 1) {
+					BinaryOp add_op;
+					add_op.lhs = toTypedValue(idx0_operands);
+					add_op.rhs = TypedValue{Type::Int, 32, 0ULL};
+					add_op.result = IrValue{flat_index};
+					ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
+				} else {
+					BinaryOp mul_op;
+					mul_op.lhs = toTypedValue(idx0_operands);
+					mul_op.rhs = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(strides[0])};
+					mul_op.result = IrValue{flat_index};
+					ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
+				}
+				
+				// Add remaining indices
+				for (size_t k = 1; k < member_multi_dim.indices.size(); ++k) {
+					auto idx_operands = visitExpressionNode(member_multi_dim.indices[k].as<ExpressionNode>());
+					
+					if (strides[k] == 1) {
+						TempVar new_flat = var_counter.next();
+						BinaryOp add_op;
+						add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, flat_index};
+						add_op.rhs = toTypedValue(idx_operands);
+						add_op.result = IrValue{new_flat};
+						ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
+						flat_index = new_flat;
+					} else {
+						TempVar temp_prod = var_counter.next();
+						BinaryOp mul_op;
+						mul_op.lhs = toTypedValue(idx_operands);
+						mul_op.rhs = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(strides[k])};
+						mul_op.result = IrValue{temp_prod};
+						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
+						
+						TempVar new_flat = var_counter.next();
+						BinaryOp add_op;
+						add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, flat_index};
+						add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, temp_prod};
+						add_op.result = IrValue{new_flat};
+						ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
+						flat_index = new_flat;
+					}
+				}
+				
+				// Generate single array access with flat index
+				TempVar result_var = var_counter.next();
+				StringHandle qualified_name = StringTable::getOrInternStringHandle(
+					StringBuilder().append(member_multi_dim.object_name).append(".").append(member_multi_dim.member_name));
+				
+				LValueInfo lvalue_info(
+					LValueInfo::Kind::ArrayElement,
+					qualified_name,
+					static_cast<int64_t>(member->offset)
+				);
+				lvalue_info.array_index = IrValue{flat_index};
+				lvalue_info.is_pointer_to_array = false;
+				setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+				
+				ArrayAccessOp payload;
+				payload.result = result_var;
+				payload.element_type = element_type;
+				payload.element_size_in_bits = base_element_size;
+				payload.array = qualified_name;
+				payload.member_offset = static_cast<int64_t>(member->offset);
+				payload.is_pointer_to_array = false;
+				payload.index.type = Type::UnsignedLongLong;
+				payload.index.size_in_bits = 64;
+				payload.index.value = flat_index;
+				
+				if (context == ExpressionContext::LValueAddress) {
+					return { element_type, base_element_size, result_var, 0ULL };
+				}
+				
+				ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
+				return { element_type, base_element_size, result_var, 0ULL };
+			}
+			
 			// This could be a multidimensional array access
 			auto multi_dim = collectMultiDimArrayIndices(arraySubscriptNode);
 			

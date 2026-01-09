@@ -20,6 +20,9 @@
 
 // Break into the debugger only on Windows
 #if defined(_WIN32) || defined(_WIN64)
+    #ifndef NOMINMAX
+        #define NOMINMAX  // Prevent Windows.h from defining min/max macros
+    #endif
     #include <windows.h>
     #define DEBUG_BREAK() if (IsDebuggerPresent()) { DebugBreak(); }
 #else
@@ -4172,10 +4175,14 @@ ParseResult Parser::parse_struct_declaration()
 				
 				if (peek_token().has_value() && peek_token()->value() == "{") {
 					// Pattern 1: Anonymous union/struct as a member
-					// Parse and flatten members
+					// Store the union info for processing during layout phase
 					consume_token(); // consume '{'
 					
-					// Parse all members of the anonymous union
+					// Mark the position where this anonymous union appears in the member list
+					size_t union_marker_index = struct_ref.members().size();
+					struct_ref.add_anonymous_union_marker(union_marker_index, is_union_keyword);
+					
+					// Parse all members of the anonymous union and store their info
 					while (peek_token().has_value() && peek_token()->value() != "}") {
 						// Check for nested anonymous union
 						if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
@@ -4317,16 +4324,73 @@ ParseResult Parser::parse_struct_declaration()
 							consume_token(); // consume ']'
 						}
 						
-						// Create member declaration
+						// Calculate member size and alignment
+						auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(anon_member_type_spec);
+						size_t referenced_size_bits = anon_member_type_spec.size_in_bits();
+						
+						// For struct types, get size and alignment from the struct type info
+						if (anon_member_type_spec.type() == Type::Struct && !anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference()) {
+							const TypeInfo* member_type_info = nullptr;
+							for (const auto& ti : gTypeInfo) {
+								if (ti.type_index_ == anon_member_type_spec.type_index()) {
+									member_type_info = &ti;
+									break;
+								}
+							}
+							if (member_type_info && member_type_info->getStructInfo()) {
+								member_size = member_type_info->getStructInfo()->total_size;
+								referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
+								member_alignment = member_type_info->getStructInfo()->alignment;
+							}
+						}
+						
+						// For array members, multiply element size by array count and collect dimensions
+						bool is_array = false;
+						std::vector<size_t> array_dimensions;
+						if (!anon_array_dimensions.empty()) {
+							is_array = true;
+							for (const auto& dim_expr : anon_array_dimensions) {
+								ConstExpr::EvaluationContext ctx(gSymbolTable);
+								auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+								if (eval_result.success && eval_result.as_int() > 0) {
+									size_t dim_size = static_cast<size_t>(eval_result.as_int());
+									array_dimensions.push_back(dim_size);
+									member_size *= dim_size;
+									referenced_size_bits *= dim_size;
+								}
+							}
+						}
+						
+						// Store the anonymous union member info for later processing during layout
+						bool is_ref_member = anon_member_type_spec.is_reference();
+						bool is_rvalue_ref_member = anon_member_type_spec.is_rvalue_reference();
+						if (is_ref_member) {
+							referenced_size_bits = referenced_size_bits ? referenced_size_bits : (anon_member_type_spec.size_in_bits());
+						}
+						
+						StringHandle member_name_handle = StringTable::getOrInternStringHandle(anon_member_name_token->value());
+						struct_ref.add_anonymous_union_member(
+							member_name_handle,
+							anon_member_type_spec.type(),
+							anon_member_type_spec.type_index(),
+							member_size,
+							member_alignment,
+							referenced_size_bits,
+							is_ref_member,
+							is_rvalue_ref_member,
+							is_array,
+							std::move(array_dimensions)
+						);
+						
+						// Add DeclarationNode to struct_ref for symbol table and AST purposes
+						// During layout phase, these will be skipped (already processed as union members)
 						ASTNode anon_member_decl_node;
 						if (!anon_array_dimensions.empty()) {
 							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), *anon_member_name_token, std::move(anon_array_dimensions));
 						} else {
 							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), *anon_member_name_token);
 						}
-						
-						// Add to current struct
-						struct_ref.add_member(anon_member_decl_node, current_access, std::nullopt);
+						struct_ref.add_member(anon_member_decl_node, AccessSpecifier::Public, std::nullopt);
 						
 						// Expect semicolon
 						if (!consume_punctuator(";")) {
@@ -5188,7 +5252,84 @@ ParseResult Parser::parse_struct_declaration()
 	// struct_type_info was already registered early (before parsing members)
 	// struct_info was created early (before parsing base classes and members)
 	// Now process data members and calculate layout
+	
+	// Build a set of member indices that are part of anonymous unions (to skip during normal processing)
+	std::unordered_set<size_t> anonymous_union_member_indices;
+	for (const auto& anon_union : struct_ref.anonymous_unions()) {
+		// Mark all member indices that are union members (they're already in the anon_union.union_members list)
+		for (size_t i = 0; i < anon_union.union_members.size(); ++i) {
+			anonymous_union_member_indices.insert(anon_union.member_index_in_ast + i);
+		}
+	}
+	
+	size_t member_index = 0;
+	size_t next_union_idx = 0;
+	const std::vector<AnonymousUnionInfo>& anon_unions = struct_ref.anonymous_unions();
+	
 	for (const auto& member_decl : struct_ref.members()) {
+		// Check if we should process an anonymous union before this member
+		while (next_union_idx < anon_unions.size() && anon_unions[next_union_idx].member_index_in_ast == member_index) {
+			const AnonymousUnionInfo& union_info = anon_unions[next_union_idx];
+			
+			// Process all anonymous union members at the same offset
+			size_t union_start_offset = struct_info->total_size;
+			size_t union_max_size = 0;
+			size_t union_max_alignment = 1;
+			
+			// First pass: determine union alignment and size
+			for (const auto& union_member : union_info.union_members) {
+				size_t effective_alignment = union_member.member_alignment;
+				if (struct_info->pack_alignment > 0 && struct_info->pack_alignment < union_member.member_alignment) {
+					effective_alignment = struct_info->pack_alignment;
+				}
+				union_max_size = std::max(union_max_size, union_member.member_size);
+				union_max_alignment = std::max(union_max_alignment, effective_alignment);
+			}
+			
+			// Align the union start offset
+			size_t aligned_union_start = ((union_start_offset + union_max_alignment - 1) & ~(union_max_alignment - 1));
+			
+			// Second pass: add all union members at the same aligned offset
+			for (const auto& union_member : union_info.union_members) {
+				size_t effective_alignment = union_member.member_alignment;
+				if (struct_info->pack_alignment > 0 && struct_info->pack_alignment < union_member.member_alignment) {
+					effective_alignment = struct_info->pack_alignment;
+				}
+				
+				// Manually add member to struct_info at the aligned offset
+				struct_info->members.emplace_back(
+					union_member.member_name,
+					union_member.member_type,
+					union_member.type_index,
+					aligned_union_start,  // Same offset for all union members
+					union_member.member_size,
+					effective_alignment,
+					AccessSpecifier::Public,  // Anonymous union members are always public
+					std::nullopt,  // No default initializer
+					union_member.is_reference,
+					union_member.is_rvalue_reference,
+					union_member.referenced_size_bits,
+					union_member.is_array,
+					union_member.array_dimensions
+				);
+				
+				// Update struct alignment
+				struct_info->alignment = std::max(struct_info->alignment, effective_alignment);
+			}
+			
+			// Update total_size to account for the union (largest member)
+			struct_info->total_size = aligned_union_start + union_max_size;
+			
+			next_union_idx++;
+		}
+		
+		// Skip individual anonymous union member nodes (they're already processed above)
+		if (anonymous_union_member_indices.count(member_index) > 0) {
+			member_index++;
+			continue;
+		}
+		
+		// Process regular (non-union) member
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
@@ -5215,16 +5356,22 @@ ParseResult Parser::parse_struct_declaration()
 			}
 		}
 
-		// For array members, multiply element size by array count
-		if (decl.is_array() && decl.array_size().has_value()) {
-			// Evaluate the array size expression to get the count
-			ConstExpr::EvaluationContext ctx(gSymbolTable);
-			auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
-			
-			if (eval_result.success) {
-				size_t array_count = static_cast<size_t>(eval_result.as_int());
-				member_size *= array_count;
-				referenced_size_bits *= array_count;
+		// For array members, multiply element size by array count and collect dimensions
+		bool is_array = false;
+		std::vector<size_t> array_dimensions;
+		if (decl.is_array()) {
+			is_array = true;
+			// Collect all array dimensions
+			const auto& dims = decl.array_dimensions();
+			for (const auto& dim_expr : dims) {
+				ConstExpr::EvaluationContext ctx(gSymbolTable);
+				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+				if (eval_result.success && eval_result.as_int() > 0) {
+					size_t dim_size = static_cast<size_t>(eval_result.as_int());
+					array_dimensions.push_back(dim_size);
+					member_size *= dim_size;
+					referenced_size_bits *= dim_size;
+				}
 			}
 		}
 
@@ -5248,8 +5395,12 @@ ParseResult Parser::parse_struct_declaration()
 			member_decl.default_initializer,
 			is_ref_member,
 			is_rvalue_ref_member,
-			referenced_size_bits
+			referenced_size_bits,
+			is_array,
+			array_dimensions
 		);
+		
+		member_index++;
 	}
 
 	// Process member functions, constructors, and destructors
