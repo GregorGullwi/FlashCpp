@@ -5215,16 +5215,22 @@ ParseResult Parser::parse_struct_declaration()
 			}
 		}
 
-		// For array members, multiply element size by array count
-		if (decl.is_array() && decl.array_size().has_value()) {
-			// Evaluate the array size expression to get the count
-			ConstExpr::EvaluationContext ctx(gSymbolTable);
-			auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
-			
-			if (eval_result.success) {
-				size_t array_count = static_cast<size_t>(eval_result.as_int());
-				member_size *= array_count;
-				referenced_size_bits *= array_count;
+		// For array members, multiply element size by array count and collect dimensions
+		bool is_array = false;
+		std::vector<size_t> array_dimensions;
+		if (decl.is_array()) {
+			is_array = true;
+			// Collect all array dimensions
+			const auto& dims = decl.array_dimensions();
+			for (const auto& dim_expr : dims) {
+				ConstExpr::EvaluationContext ctx(gSymbolTable);
+				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+				if (eval_result.success && eval_result.as_int() > 0) {
+					size_t dim_size = static_cast<size_t>(eval_result.as_int());
+					array_dimensions.push_back(dim_size);
+					member_size *= dim_size;
+					referenced_size_bits *= dim_size;
+				}
 			}
 		}
 
@@ -5248,7 +5254,9 @@ ParseResult Parser::parse_struct_declaration()
 			member_decl.default_initializer,
 			is_ref_member,
 			is_rvalue_ref_member,
-			referenced_size_bits
+			referenced_size_bits,
+			is_array,
+			array_dimensions
 		);
 	}
 
