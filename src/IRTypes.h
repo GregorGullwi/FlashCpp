@@ -1053,7 +1053,6 @@ struct ArrayAccessOp {
 	TypedValue index;                                // Index value (type + value)
 	int64_t member_offset;                           // Offset in bytes for member arrays (0 for non-member)
 	bool is_pointer_to_array;                        // True if 'array' is a pointer (int* arr), false if actual array (int arr[])
-	bool result_is_array;                            // True if result is an array (intermediate subscript on multidim array)
 };
 
 // Array store (store value to array element)

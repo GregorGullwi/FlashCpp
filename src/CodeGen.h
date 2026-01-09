@@ -14531,163 +14531,11 @@ private:
 		// Generate IR for array[index] expression
 		// This computes the address: base_address + (index * element_size)
 
-		// Check for multidimensional array access pattern (arr[i][j] or obj.arr[i][j])
+		// Check for multidimensional array access pattern (arr[i][j])
 		// If the array expression is itself an ArraySubscriptNode, we have a multidimensional access
 		const ExpressionNode& array_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
 		if (std::holds_alternative<ArraySubscriptNode>(array_expr)) {
-			// Check if this is a member array access (obj.member[i][j])
-			// by walking down to find if the base is a MemberAccessNode
-			const ExpressionNode* base_expr = &array_expr;
-			while (std::holds_alternative<ArraySubscriptNode>(*base_expr)) {
-				base_expr = &std::get<ArraySubscriptNode>(*base_expr).array_expr().as<ExpressionNode>();
-			}
-			
-			// If the base is a member access, handle it specially
-			if (std::holds_alternative<MemberAccessNode>(*base_expr)) {
-				FLASH_LOG(Codegen, Debug, "Found multidimensional member array access - flattening");
-				const MemberAccessNode& base_member_access = std::get<MemberAccessNode>(*base_expr);
-				
-				// Collect all indices from the nested subscripts
-				std::vector<ASTNode> indices;
-				indices.push_back(arraySubscriptNode.index_expr());
-				const ExpressionNode* current = &array_expr;
-				while (std::holds_alternative<ArraySubscriptNode>(*current)) {
-					const ArraySubscriptNode& inner = std::get<ArraySubscriptNode>(*current);
-					indices.push_back(inner.index_expr());
-					current = &inner.array_expr().as<ExpressionNode>();
-				}
-				// Reverse to get indices in order (outermost first)
-				std::reverse(indices.begin(), indices.end());
-				
-				// Try to get the member information
-				if (base_member_access.object().is<ExpressionNode>()) {
-					const ExpressionNode& obj_expr = base_member_access.object().as<ExpressionNode>();
-					if (std::holds_alternative<IdentifierNode>(obj_expr)) {
-						const IdentifierNode& object_ident = std::get<IdentifierNode>(obj_expr);
-						std::string_view object_name = object_ident.name();
-						std::string_view member_name = base_member_access.member_name();
-						
-						FLASH_LOG_FORMAT(Codegen, Debug, "Looking for member '{}' in object '{}'",  
-							std::string(member_name), std::string(object_name));
-						
-						auto symbol = symbol_table.lookup(object_name);
-						if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-							const auto& decl_node = symbol->as<DeclarationNode>();
-							const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-							
-							if (is_struct_type(type_node.type()) && type_node.type_index() < gTypeInfo.size()) {
-								const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-								if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
-									if (const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)))) {
-										FLASH_LOG_FORMAT(Codegen, Debug, "Member found: is_array={}, dimensions={}, indices={}",
-											member->is_array, member->array_dimensions.size(), indices.size());
-										// Check if this is a multidimensional array member
-										if (member->is_array && member->array_dimensions.size() > 1 && 
-										    member->array_dimensions.size() == indices.size()) {
-											// Flatten the multidimensional access
-											// For member[D0][D1] accessed as member[i0][i1]:
-											// flat_index = i0 * D1 + i1
-											
-											// Compute strides
-											std::vector<size_t> strides(indices.size());
-											strides.back() = 1;
-											for (int k = static_cast<int>(indices.size()) - 2; k >= 0; --k) {
-												strides[k] = strides[k + 1] * member->array_dimensions[k + 1];
-											}
-											
-											// Generate code to compute flat index
-											auto idx0_operands = visitExpressionNode(indices[0].as<ExpressionNode>());
-											TempVar flat_index = var_counter.next();
-											
-											if (strides[0] == 1) {
-												BinaryOp add_op;
-												add_op.lhs = toTypedValue(idx0_operands);
-												add_op.rhs = TypedValue{Type::Int, 32, 0ULL};
-												add_op.result = IrValue{flat_index};
-												ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
-											} else {
-												BinaryOp mul_op;
-												mul_op.lhs = toTypedValue(idx0_operands);
-												mul_op.rhs = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(strides[0])};
-												mul_op.result = IrValue{flat_index};
-												ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
-											}
-											
-											// Add remaining indices
-											for (size_t k = 1; k < indices.size(); ++k) {
-												auto idx_operands = visitExpressionNode(indices[k].as<ExpressionNode>());
-												
-												if (strides[k] == 1) {
-													TempVar new_flat = var_counter.next();
-													BinaryOp add_op;
-													add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, flat_index};
-													add_op.rhs = toTypedValue(idx_operands);
-													add_op.result = IrValue{new_flat};
-													ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
-													flat_index = new_flat;
-												} else {
-													TempVar temp_prod = var_counter.next();
-													BinaryOp mul_op;
-													mul_op.lhs = toTypedValue(idx_operands);
-													mul_op.rhs = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(strides[k])};
-													mul_op.result = IrValue{temp_prod};
-													ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
-													
-													TempVar new_flat = var_counter.next();
-													BinaryOp add_op;
-													add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, flat_index};
-													add_op.rhs = TypedValue{Type::UnsignedLongLong, 64, temp_prod};
-													add_op.result = IrValue{new_flat};
-													ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
-													flat_index = new_flat;
-												}
-											}
-											
-											// Generate single array access with flat index
-											TempVar result_var = var_counter.next();
-											StringHandle qualified_name = StringTable::getOrInternStringHandle(
-												StringBuilder().append(object_name).append(".").append(member_name));
-											
-											LValueInfo lvalue_info(
-												LValueInfo::Kind::ArrayElement,
-												qualified_name,
-												static_cast<int64_t>(member->offset)
-											);
-											lvalue_info.array_index = IrValue{flat_index};
-											lvalue_info.is_pointer_to_array = false;
-											setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
-											
-											// Get base element size
-											int base_element_size = get_type_size_bits(member->type);
-											
-											ArrayAccessOp payload;
-											payload.result = result_var;
-											payload.element_type = member->type;
-											payload.element_size_in_bits = base_element_size;
-											payload.array = qualified_name;
-											payload.member_offset = static_cast<int64_t>(member->offset);
-											payload.is_pointer_to_array = false;
-											payload.result_is_array = false;  // Final result is element, not array
-											payload.index.type = Type::UnsignedLongLong;
-											payload.index.size_in_bits = 64;
-											payload.index.value = flat_index;
-											
-											if (context == ExpressionContext::LValueAddress) {
-												return { member->type, base_element_size, result_var, 0ULL };
-											}
-											
-											ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
-											return { member->type, base_element_size, result_var, 0ULL };
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-			
-			// This could be a regular multidimensional array access (not member array)
+			// This could be a multidimensional array access
 			auto multi_dim = collectMultiDimArrayIndices(arraySubscriptNode);
 			
 			if (multi_dim.is_valid && multi_dim.base_decl) {
@@ -14861,29 +14709,17 @@ private:
 										Type element_type = member->type;
 										int element_size_bits = static_cast<int>(member->size * 8);
 										
-										// For array members, compute the proper element size based on dimensions
-										// For multidimensional arrays, the first subscript produces an array of remaining dimensions
-										bool result_is_array = false;
-										if (member->is_array && !member->array_dimensions.empty()) {
-											// Calculate element size based on array dimensions
-											// For int matrix[3][3], first subscript gives int[3] (12 bytes)
-											int base_element_size = get_type_size_bits(element_type);
-											if (base_element_size > 0) {
-												// Start with base element size
-												size_t computed_element_size = base_element_size / 8;  // Convert to bytes
-												
-												// Multiply by all dimensions except the first
-												for (size_t i = 1; i < member->array_dimensions.size(); ++i) {
-													computed_element_size *= member->array_dimensions[i];
-												}
-												
-												element_size_bits = static_cast<int>(computed_element_size * 8);
-												
-												// If there are more dimensions after the first, result is still an array
-												if (member->array_dimensions.size() > 1) {
-													result_is_array = true;
-												}
-											}
+										// For array members, member->size is the total size, we need element size
+										// This is a simplified assumption - we need better array type info
+										// For now, assume arrays of primitives and compute element size
+										int array_length = 1;  // Default if not an array
+										// TODO: Get actual array length from type info
+										// For now, use a heuristic: if size is larger than element type, it's an array
+										int base_element_size = get_type_size_bits(element_type);  // Use existing helper
+										
+										if (base_element_size > 0 && element_size_bits > base_element_size) {
+											// It's an array
+											element_size_bits = base_element_size;
 										}
 
 										// Create a temporary variable for the result
@@ -14910,7 +14746,6 @@ private:
 										payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
 										payload.member_offset = static_cast<int64_t>(member->offset);
 										payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
-										payload.result_is_array = result_is_array;  // Mark if result is an array (array decay)
 										
 										// Set index as TypedValue
 										payload.index.type = std::get<Type>(index_operands[0]);
@@ -14930,8 +14765,7 @@ private:
 											return { element_type, element_size_bits, result_var, 0ULL };
 										}
 
-										// Create instruction with typed payload
-										// If result_is_array, this will generate LEA (address), not MOV (load)
+										// Create instruction with typed payload (Load context - default)
 										ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 										// Return the result with the element type
@@ -15132,57 +14966,6 @@ private:
 		payload.element_size_in_bits = element_size_bits;
 		payload.member_offset = 0;  // Not a member array
 		payload.is_pointer_to_array = is_pointer_to_array;
-		payload.result_is_array = false;  // Default: result is not an array
-		
-		// Check if the array being subscripted is a multidimensional array member
-		// If so, determine if the result is still an array (intermediate subscript)
-		if (std::holds_alternative<TempVar>(array_operands[2])) {
-			TempVar array_temp = std::get<TempVar>(array_operands[2]);
-			if (auto lv_info = getTempVarLValueInfo(array_temp)) {
-				if (lv_info->kind == LValueInfo::Kind::Member && lv_info->member_name.has_value()) {
-					// This is a member array access
-					// Look up the struct and member to get dimension information
-					if (std::holds_alternative<StringHandle>(lv_info->base)) {
-						StringHandle base_name = std::get<StringHandle>(lv_info->base);
-						auto base_symbol = symbol_table.lookup(base_name);
-						if (base_symbol.has_value()) {
-							const DeclarationNode* decl_ptr = nullptr;
-							if (base_symbol->is<DeclarationNode>()) {
-								decl_ptr = &base_symbol->as<DeclarationNode>();
-							} else if (base_symbol->is<VariableDeclarationNode>()) {
-								decl_ptr = &base_symbol->as<VariableDeclarationNode>().declaration();
-							}
-							
-							if (decl_ptr && is_struct_type(decl_ptr->type_node().as<TypeSpecifierNode>().type())) {
-								size_t type_index = decl_ptr->type_node().as<TypeSpecifierNode>().type_index();
-								if (type_index < gTypeInfo.size()) {
-									const TypeInfo& type_info = gTypeInfo[type_index];
-									if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
-										if (const StructMember* member = struct_info->findMemberRecursive(lv_info->member_name.value())) {
-											// Check if this is a multidimensional array
-											if (member->is_array && member->array_dimensions.size() > 1) {
-												// Result is still an array (has remaining dimensions)
-												payload.result_is_array = true;
-												
-												// Recalculate element_size_bits based on remaining dimensions
-												int base_element_size = get_type_size_bits(member->type);
-												if (base_element_size > 0) {
-													size_t computed_size = base_element_size / 8;
-													for (size_t i = 1; i < member->array_dimensions.size(); ++i) {
-														computed_size *= member->array_dimensions[i];
-													}
-													payload.element_size_in_bits = static_cast<int>(computed_size * 8);
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
 		
 		// Set array (either variable name or temp)
 		if (std::holds_alternative<StringHandle>(array_operands[2])) {

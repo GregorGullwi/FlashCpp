@@ -5216,20 +5216,15 @@ ParseResult Parser::parse_struct_declaration()
 		}
 
 		// For array members, multiply element size by array count
-		// Handle all dimensions for multidimensional arrays
-		std::vector<size_t> array_dims;
-		if (decl.is_array() && !decl.array_dimensions().empty()) {
+		if (decl.is_array() && decl.array_size().has_value()) {
+			// Evaluate the array size expression to get the count
 			ConstExpr::EvaluationContext ctx(gSymbolTable);
-			for (const auto& dimension : decl.array_dimensions()) {
-				// Evaluate each array dimension expression to get the count
-				auto eval_result = ConstExpr::Evaluator::evaluate(dimension, ctx);
-				
-				if (eval_result.success) {
-					size_t array_count = static_cast<size_t>(eval_result.as_int());
-					array_dims.push_back(array_count);
-					member_size *= array_count;
-					referenced_size_bits *= array_count;
-				}
+			auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
+			
+			if (eval_result.success) {
+				size_t array_count = static_cast<size_t>(eval_result.as_int());
+				member_size *= array_count;
+				referenced_size_bits *= array_count;
 			}
 		}
 
@@ -5253,9 +5248,7 @@ ParseResult Parser::parse_struct_declaration()
 			member_decl.default_initializer,
 			is_ref_member,
 			is_rvalue_ref_member,
-			referenced_size_bits,
-			decl.is_array(),  // Pass the is_array flag
-			array_dims  // Pass array dimensions
+			referenced_size_bits
 		);
 	}
 

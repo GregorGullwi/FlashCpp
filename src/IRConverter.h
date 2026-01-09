@@ -4597,13 +4597,13 @@ private:
 	
 	// Helper function to set reference information in both storage systems
 	// This ensures metadata stays synchronized between stack offset tracking and TempVar metadata
-	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var = TempVar(), bool holds_address_only = false) {
+	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var = TempVar()) {
 		// Always update the stack offset map (for named variables and legacy lookups)
 		reference_stack_info_[stack_offset] = ReferenceInfo{
 			.value_type = value_type,
 			.value_size_bits = value_size_bits,
 			.is_rvalue_reference = is_rvalue_ref,
-			.holds_address_only = holds_address_only
+			.holds_address_only = false
 		};
 		
 		// If we have a valid TempVar, also update its metadata
@@ -12220,15 +12220,14 @@ private:
 		
 		// Phase 5 Optimization: Use value category metadata for LEA vs MOV decision
 		// For struct types, always use LEA (original behavior)
-		// For arrays (intermediate subscripts on multidimensional arrays), use LEA to compute address
 		// For primitive lvalues, we could use LEA but need to handle dereferencing correctly
-		// For now, only optimize struct types and array results to avoid breaking existing code
+		// For now, only optimize struct types to avoid breaking existing code
 		bool result_is_lvalue = isTempVarLValue(result_var);
-		bool optimize_lea = is_struct || op.result_is_array;  // Use LEA for structs and array results
+		bool optimize_lea = is_struct;  // Conservative: only struct types for now
 		
 		FLASH_LOG_FORMAT(Codegen, Debug, 
-			"ArrayAccess: is_struct={} is_lvalue={} result_is_array={} optimize_lea={}",
-			is_struct, result_is_lvalue, op.result_is_array, optimize_lea);
+			"ArrayAccess: is_struct={} is_lvalue={} optimize_lea={}",
+			is_struct, result_is_lvalue, optimize_lea);
 		
 		// For floating-point, we'll use XMM0 for the loaded value
 		// For integers and struct addresses, we allocate a general-purpose register
@@ -12247,17 +12246,6 @@ private:
 			TempVar array_temp_var = std::get<TempVar>(op.array);
 			array_base_offset = getStackOffsetFromTempVar(array_temp_var);
 			is_array_pointer = true;  // TempVar always means pointer
-		}
-		
-		// Check if the array temp var holds an address directly (not a pointer value to dereference)
-		// This happens when accessing large members (>8 bytes) like arrays in structs
-		bool array_holds_address_only = false;
-		if (std::holds_alternative<TempVar>(op.array)) {
-			TempVar array_temp_var = std::get<TempVar>(op.array);
-			auto ref_info = getReferenceInfo(array_temp_var, array_base_offset);
-			if (ref_info.has_value() && ref_info->holds_address_only) {
-				array_holds_address_only = true;
-			}
 		}
 			
 		// Check if this is a member array access (object.member format)
@@ -12307,9 +12295,8 @@ private:
 
 				// Add member offset + index offset to pointer
 				// For is_object_pointer: total offset = member_offset + (index * element_size)
-				// For is_array_pointer with holds_address_only: total offset = index * element_size (address already points to array)
 				// For is_array_pointer: total offset = index * element_size (member_offset is 0)
-				int64_t offset_bytes = (array_holds_address_only ? 0 : member_offset) + (index_value * element_size_bytes);
+				int64_t offset_bytes = member_offset + (index_value * element_size_bytes);
 				if (offset_bytes != 0) {
 					emitAddImmToReg(textSectionData, base_reg, offset_bytes);
 				}
@@ -12363,8 +12350,7 @@ private:
 					                    load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
 				// Add member offset for pointer objects (e.g., this->member)
-				// Don't add member_offset if array_holds_address_only (address already points to array)
-				if (is_object_pointer && !array_holds_address_only && member_offset != 0) {
+				if (is_object_pointer && member_offset != 0) {
 					emitAddImmToReg(textSectionData, base_reg, member_offset);
 				}
 
@@ -12472,20 +12458,16 @@ private:
 		if (is_floating_point) {
 			emitFloatMovToFrame(X64Register::XMM0, static_cast<int32_t>(result_offset), is_float);
 		} else {
-			// When optimize_lea is true, we have an address (64 bits)
-			// When optimize_lea is false, we have the actual value (element_size_bits)
-			int store_size_bits = optimize_lea ? 64 : element_size_bits;
 			emitMovToFrameSized(
 				SizedRegister{base_reg, 64, false},  // source: 64-bit register
-				SizedStackSlot{static_cast<int32_t>(result_offset), store_size_bits, false}  // dest: actual size
+				SizedStackSlot{static_cast<int32_t>(result_offset), 64, false}  // dest: 64-bit
 			);
 		}
 		
 		// Phase 5: Mark the result temp var as holding a pointer/reference when using LEA
 		// This allows subsequent operations to properly handle the address
-		// For array results (intermediate subscripts on multidimensional arrays), mark as address-only
 		if (optimize_lea) {
-			setReferenceInfo(result_offset, element_type, element_size_bits, false, result_var, op.result_is_array);
+			setReferenceInfo(result_offset, element_type, element_size_bits, false, result_var);
 		}
 		
 		// Release the base register
@@ -13078,8 +13060,8 @@ private:
 			                       store_addr.op_codes.begin() + store_addr.size_in_bytes);
 			regAlloc.release(addr_reg);
 			
-			// Mark this temp var as containing an address (not a reference that should be dereferenced)
-			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits, false, result_var, true);
+			// Mark this temp var as containing a pointer/address
+			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits, false, result_var);
 			return;
 		}
 
