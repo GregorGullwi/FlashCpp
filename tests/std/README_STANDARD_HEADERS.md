@@ -162,56 +162,42 @@ As FlashCpp gains more C++ features:
 
 ## Latest Investigation (January 9, 2026 - Named Anonymous Unions/Structs)
 
-### Improved Error Reporting for Named Anonymous Struct/Union Pattern
+### ✅ IMPLEMENTED: Named Anonymous Struct/Union Pattern Support
 
-**Issue Identified:** Multiple standard library headers (`<type_traits>`, `<utility>`, `<cstdio>`) use the named anonymous struct/union pattern:
+**Pattern Now Supported:** Multiple standard library headers (`<type_traits>`, `<utility>`, `<cstdio>`) use the named anonymous struct/union pattern:
 ```cpp
 struct Container {
     union {
         int i;
         float f;
-    } data;  // ← Named anonymous union member
+    } data;  // ← Named anonymous union member - NOW WORKS!
 };
 ```
 
 **Current Status:**
-- ❌ This pattern is **not supported** (confirmed known limitation)
-- ✅ **Improved**: Better error message now explains the issue and suggests workarounds
-- **Distinction**: This is different from the recently-added support for "named unions with member names" (`union Data { ... } data;`)
+- ✅ This pattern is **NOW FULLY SUPPORTED** (implemented in commits f86fce8, 44d188b, 25ce897)
+- ✅ Creates implicit anonymous types during parsing
+- ✅ Handles member access chains (e.g., `container.data.field`)
+- **Distinction**: This is different from named union types with member names
   - ✅ `union Data { int i; } data;` - **WORKS** (named union type with member name) - Added in commit f0e5a18
-  - ❌ `union { int i; } data;` - **NOT SUPPORTED** (anonymous union type with member name)
+  - ✅ `union { int i; } data;` - **NOW WORKS** (anonymous union type with member name) - Added in commits f86fce8-25ce897
 
-**Blockers:**
-- `/usr/include/c++/14/type_traits:2162` - Uses `struct __attribute__((__aligned__)) { } __align;`
-- `/usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h:20` - Uses `union { ... } __value;`
+**Previously Blocking Headers - Now Unblocked:**
+- ✅ `/usr/include/c++/14/type_traits:2162` - `struct __attribute__((__aligned__)) { } __align;` - Parses successfully
+- ✅ `/usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h:20` - `union { ... } __value;` - Parses successfully
 
-**Implementation Requirements:**
-This feature would require:
-1. Creating an implicit anonymous struct/union type during parsing
-2. Creating a member of that anonymous type
-3. Handling member access chains (e.g., `container.data.field`)
-4. Potentially modifying the type system to support inline anonymous type definitions
+**Implementation Details:**
+1. ✅ Creates implicit anonymous struct/union types with unique generated names
+2. ✅ Parses members directly into the anonymous type
+3. ✅ Calculates proper layout (unions: overlapping, structs: sequential)
+4. ✅ Supports multiple comma-separated declarators (e.g., `} a, b, c;`)
+5. ✅ Uses `skip_balanced_braces()` for efficient peek-ahead detection
 
-**Test Cases Created:**
-- `tests/test_named_anonymous_struct_ret42.cpp` - Documents the unsupported pattern for structs
-- `tests/test_named_anonymous_union_ret42.cpp` - Documents the unsupported pattern for unions
-
-**Workarounds:**
-```cpp
-// Option 1: Use a named type
-union Data { int i; float f; };
-struct Container {
-    Data data;  // Works!
-};
-
-// Option 2: Use true anonymous union (flatten members)
-struct Container {
-    union {
-        int i;
-        float f;
-    };  // No member name - members accessible as container.i, container.f
-};
-```
+**Test Cases - All Passing:**
+- ✅ `tests/test_named_anonymous_struct_ret42.cpp` - Returns 42 correctly
+- ✅ `tests/test_named_anonymous_union_ret42.cpp` - Returns 42 correctly
+- ✅ `tests/test_nested_anonymous_union_ret15.cpp` - Returns 15 correctly
+- ✅ `tests/test_nested_union_ret0.cpp` - Returns 0 correctly
 
 ## Latest Investigation (January 8, 2026 - Evening - Part 3)
 

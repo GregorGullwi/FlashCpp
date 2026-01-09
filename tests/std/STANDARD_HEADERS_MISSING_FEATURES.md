@@ -4,21 +4,22 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
-**UPDATE (January 9, 2026 - Named Anonymous Unions/Structs - Error Reporting Improvement)**:
-- ✅ **Improved error reporting for named anonymous struct/union pattern**
+**UPDATE (January 9, 2026 - Named Anonymous Unions/Structs - FULLY IMPLEMENTED!)**:
+- ✅ **IMPLEMENTED: Named anonymous struct/union pattern now fully supported!** 🎉
   - **Pattern**: `struct { int x; } member_name;` or `union { int i; } data;`
-  - **Status**: Still not supported, but now provides clear error message with workarounds
+  - **Status**: **NOW FULLY SUPPORTED** - Implemented in commits f86fce8, 44d188b, 25ce897
   - **Distinction clarified**: 
     - ✅ `union Data { int i; } data;` - **SUPPORTED** (named union type, added in commit f0e5a18)
-    - ❌ `union { int i; } data;` - **NOT SUPPORTED** (anonymous union type with member name)
-  - **Impact**: Blocks multiple standard headers:
-    - `/usr/include/c++/14/type_traits:2162` - `struct __attribute__((__aligned__)) { } __align;`
-    - `/usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h:20` - `union { ... } __value;`
-  - **Test cases created**:
-    - `tests/test_named_anonymous_struct_ret42.cpp` - Documents pattern for structs ❌
-    - `tests/test_named_anonymous_union_ret42.cpp` - Documents pattern for unions ❌
-  - **Workaround**: Use named types or true anonymous unions (see README)
-  - **Implementation complexity**: High - requires inline anonymous type creation and member access chain handling
+    - ✅ `union { int i; } data;` - **NOW SUPPORTED** (anonymous union type with member name)
+  - **Previously blocking headers - Now unblocked**:
+    - ✅ `/usr/include/c++/14/type_traits:2162` - `struct __attribute__((__aligned__)) { } __align;` - Parses successfully
+    - ✅ `/usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h:20` - `union { ... } __value;` - Parses successfully
+  - **Test cases - All passing**:
+    - `tests/test_named_anonymous_struct_ret42.cpp` - Returns 42 ✅
+    - `tests/test_named_anonymous_union_ret42.cpp` - Returns 42 ✅
+    - `tests/test_nested_anonymous_union_ret15.cpp` - Returns 15 ✅
+    - `tests/test_nested_union_ret0.cpp` - Returns 0 ✅
+  - **Implementation**: Creates implicit anonymous types, handles member access chains, supports multiple declarators
 
 **UPDATE (January 8, 2026 - Evening - Part 2: Anonymous Union Bug FIXED!)**:
 - ✅ **FIXED: Anonymous union member access now works!** 🎉

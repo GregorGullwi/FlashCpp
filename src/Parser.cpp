@@ -4173,29 +4173,29 @@ ParseResult Parser::parse_struct_declaration()
 				auto union_or_struct_keyword = consume_token(); // consume 'struct', 'class', or 'union'
 				bool is_union_keyword = (union_or_struct_keyword->value() == "union");
 				
-			if (peek_token().has_value() && peek_token()->value() == "{") {
-				// Pattern 1: Anonymous union/struct or named anonymous union/struct as a member
-				
-				// Save the position before the opening brace
-				SaveHandle brace_start_pos = save_token_position();
-				
-				// Peek ahead to check if this is:
-				// - True anonymous union/struct: struct { ... };
-				// - Named anonymous union/struct: struct { ... } member_name;
-				// Skip to the closing brace and check what follows
-				skip_balanced_braces();
-				bool is_named_anonymous = false;
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-					is_named_anonymous = true;
-				}
-				
-				// Restore position to the opening brace to parse the members
-				restore_token_position(brace_start_pos);
-				
-				// Now consume the opening brace
-				consume_token(); // consume '{'
-				
-				if (is_named_anonymous) {
+				if (peek_token().has_value() && peek_token()->value() == "{") {
+					// Pattern 1: Anonymous union/struct or named anonymous union/struct as a member
+					
+					// Save the position before the opening brace
+					SaveHandle brace_start_pos = save_token_position();
+					
+					// Peek ahead to check if this is:
+					// - True anonymous union/struct: struct { ... };
+					// - Named anonymous union/struct: struct { ... } member_name;
+					// Skip to the closing brace and check what follows
+					skip_balanced_braces();
+					bool is_named_anonymous = false;
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+						is_named_anonymous = true;
+					}
+					
+					// Restore position to the opening brace to parse the members
+					restore_token_position(brace_start_pos);
+					
+					// Now consume the opening brace
+					consume_token(); // consume '{'
+					
+					if (is_named_anonymous) {
 						// Named anonymous struct/union: struct { int x; } member_name;
 						// Create an anonymous type and parse members into it
 						
