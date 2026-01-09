@@ -15486,6 +15486,11 @@ private:
 						}
 					}
 				}
+				
+				// If this is arrow access (->), the nested result is a pointer that needs dereferencing
+				if (is_arrow) {
+					is_pointer_dereference = true;
+				}
 			}
 			// Case 3: Pointer dereference (e.g., ptr->member, which is transformed to (*ptr).member)
 			else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
@@ -15864,6 +15869,7 @@ private:
 		member_load.is_rvalue_reference = member->is_rvalue_reference;
 		member_load.struct_type_info = nullptr;
 		member_load.is_pointer_to_member = is_pointer_dereference;  // Mark if accessing through pointer
+		FLASH_LOG_FORMAT(Codegen, Debug, "MemberLoad: is_pointer_to_member={} for member={}", is_pointer_dereference, std::string(StringTable::getStringView(StringTable::getOrInternStringHandle(std::string(member_name)))));
 
 		// When context is LValueAddress, skip the load and return address/metadata only
 		// EXCEPTION: For reference members, we must emit MemberAccess to load the stored address
