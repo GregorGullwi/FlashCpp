@@ -99,6 +99,8 @@ The main features preventing standard header compilation:
 
 9. **Static member variable definitions outside class body for template classes** (January 8, 2026 - Afternoon) - Added support for out-of-class definitions of static member variables for template classes without initializers. Patterns like `template<typename T> const size_t ClassName<T>::memberName;` now parse correctly. This is used to provide storage for static constexpr members that were declared (with initializer) inside the class body. The parser now recognizes the pattern and registers it appropriately. This **advances `<type_traits>` from line 2244 to line 2351 (107 more lines!)**. Test case `test_template_static_member_outofline_ret42.cpp` successfully compiles! **Total session progress: 434 lines!** **Next blocker**: decltype expression evaluation at line 2351.
 
+10. **Member template function instantiation & inherited lookup infrastructure** (January 9, 2026) - Fixed "Unknown member function type" error when instantiating class templates with member template functions. Member template functions are now correctly copied to instantiated class templates and registered with both qualified and simple names. Added `lookup_inherited_template()` function for looking up template functions through inheritance hierarchy. Infrastructure is in place but **blocked by missing support for explicit template arguments on member template functions** (e.g., `obj.func<int>()` doesn't work, only `obj.func(int_value)` with deduction works). Test case `member_function_template_ret42.cpp` (with argument deduction) ✅ compiles!
+
 ## Test File Characteristics
 
 All test files:
