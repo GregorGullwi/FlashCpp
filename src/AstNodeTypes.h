@@ -2088,6 +2088,36 @@ private:
 	StringHandle mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 };
 
+// Anonymous union member information - stored during parsing, processed during layout
+struct AnonymousUnionMemberInfo {
+	StringHandle member_name;
+	Type member_type;
+	TypeIndex type_index;
+	size_t member_size;
+	size_t member_alignment;
+	size_t referenced_size_bits;
+	bool is_reference;
+	bool is_rvalue_reference;
+	bool is_array;
+	std::vector<size_t> array_dimensions;
+	
+	AnonymousUnionMemberInfo(StringHandle name, Type type, TypeIndex tidx, size_t size, size_t align,
+	                         size_t ref_size_bits, bool is_ref, bool is_rvalue_ref, bool is_arr,
+	                         std::vector<size_t> arr_dims)
+		: member_name(name), member_type(type), type_index(tidx), member_size(size),
+		  member_alignment(align), referenced_size_bits(ref_size_bits), is_reference(is_ref),
+		  is_rvalue_reference(is_rvalue_ref), is_array(is_arr), array_dimensions(std::move(arr_dims)) {}
+};
+
+// Anonymous union information - groups all members that should share the same offset
+struct AnonymousUnionInfo {
+	size_t member_index_in_ast;  // Index in members_ vector where this union appears
+	std::vector<AnonymousUnionMemberInfo> union_members;
+	bool is_union;  // true for union, false for struct (anonymous struct not yet supported)
+	
+	AnonymousUnionInfo(size_t index, bool is_u) : member_index_in_ast(index), is_union(is_u) {}
+};
+
 // Struct member with access specifier
 struct StructMemberDecl {
 	ASTNode declaration;
@@ -2287,6 +2317,28 @@ public:
 	const std::vector<StaticMemberDecl>& static_members() const {
 		return static_members_;
 	}
+	
+	// Anonymous union support
+	void add_anonymous_union_marker(size_t member_index, bool is_union) {
+		anonymous_unions_.emplace_back(member_index, is_union);
+	}
+	
+	void add_anonymous_union_member(StringHandle member_name, Type member_type, TypeIndex type_index,
+	                                 size_t member_size, size_t member_alignment, size_t referenced_size_bits,
+	                                 bool is_reference, bool is_rvalue_reference, bool is_array,
+	                                 std::vector<size_t> array_dimensions) {
+		if (!anonymous_unions_.empty()) {
+			anonymous_unions_.back().union_members.emplace_back(
+				member_name, member_type, type_index, member_size, member_alignment,
+				referenced_size_bits, is_reference, is_rvalue_reference, is_array,
+				std::move(array_dimensions)
+			);
+		}
+	}
+	
+	const std::vector<AnonymousUnionInfo>& anonymous_unions() const {
+		return anonymous_unions_;
+	}
 
 	void set_enclosing_class(StructDeclarationNode* enclosing) {
 		enclosing_class_ = enclosing;
@@ -2319,6 +2371,7 @@ private:
 	std::vector<ASTNode> nested_classes_;  // Nested classes
 	std::vector<TypeAliasDecl> type_aliases_;  // Type aliases (using X = Y;)
 	std::vector<StaticMemberDecl> static_members_;  // Static members (for templates)
+	std::vector<AnonymousUnionInfo> anonymous_unions_;  // Anonymous union tracking info
 	StructDeclarationNode* enclosing_class_ = nullptr;  // Enclosing class (if nested)
 	bool is_class_;  // true for class, false for struct
 	bool is_final_ = false;  // true if declared with 'final' keyword
