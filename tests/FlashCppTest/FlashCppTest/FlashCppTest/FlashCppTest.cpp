@@ -3339,3 +3339,15 @@ TEST_CASE("Conversion Operators") {
 TEST_CASE("Template:Template") {
 	run_test_from_file("template_template_test.cpp", "Template:Template", false);
 }
+
+TEST_CASE("NamedUnionInStruct") {
+	run_test_from_file("test_named_union_in_struct_ret42.cpp", "Named union in struct", false);
+}
+
+TEST_CASE("NamedUnionMultipleDeclarators") {
+	run_test_from_file("test_named_union_multiple_declarators_ret69.cpp", "Named union with multiple declarators", false);
+}
+
+TEST_CASE("NamedStructInStruct") {
+	run_test_from_file("test_named_struct_in_struct_ret15.cpp", "Named struct in struct", false);
+}

@@ -4449,6 +4449,18 @@ ParseResult Parser::parse_struct_declaration()
 									gTypesByName.emplace(qualified_name, nested_type_it->second);
 								}
 							}
+							
+							// Handle any variable declarators parsed after the nested declaration
+							// e.g., "union Data { ... } data;" - the "data" member should be added
+							for (auto& var_node : pending_struct_variables_) {
+								// Extract the declaration node from the VariableDeclarationNode wrapper
+								auto& var_decl_node = var_node.as<VariableDeclarationNode>();
+								auto decl_node = var_decl_node.declaration_node();
+								
+								// Add as a member of the outer struct
+								struct_ref.add_member(decl_node, current_access, std::nullopt);
+							}
+							pending_struct_variables_.clear();
 						}
 
 						continue;  // Skip to next member
@@ -5215,23 +5227,35 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Check for variable declarations after struct definition: struct Point { ... } p, q;
 	std::vector<ASTNode> struct_variables;
-	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+	if (peek_token().has_value() && 
+	    (peek_token()->type() == Token::Type::Identifier || 
+	     (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "*"))) {
 		// Parse variable declarators
 		do {
+			// Handle pointer declarators
+			TypeSpecifierNode var_type_spec(
+				Type::Struct,
+				struct_type_info.type_index_,
+				static_cast<unsigned char>(0),  // Size will be set later
+				Token(Token::Type::Identifier, StringTable::getStringView(struct_name), 0, 0, 0)
+			);
+			
+			// Parse any pointer levels
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+			       peek_token()->value() == "*") {
+				consume_token(); // consume '*'
+				CVQualifier ptr_cv = parse_cv_qualifiers();
+				var_type_spec.add_pointer_level(ptr_cv);
+			}
+			
 			auto var_name_token = consume_token();
 			if (!var_name_token.has_value()) {
 				return ParseResult::error("Expected variable name after struct definition", *current_token_);
 			}
 
 			// Create a variable declaration node for this variable
-			auto var_type_spec = emplace_node<TypeSpecifierNode>(
-				Type::Struct,
-				struct_type_info.type_index_,
-				static_cast<unsigned char>(0),  // Size will be set later
-				Token(Token::Type::Identifier, StringTable::getStringView(struct_name), var_name_token->line(), var_name_token->column(), var_name_token->file_index())
-			);
-
-			auto var_decl = emplace_node<DeclarationNode>(var_type_spec, *var_name_token);
+			auto var_type_spec_node = emplace_node<TypeSpecifierNode>(var_type_spec);
+			auto var_decl = emplace_node<DeclarationNode>(var_type_spec_node, *var_name_token);
 
 			// Add to symbol table so it can be referenced later in the code
 			gSymbolTable.insert(var_name_token->value(), var_decl);

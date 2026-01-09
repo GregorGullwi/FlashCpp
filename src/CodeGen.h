@@ -15486,6 +15486,12 @@ private:
 						}
 					}
 				}
+				
+				// If this is arrow access (->), the nested result represents a pointer that needs 
+				// dereferencing for the final member access (e.g., obj.ptr_member->field)
+				if (is_arrow) {
+					is_pointer_dereference = true;
+				}
 			}
 			// Case 3: Pointer dereference (e.g., ptr->member, which is transformed to (*ptr).member)
 			else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
