@@ -4225,7 +4225,6 @@ ParseResult Parser::parse_struct_declaration()
 						StructTypeInfo* anon_struct_info = anon_struct_info_ptr.get();
 						
 						// Set the union flag if this is a union
-						// Set the union flag if this is a union
 						if (is_union_keyword) {
 							anon_struct_info->is_union = true;
 						}
