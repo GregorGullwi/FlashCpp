@@ -20,6 +20,9 @@
 
 // Break into the debugger only on Windows
 #if defined(_WIN32) || defined(_WIN64)
+    #ifndef NOMINMAX
+        #define NOMINMAX  // Prevent Windows.h from defining min/max macros
+    #endif
     #include <windows.h>
     #define DEBUG_BREAK() if (IsDebuggerPresent()) { DebugBreak(); }
 #else
