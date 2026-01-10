@@ -79,28 +79,6 @@ The main features preventing standard header compilation:
 5. **Exception handling infrastructure**
 6. **Allocator support**
 
-### Recent Fixes (January 2026)
-
-1. **Namespace-qualified type alias lookup** - Type aliases like `size_t` are now correctly found when used inside `namespace std`, even when registered as `std::size_t` in the type table.
-
-2. **Reference declarators in template arguments** - Patterns like `declval<_Tp&>()` now correctly recognize `_Tp` as a template parameter when followed by `&` or `&&`.
-
-3. **Member type aliases as template arguments** - Type aliases defined within a struct/class can now be used as template arguments in subsequent member definitions (e.g., `using outer = wrapper<inner_type>` where `inner_type` is defined earlier in the same struct).
-
-4. **Member struct/class templates** (January 7, 2026 - Morning) - Template struct and class declarations are now supported as class members, including unnamed variadic parameter packs. This fixes `<type_traits>` compilation blocker at line 1838 where `template<typename...> struct _List { };` is used inside a class. Empty member struct templates now parse correctly. **Note**: Member struct templates with function bodies still need work.
-
-5. **Member struct template partial specialization** (January 7, 2026 - Evening Part 1) - Basic support for partial specialization of member struct templates. Patterns like `template<typename T, typename... Rest> struct List<T, Rest...> : List<Rest...> { };` now parse correctly. This advances `<type_traits>` from line 1841 to line 1845. Unique pattern names are generated with modifiers (P=pointer, R=reference, etc.). Test case `test_member_struct_partial_spec_ret0.cpp` successfully compiles!
-
-6. **Non-type value parameters & forward declarations** (January 7, 2026 - Evening Part 2) - Extended partial specialization support to handle non-type value arguments (e.g., `struct Select<N, T, true>` where `true` is a boolean value). Added support for `using` declarations in partial specialization bodies and forward declarations of member struct templates (`template<...> struct Name;`). This **advances `<type_traits>` from line 1845 to line 1917 (72 more lines!)**. Pattern names now include value markers (e.g., `_V1` for true). Test case `test_member_partial_spec_nontype_value_ret0.cpp` successfully compiles!
-
-7. **Template full specialization forward declarations** (January 8, 2026) - Added support for forward declarations of full template specializations for top-level templates. Patterns like `template<> struct make_unsigned<bool>;` now parse correctly without requiring a body definition. The parser detects `;` after template arguments and registers the specialization as a forward declaration. This **advances `<type_traits>` from line 1917 to line 2180 (263 more lines!)**. Test case `test_template_full_spec_forward_decl_ret0.cpp` successfully compiles!
-
-8. **__alignof__ operator** (January 8, 2026 - Morning) - Added support for the GCC/Clang `__alignof__` extension, which is treated as an identifier but behaves like the standard `alignof` operator. Works with both type and expression forms, including with `typename` in template contexts (e.g., `__alignof__(typename T::type)`). This **advances `<type_traits>` from line 2180 to line 2244 (64 more lines!)**. Test case `test_alignof_extension_ret0.cpp` successfully compiles! **Total progress from line 1917 to 2244: 327 lines!**
-
-9. **Static member variable definitions outside class body for template classes** (January 8, 2026 - Afternoon) - Added support for out-of-class definitions of static member variables for template classes without initializers. Patterns like `template<typename T> const size_t ClassName<T>::memberName;` now parse correctly. This is used to provide storage for static constexpr members that were declared (with initializer) inside the class body. The parser now recognizes the pattern and registers it appropriately. This **advances `<type_traits>` from line 2244 to line 2351 (107 more lines!)**. Test case `test_template_static_member_outofline_ret42.cpp` successfully compiles! **Total session progress: 434 lines!** **Next blocker**: decltype expression evaluation at line 2351.
-
-10. **Member template function instantiation & inherited lookup infrastructure** (January 9, 2026) - Fixed "Unknown member function type" error when instantiating class templates with member template functions. Member template functions are now correctly copied to instantiated class templates and registered with both qualified and simple names. Added `lookup_inherited_template()` function for looking up template functions through inheritance hierarchy. Infrastructure is in place but **blocked by missing support for explicit template arguments on member template functions** (e.g., `obj.func<int>()` doesn't work, only `obj.func(int_value)` with deduction works). Test case `member_function_template_ret42.cpp` (with argument deduction) ✅ compiles!
-
 ## Test File Characteristics
 
 All test files:
@@ -201,145 +179,18 @@ struct Container {
 - ✅ `tests/test_nested_anonymous_union_ret15.cpp` - Returns 15 correctly
 - ✅ `tests/test_nested_union_ret0.cpp` - Returns 0 correctly
 
-## Latest Investigation (January 8, 2026 - Evening - Part 3)
-
-### Additional Union Testing and Named Union Investigation
-
-**Named Union Investigation:**
-Named unions (e.g., `union {...} data;`) are **not currently supported** by the parser. The parser doesn't have infrastructure to handle inline union type declarations with member names. This would require:
-1. Creating an anonymous nested union type
-2. Creating a member of that type
-3. Properly handling member access chains like `s.data.i`
-
-This is a missing language feature, not a bug. Implementing this would require significant parser changes.
-
-**Nested Union and Struct Testing:**
-- ✅ `test_union_with_struct_ret0.cpp` - Unions can contain struct members
-- ✅ `test_struct_with_union_ret0.cpp` - Structs can contain union types
-- ❌ `test_nested_union_ret0.cpp` - Nested anonymous unions not supported (parser error)
-
-**Test Results Summary:**
-```
-✅ Anonymous unions in structs
-✅ Anonymous unions in templates
-✅ Unions containing structs
-✅ Structs containing unions
-❌ Named unions (not implemented)
-❌ Nested anonymous unions (not implemented)
-❌ Arrays in anonymous unions (parser error)
-```
-
-**Workarounds for named unions:**
-```cpp
-// Instead of this (doesn't work):
-struct S {
-    union { int i; } data;
-    void set(int v) { data.i = v; }
-};
-
-// Use this (works):
-struct S {
-    union { int i; };  // Anonymous union
-    void set(int v) { i = v; }  // Direct access
-};
-
-// Or this (works):
-union Data { int i; };
-struct S {
-    Data data;  // Separate type
-};
-```
-
-## Latest Investigation (January 8, 2026 - Evening - Part 2)
-
-### Anonymous Union Bug Fixed! 🎉
-
-**Fix Implemented:** Anonymous union members are now properly flattened into the parent struct during parsing.
-
-**What Changed:**
-- Modified Parser.cpp line 4172-4245 to parse anonymous union members instead of skipping them
-- Anonymous union members are now added directly to the parent struct's member list
-- Added check to distinguish anonymous unions (`union {...};`) from named unions (`union {...} data;`)
-- This allows proper member lookup in both regular structs and template classes
-
-**Test Results:**
-- ✅ `test_anonymous_union_member_access_ret0.cpp` - **NOW PASSES** (was hanging)
-- ✅ `test_template_anonymous_union_access_ret0.cpp` - **NOW PASSES** (was "Missing identifier" error)
-- ❌ `test_union_member_access_fail.cpp` - **Not supported** (named unions not implemented)
-
-**Examples:**
-```cpp
-// ✅ This now works!
-template<typename T>
-struct Container {
-    union {
-        char dummy;
-        T value;
-    };
-    T& get() { return value; }  // Works now!
-};
-
-// ✅ This also works!
-struct MyStruct {
-    union {
-        int i;
-        float f;
-    };
-};
-MyStruct s;
-s.i = 42;  // Works now!
-
-// ❌ Named unions are not implemented
-struct S {
-    union { int i; } data;  // Named union member
-};
-S s;
-s.data.i = 42;  // Parser error: not supported
-```
-
-**Status of Named Unions:**
-Named unions are a missing language feature that requires parser infrastructure changes. This is not a bug that can be easily fixed - it requires implementing support for inline anonymous type declarations with member names.
-
-## Latest Investigation (January 8, 2026 - Evening - Part 1)
-
-### Critical Bug Found: Union Member Access Causes Compilation Hangs
-
-During investigation of union support, discovered a **critical bug** that causes the compiler to hang indefinitely:
-
-**Bug Details:**
-- ❌ **Accessing union members (named or anonymous) in structs causes infinite loop**
-- ✅ Declaring unions works fine
-- ❌ But any attempt to read or write union member fields causes compilation to hang
-- This affects BOTH regular structs and template classes
-- This is the root cause blocking `<optional>` and `<variant>` headers
-
-**UPDATE:** This bug has been **partially fixed**! Anonymous unions now work. See section above.
 
 ## Latest Investigation (January 8, 2026 - Afternoon)
 
 ### Key Findings
 
-1. **`<limits>` header now compiles successfully!** ✅
-   - Compilation time: ~1.8 seconds
-   - Successfully instantiates `std::numeric_limits<int>` and `std::numeric_limits<float>`
-   - Can call `max()` member function
-   - Test case: `test_std_limits.cpp` produces valid output
-
-2. **Requires clauses for C++20 concepts work correctly** ✅
-   - Basic concept definitions work: `concept Integral = __is_integral(T);`
-   - Requires clauses on template functions: `requires Integral<T>`
-   - The `<concepts>` header timeout is due to template instantiation volume, not missing requires clause support
-
-3. **Template instantiation volume remains the primary blocker**
+1. **Template instantiation volume remains the primary blocker**
    - Most headers that timeout are not due to missing features
    - Individual template instantiations are fast (~20-50μs)
    - Standard headers contain hundreds to thousands of template instantiations
    - This is a performance optimization issue, not a feature gap
+   - Compile FlashCpp in release (-O3) mode when testing these features
 
-4. **Floating-point arithmetic bug fixed** ✅
-   - Fixed critical bug where float/double operations returned garbage
-   - Bug was in `storeArithmeticResult()` not storing XMM register results to memory
-   - All floating-point arithmetic now works correctly
 
 ### What Actually Works
 
