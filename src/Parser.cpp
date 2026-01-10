@@ -8150,6 +8150,92 @@ ParseResult Parser::parse_type_specifier()
 		return parse_decltype_specifier();
 	}
 
+	// Check for __underlying_type(T) which returns the underlying type of an enum
+	// This is a type-returning intrinsic used in <type_traits>:
+	//   using type = __underlying_type(_Tp);
+	if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Identifier &&
+	    current_token_opt->value() == "__underlying_type") {
+		Token underlying_token = *current_token_opt;
+		consume_token(); // consume '__underlying_type'
+
+		// Expect '('
+		if (!peek_token().has_value() || peek_token()->value() != "(") {
+			return ParseResult::error("Expected '(' after __underlying_type", underlying_token);
+		}
+		consume_token(); // consume '('
+
+		// Parse the type argument
+		ParseResult type_result = parse_type_specifier();
+		if (type_result.is_error()) {
+			return type_result;
+		}
+
+		// Expect ')'
+		if (!peek_token().has_value() || peek_token()->value() != ")") {
+			return ParseResult::error("Expected ')' after type in __underlying_type", *current_token_);
+		}
+		consume_token(); // consume ')'
+
+		// Get the argument type
+		const TypeSpecifierNode& arg_type = type_result.node()->as<TypeSpecifierNode>();
+
+		// If the argument is a template parameter or dependent type, create a dependent type placeholder
+		if (arg_type.type() == Type::UserDefined && arg_type.type_index() == 0) {
+			// Dependent type - return a placeholder that will be resolved during template instantiation
+			FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of dependent type, returning dependent placeholder");
+			return ParseResult::success(emplace_node<TypeSpecifierNode>(
+				Type::UserDefined, TypeQualifier::None, 0, underlying_token, CVQualifier::None));
+		}
+
+		// Check if the argument is marked as a template parameter in current context
+		if (parsing_template_body_ || !current_template_param_names_.empty()) {
+			// Check if arg_type refers to a template parameter
+			std::string_view arg_type_name = arg_type.token().value();
+			for (const auto& param_name : current_template_param_names_) {
+				if (arg_type_name == param_name) {
+					FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of template parameter '", arg_type_name, "', returning dependent placeholder");
+					return ParseResult::success(emplace_node<TypeSpecifierNode>(
+						Type::UserDefined, TypeQualifier::None, 0, underlying_token, CVQualifier::None));
+				}
+			}
+		}
+
+		// For concrete enum types, resolve to the underlying type
+		if (arg_type.type() == Type::Enum) {
+			// Look up the enum type to get its underlying type
+			if (arg_type.type_index() < gTypeInfo.size()) {
+				const TypeInfo& enum_type_info = gTypeInfo[arg_type.type_index()];
+				if (enum_type_info.enum_info_) {
+					const EnumTypeInfo* enum_info = enum_type_info.enum_info_.get();
+					Type underlying = enum_info->underlying_type;
+					int underlying_size = enum_info->underlying_size;
+					FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
+					return ParseResult::success(emplace_node<TypeSpecifierNode>(
+						underlying, TypeQualifier::None, underlying_size, underlying_token, CVQualifier::None));
+				}
+			}
+		}
+
+		// If we have a type index, try to look up if it's an enum
+		if (arg_type.type_index() < gTypeInfo.size()) {
+			const TypeInfo& type_info = gTypeInfo[arg_type.type_index()];
+			if (type_info.enum_info_) {
+				const EnumTypeInfo* enum_info = type_info.enum_info_.get();
+				Type underlying = enum_info->underlying_type;
+				int underlying_size = enum_info->underlying_size;
+				FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
+				return ParseResult::success(emplace_node<TypeSpecifierNode>(
+					underlying, TypeQualifier::None, underlying_size, underlying_token, CVQualifier::None));
+			}
+		}
+
+		// For non-enum types in template context, return a placeholder
+		// The actual type will be resolved when the template is instantiated
+		FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of non-enum or deferred, returning int placeholder");
+		return ParseResult::success(emplace_node<TypeSpecifierNode>(
+			Type::Int, TypeQualifier::None, 32, underlying_token, CVQualifier::None));
+	}
+
 	// Check for typename keyword (used in template-dependent contexts)
 	// e.g., typename Container<T>::value_type
 	// e.g., constexpr typename my_or<...>::type func()
