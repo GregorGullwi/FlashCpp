@@ -22047,6 +22047,10 @@ ParseResult Parser::parse_template_declaration() {
 				nullptr  // local_struct_info - not needed during template instantiation
 			});
 			
+			// Set up struct parsing context for inherited member lookups (e.g., _S_test from base class)
+			// This enables using type = decltype(_S_test<_Tp1, _Tp2>(0)); to find _S_test in base classes
+			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref});
+			
 			// Parse class body (same as full specialization)
 			while (peek_token().has_value() && peek_token()->value() != "}") {
 				// Check for access specifiers
@@ -22447,6 +22451,11 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Pop member function context
 			member_function_context_stack_.pop_back();
+			
+			// Pop struct parsing context
+			if (!struct_parsing_context_stack_.empty()) {
+				struct_parsing_context_stack_.pop_back();
+			}
 			
 			// Expect semicolon
 			if (!consume_punctuator(";")) {
