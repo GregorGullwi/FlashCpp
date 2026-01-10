@@ -12720,7 +12720,22 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 {
-	FLASH_LOG(Parser, Debug, "parse_expression: Starting with precedence=", precedence, ", context=", static_cast<int>(context), ", current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+	static thread_local int recursion_depth = 0;
+	constexpr int MAX_RECURSION_DEPTH = 50;  // Lowered to catch issues faster
+	
+	// RAII guard to ensure recursion_depth is decremented on all exit paths
+	struct RecursionGuard {
+		int& depth;
+		RecursionGuard(int& d) : depth(d) { ++depth; }
+		~RecursionGuard() { --depth; }
+	} guard(recursion_depth);
+	
+	if (recursion_depth > MAX_RECURSION_DEPTH) {
+		FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_RECURSION_DEPTH limit ({}) in parse_expression", MAX_RECURSION_DEPTH);
+		return ParseResult::error("Parser error: maximum recursion depth exceeded", *current_token_);
+	}
+	
+	FLASH_LOG(Parser, Debug, "parse_expression: Starting with precedence=", precedence, ", context=", static_cast<int>(context), ", depth=", recursion_depth, ", current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	
 	// Add a specific check for the problematic case
 	if (peek_token().has_value() && peek_token()->value() == "ns" && precedence == 2) {
@@ -12733,7 +12748,14 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		return result;
 	}
 
+	constexpr int MAX_BINARY_OP_ITERATIONS = 100;
+	int binary_op_iteration = 0;
 	while (true) {
+		if (++binary_op_iteration > MAX_BINARY_OP_ITERATIONS) {
+			FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_BINARY_OP_ITERATIONS limit ({}) in parse_expression binary operator loop", MAX_BINARY_OP_ITERATIONS);
+			return ParseResult::error("Parser error: too many binary operator iterations", *current_token_);
+		}
+		
 		// Safety check: ensure we have a token to examine
 		if (!peek_token().has_value()) {
 			break;
@@ -13663,9 +13685,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 	std::optional<ASTNode> result = prim_result.node();
 	
 	// Handle postfix operators in a loop
-	while (result.has_value() && peek_token().has_value()) {
-		FLASH_LOG_FORMAT(Parser, Debug, "Postfix operator: peek token type={}, value='{}'", 
-			static_cast<int>(peek_token()->type()), peek_token()->value());
+	constexpr int MAX_POSTFIX_ITERATIONS = 100;  // Safety limit to prevent infinite loops
+	int postfix_iteration = 0;
+	while (result.has_value() && peek_token().has_value() && postfix_iteration < MAX_POSTFIX_ITERATIONS) {
+		++postfix_iteration;
+		FLASH_LOG_FORMAT(Parser, Debug, "Postfix operator iteration {}: peek token type={}, value='{}'", 
+			postfix_iteration, static_cast<int>(peek_token()->type()), peek_token()->value());
 		if (peek_token()->type() == Token::Type::Operator) {
 			std::string_view op = peek_token()->value();
 			if (op == "++" || op == "--") {
@@ -14374,6 +14399,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		continue;  // Check for more postfix operators (e.g., obj.member1.member2)
 	}
 
+	// Check if we hit the iteration limit (indicates potential infinite loop)
+	if (postfix_iteration >= MAX_POSTFIX_ITERATIONS) {
+		FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_POSTFIX_ITERATIONS limit ({}) - possible infinite loop in postfix operator parsing", MAX_POSTFIX_ITERATIONS);
+		return ParseResult::error("Parser error: too many postfix operator iterations", *current_token_);
+	}
 
 	if (result.has_value())
 		return ParseResult::success(*result);
