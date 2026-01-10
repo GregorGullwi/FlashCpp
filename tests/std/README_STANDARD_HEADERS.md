@@ -140,6 +140,73 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
+## Latest Investigation (January 10, 2026 - Decltype Improvements)
+
+### ✅ IMPLEMENTED: TernaryOperatorNode Type Deduction in decltype
+
+**Pattern Now Supported:** The pattern `decltype(true ? expr1 : expr2)` used in `<type_traits>` for common_type computation:
+```cpp
+template<typename T, typename U>
+using cond_t = decltype(true ? std::declval<T>() : std::declval<U>());
+```
+
+**Current Status:**
+- ✅ TernaryOperatorNode handling added to `get_expression_type()` function
+- ✅ Returns common type of both branches when possible
+- ✅ Falls back to Auto type in template contexts for dependent expressions
+
+**Test Cases:**
+- ✅ `tests/test_decltype_ternary_common_type_ret0.cpp` - Compiles successfully
+
+### ✅ IMPLEMENTED: Static Decltype Return Types
+
+**Pattern Now Supported:** `static decltype(expr)` as function return type in template member functions:
+```cpp
+template<typename T, typename U>
+static decltype(_S_test<T, U>(0)) func(...);
+```
+
+**Current Status:**
+- ✅ Added check for `decltype` after function specifiers in `parse_type_specifier()`
+- ✅ Properly handles `static decltype(...)`, `inline decltype(...)`, etc.
+
+**Test Cases:**
+- ✅ `tests/test_static_decltype_return_ret0.cpp` - Compiles successfully
+
+### ✅ IMPLEMENTED: Template Parameter Context for Member Function Templates
+
+**Issue Fixed:** `current_template_param_names_` was empty when parsing decltype in member function template declarations.
+
+**Solution:** Added code to set up template parameter names in `parse_member_function_template()` before calling `parse_template_function_declaration_body()`.
+
+**Impact:**
+- ✅ `<type_traits>` now parses from line 2351 to line 2403 (52 more lines!)
+- Previous blocker at line 2351 (`decltype(true ? std::declval<_Tp>() : std::declval<_Up>())`) - Fixed
+- Previous blocker at line 2372 (`static decltype(_S_test_2<_Tp, _Up>(0))`) - Fixed
+
+### Current Blocker (Line 2403)
+
+**Error:** `Missing identifier: _S_test`
+
+**Pattern:**
+```cpp
+template<typename _Tp1, typename _Tp2>
+struct __common_type_impl<_Tp1, _Tp2, _Tp1, _Tp2>
+    : private __do_common_type_impl
+{
+    using type = decltype(_S_test<_Tp1, _Tp2>(0));  // _S_test is in base class
+};
+```
+
+**Why It Fails:** 
+- `_S_test` is a member template function defined in the base class `__do_common_type_impl`
+- When parsing the partial specialization body, the base class lookup isn't finding the inherited member template
+- This is related to the existing "Member template function lookup through inheritance" issue
+
+**Next Steps:**
+- Improve base class member lookup during partial specialization parsing
+- Ensure `struct_parsing_context_stack_` contains base class information for partial specializations
+
 ## Latest Investigation (January 9, 2026 - Named Anonymous Unions/Structs)
 
 ### ✅ IMPLEMENTED: Named Anonymous Struct/Union Pattern Support
