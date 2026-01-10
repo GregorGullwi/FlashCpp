@@ -8857,13 +8857,23 @@ ParseResult Parser::parse_type_specifier()
 				// the type should now be registered. Look it up using filled args.
 				std::string_view instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
 				
-				// Check if any template arguments are dependent
+				// Check if any template arguments are dependent or pack expansions
 				// If so, we cannot instantiate the template, but we can still parse ::member syntax
+				// Check both filled_template_args (for is_dependent) and original template_args (for is_pack)
 				bool has_dependent_args = false;
 				for (const auto& arg : filled_template_args) {
 					if (arg.is_dependent) {
 						has_dependent_args = true;
 						break;
+					}
+				}
+				// Also check original template_args for pack expansions
+				if (!has_dependent_args) {
+					for (const auto& arg : *template_args) {
+						if (arg.is_pack || arg.is_dependent) {
+							has_dependent_args = true;
+							break;
+						}
 					}
 				}
 				
@@ -21969,29 +21979,44 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Check if this is a template base class (e.g., Base<T>)
 					if (peek_token().has_value() && peek_token()->value() == "<") {
-						// Parse template arguments
-						auto template_args_opt = parse_explicit_template_arguments();
+						// Parse template arguments, collecting AST nodes for deferred resolution
+						std::vector<ASTNode> template_arg_nodes;
+						auto template_args_opt = parse_explicit_template_arguments(&template_arg_nodes);
 						if (!template_args_opt.has_value()) {
 							return ParseResult::error("Failed to parse template arguments for base class", *peek_token());
 						}
 						
 						std::vector<TemplateTypeArg> template_args = *template_args_opt;
 						
-						// Check if any template arguments are dependent
+						// Check if any template arguments are dependent or pack expansions
 						bool has_dependent_args = false;
 						for (const auto& arg : template_args) {
-							if (arg.is_dependent) {
+							if (arg.is_dependent || arg.is_pack) {
 								has_dependent_args = true;
 								break;
 							}
 						}
 						
 						// If template arguments are dependent, we're inside a template declaration
-						// Don't try to instantiate or resolve the base class yet
+						// Defer base class resolution until template instantiation
 						if (has_dependent_args) {
 							FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
-							// Skip base class resolution for now
-							// The base class will be resolved when this template is instantiated
+							
+							// Build TemplateArgumentNodeInfo structures for deferred resolution
+							std::vector<TemplateArgumentNodeInfo> arg_infos;
+							arg_infos.reserve(template_args.size());
+							for (size_t i = 0; i < template_args.size(); ++i) {
+								TemplateArgumentNodeInfo info;
+								info.is_pack = template_args[i].is_pack;
+								info.is_dependent = template_args[i].is_dependent;
+								if (i < template_arg_nodes.size()) {
+									info.node = template_arg_nodes[i];
+								}
+								arg_infos.push_back(std::move(info));
+							}
+							
+							StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
+							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::nullopt, base_access, is_virtual_base);
 							continue;  // Skip to next base class or exit loop
 						}
 						
@@ -25531,6 +25556,25 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			} else if (idx == 0) {
 				arg.is_dependent = true;
 				FLASH_LOG(Templates, Debug, "Template argument is dependent (placeholder with type_index=0)");
+			}
+		}
+		
+		// Also check Struct types - if this is a template class that was parsed with dependent arguments,
+		// the instantiation was skipped and we got back the primary template type
+		// In a template body, if the struct is a registered template and we're using template params, it's dependent
+		if (!arg.is_dependent && type_node.type() == Type::Struct && parsing_template_body_ && !in_sfinae_context_) {
+			TypeIndex idx = type_node.type_index();
+			if (idx < gTypeInfo.size()) {
+				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());
+				// Check if this is a template primary (not an instantiation which would have underscores)
+				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
+				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+					// This struct type is a template primary - if we're in a template body,
+					// it likely has dependent template arguments
+					FLASH_LOG_FORMAT(Templates, Debug, "Template argument {} is primary template in template body - marking as dependent", type_name);
+					arg.is_dependent = true;
+					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
+				}
 			}
 		}
 		

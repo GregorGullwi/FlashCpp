@@ -140,7 +140,59 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 10, 2026 - Decltype Improvements)
+## Latest Investigation (January 10, 2026 - Nested Template Base Classes)
+
+### ✅ IMPLEMENTED: Nested Template Base Classes in Partial Specializations
+
+**Pattern Now Supported:** Partial specializations can now have base classes that use nested template instantiations with dependent arguments:
+```cpp
+template<typename Tp1, typename Tp2, typename... Rp>
+struct common_type<Tp1, Tp2, Rp...>
+    : public fold<common_type<Tp1, Tp2>, pack<Rp...>>
+{ };
+```
+
+**Current Status:**
+- ✅ Properly defers base class resolution when template arguments are dependent
+- ✅ Creates dependent type placeholders for templates instantiated with dependent arguments
+- ✅ Improved identifier matching to recognize template parameters in generated type names (e.g., `pack_Rp` contains `Rp`)
+- ✅ Checks both `is_dependent` and `is_pack` flags when determining dependency
+
+**Implementation Details:**
+1. Modified partial specialization base class parsing to call `struct_ref.add_deferred_template_base_class()` instead of just skipping
+2. Added check for `is_pack` when determining if template arguments are dependent
+3. When `try_instantiate_class_template` returns nullopt due to dependent args, now creates a dependent type placeholder with a name that includes the template parameters
+4. Improved `matches_identifier` function to recognize underscore as a valid separator in template type names
+
+**Test Cases:**
+- ✅ `tests/test_nested_template_base_ret0.cpp` - Compiles and runs successfully
+
+**Impact:**
+- ✅ `<type_traits>` now parses past line 2422!
+- Previous blocker at line 2422 (`struct common_type<_Tp1, _Tp2, _Rp...> : public __common_type_fold<common_type<_Tp1, _Tp2>, __common_type_pack<_Rp...>>`) - **Fixed!**
+
+### Current Blocker (Line 243)
+
+**Error:** `Base class 'true_type' is not a struct/class`
+
+**Pattern:**
+```cpp
+template<>
+struct conjunction<>
+    : true_type
+{ };
+```
+
+**Why It Fails:**
+- `true_type` is a type alias (`using true_type = __bool_constant<true>;`)
+- When used as a base class in a full template specialization (`template<>`), the alias isn't being resolved to the underlying struct type
+- This is a different issue from the nested template base class problem
+
+**Next Steps:**
+- Improve type alias resolution for base classes in full template specializations
+- Ensure `integral_constant<bool, true>` is properly instantiated when resolving `true_type`
+
+## Previous Investigation (January 10, 2026 - Decltype Improvements)
 
 ### ✅ IMPLEMENTED: TernaryOperatorNode Type Deduction in decltype
 
@@ -190,37 +242,7 @@ static decltype(_S_test<T, U>(0)) func(...);
 - Previous blocker at line 2351 (`decltype(true ? std::declval<_Tp>() : std::declval<_Up>())`) - Fixed
 - Previous blocker at line 2372 (`static decltype(_S_test_2<_Tp, _Up>(0))`) - Fixed
 - Previous blocker at line 2403 (`using type = decltype(_S_test<_Tp1, _Tp2>(0));` - inherited member lookup) - Fixed
-
-### Current Blocker (Line 2422)
-
-**Error:** `Base class '__common_type_fold_common_type___common_type_pack' not found`
-
-**Pattern:**
-```cpp
-template<typename _Tp1, typename _Tp2, typename... _Rp>
-struct common_type<_Tp1, _Tp2, _Rp...>
-    : public __common_type_fold<common_type<_Tp1, _Tp2>, __common_type_pack<_Rp...>>
-{
-};
-```
-
-**Why It Fails:**
-- Nested template instantiation with parameter pack expansion in base class
-- The base class `__common_type_fold<common_type<_Tp1, _Tp2>, __common_type_pack<_Rp...>>` uses dependent template arguments
-- Template instantiation isn't properly resolving the nested template types
-
-**Next Steps:**
-- Improve template instantiation for nested templates with dependent arguments
-- Handle parameter pack expansion in base class specifications
-
-**Why It Fails:** 
-- `_S_test` is a member template function defined in the base class `__do_common_type_impl`
-- When parsing the partial specialization body, the base class lookup isn't finding the inherited member template
-- This is related to the existing "Member template function lookup through inheritance" issue
-
-**Next Steps:**
-- Improve base class member lookup during partial specialization parsing
-- Ensure `struct_parsing_context_stack_` contains base class information for partial specializations
+- Previous blocker at line 2422 (`struct common_type<_Tp1, _Tp2, _Rp...> : __common_type_fold<...>`) - **Fixed January 10, 2026**
 
 ## Latest Investigation (January 9, 2026 - Named Anonymous Unions/Structs)
 
