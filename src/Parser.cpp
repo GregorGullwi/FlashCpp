@@ -1350,6 +1350,45 @@ ParseResult Parser::parse_type_and_name() {
     }
 
     // Regular pointer/reference/identifier parsing (existing code)
+    // Check for pointer-to-member syntax: ClassName::*
+    // Pattern: int Point::*ptr_to_x
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+        // Save position in case this isn't a pointer-to-member
+        SaveHandle saved_pos = save_token_position();
+        Token class_name_token = *peek_token();
+        consume_token(); // consume class name
+        
+        // Check for ::
+        if (peek_token().has_value() && peek_token()->value() == "::") {
+            consume_token(); // consume '::'
+            
+            // Check for *
+            if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+                peek_token()->value() == "*") {
+                consume_token(); // consume '*'
+                
+                // This is a pointer-to-member declaration!
+                FLASH_LOG(Parser, Debug, "parse_type_and_name: Detected pointer-to-member: ", 
+                          class_name_token.value(), "::*");
+                
+                // Set the member class name
+                type_spec.set_member_class_name(class_name_token.value());
+                
+                // Add a pointer level to indicate this is a pointer
+                type_spec.add_pointer_level(CVQualifier::None);
+                
+                // Discard the saved position and continue parsing
+                discard_saved_token(saved_pos);
+            } else {
+                // Not a pointer-to-member, restore position
+                restore_token_position(saved_pos);
+            }
+        } else {
+            // Not followed by ::, restore position
+            restore_token_position(saved_pos);
+        }
+    }
+    
     // Parse pointer declarators: * [const] [volatile] *...
     // Example: int* const* volatile ptr
     while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&

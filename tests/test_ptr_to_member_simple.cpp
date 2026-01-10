@@ -1,6 +1,5 @@
 // Test pointer-to-member operators .* and ->* in expression contexts
-// Note: This tests the operators themselves, not pointer-to-member type declarations
-// which are not yet implemented (e.g., int Class::*ptr syntax)
+// Updated to also test pointer-to-member type declarations
 
 template<typename T>
 T declval();
@@ -10,12 +9,18 @@ struct Point {
     int y;
 };
 
-// Test the .* operator in a decltype context (what we actually implemented)
+// Test pointer-to-member type declaration (int Class::*)
+int Point::*getPtrToMember();
+
+// Test the .* operator in a decltype context (template expression parsing)
 template<typename T, typename M>
 using member_access_type = decltype(declval<T>().*declval<M>());
 
 int main() {
-    // Simple compile test - we can't actually execute pointer-to-member
-    // operations without implementing pointer-to-member type declarations
+    // Test type declaration parsing
+    int Point::*ptr_to_member = getPtrToMember();
+    
+    // Simple compile test - the .* operator with runtime variables
+    // requires additional support beyond template expression contexts
     return 0;
 }
