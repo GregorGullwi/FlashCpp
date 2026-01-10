@@ -171,26 +171,51 @@ struct common_type<Tp1, Tp2, Rp...>
 - ✅ `<type_traits>` now parses past line 2422!
 - Previous blocker at line 2422 (`struct common_type<_Tp1, _Tp2, _Rp...> : public __common_type_fold<common_type<_Tp1, _Tp2>, __common_type_pack<_Rp...>>`) - **Fixed!**
 
-### Current Blocker (Line 243)
+## Latest Investigation (January 10, 2026 - __underlying_type Support)
 
-**Error:** `Base class 'true_type' is not a struct/class`
+### ✅ IMPLEMENTED: __underlying_type(T) as Type Specifier
+
+**Pattern Now Supported:** The `__underlying_type(T)` intrinsic used in `<type_traits>` to get the underlying type of an enum:
+```cpp
+template<typename _Tp>
+struct __underlying_type_impl
+{
+    using type = __underlying_type(_Tp);
+};
+```
+
+**Current Status:**
+- ✅ Added support for `__underlying_type(T)` in type specifier context
+- ✅ Properly resolves to the underlying type for concrete enum types
+- ✅ Returns dependent type placeholder for template parameters (resolved at instantiation)
+
+**Test Cases:**
+- ✅ `tests/test_underlying_type_ret42.cpp` - Compiles and runs successfully
+
+**Impact:**
+- ✅ `<type_traits>` now parses past line 2443 to line 2499!
+- Previous blocker at line 2443 (`using type = __underlying_type(_Tp);`) - **Fixed!**
+
+### Current Blocker (Line 2499)
+
+**Error:** `Expected identifier token`
 
 **Pattern:**
 ```cpp
-template<>
-struct conjunction<>
-    : true_type
-{ };
+template<typename _Fp, typename _Tp1, typename... _Args>
+  static __result_of_success<decltype(
+  (std::declval<_Tp1>().*std::declval<_Fp>())(std::declval<_Args>()...)
+  ), __invoke_memfun_ref> _S_test(int);
 ```
 
 **Why It Fails:**
-- `true_type` is a type alias (`using true_type = __bool_constant<true>;`)
-- When used as a base class in a full template specialization (`template<>`), the alias isn't being resolved to the underlying struct type
-- This is a different issue from the nested template base class problem
+- This is a complex pattern using pointer-to-member operator (`.*`)
+- The decltype expression involves calling a member function pointer on a declval result
+- This requires support for pointer-to-member dereference operators in expression parsing
 
 **Next Steps:**
-- Improve type alias resolution for base classes in full template specializations
-- Ensure `integral_constant<bool, true>` is properly instantiated when resolving `true_type`
+- Implement pointer-to-member operators (`.*` and `->*`) in expression parsing
+- Handle member function pointer calls through declval
 
 ## Previous Investigation (January 10, 2026 - Decltype Improvements)
 
