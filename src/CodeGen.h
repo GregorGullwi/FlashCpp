@@ -7287,6 +7287,20 @@ private:
 			// Destructor calls return void
 			return {};
 		}
+		else if (std::holds_alternative<PointerToMemberAccessNode>(exprNode)) {
+			// Pointer-to-member operator: obj.*ptr or obj->*ptr
+			// For now, return empty operands since full implementation requires
+			// runtime type information and pointer-to-member support
+			FLASH_LOG(Codegen, Debug, "PointerToMemberAccessNode code generation not fully implemented yet - returning empty operands");
+			return {};
+		}
+		else if (std::holds_alternative<PackExpansionExprNode>(exprNode)) {
+			// Pack expansion: expr...
+			// Should have been expanded during template instantiation
+			// If we reach here, it means the pack wasn't properly substituted
+			FLASH_LOG(Codegen, Error, "PackExpansionExprNode found during code generation - should have been expanded during template instantiation");
+			return {};
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
