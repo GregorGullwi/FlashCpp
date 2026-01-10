@@ -196,9 +196,9 @@ struct __underlying_type_impl
 - ✅ `<type_traits>` now parses past line 2443 to line 2499!
 - Previous blocker at line 2443 (`using type = __underlying_type(_Tp);`) - **Fixed!**
 
-### Current Blocker (Line 2499)
+### Current Blocker (Line 2499) - PARTIALLY FIXED (January 10, 2026)
 
-**Error:** `Expected identifier token`
+**Error:** `Expected identifier token` at column 34
 
 **Pattern:**
 ```cpp
@@ -208,14 +208,41 @@ template<typename _Fp, typename _Tp1, typename... _Args>
   ), __invoke_memfun_ref> _S_test(int);
 ```
 
-**Why It Fails:**
-- This is a complex pattern using pointer-to-member operator (`.*`)
-- The decltype expression involves calling a member function pointer on a declval result
-- This requires support for pointer-to-member dereference operators in expression parsing
+**Progress Made:**
+- ✅ **Pointer-to-member operators (`.*` and `->*`) now supported!**
+- ✅ Basic patterns work: `declval<T>().*declval<Fp>()`
+- ✅ Expressions like `obj.*ptr` and `obj->*ptr` parse correctly
+- ✅ Can be used in decltype return types: `static decltype(obj.*ptr) func()`
+
+**Current Issue:**
+The pointer-to-member operators themselves work, but there's a **template argument parsing issue** when:
+1. The decltype expression is inside template arguments (e.g., `result_success<decltype(...)>`)
+2. The decltype contains a parenthesized pointer-to-member expression followed by a function call
+3. Pattern: `<decltype((obj.*ptr)(args...))>` ← fails in template argument context
+
+**Test Cases Created:**
+- ✅ `tests/test_ptr_to_member_decltype.cpp` - Basic `.*` in decltype - **WORKS**
+- ✅ `tests/test_static_decltype_ptrmem_arg.cpp` - Simple `.*` in template arg - **WORKS**
+- ❌ `tests/test_static_decltype_ptrmem_call_arg.cpp` - `(obj.*ptr)(args)` in template arg - **FAILS**
+
+**Root Cause:**
+Template argument parsing has difficulty with:
+- Parenthesized expressions containing `.*` followed by function call syntax
+- Pattern: `Template<decltype((expr1.*expr2)(args...))>` 
+- The parser expects an identifier when it sees the opening `(` after `decltype`
 
 **Next Steps:**
-- Implement pointer-to-member operators (`.*` and `->*`) in expression parsing
-- Handle member function pointer calls through declval
+- Investigate template argument parsing for complex decltype expressions
+- Handle parenthesized expressions in template argument contexts
+- Support function call syntax on parenthesized pointer-to-member results
+
+**Implementation Details:**
+- **File**: `src/AstNodeTypes.h` - Added `PointerToMemberAccessNode` class
+- **File**: `src/Parser.cpp` (~line 13975) - Modified postfix operator parsing
+  - Detects `*` after consuming `.` or `->`
+  - Parses RHS as expression with precedence 17
+  - Creates `PointerToMemberAccessNode` with object and member_pointer
+- **Integration**: Added to ExpressionNode variant, findReferencedIdentifiers, get_expression_type
 
 ## Previous Investigation (January 10, 2026 - Decltype Improvements)
 
