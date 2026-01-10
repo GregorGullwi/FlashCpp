@@ -335,6 +335,11 @@ private:
         };
         std::vector<StructParsingContext> struct_parsing_context_stack_;
 
+        // Store parsed explicit template arguments for cross-function access
+        // This allows template arguments parsed in one function (e.g., parse_primary_expression)
+        // to be accessible in another function (e.g., parse_postfix_expression) for template instantiation
+        std::optional<std::vector<TemplateTypeArg>> pending_explicit_template_args_;
+
         // Handle-based save/restore to avoid cursor position collisions
         // Each save gets a unique handle from a static incrementing counter
         using SaveHandle = size_t;
@@ -749,6 +754,19 @@ public:  // Public methods for template instantiation
             return lookup_inherited_type_alias(
                 StringTable::getOrInternStringHandle(struct_name),
                 StringTable::getOrInternStringHandle(member_name),
+                depth
+            );
+        }
+
+        // Helper: Look up a template function including inherited ones from base classes
+        // Returns the vector of all template overloads if found, nullptr otherwise
+        // Uses depth limit to prevent infinite recursion in malformed input
+        const std::vector<ASTNode>* lookup_inherited_template(StringHandle struct_name, std::string_view template_name, int depth = 0);
+        // Convenience overload for string_view parameters
+        const std::vector<ASTNode>* lookup_inherited_template(std::string_view struct_name, std::string_view template_name, int depth = 0) {
+            return lookup_inherited_template(
+                StringTable::getOrInternStringHandle(struct_name),
+                template_name,
                 depth
             );
         }
