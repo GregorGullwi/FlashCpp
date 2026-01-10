@@ -14036,7 +14036,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		bool is_arrow_access = false;
 		Token operator_start_token;  // Track the operator token for error reporting
 		
-		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
 			operator_start_token = *peek_token();
 			consume_token(); // consume '.'
 			is_arrow_access = false;
@@ -14061,7 +14061,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_start_token, false));
 				continue;  // Check for more postfix operators
 			}
-		} else if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "->"sv) {
+		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "->"sv) {
 			operator_start_token = *peek_token();
 			consume_token(); // consume '->'
 			is_arrow_access = true;
