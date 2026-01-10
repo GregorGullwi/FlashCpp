@@ -8857,13 +8857,23 @@ ParseResult Parser::parse_type_specifier()
 				// the type should now be registered. Look it up using filled args.
 				std::string_view instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
 				
-				// Check if any template arguments are dependent
+				// Check if any template arguments are dependent or pack expansions
 				// If so, we cannot instantiate the template, but we can still parse ::member syntax
+				// Check both filled_template_args (for is_dependent) and original template_args (for is_pack)
 				bool has_dependent_args = false;
 				for (const auto& arg : filled_template_args) {
 					if (arg.is_dependent) {
 						has_dependent_args = true;
 						break;
+					}
+				}
+				// Also check original template_args for pack expansions
+				if (!has_dependent_args) {
+					for (const auto& arg : *template_args) {
+						if (arg.is_pack || arg.is_dependent) {
+							has_dependent_args = true;
+							break;
+						}
 					}
 				}
 				
@@ -9129,6 +9139,23 @@ ParseResult Parser::parse_type_specifier()
 					}
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(
 						Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+				}
+				
+				// If type not found and we have dependent arguments, create a dependent type placeholder
+				// This happens when parsing Template<DependentArg> where DependentArg is a template parameter
+				// or a template with dependent arguments (e.g., common_type<T, U> where T, U are template params)
+				if (has_dependent_args) {
+					FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {} (template with dependent args)", instantiated_name);
+					StringHandle placeholder_name = StringTable::getOrInternStringHandle(instantiated_name);
+					auto& type_info = gTypeInfo.emplace_back();
+					type_info.type_ = Type::UserDefined;
+					type_info.type_index_ = gTypeInfo.size() - 1;
+					type_info.type_size_ = 0;  // Unknown size for dependent type
+					type_info.name_ = placeholder_name;
+					gTypesByName[placeholder_name] = &type_info;
+					
+					return ParseResult::success(emplace_node<TypeSpecifierNode>(
+						Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
 				}
 				// If type not found, fall through to error handling below
 			}
@@ -21969,29 +21996,44 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Check if this is a template base class (e.g., Base<T>)
 					if (peek_token().has_value() && peek_token()->value() == "<") {
-						// Parse template arguments
-						auto template_args_opt = parse_explicit_template_arguments();
+						// Parse template arguments, collecting AST nodes for deferred resolution
+						std::vector<ASTNode> template_arg_nodes;
+						auto template_args_opt = parse_explicit_template_arguments(&template_arg_nodes);
 						if (!template_args_opt.has_value()) {
 							return ParseResult::error("Failed to parse template arguments for base class", *peek_token());
 						}
 						
 						std::vector<TemplateTypeArg> template_args = *template_args_opt;
 						
-						// Check if any template arguments are dependent
+						// Check if any template arguments are dependent or pack expansions
 						bool has_dependent_args = false;
 						for (const auto& arg : template_args) {
-							if (arg.is_dependent) {
+							if (arg.is_dependent || arg.is_pack) {
 								has_dependent_args = true;
 								break;
 							}
 						}
 						
 						// If template arguments are dependent, we're inside a template declaration
-						// Don't try to instantiate or resolve the base class yet
+						// Defer base class resolution until template instantiation
 						if (has_dependent_args) {
 							FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
-							// Skip base class resolution for now
-							// The base class will be resolved when this template is instantiated
+							
+							// Build TemplateArgumentNodeInfo structures for deferred resolution
+							std::vector<TemplateArgumentNodeInfo> arg_infos;
+							arg_infos.reserve(template_args.size());
+							for (size_t i = 0; i < template_args.size(); ++i) {
+								TemplateArgumentNodeInfo info;
+								info.is_pack = template_args[i].is_pack;
+								info.is_dependent = template_args[i].is_dependent;
+								if (i < template_arg_nodes.size()) {
+									info.node = template_arg_nodes[i];
+								}
+								arg_infos.push_back(std::move(info));
+							}
+							
+							StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
+							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::nullopt, base_access, is_virtual_base);
 							continue;  // Skip to next base class or exit loop
 						}
 						
@@ -25482,9 +25524,22 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					auto is_ident_char = [](char ch) {
 						return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
 					};
+					// Special case: underscore can be a separator in template names like pack_Rp
+					auto is_template_name_separator = [](char ch) {
+						return ch == '_';
+					};
 					while (pos != std::string_view::npos) {
 						bool start_ok = (pos == 0) || !is_ident_char(haystack[pos - 1]);
+						// Also allow underscore as a prefix separator for template parameter names
+						if (!start_ok && pos > 0 && is_template_name_separator(haystack[pos - 1])) {
+							// Check if this looks like a template name separator (e.g., pack_Rp, common_type_Tp1)
+							start_ok = true;
+						}
 						bool end_ok = (pos + needle.size() >= haystack.size()) || !is_ident_char(haystack[pos + needle.size()]);
+						// Also allow underscore as a suffix separator
+						if (!end_ok && pos + needle.size() < haystack.size() && is_template_name_separator(haystack[pos + needle.size()])) {
+							end_ok = true;
+						}
 						if (start_ok && end_ok) {
 							return true;
 						}
