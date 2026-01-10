@@ -4,6 +4,16 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 10, 2026 - __underlying_type(T) Support - IMPLEMENTED!)**:
+- ✅ **IMPLEMENTED: `__underlying_type(T)` as type specifier now fully supported!** 🎉
+  - **Pattern**: `using type = __underlying_type(_Tp);`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Returns the underlying type of an enum (e.g., `int` for `enum E : int`)
+  - **Template support**: Returns dependent type placeholder for template parameters, resolved at instantiation
+  - **Test case**: `tests/test_underlying_type_ret42.cpp` - Returns 42 ✅
+  - **Impact**: `<type_traits>` now parses past line 2443 to line 2499!
+  - **Current blocker**: Line 2499 - pointer-to-member operators (`.*`) in decltype expressions
+
 **UPDATE (January 9, 2026 - Named Anonymous Unions/Structs - FULLY IMPLEMENTED!)**:
 - ✅ **IMPLEMENTED: Named anonymous struct/union pattern now fully supported!** 🎉
   - **Pattern**: `struct { int x; } member_name;` or `union { int i; } data;`
