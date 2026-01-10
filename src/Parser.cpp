@@ -189,6 +189,8 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 				findReferencedIdentifiers(ASTNode(const_cast<FunctionCallNode*>(&inner_node)), identifiers);
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				findReferencedIdentifiers(ASTNode(const_cast<MemberAccessNode*>(&inner_node)), identifiers);
+			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+				findReferencedIdentifiers(ASTNode(const_cast<PointerToMemberAccessNode*>(&inner_node)), identifiers);
 			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
 				findReferencedIdentifiers(ASTNode(const_cast<MemberFunctionCallNode*>(&inner_node)), identifiers);
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
@@ -252,6 +254,10 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 		const auto& member = node.as<MemberAccessNode>();
 		findReferencedIdentifiers(member.object(), identifiers);
 		// Don't add the member name itself
+	} else if (node.is<PointerToMemberAccessNode>()) {
+		const auto& ptr_member = node.as<PointerToMemberAccessNode>();
+		findReferencedIdentifiers(ptr_member.object(), identifiers);
+		findReferencedIdentifiers(ptr_member.member_pointer(), identifiers);
 	} else if (node.is<MemberFunctionCallNode>()) {
 		const auto& member_call = node.as<MemberFunctionCallNode>();
 		findReferencedIdentifiers(member_call.object(), identifiers);
@@ -13962,14 +13968,61 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				return ParseResult::error("Undefined qualified identifier", final_identifier);
 			}
 		}
-		// Check for member access operator . or ->
+		// Check for member access operator . or -> (or pointer-to-member .* or ->*)
 		bool is_arrow_access = false;
+		Token operator_start_token;  // Track the operator token for error reporting
+		
 		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
+			operator_start_token = *peek_token();
 			consume_token(); // consume '.'
 			is_arrow_access = false;
+			
+			// Check for pointer-to-member operator .*
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "*"sv) {
+				consume_token(); // consume '*'
+				
+				// Parse the RHS expression (pointer to member)
+				// Pointer-to-member operators have precedence similar to multiplicative operators (17)
+				// But we need to stop at lower precedence operators, so use precedence 17
+				ParseResult member_ptr_result = parse_expression(17, ExpressionContext::Normal);
+				if (member_ptr_result.is_error()) {
+					return member_ptr_result;
+				}
+				if (!member_ptr_result.node().has_value()) {
+					return ParseResult::error("Expected expression after '.*' operator", *current_token_);
+				}
+				
+				// Create PointerToMemberAccessNode
+				result = emplace_node<ExpressionNode>(
+					PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_start_token, false));
+				continue;  // Check for more postfix operators
+			}
 		} else if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "->"sv) {
+			operator_start_token = *peek_token();
 			consume_token(); // consume '->'
 			is_arrow_access = true;
+			
+			// Check for pointer-to-member operator ->*
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "*"sv) {
+				consume_token(); // consume '*'
+				
+				// Parse the RHS expression (pointer to member)
+				// Pointer-to-member operators have precedence similar to multiplicative operators (17)
+				// But we need to stop at lower precedence operators, so use precedence 17
+				ParseResult member_ptr_result = parse_expression(17, ExpressionContext::Normal);
+				if (member_ptr_result.is_error()) {
+					return member_ptr_result;
+				}
+				if (!member_ptr_result.node().has_value()) {
+					return ParseResult::error("Expected expression after '->*' operator", *current_token_);
+				}
+				
+				// Create PointerToMemberAccessNode
+				result = emplace_node<ExpressionNode>(
+					PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_start_token, true));
+				continue;  // Check for more postfix operators
+			}
+			
 			// Note: We don't transform ptr->member to (*ptr).member here anymore.
 			// Instead, we pass the is_arrow flag to MemberAccessNode, and CodeGen will
 			// handle operator-> overload resolution. For raw pointers, it will generate
@@ -20028,6 +20081,13 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				}
 			}
 		}
+	}
+	else if (std::holds_alternative<PointerToMemberAccessNode>(expr)) {
+		// For pointer-to-member access expressions like obj.*ptr_to_member or obj->*ptr_to_member
+		// The type depends on the pointer-to-member type, which is complex to determine
+		// For now, return nullopt as this is primarily used in decltype contexts where
+		// the actual type isn't needed during parsing
+		return std::nullopt;
 	}
 	else if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
 		// Pseudo-destructor call (obj.~Type()) always returns void

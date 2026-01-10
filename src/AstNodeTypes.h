@@ -2561,6 +2561,27 @@ private:
 	bool is_arrow_;  // True if accessed via -> instead of .
 };
 
+// Pointer-to-member access node: obj.*ptr_to_member or obj->*ptr_to_member
+// Used in patterns like: (declval<T>().*declval<Fp>())(args...)
+// The RHS is an expression (pointer to member), not a simple identifier
+class PointerToMemberAccessNode {
+public:
+	explicit PointerToMemberAccessNode(ASTNode object, ASTNode member_pointer, Token operator_token, bool is_arrow)
+		: object_(object), member_pointer_(member_pointer), operator_token_(operator_token), is_arrow_(is_arrow) {}
+
+	ASTNode object() const { return object_; }
+	ASTNode member_pointer() const { return member_pointer_; }
+	const Token& operator_token() const { return operator_token_; }
+	bool is_arrow() const { return is_arrow_; }  // true for ->*, false for .*
+	std::string_view op() const { return is_arrow_ ? "->*" : ".*"; }
+
+private:
+	ASTNode object_;           // The object expression (LHS)
+	ASTNode member_pointer_;   // The pointer-to-member expression (RHS)
+	Token operator_token_;     // The operator token (for error reporting)
+	bool is_arrow_;            // true for ->*, false for .*
+};
+
 // Member function call node (e.g., obj.method(args))
 class MemberFunctionCallNode {
 public:
@@ -3115,7 +3136,7 @@ private:
 };
 
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
-	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, MemberFunctionCallNode,
+	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PseudoDestructorCallNode, NoexceptExprNode>;
 
