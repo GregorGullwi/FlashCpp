@@ -8143,6 +8143,13 @@ ParseResult Parser::parse_type_specifier()
 		}
 	}
 
+	// Check for decltype after function specifiers (e.g., static decltype(...))
+	// This check MUST come after skipping function specifiers to handle patterns like:
+	// "static decltype(_S_test_2<_Tp, _Up>(0))" which appear in standard library headers
+	if (current_token_opt.has_value() && current_token_opt->value() == "decltype") {
+		return parse_decltype_specifier();
+	}
+
 	// Check for typename keyword (used in template-dependent contexts)
 	// e.g., typename Container<T>::value_type
 	// e.g., constexpr typename my_or<...>::type func()
@@ -9416,10 +9423,13 @@ ParseResult Parser::parse_decltype_specifier()
 	// Deduce the type from the expression
 	auto type_spec_opt = get_expression_type(*expr_result.node());
 	if (!type_spec_opt.has_value()) {
-		// If we're in a template body and the expression is dependent,
-		// create a dependent type placeholder that will be resolved during instantiation
-		if (parsing_template_body_) {
-			FLASH_LOG(Templates, Debug, "Creating dependent type for decltype expression in template body");
+		// If we're in a template body/declaration and the expression is dependent,
+		// create a dependent type placeholder that will be resolved during instantiation.
+		// Check both parsing_template_body_ and current_template_param_names_ since
+		// some template contexts (like member function templates in structs) might not
+		// set parsing_template_body_ but will have template parameter names.
+		if (parsing_template_body_ || !current_template_param_names_.empty()) {
+			FLASH_LOG(Templates, Debug, "Creating dependent type for decltype expression in template context");
 			// Create a placeholder type for the dependent decltype expression
 			// Store the expression so it can be re-evaluated during instantiation
 			TypeSpecifierNode dependent_type(Type::Auto, TypeQualifier::None, 0);
@@ -19928,6 +19938,57 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const auto& dtor_call = std::get<PseudoDestructorCallNode>(expr);
 		return TypeSpecifierNode(Type::Void, TypeQualifier::None, 0, dtor_call.type_name_token());
 	}
+	else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+		// For ternary expressions (cond ? true_expr : false_expr), determine the common type
+		// This is important for decltype(true ? expr1 : expr2) patterns used in <type_traits>
+		const auto& ternary = std::get<TernaryOperatorNode>(expr);
+		
+		// Get types of both branches
+		auto true_type_opt = get_expression_type(ternary.true_expr());
+		auto false_type_opt = get_expression_type(ternary.false_expr());
+		
+		// If both types are available, determine the common type
+		if (true_type_opt.has_value() && false_type_opt.has_value()) {
+			const TypeSpecifierNode& true_type = *true_type_opt;
+			const TypeSpecifierNode& false_type = *false_type_opt;
+			
+			// If both types are the same, return that type
+			if (true_type.type() == false_type.type() && 
+				true_type.type_index() == false_type.type_index() &&
+				true_type.pointer_levels().size() == false_type.pointer_levels().size()) {
+				// Return the common type (prefer the true branch for reference/const qualifiers)
+				return true_type;
+			}
+			
+			// Handle common type conversions for arithmetic types
+			if (true_type.type() != Type::Struct && true_type.type() != Type::UserDefined &&
+				false_type.type() != Type::Struct && false_type.type() != Type::UserDefined) {
+				// For arithmetic types, use usual arithmetic conversions
+				// Return the larger type (in terms of bit width)
+				if (true_type.size_in_bits() >= false_type.size_in_bits()) {
+					return true_type;
+				} else {
+					return false_type;
+				}
+			}
+			
+			// For mixed struct types, we can't easily determine the common type
+			// In template context, this might be a dependent type
+			// Return the true branch type as fallback
+			return true_type;
+		}
+		
+		// If only one type is available, return that
+		if (true_type_opt.has_value()) {
+			return true_type_opt;
+		}
+		if (false_type_opt.has_value()) {
+			return false_type_opt;
+		}
+		
+		// Both types unavailable - return nullopt
+		return std::nullopt;
+	}
 	else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 		// For qualified identifiers like MakeUnsigned::List<int, char>::size
 		// We need to look up the type of the static member
@@ -21986,6 +22047,10 @@ ParseResult Parser::parse_template_declaration() {
 				nullptr  // local_struct_info - not needed during template instantiation
 			});
 			
+			// Set up struct parsing context for inherited member lookups (e.g., _S_test from base class)
+			// This enables using type = decltype(_S_test<_Tp1, _Tp2>(0)); to find _S_test in base classes
+			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref});
+			
 			// Parse class body (same as full specialization)
 			while (peek_token().has_value() && peek_token()->value() != "}") {
 				// Check for access specifiers
@@ -22386,6 +22451,11 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Pop member function context
 			member_function_context_stack_.pop_back();
+			
+			// Pop struct parsing context
+			if (!struct_parsing_context_stack_.empty()) {
+				struct_parsing_context_stack_.pop_back();
+			}
 			
 			// Expect semicolon
 			if (!consume_punctuator(";")) {
@@ -23817,11 +23887,27 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		}
 	}
 
+	// Set up template parameter names for the body parsing phase
+	// This is needed for decltype expressions and other template-dependent constructs
+	// Save current template param names and restore after body parsing
+	std::vector<StringHandle> saved_template_param_names = std::move(current_template_param_names_);
+	current_template_param_names_.clear();
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			current_template_param_names_.push_back(tparam.nameHandle());
+		}
+	}
+
 	// Use shared helper to parse function declaration body (Phase 6)
 	// Member templates don't support requires clauses yet
 	std::optional<ASTNode> empty_requires_clause;
 	ASTNode template_func_node;
 	auto body_result = parse_template_function_declaration_body(template_params, empty_requires_clause, template_func_node);
+	
+	// Restore template param names
+	current_template_param_names_ = std::move(saved_template_param_names);
+	
 	if (body_result.is_error()) {
 		return body_result;  // template_scope automatically cleans up
 	}
