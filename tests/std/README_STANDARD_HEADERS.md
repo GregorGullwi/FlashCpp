@@ -196,11 +196,11 @@ struct __underlying_type_impl
 - ✅ `<type_traits>` now parses past line 2443 to line 2499!
 - Previous blocker at line 2443 (`using type = __underlying_type(_Tp);`) - **Fixed!**
 
-### Current Blocker (Line 2499) - PARTIALLY FIXED (January 10, 2026)
+### Current Blocker (Line 2578) - RESOLVED Line 2499 (January 10, 2026)
 
-**Error:** `Expected identifier token` at column 34
+**Previous Blocker (Line 2499):** ✅ **FULLY RESOLVED**
 
-**Pattern:**
+The complex pattern from line 2499 is now fully supported:
 ```cpp
 template<typename _Fp, typename _Tp1, typename... _Args>
   static __result_of_success<decltype(
@@ -208,41 +208,30 @@ template<typename _Fp, typename _Tp1, typename... _Args>
   ), __invoke_memfun_ref> _S_test(int);
 ```
 
-**Progress Made:**
-- ✅ **Pointer-to-member operators (`.*` and `->*`) now supported!**
-- ✅ Basic patterns work: `declval<T>().*declval<Fp>()`
-- ✅ Expressions like `obj.*ptr` and `obj->*ptr` parse correctly
-- ✅ Can be used in decltype return types: `static decltype(obj.*ptr) func()`
+**What Was Fixed:**
+1. ✅ **Pointer-to-member operators (`.*` and `->*`)** - Added AST node and postfix parsing
+2. ✅ **Pack expansion in parentheses** - Pattern: `(expr...)` in decltype/template contexts  
+3. ✅ **Pack expansion in function arguments** - Pattern: `func(expr...)`
 
-**Current Issue:**
-The pointer-to-member operators themselves work, but there's a **template argument parsing issue** when:
-1. The decltype expression is inside template arguments (e.g., `result_success<decltype(...)>`)
-2. The decltype contains a parenthesized pointer-to-member expression followed by a function call
-3. Pattern: `<decltype((obj.*ptr)(args...))>` ← fails in template argument context
+**Implementation:**
+- Added `PointerToMemberAccessNode` for `obj.*ptr` and `obj->*ptr` expressions
+- Added `PackExpansionExprNode` for `expr...` patterns
+- Modified parenthesized expression parsing to handle `...` before `)`
+- Updated 6 function call parsing locations to wrap pack-expanded arguments
 
-**Test Cases Created:**
-- ✅ `tests/test_ptr_to_member_decltype.cpp` - Basic `.*` in decltype - **WORKS**
-- ✅ `tests/test_static_decltype_ptrmem_arg.cpp` - Simple `.*` in template arg - **WORKS**
-- ❌ `tests/test_static_decltype_ptrmem_call_arg.cpp` - `(obj.*ptr)(args)` in template arg - **FAILS**
+**Test Results:**
+- ✅ `test_ptr_to_member_decltype.cpp` - Basic `.*` in decltype
+- ✅ `test_static_decltype_ptrmem_arg.cpp` - `.*` in template arguments
+- ✅ `test_static_decltype_ptrmem_call_arg.cpp` - Complex `(obj.*ptr)(args...)` pattern
+- ✅ `test_pack_expansion_paren.cpp` - Parenthesized pack expansion
 
-**Root Cause:**
-Template argument parsing has difficulty with:
-- Parenthesized expressions containing `.*` followed by function call syntax
-- Pattern: `Template<decltype((expr1.*expr2)(args...))>` 
-- The parser expects an identifier when it sees the opening `(` after `decltype`
+**Progress:** `<type_traits>` now compiles from line 2499 → line 2578 (**79 more lines!**)
 
-**Next Steps:**
-- Investigate template argument parsing for complex decltype expressions
-- Handle parenthesized expressions in template argument contexts
-- Support function call syntax on parenthesized pointer-to-member results
+---
 
-**Implementation Details:**
-- **File**: `src/AstNodeTypes.h` - Added `PointerToMemberAccessNode` class
-- **File**: `src/Parser.cpp` (~line 13975) - Modified postfix operator parsing
-  - Detects `*` after consuming `.` or `->`
-  - Parses RHS as expression with precedence 17
-  - Creates `PointerToMemberAccessNode` with object and member_pointer
-- **Integration**: Added to ExpressionNode variant, findReferencedIdentifiers, get_expression_type
+**New Blocker (Line 2578):** `Expected ';' after type alias`
+
+This is a different parsing issue unrelated to pointer-to-member or pack expansion.
 
 ## Previous Investigation (January 10, 2026 - Decltype Improvements)
 
