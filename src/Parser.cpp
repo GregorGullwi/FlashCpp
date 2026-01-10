@@ -13687,7 +13687,21 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						return arg_result;
 					}
 					if (auto arg = arg_result.node()) {
-						args.push_back(*arg);
+						// Check for pack expansion (...) after the argument
+						// Pattern: func(expr...) or func(arg1, expr..., arg3)
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							Token ellipsis_token = *peek_token();
+							consume_token(); // consume '...'
+							
+							// Wrap the argument in a PackExpansionExprNode
+							auto pack_expr = emplace_node<ExpressionNode>(
+								PackExpansionExprNode(*arg, ellipsis_token));
+							args.push_back(pack_expr);
+							
+							FLASH_LOG(Parser, Debug, "Created PackExpansionExprNode for function argument");
+						} else {
+							args.push_back(*arg);
+						}
 					}
 
 					if (!peek_token().has_value()) {
@@ -13839,7 +13853,18 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						}
 						
 						if (auto arg = arg_result.node()) {
-							args.push_back(*arg);
+							// Check for pack expansion (...) after the argument
+							if (peek_token().has_value() && peek_token()->value() == "...") {
+								Token ellipsis_token = *peek_token();
+								consume_token(); // consume '...'
+								
+								// Wrap the argument in a PackExpansionExprNode
+								auto pack_expr = emplace_node<ExpressionNode>(
+									PackExpansionExprNode(*arg, ellipsis_token));
+								args.push_back(pack_expr);
+							} else {
+								args.push_back(*arg);
+							}
 						}
 						
 						if (!peek_token().has_value()) {
@@ -14111,7 +14136,20 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						return arg_result;
 					}
 					if (auto arg = arg_result.node()) {
-						args.push_back(*arg);
+						// Check for pack expansion (...) after the argument
+						bool is_pack_expansion = false;
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							Token ellipsis_token = *peek_token();
+							consume_token(); // consume '...'
+							is_pack_expansion = true;
+							
+							// Wrap the argument in a PackExpansionExprNode
+							auto pack_expr = emplace_node<ExpressionNode>(
+								PackExpansionExprNode(*arg, ellipsis_token));
+							args.push_back(pack_expr);
+						} else {
+							args.push_back(*arg);
+						}
 						
 						// Try to deduce the argument type for template instantiation
 						// For now, we'll deduce from literals and identifiers
@@ -14784,7 +14822,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						return arg_result;
 					}
 					if (auto arg = arg_result.node()) {
-						args.push_back(*arg);
+						// Check for pack expansion (...) after the argument
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							Token ellipsis_token = *peek_token();
+							consume_token(); // consume '...'
+							
+							// Wrap the argument in a PackExpansionExprNode
+							auto pack_expr = emplace_node<ExpressionNode>(
+								PackExpansionExprNode(*arg, ellipsis_token));
+							args.push_back(pack_expr);
+						} else {
+							args.push_back(*arg);
+						}
 					}
 
 					if (!peek_token().has_value()) {
@@ -15293,8 +15342,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									args.push_back(*arg_node);
 								}
 							} else {
-								// Complex expression: need full rewriting (not implemented yet)
-								args.push_back(*arg_node);
+								// Complex expression: wrap in PackExpansionExprNode
+								// The actual expansion will be handled during template instantiation
+								Token ellipsis_token(Token::Type::Operator, "...", 0, 0, 0);  // Approximate token
+								auto pack_expr = emplace_node<ExpressionNode>(
+									PackExpansionExprNode(*arg_node, ellipsis_token));
+								args.push_back(pack_expr);
 							}
 						}
 					} else {
@@ -15648,7 +15701,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						
 						if (auto arg = arg_result.node()) {
-							args.push_back(*arg);
+							// Check for pack expansion (...) after the argument
+							if (peek_token().has_value() && peek_token()->value() == "...") {
+								Token ellipsis_token = *peek_token();
+								consume_token(); // consume '...'
+								
+								// Wrap the argument in a PackExpansionExprNode
+								auto pack_expr = emplace_node<ExpressionNode>(
+									PackExpansionExprNode(*arg, ellipsis_token));
+								args.push_back(pack_expr);
+							} else {
+								args.push_back(*arg);
+							}
 						}
 						
 						if (!peek_token().has_value()) {
@@ -17851,15 +17915,38 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Parse as parenthesized expression
 			// Note: C-style casts are now handled in parse_unary_expression()
 			// Allow comma operator in parenthesized expressions
-			ParseResult paren_result = parse_expression(MIN_PRECEDENCE);
+			// Pass the context so the expression parser knows how to handle special tokens
+			ParseResult paren_result = parse_expression(MIN_PRECEDENCE, context);
 			if (paren_result.is_error()) {
 				return paren_result;
 			}
+			
+			// In TemplateArgument or Decltype context, allow pack expansion (...) before closing paren
+			// Pattern: (expr...) where ... is pack expansion operator
+			// This is needed for patterns like decltype((expr...)) in template contexts
+			if ((context == ExpressionContext::TemplateArgument || context == ExpressionContext::Decltype) &&
+			    peek_token().has_value() && peek_token()->value() == "...") {
+				// Consume the ... and create a PackExpansionExprNode
+				Token ellipsis_token = *peek_token();
+				consume_token(); // consume '...'
+				
+				// Wrap the expression in a PackExpansionExprNode
+				if (paren_result.node().has_value()) {
+					result = emplace_node<ExpressionNode>(
+						PackExpansionExprNode(*paren_result.node(), ellipsis_token));
+				} else {
+					return ParseResult::error("Expected expression before '...'", *current_token_);
+				}
+				
+				FLASH_LOG(Parser, Debug, "Created PackExpansionExprNode for parenthesized pack expansion");
+			} else {
+				result = paren_result.node();
+			}
+			
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after parenthesized expression",
 					*current_token_);
 			}
-			result = paren_result.node();
 		}  // End of fold expression check
 	}
 	else {

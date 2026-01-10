@@ -1494,6 +1494,21 @@ private:
 	Token token_;
 };
 
+// Pack expansion expression: expr...
+// Used in template argument contexts like (declval<Args>()...)
+class PackExpansionExprNode {
+public:
+	explicit PackExpansionExprNode(ASTNode pattern, Token ellipsis_token)
+		: pattern_(pattern), ellipsis_token_(ellipsis_token) {}
+
+	ASTNode pattern() const { return pattern_; }
+	const Token& get_token() const { return ellipsis_token_; }
+
+private:
+	ASTNode pattern_;        // The expression being expanded
+	Token ellipsis_token_;   // The ... token
+};
+
 class BlockNode {
 public:
 	explicit BlockNode() {}
@@ -3138,7 +3153,7 @@ private:
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
-	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PseudoDestructorCallNode, NoexceptExprNode>;
+	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode>;
 
 /*class FunctionDefinitionNode {
 public:
