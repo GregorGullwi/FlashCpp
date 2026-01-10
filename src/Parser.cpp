@@ -9140,23 +9140,6 @@ ParseResult Parser::parse_type_specifier()
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(
 						Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
 				}
-				
-				// If type not found and we have dependent arguments, create a dependent type placeholder
-				// This happens when parsing Template<DependentArg> where DependentArg is a template parameter
-				// or a template with dependent arguments (e.g., common_type<T, U> where T, U are template params)
-				if (has_dependent_args) {
-					FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {} (template with dependent args)", instantiated_name);
-					StringHandle placeholder_name = StringTable::getOrInternStringHandle(instantiated_name);
-					auto& type_info = gTypeInfo.emplace_back();
-					type_info.type_ = Type::UserDefined;
-					type_info.type_index_ = gTypeInfo.size() - 1;
-					type_info.type_size_ = 0;  // Unknown size for dependent type
-					type_info.name_ = placeholder_name;
-					gTypesByName[placeholder_name] = &type_info;
-					
-					return ParseResult::success(emplace_node<TypeSpecifierNode>(
-						Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
-				}
 				// If type not found, fall through to error handling below
 			}
 		}
@@ -25524,22 +25507,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					auto is_ident_char = [](char ch) {
 						return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
 					};
-					// Special case: underscore can be a separator in template names like pack_Rp
-					auto is_template_name_separator = [](char ch) {
-						return ch == '_';
-					};
 					while (pos != std::string_view::npos) {
 						bool start_ok = (pos == 0) || !is_ident_char(haystack[pos - 1]);
-						// Also allow underscore as a prefix separator for template parameter names
-						if (!start_ok && pos > 0 && is_template_name_separator(haystack[pos - 1])) {
-							// Check if this looks like a template name separator (e.g., pack_Rp, common_type_Tp1)
-							start_ok = true;
-						}
 						bool end_ok = (pos + needle.size() >= haystack.size()) || !is_ident_char(haystack[pos + needle.size()]);
-						// Also allow underscore as a suffix separator
-						if (!end_ok && pos + needle.size() < haystack.size() && is_template_name_separator(haystack[pos + needle.size()])) {
-							end_ok = true;
-						}
 						if (start_ok && end_ok) {
 							return true;
 						}
@@ -25586,6 +25556,25 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			} else if (idx == 0) {
 				arg.is_dependent = true;
 				FLASH_LOG(Templates, Debug, "Template argument is dependent (placeholder with type_index=0)");
+			}
+		}
+		
+		// Also check Struct types - if this is a template class that was parsed with dependent arguments,
+		// the instantiation was skipped and we got back the primary template type
+		// In a template body, if the struct is a registered template and we're using template params, it's dependent
+		if (!arg.is_dependent && type_node.type() == Type::Struct && parsing_template_body_ && !in_sfinae_context_) {
+			TypeIndex idx = type_node.type_index();
+			if (idx < gTypeInfo.size()) {
+				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());
+				// Check if this is a template primary (not an instantiation which would have underscores)
+				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
+				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+					// This struct type is a template primary - if we're in a template body,
+					// it likely has dependent template arguments
+					FLASH_LOG_FORMAT(Templates, Debug, "Template argument {} is primary template in template body - marking as dependent", type_name);
+					arg.is_dependent = true;
+					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
+				}
 			}
 		}
 		
