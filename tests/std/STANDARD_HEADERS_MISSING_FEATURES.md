@@ -4,6 +4,32 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 11, 2026 - Partial Specializations with Requires Clauses and Namespace-Qualified Base Classes - IMPLEMENTED!)**:
+- ✅ **IMPLEMENTED: Partial specializations with requires clauses now supported!** 🎉
+  - **Pattern**: `template<...> requires requires { ... } struct Name<Args...> { ... }`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Allows partial template specializations to have requires clauses constraining when they're used
+  - **Implementation**: Re-check for `struct`/`class` keyword after parsing requires clause, as the `is_class_template` flag is set before the requires clause
+  - **Test case**: `tests/test_template_template_partial_spec_requires_ret42.cpp` - Returns 42 ✅
+
+- ✅ **IMPLEMENTED: Namespace-qualified base classes in partial specializations now supported!** 🎉
+  - **Pattern**: `struct Name<Args...> : public ns::Base { ... }`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Allows partial specializations to inherit from base classes in nested namespaces
+  - **Implementation**: 
+    - Modified partial specialization base class parsing to loop through `::` tokens for qualified names
+    - Added namespace-qualified name registration for structs (registers intermediate names like `inner::Base` for `ns::inner::Base`)
+    - Added fallback lookup in `validate_and_add_base_class` that tries current namespace prefixes
+  - **Impact**: `<type_traits>` now parses past line 2946!
+
+- ⚠️ **Current Blocker (`/usr/include/c++/14/type_traits` Line 3048)**: Non-type template parameter with `noexcept` expression as default value:
+  ```cpp
+  template<typename _Tp,
+           bool _Nothrow = noexcept(_S_conv<_Tp>(_S_get())),  // noexcept as default value
+           typename = decltype(_S_conv<_Tp>(_S_get()))>
+  ```
+  This requires implementing `noexcept(expr)` as a compile-time expression that evaluates to a boolean.
+
 **UPDATE (January 11, 2026 - Template Template Variadic Packs - IMPLEMENTED!)**:
 - ✅ **IMPLEMENTED: Template template parameters with variadic packs now supported!** 🎉
   - **Pattern**: `template<typename _Def, template<typename...> class _Op, typename... _Args>`

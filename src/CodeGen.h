@@ -473,8 +473,11 @@ public:
 					}
 
 					// Build the qualified name for deduplication
+					// Use type_info->name() (the canonical name) instead of type_name (the lookup key)
+					// This ensures consistency when the same TypeInfo is registered under multiple names
+					// (e.g., "result_true" and "detail::result_true" both point to the same TypeInfo)
 					StringBuilder qualified_name_sb;
-					qualified_name_sb.append(type_name).append("::").append(static_member.getName());
+					qualified_name_sb.append(StringTable::getStringView(type_info->name())).append("::").append(static_member.getName());
 					std::string_view qualified_name = qualified_name_sb.commit();
 					StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
 					

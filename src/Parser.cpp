@@ -3558,6 +3558,37 @@ ParseResult Parser::parse_struct_declaration()
 			gTypesByName.emplace(parent_handle, &struct_type_info);
 		}
 	}
+	
+	// Also register with namespace-qualified names for all levels of the namespace path
+	// This allows lookups like "inner::Base" when we're in namespace "ns" to find "ns::inner::Base"
+	if (!current_namespace_path.empty() && !is_nested_class) {
+		// Register with full namespace path (e.g., "ns::inner::Base")
+		auto full_qualified_name = buildQualifiedNameHandle(current_namespace_path, struct_name);
+		if (gTypesByName.find(full_qualified_name) == gTypesByName.end()) {
+			gTypesByName.emplace(full_qualified_name, &struct_type_info);
+			FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name), 
+			          "' with namespace-qualified name '", StringTable::getStringView(full_qualified_name), "'");
+		}
+		
+		// Also register intermediate names (e.g., "inner::Base" for "ns::inner::Base")
+		// This allows sibling namespace access patterns like:
+		// namespace ns { namespace inner { struct Base {}; } struct Derived : public inner::Base {}; }
+		for (size_t start = 1; start < current_namespace_path.size(); ++start) {
+			StringBuilder partial_qualified;
+			for (size_t j = start; j < current_namespace_path.size(); ++j) {
+				if (j > start) partial_qualified.append("::");
+				partial_qualified.append(current_namespace_path[j]);
+			}
+			partial_qualified.append("::").append(struct_name);
+			std::string_view partial_view = partial_qualified.commit();
+			auto partial_handle = StringTable::getOrInternStringHandle(partial_view);
+			if (gTypesByName.find(partial_handle) == gTypesByName.end()) {
+				gTypesByName.emplace(partial_handle, &struct_type_info);
+				FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name), 
+				          "' with partial qualified name '", partial_view, "'");
+			}
+		}
+	}
 
 	// Check for alignas specifier after struct name (if not already specified)
 	if (!custom_alignment.has_value()) {
@@ -19945,6 +19976,35 @@ ParseResult Parser::validate_and_add_base_class(
 {
 	// Look up base class type
 	auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base_class_name));
+	
+	// If not found directly, try with current namespace prefix
+	// This handles cases like: struct Derived : public inner::Base { }
+	// where inner::Base is actually ns::inner::Base and we're inside ns
+	if (base_type_it == gTypesByName.end()) {
+		auto namespace_path = gSymbolTable.build_current_namespace_path();
+		if (!namespace_path.empty()) {
+			// Try prepending each level of the namespace path from outermost to innermost
+			// E.g., if we're in ns::outer and looking for "inner::Base", try:
+			// 1. "ns::outer::inner::Base" (not likely, but check)
+			// 2. "ns::inner::Base" (more likely for sibling namespaces)
+			for (size_t i = namespace_path.size(); i > 0 && base_type_it == gTypesByName.end(); --i) {
+				StringBuilder qualified_name;
+				for (size_t j = 0; j < i; ++j) {
+					if (j > 0) qualified_name.append("::");
+					qualified_name.append(namespace_path[j]);
+				}
+				qualified_name.append("::").append(base_class_name);
+				std::string_view qualified_name_view = qualified_name.commit();
+				base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name_view));
+				
+				if (base_type_it != gTypesByName.end()) {
+					FLASH_LOG(Parser, Debug, "Found base class '", base_class_name, 
+					          "' as '", qualified_name_view, "' in current namespace context");
+				}
+			}
+		}
+	}
+	
 	if (base_type_it == gTypesByName.end()) {
 		return ParseResult::error("Base class '" + std::string(base_class_name) + "' not found", error_token);
 	}
@@ -21127,6 +21187,16 @@ ParseResult Parser::parse_template_declaration() {
 			*constraint_result.node(),
 			requires_token
 		);
+		
+		// After parsing requires clause, re-check if this is a class/struct template
+		// The original check (before requires clause) would have seen 'requires' keyword
+		// and set is_class_template to false, but now we can see the actual keyword
+		if (!is_class_template && peek_token().has_value() &&
+		    peek_token()->type() == Token::Type::Keyword &&
+		    (peek_token()->value() == "class" || peek_token()->value() == "struct")) {
+			is_class_template = true;
+			FLASH_LOG(Parser, Debug, "Re-detected class template after requires clause");
+		}
 	}
 
 	ParseResult decl_result;
@@ -22443,13 +22513,32 @@ ParseResult Parser::parse_template_declaration() {
 						consume_token();
 					}
 
-					// Parse base class name
+					// Parse base class name - could be qualified like ns::Base or simple like Base
 					auto base_name_token = consume_token();
 					if (!base_name_token.has_value() || base_name_token->type() != Token::Type::Identifier) {
 						return ParseResult::error("Expected base class name", base_name_token.value_or(Token()));
 					}
 
-					std::string_view base_class_name = base_name_token->value();
+					std::string base_class_name_str{base_name_token->value()};
+					
+					// Check for qualified name (e.g., ns::Base or ns::inner::Base)
+					while (peek_token().has_value() && peek_token()->value() == "::") {
+						consume_token(); // consume '::'
+						
+						auto next_name_token = peek_token();
+						if (!next_name_token.has_value() || next_name_token->type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected identifier after '::'", next_name_token.value_or(Token()));
+						}
+						consume_token(); // consume the identifier
+						
+						base_class_name_str += "::";
+						base_class_name_str += next_name_token->value();
+						base_name_token = next_name_token;  // Update for error reporting
+						
+						FLASH_LOG_FORMAT(Parser, Debug, "Parsing qualified base class name: {}", base_class_name_str);
+					}
+					
+					std::string_view base_class_name = StringTable::getOrInternStringHandle(StringBuilder().append(base_class_name_str)).view();
 					
 					// Check if this is a template base class (e.g., Base<T>)
 					if (peek_token().has_value() && peek_token()->value() == "<") {
@@ -25725,6 +25814,31 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 									is_concrete_type = true;
 									FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a type alias to concrete type, falling through to type parsing");
 								}
+							}
+						}
+					} else if (std::holds_alternative<FunctionCallNode>(expr)) {
+						// FunctionCallNode can represent a qualified template instantiation like ns::Inner<int>
+						// When we parsed ns::Inner<int>, the template was instantiated and registered.
+						// We need to restore the token position and let type parsing handle it properly.
+						const auto& fn_call = std::get<FunctionCallNode>(expr);
+						if (fn_call.has_template_arguments()) {
+							// This FunctionCallNode was created from parsing a qualified identifier with template args
+							is_concrete_type = true;
+							FLASH_LOG(Templates, Debug, "FunctionCallNode has template arguments - falling through to type parsing");
+						}
+					} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+						// QualifiedIdentifierNode can represent a namespace-qualified type like ns::Inner
+						// or a template instantiation like ns::Inner<int> (when the template has already been
+						// instantiated during expression parsing).
+						const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
+						// Build the qualified name and check if it exists in gTypesByName
+						std::string_view qualified_name = buildQualifiedNameFromStrings(qual_id.namespaces(), qual_id.name());
+						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
+						if (type_it != gTypesByName.end()) {
+							const TypeInfo* type_info = type_it->second;
+							if (type_info->struct_info_ != nullptr) {
+								is_concrete_type = true;
+								FLASH_LOG(Templates, Debug, "QualifiedIdentifierNode '", qualified_name, "' is a concrete type, falling through to type parsing");
 							}
 						}
 					}
