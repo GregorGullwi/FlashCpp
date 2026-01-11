@@ -312,16 +312,33 @@ template<typename _Tp>
 **Test Cases:**
 - ✅ `tests/test_template_template_partial_spec_requires_ret42.cpp` - Returns 42 ✅
 
-**Current Blocker (`/usr/include/c++/14/type_traits` Line 3048):** `Expected expression after '=' in template parameter default`
+### ✅ IMPLEMENTED (Line 3048) - Investigation January 11, 2026
 
-This is a new issue with non-type template parameters that have `noexcept` expressions as default values:
+**Previous Blocker (Line 3048):** ✅ **FULLY RESOLVED**
+
+The `noexcept(expr)` expression as a non-type template parameter default value is now supported:
 ```cpp
 template<typename _Tp,
          bool _Nothrow = noexcept(_S_conv<_Tp>(_S_get())),  // noexcept as default value
          typename = decltype(_S_conv<_Tp>(_S_get()))>
 ```
 
-This requires implementing `noexcept(expr)` as a compile-time expression that evaluates to a boolean.
+**What Was Fixed:**
+- ✅ **Member template function calls in noexcept expressions** - The `getDeclarationNode` helper lambda now handles `TemplateFunctionDeclarationNode` type
+- When a member template function like `_S_conv<Tp>` is called inside a noexcept expression, the code can now properly extract the inner `FunctionDeclarationNode`
+- The fix was applied to all 3 definitions of the `getDeclarationNode` lambda in `Parser.cpp`
+
+**Implementation:**
+- Modified `getDeclarationNode` lambda at lines 14139, 15028, and 15258 to handle `TemplateFunctionDeclarationNode`
+- When encountering a `TemplateFunctionDeclarationNode`, extracts the inner `FunctionDeclarationNode` via `function_declaration().as<FunctionDeclarationNode>().decl_node()`
+
+**Test Cases:**
+- ✅ `tests/test_noexcept_template_param_default_ret0.cpp` - Returns 0 ✅
+
+**Current Status:**
+- `<type_traits>` header parsing now progresses past line 3048
+- However, the header still times out due to template instantiation volume (known performance issue)
+- This is a known issue and is being tracked as a separate optimization task
 
 ---
 

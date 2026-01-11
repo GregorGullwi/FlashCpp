@@ -14143,6 +14143,9 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						return &node.as<FunctionDeclarationNode>().decl_node();
 					} else if (node.is<VariableDeclarationNode>()) {
 						return &node.as<VariableDeclarationNode>().declaration();
+					} else if (node.is<TemplateFunctionDeclarationNode>()) {
+						// Handle template function declarations - extract the inner function declaration
+						return &node.as<TemplateFunctionDeclarationNode>().function_declaration().as<FunctionDeclarationNode>().decl_node();
 					}
 					return nullptr;
 				};
@@ -15021,7 +15024,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		Token first_identifier = *current_token_;
 		consume_token(); // consume identifier
 
-		// Helper to get DeclarationNode from either DeclarationNode, FunctionDeclarationNode, or VariableDeclarationNode
+		// Helper to get DeclarationNode from either DeclarationNode, FunctionDeclarationNode, VariableDeclarationNode, or TemplateFunctionDeclarationNode
 		auto getDeclarationNode = [](const ASTNode& node) -> const DeclarationNode* {
 			if (node.is<DeclarationNode>()) {
 				return &node.as<DeclarationNode>();
@@ -15029,6 +15032,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				return &node.as<FunctionDeclarationNode>().decl_node();
 			} else if (node.is<VariableDeclarationNode>()) {
 				return &node.as<VariableDeclarationNode>().declaration();
+			} else if (node.is<TemplateFunctionDeclarationNode>()) {
+				// Handle template function declarations - extract the inner function declaration
+				return &node.as<TemplateFunctionDeclarationNode>().function_declaration().as<FunctionDeclarationNode>().decl_node();
 			}
 			return nullptr;
 		};
@@ -15256,6 +15262,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				return &node.as<FunctionDeclarationNode>().decl_node();
 			} else if (node.is<VariableDeclarationNode>()) {
 				return &node.as<VariableDeclarationNode>().declaration();
+			} else if (node.is<TemplateFunctionDeclarationNode>()) {
+				// Handle template function declarations - extract the inner function declaration
+				return &node.as<TemplateFunctionDeclarationNode>().function_declaration().as<FunctionDeclarationNode>().decl_node();
 			}
 			return nullptr;
 		};
