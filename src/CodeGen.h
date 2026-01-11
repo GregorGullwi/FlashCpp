@@ -9361,6 +9361,45 @@ private:
 			}
 		}
 
+		// Special handling for address-of non-static member: &Class::member
+		// This should produce a pointer-to-member constant (member offset)
+		if (!operandHandledAsIdentifier && unaryOperatorNode.op() == "&" && 
+		    unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operand_expr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			if (std::holds_alternative<QualifiedIdentifierNode>(operand_expr)) {
+				const QualifiedIdentifierNode& qualIdNode = std::get<QualifiedIdentifierNode>(operand_expr);
+				const auto& namespaces = qualIdNode.namespaces();
+				
+				// Check if this is Class::member pattern
+				if (namespaces.size() >= 1) {
+					std::string_view class_name = namespaces.back();
+					std::string_view member_name = qualIdNode.name();
+					
+					// Look up the class type
+					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(class_name));
+					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+						if (struct_info) {
+							// Try to find the member (non-static)
+							const StructMember* member = struct_info->findMemberRecursive(
+								StringTable::getOrInternStringHandle(member_name));
+							
+							if (member) {
+								// This is a pointer-to-member: return the member offset as a constant
+								FLASH_LOG(Codegen, Debug, "Address-of non-static member '", class_name, "::", member_name, 
+								          "' - returning offset ", member->offset, " as pointer-to-member constant");
+								
+								// Return the offset directly as a constant value (no IR instruction needed)
+								// This is a pointer-to-member constant - use 64-bit size and the member's type
+								return { member->type, 64, static_cast<unsigned long long>(member->offset), 
+								         static_cast<unsigned long long>(member->type_index) };
+							}
+						}
+					}
+				}
+			}
+		}
+
 		if (!operandHandledAsIdentifier) {
 			operandIrOperands = visitExpressionNode(unaryOperatorNode.get_operand().as<ExpressionNode>());
 		}
