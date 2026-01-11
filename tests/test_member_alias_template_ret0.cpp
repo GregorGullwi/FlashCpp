@@ -2,7 +2,7 @@
 // Tests the fix for looking up member alias templates with qualified names
 
 template<typename T>
-T declval();
+T&& declval() noexcept;
 
 struct Container {
     // Member alias template
