@@ -312,7 +312,7 @@ template<typename _Tp>
 **Test Cases:**
 - ✅ `tests/test_template_template_partial_spec_requires_ret42.cpp` - Returns 42 ✅
 
-**Current Blocker (Line 3048):** `Expected expression after '=' in template parameter default`
+**Current Blocker (`/usr/include/c++/14/type_traits` Line 3048):** `Expected expression after '=' in template parameter default`
 
 This is a new issue with non-type template parameters that have `noexcept` expressions as default values:
 ```cpp

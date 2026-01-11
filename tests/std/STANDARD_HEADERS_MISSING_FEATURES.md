@@ -22,7 +22,7 @@ This document lists the missing features in FlashCpp that prevent successful com
     - Added fallback lookup in `validate_and_add_base_class` that tries current namespace prefixes
   - **Impact**: `<type_traits>` now parses past line 2946!
 
-- ⚠️ **Current Blocker (Line 3048)**: Non-type template parameter with `noexcept` expression as default value:
+- ⚠️ **Current Blocker (`/usr/include/c++/14/type_traits` Line 3048)**: Non-type template parameter with `noexcept` expression as default value:
   ```cpp
   template<typename _Tp,
            bool _Nothrow = noexcept(_S_conv<_Tp>(_S_get())),  // noexcept as default value

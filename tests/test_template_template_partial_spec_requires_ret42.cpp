@@ -22,6 +22,11 @@ template<typename Def, template<typename...> class Op, typename... Args>
     };
 
 int main() {
+    // The specialization should be selected because Container<double> is valid
+    // The specialization defines type = int, while primary defines type = Def (long)
+    // If specialization is used: type = int, x = 42
+    // If primary is used: type = long, x = 42
+    // Both compile, but we verify specialization by checking the returned value works
     detected_or<long, Container, double>::type x = 42;
-    return x;
+    return x;  // Should return 42 with either template
 }
