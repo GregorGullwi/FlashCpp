@@ -8813,6 +8813,50 @@ ParseResult Parser::parse_type_specifier()
 								
 								FLASH_LOG(Parser, Debug, "Deferred instantiation succeeded: '", instantiated_name, "' at index ", type_idx);
 								
+								// Check for member type access after alias template resolution
+								// Pattern: typename conditional_t<...>::type
+								if (peek_token().has_value() && peek_token()->value() == "::") {
+									consume_token(); // consume '::'
+									
+									auto member_token = peek_token();
+									if (member_token.has_value() && member_token->type() == Token::Type::Identifier) {
+										std::string_view member_name = member_token->value();
+										consume_token(); // consume member name
+										
+										// Build qualified type name
+										StringBuilder qualified_name_builder;
+										std::string_view qualified_type_name = qualified_name_builder
+											.append(instantiated_name)
+											.append("::")
+											.append(member_name)
+											.commit();
+										
+										FLASH_LOG(Parser, Debug, "Looking up member type '", qualified_type_name, "' after alias resolution");
+										
+										// Look up the member type
+										auto member_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
+										if (member_type_it != gTypesByName.end()) {
+											const TypeInfo* member_type_info = member_type_it->second;
+											FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info->type_index_);
+											return ParseResult::success(emplace_node<TypeSpecifierNode>(
+												member_type_info->type_, member_type_info->type_index_, 
+												static_cast<unsigned char>(member_type_info->type_size_), 
+												*member_token, cv_qualifier));
+										} else {
+											// Member type not found - might be a dependent type
+											FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
+											auto& placeholder_type = gTypeInfo.emplace_back();
+											placeholder_type.type_ = Type::UserDefined;
+											placeholder_type.type_index_ = gTypeInfo.size() - 1;
+											placeholder_type.type_size_ = 0;
+											placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
+											gTypesByName[placeholder_type.name_] = &placeholder_type;
+											return ParseResult::success(emplace_node<TypeSpecifierNode>(
+												Type::UserDefined, placeholder_type.type_index_, 0, *member_token, cv_qualifier));
+										}
+									}
+								}
+								
 								// Create the final type specifier
 								auto new_type_spec = emplace_node<TypeSpecifierNode>(
 									Type::Struct,
@@ -8903,6 +8947,55 @@ ParseResult Parser::parse_type_specifier()
 						}
 					}
 					
+					// Check for member type access after alias template resolution
+					// Pattern: typename alias_template<...>::type
+					if (peek_token().has_value() && peek_token()->value() == "::") {
+						consume_token(); // consume '::'
+						
+						auto member_token = peek_token();
+						if (member_token.has_value() && member_token->type() == Token::Type::Identifier) {
+							std::string_view member_name = member_token->value();
+							consume_token(); // consume member name
+							
+							// Get the type name from instantiated_type to look up member
+							std::string_view base_type_name;
+							if (instantiated_type.type_index() < gTypeInfo.size()) {
+								base_type_name = StringTable::getStringView(gTypeInfo[instantiated_type.type_index()].name());
+							}
+							
+							// Build qualified type name
+							StringBuilder qualified_name_builder;
+							std::string_view qualified_type_name = qualified_name_builder
+								.append(base_type_name)
+								.append("::")
+								.append(member_name)
+								.commit();
+							
+							FLASH_LOG(Parser, Debug, "Looking up member type '", qualified_type_name, "' after non-deferred alias resolution");
+							
+							// Look up the member type
+							auto member_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
+							if (member_type_it != gTypesByName.end()) {
+								const TypeInfo* member_type_info = member_type_it->second;
+								FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info->type_index_);
+								return ParseResult::success(emplace_node<TypeSpecifierNode>(
+									member_type_info->type_, member_type_info->type_index_, 
+									static_cast<unsigned char>(member_type_info->type_size_), 
+									*member_token, cv_qualifier));
+							} else {
+								// Member type not found - might be a dependent type
+								FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
+								auto& placeholder_type = gTypeInfo.emplace_back();
+								placeholder_type.type_ = Type::UserDefined;
+								placeholder_type.type_index_ = gTypeInfo.size() - 1;
+								placeholder_type.type_size_ = 0;
+								placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
+								gTypesByName[placeholder_type.name_] = &placeholder_type;
+								return ParseResult::success(emplace_node<TypeSpecifierNode>(
+									Type::UserDefined, placeholder_type.type_index_, 0, *member_token, cv_qualifier));
+							}
+						}
+					}
 					
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 				}
