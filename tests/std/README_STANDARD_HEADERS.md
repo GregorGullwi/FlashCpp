@@ -238,6 +238,9 @@ protected:
 ### Remaining Blockers
 
 1. **Operator call syntax** - `!operator==(__arg)` pattern in `<typeinfo>` line 114
+   - Pattern: `return !operator==(other);` - calling an operator as a member function by name
+   - This requires code generation changes to handle operator functions called by name
+   - Workaround: Use `!((*this) == other)` or `!this->operator==(other)` syntax instead
 2. **Complex standard library headers** - Most headers still timeout or have parsing issues
 
 ---
