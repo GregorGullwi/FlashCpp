@@ -7350,6 +7350,12 @@ private:
 				}
 			}
 			
+			// Validate ptr_operands before using
+			if (ptr_operands.size() < 2) {
+				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer operands incomplete (size=", ptr_operands.size(), ")");
+				return {};
+			}
+			
 			// Add the offset to the object address
 			TempVar member_addr = var_counter.next();
 			BinaryOp add_op;
