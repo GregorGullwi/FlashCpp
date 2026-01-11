@@ -231,17 +231,52 @@ protected:
 - ✅ Constructor/destructor noexcept specifiers now work
 - ✅ Explicit constructor keyword now handled
 - ✅ All 888 existing tests still pass
-- ⚠️ Next blocker: `operator==(__arg)` call syntax in `<typeinfo>` line 114
+- ✅ **Operator call syntax fixed!** `operator==(__arg)` call syntax in `<typeinfo>` line 114
 
 ---
 
-### Remaining Blockers
+### ✅ IMPLEMENTED: Operator Call Syntax (`operator==(arg)`)
 
-1. **Operator call syntax** - `!operator==(__arg)` pattern in `<typeinfo>` line 114
-   - Pattern: `return !operator==(other);` - calling an operator as a member function by name
-   - This requires code generation changes to handle operator functions called by name
-   - Workaround: Use `!((*this) == other)` or `!this->operator==(other)` syntax instead
-2. **Complex standard library headers** - Most headers still timeout or have parsing issues
+**Pattern Now Supported:** Calling operators by name using the explicit member function call syntax:
+```cpp
+bool operator!=(const MyType& other) const {
+    return !operator==(other);  // ← NOW WORKS!
+}
+```
+
+**What Was Fixed:**
+1. ✅ **Parser: operator keyword in expression context** - Handles `operator==(args)` syntax within member functions
+2. ✅ **CodeGen: `this` pointer type** - Fixed to include pointer level so member function calls pass `this` directly
+3. ✅ **IRConverter: `this` registration** - Now registers `this` in `reference_stack_info_` so codegen uses MOV instead of LEA
+4. ✅ **CodeGen: Reference argument handling** - Fixed to use 64-bit pointer size for pass-through of reference arguments
+
+**Implementation Details:**
+- Modified `parse_primary_expression()` to recognize `operator` keyword and parse operator symbols
+- Supports operator() and operator[] as well as standard operator symbols (==, !=, <, etc.)
+- Creates `MemberFunctionCallNode` with implicit `this` object
+- Fixed underlying bugs in `this` pointer handling that affected member function calls
+
+**Test Cases:**
+- ✅ `tests/test_operator_call_syntax_ret0.cpp` - Returns 0 ✅
+
+**Impact:**
+- ✅ `<typeinfo>` header now progresses past line 114!
+- Previously blocked on `return !operator==(other);` pattern
+
+---
+
+### Updated Test Results (January 11, 2026)
+
+| Status | Count | Headers |
+|--------|-------|---------|
+| ✅ Compiled | 1 | `<limits>` |
+| ⏱️ Timeout | 7 | `<string>`, `<iostream>`, `<vector>`, `<memory>`, `<functional>`, `<ranges>`, `<chrono>` |
+| ❌ Failed | 13 | `<type_traits>`, `<string_view>`, `<tuple>`, `<array>`, `<algorithm>`, `<utility>`, `<map>`, `<set>`, `<optional>`, `<variant>`, `<any>`, `<span>`, `<concepts>` |
+
+**Progress Notes:**
+- ✅ All 889 existing tests pass (was 888, added new test)
+- ✅ Operator call syntax (`operator==(arg)`) now works
+- ⚠️ Next blockers: Complex standard library headers still timeout or have parsing issues
 
 ---
 

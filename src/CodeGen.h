@@ -14351,8 +14351,6 @@ private:
 			// This is critical for empty structs (size 0) which still need a valid address
 			IrValue this_arg_value;
 			bool object_is_pointer_like = object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
-			FLASH_LOG_FORMAT(Codegen, Debug, "MemberFunctionCall: object_name='{}', object_type.type()={}, pointer_depth={}, is_ref={}, is_rref={}, object_is_pointer_like={}",
-			                 object_name, static_cast<int>(object_type.type()), object_type.pointer_depth(), object_type.is_reference(), object_type.is_rvalue_reference(), object_is_pointer_like);
 			if (object_is_pointer_like) {
 				// For pointer/reference objects, pass through directly
 				this_arg_value = IrValue(StringTable::getOrInternStringHandle(object_name));

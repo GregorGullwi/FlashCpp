@@ -14784,22 +14784,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 			// Look up the operator function in the current struct type
 			const auto& member_ctx = member_function_context_stack_.back();
-			FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: looking for '{}' in struct_type_index={}", 
-			                 operator_name, member_ctx.struct_type_index);
 			if (member_ctx.struct_type_index < gTypeInfo.size()) {
 				const TypeInfo& type_info = gTypeInfo[member_ctx.struct_type_index];
 				if (type_info.struct_info_) {
-					FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: struct has {} member functions", 
-					                 type_info.struct_info_->member_functions.size());
 					// Search for the operator member function
 					for (const auto& member_func : type_info.struct_info_->member_functions) {
-						FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: checking member function '{}'", 
-						                 StringTable::getStringView(member_func.name));
 						if (StringTable::getStringView(member_func.name) == operator_name) {
 							// Found the operator function - check if it's a FunctionDeclarationNode
 							if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-								FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: found matching FunctionDeclarationNode for '{}'", 
-								                 operator_name);
 								auto& func_decl = const_cast<FunctionDeclarationNode&>(member_func.function_decl.as<FunctionDeclarationNode>());
 								result = emplace_node<ExpressionNode>(
 									MemberFunctionCallNode(this_node, func_decl, std::move(args), operator_name_token));
@@ -14813,11 +14805,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// If we couldn't find the operator in the current type, create a generic member access + call
 			// This handles cases where the operator might be inherited or template-dependent
 			// Look up the function in symbol table as fallback
-			FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: operator '{}' not found in struct, trying symbol table", 
-			                 operator_name);
 			auto func_lookup = gSymbolTable.lookup(operator_name);
 			if (func_lookup.has_value() && func_lookup->is<FunctionDeclarationNode>()) {
-				FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: found '{}' in symbol table", operator_name);
 				auto& func_decl = func_lookup->as<FunctionDeclarationNode>();
 				result = emplace_node<ExpressionNode>(
 					MemberFunctionCallNode(this_node, func_decl, std::move(args), operator_name_token));
@@ -14827,7 +14816,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Create a deferred function call for template contexts
 			// We create a MemberAccessNode followed by postfix call handling
 			// The codegen will handle this as this->operator_name(args)
-			FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: creating placeholder for '{}'", operator_name);
 			auto member_access = emplace_node<ExpressionNode>(
 				MemberAccessNode(this_node, operator_name_token, true)); // true = arrow access
 			
