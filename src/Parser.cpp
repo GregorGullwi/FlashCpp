@@ -3599,7 +3599,7 @@ ParseResult Parser::parse_struct_declaration()
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 
 	// Push struct parsing context for nested class support
-	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name), &struct_ref});
+	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name), &struct_ref, nullptr});
 	
 	// RAII guard to ensure stack is always popped, even on early returns
 	auto pop_stack_guard = [this](void*) { 
@@ -3616,6 +3616,11 @@ ParseResult Parser::parse_struct_declaration()
 	StringHandle struct_info_name = is_nested_class ? qualified_struct_name : struct_name;
 	auto struct_info = std::make_unique<StructTypeInfo>(struct_info_name, struct_ref.default_access());
 	struct_info->is_union = is_union;
+	
+	// Update the struct parsing context with the local_struct_info for static member lookup
+	if (!struct_parsing_context_stack_.empty()) {
+		struct_parsing_context_stack_.back().local_struct_info = struct_info.get();
+	}
 
 	// Apply pack alignment from #pragma pack BEFORE adding members
 	size_t pack_alignment = context_.getCurrentPackAlignment();
@@ -6837,10 +6842,15 @@ ParseResult Parser::parse_typedef_declaration()
 		auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name_for_typedef, false);
 
 		// Push struct parsing context
-		struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name_for_typedef), &struct_ref});
+		struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name_for_typedef), &struct_ref, nullptr});
 
 		// Create StructTypeInfo
 		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public);
+		
+		// Update the struct parsing context with the local_struct_info for static member lookup
+		if (!struct_parsing_context_stack_.empty()) {
+			struct_parsing_context_stack_.back().local_struct_info = struct_info.get();
+		}
 
 		// Apply pack alignment from #pragma pack
 		size_t pack_alignment = context_.getCurrentPackAlignment();
@@ -15855,6 +15865,72 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							}
 						}
 					}
+					
+					// If still not found, check for static data members in the current struct/class being parsed
+					// This handles cases like: using type = typename aligned_storage<_S_len, alignment_value>::type;
+					// where _S_len and alignment_value are static const members of the same struct
+					if (!found_as_type_alias && !struct_parsing_context_stack_.empty()) {
+						const auto& ctx = struct_parsing_context_stack_.back();
+						// First try the struct_node's static_members (for member struct templates)
+						if (ctx.struct_node != nullptr) {
+							for (const auto& static_member : ctx.struct_node->static_members()) {
+								if (static_member.name == identifier_handle) {
+									FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as static member in current struct node (struct parsing context)", 
+										idenfifier_token.value());
+									found_as_type_alias = true;  // Reuse this flag to prevent "Missing identifier" error
+									break;
+								}
+							}
+						}
+						
+						// Then check local_struct_info (for template classes being parsed where static members are added)
+						if (!found_as_type_alias && ctx.local_struct_info != nullptr) {
+							for (const auto& static_member : ctx.local_struct_info->static_members) {
+								if (static_member.getName() == identifier_handle) {
+									FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as static member in local_struct_info (struct parsing context)", 
+										idenfifier_token.value());
+									found_as_type_alias = true;  // Reuse this flag to prevent "Missing identifier" error
+									break;
+								}
+							}
+						}
+						
+						// Finally check StructTypeInfo from gTypesByName (for already-registered types)
+						if (!found_as_type_alias) {
+							StringHandle struct_name_handle = StringTable::getOrInternStringHandle(ctx.struct_name);
+							auto type_it = gTypesByName.find(struct_name_handle);
+							if (type_it != gTypesByName.end() && type_it->second->getStructInfo()) {
+								const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+								for (const auto& static_member : struct_info->static_members) {
+									if (static_member.getName() == identifier_handle) {
+										FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as static member in StructTypeInfo (struct parsing context)", 
+											idenfifier_token.value());
+										found_as_type_alias = true;  // Reuse this flag to prevent "Missing identifier" error
+										break;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		// If identifier is followed by '<' and we're inside a struct context, check if it's a member struct template
+		// This handles patterns like: template<typename T> struct Outer<_Tp, Inner<T>> { }
+		// where Inner is a member struct template of the enclosing class
+		if (!identifierType && !found_as_type_alias && peek_token().has_value() && peek_token()->value() == "<") {
+			if (!struct_parsing_context_stack_.empty()) {
+				const auto& ctx = struct_parsing_context_stack_.back();
+				// Build qualified name: EnclosingClass::MemberTemplate
+				StringBuilder qualified_name;
+				qualified_name.append(ctx.struct_name).append("::"sv).append(idenfifier_token.value());
+				std::string_view qualified_name_sv = qualified_name.commit();
+				auto member_template = gTemplateRegistry.lookupTemplate(qualified_name_sv);
+				if (member_template.has_value()) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as member struct template '{}' in enclosing class", 
+						idenfifier_token.value(), qualified_name_sv);
+					found_as_type_alias = true;  // Reuse this flag to prevent "Missing identifier" error
 				}
 			}
 		}
@@ -22646,7 +22722,7 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Set up struct parsing context for inherited member lookups (e.g., _S_test from base class)
 			// This enables using type = decltype(_S_test<_Tp1, _Tp2>(0)); to find _S_test in base classes
-			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref});
+			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref, nullptr});
 			
 			// Parse class body (same as full specialization)
 			while (peek_token().has_value() && peek_token()->value() != "}") {
@@ -24805,8 +24881,20 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 	// Handle partial specialization of member struct template
 	if (is_partial_specialization) {
+		// Save current template param names and set up the new ones for pattern parsing
+		// This allows template parameter references like _Sz in the pattern <_Sz, _List<_Uint, _UInts...>, true>
+		auto saved_template_param_names = std::move(current_template_param_names_);
+		current_template_param_names_.clear();
+		for (const auto& name : template_param_names) {
+			current_template_param_names_.emplace_back(StringTable::getOrInternStringHandle(name));
+		}
+		
 		// Parse the specialization pattern: <T, Rest...>, etc.
 		auto pattern_args_opt = parse_explicit_template_arguments();
+		
+		// Restore the original template param names
+		current_template_param_names_ = std::move(saved_template_param_names);
+		
 		if (!pattern_args_opt.has_value()) {
 			return ParseResult::error("Expected template argument pattern in partial specialization", *current_token_);
 		}

@@ -140,7 +140,93 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 10, 2026 - Nested Template Base Classes)
+## Latest Investigation (January 11, 2026 - Member Template and Static Member Resolution)
+
+### ✅ IMPLEMENTED: Member Struct Template Resolution in Partial Specialization Patterns
+
+**Pattern Now Supported:** Partial specializations where template argument patterns reference member struct templates:
+```cpp
+class __make_unsigned_selector_base {
+protected:
+    template<typename...> struct _List { };
+
+    template<typename _Tp, typename _U>
+    struct Outer;
+
+    template<typename _Tp, typename _U>
+    struct Outer<_Tp, _List<_U>> {  // ← _List is a member struct template - NOW WORKS!
+        using __type = _Tp;
+    };
+};
+```
+
+**What Was Fixed:**
+1. ✅ **Member struct template lookup in partial specialization patterns** - When parsing template argument patterns like `_List<_U>` inside a partial specialization, the parser now checks if the identifier is a member struct template of the enclosing class
+2. ✅ **Non-type template parameter recognition in partial specialization patterns** - Parameters like `_Sz` in `struct __select<_Sz, _List<_Uint, _UInts...>, true>` are now properly recognized by setting up `current_template_param_names_` before parsing the pattern
+
+**Implementation:**
+- Added check in `parse_primary_expression` to look up member struct templates in `gTemplateRegistry` using the qualified name (e.g., `EnclosingClass::MemberTemplate`)
+- Modified `parse_member_struct_template` to set up `current_template_param_names_` before calling `parse_explicit_template_arguments()` for the specialization pattern
+
+**Test Cases:**
+- ✅ `test_member_template_arg.cpp` - Basic member struct as template argument
+- ✅ `test_member_struct_full_pattern.cpp` - Complex pattern with multiple nested member templates
+
+---
+
+### ✅ IMPLEMENTED: Static Data Member Resolution in Template Type Aliases
+
+**Pattern Now Supported:** Type aliases within template structs that reference static data members of the same struct:
+```cpp
+template<unsigned long _Len>
+struct aligned_union {
+private:
+    static const unsigned long _S_len = _Len > 8 ? _Len : 8;
+public:
+    static const unsigned long alignment_value = 8;
+    using type = typename aligned_storage<_S_len, alignment_value>::type;  // ← NOW WORKS!
+};
+```
+
+**What Was Fixed:**
+- ✅ **Static member lookup during struct body parsing** - Added `local_struct_info` pointer to `StructParsingContext` to track the `StructTypeInfo` being built
+- ✅ **Identifier resolution for static members** - When parsing expressions inside a struct body, static members are now looked up in the local `StructTypeInfo`
+
+**Implementation:**
+- Extended `StructParsingContext` struct to include `local_struct_info` field
+- Updated all three locations where `struct_parsing_context_stack_` is pushed to set the `local_struct_info`
+- Added check in `parse_primary_expression` to look up static members from `local_struct_info`
+
+**Test Cases:**
+- ✅ `test_static_member_in_type_alias.cpp` - Static members used as template arguments
+
+---
+
+### Current Test Results (January 11, 2026)
+
+| Status | Count | Headers |
+|--------|-------|---------|
+| ✅ Compiled | 1 | `<limits>` |
+| ⏱️ Timeout | 7 | `<string>`, `<iostream>`, `<vector>`, `<memory>`, `<functional>`, `<ranges>`, `<chrono>` |
+| ❌ Failed | 13 | `<type_traits>`, `<string_view>`, `<tuple>`, `<array>`, `<algorithm>`, `<utility>`, `<map>`, `<set>`, `<optional>`, `<variant>`, `<any>`, `<span>`, `<concepts>` |
+
+**Progress Notes:**
+- `<vector>` moved from Failed to Timeout (progress!)
+- Several `Missing identifier` errors in `<type_traits>` have been resolved
+- Remaining issues include: member alias templates (like `__cond_t`), and template node type mismatches
+
+---
+
+### Remaining Blockers in `<type_traits>`
+
+1. **Member alias templates as identifiers** - Pattern: `struct S { template<typename T, typename U> using __cond_t = decltype(...); ... __cond_t<A, B>; }`
+2. **Template node type mismatches** - `Template node is not a TemplateClassDeclarationNode`
+3. **Missing primary template lookups** - `No primary template found for 'enable'`
+4. **`std::bad_any_cast` crash** - Likely from incorrect AST node casting
+
+---
+
+## Previous Investigation (January 10, 2026 - Nested Template Base Classes)
 
 ### ✅ IMPLEMENTED: Nested Template Base Classes in Partial Specializations
 
