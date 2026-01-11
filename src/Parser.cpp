@@ -11806,9 +11806,6 @@ ParseResult Parser::parse_return_statement()
 
 ParseResult Parser::parse_unary_expression(ExpressionContext context)
 {
-	FLASH_LOG_FORMAT(Parser, Debug, ">>> ENTERING parse_unary_expression, context={}, current_token={}", 
-		static_cast<int>(context),
-		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	
 	// Check for 'static_cast' keyword
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "static_cast") {
@@ -12719,10 +12716,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	// Not a unary operator, parse as postfix expression (which starts with primary expression)
 	// Phase 3: Changed to call parse_postfix_expression instead of parse_primary_expression
 	// This allows postfix operators (++, --, [], (), ::, ., ->) to be handled in a separate layer
-	FLASH_LOG(Parser, Debug, ">>> parse_unary_expression: Calling parse_postfix_expression");
 	ParseResult postfix_result = parse_postfix_expression(context);
-	FLASH_LOG_FORMAT(Parser, Debug, ">>> parse_unary_expression: Returned from parse_postfix_expression, success={}", 
-		!postfix_result.is_error());
 	return postfix_result;
 }
 
@@ -12752,11 +12746,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		FLASH_LOG(Parser, Error, "UNEXPECTED: parse_expression called with token 'ns' and precedence=2 (initializer context)");
 	}
 	
-	FLASH_LOG(Parser, Debug, ">>> Calling parse_unary_expression");
 	ParseResult result = parse_unary_expression(context);
-	FLASH_LOG_FORMAT(Parser, Debug, ">>> Returned from parse_unary_expression, success={}, current token: {}",
-		!result.is_error(),
-		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	if (result.is_error()) {
 		FLASH_LOG(Parser, Debug, "parse_expression: parse_unary_expression failed: ", result.error_message());
 		return result;
@@ -13685,16 +13675,8 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 // It calls parse_primary_expression and then handles postfix operators in a loop
 ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 {
-	FLASH_LOG_FORMAT(Parser, Debug, ">>> ENTERING parse_postfix_expression, context={}, current_token={}", 
-		static_cast<int>(context), 
-		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
-	
 	// First, parse the primary expression
-	FLASH_LOG(Parser, Debug, ">>> Calling parse_primary_expression");
 	ParseResult prim_result = parse_primary_expression(context);
-	FLASH_LOG_FORMAT(Parser, Debug, ">>> Returned from parse_primary_expression, success={}, current_token={}", 
-		!prim_result.is_error(),
-		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	if (prim_result.is_error()) {
 		return prim_result;
 	}
@@ -14083,34 +14065,19 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		bool is_arrow_access = false;
 		Token operator_start_token;  // Track the operator token for error reporting
 		
-		FLASH_LOG_FORMAT(Parser, Debug, ">>> Postfix loop: Checking for . or ->, peek_token={}", 
-			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
-		
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
-			FLASH_LOG(Parser, Debug, ">>> Found '.', consuming it");
 			operator_start_token = *peek_token();
 			consume_token(); // consume '.'
 			is_arrow_access = false;
 			
-			FLASH_LOG_FORMAT(Parser, Debug, ">>> After consuming '.', peek_token={}", 
-				peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
-			
 			// Check for pointer-to-member operator .*
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "*"sv) {
-				FLASH_LOG(Parser, Debug, ">>> Found '*' after '.', this is .* operator");
 				consume_token(); // consume '*'
-				
-				FLASH_LOG_FORMAT(Parser, Debug, ">>> After consuming '*', peek_token={}, calling parse_expression(17)", 
-					peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 				
 				// Parse the RHS expression (pointer to member)
 				// Pointer-to-member operators have precedence similar to multiplicative operators (17)
 				// But we need to stop at lower precedence operators, so use precedence 17
 				ParseResult member_ptr_result = parse_expression(17, ExpressionContext::Normal);
-				
-				FLASH_LOG_FORMAT(Parser, Debug, ">>> Returned from parse_expression after .*, success={}, peek_token={}", 
-					!member_ptr_result.is_error(),
-					peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 				
 				if (member_ptr_result.is_error()) {
 					return member_ptr_result;
@@ -14120,10 +14087,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				}
 				
 				// Create PointerToMemberAccessNode
-				FLASH_LOG(Parser, Debug, ">>> Creating PointerToMemberAccessNode");
 				result = emplace_node<ExpressionNode>(
 					PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_start_token, false));
-				FLASH_LOG(Parser, Debug, ">>> Created PointerToMemberAccessNode, continuing postfix loop");
 				continue;  // Check for more postfix operators
 			}
 		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "->"sv) {
@@ -14444,10 +14409,6 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_POSTFIX_ITERATIONS limit ({}) - possible infinite loop in postfix operator parsing", MAX_POSTFIX_ITERATIONS);
 		return ParseResult::error("Parser error: too many postfix operator iterations", *current_token_);
 	}
-
-	FLASH_LOG_FORMAT(Parser, Debug, ">>> EXITING parse_postfix_expression normally, has_result={}, peek_token={}", 
-		result.has_value(),
-		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 
 	if (result.has_value())
 		return ParseResult::success(*result);
