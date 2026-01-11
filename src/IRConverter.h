@@ -8676,9 +8676,11 @@ private:
 		
 		// For member functions, add 'this' pointer parameter
 		// This comes after hidden return parameter (if present)
+		int this_offset_saved = 0;  // Will be set if this is a member function
 		if (!struct_name.empty()) {
 			// 'this' offset depends on whether there's a hidden return parameter
 			int this_offset = (param_offset_adjustment + 1) * -8;
+			this_offset_saved = this_offset;  // Save for later reference_stack_info_ registration
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle("this")].offset = this_offset;
 
 			// Add 'this' parameter to debug information
@@ -8705,6 +8707,13 @@ private:
 			size_t paramIndex = FunctionDeclLayout::FIRST_PARAM_INDEX;
 			// Clear reference parameter tracking from previous function
 			reference_stack_info_.clear();
+			
+			// Register 'this' as a pointer in reference_stack_info_ (AFTER the clear)
+			// This is critical for member function calls that pass 'this' as an argument
+			// Without this, the codegen would use LEA (address-of) instead of MOV (load)
+			if (!struct_name.empty()) {
+				setReferenceInfo(this_offset_saved, Type::Struct, 64, false);
+			}
 			
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
 				auto param_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
@@ -8811,6 +8820,13 @@ private:
 			// Typed payload path: build ParameterInfo from already-extracted parameter_types
 			const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
 			reference_stack_info_.clear();
+			
+			// Register 'this' as a pointer in reference_stack_info_ (AFTER the clear)
+			// This is critical for member function calls that pass 'this' as an argument
+			// Without this, the codegen would use LEA (address-of) instead of MOV (load)
+			if (!struct_name.empty()) {
+				setReferenceInfo(this_offset_saved, Type::Struct, 64, false);
+			}
 		
 			// Reset counters for this code path (they start at param_offset_adjustment for int, 0 for float)
 			// The counters were already declared before the if/else block

@@ -2512,6 +2512,8 @@ private:
 					Token this_token = func_decl.identifier_token();  // Use function token for location
 					auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
 						Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+					// Mark 'this' as a pointer to struct (not a struct value)
+					this_type.as<TypeSpecifierNode>().add_pointer_level();
 					auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 
 					// Add 'this' to symbol table (it's the implicit first parameter)
@@ -2950,6 +2952,8 @@ private:
 				Token this_token = node.name_token();  // Use constructor token for location
 				auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
 					Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+				// Mark 'this' as a pointer to struct (not a struct value)
+				this_type.as<TypeSpecifierNode>().add_pointer_level();
 				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 
 				// Add 'this' to symbol table (it's the implicit first parameter)
@@ -3434,6 +3438,8 @@ private:
 				Token this_token = node.name_token();  // Use destructor token for location
 				auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
 					Type::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None);
+				// Mark 'this' as a pointer to struct (not a struct value)
+				this_type.as<TypeSpecifierNode>().add_pointer_level();
 				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 
 				// Add 'this' to symbol table (it's the implicit first parameter)
@@ -14345,6 +14351,8 @@ private:
 			// This is critical for empty structs (size 0) which still need a valid address
 			IrValue this_arg_value;
 			bool object_is_pointer_like = object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
+			FLASH_LOG_FORMAT(Codegen, Debug, "MemberFunctionCall: object_name='{}', object_type.type()={}, pointer_depth={}, is_ref={}, is_rref={}, object_is_pointer_like={}",
+			                 object_name, static_cast<int>(object_type.type()), object_type.pointer_depth(), object_type.is_reference(), object_type.is_rvalue_reference(), object_is_pointer_like);
 			if (object_is_pointer_like) {
 				// For pointer/reference objects, pass through directly
 				this_arg_value = IrValue(StringTable::getOrInternStringHandle(object_name));
@@ -14378,8 +14386,6 @@ private:
 			}
 		
 			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-				auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-			
 				// Get the parameter type from the function declaration to check if it's a reference
 				// For generic lambdas, use the deduced types from param_types instead of the original auto types
 				const TypeSpecifierNode* param_type = nullptr;
@@ -14400,7 +14406,8 @@ private:
 					}
 				}
 			
-				// For variables, we need to add the type and size
+				// For variables (identifiers), handle specially to avoid unnecessary dereferences
+				// when passing reference arguments to reference parameters
 				if (std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 					const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 					const std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
@@ -14422,9 +14429,10 @@ private:
 							// Parameter expects a reference - pass the address of the argument
 							if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 								// Argument is already a reference - just pass it through
+								// Use 64-bit pointer size since references are passed as pointers
 								call_op.args.push_back(TypedValue{
 									.type = type_node.type(),
-									.size_in_bits = static_cast<int>(type_node.size_in_bits()),
+									.size_in_bits = 64,  // Reference is passed as pointer (64 bits on x64)
 									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 									.is_reference = true
 								});
@@ -14467,9 +14475,10 @@ private:
 							// Parameter expects a reference - pass the address of the argument
 							if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 								// Argument is already a reference - just pass it through
+								// Use 64-bit pointer size since references are passed as pointers
 								call_op.args.push_back(TypedValue{
 									.type = type_node.type(),
-									.size_in_bits = static_cast<int>(type_node.size_in_bits()),
+									.size_in_bits = 64,  // Reference is passed as pointer (64 bits on x64)
 									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 									.is_reference = true
 								});
@@ -14502,12 +14511,15 @@ private:
 							});
 						}
 					} else {
-						// Unknown symbol type - use toTypedValue fallback
+						// Unknown symbol type - fall back to visitExpressionNode
+						auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 						call_op.args.push_back(toTypedValue(std::span<const IrOperand>(argumentIrOperands.data(), argumentIrOperands.size())));
 					}
 				}
 				else {
-					// Not an identifier - could be a literal, expression result, etc.
+					// Not an identifier - call visitExpressionNode to get the value
+					auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+					
 					// Check if parameter expects a reference and argument is a literal
 					if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 						// Parameter expects a reference, but argument is not an identifier

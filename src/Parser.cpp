@@ -14695,6 +14695,158 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 	}
 
+	// Check for 'operator' keyword in expression context: operator==(other), operator+=(x), etc.
+	// This is used to call operators as member functions by name, e.g., return !operator==(other);
+	// This pattern is common in standard library headers like <typeinfo>
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "operator") {
+		Token operator_keyword_token = *current_token_;
+		consume_token(); // consume 'operator'
+
+		std::string operator_name = "operator";
+
+		// Check for operator() - function call operator
+		if (current_token_.has_value() && current_token_->type() == Token::Type::Punctuator &&
+		    current_token_->value() == "(") {
+			consume_token(); // consume '('
+			if (!current_token_.has_value() || current_token_->value() != ")") {
+				return ParseResult::error("Expected ')' after 'operator('", operator_keyword_token);
+			}
+			consume_token(); // consume ')'
+			operator_name = "operator()";
+		}
+		// Check for operator[] - subscript operator
+		else if (current_token_.has_value() && current_token_->type() == Token::Type::Punctuator &&
+		         current_token_->value() == "[") {
+			consume_token(); // consume '['
+			if (!current_token_.has_value() || current_token_->value() != "]") {
+				return ParseResult::error("Expected ']' after 'operator['", operator_keyword_token);
+			}
+			consume_token(); // consume ']'
+			operator_name = "operator[]";
+		}
+		// Check for other operators
+		else if (current_token_.has_value() && current_token_->type() == Token::Type::Operator) {
+			std::string_view operator_symbol = current_token_->value();
+			consume_token(); // consume operator symbol
+			operator_name += std::string(operator_symbol);
+		}
+		else {
+			return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
+		}
+
+		// Now expect '(' and arguments
+		if (!consume_punctuator("(")) {
+			return ParseResult::error("Expected '(' after operator name in expression", operator_keyword_token);
+		}
+
+		// Parse arguments
+		ChunkedVector<ASTNode> args;
+		if (current_token_.has_value() && current_token_->value() != ")") {
+			while (true) {
+				auto arg_result = parse_expression();
+				if (arg_result.is_error()) {
+					return arg_result;
+				}
+				if (auto arg = arg_result.node()) {
+					args.push_back(*arg);
+				}
+
+				if (!current_token_.has_value()) {
+					return ParseResult::error("Expected ',' or ')' in operator call", operator_keyword_token);
+				}
+
+				if (current_token_->value() == ")") {
+					break;
+				}
+
+				if (!consume_punctuator(",")) {
+					return ParseResult::error("Expected ',' between operator call arguments", operator_keyword_token);
+				}
+			}
+		}
+
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Expected ')' after operator call arguments", operator_keyword_token);
+		}
+
+		// Create a token with the full operator name for the identifier
+		Token operator_name_token(Token::Type::Identifier, StringBuilder().append(operator_name).commit(), 
+		                          operator_keyword_token.line(), operator_keyword_token.column(), operator_keyword_token.file_index());
+
+		// Check if we're inside a member function context
+		if (!member_function_context_stack_.empty()) {
+			// Inside a member function - this is a member operator call
+			// Create this->operator_name(args) pattern
+			// First create 'this' identifier
+			Token this_token(Token::Type::Keyword, "this", 
+			                operator_keyword_token.line(), operator_keyword_token.column(), operator_keyword_token.file_index());
+			auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+
+			// Look up the operator function in the current struct type
+			const auto& member_ctx = member_function_context_stack_.back();
+			FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: looking for '{}' in struct_type_index={}", 
+			                 operator_name, member_ctx.struct_type_index);
+			if (member_ctx.struct_type_index < gTypeInfo.size()) {
+				const TypeInfo& type_info = gTypeInfo[member_ctx.struct_type_index];
+				if (type_info.struct_info_) {
+					FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: struct has {} member functions", 
+					                 type_info.struct_info_->member_functions.size());
+					// Search for the operator member function
+					for (const auto& member_func : type_info.struct_info_->member_functions) {
+						FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: checking member function '{}'", 
+						                 StringTable::getStringView(member_func.name));
+						if (StringTable::getStringView(member_func.name) == operator_name) {
+							// Found the operator function - check if it's a FunctionDeclarationNode
+							if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+								FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: found matching FunctionDeclarationNode for '{}'", 
+								                 operator_name);
+								auto& func_decl = const_cast<FunctionDeclarationNode&>(member_func.function_decl.as<FunctionDeclarationNode>());
+								result = emplace_node<ExpressionNode>(
+									MemberFunctionCallNode(this_node, func_decl, std::move(args), operator_name_token));
+								return ParseResult::success(*result);
+							}
+						}
+					}
+				}
+			}
+
+			// If we couldn't find the operator in the current type, create a generic member access + call
+			// This handles cases where the operator might be inherited or template-dependent
+			// Look up the function in symbol table as fallback
+			FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: operator '{}' not found in struct, trying symbol table", 
+			                 operator_name);
+			auto func_lookup = gSymbolTable.lookup(operator_name);
+			if (func_lookup.has_value() && func_lookup->is<FunctionDeclarationNode>()) {
+				FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: found '{}' in symbol table", operator_name);
+				auto& func_decl = func_lookup->as<FunctionDeclarationNode>();
+				result = emplace_node<ExpressionNode>(
+					MemberFunctionCallNode(this_node, func_decl, std::move(args), operator_name_token));
+				return ParseResult::success(*result);
+			}
+
+			// Create a deferred function call for template contexts
+			// We create a MemberAccessNode followed by postfix call handling
+			// The codegen will handle this as this->operator_name(args)
+			FLASH_LOG_FORMAT(Parser, Debug, "operator call syntax: creating placeholder for '{}'", operator_name);
+			auto member_access = emplace_node<ExpressionNode>(
+				MemberAccessNode(this_node, operator_name_token, true)); // true = arrow access
+			
+			// Create a placeholder type spec and decl for the deferred call
+			auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, operator_name_token);
+			auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_name_token).as<DeclarationNode>();
+			auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
+			result = emplace_node<ExpressionNode>(
+				MemberFunctionCallNode(this_node, func_decl_node, std::move(args), operator_name_token));
+			return ParseResult::success(*result);
+		}
+		else {
+			// Not in a member function context - this is an error or a free-standing operator call
+			// (free-standing operator calls are rare but technically possible)
+			return ParseResult::error("Operator call syntax 'operator==(args)' can only be used inside a member function", 
+			                         operator_keyword_token);
+		}
+	}
+
 	// Check for requires expression: requires(params) { requirements; } or requires { requirements; }
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "requires") {
 		ParseResult requires_result = parse_requires_expression();
