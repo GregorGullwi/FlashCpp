@@ -140,7 +140,112 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 11, 2026 - Member Alias Template Lookup and Template Name Extraction)
+## Latest Investigation (January 11, 2026 - Typedef Reference Declarators and Constructor/Destructor noexcept)
+
+### ✅ IMPLEMENTED: Typedef Reference Declarators
+
+**Pattern Now Supported:** Typedef declarations with reference declarators inside template class bodies:
+```cpp
+template<class E>
+class container {
+public:
+    typedef E value_type;
+    typedef const E& const_reference;   // ← NOW WORKS!
+    typedef E& reference;               // ← NOW WORKS!
+    typedef E&& rvalue_reference;       // ← NOW WORKS!
+    typedef const E* const_pointer;
+    typedef E* pointer;
+};
+```
+
+**What Was Fixed:**
+1. ✅ **Lvalue reference declarators (`&`)** - `typedef const T& reference;`
+2. ✅ **Rvalue reference declarators (`&&`)** - `typedef T&& rvalue_ref;` (both single `&&` token and two `&` tokens)
+
+**Implementation:**
+- Modified `parse_typedef_declaration()` in `src/Parser.cpp` to handle reference declarators after the type specifier
+- Added handling for both `&` (lvalue) and `&&` (rvalue) reference tokens
+
+**Test Cases:**
+- ✅ `tests/test_typedef_reference_ret0.cpp` - All typedef reference patterns
+
+**Impact:**
+- ✅ `<initializer_list>` header now progresses past line 49!
+- Previously blocked on `typedef const _E& reference;`
+
+---
+
+### ✅ IMPLEMENTED: Constructor/Destructor noexcept Specifier
+
+**Pattern Now Supported:** Constructor and destructor declarations with `noexcept` specifier:
+```cpp
+class test_class {
+public:
+    test_class() noexcept : value_(0) { }
+    virtual ~test_class() noexcept { }
+};
+```
+
+**What Was Fixed:**
+1. ✅ **Constructor trailing specifiers** - `noexcept`, `throw()`, attributes parsed after constructor parameters
+2. ✅ **Destructor trailing specifiers** - Same handling for destructors
+
+**Implementation:**
+- Added call to `parse_function_trailing_specifiers()` after parsing constructor/destructor parameters
+- Added `set_noexcept()` and `is_noexcept()` methods to `ConstructorDeclarationNode` and `DestructorDeclarationNode`
+
+**Impact:**
+- ✅ `<exception.h>` header now progresses past line 63!
+- Previously blocked on `virtual ~exception() _GLIBCXX_TXN_SAFE_DYN _GLIBCXX_NOTHROW;`
+
+---
+
+### ✅ IMPLEMENTED: Explicit Constructor Keyword
+
+**Pattern Now Supported:** `explicit` keyword on constructors:
+```cpp
+class type_info {
+protected:
+    explicit type_info(const char* __n) : __name(__n) { }
+};
+```
+
+**What Was Fixed:**
+- Added `explicit` keyword handling in struct member parsing loop alongside `constexpr`, `consteval`, and `inline`
+
+**Impact:**
+- ✅ `<typeinfo>` header now progresses past line 151!
+
+---
+
+### Current Test Results (January 11, 2026)
+
+| Status | Count | Headers |
+|--------|-------|---------|
+| ✅ Compiled | 1 | `<limits>` |
+| ⏱️ Timeout | 7 | `<string>`, `<iostream>`, `<vector>`, `<memory>`, `<functional>`, `<ranges>`, `<chrono>` |
+| ❌ Failed | 13 | `<type_traits>`, `<string_view>`, `<tuple>`, `<array>`, `<algorithm>`, `<utility>`, `<map>`, `<set>`, `<optional>`, `<variant>`, `<any>`, `<span>`, `<concepts>` |
+
+**Progress Notes:**
+- ✅ Typedef reference declarators now work in template class bodies
+- ✅ Constructor/destructor noexcept specifiers now work
+- ✅ Explicit constructor keyword now handled
+- ✅ All 888 existing tests still pass
+- ⚠️ Next blocker: `operator==(__arg)` call syntax in `<typeinfo>` line 114
+
+---
+
+### Remaining Blockers
+
+1. **Operator call syntax** - `!operator==(__arg)` pattern in `<typeinfo>` line 114
+   - Pattern: `return !operator==(other);` - calling an operator as a member function by name
+   - This requires code generation changes to handle operator functions called by name
+   - Workaround: Use `!((*this) == other)` or `!this->operator==(other)` syntax instead
+2. **Complex standard library headers** - Most headers still timeout or have parsing issues
+
+---
+
+## Previous Investigation (January 11, 2026 - Member Alias Template Lookup and Template Name Extraction)
 
 ### ✅ IMPLEMENTED: Member Alias Template Lookup in Struct Context
 
