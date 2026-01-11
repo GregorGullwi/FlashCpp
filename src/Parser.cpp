@@ -15869,16 +15869,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// If still not found, check for static data members in the current struct/class being parsed
 					// This handles cases like: using type = typename aligned_storage<_S_len, alignment_value>::type;
 					// where _S_len and alignment_value are static const members of the same struct
-					FLASH_LOG_FORMAT(Parser, Debug, "Checking for static member '{}', found_as_type_alias={}, struct_parsing_context_stack_.empty()={}", 
-						idenfifier_token.value(), found_as_type_alias, struct_parsing_context_stack_.empty());
 					if (!found_as_type_alias && !struct_parsing_context_stack_.empty()) {
 						const auto& ctx = struct_parsing_context_stack_.back();
-						FLASH_LOG_FORMAT(Parser, Debug, "  struct_name='{}', struct_node={}, local_struct_info={}", 
-							ctx.struct_name, ctx.struct_node != nullptr ? "valid" : "null",
-							ctx.local_struct_info != nullptr ? "valid" : "null");
 						// First try the struct_node's static_members (for member struct templates)
 						if (ctx.struct_node != nullptr) {
-							FLASH_LOG_FORMAT(Parser, Debug, "  struct_node->static_members().size()={}", ctx.struct_node->static_members().size());
 							for (const auto& static_member : ctx.struct_node->static_members()) {
 								if (static_member.name == identifier_handle) {
 									FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as static member in current struct node (struct parsing context)", 
@@ -15891,10 +15885,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						
 						// Then check local_struct_info (for template classes being parsed where static members are added)
 						if (!found_as_type_alias && ctx.local_struct_info != nullptr) {
-							FLASH_LOG_FORMAT(Parser, Debug, "  local_struct_info->static_members.size()={}", ctx.local_struct_info->static_members.size());
 							for (const auto& static_member : ctx.local_struct_info->static_members) {
-								FLASH_LOG_FORMAT(Parser, Debug, "  Comparing '{}' with static member '{}'", 
-									idenfifier_token.value(), StringTable::getStringView(static_member.getName()));
 								if (static_member.getName() == identifier_handle) {
 									FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as static member in local_struct_info (struct parsing context)", 
 										idenfifier_token.value());
