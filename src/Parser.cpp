@@ -7291,6 +7291,22 @@ ParseResult Parser::parse_typedef_declaration()
 				}
 			}
 		}
+		
+		// Handle reference declarators (e.g., typedef T& reference; or typedef T&& rvalue_ref;)
+		if (peek_token().has_value() && peek_token()->value() == "&") {
+			consume_token(); // consume first '&'
+			// Check for && (rvalue reference) as two separate '&' tokens
+			if (peek_token().has_value() && peek_token()->value() == "&") {
+				consume_token(); // consume second '&'
+				type_spec.set_reference(true);  // true = rvalue reference
+			} else {
+				type_spec.set_lvalue_reference(true);  // lvalue reference
+			}
+		} else if (peek_token().has_value() && peek_token()->value() == "&&") {
+			// Handle && as a single token (rvalue reference)
+			consume_token(); // consume '&&'
+			type_spec.set_reference(true);  // true = rvalue reference
+		}
 	}
 
 	// Parse the alias name (identifier)
