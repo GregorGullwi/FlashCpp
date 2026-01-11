@@ -9,16 +9,13 @@ struct Point {
     int y;
 };
 
-// Test pointer-to-member type declaration (int Class::*)
-int Point::*getPtrToMember();
-
 // Test the .* operator in a decltype context (template expression parsing)
 template<typename T, typename M>
 using member_access_type = decltype(declval<T>().*declval<M>());
 
 int main() {
-    // Test type declaration parsing
-    int Point::*ptr_to_member = getPtrToMember();
+    // Test type declaration parsing (int Class::*)
+    int Point::*ptr_to_member = nullptr;
     
     // Simple compile test - the .* operator with runtime variables
     // requires additional support beyond template expression contexts

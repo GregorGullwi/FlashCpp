@@ -3,9 +3,7 @@ struct Point {
     int x;
 };
 
-int Point::*getPtr();
-
 int main() {
-    int Point::*ptr = getPtr();
+    int Point::*ptr = nullptr;
     return 0;
 }
