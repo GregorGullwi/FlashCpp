@@ -285,6 +285,73 @@ template<typename _Def, template<typename...> class _Op, typename... _Args>
 
 ---
 
+### ✅ IMPLEMENTED (Line 2946 & 3048) - Investigation January 11, 2026
+
+**Previous Blocker (Line 2946):** ✅ **FULLY RESOLVED**
+
+Partial specializations with namespace-qualified base classes are now supported:
+```cpp
+template<typename _Tp>
+  struct __is_swappable_with_impl<_Tp&, _Tp&>
+  : public __swappable_details::__do_is_swappable_impl  // <-- Qualified base class
+  {
+    using type = decltype(__test<_Tp&>(0));
+  };
+```
+
+**What Was Fixed:**
+1. ✅ **Partial specialization base class parsing** - Now handles qualified names like `ns::Base`
+2. ✅ **Struct registration with namespace-qualified names** - Structs inside namespaces are now registered with intermediate names (e.g., `inner::Base` for `ns::inner::Base`)
+3. ✅ **Base class lookup in namespaces** - `validate_and_add_base_class` now tries namespace-prefixed lookups
+
+**Implementation:**
+- Modified partial specialization parsing to loop through `::` tokens when parsing base class names
+- Added namespace-qualified name registration for structs (registers both full path and intermediate paths)
+- Added fallback lookup in `validate_and_add_base_class` that tries current namespace prefixes
+
+**Test Cases:**
+- ✅ `tests/test_template_template_partial_spec_requires_ret42.cpp` - Returns 42 ✅
+
+**Current Blocker (Line 3048):** `Expected expression after '=' in template parameter default`
+
+This is a new issue with non-type template parameters that have `noexcept` expressions as default values:
+```cpp
+template<typename _Tp,
+         bool _Nothrow = noexcept(_S_conv<_Tp>(_S_get())),  // noexcept as default value
+         typename = decltype(_S_conv<_Tp>(_S_get()))>
+```
+
+This requires implementing `noexcept(expr)` as a compile-time expression that evaluates to a boolean.
+
+---
+
+### ✅ IMPLEMENTED (Line 2737) - Investigation January 11, 2026
+
+**Previous Blocker (Line 2737):** ✅ **FULLY RESOLVED**
+
+Partial specializations with requires clauses are now supported:
+```cpp
+template<typename _Def, template<typename...> class _Op, typename... _Args>
+  requires requires { typename _Op<_Args...>; }
+  struct __detected_or<_Def, _Op, _Args...>
+  {
+    using type = int;
+  };
+```
+
+**What Was Fixed:**
+- ✅ **Re-detection of class template after requires clause** - The `is_class_template` flag is now re-checked after parsing the requires clause
+- Previously, `is_class_template` was set before the requires clause, so it was `false` when `requires` was the next token
+
+**Implementation:**
+- Added code after `parse_expression()` for requires clause to re-check if `struct` or `class` keyword follows
+- Sets `is_class_template = true` if struct/class keyword is detected after requires clause
+
+**Test Cases:**
+- ✅ `tests/test_template_template_partial_spec_requires_ret42.cpp` - Returns 42 ✅
+
+---
+
 **Previous Blocker (Line 2578):** ✅ **FULLY RESOLVED**
 
 The pointer-to-member type alias syntax has been implemented:
