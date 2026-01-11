@@ -4,6 +4,16 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 11, 2026 - Pointer-to-Member Type Alias Syntax - IMPLEMENTED!)**:
+- ✅ **IMPLEMENTED: Pointer-to-member type syntax in type aliases now supported!** 🎉
+  - **Pattern**: `using _MemPtr = _Res _Class::*;`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Allows type aliases for pointer-to-member types
+  - **Implementation**: Added handling in both global scope and struct member type alias parsing
+  - **Test case**: `tests/test_ptr_to_member_type_alias_ret42.cpp` - Returns 42 ✅
+  - **Impact**: `<type_traits>` now parses past line 2578 to line 2583!
+  - **Current blocker**: Line 2583 - `typename Template<...>::type` in multi-line type aliases
+
 **UPDATE (January 10, 2026 - __underlying_type(T) Support - IMPLEMENTED!)**:
 - ✅ **IMPLEMENTED: `__underlying_type(T)` as type specifier now fully supported!** 🎉
   - **Pattern**: `using type = __underlying_type(_Tp);`

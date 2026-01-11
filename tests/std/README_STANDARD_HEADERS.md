@@ -196,7 +196,43 @@ struct __underlying_type_impl
 - ✅ `<type_traits>` now parses past line 2443 to line 2499!
 - Previous blocker at line 2443 (`using type = __underlying_type(_Tp);`) - **Fixed!**
 
-### Current Blocker (Line 2578) - RESOLVED Line 2499 (January 10, 2026)
+### Current Blocker (Line 2583) - Investigation January 11, 2026
+
+**Previous Blocker (Line 2578):** ✅ **PARTIALLY RESOLVED**
+
+The pointer-to-member type alias syntax has been implemented:
+```cpp
+using _MemPtr = _Res _Class::*;
+```
+
+**What Was Fixed:**
+- ✅ **Pointer-to-member type syntax in type aliases** - Pattern: `using T = Type Class::*;`
+- Added handling in both global scope and struct member type alias parsing
+- Test case: `test_ptr_to_member_type_alias_ret42.cpp` - Returns 42 ✅
+
+**Progress:** `<type_traits>` now compiles from line 2578 → line 2583 (**5 more lines!**)
+
+---
+
+**New Blocker (Line 2583):** `Expected ';' after type alias`
+
+The issue is with multi-line type aliases that end with `>::type;`:
+```cpp
+using type = typename __conditional_t<__or_<is_same<_Argval, _Class>,
+    is_base_of<_Class, _Argval>>::value,
+    __result_of_memobj_ref<_MemPtr, _Arg>,
+    __result_of_memobj_deref<_MemPtr, _Arg>
+>::type;  // <-- Line 2583: Parser expects ';' but sees '::'
+```
+
+**Analysis:**
+- After parsing nested template arguments, the parser sees `>` followed by `::`
+- The `::type` member type access after `>` is not being handled correctly
+- This affects `typename Template<...>::type` patterns in type aliases
+
+---
+
+### ✅ IMPLEMENTED (Line 2499): Pointer-to-Member Operators and Pack Expansion
 
 **Previous Blocker (Line 2499):** ✅ **FULLY RESOLVED**
 
