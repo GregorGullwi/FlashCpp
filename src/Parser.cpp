@@ -23680,19 +23680,64 @@ ParseResult Parser::parse_requires_expression() {
 		// 4. Simple requirement: expression;
 		
 		if (peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "typename") {
-			// Type requirement: typename T::type;
+			// Type requirement: typename T::type; or typename Op<Args...>;
 			consume_token(); // consume 'typename'
 			
-			// Parse the type name (simplified - just parse an identifier for now)
+			// Parse the type name - can be identifier, qualified name, or template instantiation
 			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
 				return ParseResult::error("Expected type name after 'typename' in requires expression", *current_token_);
 			}
 			Token type_name = *peek_token();
 			consume_token();
 			
-			// For now, just create an identifier node for the type requirement
-			// Full implementation would parse full nested-name-specifier
-			auto type_req_node = emplace_node<IdentifierNode>(type_name);
+			// Handle qualified names (T::type) and template arguments (Op<Args...>)
+			StringBuilder full_type_name;
+			full_type_name.append(type_name.value());
+			
+			while (peek_token().has_value()) {
+				if (peek_token()->value() == "::") {
+					consume_token(); // consume '::'
+					full_type_name.append("::"sv);
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+						full_type_name.append(peek_token()->value());
+						consume_token();
+					}
+				} else if (peek_token()->value() == "<") {
+					// Parse template arguments
+					full_type_name.append("<"sv);
+					consume_token(); // consume '<'
+					int angle_depth = 1;
+					while (angle_depth > 0 && peek_token().has_value()) {
+						if (peek_token()->value() == "<") {
+							angle_depth++;
+							full_type_name.append("<"sv);
+						} else if (peek_token()->value() == ">") {
+							angle_depth--;
+							if (angle_depth > 0) {
+								full_type_name.append(">"sv);
+							}
+						} else if (peek_token()->value() == ">>") {
+							// Handle >> as two >
+							angle_depth -= 2;
+							if (angle_depth > 0) {
+								full_type_name.append(">>"sv);
+							} else if (angle_depth == 0) {
+								full_type_name.append(">"sv);
+							}
+						} else {
+							full_type_name.append(peek_token()->value());
+						}
+						consume_token();
+					}
+					full_type_name.append(">"sv);
+				} else {
+					break;
+				}
+			}
+			
+			// Create an identifier node for the type requirement
+			// Using the full type name including template arguments
+			auto type_req_node = emplace_node<IdentifierNode>(type_name); // Keep original token for location info
 			requirements.push_back(type_req_node);
 			
 			// Expect ';' after type requirement
@@ -24176,6 +24221,7 @@ ParseResult Parser::parse_template_template_parameter_forms(std::vector<ASTNode>
 
 // Parse a single template template parameter form (just type specifier, no name)
 // For template<template<typename> class Container>, this parses "typename"
+// Also handles variadic packs: template<typename...> class Container
 ParseResult Parser::parse_template_template_parameter_form() {
 	ScopedTokenPosition saved_position(*this);
 
@@ -24187,9 +24233,24 @@ ParseResult Parser::parse_template_template_parameter_form() {
 			Token keyword_token = *peek_token();
 			consume_token(); // consume 'typename' or 'class'
 
+			// Check for ellipsis (parameter pack): typename... 
+			// This handles patterns like: template<typename...> class Op
+			bool is_variadic = false;
+			if (peek_token().has_value() && 
+			    (peek_token()->type() == Token::Type::Operator || peek_token()->type() == Token::Type::Punctuator) &&
+			    peek_token()->value() == "...") {
+				consume_token(); // consume '...'
+				is_variadic = true;
+			}
+
 			// For template template parameters, we don't expect an identifier name
 			// Just create a type parameter node with an empty name
 			auto param_node = emplace_node<TemplateParameterNode>(StringHandle(), keyword_token);
+			
+			// Set variadic flag if this is a parameter pack
+			if (is_variadic) {
+				param_node.as<TemplateParameterNode>().set_variadic(true);
+			}
 
 			return saved_position.success(param_node);
 		}

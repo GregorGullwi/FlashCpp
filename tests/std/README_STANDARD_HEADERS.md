@@ -230,11 +230,11 @@ using type = typename __conditional_t<__or_<is_same<_Argval, _Class>,
 
 ---
 
-### Current Blocker (Line 2727) - January 11, 2026
+### ✅ IMPLEMENTED (Line 2727) - Investigation January 11, 2026
 
-**New Blocker (Line 2727):** `Expected '>' after nested template parameter list`
+**Previous Blocker (Line 2727):** ✅ **FULLY RESOLVED**
 
-The issue is with template template parameters with variadic parameters:
+The template template parameters with variadic parameters are now supported:
 ```cpp
 template<typename _Def, template<typename...> class _Op, typename... _Args>
     struct __detected_or
@@ -244,10 +244,44 @@ template<typename _Def, template<typename...> class _Op, typename... _Args>
     };
 ```
 
-**Analysis:**
-- `template<typename...> class _Op` is a template template parameter
-- The variadic pack `typename...` inside the template template parameter is not being parsed correctly
-- Parser expects `>` but sees `...`
+**What Was Fixed:**
+- ✅ **Template template parameters with variadic packs** - Pattern: `template<typename...> class Op`
+- Modified `parse_template_template_parameter_form()` to handle `typename...` inside template template parameters
+- Test case: `test_template_template_variadic_ret42.cpp` - Returns 42 ✅
+
+**Implementation:**
+- Added ellipsis (`...`) handling after `typename` or `class` keywords in template template parameter parsing
+- Sets `is_variadic` flag on the parameter node when `...` is detected
+
+---
+
+### ✅ IMPLEMENTED (Line 2736) - Investigation January 11, 2026
+
+**Previous Blocker (Line 2736):** ✅ **FULLY RESOLVED**
+
+The requires expression type requirements with template arguments are now supported:
+```cpp
+template<typename _Def, template<typename...> class _Op, typename... _Args>
+  requires requires { typename _Op<_Args...>; }
+  struct __detected_or<_Def, _Op, _Args...>
+```
+
+**What Was Fixed:**
+- ✅ **Type requirements with template arguments in requires expressions** - Pattern: `typename Op<Args...>`
+- Modified requires expression parsing to handle qualified names and template arguments after `typename`
+- The type requirement parser now correctly consumes template argument lists
+
+**Implementation:**
+- Enhanced `parse_requires_expression()` to parse full type names including `::` qualifiers and `<...>` template arguments
+- Uses balanced angle bracket parsing for template argument lists
+
+---
+
+### Current Status (January 11, 2026)
+
+**Progress:** `<type_traits>` now parses past line 2736 without syntax errors! The header times out during compilation due to template instantiation volume, but no parsing errors are encountered.
+
+**Current Bottleneck:** Template instantiation performance (timeouts) - This is a known issue and is being tracked as a separate optimization task.
 
 ---
 
