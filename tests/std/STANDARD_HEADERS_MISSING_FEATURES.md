@@ -9,7 +9,7 @@ This document lists the missing features in FlashCpp that prevent successful com
   - **Pattern**: `template<typename _Def, template<typename...> class _Op, typename... _Args>`
   - **Status**: **NOW FULLY SUPPORTED**
   - **What it does**: Allows template template parameters to specify variadic type parameter lists
-  - **Implementation**: Modified `parse_template_template_parameter_form()` to handle `typename...` inside nested template parameter lists
+  - **Implementation**: Modified `parse_template_template_parameter_form()` in `src/Parser.cpp` (lines 24177-24214) to check for `...` after `typename` or `class` keywords and set the variadic flag
   - **Test case**: `tests/test_template_template_variadic_ret42.cpp` - Returns 42 ✅
   - **Impact**: `<type_traits>` now parses past line 2727!
 
@@ -18,7 +18,7 @@ This document lists the missing features in FlashCpp that prevent successful com
   - **Pattern**: `requires requires { typename Op<Args...>; }`
   - **Status**: **NOW FULLY SUPPORTED**
   - **What it does**: Allows type requirements in requires expressions to include template instantiations
-  - **Implementation**: Enhanced requires expression parsing to handle qualified names and template arguments after `typename`
+  - **Implementation**: Enhanced requires expression type requirement parsing in `src/Parser.cpp` (lines 23682-23742) to handle `::` qualifiers and `<...>` template arguments using balanced bracket parsing
   - **Impact**: `<type_traits>` now parses past line 2736!
   - **Current status**: Header times out due to template instantiation volume (known performance issue)
 
