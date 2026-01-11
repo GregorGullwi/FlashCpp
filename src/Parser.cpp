@@ -17151,6 +17151,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// This handles patterns like: __enable_if_t<...> in template argument contexts
 						if (!identifierType) {
 							auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
+							
+							// If not found directly, try looking up as a member alias template of the enclosing class
+							if (!alias_opt.has_value() && !struct_parsing_context_stack_.empty()) {
+								const auto& context = struct_parsing_context_stack_.back();
+								StringBuilder qualified_alias_name;
+								qualified_alias_name.append(context.struct_name).append("::"sv).append(idenfifier_token.value());
+								std::string_view qualified_alias_name_sv = qualified_alias_name.commit();
+								alias_opt = gTemplateRegistry.lookup_alias_template(qualified_alias_name_sv);
+								if (alias_opt.has_value()) {
+									FLASH_LOG_FORMAT(Parser, Debug, "Found member template alias '{}' as '{}'", idenfifier_token.value(), qualified_alias_name_sv);
+								}
+							}
+							
 							if (alias_opt.has_value()) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Found template alias '{}' with template arguments (no ::)", idenfifier_token.value());
 								// For template aliases used in expression/template contexts, create a simple identifier
@@ -17292,6 +17305,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				if (!identifierType && peek_token().has_value() && peek_token()->value() == "<") {
 					// Check if this is an alias template
 					auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
+					
+					// If not found directly, try looking up as a member alias template of the enclosing class
+					// This handles patterns like: template<typename T, typename U> using cond_t = decltype(...);
+					// used within the same struct as: decltype(cond_t<T, U>())
+					if (!alias_opt.has_value() && !struct_parsing_context_stack_.empty()) {
+						const auto& context = struct_parsing_context_stack_.back();
+						// Build qualified name: EnclosingClass::MemberAliasTemplate
+						StringBuilder qualified_alias_name;
+						qualified_alias_name.append(context.struct_name).append("::"sv).append(idenfifier_token.value());
+						std::string_view qualified_alias_name_sv = qualified_alias_name.commit();
+						alias_opt = gTemplateRegistry.lookup_alias_template(qualified_alias_name_sv);
+						if (alias_opt.has_value()) {
+							FLASH_LOG(Parser, Debug, "Found member alias template '", idenfifier_token.value(), "' as '", qualified_alias_name_sv, "'");
+						}
+					}
+					
 					if (alias_opt.has_value()) {
 						// This is an alias template like "remove_const_t<T>"
 						// We need to instantiate it, which will happen in the normal template arg parsing flow below
@@ -20211,18 +20240,43 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 					FLASH_LOG(Templates, Debug, "Dependent member type lookup for '",
 					          StringTable::getStringView(resolved_handle), "' found=", (type_it != gTypesByName.end()));
 					
-					// If not found, try instantiating the base template using the portion before the first '_'
+					// If not found, try instantiating the base template
+					// The base_part contains a mangled name like "enable_if_void_int"
+					// We need to find the actual template name, which could be "enable_if" not just "enable"
+					// Try progressively longer prefixes until we find a registered template
 					if (type_it == gTypesByName.end()) {
-						auto underscore_pos = base_part.find('_');
-						if (underscore_pos != std::string::npos) {
-							std::string_view base_template_name = std::string_view(base_part).substr(0, underscore_pos);
-							try_instantiate_class_template(base_template_name, template_args);
-							
-							std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
-							resolved_handle = build_resolved_handle(instantiated_base, member_part);
-							type_it = gTypesByName.find(resolved_handle);
-							FLASH_LOG(Templates, Debug, "After instantiating base template, lookup for '",
-							          StringTable::getStringView(resolved_handle), "' found=", (type_it != gTypesByName.end()));
+						std::string_view base_template_name;
+						std::string_view base_sv(base_part);
+						size_t underscore_pos = 0;
+						
+						while ((underscore_pos = base_sv.find('_', underscore_pos)) != std::string::npos) {
+							std::string_view candidate = base_sv.substr(0, underscore_pos);
+							auto candidate_opt = gTemplateRegistry.lookupTemplate(candidate);
+							if (candidate_opt.has_value()) {
+								base_template_name = candidate;
+								break;
+							}
+							// Also check alias templates
+							auto alias_candidate = gTemplateRegistry.lookup_alias_template(candidate);
+							if (alias_candidate.has_value()) {
+								base_template_name = candidate;
+								break;
+							}
+							underscore_pos++; // Move past this underscore
+						}
+						
+						// Only try to instantiate if we found a class template (not a function template)
+						if (!base_template_name.empty()) {
+							auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
+							if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+								try_instantiate_class_template(base_template_name, template_args);
+								
+								std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
+								resolved_handle = build_resolved_handle(instantiated_base, member_part);
+								type_it = gTypesByName.find(resolved_handle);
+								FLASH_LOG(Templates, Debug, "After instantiating base template '", base_template_name, "', lookup for '",
+								          StringTable::getStringView(resolved_handle), "' found=", (type_it != gTypesByName.end()));
+							}
 						}
 					}
 					
@@ -27367,22 +27421,49 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		if (type_it == gTypesByName.end()) {
 			// Try instantiating the base template to register member aliases
-			auto underscore_pos = base_part.find('_');
-			if (underscore_pos != std::string::npos) {
-				std::string_view base_template_name = std::string_view(base_part).substr(0, underscore_pos);
-				try_instantiate_class_template(base_template_name, template_args_as_type_args);
-				
-				std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args_as_type_args);
-				resolved_handle = build_resolved_handle(instantiated_base, member_part);
-				type_it = gTypesByName.find(resolved_handle);
-				
-				// Fallback: also try using the primary template name (uninstantiated) to find a registered alias
-				if (type_it == gTypesByName.end()) {
-					StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
-					type_it = gTypesByName.find(primary_handle);
+			// The base_part contains a mangled name like "enable_if_void_int"
+			// We need to find the actual template name, which could be "enable_if" not just "enable"
+			// Try progressively longer prefixes until we find a registered template
+			std::string_view base_template_name;
+			std::string_view base_sv(base_part);
+			size_t underscore_pos = 0;
+			
+			while ((underscore_pos = base_sv.find('_', underscore_pos)) != std::string::npos) {
+				std::string_view candidate = base_sv.substr(0, underscore_pos);
+				auto candidate_opt = gTemplateRegistry.lookupTemplate(candidate);
+				if (candidate_opt.has_value()) {
+					base_template_name = candidate;
+					FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: found template '", candidate, "' in base_part '", base_part, "'");
+					break;
 				}
-				FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: after instantiation lookup '",
-				          StringTable::getStringView(resolved_handle), "' found=", (type_it != gTypesByName.end()));
+				// Also check alias templates
+				auto alias_candidate = gTemplateRegistry.lookup_alias_template(candidate);
+				if (alias_candidate.has_value()) {
+					base_template_name = candidate;
+					FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: found alias template '", candidate, "' in base_part '", base_part, "'");
+					break;
+				}
+				underscore_pos++; // Move past this underscore
+			}
+			
+			// Only try to instantiate if we found a class template (not a function template)
+			if (!base_template_name.empty()) {
+				auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
+				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+					try_instantiate_class_template(base_template_name, template_args_as_type_args);
+					
+					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args_as_type_args);
+					resolved_handle = build_resolved_handle(instantiated_base, member_part);
+					type_it = gTypesByName.find(resolved_handle);
+					
+					// Fallback: also try using the primary template name (uninstantiated) to find a registered alias
+					if (type_it == gTypesByName.end()) {
+						StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
+						type_it = gTypesByName.find(primary_handle);
+					}
+					FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: after instantiation lookup '",
+					          StringTable::getStringView(resolved_handle), "' found=", (type_it != gTypesByName.end()));
+				}
 			}
 		}
 		
@@ -28394,6 +28475,17 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
+	
+	// Early check: verify this is actually a class template before proceeding
+	// This prevents errors when function templates like 'declval' are passed to this function
+	{
+		auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+		if (template_opt.has_value() && !template_opt->is<TemplateClassDeclarationNode>()) {
+			// This is not a class template (probably a function template) - skip silently
+			FLASH_LOG_FORMAT(Templates, Debug, "Skipping try_instantiate_class_template for non-class template '{}'", template_name);
+			return std::nullopt;
+		}
+	}
 	
 	// Check if any template arguments are dependent (contain template parameters)
 	// If so, we cannot instantiate the template yet - it's a dependent type
@@ -29812,7 +29904,7 @@ if (struct_type_info.getStructInfo()) {
 	}
 	
 	if (!template_node.is<TemplateClassDeclarationNode>()) {
-		FLASH_LOG(Templates, Error, "Template node is not a TemplateClassDeclarationNode, returning nullopt");
+		FLASH_LOG(Templates, Error, "Template node is not a TemplateClassDeclarationNode for '", template_name, "', returning nullopt");
 		return std::nullopt;  // Not a class template
 	}
 

@@ -140,7 +140,89 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 11, 2026 - Member Template and Static Member Resolution)
+## Latest Investigation (January 11, 2026 - Member Alias Template Lookup and Template Name Extraction)
+
+### ✅ IMPLEMENTED: Member Alias Template Lookup in Struct Context
+
+**Pattern Now Supported:** Member alias templates can now be used within the same struct where they are defined:
+```cpp
+struct Container {
+    template<typename T, typename U>
+    using cond_t = decltype(true ? declval<T>() : declval<U>());
+    
+    // Use cond_t within the same struct - NOW WORKS!
+    template<typename T, typename U>
+    static decltype(cond_t<T, U>()) test_func();
+};
+```
+
+**What Was Fixed:**
+1. ✅ **Member alias template lookup using qualified names** - When looking up an identifier like `cond_t`, the parser now also checks for `EnclosingStruct::cond_t` in the template registry
+2. ✅ **Two code paths updated** - Both the main expression parsing and the alias-specific expression parsing now check for member alias templates
+
+**Implementation:**
+- Modified `parse_primary_expression()` to build qualified names when inside a struct context
+- Uses `struct_parsing_context_stack_` to get the enclosing struct name
+- Falls back to qualified lookup when direct lookup fails
+
+**Test Cases:**
+- ✅ `test_member_alias_template_ret0.cpp` - Member alias template used within same struct
+
+---
+
+### ✅ IMPLEMENTED: Template Name Extraction Fix for Underscore-Containing Names
+
+**Bug Fixed:** Templates with underscores in their names (like `enable_if`) were incorrectly parsed when resolving dependent member types.
+
+**The Problem:** When resolving a type like `enable_if_void_int::type`, the code looked for the first underscore to extract the template name, yielding `enable` instead of `enable_if`.
+
+**What Was Fixed:**
+- Modified the template name extraction algorithm to try progressively longer prefixes
+- Checks if each prefix is a registered template before using it
+- For `enable_if_void_int`, now correctly finds `enable_if` as the template name
+
+**Implementation:**
+- Two locations updated in `Parser.cpp` in the `resolve_dependent_member_alias` lambda and related code
+- Uses a while loop to try `enable`, then `enable_if`, etc. until a registered template is found
+
+---
+
+### ✅ IMPLEMENTED: Filter Non-Class Templates in try_instantiate_class_template
+
+**Bug Fixed:** Function templates like `declval` were being passed to `try_instantiate_class_template`, causing errors.
+
+**What Was Fixed:**
+- Added an early check at the start of `try_instantiate_class_template()`
+- Verifies the template is a `TemplateClassDeclarationNode` before proceeding
+- Silently skips function templates, preventing spurious error messages
+
+---
+
+### Current Test Results (January 11, 2026)
+
+| Status | Count | Headers |
+|--------|-------|---------|
+| ✅ Compiled | 1 | `<limits>` |
+| ⏱️ Timeout | 7 | `<string>`, `<iostream>`, `<vector>`, `<memory>`, `<functional>`, `<ranges>`, `<chrono>` |
+| ❌ Failed | 13 | `<type_traits>`, `<string_view>`, `<tuple>`, `<array>`, `<algorithm>`, `<utility>`, `<map>`, `<set>`, `<optional>`, `<variant>`, `<any>`, `<span>`, `<concepts>` |
+
+**Progress Notes:**
+- ✅ Member alias templates within struct context now work
+- ✅ Template names with underscores (like `enable_if`) now extracted correctly
+- ✅ Function templates no longer cause "not a TemplateClassDeclarationNode" errors
+- ⚠️ `<type_traits>` still crashes with `std::bad_any_cast` - requires further investigation
+- All 886 existing tests still pass
+
+---
+
+### Remaining Blockers in `<type_traits>`
+
+1. **`std::bad_any_cast` crash** - The header still causes a crash during parsing; root cause TBD
+2. **Complex template metaprogramming patterns** - Some deeply nested patterns may still have issues
+
+---
+
+## Previous Investigation (January 11, 2026 - Member Template and Static Member Resolution)
 
 ### ✅ IMPLEMENTED: Member Struct Template Resolution in Partial Specialization Patterns
 
@@ -212,17 +294,10 @@ public:
 
 **Progress Notes:**
 - `<vector>` moved from Failed to Timeout (progress!)
-- Several `Missing identifier` errors in `<type_traits>` have been resolved
-- Remaining issues include: member alias templates (like `__cond_t`), and template node type mismatches
-
----
-
-### Remaining Blockers in `<type_traits>`
-
-1. **Member alias templates as identifiers** - Pattern: `struct S { template<typename T, typename U> using __cond_t = decltype(...); ... __cond_t<A, B>; }`
-2. **Template node type mismatches** - `Template node is not a TemplateClassDeclarationNode`
-3. **Missing primary template lookups** - `No primary template found for 'enable'`
-4. **`std::bad_any_cast` crash** - Likely from incorrect AST node casting
+- ✅ Member alias templates (like `__cond_t`) - **FIXED** (January 11, 2026)
+- ✅ Template node type mismatches for `declval` - **FIXED** (January 11, 2026)
+- ✅ `enable` vs `enable_if` name extraction - **FIXED** (January 11, 2026)
+- Remaining issue: `std::bad_any_cast` crash during type_traits parsing
 
 ---
 
