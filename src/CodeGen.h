@@ -7287,6 +7287,113 @@ private:
 			// Destructor calls return void
 			return {};
 		}
+		else if (std::holds_alternative<PointerToMemberAccessNode>(exprNode)) {
+			// Pointer-to-member operator: obj.*ptr or obj->*ptr
+			// This accesses a member through a pointer-to-member offset
+			const PointerToMemberAccessNode& ptmNode = std::get<PointerToMemberAccessNode>(exprNode);
+			
+			// Visit the object expression (LHS)
+			auto object_operands = visitExpressionNode(ptmNode.object().as<ExpressionNode>(), ExpressionContext::LValueAddress);
+			if (object_operands.empty()) {
+				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: object expression returned empty operands");
+				return {};
+			}
+			
+			// Visit the member pointer expression (RHS) - this should be the offset
+			auto ptr_operands = visitExpressionNode(ptmNode.member_pointer().as<ExpressionNode>());
+			if (ptr_operands.empty()) {
+				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer expression returned empty operands");
+				return {};
+			}
+			
+			// Get object base address
+			TempVar object_addr = var_counter.next();
+			if (ptmNode.is_arrow()) {
+				// For ->*, object is a pointer - use it as the address
+				if (std::holds_alternative<StringHandle>(object_operands[2])) {
+					// Object is a named pointer variable - its value is the address we need
+					// Use Assignment to load it into a temp var
+					StringHandle obj_ptr_name = std::get<StringHandle>(object_operands[2]);
+					AssignmentOp assign_op;
+					assign_op.result = object_addr;
+					assign_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
+					assign_op.rhs = TypedValue{Type::UnsignedLongLong, 64, obj_ptr_name};
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+				} else if (std::holds_alternative<TempVar>(object_operands[2])) {
+					// Object is already a temp var containing the address
+					object_addr = std::get<TempVar>(object_operands[2]);
+				} else {
+					FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for ->*");
+					return {};
+				}
+			} else {
+				// For .*, object is a value - take its address
+				// If object is in LValueAddress context, object_operands[2] might be the address
+				if (std::holds_alternative<StringHandle>(object_operands[2])) {
+					// Object is a named variable - compute its address
+					StringHandle obj_name = std::get<StringHandle>(object_operands[2]);
+					AddressOfOp addr_op;
+					addr_op.result = object_addr;
+					addr_op.operand = TypedValue{
+						.type = std::get<Type>(object_operands[0]),
+						.size_in_bits = std::get<int>(object_operands[1]),
+						.value = obj_name,
+						.pointer_depth = 0
+					};
+					ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+				} else if (std::holds_alternative<TempVar>(object_operands[2])) {
+					// Object is a temp var - might already be an address or need address-of
+					object_addr = std::get<TempVar>(object_operands[2]);
+				} else {
+					FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: unexpected object operand type for .*");
+					return {};
+				}
+			}
+			
+			// Validate ptr_operands before using
+			if (ptr_operands.size() < 2) {
+				FLASH_LOG(Codegen, Error, "PointerToMemberAccessNode: member pointer operands incomplete (size=", ptr_operands.size(), ")");
+				return {};
+			}
+			
+			// Add the offset to the object address
+			TempVar member_addr = var_counter.next();
+			BinaryOp add_op;
+			add_op.lhs = TypedValue{Type::UnsignedLongLong, 64, object_addr};
+			add_op.rhs = toTypedValue(ptr_operands); // The offset value
+			add_op.result = member_addr;
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
+			
+			// Dereference to get the member value
+			// The member type should be in ptr_operands[0]
+			Type member_type = std::get<Type>(ptr_operands[0]);
+			int member_size = std::get<int>(ptr_operands[1]);
+			TypeIndex member_type_index = 0;
+			if (ptr_operands.size() >= 4 && std::holds_alternative<unsigned long long>(ptr_operands[3])) {
+				member_type_index = static_cast<TypeIndex>(std::get<unsigned long long>(ptr_operands[3]));
+			}
+			
+			TempVar result_var = var_counter.next();
+			DereferenceOp deref_op;
+			deref_op.result = result_var;
+			deref_op.pointer = TypedValue{
+				.type = member_type,
+				.size_in_bits = member_size,
+				.value = member_addr,
+				.pointer_depth = 1  // We're dereferencing a pointer
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), ptmNode.operator_token()));
+			
+			// Return the dereferenced member value
+			return { member_type, member_size, result_var, static_cast<unsigned long long>(member_type_index) };
+		}
+		else if (std::holds_alternative<PackExpansionExprNode>(exprNode)) {
+			// Pack expansion: expr...
+			// Should have been expanded during template instantiation
+			// If we reach here, it means the pack wasn't properly substituted
+			FLASH_LOG(Codegen, Error, "PackExpansionExprNode found during code generation - should have been expanded during template instantiation");
+			return {};
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
@@ -9344,6 +9451,45 @@ private:
 				}
 				// For capturing lambdas, fall through to normal handling
 				// (they cannot decay to function pointers)
+			}
+		}
+
+		// Special handling for address-of non-static member: &Class::member
+		// This should produce a pointer-to-member constant (member offset)
+		if (!operandHandledAsIdentifier && unaryOperatorNode.op() == "&" && 
+		    unaryOperatorNode.get_operand().is<ExpressionNode>()) {
+			const ExpressionNode& operand_expr = unaryOperatorNode.get_operand().as<ExpressionNode>();
+			if (std::holds_alternative<QualifiedIdentifierNode>(operand_expr)) {
+				const QualifiedIdentifierNode& qualIdNode = std::get<QualifiedIdentifierNode>(operand_expr);
+				const auto& namespaces = qualIdNode.namespaces();
+				
+				// Check if this is Class::member pattern
+				if (namespaces.size() >= 1) {
+					std::string_view class_name = namespaces.back();
+					std::string_view member_name = qualIdNode.name();
+					
+					// Look up the class type
+					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(class_name));
+					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+						if (struct_info) {
+							// Try to find the member (non-static)
+							const StructMember* member = struct_info->findMemberRecursive(
+								StringTable::getOrInternStringHandle(member_name));
+							
+							if (member) {
+								// This is a pointer-to-member: return the member offset as a constant
+								FLASH_LOG(Codegen, Debug, "Address-of non-static member '", class_name, "::", member_name, 
+								          "' - returning offset ", member->offset, " as pointer-to-member constant");
+								
+								// Return the offset directly as a constant value (no IR instruction needed)
+								// This is a pointer-to-member constant - use 64-bit size and the member's type
+								return { member->type, 64, static_cast<unsigned long long>(member->offset), 
+								         static_cast<unsigned long long>(member->type_index) };
+							}
+						}
+					}
+				}
 			}
 		}
 

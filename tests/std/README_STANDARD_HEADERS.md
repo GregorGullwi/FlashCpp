@@ -196,11 +196,11 @@ struct __underlying_type_impl
 - ✅ `<type_traits>` now parses past line 2443 to line 2499!
 - Previous blocker at line 2443 (`using type = __underlying_type(_Tp);`) - **Fixed!**
 
-### Current Blocker (Line 2499)
+### Current Blocker (Line 2578) - RESOLVED Line 2499 (January 10, 2026)
 
-**Error:** `Expected identifier token`
+**Previous Blocker (Line 2499):** ✅ **FULLY RESOLVED**
 
-**Pattern:**
+The complex pattern from line 2499 is now fully supported:
 ```cpp
 template<typename _Fp, typename _Tp1, typename... _Args>
   static __result_of_success<decltype(
@@ -208,14 +208,30 @@ template<typename _Fp, typename _Tp1, typename... _Args>
   ), __invoke_memfun_ref> _S_test(int);
 ```
 
-**Why It Fails:**
-- This is a complex pattern using pointer-to-member operator (`.*`)
-- The decltype expression involves calling a member function pointer on a declval result
-- This requires support for pointer-to-member dereference operators in expression parsing
+**What Was Fixed:**
+1. ✅ **Pointer-to-member operators (`.*` and `->*`)** - Added AST node and postfix parsing
+2. ✅ **Pack expansion in parentheses** - Pattern: `(expr...)` in decltype/template contexts  
+3. ✅ **Pack expansion in function arguments** - Pattern: `func(expr...)`
 
-**Next Steps:**
-- Implement pointer-to-member operators (`.*` and `->*`) in expression parsing
-- Handle member function pointer calls through declval
+**Implementation:**
+- Added `PointerToMemberAccessNode` for `obj.*ptr` and `obj->*ptr` expressions
+- Added `PackExpansionExprNode` for `expr...` patterns
+- Modified parenthesized expression parsing to handle `...` before `)`
+- Updated 6 function call parsing locations to wrap pack-expanded arguments
+
+**Test Results:**
+- ✅ `test_ptr_to_member_decltype.cpp` - Basic `.*` in decltype
+- ✅ `test_static_decltype_ptrmem_arg.cpp` - `.*` in template arguments
+- ✅ `test_static_decltype_ptrmem_call_arg.cpp` - Complex `(obj.*ptr)(args...)` pattern
+- ✅ `test_pack_expansion_paren.cpp` - Parenthesized pack expansion
+
+**Progress:** `<type_traits>` now compiles from line 2499 → line 2578 (**79 more lines!**)
+
+---
+
+**New Blocker (Line 2578):** `Expected ';' after type alias`
+
+This is a different parsing issue unrelated to pointer-to-member or pack expansion.
 
 ## Previous Investigation (January 10, 2026 - Decltype Improvements)
 

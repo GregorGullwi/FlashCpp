@@ -189,6 +189,8 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 				findReferencedIdentifiers(ASTNode(const_cast<FunctionCallNode*>(&inner_node)), identifiers);
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				findReferencedIdentifiers(ASTNode(const_cast<MemberAccessNode*>(&inner_node)), identifiers);
+			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+				findReferencedIdentifiers(ASTNode(const_cast<PointerToMemberAccessNode*>(&inner_node)), identifiers);
 			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
 				findReferencedIdentifiers(ASTNode(const_cast<MemberFunctionCallNode*>(&inner_node)), identifiers);
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
@@ -252,6 +254,10 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 		const auto& member = node.as<MemberAccessNode>();
 		findReferencedIdentifiers(member.object(), identifiers);
 		// Don't add the member name itself
+	} else if (node.is<PointerToMemberAccessNode>()) {
+		const auto& ptr_member = node.as<PointerToMemberAccessNode>();
+		findReferencedIdentifiers(ptr_member.object(), identifiers);
+		findReferencedIdentifiers(ptr_member.member_pointer(), identifiers);
 	} else if (node.is<MemberFunctionCallNode>()) {
 		const auto& member_call = node.as<MemberFunctionCallNode>();
 		findReferencedIdentifiers(member_call.object(), identifiers);
@@ -1344,6 +1350,45 @@ ParseResult Parser::parse_type_and_name() {
     }
 
     // Regular pointer/reference/identifier parsing (existing code)
+    // Check for pointer-to-member syntax: ClassName::*
+    // Pattern: int Point::*ptr_to_x
+    if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+        // Save position in case this isn't a pointer-to-member
+        SaveHandle saved_pos = save_token_position();
+        Token class_name_token = *peek_token();
+        consume_token(); // consume class name
+        
+        // Check for ::
+        if (peek_token().has_value() && peek_token()->value() == "::") {
+            consume_token(); // consume '::'
+            
+            // Check for *
+            if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+                peek_token()->value() == "*") {
+                consume_token(); // consume '*'
+                
+                // This is a pointer-to-member declaration!
+                FLASH_LOG(Parser, Debug, "parse_type_and_name: Detected pointer-to-member: ", 
+                          class_name_token.value(), "::*");
+                
+                // Set the member class name
+                type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_name_token.value()));
+                
+                // Add a pointer level to indicate this is a pointer
+                type_spec.add_pointer_level(CVQualifier::None);
+                
+                // Discard the saved position and continue parsing
+                discard_saved_token(saved_pos);
+            } else {
+                // Not a pointer-to-member, restore position
+                restore_token_position(saved_pos);
+            }
+        } else {
+            // Not followed by ::, restore position
+            restore_token_position(saved_pos);
+        }
+    }
+    
     // Parse pointer declarators: * [const] [volatile] *...
     // Example: int* const* volatile ptr
     while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
@@ -11761,6 +11806,7 @@ ParseResult Parser::parse_return_statement()
 
 ParseResult Parser::parse_unary_expression(ExpressionContext context)
 {
+	
 	// Check for 'static_cast' keyword
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "static_cast") {
 		Token cast_token = *current_token_;
@@ -12670,12 +12716,30 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	// Not a unary operator, parse as postfix expression (which starts with primary expression)
 	// Phase 3: Changed to call parse_postfix_expression instead of parse_primary_expression
 	// This allows postfix operators (++, --, [], (), ::, ., ->) to be handled in a separate layer
-	return parse_postfix_expression(context);
+	ParseResult postfix_result = parse_postfix_expression(context);
+	return postfix_result;
 }
 
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 {
-	FLASH_LOG(Parser, Debug, "parse_expression: Starting with precedence=", precedence, ", context=", static_cast<int>(context), ", current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+	static thread_local int recursion_depth = 0;
+	constexpr int MAX_RECURSION_DEPTH = 50;  // Lowered to catch issues faster
+	
+	// RAII guard to ensure recursion_depth is decremented on all exit paths
+	struct RecursionGuard {
+		int& depth;
+		RecursionGuard(int& d) : depth(d) { ++depth; }
+		~RecursionGuard() { --depth; }
+	} guard(recursion_depth);
+	
+	if (recursion_depth > MAX_RECURSION_DEPTH) {
+		FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_RECURSION_DEPTH limit ({}) in parse_expression", MAX_RECURSION_DEPTH);
+		return ParseResult::error("Parser error: maximum recursion depth exceeded", *current_token_);
+	}
+	
+	FLASH_LOG_FORMAT(Parser, Debug, ">>> parse_expression: Starting with precedence={}, context={}, depth={}, current token: {}", 
+		precedence, static_cast<int>(context), recursion_depth, 
+		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	
 	// Add a specific check for the problematic case
 	if (peek_token().has_value() && peek_token()->value() == "ns" && precedence == 2) {
@@ -12688,7 +12752,14 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		return result;
 	}
 
+	constexpr int MAX_BINARY_OP_ITERATIONS = 100;
+	int binary_op_iteration = 0;
 	while (true) {
+		if (++binary_op_iteration > MAX_BINARY_OP_ITERATIONS) {
+			FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_BINARY_OP_ITERATIONS limit ({}) in parse_expression binary operator loop", MAX_BINARY_OP_ITERATIONS);
+			return ParseResult::error("Parser error: too many binary operator iterations", *current_token_);
+		}
+		
 		// Safety check: ensure we have a token to examine
 		if (!peek_token().has_value()) {
 			break;
@@ -13618,9 +13689,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 	std::optional<ASTNode> result = prim_result.node();
 	
 	// Handle postfix operators in a loop
-	while (result.has_value() && peek_token().has_value()) {
-		FLASH_LOG_FORMAT(Parser, Debug, "Postfix operator: peek token type={}, value='{}'", 
-			static_cast<int>(peek_token()->type()), peek_token()->value());
+	constexpr int MAX_POSTFIX_ITERATIONS = 100;  // Safety limit to prevent infinite loops
+	int postfix_iteration = 0;
+	while (result.has_value() && peek_token().has_value() && postfix_iteration < MAX_POSTFIX_ITERATIONS) {
+		++postfix_iteration;
+		FLASH_LOG_FORMAT(Parser, Debug, "Postfix operator iteration {}: peek token type={}, value='{}'", 
+			postfix_iteration, static_cast<int>(peek_token()->type()), peek_token()->value());
 		if (peek_token()->type() == Token::Type::Operator) {
 			std::string_view op = peek_token()->value();
 			if (op == "++" || op == "--") {
@@ -13681,7 +13755,21 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						return arg_result;
 					}
 					if (auto arg = arg_result.node()) {
-						args.push_back(*arg);
+						// Check for pack expansion (...) after the argument
+						// Pattern: func(expr...) or func(arg1, expr..., arg3)
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							Token ellipsis_token = *peek_token();
+							consume_token(); // consume '...'
+							
+							// Wrap the argument in a PackExpansionExprNode
+							auto pack_expr = emplace_node<ExpressionNode>(
+								PackExpansionExprNode(*arg, ellipsis_token));
+							args.push_back(pack_expr);
+							
+							FLASH_LOG(Parser, Debug, "Created PackExpansionExprNode for function argument");
+						} else {
+							args.push_back(*arg);
+						}
 					}
 
 					if (!peek_token().has_value()) {
@@ -13833,7 +13921,18 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						}
 						
 						if (auto arg = arg_result.node()) {
-							args.push_back(*arg);
+							// Check for pack expansion (...) after the argument
+							if (peek_token().has_value() && peek_token()->value() == "...") {
+								Token ellipsis_token = *peek_token();
+								consume_token(); // consume '...'
+								
+								// Wrap the argument in a PackExpansionExprNode
+								auto pack_expr = emplace_node<ExpressionNode>(
+									PackExpansionExprNode(*arg, ellipsis_token));
+								args.push_back(pack_expr);
+							} else {
+								args.push_back(*arg);
+							}
 						}
 						
 						if (!peek_token().has_value()) {
@@ -13962,14 +14061,62 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				return ParseResult::error("Undefined qualified identifier", final_identifier);
 			}
 		}
-		// Check for member access operator . or ->
+		// Check for member access operator . or -> (or pointer-to-member .* or ->*)
 		bool is_arrow_access = false;
-		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
+		Token operator_start_token;  // Track the operator token for error reporting
+		
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "."sv) {
+			operator_start_token = *peek_token();
 			consume_token(); // consume '.'
 			is_arrow_access = false;
-		} else if (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "->"sv) {
+			
+			// Check for pointer-to-member operator .*
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "*"sv) {
+				consume_token(); // consume '*'
+				
+				// Parse the RHS expression (pointer to member)
+				// Pointer-to-member operators have precedence similar to multiplicative operators (17)
+				// But we need to stop at lower precedence operators, so use precedence 17
+				ParseResult member_ptr_result = parse_expression(17, ExpressionContext::Normal);
+				
+				if (member_ptr_result.is_error()) {
+					return member_ptr_result;
+				}
+				if (!member_ptr_result.node().has_value()) {
+					return ParseResult::error("Expected expression after '.*' operator", *current_token_);
+				}
+				
+				// Create PointerToMemberAccessNode
+				result = emplace_node<ExpressionNode>(
+					PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_start_token, false));
+				continue;  // Check for more postfix operators
+			}
+		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "->"sv) {
+			operator_start_token = *peek_token();
 			consume_token(); // consume '->'
 			is_arrow_access = true;
+			
+			// Check for pointer-to-member operator ->*
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "*"sv) {
+				consume_token(); // consume '*'
+				
+				// Parse the RHS expression (pointer to member)
+				// Pointer-to-member operators have precedence similar to multiplicative operators (17)
+				// But we need to stop at lower precedence operators, so use precedence 17
+				ParseResult member_ptr_result = parse_expression(17, ExpressionContext::Normal);
+				if (member_ptr_result.is_error()) {
+					return member_ptr_result;
+				}
+				if (!member_ptr_result.node().has_value()) {
+					return ParseResult::error("Expected expression after '->*' operator", *current_token_);
+				}
+				
+				// Create PointerToMemberAccessNode
+				result = emplace_node<ExpressionNode>(
+					PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_start_token, true));
+				continue;  // Check for more postfix operators
+			}
+			
 			// Note: We don't transform ptr->member to (*ptr).member here anymore.
 			// Instead, we pass the is_arrow flag to MemberAccessNode, and CodeGen will
 			// handle operator-> overload resolution. For raw pointers, it will generate
@@ -14058,7 +14205,20 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						return arg_result;
 					}
 					if (auto arg = arg_result.node()) {
-						args.push_back(*arg);
+						// Check for pack expansion (...) after the argument
+						bool is_pack_expansion = false;
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							Token ellipsis_token = *peek_token();
+							consume_token(); // consume '...'
+							is_pack_expansion = true;
+							
+							// Wrap the argument in a PackExpansionExprNode
+							auto pack_expr = emplace_node<ExpressionNode>(
+								PackExpansionExprNode(*arg, ellipsis_token));
+							args.push_back(pack_expr);
+						} else {
+							args.push_back(*arg);
+						}
 						
 						// Try to deduce the argument type for template instantiation
 						// For now, we'll deduce from literals and identifiers
@@ -14244,6 +14404,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 		continue;  // Check for more postfix operators (e.g., obj.member1.member2)
 	}
 
+	// Check if we hit the iteration limit (indicates potential infinite loop)
+	if (postfix_iteration >= MAX_POSTFIX_ITERATIONS) {
+		FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_POSTFIX_ITERATIONS limit ({}) - possible infinite loop in postfix operator parsing", MAX_POSTFIX_ITERATIONS);
+		return ParseResult::error("Parser error: too many postfix operator iterations", *current_token_);
+	}
 
 	if (result.has_value())
 		return ParseResult::success(*result);
@@ -14731,7 +14896,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						return arg_result;
 					}
 					if (auto arg = arg_result.node()) {
-						args.push_back(*arg);
+						// Check for pack expansion (...) after the argument
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							Token ellipsis_token = *peek_token();
+							consume_token(); // consume '...'
+							
+							// Wrap the argument in a PackExpansionExprNode
+							auto pack_expr = emplace_node<ExpressionNode>(
+								PackExpansionExprNode(*arg, ellipsis_token));
+							args.push_back(pack_expr);
+						} else {
+							args.push_back(*arg);
+						}
 					}
 
 					if (!peek_token().has_value()) {
@@ -15240,8 +15416,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									args.push_back(*arg_node);
 								}
 							} else {
-								// Complex expression: need full rewriting (not implemented yet)
-								args.push_back(*arg_node);
+								// Complex expression: wrap in PackExpansionExprNode
+								// The actual expansion will be handled during template instantiation
+								Token ellipsis_token(Token::Type::Operator, "...", 0, 0, 0);  // Approximate token
+								auto pack_expr = emplace_node<ExpressionNode>(
+									PackExpansionExprNode(*arg_node, ellipsis_token));
+								args.push_back(pack_expr);
 							}
 						}
 					} else {
@@ -15595,7 +15775,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						
 						if (auto arg = arg_result.node()) {
-							args.push_back(*arg);
+							// Check for pack expansion (...) after the argument
+							if (peek_token().has_value() && peek_token()->value() == "...") {
+								Token ellipsis_token = *peek_token();
+								consume_token(); // consume '...'
+								
+								// Wrap the argument in a PackExpansionExprNode
+								auto pack_expr = emplace_node<ExpressionNode>(
+									PackExpansionExprNode(*arg, ellipsis_token));
+								args.push_back(pack_expr);
+							} else {
+								args.push_back(*arg);
+							}
 						}
 						
 						if (!peek_token().has_value()) {
@@ -17798,15 +17989,38 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Parse as parenthesized expression
 			// Note: C-style casts are now handled in parse_unary_expression()
 			// Allow comma operator in parenthesized expressions
-			ParseResult paren_result = parse_expression(MIN_PRECEDENCE);
+			// Pass the context so the expression parser knows how to handle special tokens
+			ParseResult paren_result = parse_expression(MIN_PRECEDENCE, context);
 			if (paren_result.is_error()) {
 				return paren_result;
 			}
+			
+			// In TemplateArgument or Decltype context, allow pack expansion (...) before closing paren
+			// Pattern: (expr...) where ... is pack expansion operator
+			// This is needed for patterns like decltype((expr...)) in template contexts
+			if ((context == ExpressionContext::TemplateArgument || context == ExpressionContext::Decltype) &&
+			    peek_token().has_value() && peek_token()->value() == "...") {
+				// Consume the ... and create a PackExpansionExprNode
+				Token ellipsis_token = *peek_token();
+				consume_token(); // consume '...'
+				
+				// Wrap the expression in a PackExpansionExprNode
+				if (paren_result.node().has_value()) {
+					result = emplace_node<ExpressionNode>(
+						PackExpansionExprNode(*paren_result.node(), ellipsis_token));
+				} else {
+					return ParseResult::error("Expected expression before '...'", *current_token_);
+				}
+				
+				FLASH_LOG(Parser, Debug, "Created PackExpansionExprNode for parenthesized pack expansion");
+			} else {
+				result = paren_result.node();
+			}
+			
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after parenthesized expression",
 					*current_token_);
 			}
-			result = paren_result.node();
 		}  // End of fold expression check
 	}
 	else {
@@ -20028,6 +20242,13 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				}
 			}
 		}
+	}
+	else if (std::holds_alternative<PointerToMemberAccessNode>(expr)) {
+		// For pointer-to-member access expressions like obj.*ptr_to_member or obj->*ptr_to_member
+		// The type depends on the pointer-to-member type, which is complex to determine
+		// For now, return nullopt as this is primarily used in decltype contexts where
+		// the actual type isn't needed during parsing
+		return std::nullopt;
 	}
 	else if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
 		// Pseudo-destructor call (obj.~Type()) always returns void

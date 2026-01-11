@@ -1201,6 +1201,13 @@ public:
 	bool is_pack_expansion() const { return is_pack_expansion_; }
 	void set_pack_expansion(bool is_pack) { is_pack_expansion_ = is_pack; }
 
+	// Pointer-to-member support (for types like int Class::*)
+	bool has_member_class() const { return member_class_name_.has_value(); }
+	StringHandle member_class_name() const { return *member_class_name_; }
+	void set_member_class_name(StringHandle class_name) { 
+		member_class_name_ = class_name; 
+	}
+
 	void set_type_index(TypeIndex index) { type_index_ = index; }
 	const Token& token() const { return token_; }
 	void copy_indirection_from(const TypeSpecifierNode& other) {
@@ -1262,6 +1269,7 @@ private:
 	std::vector<size_t> array_dimensions_;  // Array dimensions (e.g., int[2][3][4] -> {2, 3, 4})
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
 	bool is_pack_expansion_ = false;  // True if this type is followed by ... (pack expansion)
+	std::optional<StringHandle> member_class_name_;  // For pointer-to-member types (int Class::*)
 };
 
 class DeclarationNode {
@@ -1492,6 +1500,21 @@ private:
 	Type type_;
 	std::optional<ASTNode> init_expr_;
 	Token token_;
+};
+
+// Pack expansion expression: expr...
+// Used in template argument contexts like (declval<Args>()...)
+class PackExpansionExprNode {
+public:
+	explicit PackExpansionExprNode(ASTNode pattern, Token ellipsis_token)
+		: pattern_(pattern), ellipsis_token_(ellipsis_token) {}
+
+	ASTNode pattern() const { return pattern_; }
+	const Token& get_token() const { return ellipsis_token_; }
+
+private:
+	ASTNode pattern_;        // The expression being expanded
+	Token ellipsis_token_;   // The ... token
 };
 
 class BlockNode {
@@ -2561,6 +2584,27 @@ private:
 	bool is_arrow_;  // True if accessed via -> instead of .
 };
 
+// Pointer-to-member access node: obj.*ptr_to_member or obj->*ptr_to_member
+// Used in patterns like: (declval<T>().*declval<Fp>())(args...)
+// The RHS is an expression (pointer to member), not a simple identifier
+class PointerToMemberAccessNode {
+public:
+	explicit PointerToMemberAccessNode(ASTNode object, ASTNode member_pointer, Token operator_token, bool is_arrow)
+		: object_(object), member_pointer_(member_pointer), operator_token_(operator_token), is_arrow_(is_arrow) {}
+
+	ASTNode object() const { return object_; }
+	ASTNode member_pointer() const { return member_pointer_; }
+	const Token& operator_token() const { return operator_token_; }
+	bool is_arrow() const { return is_arrow_; }  // true for ->*, false for .*
+	std::string_view op() const { return is_arrow_ ? "->*" : ".*"; }
+
+private:
+	ASTNode object_;           // The object expression (LHS)
+	ASTNode member_pointer_;   // The pointer-to-member expression (RHS)
+	Token operator_token_;     // The operator token (for error reporting)
+	bool is_arrow_;            // true for ->*, false for .*
+};
+
 // Member function call node (e.g., obj.method(args))
 class MemberFunctionCallNode {
 public:
@@ -3115,9 +3159,9 @@ private:
 };
 
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
-	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, MemberFunctionCallNode,
+	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
-	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PseudoDestructorCallNode, NoexceptExprNode>;
+	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode>;
 
 /*class FunctionDefinitionNode {
 public:
