@@ -2065,6 +2065,10 @@ public:
 	std::string_view mangled_name() const { return mangled_name_; }
 	bool has_mangled_name() const { return !mangled_name_.empty(); }
 
+	// noexcept specifier support
+	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
+	bool is_noexcept() const { return is_noexcept_; }
+
 private:
 	StringHandle struct_name_;
 	StringHandle name_;
@@ -2074,6 +2078,7 @@ private:
 	std::optional<DelegatingInitializer> delegating_initializer_;  // Delegating constructor call
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	bool is_implicit_;  // True if this is an implicitly generated default constructor
+	bool is_noexcept_ = false;  // noexcept specifier
 	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 };
 
@@ -2104,11 +2109,16 @@ public:
 	StringHandle mangled_name() const { return mangled_name_; }
 	bool has_mangled_name() const { return mangled_name_.isValid(); }
 
+	// noexcept specifier support
+	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
+	bool is_noexcept() const { return is_noexcept_; }
+
 private:
 	StringHandle struct_name_;  // Points directly into source text from lexer token
 	StringHandle name_;         // Points directly into source text from lexer token
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	StringHandle mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
+	bool is_noexcept_ = false;  // noexcept specifier
 };
 
 // Anonymous union member information - stored during parsing, processed during layout

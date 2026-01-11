@@ -3436,6 +3436,22 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		}
 	}
 	
+	// Handle reference declarators (e.g., typedef T& reference; or typedef T&& rvalue_ref;)
+	if (peek_token().has_value() && peek_token()->value() == "&") {
+		consume_token(); // consume first '&'
+		// Check for && (rvalue reference) as two separate '&' tokens
+		if (peek_token().has_value() && peek_token()->value() == "&") {
+			consume_token(); // consume second '&'
+			type_spec.set_reference(true);  // true = rvalue reference
+		} else {
+			type_spec.set_lvalue_reference(true);  // lvalue reference
+		}
+	} else if (peek_token().has_value() && peek_token()->value() == "&&") {
+		// Handle && as a single token (rvalue reference)
+		consume_token(); // consume '&&'
+		type_spec.set_reference(true);  // true = rvalue reference
+	}
+	
 	// Parse the alias name
 	auto alias_token = peek_token();
 	if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
@@ -4768,10 +4784,11 @@ ParseResult Parser::parse_struct_declaration()
 			}
 		}
 
-		// Check for constexpr, consteval, inline specifiers (can appear on constructors and member functions)
+		// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
 		bool is_member_constexpr = false;
 		bool is_member_consteval = false;
 		bool is_member_inline = false;
+		bool is_member_explicit = false;
 		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 			std::string_view kw = peek_token()->value();
 			if (kw == "constexpr") {
@@ -4782,6 +4799,9 @@ ParseResult Parser::parse_struct_declaration()
 				consume_token();
 			} else if (kw == "inline") {
 				is_member_inline = true;
+				consume_token();
+			} else if (kw == "explicit") {
+				is_member_explicit = true;
 				consume_token();
 			} else {
 				break;
@@ -4837,6 +4857,20 @@ ParseResult Parser::parse_struct_declaration()
 						const Token& param_token = param_decl_node.identifier_token();
 						gSymbolTable.insert(param_token.value(), param);
 					}
+				}
+
+				// Parse trailing specifiers (noexcept, throw(), etc.) before initializer list
+				// Constructor trailing specifiers are more limited than member function specifiers,
+				// but we use the same parsing function and just ignore irrelevant qualifiers
+				FlashCpp::MemberQualifiers ctor_member_quals;
+				FlashCpp::FunctionSpecifiers ctor_func_specs;
+				auto ctor_specs_result = parse_function_trailing_specifiers(ctor_member_quals, ctor_func_specs);
+				if (ctor_specs_result.is_error()) {
+					return ctor_specs_result;
+				}
+				// Apply noexcept to constructor if specified
+				if (ctor_func_specs.is_noexcept) {
+					ctor_ref.set_noexcept(true);
 				}
 
 				// Check for member initializer list (: Base(args), member(value), ...)
@@ -5011,20 +5045,20 @@ ParseResult Parser::parse_struct_declaration()
 			// Use qualified_struct_name for nested classes so the member function references the correct type
 			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(qualified_struct_name, StringTable::getOrInternStringHandle(dtor_name));
 
-			// Parse override/final specifiers for destructors
-			bool is_override = false;
-			bool is_final = false;
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				std::string_view keyword = peek_token()->value();
-				if (keyword == "override") {
-					is_override = true;
-					consume_token();
-				} else if (keyword == "final") {
-					is_final = true;
-					consume_token();
-				} else {
-					break;  // Not a destructor specifier
-				}
+			// Parse trailing specifiers (noexcept, override, final, __attribute__, etc.)
+			// Destructor trailing specifiers are similar to member function specifiers
+			FlashCpp::MemberQualifiers dtor_member_quals;
+			FlashCpp::FunctionSpecifiers dtor_func_specs;
+			auto dtor_specs_result = parse_function_trailing_specifiers(dtor_member_quals, dtor_func_specs);
+			if (dtor_specs_result.is_error()) {
+				return dtor_specs_result;
+			}
+			
+			// Apply specifiers
+			bool is_override = dtor_func_specs.is_override;
+			bool is_final = dtor_func_specs.is_final;
+			if (dtor_func_specs.is_noexcept) {
+				dtor_ref.set_noexcept(true);
 			}
 
 			// In C++, 'override' or 'final' on destructor implies 'virtual'
