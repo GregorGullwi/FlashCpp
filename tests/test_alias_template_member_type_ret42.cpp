@@ -45,7 +45,7 @@ struct conditional<false> {
     using type = Else;
 };
 
-// Alias template that returns typename conditional<_Cond>::template type<_If, _Else>
+// Alias template that resolves to conditional<_Cond>::template type<_If, _Else>
 template<bool _Cond, typename _If, typename _Else>
 using conditional_t = typename conditional<_Cond>::template type<_If, _Else>;
 
