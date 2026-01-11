@@ -17151,6 +17151,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// This handles patterns like: __enable_if_t<...> in template argument contexts
 						if (!identifierType) {
 							auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
+							
+							// If not found directly, try looking up as a member alias template of the enclosing class
+							if (!alias_opt.has_value() && !struct_parsing_context_stack_.empty()) {
+								const auto& context = struct_parsing_context_stack_.back();
+								StringBuilder qualified_alias_name;
+								qualified_alias_name.append(context.struct_name).append("::"sv).append(idenfifier_token.value());
+								std::string_view qualified_alias_name_sv = qualified_alias_name.commit();
+								alias_opt = gTemplateRegistry.lookup_alias_template(qualified_alias_name_sv);
+								if (alias_opt.has_value()) {
+									FLASH_LOG_FORMAT(Parser, Debug, "Found member template alias '{}' as '{}'", idenfifier_token.value(), qualified_alias_name_sv);
+								}
+							}
+							
 							if (alias_opt.has_value()) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Found template alias '{}' with template arguments (no ::)", idenfifier_token.value());
 								// For template aliases used in expression/template contexts, create a simple identifier
@@ -17292,6 +17305,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				if (!identifierType && peek_token().has_value() && peek_token()->value() == "<") {
 					// Check if this is an alias template
 					auto alias_opt = gTemplateRegistry.lookup_alias_template(idenfifier_token.value());
+					
+					// If not found directly, try looking up as a member alias template of the enclosing class
+					// This handles patterns like: template<typename T, typename U> using cond_t = decltype(...);
+					// used within the same struct as: decltype(cond_t<T, U>())
+					if (!alias_opt.has_value() && !struct_parsing_context_stack_.empty()) {
+						const auto& context = struct_parsing_context_stack_.back();
+						// Build qualified name: EnclosingClass::MemberAliasTemplate
+						StringBuilder qualified_alias_name;
+						qualified_alias_name.append(context.struct_name).append("::"sv).append(idenfifier_token.value());
+						std::string_view qualified_alias_name_sv = qualified_alias_name.commit();
+						alias_opt = gTemplateRegistry.lookup_alias_template(qualified_alias_name_sv);
+						if (alias_opt.has_value()) {
+							FLASH_LOG(Parser, Debug, "Found member alias template '", idenfifier_token.value(), "' as '", qualified_alias_name_sv, "'");
+						}
+					}
+					
 					if (alias_opt.has_value()) {
 						// This is an alias template like "remove_const_t<T>"
 						// We need to instantiate it, which will happen in the normal template arg parsing flow below
