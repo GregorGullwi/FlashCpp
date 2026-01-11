@@ -2934,6 +2934,35 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		CVQualifier cv_qualifier = parse_cv_qualifiers();
 		type_spec.add_cv_qualifier(cv_qualifier);
 		
+		// Check for pointer-to-member type syntax: Type Class::*
+		// This is used in <type_traits> for result_of patterns
+		// Pattern: using _MemPtr = _Res _Class::*;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+			// Look ahead to see if this is Class::* pattern
+			auto saved_pos = save_token_position();
+			Token class_token = *peek_token();
+			consume_token(); // consume potential class name
+			
+			if (peek_token().has_value() && peek_token()->value() == "::") {
+				consume_token(); // consume '::'
+				if (peek_token().has_value() && peek_token()->value() == "*") {
+					consume_token(); // consume '*'
+					// This is a pointer-to-member type: Type Class::*
+					// Mark the type as a pointer-to-member
+					type_spec.add_pointer_level(CVQualifier::None);  // Add pointer level
+					type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_token.value()));
+					FLASH_LOG(Parser, Debug, "Parsed pointer-to-member type: ", type_spec.token().value(), " ", class_token.value(), "::*");
+					discard_saved_token(saved_pos);
+				} else {
+					// Not a pointer-to-member, restore position
+					restore_token_position(saved_pos);
+				}
+			} else {
+				// Not a pointer-to-member, restore position
+				restore_token_position(saved_pos);
+			}
+		}
+		
 		// Parse pointer declarators: * [const] [volatile] *...
 		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
 		       peek_token()->value() == "*") {
@@ -7620,6 +7649,35 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				// For example: using RvalueRef = typename T::type&&;
 				if (type_result.node().has_value()) {
 					TypeSpecifierNode type_spec = type_result.node()->as<TypeSpecifierNode>();
+					
+					// Check for pointer-to-member type syntax: Type Class::*
+					// This is used in <type_traits> for result_of patterns
+					// Pattern: using _MemPtr = _Res _Class::*;
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+						// Look ahead to see if this is Class::* pattern
+						auto saved_pos = save_token_position();
+						Token class_token = *peek_token();
+						consume_token(); // consume potential class name
+						
+						if (peek_token().has_value() && peek_token()->value() == "::") {
+							consume_token(); // consume '::'
+							if (peek_token().has_value() && peek_token()->value() == "*") {
+								consume_token(); // consume '*'
+								// This is a pointer-to-member type: Type Class::*
+								// Mark the type as a pointer-to-member
+								type_spec.add_pointer_level(CVQualifier::None);  // Add pointer level
+								type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_token.value()));
+								FLASH_LOG(Parser, Debug, "Parsed pointer-to-member type: ", type_spec.token().value(), " ", class_token.value(), "::*");
+								discard_saved_token(saved_pos);
+							} else {
+								// Not a pointer-to-member, restore position
+								restore_token_position(saved_pos);
+							}
+						} else {
+							// Not a pointer-to-member, restore position
+							restore_token_position(saved_pos);
+						}
+					}
 					
 					// Parse pointer declarators: * [const] [volatile] *...
 					while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
@@ -17036,6 +17094,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// Check if this is a class template (for expressions like type_identity<T>{})
 						auto class_template_opt = gTemplateRegistry.lookupTemplate(idenfifier_token.value());
 						FLASH_LOG(Parser, Debug, "Looking up class template '", idenfifier_token.value(), "', found=", class_template_opt.has_value());
+						
+						// If not found directly, try looking up as a member struct template of the enclosing class
+						// This handles patterns like: template<typename T> struct Select<Wrapper<T>> { };
+						// where Wrapper is a member struct template of the same class
+						if (!class_template_opt.has_value() && !struct_parsing_context_stack_.empty()) {
+							const auto& context = struct_parsing_context_stack_.back();
+							// Build qualified name: EnclosingClass::MemberTemplate
+							StringBuilder qualified_name;
+							qualified_name.append(context.struct_name).append("::"sv).append(idenfifier_token.value());
+							std::string_view qualified_name_sv = qualified_name.commit();
+							class_template_opt = gTemplateRegistry.lookupTemplate(qualified_name_sv);
+							if (class_template_opt.has_value()) {
+								FLASH_LOG(Parser, Debug, "Found member struct template '", idenfifier_token.value(), "' as '", qualified_name_sv, "'");
+							}
+						}
+						
 						if (class_template_opt.has_value()) {
 							FLASH_LOG(Parser, Debug, "Found class template '", idenfifier_token.value(), "' in expression context");
 							// Don't return - let it fall through to template argument parsing below
