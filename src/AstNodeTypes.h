@@ -1203,9 +1203,9 @@ public:
 
 	// Pointer-to-member support (for types like int Class::*)
 	bool has_member_class() const { return member_class_name_.has_value(); }
-	const std::string& member_class_name() const { return *member_class_name_; }
-	void set_member_class_name(std::string_view class_name) { 
-		member_class_name_ = std::string(class_name); 
+	StringHandle member_class_name() const { return *member_class_name_; }
+	void set_member_class_name(StringHandle class_name) { 
+		member_class_name_ = class_name; 
 	}
 
 	void set_type_index(TypeIndex index) { type_index_ = index; }
@@ -1269,7 +1269,7 @@ private:
 	std::vector<size_t> array_dimensions_;  // Array dimensions (e.g., int[2][3][4] -> {2, 3, 4})
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
 	bool is_pack_expansion_ = false;  // True if this type is followed by ... (pack expansion)
-	std::optional<std::string> member_class_name_;  // For pointer-to-member types (int Class::*)
+	std::optional<StringHandle> member_class_name_;  // For pointer-to-member types (int Class::*)
 };
 
 class DeclarationNode {

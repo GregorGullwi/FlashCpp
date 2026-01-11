@@ -1372,7 +1372,7 @@ ParseResult Parser::parse_type_and_name() {
                           class_name_token.value(), "::*");
                 
                 // Set the member class name
-                type_spec.set_member_class_name(class_name_token.value());
+                type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_name_token.value()));
                 
                 // Add a pointer level to indicate this is a pointer
                 type_spec.add_pointer_level(CVQualifier::None);
