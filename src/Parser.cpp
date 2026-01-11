@@ -25816,6 +25816,31 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								}
 							}
 						}
+					} else if (std::holds_alternative<FunctionCallNode>(expr)) {
+						// FunctionCallNode can represent a qualified template instantiation like ns::Inner<int>
+						// When we parsed ns::Inner<int>, the template was instantiated and registered.
+						// We need to restore the token position and let type parsing handle it properly.
+						const auto& fn_call = std::get<FunctionCallNode>(expr);
+						if (fn_call.has_template_arguments()) {
+							// This FunctionCallNode was created from parsing a qualified identifier with template args
+							is_concrete_type = true;
+							FLASH_LOG(Templates, Debug, "FunctionCallNode has template arguments - falling through to type parsing");
+						}
+					} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+						// QualifiedIdentifierNode can represent a namespace-qualified type like ns::Inner
+						// or a template instantiation like ns::Inner<int> (when the template has already been
+						// instantiated during expression parsing).
+						const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
+						// Build the qualified name and check if it exists in gTypesByName
+						std::string_view qualified_name = buildQualifiedNameFromStrings(qual_id.namespaces(), qual_id.name());
+						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
+						if (type_it != gTypesByName.end()) {
+							const TypeInfo* type_info = type_it->second;
+							if (type_info->struct_info_ != nullptr) {
+								is_concrete_type = true;
+								FLASH_LOG(Templates, Debug, "QualifiedIdentifierNode '", qualified_name, "' is a concrete type, falling through to type parsing");
+							}
+						}
 					}
 					
 					// If it's a concrete type, restore and let type parsing handle it
