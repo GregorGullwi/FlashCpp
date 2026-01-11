@@ -4,6 +4,24 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 11, 2026 - Template Template Variadic Packs - IMPLEMENTED!)**:
+- ✅ **IMPLEMENTED: Template template parameters with variadic packs now supported!** 🎉
+  - **Pattern**: `template<typename _Def, template<typename...> class _Op, typename... _Args>`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Allows template template parameters to specify variadic type parameter lists
+  - **Implementation**: Modified `parse_template_template_parameter_form()` in `src/Parser.cpp` (lines 24177-24214) to check for `...` after `typename` or `class` keywords and set the variadic flag
+  - **Test case**: `tests/test_template_template_variadic_ret42.cpp` - Returns 42 ✅
+  - **Impact**: `<type_traits>` now parses past line 2727!
+
+**UPDATE (January 11, 2026 - Requires Type Requirements with Templates - IMPLEMENTED!)**:
+- ✅ **IMPLEMENTED: Type requirements with template arguments in requires expressions now supported!** 🎉
+  - **Pattern**: `requires requires { typename Op<Args...>; }`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Allows type requirements in requires expressions to include template instantiations
+  - **Implementation**: Enhanced requires expression type requirement parsing in `src/Parser.cpp` (lines 23682-23742) to handle `::` qualifiers and `<...>` template arguments using balanced bracket parsing
+  - **Impact**: `<type_traits>` now parses past line 2736!
+  - **Current status**: Header times out due to template instantiation volume (known performance issue)
+
 **UPDATE (January 11, 2026 - Member Type Access After Alias Template - IMPLEMENTED!)**:
 - ✅ **IMPLEMENTED: `typename alias_template<...>::type` pattern now supported!** 🎉
   - **Pattern**: `using type = typename conditional_t<...>::type;`
@@ -12,7 +30,6 @@ This document lists the missing features in FlashCpp that prevent successful com
   - **Implementation**: After alias template resolution, check for `::` and parse member access
   - **Test case**: `tests/test_alias_template_member_type_ret42.cpp` - Returns 42 ✅
   - **Impact**: `<type_traits>` now parses past line 2583 to line 2727!
-  - **Current blocker**: Line 2727 - Template template parameters with variadic packs
 
 **UPDATE (January 11, 2026 - Pointer-to-Member Type Alias Syntax - IMPLEMENTED!)**:
 - ✅ **IMPLEMENTED: Pointer-to-member type syntax in type aliases now supported!** 🎉
@@ -31,7 +48,6 @@ This document lists the missing features in FlashCpp that prevent successful com
   - **Template support**: Returns dependent type placeholder for template parameters, resolved at instantiation
   - **Test case**: `tests/test_underlying_type_ret42.cpp` - Returns 42 ✅
   - **Impact**: `<type_traits>` now parses past line 2443 to line 2499!
-  - **Current blocker**: Line 2499 - pointer-to-member operators (`.*`) in decltype expressions
 
 **UPDATE (January 9, 2026 - Named Anonymous Unions/Structs - FULLY IMPLEMENTED!)**:
 - ✅ **IMPLEMENTED: Named anonymous struct/union pattern now fully supported!** 🎉
