@@ -196,9 +196,62 @@ struct __underlying_type_impl
 - ✅ `<type_traits>` now parses past line 2443 to line 2499!
 - Previous blocker at line 2443 (`using type = __underlying_type(_Tp);`) - **Fixed!**
 
-### Current Blocker (Line 2583) - Investigation January 11, 2026
+### ✅ IMPLEMENTED (Line 2583) - Investigation January 11, 2026
 
-**Previous Blocker (Line 2578):** ✅ **PARTIALLY RESOLVED**
+**Previous Blocker (Line 2583):** ✅ **FULLY RESOLVED**
+
+The `::type` member access after alias template resolution is now supported:
+```cpp
+using type = typename __conditional_t<__or_<is_same<_Argval, _Class>,
+    is_base_of<_Class, _Argval>>::value,
+    __result_of_memobj_ref<_MemPtr, _Arg>,
+    __result_of_memobj_deref<_MemPtr, _Arg>
+>::type;  // <-- Line 2583: NOW WORKS!
+```
+
+**What Was Fixed:**
+- ✅ **Member type access after alias template resolution** - Pattern: `typename alias_template<...>::type`
+- After alias template resolution returns a type (e.g., `result_ref<int, Arg>`), check for `::` and parse member access
+- Added handling in two code paths: deferred instantiation and non-deferred alias resolution
+- Test case: `test_alias_template_member_type_ret42.cpp` - Returns 42 ✅
+
+**Root Cause Analysis:**
+- The parser was resolving `conditional_t<...>` to a struct type (e.g., `result_ref<int, Arg>`)
+- It then returned immediately without checking if `::type` followed
+- This caused "Expected ';' after type alias" error because the caller saw `::`
+
+**Implementation:**
+- Modified `parse_type_specifier()` in two locations where alias templates return
+- Before returning, check if `peek_token()` is `::`
+- If so, consume `::` and the member name, then look up the qualified type
+- For dependent types, create a placeholder type
+
+**Progress:** `<type_traits>` now compiles from line 2583 → line 2727 (**144 more lines!**)
+
+---
+
+### Current Blocker (Line 2727) - January 11, 2026
+
+**New Blocker (Line 2727):** `Expected '>' after nested template parameter list`
+
+The issue is with template template parameters with variadic parameters:
+```cpp
+template<typename _Def, template<typename...> class _Op, typename... _Args>
+    struct __detected_or
+    {
+      using type = _Def;
+      using __is_detected = false_type;
+    };
+```
+
+**Analysis:**
+- `template<typename...> class _Op` is a template template parameter
+- The variadic pack `typename...` inside the template template parameter is not being parsed correctly
+- Parser expects `>` but sees `...`
+
+---
+
+**Previous Blocker (Line 2578):** ✅ **FULLY RESOLVED**
 
 The pointer-to-member type alias syntax has been implemented:
 ```cpp
@@ -209,26 +262,6 @@ using _MemPtr = _Res _Class::*;
 - ✅ **Pointer-to-member type syntax in type aliases** - Pattern: `using T = Type Class::*;`
 - Added handling in both global scope and struct member type alias parsing
 - Test case: `test_ptr_to_member_type_alias_ret42.cpp` - Returns 42 ✅
-
-**Progress:** `<type_traits>` now compiles from line 2578 → line 2583 (**5 more lines!**)
-
----
-
-**New Blocker (Line 2583):** `Expected ';' after type alias`
-
-The issue is with multi-line type aliases that end with `>::type;`:
-```cpp
-using type = typename __conditional_t<__or_<is_same<_Argval, _Class>,
-    is_base_of<_Class, _Argval>>::value,
-    __result_of_memobj_ref<_MemPtr, _Arg>,
-    __result_of_memobj_deref<_MemPtr, _Arg>
->::type;  // <-- Line 2583: Parser expects ';' but sees '::'
-```
-
-**Analysis:**
-- After parsing nested template arguments, the parser sees `>` followed by `::`
-- The `::type` member type access after `>` is not being handled correctly
-- This affects `typename Template<...>::type` patterns in type aliases
 
 ---
 
