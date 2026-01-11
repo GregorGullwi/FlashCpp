@@ -23691,53 +23691,34 @@ ParseResult Parser::parse_requires_expression() {
 			consume_token();
 			
 			// Handle qualified names (T::type) and template arguments (Op<Args...>)
-			StringBuilder full_type_name;
-			full_type_name.append(type_name.value());
-			
-			while (peek_token().has_value()) {
+			// Only continue parsing if we see :: or < 
+			while (peek_token().has_value() && 
+			       (peek_token()->value() == "::" || peek_token()->value() == "<")) {
 				if (peek_token()->value() == "::") {
 					consume_token(); // consume '::'
-					full_type_name.append("::"sv);
 					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-						full_type_name.append(peek_token()->value());
-						consume_token();
+						consume_token(); // consume qualified name part
 					}
 				} else if (peek_token()->value() == "<") {
-					// Parse template arguments
-					full_type_name.append("<"sv);
+					// Parse template arguments using balanced bracket parsing
 					consume_token(); // consume '<'
 					int angle_depth = 1;
 					while (angle_depth > 0 && peek_token().has_value()) {
 						if (peek_token()->value() == "<") {
 							angle_depth++;
-							full_type_name.append("<"sv);
 						} else if (peek_token()->value() == ">") {
 							angle_depth--;
-							if (angle_depth > 0) {
-								full_type_name.append(">"sv);
-							}
 						} else if (peek_token()->value() == ">>") {
 							// Handle >> as two >
 							angle_depth -= 2;
-							if (angle_depth > 0) {
-								full_type_name.append(">>"sv);
-							} else if (angle_depth == 0) {
-								full_type_name.append(">"sv);
-							}
-						} else {
-							full_type_name.append(peek_token()->value());
 						}
 						consume_token();
 					}
-					full_type_name.append(">"sv);
-				} else {
-					break;
 				}
 			}
 			
 			// Create an identifier node for the type requirement
-			// Using the full type name including template arguments
-			auto type_req_node = emplace_node<IdentifierNode>(type_name); // Keep original token for location info
+			auto type_req_node = emplace_node<IdentifierNode>(type_name);
 			requirements.push_back(type_req_node);
 			
 			// Expect ';' after type requirement
