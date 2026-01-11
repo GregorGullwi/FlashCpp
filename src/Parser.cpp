@@ -4859,18 +4859,17 @@ ParseResult Parser::parse_struct_declaration()
 					}
 				}
 
-				// Parse trailing specifiers (noexcept, throw(), etc.) before initializer list
-				// Constructor trailing specifiers are more limited than member function specifiers,
-				// but we use the same parsing function and just ignore irrelevant qualifiers
-				FlashCpp::MemberQualifiers ctor_member_quals;
-				FlashCpp::FunctionSpecifiers ctor_func_specs;
-				auto ctor_specs_result = parse_function_trailing_specifiers(ctor_member_quals, ctor_func_specs);
-				if (ctor_specs_result.is_error()) {
-					return ctor_specs_result;
-				}
-				// Apply noexcept to constructor if specified
-				if (ctor_func_specs.is_noexcept) {
+				// Parse noexcept specifier before initializer list
+				// C++ grammar: constructor() noexcept : initializer_list { body }
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+				    peek_token()->value() == "noexcept") {
+					consume_token(); // consume 'noexcept'
 					ctor_ref.set_noexcept(true);
+					
+					// Check for noexcept(expr) form
+					if (peek_token().has_value() && peek_token()->value() == "(") {
+						skip_balanced_parens(); // skip the noexcept expression
+					}
 				}
 
 				// Check for member initializer list (: Base(args), member(value), ...)
