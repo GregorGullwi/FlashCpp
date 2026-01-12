@@ -1401,6 +1401,11 @@ ParseResult Parser::parse_type_and_name() {
         type_spec.add_pointer_level(ptr_cv);
     }
 
+    // Parse postfix cv-qualifiers before references: Type const& or Type volatile&
+    // This handles C++ postfix const/volatile syntax like: __nonesuch const&
+    CVQualifier postfix_cv = parse_cv_qualifiers();
+    type_spec.add_cv_qualifier(postfix_cv);
+
     // Parse reference declarators: & or &&
     // Example: int& ref or int&& rvalue_ref
     ReferenceQualifier ref_qual = parse_reference_qualifier();
@@ -18630,6 +18635,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									is_fold = true;
 								}
 							}
+						} else if (consume_punctuator(")")) {
+							// Unary right fold with complex expression: (expr op ...)
+							// The expression is a pack expansion that will be folded
+							discard_saved_token(fold_check_pos);
+							discard_saved_token(init_pos);
+							// For unary right fold, we need to extract the pack name from the expression
+							// If the expression contains a pack expansion, use that
+							// For now, we'll create a fold expression with the expression as the pack
+							result = emplace_node<ExpressionNode>(
+								FoldExpressionNode(*init_result.node(), fold_op,
+									FoldExpressionNode::Direction::Right, op_token));
+							is_fold = true;
 						}
 					}
 				}
@@ -21634,10 +21651,37 @@ ParseResult Parser::parse_template_declaration() {
 				std::string_view var_name = peek_token()->value();
 				consume_token();
 				
-				// After identifier, expect '=' for variable template
-				// (function would have '(' here)
-				if (peek_token().has_value() && peek_token()->value() == "=") {
-					is_variable_template = true;
+				// After identifier, check what comes next:
+				// - '=' : variable template primary definition
+				// - '<' followed by '...>' and then '=' : variable template partial specialization
+				// - '<' followed by '...>' and then '::' : NOT a variable template (static member definition)
+				// - '(' : function, not variable template
+				if (peek_token().has_value()) {
+					if (peek_token()->value() == "=") {
+						is_variable_template = true;
+					} else if (peek_token()->value() == "<") {
+						// Could be partial spec or static member definition
+						// Need to skip the template args and check what follows
+						consume_token(); // consume '<'
+						int angle_depth = 1;
+						while (angle_depth > 0 && peek_token().has_value()) {
+							if (peek_token()->value() == "<") {
+								angle_depth++;
+							} else if (peek_token()->value() == ">") {
+								angle_depth--;
+							} else if (peek_token()->value() == ">>") {
+								angle_depth -= 2;
+							}
+							consume_token();
+						}
+						// Now check what follows the closing >
+						// If it's '=', it's a variable template partial spec
+						// If it's '::', it's a static member definition (NOT variable template)
+						if (peek_token().has_value() && peek_token()->value() == "=") {
+							is_variable_template = true;
+						}
+						// If it's '::', fall through (is_variable_template stays false)
+					}
 				}
 			}
 		}
@@ -21681,6 +21725,45 @@ ParseResult Parser::parse_template_declaration() {
 		    (peek_token()->value() == "class" || peek_token()->value() == "struct")) {
 			is_class_template = true;
 			FLASH_LOG(Parser, Debug, "Re-detected class template after requires clause");
+		}
+		
+		// Also re-check for variable template after requires clause
+		// Pattern: template<T> requires Constraint inline constexpr bool var<T> = value;
+		if (!is_class_template && !is_variable_template && peek_token().has_value()) {
+			auto var_recheck_pos = save_token_position();
+			
+			// Try to parse type specifier (it handles skipping storage class specifiers internally)
+			auto var_type_result = parse_type_specifier();
+			if (!var_type_result.is_error()) {
+				// After type, expect identifier
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+					consume_token();
+					
+					// Check for '=' or '<' followed by pattern and '='
+					if (peek_token().has_value()) {
+						if (peek_token()->value() == "=") {
+							is_variable_template = true;
+							FLASH_LOG(Parser, Debug, "Re-detected variable template after requires clause");
+						} else if (peek_token()->value() == "<") {
+							// Skip template args and check for '='
+							consume_token();
+							int angle_depth = 1;
+							while (angle_depth > 0 && peek_token().has_value()) {
+								if (peek_token()->value() == "<") angle_depth++;
+								else if (peek_token()->value() == ">") angle_depth--;
+								else if (peek_token()->value() == ">>") angle_depth -= 2;
+								consume_token();
+							}
+							if (peek_token().has_value() && peek_token()->value() == "=") {
+								is_variable_template = true;
+								FLASH_LOG(Parser, Debug, "Re-detected variable template partial spec after requires clause");
+							}
+						}
+					}
+				}
+			}
+			
+			restore_token_position(var_recheck_pos);
 		}
 	}
 
@@ -21922,6 +22005,108 @@ ParseResult Parser::parse_template_declaration() {
 		Token var_name_token = *peek_token();
 		consume_token();
 		
+		// Check for variable template partial specialization: name<pattern>
+		// Example: template<typename T> inline constexpr bool is_reference_v<T&> = true;
+		std::vector<TemplateTypeArg> specialization_pattern;
+		bool is_partial_spec = false;
+		if (peek_token().has_value() && peek_token()->value() == "<") {
+			consume_token(); // consume '<'
+			is_partial_spec = true;
+			
+			// Parse the specialization pattern (e.g., T&, T*, T&&, or non-type values like 0)
+			// These are template argument patterns
+			while (peek_token().has_value() && peek_token()->value() != ">") {
+				// Check for typename keyword (for dependent types)
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+				    peek_token()->value() == "typename") {
+					consume_token(); // consume 'typename'
+				}
+				
+				// Check if this is a non-type value (numeric literal)
+				bool is_value_arg = false;
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Literal) {
+					// It's a numeric literal - treat as non-type value
+					is_value_arg = true;
+					Token value_token = *peek_token();
+					consume_token();
+					
+					// Create template type argument for the value
+					TemplateTypeArg arg;
+					arg.is_value = true;
+					arg.value = std::stoll(std::string(value_token.value()));
+					arg.base_type = Type::Int;
+					specialization_pattern.push_back(arg);
+				} else {
+					// Parse the pattern type
+					auto pattern_type = parse_type_specifier();
+					if (pattern_type.is_error()) {
+						return pattern_type;
+					}
+					
+					// Check for reference modifiers
+					TypeSpecifierNode& type_spec = pattern_type.node()->as<TypeSpecifierNode>();
+					CVQualifier cv = parse_cv_qualifiers();
+					type_spec.add_cv_qualifier(cv);
+				
+					// Parse pointer/reference declarators
+					size_t ptr_depth = 0;
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+					       peek_token()->value() == "*") {
+						consume_token(); // consume '*'
+						ptr_depth++;
+						CVQualifier ptr_cv = parse_cv_qualifiers();
+						type_spec.add_pointer_level(ptr_cv);
+					}
+					
+					// Parse reference qualifier
+					ReferenceQualifier ref = parse_reference_qualifier();
+					if (ref == ReferenceQualifier::LValueReference) {
+						type_spec.set_reference(false);
+					} else if (ref == ReferenceQualifier::RValueReference) {
+						type_spec.set_reference(true);
+					}
+					
+					// Parse array bounds: [_Nm] or []
+					bool is_array = false;
+					while (peek_token().has_value() && peek_token()->value() == "[") {
+						consume_token(); // consume '['
+						is_array = true;
+						// Skip the array bound expression (could be a template parameter like _Nm)
+						while (peek_token().has_value() && peek_token()->value() != "]") {
+							consume_token();
+						}
+						if (peek_token().has_value() && peek_token()->value() == "]") {
+							consume_token(); // consume ']'
+						}
+					}
+					
+					// Create template type argument
+					TemplateTypeArg arg;
+					arg.base_type = type_spec.type();
+					arg.type_index = type_spec.type_index();
+					arg.is_value = false;
+					arg.cv_qualifier = type_spec.cv_qualifier();
+					arg.pointer_depth = ptr_depth + type_spec.pointer_levels().size();
+					arg.is_reference = type_spec.is_lvalue_reference();
+					arg.is_rvalue_reference = type_spec.is_rvalue_reference();
+					arg.is_array = is_array;
+					specialization_pattern.push_back(arg);
+				}
+				
+				// Check for comma or closing >
+				if (peek_token().has_value() && peek_token()->value() == ",") {
+					consume_token(); // consume ','
+				} else {
+					break;
+				}
+			}
+			
+			if (!peek_token().has_value() || peek_token()->value() != ">") {
+				return ParseResult::error("Expected '>' after variable template specialization pattern", *current_token_);
+			}
+			consume_token(); // consume '>'
+		}
+		
 		// Create DeclarationNode
 		auto decl_node = emplace_node<DeclarationNode>(
 			type_result.node().value(),
@@ -21964,7 +22149,29 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Register in template registry
 		std::string_view var_name = var_name_token.value();
-		gTemplateRegistry.registerVariableTemplate(var_name, template_var_node);
+		if (is_partial_spec) {
+			// For partial specializations, register with a name that includes the pattern
+			// This allows lookup during instantiation
+			// Build a unique name for the pattern
+			StringBuilder pattern_name;
+			pattern_name.append(var_name);
+			for (const auto& arg : specialization_pattern) {
+				pattern_name.append("_");
+				if (arg.is_reference) {
+					pattern_name.append("R");  // lvalue reference
+				} else if (arg.is_rvalue_reference) {
+					pattern_name.append("RR"); // rvalue reference
+				}
+				for (size_t i = 0; i < arg.pointer_depth; i++) {
+					pattern_name.append("P");  // pointer
+				}
+			}
+			std::string_view pattern_key = pattern_name.commit();
+			gTemplateRegistry.registerVariableTemplate(pattern_key, template_var_node);
+			FLASH_LOG(Parser, Debug, "Registered variable template partial specialization: ", pattern_key);
+		} else {
+			gTemplateRegistry.registerVariableTemplate(var_name, template_var_node);
+		}
 		
 		// Also add to symbol table so identifier lookup works
 		gSymbolTable.insert(var_name, template_var_node);
@@ -24243,6 +24450,29 @@ ParseResult Parser::parse_requires_expression() {
 			auto type_result = parse_type_specifier();
 			if (type_result.is_error()) {
 				return type_result;
+			}
+			
+			// Parse pointer/reference modifiers after the type
+			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+			
+			// Parse cv-qualifiers (const, volatile)
+			CVQualifier cv = parse_cv_qualifiers();
+			type_spec.add_cv_qualifier(cv);
+			
+			// Parse pointer declarators
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+			       peek_token()->value() == "*") {
+				consume_token(); // consume '*'
+				CVQualifier ptr_cv = parse_cv_qualifiers();
+				type_spec.add_pointer_level(ptr_cv);
+			}
+			
+			// Parse reference qualifiers (& or &&)
+			ReferenceQualifier ref = parse_reference_qualifier();
+			if (ref == ReferenceQualifier::LValueReference) {
+				type_spec.set_reference(false);  // false = lvalue reference
+			} else if (ref == ReferenceQualifier::RValueReference) {
+				type_spec.set_reference(true);   // true = rvalue reference
 			}
 			
 			// Parse parameter name
