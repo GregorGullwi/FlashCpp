@@ -13260,6 +13260,9 @@ private:
 		call_op.result = ret_var;
 		call_op.function_name = StringTable::getOrInternStringHandle(function_name);
 		
+		// Check if this is an indirect call (function pointer/reference)
+		call_op.is_indirect_call = functionCallNode.is_indirect_call();
+		
 		// Get return type information
 		const auto& return_type = decl_node.type_node().as<TypeSpecifierNode>();
 		call_op.return_type = return_type.type();

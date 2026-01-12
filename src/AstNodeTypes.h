@@ -979,6 +979,9 @@ struct TypeInfo
 	// For typedef of reference types, store the reference qualifier
 	bool is_reference_ = false;
 	bool is_rvalue_reference_ = false;
+	
+	// For function pointer/reference type aliases, store the function signature
+	std::optional<FunctionSignature> function_signature_;
 
 	StringHandle name() const { 
 		return name_;
@@ -1693,6 +1696,11 @@ public:
 	}
 	const std::vector<ASTNode>& template_arguments() const { return template_arguments_; }
 	bool has_template_arguments() const { return !template_arguments_.empty(); }
+	
+	// Indirect call support (for function pointers and function references)
+	// When true, the call is through a variable holding a function address, not a direct function name
+	void set_indirect_call(bool indirect) { is_indirect_call_ = indirect; }
+	bool is_indirect_call() const { return is_indirect_call_; }
 
 private:
 	DeclarationNode& func_decl_;
@@ -1700,6 +1708,7 @@ private:
 	Token called_from_;
 	StringHandle mangled_name_;  // Pre-computed mangled name
 	std::vector<ASTNode> template_arguments_;  // Explicit template arguments (e.g., <T> in foo<T>())
+	bool is_indirect_call_ = false;  // True for function pointer/reference calls
 };
 
 // Constructor call node - represents constructor calls like T(args)

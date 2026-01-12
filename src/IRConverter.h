@@ -2608,6 +2608,27 @@ inline void emitPop(std::vector<char>& textSectionData, X64Register reg) {
 }
 
 /**
+ * @brief Emits CALL r64 instruction (indirect call through register).
+ * @param textSectionData The vector to append opcodes to
+ * @param reg The register containing the function address
+ * 
+ * Encoding: FF /2 where /2 means reg field = 2 (call r/m64)
+ * For RAX: FF D0 (ModR/M = 11 010 000)
+ * For R8+: 41 FF D0+ (REX.B prefix needed)
+ */
+inline void emitCallReg(std::vector<char>& textSectionData, X64Register reg) {
+	uint8_t reg_bits = static_cast<uint8_t>(reg) & 0x07;
+	bool reg_extended = static_cast<uint8_t>(reg) >= static_cast<uint8_t>(X64Register::R8);
+	
+	if (reg_extended) {
+		textSectionData.push_back(0x41);  // REX.B prefix
+	}
+	textSectionData.push_back(static_cast<char>(0xFF));  // Opcode for CALL r/m64
+	// ModR/M: mod=11 (register), reg=010 (/2), r/m=reg_bits
+	textSectionData.push_back(static_cast<char>(0xD0 + reg_bits));
+}
+
+/**
  * @brief Emits x64 opcodes for ADD dest_reg, src_reg.
  *
  * @param textSectionData The vector to append opcodes to
@@ -6508,13 +6529,42 @@ private:
 			}
 			
 			// Generate call instruction
-			std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
-			textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
-			
-			// Add relocation for function name (Phase 4: Use helper)
-			StringHandle func_name_handle = call_op.getFunctionName();
-			std::string mangled_name(StringTable::getStringView(func_name_handle));
-			writer.add_relocation(textSectionData.size() - 4, mangled_name);
+			if (call_op.is_indirect_call) {
+				// Indirect call: the function_name is actually the variable name holding the function pointer
+				// Allocate a register using the register allocator, load the function pointer, then call through it
+				StringHandle func_ptr_name = call_op.getFunctionName();
+				int func_ptr_offset = variable_scopes.back().variables[func_ptr_name].offset;
+				
+				// Note: Both function pointers and function references are handled the same way here.
+				// The reference variable holds the function address directly (function references
+				// decay to function pointers, so we just load the 64-bit function address from the
+				// stack location and call through it).
+				
+				// Allocate a scratch register for the indirect call
+				X64Register call_reg = allocateRegisterWithSpilling();
+				
+				// Load the function pointer/reference value
+				emitMovFromFrame(call_reg, func_ptr_offset);
+				
+				// Emit indirect call through the allocated register
+				emitCallReg(textSectionData, call_reg);
+				
+				// Release the register after the call
+				regAlloc.release(call_reg);
+				
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Generated indirect call through {} at offset {}",
+					static_cast<int>(call_reg), func_ptr_offset);
+			} else {
+				// Direct call: E8 + 32-bit relative offset
+				std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
+				textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
+				
+				// Add relocation for function name (Phase 4: Use helper)
+				StringHandle func_name_handle = call_op.getFunctionName();
+				std::string mangled_name(StringTable::getStringView(func_name_handle));
+				writer.add_relocation(textSectionData.size() - 4, mangled_name);
+			}
 			
 			// Invalidate caller-saved registers (function calls clobber them)
 			regAlloc.invalidateCallerSavedRegisters();
@@ -7869,10 +7919,11 @@ private:
 						// Check if it's a 64-bit value (likely a pointer)
 						// For __range_begin_ and similar, which are int64 pointers
 						// Also check for struct types that returned as pointers (reference returns)
+						// And function pointers which are always 64-bit addresses
 						bool is_likely_pointer = (init.size_in_bits == 64 && 
 						                          (init.type == Type::Long || init.type == Type::Int || 
 						                           init.type == Type::UnsignedLong || init.type == Type::LongLong ||
-						                           init.type == Type::Struct));  // Struct references return 64-bit pointers
+						                           init.type == Type::Struct || init.type == Type::FunctionPointer));  // Struct references and function references return 64-bit pointers
 						FLASH_LOG(Codegen, Debug, "is_likely_pointer=", is_likely_pointer);
 						if (is_likely_pointer) {
 							// Load the pointer value
