@@ -4859,17 +4859,9 @@ ParseResult Parser::parse_struct_declaration()
 					}
 				}
 
-				// Parse noexcept specifier before initializer list
-				// C++ grammar: constructor() noexcept : initializer_list { body }
-				if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
-				    peek_token()->value() == "noexcept") {
-					consume_token(); // consume 'noexcept'
+				// Parse exception specifier (noexcept or throw()) before initializer list
+				if (parse_constructor_exception_specifier()) {
 					ctor_ref.set_noexcept(true);
-					
-					// Check for noexcept(expr) form
-					if (peek_token().has_value() && peek_token()->value() == "(") {
-						skip_balanced_parens(); // skip the noexcept expression
-					}
 				}
 
 				// Check for member initializer list (: Base(args), member(value), ...)
@@ -13434,6 +13426,39 @@ void Parser::skip_noexcept_specifier()
 			}
 		}
 	}
+}
+
+// Parse constructor exception specifier (noexcept or throw())
+// Returns true if the constructor should be treated as noexcept
+// throw() is equivalent to noexcept(true) in C++
+bool Parser::parse_constructor_exception_specifier()
+{
+	bool is_noexcept = false;
+	
+	// Parse noexcept specifier
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+	    peek_token()->value() == "noexcept") {
+		consume_token(); // consume 'noexcept'
+		is_noexcept = true;
+		
+		// Check for noexcept(expr) form
+		if (peek_token().has_value() && peek_token()->value() == "(") {
+			skip_balanced_parens(); // skip the noexcept expression
+		}
+	}
+	
+	// Parse throw() (old-style exception specification)
+	// throw() is equivalent to noexcept(true) in C++
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+	    peek_token()->value() == "throw") {
+		consume_token(); // consume 'throw'
+		if (peek_token().has_value() && peek_token()->value() == "(") {
+			skip_balanced_parens(); // skip throw(...)
+		}
+		is_noexcept = true;
+	}
+	
+	return is_noexcept;
 }
 
 // Skip function trailing specifiers and attributes after parameters
@@ -22206,6 +22231,11 @@ ParseResult Parser::parse_template_declaration() {
 						// Register parameters in symbol table using helper (Phase 5)
 						register_parameters_in_scope(ctor_ref.parameter_nodes());
 						
+						// Parse exception specifier (noexcept or throw()) before initializer list
+						if (parse_constructor_exception_specifier()) {
+							ctor_ref.set_noexcept(true);
+						}
+						
 						// Parse member initializer list if present
 						if (peek_token().has_value() && peek_token()->value() == ":") {
 							consume_token();  // consume ':'
@@ -23073,6 +23103,11 @@ ParseResult Parser::parse_template_declaration() {
 						
 						// Register parameters in symbol table using helper (Phase 5)
 						register_parameters_in_scope(ctor_ref.parameter_nodes());
+						
+						// Parse exception specifier (noexcept or throw()) before initializer list
+						if (parse_constructor_exception_specifier()) {
+							ctor_ref.set_noexcept(true);
+						}
 						
 						// Parse member initializer list if present
 						if (peek_token().has_value() && peek_token()->value() == ":") {
