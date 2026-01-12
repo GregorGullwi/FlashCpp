@@ -24849,6 +24849,13 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// This position is at the start of the return type, before parse_type_and_name()
 	SaveHandle declaration_start = save_token_position();
 	
+	// Parse storage class specifiers (constexpr, inline, static, etc.)
+	// This must be done BEFORE parse_type_and_name() to capture constexpr for template functions
+	auto specs = parse_declaration_specifiers();
+	bool is_constexpr = specs.is_constexpr;
+	bool is_consteval = specs.is_consteval;
+	bool is_constinit = specs.is_constinit;
+	
 	// Parse the function declaration (type and name)
 	auto type_and_name_result = parse_type_and_name();
 	if (type_and_name_result.is_error()) {
@@ -24885,6 +24892,11 @@ ParseResult Parser::parse_template_function_declaration_body(
 	}
 
 	FunctionDeclarationNode& func_decl = *func_decl_ptr;
+	
+	// Apply storage class specifiers to the function declaration
+	func_decl.set_is_constexpr(is_constexpr);
+	func_decl.set_is_consteval(is_consteval);
+	func_decl.set_is_constinit(is_constinit);
 
 	// In C++, the order after parameters is: cv-qualifiers -> ref-qualifier -> noexcept -> trailing-return-type
 	// We need to skip cv-qualifiers, ref-qualifier, and noexcept BEFORE checking for trailing return type
@@ -27116,6 +27128,15 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			new_func_ref.set_definition(orig_body.value());
 		}
 	}
+
+	// Copy function specifiers from original template
+	new_func_ref.set_is_constexpr(func_decl.is_constexpr());
+	new_func_ref.set_is_consteval(func_decl.is_consteval());
+	new_func_ref.set_is_constinit(func_decl.is_constinit());
+	new_func_ref.set_noexcept(func_decl.is_noexcept());
+	new_func_ref.set_is_variadic(func_decl.is_variadic());
+	new_func_ref.set_linkage(func_decl.linkage());
+	new_func_ref.set_calling_convention(func_decl.calling_convention());
 
 	// Compute and set the proper mangled name (Itanium/MSVC) for code generation
 	compute_and_set_mangled_name(new_func_ref);
@@ -30934,6 +30955,130 @@ if (struct_type_info.getStructInfo()) {
 								resolved_args.push_back(val_arg);
 								continue;
 							}
+						}
+					} else if (std::holds_alternative<FunctionCallNode>(expr)) {
+						// Handle constexpr function calls like: call_is_nt<Result>(typename Result::__invoke_type{})
+						// These need template parameter substitution before evaluation
+						const FunctionCallNode& func_call = std::get<FunctionCallNode>(expr);
+						
+						FLASH_LOG(Templates, Debug, "Processing FunctionCallNode in deferred base argument");
+						
+						// Check if the function has template arguments that need substitution
+						bool has_dependent_template_args = false;
+						std::vector<TemplateTypeArg> substituted_func_template_args;
+						
+						if (func_call.has_template_arguments()) {
+							for (const ASTNode& targ_node : func_call.template_arguments()) {
+								if (targ_node.is<ExpressionNode>()) {
+									const ExpressionNode& targ_expr = targ_node.as<ExpressionNode>();
+									if (std::holds_alternative<TemplateParameterReferenceNode>(targ_expr)) {
+										const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(targ_expr);
+										std::string_view param_name = tparam_ref.param_name().view();
+										auto subst_it = name_substitution_map.find(param_name);
+										if (subst_it != name_substitution_map.end()) {
+											substituted_func_template_args.push_back(subst_it->second);
+											FLASH_LOG_FORMAT(Templates, Debug, "Substituted function template arg '{}' with type_index {}", 
+											                 param_name, subst_it->second.type_index);
+										} else {
+											has_dependent_template_args = true;
+										}
+									} else if (std::holds_alternative<IdentifierNode>(targ_expr)) {
+										const auto& id = std::get<IdentifierNode>(targ_expr);
+										auto subst_it = name_substitution_map.find(id.name());
+										if (subst_it != name_substitution_map.end()) {
+											substituted_func_template_args.push_back(subst_it->second);
+											FLASH_LOG_FORMAT(Templates, Debug, "Substituted function template arg identifier '{}' with type_index {}", 
+											                 id.name(), subst_it->second.type_index);
+										} else {
+											has_dependent_template_args = true;
+										}
+									} else {
+										// Keep the argument as-is for other expression types
+										has_dependent_template_args = true;
+									}
+								} else if (targ_node.is<TypeSpecifierNode>()) {
+									const TypeSpecifierNode& type_spec = targ_node.as<TypeSpecifierNode>();
+									if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+										std::string_view type_name = StringTable::getStringView(gTypeInfo[type_spec.type_index()].name());
+										auto subst_it = name_substitution_map.find(type_name);
+										if (subst_it != name_substitution_map.end()) {
+											substituted_func_template_args.push_back(subst_it->second);
+										} else {
+											// Keep as-is
+											substituted_func_template_args.emplace_back(type_spec);
+										}
+									} else {
+										substituted_func_template_args.emplace_back(type_spec);
+									}
+								}
+							}
+						}
+						
+						// If we successfully substituted all template arguments, try to instantiate and call the function
+						if (!has_dependent_template_args && !substituted_func_template_args.empty()) {
+							std::string_view func_name = func_call.called_from().value();
+							FLASH_LOG_FORMAT(Templates, Debug, "Trying to instantiate constexpr function '{}' with {} template args",
+							                 func_name, substituted_func_template_args.size());
+							
+							// Try to instantiate the template function
+							auto instantiated_func = try_instantiate_template_explicit(func_name, substituted_func_template_args);
+							
+							if (instantiated_func.has_value()) {
+								FLASH_LOG_FORMAT(Templates, Debug, "try_instantiate_template_explicit returned node, is FunctionDeclarationNode: {}",
+								                 instantiated_func->is<FunctionDeclarationNode>());
+							} else {
+								FLASH_LOG(Templates, Debug, "try_instantiate_template_explicit returned nullopt");
+							}
+							
+							if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+								const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
+								
+								FLASH_LOG_FORMAT(Templates, Debug, "Instantiated function: is_constexpr={}, has_definition={}",
+								                 func_decl.is_constexpr(), func_decl.get_definition().has_value());
+								
+								// Check if the function is constexpr
+								if (func_decl.is_constexpr()) {
+									// For constexpr functions that return a constant value, we can evaluate them
+									// Look for a simple return statement with a constant value
+									// This is a simplified constexpr evaluation - full constexpr requires an interpreter
+									
+									// For now, if the function body is just "return true;" or "return false;", we can evaluate it
+									// This handles the common type_traits pattern
+									if (func_decl.get_definition().has_value()) {
+										const ASTNode& body_node = *func_decl.get_definition();
+										FLASH_LOG_FORMAT(Templates, Debug, "Function body is BlockNode: {}", body_node.is<BlockNode>());
+										if (body_node.is<BlockNode>()) {
+											const BlockNode& block = body_node.as<BlockNode>();
+											FLASH_LOG_FORMAT(Templates, Debug, "Block has {} statements", block.get_statements().size());
+											if (block.get_statements().size() == 1) {
+												const ASTNode& stmt = block.get_statements()[0];
+												FLASH_LOG_FORMAT(Templates, Debug, "First statement is ReturnStatementNode: {}", stmt.is<ReturnStatementNode>());
+												if (stmt.is<ReturnStatementNode>()) {
+													const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
+													if (ret_stmt.expression().has_value()) {
+														// Try to evaluate the return expression as a constant
+														if (auto ret_value = try_evaluate_constant_expression(*ret_stmt.expression())) {
+															FLASH_LOG_FORMAT(Templates, Debug, "Evaluated constexpr function call to value {}", ret_value->value);
+															TemplateTypeArg val_arg(ret_value->value, ret_value->type);
+															val_arg.is_pack = arg_info.is_pack;
+															resolved_args.push_back(val_arg);
+															continue;
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						
+						// Fallback: try to evaluate the expression directly
+						if (auto value = try_evaluate_constant_expression(arg_info.node)) {
+							TemplateTypeArg val_arg(value->value, value->type);
+							val_arg.is_pack = arg_info.is_pack;
+							resolved_args.push_back(val_arg);
+							continue;
 						}
 					} else {
 						// Try to evaluate non-type template argument after substitution

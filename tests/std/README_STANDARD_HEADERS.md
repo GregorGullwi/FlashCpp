@@ -140,7 +140,47 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 12, 2026 - Typename Brace Initialization in Expression Context)
+## Latest Investigation (January 12, 2026 - Constexpr Function Call Evaluation in Deferred Base Classes)
+
+### ✅ FIXED: Compile-Time Evaluation of Constexpr Function Calls in Deferred Base Class Template Arguments
+
+**Pattern Now Fully Working:** Constexpr function calls in deferred base class template arguments are now evaluated correctly at template instantiation time:
+```cpp
+// A function that takes a type and returns bool
+template<typename Result>
+constexpr bool call_is_nt(typename Result::__invoke_type) {
+    return true;
+}
+
+// This pattern NOW WORKS CORRECTLY!
+template<typename Result>
+struct test : bool_constant<call_is_nt<Result>(typename Result::__invoke_type{})>
+{ };
+
+// test<MyResult>::value is now correctly evaluated to true
+```
+
+**What Was Fixed:**
+1. ✅ **Constexpr flag preservation in template function instantiation** - Added copying of constexpr/consteval/constinit flags from original template function to instantiated function in `try_instantiate_template_explicit()`
+2. ✅ **Constexpr flag capture during template function parsing** - Added `parse_declaration_specifiers()` call in `parse_template_function_declaration_body()` to capture constexpr specifiers before function body parsing
+3. ✅ **FunctionCallNode handling in deferred base resolution** - Added handling for `FunctionCallNode` expressions in the deferred base class argument evaluation, with template parameter substitution and constexpr function evaluation
+4. ✅ **Simple constexpr function evaluation** - For constexpr functions with a single return statement returning a constant value, the value is now extracted and used for the base class template argument
+
+**Implementation:**
+- Modified `try_instantiate_template_explicit()` to copy function specifiers (constexpr, consteval, constinit, noexcept, variadic, linkage, calling convention)
+- Modified `parse_template_function_declaration_body()` to call `parse_declaration_specifiers()` and apply flags to the function declaration
+- Added `FunctionCallNode` handling in the deferred base class resolution loop to:
+  - Extract and substitute template arguments
+  - Instantiate the template function
+  - Check if the function is constexpr
+  - Extract the return value from simple single-statement constexpr functions
+
+**Test Cases:**
+- ✅ `test_typename_brace_init_ret0.cpp` - Complex typename brace init as function argument with constexpr evaluation (returns 0)
+
+---
+
+## Previous Investigation (January 12, 2026 - Typename Brace Initialization in Expression Context)
 
 ### ✅ IMPLEMENTED: `typename T::type{}` Constructor Calls in Expression Context
 
@@ -170,19 +210,15 @@ struct test : bool_constant<call_is_nt<Result>(typename Result::__invoke_type{})
 - Parses `{}` or `()` initializers with arguments
 - Creates a `ConstructorCallNode` with a `Type::UserDefined` type specifier containing the qualified name
 
-**Test Cases:**
-- ✅ `test_typename_brace_init_ret1.cpp` - Complex typename brace init as function argument (parses and compiles; returns 1 because deferred base class evaluation doesn't yet resolve `FunctionCallNode` expressions)
-
-**Known Limitation:**
-The deferred template base class evaluation doesn't yet correctly resolve `FunctionCallNode` expressions as template arguments at instantiation time. The pattern parses correctly but the runtime value isn't evaluated. This requires additional work on the template instantiation machinery.
-
 ---
 
 ## Previous Investigation (January 12, 2026 - Dependent Function Calls as Template Arguments)
 
-### ✅ PARTIAL FIX: Template Function Calls as Non-Type Template Arguments
+### ✅ FIXED: Template Function Calls as Non-Type Template Arguments
 
-**Pattern Now Supported (Simple Case):** Template function calls can now be used as non-type template arguments:
+**Status Upgrade:** This was previously marked as "PARTIAL FIX" because the parsing worked but the compile-time evaluation didn't. With the constexpr evaluation fixes above, this pattern now works fully.
+
+**Pattern Now Supported:** Template function calls can now be used as non-type template arguments:
 ```cpp
 template<bool B>
 struct bool_constant { static constexpr bool value = B; };

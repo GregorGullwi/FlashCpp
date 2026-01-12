@@ -1,7 +1,6 @@
 // Test case for typename T::type{} as function argument
-// This pattern NOW PARSES correctly, but runtime evaluation of the deferred
-// base class template argument is not yet implemented, so value is 0 (false)
-// and the test returns 1.
+// This pattern NOW WORKS - the deferred base class template argument is correctly
+// evaluated at template instantiation time, and the constexpr function returns true.
 template<bool B>
 struct bool_constant {
     static constexpr bool value = B;
@@ -18,13 +17,12 @@ constexpr bool call_is_nt(typename Result::__invoke_type) {
     return true;
 }
 
-// This pattern now parses correctly!
+// This pattern now works correctly!
 template<typename Result>
 struct test : bool_constant<call_is_nt<Result>(typename Result::__invoke_type{})>
 { };
 
 int main() {
-    // Returns 1 because test<MyResult>::value is false (deferred base evaluation not implemented)
-    // When fully working, this should return 0
+    // test<MyResult>::value is true (from the constexpr function call), so returns 0
     return test<MyResult>::value ? 0 : 1;
 }
