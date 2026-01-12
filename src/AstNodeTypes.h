@@ -1478,19 +1478,27 @@ public:
 	// Unary fold: (... op pack) or (pack op ...)
 	explicit FoldExpressionNode(std::string_view pack_name, std::string_view op, Direction dir, Token token)
 		: pack_name_(pack_name), op_(op), direction_(dir), type_(Type::Unary), 
-		  init_expr_(std::nullopt), token_(token) {}
+		  init_expr_(std::nullopt), pack_expr_(std::nullopt), token_(token) {}
 
 	// Binary fold: (init op ... op pack) or (pack op ... op init)
 	explicit FoldExpressionNode(std::string_view pack_name, std::string_view op, 
 		                         Direction dir, ASTNode init, Token token)
 		: pack_name_(pack_name), op_(op), direction_(dir), type_(Type::Binary), 
-		  init_expr_(init), token_(token) {}
+		  init_expr_(init), pack_expr_(std::nullopt), token_(token) {}
+
+	// Unary fold with complex pack expression: (expr op ...) or (... op expr)
+	// Used when the pack is a complex expression like a function call
+	explicit FoldExpressionNode(ASTNode pack_expr, std::string_view op, Direction dir, Token token)
+		: pack_name_(""), op_(op), direction_(dir), type_(Type::Unary),
+		  init_expr_(std::nullopt), pack_expr_(pack_expr), token_(token) {}
 
 	std::string_view pack_name() const { return pack_name_; }
 	std::string_view op() const { return op_; }
 	Direction direction() const { return direction_; }
 	Type type() const { return type_; }
 	const std::optional<ASTNode>& init_expr() const { return init_expr_; }
+	const std::optional<ASTNode>& pack_expr() const { return pack_expr_; }
+	bool has_complex_pack_expr() const { return pack_expr_.has_value(); }
 	const Token& get_token() const { return token_; }
 
 private:
@@ -1499,6 +1507,7 @@ private:
 	Direction direction_;
 	Type type_;
 	std::optional<ASTNode> init_expr_;
+	std::optional<ASTNode> pack_expr_;  // Complex pack expression (if any)
 	Token token_;
 };
 

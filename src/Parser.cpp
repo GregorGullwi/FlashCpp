@@ -1401,6 +1401,11 @@ ParseResult Parser::parse_type_and_name() {
         type_spec.add_pointer_level(ptr_cv);
     }
 
+    // Parse postfix cv-qualifiers before references: Type const& or Type volatile&
+    // This handles C++ postfix const/volatile syntax like: __nonesuch const&
+    CVQualifier postfix_cv = parse_cv_qualifiers();
+    type_spec.add_cv_qualifier(postfix_cv);
+
     // Parse reference declarators: & or &&
     // Example: int& ref or int&& rvalue_ref
     ReferenceQualifier ref_qual = parse_reference_qualifier();
@@ -18630,6 +18635,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									is_fold = true;
 								}
 							}
+						} else if (consume_punctuator(")")) {
+							// Unary right fold with complex expression: (expr op ...)
+							// The expression is a pack expansion that will be folded
+							discard_saved_token(fold_check_pos);
+							discard_saved_token(init_pos);
+							// For unary right fold, we need to extract the pack name from the expression
+							// If the expression contains a pack expansion, use that
+							// For now, we'll create a fold expression with the expression as the pack
+							result = emplace_node<ExpressionNode>(
+								FoldExpressionNode(*init_result.node(), fold_op,
+									FoldExpressionNode::Direction::Right, op_token));
+							is_fold = true;
 						}
 					}
 				}
@@ -21635,8 +21652,10 @@ ParseResult Parser::parse_template_declaration() {
 				consume_token();
 				
 				// After identifier, expect '=' for variable template
+				// OR '<' for variable template partial specialization
 				// (function would have '(' here)
-				if (peek_token().has_value() && peek_token()->value() == "=") {
+				if (peek_token().has_value() && 
+				    (peek_token()->value() == "=" || peek_token()->value() == "<")) {
 					is_variable_template = true;
 				}
 			}
@@ -21922,6 +21941,77 @@ ParseResult Parser::parse_template_declaration() {
 		Token var_name_token = *peek_token();
 		consume_token();
 		
+		// Check for variable template partial specialization: name<pattern>
+		// Example: template<typename T> inline constexpr bool is_reference_v<T&> = true;
+		std::vector<TemplateTypeArg> specialization_pattern;
+		bool is_partial_spec = false;
+		if (peek_token().has_value() && peek_token()->value() == "<") {
+			consume_token(); // consume '<'
+			is_partial_spec = true;
+			
+			// Parse the specialization pattern (e.g., T&, T*, T&&)
+			// These are template argument patterns, not actual types
+			while (peek_token().has_value() && peek_token()->value() != ">") {
+				// Check for typename keyword (for dependent types)
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+				    peek_token()->value() == "typename") {
+					consume_token(); // consume 'typename'
+				}
+				
+				// Parse the pattern type
+				auto pattern_type = parse_type_specifier();
+				if (pattern_type.is_error()) {
+					return pattern_type;
+				}
+				
+				// Check for reference modifiers
+				TypeSpecifierNode& type_spec = pattern_type.node()->as<TypeSpecifierNode>();
+				CVQualifier cv = parse_cv_qualifiers();
+				type_spec.add_cv_qualifier(cv);
+				
+				// Parse pointer/reference declarators
+				size_t ptr_depth = 0;
+				while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+				       peek_token()->value() == "*") {
+					consume_token(); // consume '*'
+					ptr_depth++;
+					CVQualifier ptr_cv = parse_cv_qualifiers();
+					type_spec.add_pointer_level(ptr_cv);
+				}
+				
+				// Parse reference qualifier
+				ReferenceQualifier ref = parse_reference_qualifier();
+				if (ref == ReferenceQualifier::LValueReference) {
+					type_spec.set_reference(false);
+				} else if (ref == ReferenceQualifier::RValueReference) {
+					type_spec.set_reference(true);
+				}
+				
+				// Create template type argument
+				TemplateTypeArg arg;
+				arg.base_type = type_spec.type();
+				arg.type_index = type_spec.type_index();
+				arg.is_value = false;
+				arg.cv_qualifier = type_spec.cv_qualifier();
+				arg.pointer_depth = ptr_depth + type_spec.pointer_levels().size();
+				arg.is_reference = type_spec.is_lvalue_reference();
+				arg.is_rvalue_reference = type_spec.is_rvalue_reference();
+				specialization_pattern.push_back(arg);
+				
+				// Check for comma or closing >
+				if (peek_token().has_value() && peek_token()->value() == ",") {
+					consume_token(); // consume ','
+				} else {
+					break;
+				}
+			}
+			
+			if (!peek_token().has_value() || peek_token()->value() != ">") {
+				return ParseResult::error("Expected '>' after variable template specialization pattern", *current_token_);
+			}
+			consume_token(); // consume '>'
+		}
+		
 		// Create DeclarationNode
 		auto decl_node = emplace_node<DeclarationNode>(
 			type_result.node().value(),
@@ -21964,7 +22054,29 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Register in template registry
 		std::string_view var_name = var_name_token.value();
-		gTemplateRegistry.registerVariableTemplate(var_name, template_var_node);
+		if (is_partial_spec) {
+			// For partial specializations, register with a name that includes the pattern
+			// This allows lookup during instantiation
+			// Build a unique name for the pattern
+			StringBuilder pattern_name;
+			pattern_name.append(var_name);
+			for (const auto& arg : specialization_pattern) {
+				pattern_name.append("_");
+				if (arg.is_reference) {
+					pattern_name.append("R");  // lvalue reference
+				} else if (arg.is_rvalue_reference) {
+					pattern_name.append("RR"); // rvalue reference
+				}
+				for (size_t i = 0; i < arg.pointer_depth; i++) {
+					pattern_name.append("P");  // pointer
+				}
+			}
+			std::string_view pattern_key = pattern_name.commit();
+			gTemplateRegistry.registerVariableTemplate(pattern_key, template_var_node);
+			FLASH_LOG(Parser, Debug, "Registered variable template partial specialization: ", pattern_key);
+		} else {
+			gTemplateRegistry.registerVariableTemplate(var_name, template_var_node);
+		}
 		
 		// Also add to symbol table so identifier lookup works
 		gSymbolTable.insert(var_name, template_var_node);
