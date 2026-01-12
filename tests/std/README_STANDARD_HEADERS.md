@@ -169,7 +169,7 @@ struct wrapper : bool_constant<test_func<T>()>
 - The `FunctionCallNode` stores the template argument nodes for later resolution during instantiation
 
 **Test Cases:**
-- ✅ `test_simple_template_func_call.cpp` - Simple template function call as template argument
+- ✅ `test_simple_template_func_call_ret0.cpp` - Simple template function call as template argument
 
 **Still Not Working:**
 The more complex pattern with `typename` in the function argument still fails:

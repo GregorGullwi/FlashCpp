@@ -9,7 +9,7 @@ constexpr bool test_func() {
     return true;
 }
 
-// This pattern: test_func<int>() as template argument
+// This pattern: test_func<T>() as template argument
 template<typename T>
 struct wrapper : bool_constant<test_func<T>()>
 { };
