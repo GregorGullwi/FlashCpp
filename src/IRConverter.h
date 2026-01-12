@@ -6535,22 +6535,16 @@ private:
 				StringHandle func_ptr_name = call_op.getFunctionName();
 				int func_ptr_offset = variable_scopes.back().variables[func_ptr_name].offset;
 				
-				// Check if this is a reference (function reference) - if so, the value at the offset
-				// IS the function address, not a pointer to a pointer
-				auto ref_it = reference_stack_info_.find(func_ptr_offset);
-				bool is_func_reference = (ref_it != reference_stack_info_.end());
+				// Note: Both function pointers and function references are handled the same way here.
+				// The reference variable holds the function address directly (function references
+				// decay to function pointers, so we just load the 64-bit function address from the
+				// stack location and call through it).
 				
 				// Allocate a scratch register for the indirect call
 				X64Register call_reg = allocateRegisterWithSpilling();
 				
-				if (is_func_reference) {
-					// For function references, load the function address directly
-					// The reference variable holds the function address
-					emitMovFromFrame(call_reg, func_ptr_offset);
-				} else {
-					// For function pointers, load the function pointer value
-					emitMovFromFrame(call_reg, func_ptr_offset);
-				}
+				// Load the function pointer/reference value
+				emitMovFromFrame(call_reg, func_ptr_offset);
 				
 				// Emit indirect call through the allocated register
 				emitCallReg(textSectionData, call_reg);
@@ -6559,8 +6553,8 @@ private:
 				regAlloc.release(call_reg);
 				
 				FLASH_LOG_FORMAT(Codegen, Debug,
-					"Generated indirect call through {} at offset {}, is_reference={}",
-					static_cast<int>(call_reg), func_ptr_offset, is_func_reference);
+					"Generated indirect call through {} at offset {}",
+					static_cast<int>(call_reg), func_ptr_offset);
 			} else {
 				// Direct call: E8 + 32-bit relative offset
 				std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
