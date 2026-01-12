@@ -2978,6 +2978,108 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			type_spec.add_pointer_level(ptr_cv);
 		}
 		
+		// Check for function pointer/reference type syntax: ReturnType (&)(...) or ReturnType (*)(...) 
+		// Pattern: Type (&)() = lvalue reference to function returning Type
+		// Pattern: Type (&&)() = rvalue reference to function returning Type
+		// Pattern: Type (*)() = pointer to function returning Type
+		// This handles types like: int (&)(), _Xp (&)(), etc.
+		if (peek_token().has_value() && peek_token()->value() == "(") {
+			auto func_type_saved_pos = save_token_position();
+			consume_token(); // consume '('
+			
+			// Check what's inside the parentheses: &, &&, or *
+			bool is_function_ref = false;
+			bool is_rvalue_function_ref = false;
+			bool is_function_ptr = false;
+			
+			if (peek_token().has_value()) {
+				if (peek_token()->value() == "&&") {
+					is_rvalue_function_ref = true;
+					consume_token(); // consume '&&'
+				} else if (peek_token()->value() == "&") {
+					is_function_ref = true;
+					consume_token(); // consume '&'
+					// Check for second & (in case lexer didn't combine them)
+					if (peek_token().has_value() && peek_token()->value() == "&") {
+						is_rvalue_function_ref = true;
+						is_function_ref = false;
+						consume_token(); // consume second '&'
+					}
+				} else if (peek_token()->value() == "*") {
+					is_function_ptr = true;
+					consume_token(); // consume '*'
+				}
+			}
+			
+			// After &, &&, or *, expect ')'
+			if ((is_function_ref || is_rvalue_function_ref || is_function_ptr) &&
+			    peek_token().has_value() && peek_token()->value() == ")") {
+				consume_token(); // consume ')'
+				
+				// Now expect '(' for the parameter list
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					consume_token(); // consume '('
+					
+					// Parse parameter list (can be empty or have parameters)
+					// For now, we'll skip the parameter list - we just need to recognize the syntax
+					// and accept it for type traits purposes
+					std::vector<Type> param_types;
+					while (peek_token().has_value() && peek_token()->value() != ")") {
+						// Skip parameter - can be complex types
+						auto param_type_result = parse_type_specifier();
+						if (!param_type_result.is_error() && param_type_result.node().has_value()) {
+							const TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
+							param_types.push_back(param_type.type());
+						}
+						
+						// Check for comma
+						if (peek_token().has_value() && peek_token()->value() == ",") {
+							consume_token(); // consume ','
+						} else {
+							break;
+						}
+					}
+					
+					if (peek_token().has_value() && peek_token()->value() == ")") {
+						consume_token(); // consume ')'
+						
+						// Successfully parsed function reference/pointer type!
+						// Mark the type accordingly
+						FunctionSignature func_sig;
+						func_sig.return_type = type_spec.type();
+						func_sig.parameter_types = std::move(param_types);
+						
+						if (is_function_ptr) {
+							type_spec.add_pointer_level(CVQualifier::None);
+						}
+						type_spec.set_function_signature(func_sig);
+						
+						if (is_function_ref) {
+							type_spec.set_reference(false);  // lvalue reference
+						} else if (is_rvalue_function_ref) {
+							type_spec.set_reference(true);   // rvalue reference
+						}
+						
+						FLASH_LOG(Parser, Debug, "Parsed function reference/pointer type: ", 
+						          is_function_ptr ? "pointer" : (is_rvalue_function_ref ? "rvalue ref" : "lvalue ref"),
+						          " to function");
+						
+						// Discard saved position - we successfully parsed
+						discard_saved_token(func_type_saved_pos);
+					} else {
+						// Parsing failed - restore position
+						restore_token_position(func_type_saved_pos);
+					}
+				} else {
+					// No parameter list follows - restore position
+					restore_token_position(func_type_saved_pos);
+				}
+			} else {
+				// Not a function type syntax - restore position
+				restore_token_position(func_type_saved_pos);
+			}
+		}
+		
 		// Parse reference modifiers: & or &&
 		ReferenceQualifier ref_qual = parse_reference_qualifier();
 		if (ref_qual == ReferenceQualifier::RValueReference) {
@@ -7775,6 +7877,105 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						CVQualifier ptr_cv = parse_cv_qualifiers();
 						
 						type_spec.add_pointer_level(ptr_cv);
+					}
+					
+					// Check for function pointer/reference type syntax: ReturnType (&)(...) or ReturnType (*)(...) 
+					// Pattern: Type (&)() = lvalue reference to function returning Type
+					// Pattern: Type (&&)() = rvalue reference to function returning Type
+					// Pattern: Type (*)() = pointer to function returning Type
+					// This handles types like: int (&)(), _Xp (&)(), etc.
+					if (peek_token().has_value() && peek_token()->value() == "(") {
+						auto func_type_saved_pos = save_token_position();
+						consume_token(); // consume '('
+						
+						// Check what's inside the parentheses: &, &&, or *
+						bool is_function_ref = false;
+						bool is_rvalue_function_ref = false;
+						bool is_function_ptr = false;
+						
+						if (peek_token().has_value()) {
+							if (peek_token()->value() == "&&") {
+								is_rvalue_function_ref = true;
+								consume_token(); // consume '&&'
+							} else if (peek_token()->value() == "&") {
+								is_function_ref = true;
+								consume_token(); // consume '&'
+								// Check for second & (in case lexer didn't combine them)
+								if (peek_token().has_value() && peek_token()->value() == "&") {
+									is_rvalue_function_ref = true;
+									is_function_ref = false;
+									consume_token(); // consume second '&'
+								}
+							} else if (peek_token()->value() == "*") {
+								is_function_ptr = true;
+								consume_token(); // consume '*'
+							}
+						}
+						
+						// After &, &&, or *, expect ')'
+						if ((is_function_ref || is_rvalue_function_ref || is_function_ptr) &&
+						    peek_token().has_value() && peek_token()->value() == ")") {
+							consume_token(); // consume ')'
+							
+							// Now expect '(' for the parameter list
+							if (peek_token().has_value() && peek_token()->value() == "(") {
+								consume_token(); // consume '('
+								
+								// Parse parameter list (can be empty or have parameters)
+								std::vector<Type> param_types;
+								while (peek_token().has_value() && peek_token()->value() != ")") {
+									// Skip parameter - can be complex types
+									auto param_type_result = parse_type_specifier();
+									if (!param_type_result.is_error() && param_type_result.node().has_value()) {
+										const TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
+										param_types.push_back(param_type.type());
+									}
+									
+									// Check for comma
+									if (peek_token().has_value() && peek_token()->value() == ",") {
+										consume_token(); // consume ','
+									} else {
+										break;
+									}
+								}
+								
+								if (peek_token().has_value() && peek_token()->value() == ")") {
+									consume_token(); // consume ')'
+									
+									// Successfully parsed function reference/pointer type!
+									FunctionSignature func_sig;
+									func_sig.return_type = type_spec.type();
+									func_sig.parameter_types = std::move(param_types);
+									
+									if (is_function_ptr) {
+										type_spec.add_pointer_level(CVQualifier::None);
+									}
+									type_spec.set_function_signature(func_sig);
+									
+									if (is_function_ref) {
+										type_spec.set_reference(false);  // lvalue reference
+									} else if (is_rvalue_function_ref) {
+										type_spec.set_reference(true);   // rvalue reference
+									}
+									
+									FLASH_LOG(Parser, Debug, "Parsed function reference/pointer type in global alias: ", 
+									          is_function_ptr ? "pointer" : (is_rvalue_function_ref ? "rvalue ref" : "lvalue ref"),
+									          " to function");
+									
+									// Discard saved position - we successfully parsed
+									discard_saved_token(func_type_saved_pos);
+								} else {
+									// Parsing failed - restore position
+									restore_token_position(func_type_saved_pos);
+								}
+							} else {
+								// No parameter list follows - restore position
+								restore_token_position(func_type_saved_pos);
+							}
+						} else {
+							// Not a function type syntax - restore position
+							restore_token_position(func_type_saved_pos);
+						}
 					}
 					
 					// Parse reference declarators: & or &&
@@ -21926,10 +22127,17 @@ ParseResult Parser::parse_template_declaration() {
 		}
 		
 		// Handle reference modifiers (&, &&)
-		if (peek_token().has_value() && peek_token()->value() == "&") {
+		// The lexer may produce either:
+		// - A single '&&' token for rvalue reference
+		// - Two separate '&' tokens for rvalue reference  
+		// - A single '&' token for lvalue reference
+		if (peek_token().has_value() && peek_token()->value() == "&&") {
+			consume_token(); // consume '&&'
+			type_spec.set_reference(true);  // true = rvalue reference
+		} else if (peek_token().has_value() && peek_token()->value() == "&") {
 			consume_token(); // consume first '&'
 			
-			// Check for rvalue reference (&&)
+			// Check for rvalue reference (&&) as two tokens
 			if (peek_token().has_value() && peek_token()->value() == "&") {
 				consume_token(); // consume second '&'
 				type_spec.set_reference(true);  // true = rvalue reference
@@ -26765,20 +26973,46 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		}
 
 		// Check for pointer-to-array syntax: T(*)[] or T(*)[N]
-		// This is the syntax used for pointer-to-array types in template arguments
+		// AND function pointer/reference syntax: T(&)() or T(*)() or T(&&)()
+		// This is the syntax used for pointer-to-array types and function types in template arguments
 		// e.g., is_convertible<_FromElementType(*)[], _ToElementType(*)[]>
+		// e.g., declval<_Xp(&)()>() - function reference type
 		if (peek_token().has_value() && peek_token()->value() == "(") {
 			SaveHandle paren_saved_pos = save_token_position();
 			consume_token(); // consume '('
 			
-			if (peek_token().has_value() && peek_token()->value() == "*") {
-				consume_token(); // consume '*'
+			// Detect what's inside: *, &, or &&
+			bool is_ptr = false;
+			bool is_lvalue_ref = false;
+			bool is_rvalue_ref = false;
+			
+			if (peek_token().has_value()) {
+				if (peek_token()->value() == "*") {
+					is_ptr = true;
+					consume_token(); // consume '*'
+				} else if (peek_token()->value() == "&&") {
+					is_rvalue_ref = true;
+					consume_token(); // consume '&&'
+				} else if (peek_token()->value() == "&") {
+					is_lvalue_ref = true;
+					consume_token(); // consume '&'
+					// Check for second & (in case lexer didn't combine them)
+					if (peek_token().has_value() && peek_token()->value() == "&") {
+						is_rvalue_ref = true;
+						is_lvalue_ref = false;
+						consume_token(); // consume second '&'
+					}
+				}
+			}
+			
+			if ((is_ptr || is_lvalue_ref || is_rvalue_ref) &&
+			    peek_token().has_value() && peek_token()->value() == ")") {
+				consume_token(); // consume ')'
 				
-				if (peek_token().has_value() && peek_token()->value() == ")") {
-					consume_token(); // consume ')'
-					
-					// Now we should see [] for pointer-to-array
-					if (peek_token().has_value() && peek_token()->value() == "[") {
+				// Check what follows: [] for array or () for function
+				if (peek_token().has_value() && peek_token()->value() == "[") {
+					// Pointer-to-array: T(*)[] or T(*)[N]
+					if (is_ptr) {
 						consume_token(); // consume '['
 						
 						// Optional array size
@@ -26805,11 +27039,64 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							restore_token_position(paren_saved_pos);
 						}
 					} else {
-						// Just (*) without [] - this is a pointer type, not pointer-to-array
-						// Actually this is rare, restore for now
+						// References to arrays are less common, restore for now
+						restore_token_position(paren_saved_pos);
+					}
+				} else if (peek_token().has_value() && peek_token()->value() == "(") {
+					// Function pointer/reference: T(&)(...) or T(*)(...) or T(&&)(...)
+					consume_token(); // consume '('
+					
+					// Parse parameter list (can be empty or have parameters)
+					std::vector<Type> param_types;
+					while (peek_token().has_value() && peek_token()->value() != ")") {
+						// Parse parameter type - can be complex types
+						auto param_type_result = parse_type_specifier();
+						if (!param_type_result.is_error() && param_type_result.node().has_value()) {
+							const TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
+							param_types.push_back(param_type.type());
+						} else {
+							// Parsing failed - restore position
+							restore_token_position(paren_saved_pos);
+							break;
+						}
+						
+						// Check for comma
+						if (peek_token().has_value() && peek_token()->value() == ",") {
+							consume_token(); // consume ','
+						} else {
+							break;
+						}
+					}
+					
+					if (peek_token().has_value() && peek_token()->value() == ")") {
+						consume_token(); // consume ')'
+						
+						// Successfully parsed function reference/pointer type!
+						FunctionSignature func_sig;
+						func_sig.return_type = type_node.type();
+						func_sig.parameter_types = std::move(param_types);
+						
+						if (is_ptr) {
+							type_node.add_pointer_level(CVQualifier::None);
+						}
+						type_node.set_function_signature(func_sig);
+						
+						if (is_lvalue_ref) {
+							type_node.set_reference(false);  // lvalue reference
+						} else if (is_rvalue_ref) {
+							type_node.set_reference(true);   // rvalue reference
+						}
+						
+						discard_saved_token(paren_saved_pos);
+						FLASH_LOG(Parser, Debug, "Parsed function ", 
+						          is_ptr ? "pointer" : (is_rvalue_ref ? "rvalue ref" : "lvalue ref"),
+						          " type in template argument");
+					} else {
+						// Parsing failed - restore position
 						restore_token_position(paren_saved_pos);
 					}
 				} else {
+					// Just (*) or (&) or (&&) without [] or () - restore
 					restore_token_position(paren_saved_pos);
 				}
 			} else {
