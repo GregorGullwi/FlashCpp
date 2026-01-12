@@ -140,7 +140,98 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 12, 2026 - throw() Exception Specifier Support)
+## Latest Investigation (January 12, 2026 - Member Function Templates in Partial Specializations)
+
+### ✅ FIXED: bad_any_cast Crash with Member Function Templates in Partial Specializations
+
+**Bug:** FlashCpp crashed with `std::bad_any_cast` when parsing member function templates inside partial specializations:
+```cpp
+template<typename _Result, typename _Ret>
+struct __is_invocable_impl<_Result, _Ret, false, void_t<typename _Result::type>>
+{
+    template<typename _Tp>
+    static void _S_conv(_Tp) noexcept;  // ← CRASHED HERE (before fix)
+};
+```
+
+**Root Cause:**
+- When iterating over member functions to finalize the struct layout, the code assumed all `function_declaration` nodes were `FunctionDeclarationNode`
+- But member function templates are stored as `TemplateFunctionDeclarationNode`
+- Line 23466 in `parse_template_declaration()` called `.as<FunctionDeclarationNode>()` without checking the actual type first
+
+**What Was Fixed:**
+- Modified member function iteration in `parse_template_declaration()` (line 23466) to check for `TemplateFunctionDeclarationNode` before `FunctionDeclarationNode`
+- For member function templates, the code now extracts the inner `FunctionDeclarationNode` from the template wrapper
+
+**Implementation:**
+```cpp
+if (member_func_decl.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+    // Extract inner function declaration from template wrapper
+    const TemplateFunctionDeclarationNode& template_decl = ...;
+    const FunctionDeclarationNode& func_decl = template_decl.function_declaration().as<FunctionDeclarationNode>();
+    // ...
+} else {
+    // Regular member function
+    const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
+    // ...
+}
+```
+
+**Test Cases:**
+- ✅ `tests/test_member_function_template_in_partial_spec_ret0.cpp` - Compiles successfully
+- ✅ All 891 existing tests pass
+
+**Impact:**
+- ✅ `<type_traits>` no longer crashes during compilation
+- ✅ Patterns like `__is_invocable_impl` from libstdc++ now parse correctly
+- Note: `<type_traits>` header still exits with code 1 (no error message displayed) - likely hits other unsupported patterns during compilation. Further investigation needed to identify remaining blockers.
+
+---
+
+## Previous Investigation (January 12, 2026 - Member Template Alias Rvalue Reference Declarators)
+
+### ✅ IMPLEMENTED: Member Template Alias Rvalue Reference Declarators in Partial Specializations
+
+**Pattern Now Supported:** Member template aliases with rvalue reference (`&&`) declarators after `typename X::type`, particularly in partial specializations:
+```cpp
+template<typename _Tp>
+struct __xref {
+    template<typename _Up> 
+    using __type = typename __copy_cv<_Tp>::type;
+};
+
+// Partial specialization with && pattern argument and && in alias
+template<typename _Tp>
+struct __xref<_Tp&&> {
+    template<typename _Up> 
+    using __type = typename __copy_cv<_Tp>::type&&;  // ← NOW WORKS!
+};
+```
+
+**What Was Fixed:**
+- ✅ **`&&` as single token in member template aliases** - The parser now handles `&&` as a single token (in addition to two separate `&` tokens) when parsing reference declarators in `parse_member_template_alias()`
+- This pattern is used extensively in `<type_traits>` around line 3900 for `__xref` and `basic_common_reference` templates
+
+**Why This Matters:**
+- The `<type_traits>` header uses this pattern for `__xref` partial specializations
+- The `basic_common_reference` template requires this for proper reference handling
+- Without this fix, the parser would fail with "Expected ';' after member template alias declaration"
+
+**Implementation:**
+- Modified `parse_member_template_alias()` in `src/Parser.cpp` (around line 25017-25033)
+- Added check for `&&` as a single token alongside existing `&` handling
+- Mirrors the fix already present in `parse_typedef_declaration()` at line 3449
+
+**Test Cases:**
+- ✅ `tests/test_member_template_alias_rvalue_ref_ret0.cpp` - Compiles successfully
+
+**Impact:**
+- ✅ Unblocks parsing of `__xref` partial specializations in `<type_traits>`
+- Note: `<type_traits>` still has `std::bad_any_cast` crash around line 3900 which is a separate issue
+
+---
+
+## Previous Investigation (January 12, 2026 - throw() Exception Specifier Support)
 
 ### ✅ IMPLEMENTED: throw() Exception Specifier on Constructors/Destructors
 

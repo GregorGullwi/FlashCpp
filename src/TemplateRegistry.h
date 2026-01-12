@@ -1165,6 +1165,12 @@ public:
 			          ", is_value=", arg.is_value, ", dependent_name='", dep_name_view, "'");
 		}
 		
+		// Debug: log each template param type
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			FLASH_LOG(Templates, Debug, "  template_param[", i, "]: type_name=", template_params[i].type_name(), 
+			          ", is_TemplateParameterNode=", template_params[i].is<TemplateParameterNode>());
+		}
+		
 		TemplatePattern pattern;
 		pattern.template_params = template_params;
 		pattern.pattern_args = pattern_args;
