@@ -14711,20 +14711,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			return ParseResult::error("Expected type name after 'typename' keyword", typename_token);
 		}
 		
-		// Build the full qualified type name
-		std::string type_name_str(current_token_->value());
+		// Build the full qualified type name using StringBuilder
+		StringBuilder type_name_sb;
+		type_name_sb.append(current_token_->value());
 		Token first_type_token = *current_token_;
 		consume_token(); // consume first identifier
 		
 		// Parse :: and subsequent identifiers
 		while (current_token_.has_value() && current_token_->value() == "::") {
-			type_name_str += "::";
+			type_name_sb.append("::");
 			consume_token(); // consume '::'
 			
 			if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+				type_name_sb.reset(); // Must reset before early return
 				return ParseResult::error("Expected identifier after '::' in typename", typename_token);
 			}
-			type_name_str += current_token_->value();
+			type_name_sb.append(current_token_->value());
 			consume_token(); // consume identifier
 		}
 		
@@ -14740,6 +14742,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			while (current_token_.has_value() && current_token_->value() != "}") {
 				auto arg_result = parse_expression();
 				if (arg_result.is_error()) {
+					type_name_sb.reset(); // Must reset before early return
 					return arg_result;
 				}
 				if (auto arg = arg_result.node()) {
@@ -14749,11 +14752,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				if (current_token_.has_value() && current_token_->value() == ",") {
 					consume_token(); // consume ','
 				} else if (!current_token_.has_value() || current_token_->value() != "}") {
+					type_name_sb.reset(); // Must reset before early return
 					return ParseResult::error("Expected ',' or '}' in brace initializer", typename_token);
 				}
 			}
 			
 			if (!consume_punctuator("}")) {
+				type_name_sb.reset(); // Must reset before early return
 				return ParseResult::error("Expected '}' after brace initializer", typename_token);
 			}
 		} else if (current_token_.has_value() && current_token_->value() == "(") {
@@ -14764,6 +14769,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			while (current_token_.has_value() && current_token_->value() != ")") {
 				auto arg_result = parse_expression();
 				if (arg_result.is_error()) {
+					type_name_sb.reset(); // Must reset before early return
 					return arg_result;
 				}
 				if (auto arg = arg_result.node()) {
@@ -14773,20 +14779,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				if (current_token_.has_value() && current_token_->value() == ",") {
 					consume_token(); // consume ','
 				} else if (!current_token_.has_value() || current_token_->value() != ")") {
+					type_name_sb.reset(); // Must reset before early return
 					return ParseResult::error("Expected ',' or ')' in constructor call", typename_token);
 				}
 			}
 			
 			if (!consume_punctuator(")")) {
+				type_name_sb.reset(); // Must reset before early return
 				return ParseResult::error("Expected ')' after constructor arguments", typename_token);
 			}
 		} else {
+			type_name_sb.reset(); // Must reset before early return
 			return ParseResult::error("Expected '{' or '(' after typename type expression", typename_token);
 		}
 		
 		// Create a TypeSpecifierNode for the dependent type
 		// Store the full type name so it can be resolved during template instantiation
-		std::string_view interned_type_name = StringTable::getOrInternStringHandle(type_name_str).view();
+		std::string_view interned_type_name = StringTable::getOrInternStringHandle(type_name_sb.commit()).view();
 		Token type_token(Token::Type::Identifier, interned_type_name, 
 		                 first_type_token.line(), first_type_token.column(), first_type_token.file_index());
 		
