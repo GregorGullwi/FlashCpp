@@ -21732,18 +21732,7 @@ ParseResult Parser::parse_template_declaration() {
 		if (!is_class_template && !is_variable_template && peek_token().has_value()) {
 			auto var_recheck_pos = save_token_position();
 			
-			// Skip storage class specifiers
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				std::string_view kw = peek_token()->value();
-				if (kw == "constexpr" || kw == "inline" || kw == "static" || 
-				    kw == "const" || kw == "volatile" || kw == "extern") {
-					consume_token();
-				} else {
-					break;
-				}
-			}
-			
-			// Try to parse type specifier
+			// Try to parse type specifier (it handles skipping storage class specifiers internally)
 			auto var_type_result = parse_type_specifier();
 			if (!var_type_result.is_error()) {
 				// After type, expect identifier
