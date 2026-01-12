@@ -10,7 +10,7 @@ These files test FlashCpp's ability to compile and use various C++ standard libr
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Failed | Requires typename brace init as template arg |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | Successfully compiles! Function ref types added Jan 12, 2026 |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Complex template instantiation |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Virtual inheritance, locales |
@@ -140,7 +140,47 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 12, 2026 - Constexpr Function Call Evaluation in Deferred Base Classes)
+## Latest Investigation (January 12, 2026 - Function Reference/Pointer Types)
+
+### ✅ IMPLEMENTED: Function Reference and Pointer Types in Type Aliases and Template Arguments
+
+**Pattern Now Supported:** Function reference and pointer types used in type aliases and template arguments, enabling `<type_traits>` to compile completely:
+```cpp
+// Function reference types in type aliases
+using func_ref = int (&)();    // lvalue reference to function
+using func_rref = int (&&)();  // rvalue reference to function
+using func_ptr = int (*)();    // pointer to function
+
+// Function reference types in template arguments (key blocker for <type_traits>)
+template<typename T> T declval();
+template<typename _Xp, typename _Yp>
+using __cond_res = decltype(false ? declval<_Xp(&)()>()() : declval<_Yp(&)()>()());
+```
+
+**What Was Fixed:**
+1. ✅ **Function reference types in template arguments** - Modified `parse_explicit_template_arguments()` to recognize and parse `T(&)()`, `T(&&)()`, and `T(*)()` patterns
+2. ✅ **Function reference types in global type aliases** - Modified `parse_using_directive_or_declaration()` to handle function type syntax after the base type
+3. ✅ **Function reference types in member type aliases** - Modified `parse_member_type_alias()` with the same handling
+4. ✅ **Rvalue reference (`&&`) token handling in template alias declarations** - Fixed to handle both single `&&` token and two `&` tokens
+
+**Implementation:**
+- Added function type detection after base type parsing: checks for `(` followed by `&`, `&&`, or `*`, then `)`, then `(` for parameter list
+- Creates `FunctionSignature` with return type and parameter types
+- Properly sets reference qualifier for function references
+- Added handling in three key locations: template arguments, global type aliases, and member type aliases
+
+**Test Cases:**
+- ✅ `test_function_ref_type_ret42.cpp` - Function reference and pointer types in global type aliases
+- ✅ `test_std_type_traits.cpp` - Full `<type_traits>` header now compiles successfully!
+
+**Impact:**
+- ✅ `<type_traits>` header now **FULLY COMPILES** (~7 seconds)
+- The header was previously blocked at line 3834 with `declval<_Xp(&)()>()()` pattern
+- This was one of the most important blockers for standard library support
+
+---
+
+## Previous Investigation (January 12, 2026 - Constexpr Function Call Evaluation in Deferred Base Classes)
 
 ### ✅ FIXED: Compile-Time Evaluation of Constexpr Function Calls in Deferred Base Class Template Arguments
 
