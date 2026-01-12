@@ -695,6 +695,7 @@ public:  // Public methods for template instantiation
         void skip_gcc_attributes();                   // Skip GCC __attribute__((...)) specifications
         void skip_noexcept_specifier();               // Skip noexcept or noexcept(expr) specifier
         void skip_function_trailing_specifiers();     // Skip all trailing specifiers after function parameters
+        bool parse_constructor_exception_specifier(); // Parse noexcept or throw() and return true if noexcept
         void apply_trailing_reference_qualifiers(TypeSpecifierNode& type_spec);  // Apply & or && reference qualifiers to a type
         
         // Helper to parse static member functions (reduces code duplication)
