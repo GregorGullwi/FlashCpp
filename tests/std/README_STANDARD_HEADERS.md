@@ -140,7 +140,50 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 12, 2026 - throw() Exception Specifier Support)
+## Latest Investigation (January 12, 2026 - Member Template Alias Rvalue Reference Declarators)
+
+### ✅ IMPLEMENTED: Member Template Alias Rvalue Reference Declarators in Partial Specializations
+
+**Pattern Now Supported:** Member template aliases with rvalue reference (`&&`) declarators after `typename X::type`, particularly in partial specializations:
+```cpp
+template<typename _Tp>
+struct __xref {
+    template<typename _Up> 
+    using __type = typename __copy_cv<_Tp>::type;
+};
+
+// Partial specialization with && pattern argument and && in alias
+template<typename _Tp>
+struct __xref<_Tp&&> {
+    template<typename _Up> 
+    using __type = typename __copy_cv<_Tp>::type&&;  // ← NOW WORKS!
+};
+```
+
+**What Was Fixed:**
+- ✅ **`&&` as single token in member template aliases** - The parser now handles `&&` as a single token (in addition to two separate `&` tokens) when parsing reference declarators in `parse_member_template_alias()`
+- This pattern is used extensively in `<type_traits>` around line 3900 for `__xref` and `basic_common_reference` templates
+
+**Why This Matters:**
+- The `<type_traits>` header uses this pattern for `__xref` partial specializations
+- The `basic_common_reference` template requires this for proper reference handling
+- Without this fix, the parser would fail with "Expected ';' after member template alias declaration"
+
+**Implementation:**
+- Modified `parse_member_template_alias()` in `src/Parser.cpp` (around line 25017-25033)
+- Added check for `&&` as a single token alongside existing `&` handling
+- Mirrors the fix already present in `parse_typedef_declaration()` at line 3449
+
+**Test Cases:**
+- ✅ `tests/test_member_template_alias_rvalue_ref_ret0.cpp` - Compiles successfully
+
+**Impact:**
+- ✅ Unblocks parsing of `__xref` partial specializations in `<type_traits>`
+- Note: `<type_traits>` still has `std::bad_any_cast` crash around line 3900 which is a separate issue
+
+---
+
+## Previous Investigation (January 12, 2026 - throw() Exception Specifier Support)
 
 ### ✅ IMPLEMENTED: throw() Exception Specifier on Constructors/Destructors
 

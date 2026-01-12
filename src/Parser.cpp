@@ -25025,6 +25025,10 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		} else {
 			type_spec.set_lvalue_reference(true);  // lvalue reference
 		}
+	} else if (peek_token().has_value() && peek_token()->value() == "&&") {
+		// Handle && as a single token (rvalue reference)
+		consume_token(); // consume '&&'
+		type_spec.set_reference(true);  // true = rvalue reference
 	}
 
 	// Expect semicolon
