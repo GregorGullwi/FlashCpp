@@ -140,7 +140,45 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 12, 2026 - Dependent Function Calls as Template Arguments)
+## Latest Investigation (January 12, 2026 - Typename Brace Initialization in Expression Context)
+
+### ✅ IMPLEMENTED: `typename T::type{}` Constructor Calls in Expression Context
+
+**Pattern Now Supported:** The `typename Type::member{}` syntax for creating temporaries of dependent types is now parsed correctly:
+```cpp
+// A function that takes a type and returns bool
+template<typename Result>
+constexpr bool call_is_nt(typename Result::__invoke_type) {
+    return true;
+}
+
+// This pattern NOW PARSES CORRECTLY!
+template<typename Result>
+struct test : bool_constant<call_is_nt<Result>(typename Result::__invoke_type{})>
+{ };
+```
+
+**What Was Fixed:**
+1. ✅ **`typename` keyword handling in expression context** - The expression parser now recognizes `typename` as the start of a dependent type constructor call
+2. ✅ **Qualified dependent type name parsing** - Handles `typename T::type` and `typename T::nested::type` patterns
+3. ✅ **Brace initialization `{}` parsing** - Creates a `ConstructorCallNode` for `typename Type{}` patterns
+4. ✅ **Parenthesis initialization `()` parsing** - Also supports `typename Type(args)` patterns
+
+**Implementation:**
+- Added new handling at the start of `parse_primary_expression()` for the `typename` keyword
+- Parses the qualified type name (e.g., `Result::__invoke_type`)
+- Parses `{}` or `()` initializers with arguments
+- Creates a `ConstructorCallNode` with a `Type::UserDefined` type specifier containing the qualified name
+
+**Test Cases:**
+- ✅ `test_typename_brace_init_ret1.cpp` - Complex typename brace init as function argument (parses and compiles; returns 1 because deferred base class evaluation doesn't yet resolve `FunctionCallNode` expressions)
+
+**Known Limitation:**
+The deferred template base class evaluation doesn't yet correctly resolve `FunctionCallNode` expressions as template arguments at instantiation time. The pattern parses correctly but the runtime value isn't evaluated. This requires additional work on the template instantiation machinery.
+
+---
+
+## Previous Investigation (January 12, 2026 - Dependent Function Calls as Template Arguments)
 
 ### ✅ PARTIAL FIX: Template Function Calls as Non-Type Template Arguments
 
@@ -170,23 +208,6 @@ struct wrapper : bool_constant<test_func<T>()>
 
 **Test Cases:**
 - ✅ `test_simple_template_func_call_ret0.cpp` - Simple template function call as template argument
-
-**Still Not Working:**
-The more complex pattern with `typename` in the function argument still fails:
-```cpp
-// This pattern DOES NOT WORK YET
-template<typename Result>
-struct test : bool_constant<call_func<Result>(typename Result::type{})>
-{ };
-```
-
-**Root Cause:** The expression parser doesn't recognize `typename Type::member{}` as a valid expression. This is a constructor call using C++11 uniform initialization syntax (brace initialization `{}`) with a dependent type name, which requires special handling.
-
-**Next Steps to Fix:**
-1. Add handling in `parse_primary_expression` for `typename` keyword to recognize type-as-constructor patterns
-2. Parse `typename T::type` as a type specifier
-3. Parse `{}` (brace initialization) or `()` (parenthesis initialization) following the type as constructor call arguments
-4. Create a `ConstructorCallNode` with the dependent type
 
 ---
 

@@ -14698,6 +14698,106 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 {
 	std::optional<ASTNode> result;
 	
+	// Check for 'typename' keyword in expression context: typename T::type{} or typename T::type()
+	// This handles dependent type constructor calls used as function arguments
+	// Pattern: typename Result::__invoke_type{} creates a temporary of the dependent type
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "typename") {
+		Token typename_token = *current_token_;
+		consume_token(); // consume 'typename'
+		
+		// Parse the dependent type name: T::type or Result::__invoke_type
+		// This should be an identifier followed by :: and more identifiers
+		if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected type name after 'typename' keyword", typename_token);
+		}
+		
+		// Build the full qualified type name
+		std::string type_name_str(current_token_->value());
+		Token first_type_token = *current_token_;
+		consume_token(); // consume first identifier
+		
+		// Parse :: and subsequent identifiers
+		while (current_token_.has_value() && current_token_->value() == "::") {
+			type_name_str += "::";
+			consume_token(); // consume '::'
+			
+			if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after '::' in typename", typename_token);
+			}
+			type_name_str += current_token_->value();
+			consume_token(); // consume identifier
+		}
+		
+		// Now we should have either '{}' (brace init) or '()' (paren init)
+		ChunkedVector<ASTNode> args;
+		Token init_token = typename_token;
+		
+		if (current_token_.has_value() && current_token_->value() == "{") {
+			init_token = *current_token_;
+			consume_token(); // consume '{'
+			
+			// Parse brace initializer arguments
+			while (current_token_.has_value() && current_token_->value() != "}") {
+				auto arg_result = parse_expression();
+				if (arg_result.is_error()) {
+					return arg_result;
+				}
+				if (auto arg = arg_result.node()) {
+					args.push_back(*arg);
+				}
+				
+				if (current_token_.has_value() && current_token_->value() == ",") {
+					consume_token(); // consume ','
+				} else if (!current_token_.has_value() || current_token_->value() != "}") {
+					return ParseResult::error("Expected ',' or '}' in brace initializer", typename_token);
+				}
+			}
+			
+			if (!consume_punctuator("}")) {
+				return ParseResult::error("Expected '}' after brace initializer", typename_token);
+			}
+		} else if (current_token_.has_value() && current_token_->value() == "(") {
+			init_token = *current_token_;
+			consume_token(); // consume '('
+			
+			// Parse parenthesized arguments
+			while (current_token_.has_value() && current_token_->value() != ")") {
+				auto arg_result = parse_expression();
+				if (arg_result.is_error()) {
+					return arg_result;
+				}
+				if (auto arg = arg_result.node()) {
+					args.push_back(*arg);
+				}
+				
+				if (current_token_.has_value() && current_token_->value() == ",") {
+					consume_token(); // consume ','
+				} else if (!current_token_.has_value() || current_token_->value() != ")") {
+					return ParseResult::error("Expected ',' or ')' in constructor call", typename_token);
+				}
+			}
+			
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after constructor arguments", typename_token);
+			}
+		} else {
+			return ParseResult::error("Expected '{' or '(' after typename type expression", typename_token);
+		}
+		
+		// Create a TypeSpecifierNode for the dependent type
+		// Store the full type name so it can be resolved during template instantiation
+		std::string_view interned_type_name = StringTable::getOrInternStringHandle(type_name_str).view();
+		Token type_token(Token::Type::Identifier, interned_type_name, 
+		                 first_type_token.line(), first_type_token.column(), first_type_token.file_index());
+		
+		// Create a dependent/placeholder type (Type::UserDefined with special marker)
+		auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, type_token);
+		
+		// Create ConstructorCallNode with the dependent type
+		result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), init_token));
+		return ParseResult::success(*result);
+	}
+	
 	// Check for functional-style cast with keyword type names: bool(x), int(x), etc.
 	// This must come early because these are keywords, not identifiers
 	if (current_token_->type() == Token::Type::Keyword) {
