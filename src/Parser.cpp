@@ -4872,6 +4872,18 @@ ParseResult Parser::parse_struct_declaration()
 					}
 				}
 
+				// Parse throw() (old-style exception specification) - just skip it
+				// C++ grammar: constructor() throw() : initializer_list { body }
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+				    peek_token()->value() == "throw") {
+					consume_token(); // consume 'throw'
+					if (peek_token().has_value() && peek_token()->value() == "(") {
+						skip_balanced_parens(); // skip throw(...)
+					}
+					// treat throw() as noexcept(true) for our purposes
+					ctor_ref.set_noexcept(true);
+				}
+
 				// Check for member initializer list (: Base(args), member(value), ...)
 				// For delayed parsing, save the position and skip it
 				SaveHandle initializer_list_start;
@@ -22206,6 +22218,26 @@ ParseResult Parser::parse_template_declaration() {
 						// Register parameters in symbol table using helper (Phase 5)
 						register_parameters_in_scope(ctor_ref.parameter_nodes());
 						
+						// Parse noexcept specifier before initializer list
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+						    peek_token()->value() == "noexcept") {
+							consume_token(); // consume 'noexcept'
+							ctor_ref.set_noexcept(true);
+							if (peek_token().has_value() && peek_token()->value() == "(") {
+								skip_balanced_parens();
+							}
+						}
+
+						// Parse throw() (old-style exception specification) - just skip it
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+						    peek_token()->value() == "throw") {
+							consume_token(); // consume 'throw'
+							if (peek_token().has_value() && peek_token()->value() == "(") {
+								skip_balanced_parens();
+							}
+							ctor_ref.set_noexcept(true);
+						}
+						
 						// Parse member initializer list if present
 						if (peek_token().has_value() && peek_token()->value() == ":") {
 							consume_token();  // consume ':'
@@ -23073,6 +23105,26 @@ ParseResult Parser::parse_template_declaration() {
 						
 						// Register parameters in symbol table using helper (Phase 5)
 						register_parameters_in_scope(ctor_ref.parameter_nodes());
+						
+						// Parse noexcept specifier before initializer list
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+						    peek_token()->value() == "noexcept") {
+							consume_token(); // consume 'noexcept'
+							ctor_ref.set_noexcept(true);
+							if (peek_token().has_value() && peek_token()->value() == "(") {
+								skip_balanced_parens();
+							}
+						}
+
+						// Parse throw() (old-style exception specification) - just skip it
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+						    peek_token()->value() == "throw") {
+							consume_token(); // consume 'throw'
+							if (peek_token().has_value() && peek_token()->value() == "(") {
+								skip_balanced_parens();
+							}
+							ctor_ref.set_noexcept(true);
+						}
 						
 						// Parse member initializer list if present
 						if (peek_token().has_value() && peek_token()->value() == ":") {

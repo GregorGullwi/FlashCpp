@@ -140,7 +140,49 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 11, 2026 - Typedef Reference Declarators and Constructor/Destructor noexcept)
+## Latest Investigation (January 12, 2026 - throw() Exception Specifier Support)
+
+### ✅ IMPLEMENTED: throw() Exception Specifier on Constructors/Destructors
+
+**Pattern Now Supported:** The old-style `throw()` exception specifier (pre-C++17) used in standard library headers like `<new>` and `<exception>`:
+```cpp
+class bad_alloc {
+public:
+    bad_alloc() throw() { }                        // ← NOW WORKS!
+    ~bad_alloc() throw() { }                       // ← NOW WORKS!
+    virtual const char* what() const throw() { }   // ← Already worked (member functions)
+};
+```
+
+**What Was Fixed:**
+1. ✅ **Constructor throw() specifier** - Handled in 3 code paths:
+   - Regular struct constructor parsing
+   - Template full specialization constructor parsing
+   - Template partial specialization constructor parsing
+2. ✅ **Destructor throw() specifier** - Already handled via `parse_function_trailing_specifiers()`
+3. ✅ **Member function throw() specifier** - Already handled via `parse_function_trailing_specifiers()`
+
+**Why This Matters:**
+- The `<new>` header defines `bad_alloc` and `bad_array_new_length` with `throw()` specifiers
+- The `<exception>` header also uses this pattern extensively
+- Many pre-C++17 standard library implementations use `throw()` instead of `noexcept`
+- GCC's libstdc++ still uses `throw()` in many places for compatibility
+
+**Implementation:**
+- Modified constructor parsing in `parse_struct_declaration()` to check for `throw` keyword after parameter list
+- Added same handling in template full and partial specialization constructor parsing
+- Consumes `throw()` and sets constructor as noexcept (semantically equivalent)
+
+**Test Cases:**
+- ✅ `tests/test_throw_specifier_ret42.cpp` - Returns 42 ✅
+
+**Impact:**
+- ✅ `<new>` header now progresses past `bad_alloc` class parsing
+- Note: `<new>` still has other issues (function pointer typedefs: `typedef void (*new_handler)();`)
+
+---
+
+## Previous Investigation (January 11, 2026 - Typedef Reference Declarators and Constructor/Destructor noexcept)
 
 ### ✅ IMPLEMENTED: Typedef Reference Declarators
 
