@@ -10,7 +10,7 @@ These files test FlashCpp's ability to compile and use various C++ standard libr
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Failed | Requires conversion operators |
+| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Failed | Requires typename brace init as template arg |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Complex template instantiation |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Virtual inheritance, locales |
@@ -140,7 +140,57 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 12, 2026 - Member Function Templates in Partial Specializations)
+## Latest Investigation (January 12, 2026 - Dependent Function Calls as Template Arguments)
+
+### ✅ PARTIAL FIX: Template Function Calls as Non-Type Template Arguments
+
+**Pattern Now Supported (Simple Case):** Template function calls can now be used as non-type template arguments:
+```cpp
+template<bool B>
+struct bool_constant { static constexpr bool value = B; };
+
+template<typename T>
+constexpr bool test_func() { return true; }
+
+// This pattern NOW WORKS!
+template<typename T>
+struct wrapper : bool_constant<test_func<T>()>
+{ };
+```
+
+**What Was Fixed:**
+1. ✅ **FunctionCallNode preservation in expression parsing** - When parsing `func<T>()` as a template argument, expression parsing now creates a `FunctionCallNode` instead of just an `IdentifierNode`
+2. ✅ **Dependent function call AST creation** - For template-dependent function calls, the parser now creates a placeholder `FunctionCallNode` with template arguments, preserving the function call structure for later resolution
+3. ✅ **Template argument node capture** - Modified `parse_explicit_template_arguments` to capture AST nodes for dependent function calls
+
+**Implementation:**
+- Modified `parse_primary_expression()` to capture template argument AST nodes in a new `explicit_template_arg_nodes` vector
+- When `has_dependent_template_args` is true, creates a `FunctionCallNode` with a placeholder `DeclarationNode` instead of creating just an `IdentifierNode`
+- The `FunctionCallNode` stores the template argument nodes for later resolution during instantiation
+
+**Test Cases:**
+- ✅ `test_simple_template_func_call.cpp` - Simple template function call as template argument
+
+**Still Not Working:**
+The more complex pattern with `typename` in the function argument still fails:
+```cpp
+// This pattern DOES NOT WORK YET
+template<typename Result>
+struct test : bool_constant<call_func<Result>(typename Result::type{})>
+{ };
+```
+
+**Root Cause:** The expression parser doesn't recognize `typename Type::member{}` as a valid expression. This is a constructor call with brace initialization using a dependent type name, which requires special handling.
+
+**Next Steps to Fix:**
+1. Add handling in `parse_primary_expression` for `typename` keyword to recognize type-as-constructor patterns
+2. Parse `typename T::type` as a type specifier
+3. Parse `{}` or `()` following the type as constructor call arguments
+4. Create a `ConstructorCallNode` with the dependent type
+
+---
+
+## Previous Investigation (January 12, 2026 - Member Function Templates in Partial Specializations)
 
 ### ✅ FIXED: bad_any_cast Crash with Member Function Templates in Partial Specializations
 

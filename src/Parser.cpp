@@ -17699,6 +17699,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Check for explicit template arguments: identifier<type1, type2>(args)
 			// BUT: Don't attempt template argument parsing for regular variables (could be < comparison)
 			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
+			std::vector<ASTNode> explicit_template_arg_nodes;  // Store AST nodes for template arguments
 			bool should_try_template_args = true;  // Default: try template parsing
 			
 			// Only skip template argument parsing if we KNOW it's a regular variable
@@ -17716,7 +17717,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// If identifierType is null (not found), default to true (might be a template)
 			
 			if (should_try_template_args && peek_token().has_value() && peek_token()->value() == "<") {
-				explicit_template_args = parse_explicit_template_arguments();
+				explicit_template_args = parse_explicit_template_arguments(&explicit_template_arg_nodes);
 				// If parsing failed, it might be a less-than operator, so continue normally
 				
 				// After template arguments, check for :: to handle Template<T>::member syntax
@@ -18098,11 +18099,25 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										}
 									} else if (has_dependent_template_args) {
 										// Template arguments are dependent - this is a template-dependent expression
-										// Create a placeholder expression that will be resolved during template instantiation
-										// For now, just skip this - the expression will be re-parsed when the template is instantiated
-										FLASH_LOG(Templates, Debug, "Skipping template instantiation for dependent call to '", idenfifier_token.value(), "'");
-										// Create a placeholder with the identifier - this will be re-resolved during instantiation
-										result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+										// Create a FunctionCallNode with a placeholder declaration that will be resolved during template instantiation
+										// IMPORTANT: We must create a FunctionCallNode (not just IdentifierNode) to preserve the information
+										// that this is a function call with template arguments. This is needed for non-type template arguments
+										// like: bool_constant<test_func<T>()> where the function call result is used as a constant expression.
+										FLASH_LOG(Templates, Debug, "Creating dependent FunctionCallNode for call to '", idenfifier_token.value(), "'");
+										
+										// Create a placeholder declaration for the dependent function call
+										auto type_node = emplace_node<TypeSpecifierNode>(Type::Bool, TypeQualifier::None, 1, idenfifier_token);
+										auto placeholder_decl = emplace_node<DeclarationNode>(type_node, idenfifier_token);
+										const DeclarationNode& decl_ref = placeholder_decl.as<DeclarationNode>();
+										
+										// Create FunctionCallNode with the placeholder
+										result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(decl_ref), std::move(args), idenfifier_token));
+										
+										// Store the template arguments in the FunctionCallNode for later resolution
+										FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
+										if (!explicit_template_arg_nodes.empty()) {
+											func_call.set_template_arguments(std::move(explicit_template_arg_nodes));
+										}
 									} else {
 										return ParseResult::error("No matching template for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 									}
@@ -26184,6 +26199,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
 				bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) || 
 				                            std::holds_alternative<TemplateParameterReferenceNode>(expr);
+				bool is_function_call_expr = std::holds_alternative<FunctionCallNode>(expr);
 				bool followed_by_template_args = peek_token().has_value() && peek_token()->value() == "<";
 				bool followed_by_array_declarator = peek_token().has_value() && peek_token()->value() == "[";
 				bool followed_by_pack_expansion = peek_token().has_value() && peek_token()->value() == "...";
@@ -26225,15 +26241,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							}
 						}
 					} else if (std::holds_alternative<FunctionCallNode>(expr)) {
-						// FunctionCallNode can represent a qualified template instantiation like ns::Inner<int>
-						// When we parsed ns::Inner<int>, the template was instantiated and registered.
-						// We need to restore the token position and let type parsing handle it properly.
-						const auto& fn_call = std::get<FunctionCallNode>(expr);
-						if (fn_call.has_template_arguments()) {
-							// This FunctionCallNode was created from parsing a qualified identifier with template args
-							is_concrete_type = true;
-							FLASH_LOG(Templates, Debug, "FunctionCallNode has template arguments - falling through to type parsing");
-						}
+						// FunctionCallNode represents a function call expression like test_func<T>()
+						// This is NOT a type - it's a non-type template argument (the result of calling a function)
+						// Previously this code incorrectly treated FunctionCallNode with template arguments as a type,
+						// but that was wrong. A function call with template arguments (e.g., test_func<T>()) is still
+						// a function call, not a type. The function returns a value, and that value is used as
+						// the non-type template argument.
+						// DO NOT set is_concrete_type = true here - let it be accepted as a dependent expression.
+						FLASH_LOG(Templates, Debug, "FunctionCallNode - treating as function call expression, not a type");
 					} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 						// QualifiedIdentifierNode can represent a namespace-qualified type like ns::Inner
 						// or a template instantiation like ns::Inner<int> (when the template has already been
