@@ -25,5 +25,5 @@ int main() {
     if (val1 != 42) return 1;
     if (val2 != 42) return 2;
     
-    return 42;  // Return 42 to indicate success
+    return 0;  // Return 0 to indicate success
 }
