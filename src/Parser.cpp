@@ -9132,6 +9132,10 @@ ParseResult Parser::parse_type_specifier()
 					
 					// Fill in defaults for missing parameters
 					for (size_t i = filled_template_args.size(); i < template_params.size(); ++i) {
+						if (!template_params[i].is<TemplateParameterNode>()) {
+							FLASH_LOG_FORMAT(Templates, Error, "Template parameter {} is not a TemplateParameterNode", i);
+							continue;
+						}
 						const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
 						if (param.has_default() && param.kind() == TemplateParameterKind::Type) {
 							const ASTNode& default_node = param.default_value();
@@ -9535,6 +9539,10 @@ ParseResult Parser::parse_type_specifier()
 				// Helper lambda to build instantiated template name suffix
 				std::vector<TemplateTypeArg> filled_template_args;
 				for (size_t i = 0; i < template_params.size(); ++i) {
+					if (!template_params[i].is<TemplateParameterNode>()) {
+						FLASH_LOG_FORMAT(Templates, Error, "Template parameter {} is not a TemplateParameterNode", i);
+						continue;
+					}
 					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
 					if (param.has_default() && param.kind() == TemplateParameterKind::Type) {
 						const ASTNode& default_node = param.default_value();
@@ -23455,20 +23463,41 @@ ParseResult Parser::parse_template_declaration() {
 						member_func_decl.is_virtual
 					);
 				} else {
-					const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
-					const DeclarationNode& decl = func_decl.decl_node();
-					
-					// Phase 7B: Intern function name and use StringHandle overload
-					StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
-					struct_info->addMemberFunction(
-						func_name_handle,
-						member_func_decl.function_declaration,
-						member_func_decl.access,
-						member_func_decl.is_virtual,
-						member_func_decl.is_pure_virtual,
-						member_func_decl.is_override,
-						member_func_decl.is_final
-					);
+					// Handle both regular functions and member function templates
+					if (member_func_decl.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+						// Member function template - get the inner function declaration
+						const TemplateFunctionDeclarationNode& template_decl = member_func_decl.function_declaration.as<TemplateFunctionDeclarationNode>();
+						const FunctionDeclarationNode& func_decl = template_decl.function_declaration().as<FunctionDeclarationNode>();
+						const DeclarationNode& decl = func_decl.decl_node();
+						
+						// Phase 7B: Intern function name and use StringHandle overload
+						StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+						struct_info->addMemberFunction(
+							func_name_handle,
+							member_func_decl.function_declaration,
+							member_func_decl.access,
+							member_func_decl.is_virtual,
+							member_func_decl.is_pure_virtual,
+							member_func_decl.is_override,
+							member_func_decl.is_final
+						);
+					} else {
+						// Regular member function
+						const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
+						const DeclarationNode& decl = func_decl.decl_node();
+						
+						// Phase 7B: Intern function name and use StringHandle overload
+						StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+						struct_info->addMemberFunction(
+							func_name_handle,
+							member_func_decl.function_declaration,
+							member_func_decl.access,
+							member_func_decl.is_virtual,
+							member_func_decl.is_pure_virtual,
+							member_func_decl.is_override,
+							member_func_decl.is_final
+						);
+					}
 				}
 			}
 			
@@ -26774,6 +26803,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// Build template argument list
 	std::vector<TemplateArgument> template_args;
 	for (size_t i = 0; i < template_params.size(); ++i) {
+		if (!template_params[i].is<TemplateParameterNode>()) {
+			FLASH_LOG_FORMAT(Templates, Error, "Template parameter {} is not a TemplateParameterNode (type: {})", i, template_params[i].type_name());
+			continue;
+		}
 		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
 		if (param.kind() == TemplateParameterKind::Template) {
 			// Template template parameter - the explicit_types[i] should be a template name

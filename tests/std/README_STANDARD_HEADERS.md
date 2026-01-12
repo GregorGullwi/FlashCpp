@@ -140,7 +140,55 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 12, 2026 - Member Template Alias Rvalue Reference Declarators)
+## Latest Investigation (January 12, 2026 - Member Function Templates in Partial Specializations)
+
+### ✅ FIXED: bad_any_cast Crash with Member Function Templates in Partial Specializations
+
+**Bug:** FlashCpp crashed with `std::bad_any_cast` when parsing member function templates inside partial specializations:
+```cpp
+template<typename _Result, typename _Ret>
+struct __is_invocable_impl<_Result, _Ret, false, void_t<typename _Result::type>>
+{
+    template<typename _Tp>
+    static void _S_conv(_Tp) noexcept;  // ← CRASHED HERE (before fix)
+};
+```
+
+**Root Cause:**
+- When iterating over member functions to finalize the struct layout, the code assumed all `function_declaration` nodes were `FunctionDeclarationNode`
+- But member function templates are stored as `TemplateFunctionDeclarationNode`
+- Line 23466 in `parse_template_declaration()` called `.as<FunctionDeclarationNode>()` without checking the actual type first
+
+**What Was Fixed:**
+- Modified member function iteration in `parse_template_declaration()` (line 23466) to check for `TemplateFunctionDeclarationNode` before `FunctionDeclarationNode`
+- For member function templates, the code now extracts the inner `FunctionDeclarationNode` from the template wrapper
+
+**Implementation:**
+```cpp
+if (member_func_decl.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+    // Extract inner function declaration from template wrapper
+    const TemplateFunctionDeclarationNode& template_decl = ...;
+    const FunctionDeclarationNode& func_decl = template_decl.function_declaration().as<FunctionDeclarationNode>();
+    // ...
+} else {
+    // Regular member function
+    const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
+    // ...
+}
+```
+
+**Test Cases:**
+- ✅ `tests/test_member_function_template_in_partial_spec_ret0.cpp` - Compiles successfully
+- ✅ All 891 existing tests pass
+
+**Impact:**
+- ✅ `<type_traits>` no longer crashes during compilation
+- ✅ Patterns like `__is_invocable_impl` from libstdc++ now parse correctly
+- Note: `<type_traits>` still has other issues but no longer crashes with bad_any_cast
+
+---
+
+## Previous Investigation (January 12, 2026 - Member Template Alias Rvalue Reference Declarators)
 
 ### ✅ IMPLEMENTED: Member Template Alias Rvalue Reference Declarators in Partial Specializations
 
