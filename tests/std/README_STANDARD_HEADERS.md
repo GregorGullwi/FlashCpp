@@ -184,7 +184,7 @@ if (member_func_decl.function_declaration.is<TemplateFunctionDeclarationNode>())
 **Impact:**
 - ✅ `<type_traits>` no longer crashes during compilation
 - ✅ Patterns like `__is_invocable_impl` from libstdc++ now parse correctly
-- Note: `<type_traits>` still has other issues but no longer crashes with bad_any_cast
+- Note: `<type_traits>` header still exits with code 1 (no error message displayed) - likely hits other unsupported patterns during compilation. Further investigation needed to identify remaining blockers.
 
 ---
 
