@@ -14,20 +14,20 @@ These files test FlashCpp's ability to compile and use various C++ standard libr
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Failed | Blocked by function pointer typedef `void (*handler)()` in `<new>` |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Virtual inheritance, locales |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Failed | Variadic templates, SFINAE - check error |
-| `<vector>` | `test_std_vector.cpp` | ❌ Failed | Allocators, exceptions - check error |
-| `<array>` | `test_std_array.cpp` | ❌ Failed | constexpr support - check error |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Failed | Iterators, concepts - check error |
-| `<utility>` | `test_std_utility.cpp` | ❌ Failed | std::pair, std::move - check error |
+| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Variadic templates, times out during compilation |
+| `<vector>` | `test_std_vector.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
+| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Times out during compilation |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
+| `<utility>` | `test_std_utility.cpp` | ❌ Failed | Blocked at `move.h:168` - "Expected type specifier" |
 | `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Smart pointers, allocators |
 | `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | std::function, type erasure |
-| `<map>` | `test_std_map.cpp` | ❌ Failed | Red-black trees, allocators - check error |
-| `<set>` | `test_std_set.cpp` | ❌ Failed | Red-black trees, allocators - check error |
-| `<optional>` | `test_std_optional.cpp` | ❌ Failed | Union templates - check error |
-| `<variant>` | `test_std_variant.cpp` | ❌ Failed | Advanced union handling - check error |
+| `<map>` | `test_std_map.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
+| `<set>` | `test_std_set.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
+| `<optional>` | `test_std_optional.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
+| `<variant>` | `test_std_variant.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
 | `<any>` | `test_std_any.cpp` | ❌ Failed | Type erasure, RTTI |
-| `<span>` | `test_std_span.cpp` | ❌ Failed | constexpr support - check error |
-| `<concepts>` | `test_std_concepts.cpp` | ❌ Failed | Requires clauses - check error |
+| `<span>` | `test_std_span.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
+| `<concepts>` | `test_std_concepts.cpp` | ❌ Failed | Blocked at `concepts:130` - compound requirement in requires |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Concepts, views |
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | Successfully compiles in ~1.8s! |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Ratio templates, duration |
