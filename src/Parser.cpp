@@ -7999,6 +7999,10 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					alias_type_info.pointer_depth_ = type_spec.pointer_depth();
 					alias_type_info.is_reference_ = type_spec.is_reference();
 					alias_type_info.is_rvalue_reference_ = type_spec.is_rvalue_reference();
+					// Copy function signature for function pointer/reference type aliases
+					if (type_spec.has_function_signature()) {
+						alias_type_info.function_signature_ = type_spec.function_signature();
+					}
 					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 
 					// Return success (no AST node needed for type aliases)
@@ -9934,6 +9938,10 @@ ParseResult Parser::parse_type_specifier()
 			user_type_index = type_it->second->type_index_;
 			// If this is a typedef (has a stored type and size, but is not a struct/enum), use the underlying type
 			bool is_typedef = (type_it->second->type_size_ > 0 && !type_it->second->isStruct() && !type_it->second->isEnum());
+			// Also consider function pointer/reference type aliases as typedefs (they may have size 0 but have function_signature)
+			if (!is_typedef && type_it->second->function_signature_.has_value()) {
+				is_typedef = true;
+			}
 			if (is_typedef) {
 				resolved_type = type_it->second->type_;
 				type_size = type_it->second->type_size_;
@@ -9950,6 +9958,10 @@ ParseResult Parser::parse_type_specifier()
 					} else {
 						type_spec_node.as<TypeSpecifierNode>().set_lvalue_reference(true);  // lvalue reference
 					}
+				}
+				// Copy function signature for function pointer/reference type aliases
+				if (type_it->second->function_signature_.has_value()) {
+					type_spec_node.as<TypeSpecifierNode>().set_function_signature(type_it->second->function_signature_.value());
 				}
 				return ParseResult::success(type_spec_node);
 			} else if (user_type_index < gTypeInfo.size()) {
@@ -18098,6 +18110,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					FLASH_LOG_FORMAT(Parser, Debug, "@@@ type_node.type()={} for '{}'", static_cast<int>(type_node.type()), idenfifier_token.value());
 					// Check for function pointers or function references (both have function_signature)
 					is_function_pointer = type_node.is_function_pointer() || type_node.has_function_signature();
+					FLASH_LOG_FORMAT(Parser, Debug, "@@@ is_function_pointer={} (is_fp={}, has_sig={}) for '{}'", 
+						is_function_pointer, type_node.is_function_pointer(), type_node.has_function_signature(), idenfifier_token.value());
 
 					// Check if this is a struct with operator()
 					// Note: Lambda variables have Type::Auto (from auto lambda = [...]), not Type::Struct
@@ -18280,6 +18294,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						return ParseResult::error("Invalid function pointer declaration", idenfifier_token);
 					}
 					result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), idenfifier_token));
+					
+					// Mark this as an indirect call (function pointer/reference)
+					std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_indirect_call(true);
 					
 					// Copy mangled name if available
 					if (identifierType->is<FunctionDeclarationNode>()) {

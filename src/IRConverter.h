@@ -6508,13 +6508,32 @@ private:
 			}
 			
 			// Generate call instruction
-			std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
-			textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
-			
-			// Add relocation for function name (Phase 4: Use helper)
-			StringHandle func_name_handle = call_op.getFunctionName();
-			std::string mangled_name(StringTable::getStringView(func_name_handle));
-			writer.add_relocation(textSectionData.size() - 4, mangled_name);
+			if (call_op.is_indirect_call) {
+				// Indirect call: the function_name is actually the variable name holding the function pointer
+				// Load the function pointer into RAX, then call through it
+				StringHandle func_ptr_name = call_op.getFunctionName();
+				int func_ptr_offset = variable_scopes.back().variables[func_ptr_name].offset;
+				
+				// Load function pointer into RAX
+				emitMovFromFrame(X64Register::RAX, func_ptr_offset);
+				
+				// CALL RAX: FF D0 (or FF /2 for call r/m64)
+				textSectionData.push_back(0xFF);
+				textSectionData.push_back(0xD0);  // ModR/M for CALL RAX
+				
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Generated indirect call through function pointer at offset {}",
+					func_ptr_offset);
+			} else {
+				// Direct call: E8 + 32-bit relative offset
+				std::array<uint8_t, 5> callInst = { 0xE8, 0, 0, 0, 0 };
+				textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
+				
+				// Add relocation for function name (Phase 4: Use helper)
+				StringHandle func_name_handle = call_op.getFunctionName();
+				std::string mangled_name(StringTable::getStringView(func_name_handle));
+				writer.add_relocation(textSectionData.size() - 4, mangled_name);
+			}
 			
 			// Invalidate caller-saved registers (function calls clobber them)
 			regAlloc.invalidateCallerSavedRegisters();
