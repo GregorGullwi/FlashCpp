@@ -18096,7 +18096,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					FLASH_LOG_FORMAT(Parser, Debug, "@@@ decl exists for '{}'", idenfifier_token.value());
 					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
 					FLASH_LOG_FORMAT(Parser, Debug, "@@@ type_node.type()={} for '{}'", static_cast<int>(type_node.type()), idenfifier_token.value());
-					is_function_pointer = type_node.is_function_pointer();
+					// Check for function pointers or function references (both have function_signature)
+					is_function_pointer = type_node.is_function_pointer() || type_node.has_function_signature();
 
 					// Check if this is a struct with operator()
 					// Note: Lambda variables have Type::Auto (from auto lambda = [...]), not Type::Struct
