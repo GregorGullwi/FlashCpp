@@ -180,12 +180,12 @@ struct test : bool_constant<call_func<Result>(typename Result::type{})>
 { };
 ```
 
-**Root Cause:** The expression parser doesn't recognize `typename Type::member{}` as a valid expression. This is a constructor call with brace initialization using a dependent type name, which requires special handling.
+**Root Cause:** The expression parser doesn't recognize `typename Type::member{}` as a valid expression. This is a constructor call using C++11 uniform initialization syntax (brace initialization `{}`) with a dependent type name, which requires special handling.
 
 **Next Steps to Fix:**
 1. Add handling in `parse_primary_expression` for `typename` keyword to recognize type-as-constructor patterns
 2. Parse `typename T::type` as a type specifier
-3. Parse `{}` or `()` following the type as constructor call arguments
+3. Parse `{}` (brace initialization) or `()` (parenthesis initialization) following the type as constructor call arguments
 4. Create a `ConstructorCallNode` with the dependent type
 
 ---
