@@ -172,13 +172,13 @@ int main() {
 
 **What Was Fixed:**
 1. ✅ **Namespace-qualified variable template registration** - Variable templates in namespaces are now registered with both simple names (`is_reference_v`) and qualified names (`std::is_reference_v`)
-2. ✅ **Variable template lookup in qualified identifier parsing** - When parsing `ns::template<args>`, the parser now checks for variable templates before class templates
+2. ✅ **Variable template lookup in qualified identifier parsing** - When parsing `ns::name<args>`, the parser now checks for variable templates before class templates
 3. ✅ **Partial specialization pattern matching** - Variable template partial specializations (e.g., `is_reference_v<T&>`, `is_reference_v<T&&>`) are now correctly matched based on template argument characteristics
 4. ✅ **Reference qualifier detection in template arguments** - When parsing template arguments like `<int&>`, the parser now correctly recognizes `&` and `&&` as reference modifiers (previously interpreted as binary operators)
 5. ✅ **Pointer modifier detection in template arguments** - Similarly, `*` is now recognized as a pointer modifier when following an identifier
 
 **Implementation:**
-- Modified `parse_explicit_template_arguments()` to detect when a simple identifier is followed by `&`, `&&`, or `*` and fall through to type parsing instead of accepting it as an expression
+- Modified `parse_explicit_template_arguments()` to detect when a simple identifier is followed by `&`, `&&`, or `*` and treat the identifier and modifier as a type specifier (e.g., `int&`) instead of parsing the modifier as a binary operator
 - Added variable template lookup in `parse_primary_expression()` for qualified identifiers with template arguments
 - Modified `try_instantiate_variable_template()` to check partial specialization patterns based on `is_reference`, `is_rvalue_reference`, and `pointer_depth` properties
 - Fixed symbol table registration to use simple names (without `::`) for proper lookup during code generation
