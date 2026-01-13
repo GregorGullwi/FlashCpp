@@ -47,13 +47,25 @@ cd tests/std
 
 ## Current Blockers
 
-### 1. `<utility>` - Variable Template Brace Initialization
+### 1. `<utility>` - Template Friend Declarations
 
-**Location:** `c++config.h` - pattern `inline constexpr in_place_type_t<_Tp> in_place_type{};`
+**Location:** `bits/stl_pair.h` - pattern `template<typename _T1, typename _T2> friend struct pair;`
 
-The parser expects a function parameter list `()` after a variable template declaration but encounters brace initialization `{}` instead. The fix requires supporting brace-initialized variable templates.
+Template friend declarations are not fully supported. The parser fails when parsing a friend declaration of a class template inside another template class.
 
-**Previous blocker resolved:** The `enable_if<__is_swappable<_Tp>::value>::type` pattern in `stl_pair.h` now works correctly. Library type traits like `__is_swappable<T>` (which use template syntax `<>`) are now properly distinguished from compiler intrinsics like `__is_void(T)` (which use function call syntax `()`).
+**Example pattern:**
+```cpp
+template<typename _T1, typename _T2>
+struct pair {
+    template<typename _U1, typename _U2> friend struct pair;  // Template friend declaration
+};
+```
+
+**Previous blockers resolved (January 13, 2026):**
+- Variable template brace initialization: Pattern `inline constexpr in_place_type_t<_Tp> in_place_type{};` now works
+- C++17 nested namespaces: Pattern `namespace A::B::C { }` now works
+- C++20 inline nested namespaces: Pattern `namespace A::inline B { }` now works
+- `const typename` in type specifiers: Pattern `constexpr const typename T::type` now works
 
 ### 2. Template Instantiation Performance
 
@@ -98,6 +110,7 @@ The following features have been implemented to support standard headers:
 - Conversion operators (`operator T()`)
 - Function pointer typedefs
 - Variable templates with partial specializations
+- Variable templates with brace initialization (`constexpr Type<T> name{};`)
 - Function reference/pointer types in template arguments
 
 **Templates:**
@@ -106,7 +119,9 @@ The following features have been implemented to support standard headers:
 - Member template requires clauses
 - Template function `= delete`/`= default`
 
-**C++20 Concepts:**
+**C++17/C++20 Features:**
+- C++17 nested namespace declarations (`namespace A::B::C { }`)
+- C++20 inline nested namespace declarations (`namespace A::inline B { }`)
 - Compound requirement noexcept specifier
 - Template parameter brace initialization
 - Globally qualified `::new`/`::delete`
@@ -118,14 +133,45 @@ The following features have been implemented to support standard headers:
 
 ## Recent Changes
 
+### 2026-01-13: Multiple Parsing Improvements
+
+**Fixed:** Four parsing issues that were blocking `<utility>` header progress:
+
+#### 1. Variable Template Brace Initialization
+
+- Pattern: `template<typename T> inline constexpr Type<T> name{};`
+- Previously: Parser expected `()` after variable template name, failed on `{}`
+- Now: Both `= value` and `{}` initialization are supported
+- **Test case:** `tests/test_var_template_brace_init_ret0.cpp`
+
+#### 2. C++17 Nested Namespace Declarations
+
+- Pattern: `namespace A::B::C { ... }`
+- Previously: Parser expected `{` immediately after first namespace name
+- Now: Multiple namespace names separated by `::` are supported
+- **Test case:** `tests/test_nested_namespace_ret42.cpp`
+
+#### 3. C++20 Inline Nested Namespace Declarations
+
+- Pattern: `namespace A::inline B { ... }`
+- Previously: Not supported
+- Now: The `inline` keyword makes B's members visible in A without B:: prefix
+- **Test case:** `tests/test_nested_namespace_ret42.cpp` (includes inline case)
+
+#### 4. `const typename` in Type Specifiers
+
+- Pattern: `constexpr const typename tuple_element<...>::type&`
+- Previously: Parser didn't recognize `typename` after `const`
+- Now: `typename` is recognized after cv-qualifiers
+
+**Progress:** `<utility>` parsing now advances to `stl_pair.h` template friend declarations.
+
 ### 2026-01-13: Library Type Traits vs Compiler Intrinsics
 
 **Fixed:** Identifiers starting with `__is_` or `__has_` followed by `<` are now correctly treated as library type traits (template classes) rather than compiler intrinsics.
 
 - `__is_swappable<T>` → Treated as template class (library type trait)
 - `__is_void(T)` → Treated as compiler intrinsic
-
-This fix advances `<utility>` parsing past the `stl_pair.h` swap function declarations. The new blocker is variable template brace initialization in `c++config.h`.
 
 ## See Also
 
