@@ -82,6 +82,7 @@ The main features preventing standard header compilation:
 8. **Operator new/delete at global scope** - ✅ Implemented (Jan 13, 2026)
 9. **Template function = delete/default** - ✅ Implemented (Jan 13, 2026)
 10. **Complex noexcept expressions with dependent templates** - ⚠️ Not yet implemented
+11. **Namespace-qualified variable templates with partial specializations** - ✅ Implemented (Jan 13, 2026)
 
 ## Test File Characteristics
 
@@ -144,7 +145,55 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 12, 2026 - Named Anonymous Unions in Typedef & Direct Initialization)
+## Latest Investigation (January 13, 2026 - Namespace-Qualified Variable Templates with Partial Specializations)
+
+### ✅ IMPLEMENTED: Namespace-Qualified Variable Template Support
+
+**Pattern Now Supported:** Variable templates accessed with namespace qualification and partial specializations for reference/pointer types:
+```cpp
+namespace std {
+    template<typename T>
+    inline constexpr bool is_reference_v = false;
+
+    template<typename T>
+    inline constexpr bool is_reference_v<T&> = true;
+
+    template<typename T>
+    inline constexpr bool is_reference_v<T&&> = true;
+}
+
+int main() {
+    bool is_int_ref = std::is_reference_v<int>;      // false
+    bool is_ref = std::is_reference_v<int&>;         // true - uses partial specialization
+    bool is_rref = std::is_reference_v<int&&>;       // true - uses partial specialization
+    return (!is_int_ref && is_ref && is_rref) ? 0 : 1;
+}
+```
+
+**What Was Fixed:**
+1. ✅ **Namespace-qualified variable template registration** - Variable templates in namespaces are now registered with both simple names (`is_reference_v`) and qualified names (`std::is_reference_v`)
+2. ✅ **Variable template lookup in qualified identifier parsing** - When parsing `ns::name<args>`, the parser now checks for variable templates before class templates
+3. ✅ **Partial specialization pattern matching** - Variable template partial specializations (e.g., `is_reference_v<T&>`, `is_reference_v<T&&>`) are now correctly matched based on template argument characteristics
+4. ✅ **Reference qualifier detection in template arguments** - When parsing template arguments like `<int&>`, the parser now correctly recognizes `&` and `&&` as reference modifiers (previously interpreted as binary operators)
+5. ✅ **Pointer modifier detection in template arguments** - Similarly, `*` is now recognized as a pointer modifier when following an identifier
+
+**Implementation:**
+- Modified `parse_explicit_template_arguments()` to detect when a simple identifier is followed by `&`, `&&`, or `*` and treat the identifier and modifier as a type specifier (e.g., `int&`) instead of parsing the modifier as a binary operator
+- Added variable template lookup in `parse_primary_expression()` for qualified identifiers with template arguments
+- Modified `try_instantiate_variable_template()` to check partial specialization patterns based on `is_reference`, `is_rvalue_reference`, and `pointer_depth` properties
+- Fixed symbol table registration to use simple names (without `::`) for proper lookup during code generation
+
+**Test Cases:**
+- ✅ All 902 existing tests pass
+- Variable template with namespace qualification and partial specializations works correctly
+
+**Impact:**
+- ✅ Variable templates like `std::is_reference_v<T>`, `std::is_pointer_v<T>`, etc. now work correctly with namespace qualification
+- This is a key building block for `<type_traits>` and other standard library headers
+
+---
+
+## Previous Investigation (January 12, 2026 - Named Anonymous Unions in Typedef & Direct Initialization)
 
 ### ✅ IMPLEMENTED: Named Anonymous Unions in Typedef Struct Bodies
 
