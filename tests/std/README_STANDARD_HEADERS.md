@@ -9,7 +9,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | - |
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | - |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | - |
-| `<utility>` | `test_std_utility.cpp` | ❌ Failed | `c++config.h` - variable template brace initialization |
+| `<utility>` | `test_std_utility.cpp` | ❌ Failed | `stl_pair.h` - member template alias with complex expressions |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template instantiation volume |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template instantiation volume |
@@ -47,21 +47,25 @@ cd tests/std
 
 ## Current Blockers
 
-### 1. `<utility>` - Template Friend Declarations
+### 1. `<utility>` - Member Template Alias with Complex Expressions
 
-**Location:** `bits/stl_pair.h` - pattern `template<typename _T1, typename _T2> friend struct pair;`
+**Location:** `bits/stl_pair.h:767` - member template alias with boolean expression arguments
 
-Template friend declarations are not fully supported. The parser fails when parsing a friend declaration of a class template inside another template class.
+The parser cannot handle member template aliases where the template arguments contain complex boolean expressions with the `||` operator.
 
 **Example pattern:**
 ```cpp
 template<typename _T1, typename _T2>
 struct pair {
-    template<typename _U1, typename _U2> friend struct pair;  // Template friend declaration
+    template <typename _U1, typename _U2>
+    using _PCCFP = _PCC<!is_same<_T1, _U1>::value
+                        || !is_same<_T2, _U2>::value,
+                        _T1, _T2>;
 };
 ```
 
 **Previous blockers resolved (January 13, 2026):**
+- Template friend declarations: Pattern `template<typename _U1, typename _U2> friend struct pair;` now works
 - Variable template brace initialization: Pattern `inline constexpr in_place_type_t<_Tp> in_place_type{};` now works
 - C++17 nested namespaces: Pattern `namespace A::B::C { }` now works
 - C++20 inline nested namespaces: Pattern `namespace A::inline B { }` now works
@@ -118,6 +122,7 @@ The following features have been implemented to support standard headers:
 - Namespace-qualified variable templates
 - Member template requires clauses
 - Template function `= delete`/`= default`
+- Template friend declarations (`template<typename T1, typename T2> friend struct pair;`)
 
 **C++17/C++20 Features:**
 - C++17 nested namespace declarations (`namespace A::B::C { }`)
@@ -132,6 +137,17 @@ The following features have been implemented to support standard headers:
 - Global scope `operator new`/`operator delete`
 
 ## Recent Changes
+
+### 2026-01-13: Template Friend Declarations
+
+**Fixed:** Template friend declarations inside template classes are now supported.
+
+- Pattern: `template<typename T1, typename T2> friend struct pair;`
+- Previously: Parser failed with "Expected identifier token" when encountering `friend` after template parameters
+- Now: Template friend declarations are properly detected and parsed
+- **Test case:** `tests/test_template_friend_decl_ret0.cpp`
+
+**Progress:** `<utility>` parsing now advances past template friend declarations to member template alias parsing at line 765.
 
 ### 2026-01-13: Multiple Parsing Improvements
 
@@ -164,7 +180,7 @@ The following features have been implemented to support standard headers:
 - Previously: Parser didn't recognize `typename` after `const`
 - Now: `typename` is recognized after cv-qualifiers
 
-**Progress:** `<utility>` parsing now advances to `stl_pair.h` template friend declarations.
+**Progress:** `<utility>` parsing advanced past variable template brace initialization and nested namespace issues.
 
 ### 2026-01-13: Library Type Traits vs Compiler Intrinsics
 

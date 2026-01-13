@@ -546,6 +546,7 @@ private:
         ParseResult parse_typedef_declaration(); // Add typedef declaration parser
         ParseResult parse_static_assert();       // NEW: Parse static_assert declarations
         ParseResult parse_friend_declaration();  // NEW: Parse friend declarations
+        ParseResult parse_template_friend_declaration(StructDeclarationNode& struct_node);  // NEW: Parse template friend declarations
         ParseResult parse_template_declaration();  // NEW: Parse template declarations
         ParseResult parse_concept_declaration();   // NEW: Parse C++20 concept declarations
        ParseResult parse_requires_expression();   // NEW: Parse C++20 requires expressions

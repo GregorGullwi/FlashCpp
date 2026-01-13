@@ -226,7 +226,8 @@ enum class AccessSpecifier {
 enum class FriendKind {
 	Function,      // friend void func();
 	Class,         // friend class ClassName;
-	MemberFunction // friend void Class::func();
+	MemberFunction, // friend void Class::func();
+	TemplateClass  // template<typename T1, typename T2> friend struct pair;
 };
 
 // Base class specifier for inheritance
