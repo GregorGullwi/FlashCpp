@@ -30271,11 +30271,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			result = 1;  // Start with true
 			for (int64_t v : pack_values) {
 				result = (*result != 0 && v != 0) ? 1 : 0;
+				if (*result == 0) break;  // Short-circuit: stop on first false
 			}
 		} else if (op == "||") {
 			result = 0;  // Start with false
 			for (int64_t v : pack_values) {
 				result = (*result != 0 || v != 0) ? 1 : 0;
+				if (*result != 0) break;  // Short-circuit: stop on first true
 			}
 		} else if (op == "+") {
 			result = 0;
