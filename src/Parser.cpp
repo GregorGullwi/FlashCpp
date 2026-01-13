@@ -7929,6 +7929,84 @@ ParseResult Parser::parse_friend_declaration()
 	return saved_position.success(friend_node);
 }
 
+// Parse template friend declarations
+// Pattern: template<typename T1, typename T2> friend struct pair;
+ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& struct_node) {
+	ScopedTokenPosition saved_position(*this);
+
+	// Consume 'template' keyword
+	if (!consume_keyword("template")) {
+		return ParseResult::error("Expected 'template' keyword", *peek_token());
+	}
+
+	// Consume '<' 
+	// Note: '<' is tokenized as Token::Type::Operator by the lexer, so we check
+	// the value only (matching how other template parsing code handles '<')
+	if (!peek_token().has_value() || peek_token()->value() != "<") {
+		return ParseResult::error("Expected '<' after 'template'", *peek_token());
+	}
+	consume_token(); // consume '<'
+
+	// Skip template parameters - we don't need to parse them in detail for friend declarations
+	// Just consume everything until we find the matching '>'
+	int angle_bracket_depth = 1;
+	while (angle_bracket_depth > 0 && peek_token().has_value()) {
+		if (peek_token()->value() == "<") {
+			angle_bracket_depth++;
+		} else if (peek_token()->value() == ">") {
+			angle_bracket_depth--;
+		}
+		consume_token();
+	}
+
+	// Now we should see 'friend'
+	if (!consume_keyword("friend")) {
+		return ParseResult::error("Expected 'friend' keyword after template parameters", *peek_token());
+	}
+
+	// Check for 'struct' or 'class' keyword
+	bool is_struct = false;
+	if (peek_token().has_value() && peek_token()->value() == "struct") {
+		is_struct = true;
+		consume_token(); // consume 'struct'
+	} else if (peek_token().has_value() && peek_token()->value() == "class") {
+		consume_token(); // consume 'class'
+	} else {
+		// Not a template friend class/struct declaration - might be a friend function template
+		// We skip the declaration since friend function templates don't affect accessibility
+		// and are primarily for ADL (Argument-Dependent Lookup) purposes.
+		// The empty name is acceptable because we only need to record that a friend 
+		// declaration exists; the actual function resolution happens at call sites.
+		while (peek_token().has_value() && peek_token()->value() != ";") {
+			consume_token();
+		}
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after template friend declaration", *peek_token());
+		}
+		// Create a minimal friend declaration node - name is empty since we skipped parsing
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, StringHandle{});
+		struct_node.add_friend(friend_node);
+		return saved_position.success(friend_node);
+	}
+
+	// Parse the class/struct name
+	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+		return ParseResult::error("Expected class/struct name after 'friend struct/class'", *peek_token());
+	}
+	auto class_name = consume_token()->value();
+
+	// Expect semicolon
+	if (!consume_punctuator(";")) {
+		return ParseResult::error("Expected ';' after template friend class declaration", *peek_token());
+	}
+
+	// Create friend declaration node with TemplateClass kind
+	auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::TemplateClass, StringTable::getOrInternStringHandle(class_name));
+	struct_node.add_friend(friend_node);
+
+	return saved_position.success(friend_node);
+}
+
 ParseResult Parser::parse_namespace() {
 	ScopedTokenPosition saved_position(*this);
 
@@ -27024,7 +27102,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 // a member template alias or member function template, then dispatches to the appropriate parser.
 // This eliminates code duplication across regular struct, full specialization, and partial specialization parsing.
 ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access) {
-	// Look ahead to determine if this is a template alias, struct/class template, or function template
+	// Look ahead to determine if this is a template alias, struct/class template, friend, or function template
 	SaveHandle lookahead_pos = save_token_position();
 	
 	consume_token(); // consume 'template'
@@ -27032,6 +27110,7 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 	// Skip template parameter list to find what comes after
 	bool is_template_alias = false;
 	bool is_struct_or_class_template = false;
+	bool is_template_friend = false;
 	if (peek_token().has_value() && peek_token()->value() == "<") {
 		consume_token(); // consume '<'
 		
@@ -27053,6 +27132,8 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 				is_template_alias = true;
 			} else if (next_keyword == "struct" || next_keyword == "class") {
 				is_struct_or_class_template = true;
+			} else if (next_keyword == "friend") {
+				is_template_friend = true;
 			}
 		}
 	}
@@ -27066,6 +27147,9 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 	} else if (is_struct_or_class_template) {
 		// This is a member struct/class template
 		return parse_member_struct_template(struct_node, access);
+	} else if (is_template_friend) {
+		// This is a template friend declaration
+		return parse_template_friend_declaration(struct_node);
 	} else {
 		// This is a member function template
 		return parse_member_function_template(struct_node, access);
