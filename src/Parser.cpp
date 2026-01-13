@@ -11486,6 +11486,16 @@ ParseResult Parser::parse_statement_or_declaration()
 		return parse_block();
 	}
 
+	// Handle ::new and ::delete expressions at statement level
+	if (current_token.type() == Token::Type::Punctuator && current_token.value() == "::") {
+		auto next = peek_token(1);
+		if (next.has_value() && next->type() == Token::Type::Keyword &&
+			(next->value() == "new" || next->value() == "delete")) {
+			// This is a globally qualified new/delete expression
+			return parse_expression_statement();
+		}
+	}
+
 	if (current_token.type() == Token::Type::Keyword) {
 		// Keyword parsing function map - initialized once on first call
 		static const std::unordered_map<std::string_view, ParsingFunction> keyword_parsing_functions = {
@@ -12953,7 +12963,21 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		restore_token_position(saved_pos);
 	}
 
-	// Check for 'new' keyword
+	// Check for '::new' or '::delete' - globally qualified new/delete
+	// This is used in standard library (e.g., concepts header) to call global operator new/delete
+	bool is_global_scope_qualified = false;
+	if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "::") {
+		// Check if the NEXT token is 'new' or 'delete' (use peek_token(1) to look ahead)
+		auto next = peek_token(1);
+		if (next.has_value() && next->type() == Token::Type::Keyword &&
+			(next->value() == "new" || next->value() == "delete")) {
+			consume_token(); // consume '::'
+			is_global_scope_qualified = true;
+			// Fall through to handle 'new' or 'delete' below
+		}
+	}
+
+	// Check for 'new' keyword (handles both 'new' and '::new')
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "new") {
 		consume_token(); // consume 'new'
 
@@ -17242,12 +17266,46 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 		}
 		
-		// If the identifier is a template parameter reference, don't return yet
-		// We need to check if it's followed by '(' for a constructor call like T(42)
+		// If the identifier is a template parameter reference, check for constructor calls
+		// This handles both T(42) and T{} patterns for dependent type construction
 		if (identifierType.has_value() && identifierType->is<TemplateParameterReferenceNode>()) {
 			const auto& tparam_ref = identifierType->as<TemplateParameterReferenceNode>();
 			
-			// Wrap it in an ExpressionNode, but continue checking for constructor calls
+			// Check for brace initialization: T{} or T{args}
+			if (peek_token().has_value() && peek_token()->value() == "{") {
+				consume_token(); // consume '{'
+				
+				// Parse brace initializer arguments
+				ChunkedVector<ASTNode> args;
+				while (current_token_.has_value() && current_token_->value() != "}") {
+					auto argResult = parse_expression();
+					if (argResult.is_error()) {
+						return argResult;
+					}
+					if (auto node = argResult.node()) {
+						args.push_back(*node);
+					}
+					
+					if (current_token_.has_value() && current_token_->value() == ",") {
+						consume_token(); // consume ','
+					} else if (!current_token_.has_value() || current_token_->value() != "}") {
+						return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+					}
+				}
+				
+				if (!consume_punctuator("}")) {
+					return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+				}
+				
+				// Create TypeSpecifierNode for the template parameter (dependent type)
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, idenfifier_token);
+				
+				// Create ConstructorCallNode for brace initialization
+				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
+				return ParseResult::success(*result);
+			}
+			
+			// Wrap it in an ExpressionNode, but continue checking for '(' constructor calls below
 			result = emplace_node<ExpressionNode>(tparam_ref);
 			// Don't return - let it fall through to check for '(' below
 		}
@@ -25281,7 +25339,7 @@ ParseResult Parser::parse_requires_expression() {
 		}
 		
 		if (peek_token()->value() == "{") {
-			// Compound requirement: { expression } or { expression } -> ConceptName;
+			// Compound requirement: { expression } noexcept_opt -> type-constraint_opt ;
 			Token lbrace_token = *peek_token();
 			consume_token(); // consume '{'
 			
@@ -25294,6 +25352,15 @@ ParseResult Parser::parse_requires_expression() {
 			// Expect '}'
 			if (!consume_punctuator("}")) {
 				return ParseResult::error("Expected '}' after compound requirement expression", *current_token_);
+			}
+			
+			// Check for optional noexcept specifier
+			bool is_noexcept = false;
+			if (peek_token().has_value() && 
+				peek_token()->type() == Token::Type::Keyword && 
+				peek_token()->value() == "noexcept") {
+				consume_token(); // consume 'noexcept'
+				is_noexcept = true;
 			}
 			
 			// Check for optional return type constraint: -> ConceptName or -> Type
@@ -25314,6 +25381,7 @@ ParseResult Parser::parse_requires_expression() {
 			auto compound_req = emplace_node<CompoundRequirementNode>(
 				*expr_result.node(),
 				return_type_constraint,
+				is_noexcept,
 				lbrace_token
 			);
 			requirements.push_back(compound_req);
@@ -26023,11 +26091,28 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		}
 	}
 
+	// Check for requires clause after template parameters
+	// Pattern: template<typename T> requires Constraint<T> ReturnType func();
+	std::optional<ASTNode> requires_clause;
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+		peek_token()->value() == "requires") {
+		consume_token(); // consume 'requires'
+		
+		// Parse the constraint expression
+		auto constraint_result = parse_expression();
+		if (constraint_result.is_error()) {
+			current_template_param_names_ = std::move(saved_template_param_names);
+			return constraint_result;
+		}
+		
+		requires_clause = emplace_node<RequiresClauseNode>(
+			*constraint_result.node(),
+			Token(Token::Type::Keyword, "requires", 0, 0, 0));
+	}
+
 	// Use shared helper to parse function declaration body (Phase 6)
-	// Member templates don't support requires clauses yet
-	std::optional<ASTNode> empty_requires_clause;
 	ASTNode template_func_node;
-	auto body_result = parse_template_function_declaration_body(template_params, empty_requires_clause, template_func_node);
+	auto body_result = parse_template_function_declaration_body(template_params, requires_clause, template_func_node);
 	
 	// Restore template param names
 	current_template_param_names_ = std::move(saved_template_param_names);

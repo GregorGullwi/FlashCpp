@@ -3616,19 +3616,23 @@ public:
 	explicit CompoundRequirementNode(
 		ASTNode expression,
 		std::optional<ASTNode> return_type_constraint = std::nullopt,
+		bool is_noexcept = false,
 		Token lbrace_token = Token())
 		: expression_(expression),
 		  return_type_constraint_(return_type_constraint),
+		  is_noexcept_(is_noexcept),
 		  lbrace_token_(lbrace_token) {}
 
 	const ASTNode& expression() const { return expression_; }
 	const std::optional<ASTNode>& return_type_constraint() const { return return_type_constraint_; }
 	bool has_return_type_constraint() const { return return_type_constraint_.has_value(); }
+	bool is_noexcept() const { return is_noexcept_; }
 	const Token& lbrace_token() const { return lbrace_token_; }
 
 private:
 	ASTNode expression_;                          // The expression inside { }
 	std::optional<ASTNode> return_type_constraint_;  // Optional -> ConceptName or -> Type
+	bool is_noexcept_;                            // Whether noexcept specifier was present
 	Token lbrace_token_;                          // For error reporting
 };
 

@@ -11,6 +11,7 @@ These files test FlashCpp's ability to compile and use various C++ standard libr
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | Successfully compiles! Function ref types added Jan 12, 2026 |
+| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | Successfully compiles! Compound requirement noexcept, ::new, member template requires clauses added Jan 13 |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Now progresses further after function pointer typedef fix (Jan 13) |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Virtual inheritance, locales |
@@ -27,7 +28,6 @@ These files test FlashCpp's ability to compile and use various C++ standard libr
 | `<variant>` | `test_std_variant.cpp` | ⏱️ Timeout | Now progresses further after operator new/delete fix (Jan 13) |
 | `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Type erasure, RTTI |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Now progresses further after operator new/delete fix (Jan 13) |
-| `<concepts>` | `test_std_concepts.cpp` | ❌ Failed | Blocked at `concepts:130` - compound requirement in requires |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Concepts, views |
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | Successfully compiles in ~1.8s! |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Ratio templates, duration |
@@ -145,7 +145,67 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 13, 2026 - Namespace-Qualified Variable Templates with Partial Specializations)
+## Latest Investigation (January 13, 2026 - Concepts Header Now Compiles!)
+
+### ✅ IMPLEMENTED: `<concepts>` Header Now Successfully Compiles!
+
+The `<concepts>` header now **fully compiles** in FlashCpp! This is a major milestone as `<concepts>` is foundational for C++20 programming.
+
+**Features Implemented to Unblock `<concepts>`:**
+
+1. **Compound Requirement `noexcept` Specifier**
+   - Pattern: `{ expr } noexcept;` in requires expressions
+   - The C++20 requires syntax supports `noexcept` checks on expressions
+   - Example:
+   ```cpp
+   template<typename T>
+   concept nothrow_destructible = requires(T& t) {
+       { t.~T() } noexcept;  // Expression must be noexcept
+   };
+   ```
+   - Added `is_noexcept` flag to `CompoundRequirementNode` AST class
+   - Modified requires expression parsing to handle `noexcept` after `}`
+
+2. **Template Parameter Brace Initialization (`T{}`)**
+   - Pattern: `_Tp{}` as a simple requirement in requires expressions
+   - Example:
+   ```cpp
+   concept default_initializable = requires {
+       _Tp{};  // Creates a default-constructed temporary
+   };
+   ```
+   - Added brace initialization handling for template parameter references in expression context
+
+3. **Globally Qualified `::new` and `::delete`**
+   - Pattern: `(void) ::new _Tp;` for global scope operator new/delete
+   - Used in `<concepts>` for `default_initializable` concept
+   - Added handling in `parse_unary_expression()` for `::` followed by `new`/`delete`
+   - Added handling in `parse_statement_or_declaration()` for statement-level `::new`/`::delete`
+
+4. **Requires Clause on Member Function Templates**
+   - Pattern: `template<typename T> requires Constraint<T> ReturnType func();`
+   - Example from `<concepts>`:
+   ```cpp
+   template<typename _Tp, typename _Up>
+     requires __adl_swap<_Tp, _Up>
+     || (same_as<_Tp, _Up> && is_lvalue_reference_v<_Tp>)
+     constexpr void operator()(_Tp&& __t, _Up&& __u) const
+   ```
+   - Modified `parse_member_function_template()` to check for and parse `requires` keyword after template parameters
+
+**Test Cases:**
+- ✅ `test_brace_init_requires_ret0.cpp` - Template parameter brace initialization in requires
+- ✅ `test_global_scope_new_ret0.cpp` - Globally qualified `::new` and `::delete`
+- ✅ All 904 existing tests pass
+
+**Impact:**
+- ✅ `<concepts>` header now **successfully compiles**!
+- This is a critical header for C++20 as many other headers depend on concepts
+- Total successfully compiling C++20 standard headers: 3 (`<limits>`, `<type_traits>`, `<concepts>`)
+
+---
+
+## Previous Investigation (January 13, 2026 - Namespace-Qualified Variable Templates with Partial Specializations)
 
 ### ✅ IMPLEMENTED: Namespace-Qualified Variable Template Support
 
