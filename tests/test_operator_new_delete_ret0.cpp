@@ -2,7 +2,8 @@
 // This pattern is used in <new> header
 // We use placement new with a tag type to avoid linker conflicts with CRT
 
-#include <stddef.h>
+// Forward declare size_t - use __SIZE_TYPE__ for portability across compilers
+typedef __SIZE_TYPE__ size_t;
 
 // Tag type for our custom placement new
 struct MyTag {};
