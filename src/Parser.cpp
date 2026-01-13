@@ -7935,8 +7935,6 @@ ParseResult Parser::parse_namespace() {
 	// Detect if this namespace was prefixed with 'inline'
 	bool is_inline_namespace = pending_inline_namespace_;
 	pending_inline_namespace_ = false;
-	NamespacePath parent_namespace_path;
-	NamespacePath inline_namespace_path;
 
 	// Consume 'namespace' keyword
 	if (!consume_keyword("namespace")) {
@@ -7950,6 +7948,8 @@ ParseResult Parser::parse_namespace() {
 	// C++17 nested namespace declarations: namespace A::B::C { }
 	// This vector holds all namespace names for nested declarations
 	std::vector<std::string_view> nested_names;
+	// Track which nested namespaces are inline (parallel to nested_names)
+	std::vector<bool> nested_inline_flags;
 
 	if (peek_token().has_value() && peek_token()->value() == "{") {
 		// Anonymous namespace
@@ -7966,9 +7966,12 @@ ParseResult Parser::parse_namespace() {
 		namespace_name = name_token->value();
 		
 		// Collect all namespace names (including the first one for nested namespaces)
+		// The first namespace gets the is_inline_namespace flag from 'inline namespace' prefix
 		nested_names.push_back(namespace_name);
+		nested_inline_flags.push_back(is_inline_namespace);
 		
 		// C++17 nested namespace declarations: namespace A::B::C { }
+		// Also supports C++20: namespace A::inline B::C { }
 		// Continue collecting nested namespace names if present
 		while (peek_token().has_value() && peek_token()->value() == "::") {
 			consume_token(); // consume '::'
@@ -7980,13 +7983,13 @@ ParseResult Parser::parse_namespace() {
 				consume_token(); // consume 'inline'
 				nested_is_inline = true;
 			}
-			(void)nested_is_inline; // TODO: Handle inline nested namespaces
 			
 			auto nested_name_token = consume_token();
 			if (!nested_name_token.has_value() || nested_name_token->type() != Token::Type::Identifier) {
 				return ParseResult::error("Expected namespace name after '::'", nested_name_token.value_or(Token()));
 			}
 			nested_names.push_back(nested_name_token->value());
+			nested_inline_flags.push_back(nested_is_inline);
 		}
 
 		// Skip any attributes after the namespace name (e.g., __attribute__((__abi_tag__ ("cxx11"))))
@@ -8030,16 +8033,8 @@ ParseResult Parser::parse_namespace() {
 	}
 
 	// Inline namespaces inject their members into the enclosing namespace scope
-	if (is_inline_namespace) {
-		if (is_anonymous) {
-			return ParseResult::error("Anonymous namespaces cannot be inline", current_token_.value_or(Token()));
-		}
-
-		parent_namespace_path = gSymbolTable.build_current_namespace_path();
-		inline_namespace_path = parent_namespace_path;
-		inline_namespace_path.push_back(StringType<>(namespace_name));
-		gSymbolTable.add_using_directive(inline_namespace_path);
-	}
+	// For nested declarations like namespace A::inline B, B is inline within A
+	// We now handle this per-namespace in the enter loop below, not just for the first namespace
 
 	// Expect opening brace
 	if (!consume_punctuator("{")) {
@@ -8053,21 +8048,38 @@ ParseResult Parser::parse_namespace() {
 	std::string_view innermost_name = nested_names.empty() ? namespace_name : nested_names.back();
 	auto [namespace_node, namespace_ref] = emplace_node_ref<NamespaceDeclarationNode>(is_anonymous ? "" : innermost_name);
 
-	// Enter namespace scope(s)
+	// Enter namespace scope(s) and handle inline namespaces
 	// For anonymous namespaces, we DON'T enter a new scope in the symbol table
 	// Instead, symbols are added to the current scope but tracked separately for mangling
 	// This allows them to be accessed without qualification (per C++ standard)
 	// while still getting unique linkage names
 	// For nested namespaces (A::B::C), enter each scope in order
 	if (!is_anonymous) {
-		for (const auto& ns_name : nested_names) {
+		NamespacePath current_path = gSymbolTable.build_current_namespace_path();
+		
+		for (size_t i = 0; i < nested_names.size(); ++i) {
+			const auto& ns_name = nested_names[i];
+			bool this_ns_is_inline = nested_inline_flags.size() > i && nested_inline_flags[i];
+			
+			// If this namespace is inline, add a using directive BEFORE entering
+			// This makes members visible in the current (parent) scope
+			if (this_ns_is_inline) {
+				NamespacePath inline_path = current_path;
+				inline_path.push_back(StringType<>(ns_name));
+				gSymbolTable.add_using_directive(inline_path);
+			}
+			
 			gSymbolTable.enter_namespace(ns_name);
+			
+			// Update current path for the next iteration
+			current_path.push_back(StringType<>(ns_name));
 		}
 	}
 
 	// Track inline namespace nesting (one entry per nested level for proper cleanup)
 	for (size_t i = 0; i < (nested_names.empty() ? 1 : nested_names.size()); ++i) {
-		inline_namespace_stack_.push_back(is_inline_namespace);
+		bool this_is_inline = nested_inline_flags.size() > i && nested_inline_flags[i];
+		inline_namespace_stack_.push_back(this_is_inline);
 	}
 	// For anonymous namespaces, track the namespace in the AST but not in symbol lookup
 	// Symbols will be added to current scope during declaration parsing
@@ -8208,8 +8220,19 @@ ParseResult Parser::parse_namespace() {
 	}
 
 	// Merge inline namespace symbols into parent namespace for qualified lookup
-	if (is_inline_namespace && !is_anonymous) {
-		gSymbolTable.merge_inline_namespace(inline_namespace_path, parent_namespace_path);
+	// We need to do this for each inline namespace in the chain
+	// Capture the path AFTER exiting scopes (we're back to original scope)
+	if (!is_anonymous && !nested_inline_flags.empty()) {
+		NamespacePath current_path = gSymbolTable.build_current_namespace_path();
+		for (size_t i = 0; i < nested_names.size(); ++i) {
+			bool this_is_inline = nested_inline_flags.size() > i && nested_inline_flags[i];
+			if (this_is_inline) {
+				NamespacePath inline_path = current_path;
+				inline_path.push_back(StringType<>(nested_names[i]));
+				gSymbolTable.merge_inline_namespace(inline_path, current_path);
+			}
+			current_path.push_back(StringType<>(nested_names[i]));
+		}
 	}
 
 	return saved_position.success(namespace_node);

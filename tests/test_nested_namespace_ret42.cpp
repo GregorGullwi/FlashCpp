@@ -1,7 +1,7 @@
 // Test C++17 nested namespace declarations
 // Pattern from bits/version.h: namespace ranges::__detail { }
 
-// Nested namespace with struct
+// Regular nested namespace with struct
 namespace A::B {
     struct Data {
         int x;
@@ -9,9 +9,26 @@ namespace A::B {
     };
 }
 
+// C++20 nested namespace with inline keyword
+// Pattern: namespace X::inline Y { }
+// The inline keyword makes Y's members visible in X
+namespace X::inline Y {
+    struct Point {
+        int a;
+        int b;
+    };
+}
+
 int main() {
+    // Regular nested namespace - requires full qualification
     A::B::Data d;
     d.x = 42;
     d.y = 0;
-    return d.x;
+    
+    // Inline nested namespace - can access without Y:: prefix
+    X::Point p;  // Works because Y is inline in X
+    p.a = d.x;
+    p.b = 0;
+    
+    return p.a;  // Should return 42
 }
