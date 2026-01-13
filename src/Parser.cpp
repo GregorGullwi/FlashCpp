@@ -7649,13 +7649,108 @@ ParseResult Parser::parse_typedef_declaration()
 		}
 	}
 
-	// Parse the alias name (identifier)
-	auto alias_token = consume_token();
-	if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
-		return ParseResult::error("Expected identifier after type in typedef", alias_token.value_or(Token()));
+	// Check for function pointer typedef: typedef return_type (*alias_name)(params);
+	// Pattern: '(' '*' identifier ')' '(' params ')'
+	bool is_function_pointer_typedef = false;
+	std::string_view function_pointer_alias_name;
+	if (peek_token().has_value() && peek_token()->value() == "(") {
+		// Peek ahead to check if this is a function pointer pattern
+		SaveHandle paren_saved = save_token_position();
+		consume_token(); // consume '('
+		
+		// Check for optional calling convention or additional modifiers before '*'
+		// e.g., typedef void (__cdecl *handler)();
+		// Skip any calling convention specifiers
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			std::string_view kw = peek_token()->value();
+			if (kw == "__cdecl" || kw == "__stdcall" || kw == "__fastcall" || 
+			    kw == "__thiscall" || kw == "__vectorcall" || kw == "_cdecl" ||
+			    kw == "_stdcall" || kw == "_fastcall") {
+				consume_token();
+			} else {
+				break;
+			}
+		}
+		
+		if (peek_token().has_value() && peek_token()->value() == "*") {
+			consume_token(); // consume '*'
+			
+			// Now expect the alias name identifier
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+				function_pointer_alias_name = peek_token()->value();
+				consume_token(); // consume alias name
+				
+				// Expect closing ')'
+				if (peek_token().has_value() && peek_token()->value() == ")") {
+					consume_token(); // consume ')'
+					
+					// Now expect '(' for the parameter list
+					if (peek_token().has_value() && peek_token()->value() == "(") {
+						// This is a function pointer typedef!
+						is_function_pointer_typedef = true;
+						discard_saved_token(paren_saved);
+						
+						// Parse the parameter list
+						consume_token(); // consume '('
+						
+						// Skip the parameter list by counting parentheses
+						int paren_depth = 1;
+						while (paren_depth > 0 && peek_token().has_value()) {
+							auto token = peek_token();
+							if (token->value() == "(") {
+								paren_depth++;
+							} else if (token->value() == ")") {
+								paren_depth--;
+							}
+							consume_token();
+						}
+						
+						// We've consumed through the closing ')' of the parameter list
+					}
+				}
+			}
+		}
+		
+		// If not a function pointer typedef, restore position
+		if (!is_function_pointer_typedef) {
+			restore_token_position(paren_saved);
+		}
 	}
 
-	std::string_view alias_name = alias_token->value();
+	std::string_view alias_name;
+	std::optional<Token> alias_token;
+	
+	if (is_function_pointer_typedef) {
+		alias_name = function_pointer_alias_name;
+		// Create a synthetic token for the alias name (use file index 0 since it's synthetic)
+		alias_token = Token(Token::Type::Identifier, function_pointer_alias_name, 0, 0, 0);
+		
+		// For function pointer typedefs, create a proper FunctionPointer type
+		// The return type is in type_spec, create a function pointer type with it
+		Type return_type = type_spec.type();
+		
+		// Create a new TypeSpecifierNode for the function pointer (64-bit pointer)
+		TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64);
+		
+		// Create a basic function signature with the return type
+		// Note: We don't have full parameter info here since we just skipped the param list
+		// This is a simplified implementation that handles the common case
+		FunctionSignature sig;
+		sig.return_type = return_type;
+		sig.linkage = Linkage::None;
+		fp_type.set_function_signature(sig);
+		
+		// Replace type_spec with the function pointer type
+		type_spec = fp_type;
+		type_node = emplace_node<TypeSpecifierNode>(type_spec);
+	} else {
+		// Parse the alias name (identifier)
+		alias_token = consume_token();
+		if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected identifier after type in typedef", alias_token.value_or(Token()));
+		}
+		alias_name = alias_token->value();
+	}
 
 	// Check for function type typedef: typedef return_type name(params);
 	// This is different from function pointer typedef: typedef return_type (*name)(params);
