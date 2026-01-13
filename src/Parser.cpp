@@ -25581,7 +25581,8 @@ ParseResult Parser::parse_template_parameter() {
 		auto concept_check_pos = save_token_position();
 		
 		// Build potential concept name (possibly namespace-qualified)
-		std::string potential_concept_str(peek_token()->value());
+		StringBuilder potential_concept_sb;
+		potential_concept_sb.append(peek_token()->value());
 		Token concept_token = *peek_token();
 		consume_token(); // consume first identifier
 		
@@ -25591,16 +25592,17 @@ ParseResult Parser::parse_template_parameter() {
 			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
 				// Not a valid qualified name, restore and continue
 				restore_token_position(concept_check_pos);
+				potential_concept_sb.reset();
 				break;
 			}
-			potential_concept_str += "::";
-			potential_concept_str += peek_token()->value();
+			potential_concept_sb.append("::");
+			potential_concept_sb.append(peek_token()->value());
 			concept_token = *peek_token();
 			consume_token(); // consume next identifier
 		}
 		
 		// Intern the concept name string and get a stable string_view
-		StringHandle concept_handle = StringTable::getOrInternStringHandle(potential_concept_str);
+		StringHandle concept_handle = StringTable::getOrInternStringHandle(potential_concept_sb);
 		std::string_view potential_concept = StringTable::getStringView(concept_handle);
 		
 		// Check if this identifier is a registered concept
