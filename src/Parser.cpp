@@ -30258,54 +30258,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return default_init;  // Return original if no substitution was performed
 	};
 	
-	// Helper lambda to evaluate a fold expression with concrete pack values
-	// Used in multiple places for static member initializer substitution
+	// Helper lambda to evaluate a fold expression with concrete pack values and create an AST node
+	// Uses ConstExpr::evaluate_fold_expression for the actual computation
 	auto evaluate_fold_expression = [this](std::string_view op, const std::vector<int64_t>& pack_values) -> std::optional<ASTNode> {
-		if (pack_values.empty()) {
-			return std::nullopt;
-		}
-		
-		std::optional<int64_t> result;
-		
-		if (op == "&&") {
-			result = 1;  // Start with true
-			for (int64_t v : pack_values) {
-				result = (*result != 0 && v != 0) ? 1 : 0;
-				if (*result == 0) break;  // Short-circuit: stop on first false
-			}
-		} else if (op == "||") {
-			result = 0;  // Start with false
-			for (int64_t v : pack_values) {
-				result = (*result != 0 || v != 0) ? 1 : 0;
-				if (*result != 0) break;  // Short-circuit: stop on first true
-			}
-		} else if (op == "+") {
-			result = 0;
-			for (int64_t v : pack_values) {
-				*result += v;
-			}
-		} else if (op == "*") {
-			result = 1;
-			for (int64_t v : pack_values) {
-				*result *= v;
-			}
-		} else if (op == "&") {
-			result = pack_values[0];
-			for (size_t i = 1; i < pack_values.size(); ++i) {
-				*result &= pack_values[i];
-			}
-		} else if (op == "|") {
-			result = pack_values[0];
-			for (size_t i = 1; i < pack_values.size(); ++i) {
-				*result |= pack_values[i];
-			}
-		} else if (op == "^") {
-			result = pack_values[0];
-			for (size_t i = 1; i < pack_values.size(); ++i) {
-				*result ^= pack_values[i];
-			}
-		}
-		
+		auto result = ConstExpr::evaluate_fold_expression(op, pack_values);
 		if (!result.has_value()) {
 			return std::nullopt;
 		}

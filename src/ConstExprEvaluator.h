@@ -3106,4 +3106,58 @@ public:
 	}
 };
 
+// Evaluate a fold expression with concrete pack values
+// This is used during template instantiation for patterns like:
+//   template<bool... Bs> struct __and_ { static constexpr bool value = (Bs && ...); };
+// Supported operators: &&, ||, +, *, &, |, ^
+// Returns the evaluated result, or nullopt if evaluation fails
+inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, const std::vector<int64_t>& pack_values) {
+	if (pack_values.empty()) {
+		return std::nullopt;
+	}
+	
+	std::optional<int64_t> result;
+	
+	if (op == "&&") {
+		result = 1;  // Start with true
+		for (int64_t v : pack_values) {
+			result = (*result != 0 && v != 0) ? 1 : 0;
+			if (*result == 0) break;  // Short-circuit: stop on first false
+		}
+	} else if (op == "||") {
+		result = 0;  // Start with false
+		for (int64_t v : pack_values) {
+			result = (*result != 0 || v != 0) ? 1 : 0;
+			if (*result != 0) break;  // Short-circuit: stop on first true
+		}
+	} else if (op == "+") {
+		result = 0;
+		for (int64_t v : pack_values) {
+			*result += v;
+		}
+	} else if (op == "*") {
+		result = 1;
+		for (int64_t v : pack_values) {
+			*result *= v;
+		}
+	} else if (op == "&") {
+		result = pack_values[0];
+		for (size_t i = 1; i < pack_values.size(); ++i) {
+			*result &= pack_values[i];
+		}
+	} else if (op == "|") {
+		result = pack_values[0];
+		for (size_t i = 1; i < pack_values.size(); ++i) {
+			*result |= pack_values[i];
+		}
+	} else if (op == "^") {
+		result = pack_values[0];
+		for (size_t i = 1; i < pack_values.size(); ++i) {
+			*result ^= pack_values[i];
+		}
+	}
+	
+	return result;
+}
+
 } // namespace ConstExpr
