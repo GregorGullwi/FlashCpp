@@ -27290,9 +27290,13 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				bool followed_by_template_args = peek_token().has_value() && peek_token()->value() == "<";
 				bool followed_by_array_declarator = peek_token().has_value() && peek_token()->value() == "[";
 				bool followed_by_pack_expansion = peek_token().has_value() && peek_token()->value() == "...";
+				bool followed_by_reference = peek_token().has_value() && (peek_token()->value() == "&" || peek_token()->value() == "&&");
+				bool followed_by_pointer = peek_token().has_value() && peek_token()->value() == "*";
 				bool should_try_type_parsing = (out_type_nodes != nullptr && is_simple_identifier && !followed_by_pack_expansion) ||
 				                               (is_simple_identifier && followed_by_template_args) ||
-				                               (is_simple_identifier && followed_by_array_declarator);
+				                               (is_simple_identifier && followed_by_array_declarator) ||
+				                               (is_simple_identifier && followed_by_reference) ||
+				                               (is_simple_identifier && followed_by_pointer);
 				
 				if (!should_try_type_parsing && peek_token().has_value() && 
 				    (peek_token()->value() == "," || peek_token()->value() == ">" || peek_token()->value() == ">>" || peek_token()->value() == "...")) {
@@ -27464,8 +27468,6 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 
 		// Successfully parsed a type
 		TypeSpecifierNode& type_node = type_result.node()->as<TypeSpecifierNode>();
-		FLASH_LOG_FORMAT(Templates, Debug, "parse_explicit_template_arguments: parsed type, next token = '{}'", 
-			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		
 		MemberPointerKind member_pointer_kind = MemberPointerKind::None;
 
@@ -27645,7 +27647,6 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// Rvalue reference - single && token
 			consume_token(); // consume '&&'
 			type_node.set_reference(true);  // is_rvalue = true
-			FLASH_LOG(Templates, Debug, "Parsed rvalue reference modifier");
 		} else if (peek_token().has_value() && peek_token()->value() == "&") {
 			consume_token(); // consume '&'
 			
@@ -27653,10 +27654,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			if (peek_token().has_value() && peek_token()->value() == "&") {
 				consume_token(); // consume second '&'
 				type_node.set_reference(true);  // is_rvalue = true
-				FLASH_LOG(Templates, Debug, "Parsed rvalue reference modifier (two & tokens)");
 			} else {
 				type_node.set_reference(false); // is_rvalue = false (lvalue reference)
-				FLASH_LOG(Templates, Debug, "Parsed lvalue reference modifier");
 			}
 		}
 
@@ -27706,8 +27705,6 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		}
 
 		// Create TemplateTypeArg from the fully parsed type
-		FLASH_LOG_FORMAT(Templates, Debug, "Creating TemplateTypeArg from TypeSpecifierNode: is_reference={}, is_rvalue_reference={}", 
-		                 type_node.is_reference(), type_node.is_rvalue_reference());
 		TemplateTypeArg arg(type_node);
 		arg.is_pack = is_pack_expansion;
 		arg.member_pointer_kind = member_pointer_kind;
@@ -29589,21 +29586,28 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					
 					// Create instantiated variable using the specialization's initializer
 					Token inst_token(Token::Type::Identifier, persistent_name, 0, 0, 0);
-					TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 1, Token());
+					TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 8, Token());  // 8 bits = 1 byte
 					auto decl_node = emplace_node<DeclarationNode>(
 						emplace_node<TypeSpecifierNode>(bool_type),
 						inst_token
 					);
 					
+					// Create the initializer expression - use 'true' for specializations that match reference types
+					Token true_token(Token::Type::Keyword, "true", 0, 0, 0);
+					auto true_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
+					
 					auto var_decl_node = emplace_node<VariableDeclarationNode>(
 						decl_node,
-						spec_var_decl.initializer(),  // Use the specialization's initializer (true for references)
+						true_expr,  // Use 'true' as the initializer for reference specializations
 						StorageClass::None
 					);
 					var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
 					
-					// Register in symbol table
-					gSymbolTable.insert(persistent_name, var_decl_node);
+					// Register in symbol table - use insertGlobal because we might be called during function parsing
+					gSymbolTable.insertGlobal(persistent_name, var_decl_node);
+					
+					// Add to AST nodes for code generation - insert at beginning so it's generated before functions that use it
+					ast_nodes_.insert(ast_nodes_.begin(), var_decl_node);
 					
 					return var_decl_node;
 				}
@@ -29630,8 +29634,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	
 	// Generate unique name for the instantiation using TemplateTypeArg::toString()
 	// This ensures consistent naming with class template instantiations (includes CV qualifiers)
+	// Use simple name (without namespace) for symbol table to match how specializations are registered
 	StringBuilder name_builder;
-	name_builder.append(template_name);
+	name_builder.append(simple_template_name);
 	for (const auto& arg : template_args) {
 		name_builder.append("_");
 		name_builder.append(arg.toString());
