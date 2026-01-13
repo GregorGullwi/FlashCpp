@@ -116,6 +116,17 @@ The following features have been implemented to support standard headers:
 - Direct initialization with `*this`
 - Global scope `operator new`/`operator delete`
 
+## Recent Changes
+
+### 2026-01-13: Library Type Traits vs Compiler Intrinsics
+
+**Fixed:** Identifiers starting with `__is_` or `__has_` followed by `<` are now correctly treated as library type traits (template classes) rather than compiler intrinsics.
+
+- `__is_swappable<T>` → Treated as template class (library type trait)
+- `__is_void(T)` → Treated as compiler intrinsic
+
+This fix advances `<utility>` parsing past the `stl_pair.h` swap function declarations. The new blocker is variable template brace initialization in `c++config.h`.
+
 ## See Also
 
 - [`STANDARD_HEADERS_MISSING_FEATURES.md`](./STANDARD_HEADERS_MISSING_FEATURES.md) - Detailed analysis of missing features and implementation history
