@@ -31219,6 +31219,111 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								FLASH_LOG(Templates, Debug, "Substituted static member initializer identifier '", id_name, "' (template parameter)");
 							}
 						}
+						// Handle FoldExpressionNode (e.g., static constexpr bool value = (Bs && ...);)
+						else if (std::holds_alternative<FoldExpressionNode>(expr)) {
+							const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
+							std::string_view pack_name = fold.pack_name();
+							std::string_view op = fold.op();
+							FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
+							
+							// Find the parameter pack in template parameters
+							std::optional<size_t> pack_param_idx;
+							for (size_t p = 0; p < template_params.size(); ++p) {
+								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+								if (tparam.name() == pack_name && tparam.is_variadic()) {
+									pack_param_idx = p;
+									break;
+								}
+							}
+							
+							if (pack_param_idx.has_value()) {
+								// Collect the values from the variadic pack arguments
+								std::vector<int64_t> pack_values;
+								bool all_values_found = true;
+								
+								// For variadic packs, arguments after non-variadic parameters are the pack values
+								size_t non_variadic_count = 0;
+								for (const auto& param : template_params) {
+									if (!param.as<TemplateParameterNode>().is_variadic()) {
+										non_variadic_count++;
+									}
+								}
+								
+								for (size_t i = non_variadic_count; i < template_args.size() && all_values_found; ++i) {
+									if (template_args[i].is_value) {
+										pack_values.push_back(template_args[i].value);
+										FLASH_LOG(Templates, Debug, "Pack value[", i - non_variadic_count, "] = ", template_args[i].value);
+									} else {
+										all_values_found = false;
+									}
+								}
+								
+								if (all_values_found && !pack_values.empty()) {
+									// Evaluate the fold expression
+									std::optional<int64_t> result;
+									
+									if (op == "&&") {
+										result = 1;  // Start with true
+										for (int64_t v : pack_values) {
+											result = (*result != 0 && v != 0) ? 1 : 0;
+										}
+									} else if (op == "||") {
+										result = 0;  // Start with false
+										for (int64_t v : pack_values) {
+											result = (*result != 0 || v != 0) ? 1 : 0;
+										}
+									} else if (op == "+") {
+										result = 0;
+										for (int64_t v : pack_values) {
+											*result += v;
+										}
+									} else if (op == "*") {
+										result = 1;
+										for (int64_t v : pack_values) {
+											*result *= v;
+										}
+									} else if (op == "&") {
+										if (!pack_values.empty()) {
+											result = pack_values[0];
+											for (size_t i = 1; i < pack_values.size(); ++i) {
+												*result &= pack_values[i];
+											}
+										}
+									} else if (op == "|") {
+										if (!pack_values.empty()) {
+											result = pack_values[0];
+											for (size_t i = 1; i < pack_values.size(); ++i) {
+												*result |= pack_values[i];
+											}
+										}
+									} else if (op == "^") {
+										if (!pack_values.empty()) {
+											result = pack_values[0];
+											for (size_t i = 1; i < pack_values.size(); ++i) {
+												*result ^= pack_values[i];
+											}
+										}
+									}
+									
+									if (result.has_value()) {
+										FLASH_LOG(Templates, Debug, "Evaluated fold expression to: ", *result);
+										// Create a bool literal for && and ||, numeric for others
+										if (op == "&&" || op == "||") {
+											Token bool_token(Token::Type::Keyword, *result ? "true" : "false", 0, 0, 0);
+											substituted_initializer = emplace_node<ExpressionNode>(
+												BoolLiteralNode(bool_token, *result != 0)
+											);
+										} else {
+											std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*result)).commit();
+											Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+											substituted_initializer = emplace_node<ExpressionNode>(
+												NumericLiteralNode(num_token, static_cast<unsigned long long>(*result), Type::Int, TypeQualifier::None, 64)
+											);
+										}
+									}
+								}
+							}
+						}
 						// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : 0)
 						else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 							const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr);
@@ -32792,6 +32897,322 @@ if (struct_type_info.getStructInfo()) {
 
 	// Skip member function instantiation - we only need type information for nested classes
 	// Member functions will be instantiated on-demand when called
+
+	// Copy static members from the primary template with template parameter substitution
+	// This handles cases like:
+	//   template<bool... Bs> struct __and_ { static constexpr bool value = (Bs && ...); };
+	// where the fold expression needs to be evaluated with the actual template arguments
+	//
+	// Note: Static members can be in two places:
+	// 1. class_decl.static_members() - AST node storage
+	// 2. StructTypeInfo for the template - type system storage
+	// We need to check both.
+	
+	// First, try to get static members from the template's StructTypeInfo
+	auto template_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(template_name));
+	const StructTypeInfo* template_struct_info = nullptr;
+	if (template_type_it != gTypesByName.end() && template_type_it->second->getStructInfo()) {
+		template_struct_info = template_type_it->second->getStructInfo();
+	}
+	
+	// Process static members from StructTypeInfo (preferred source)
+	if (template_struct_info && !template_struct_info->static_members.empty()) {
+		FLASH_LOG(Templates, Debug, "Processing ", template_struct_info->static_members.size(), " static members from primary template StructTypeInfo");
+		for (const auto& static_member : template_struct_info->static_members) {
+			FLASH_LOG(Templates, Debug, "Copying static member: ", StringTable::getStringView(static_member.getName()));
+			
+			// Check if initializer needs substitution (e.g., fold expressions, template parameters)
+			std::optional<ASTNode> substituted_initializer = static_member.initializer;
+			if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
+				const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
+				
+				// Handle FoldExpressionNode (e.g., static constexpr bool value = (Bs && ...);)
+				if (std::holds_alternative<FoldExpressionNode>(expr)) {
+					const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
+					std::string_view pack_name = fold.pack_name();
+					std::string_view op = fold.op();
+					FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
+					
+					// Find the parameter pack in template parameters
+					std::optional<size_t> pack_param_idx;
+					for (size_t p = 0; p < template_params.size(); ++p) {
+						const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+						if (tparam.name() == pack_name && tparam.is_variadic()) {
+							pack_param_idx = p;
+							break;
+						}
+					}
+					
+					if (pack_param_idx.has_value()) {
+						// Collect the values from the variadic pack arguments
+						std::vector<int64_t> pack_values;
+						bool all_values_found = true;
+						
+						// For variadic packs, arguments after non-variadic parameters are the pack values
+						size_t non_variadic_count = 0;
+						for (const auto& param : template_params) {
+							if (!param.as<TemplateParameterNode>().is_variadic()) {
+								non_variadic_count++;
+							}
+						}
+						
+						for (size_t i = non_variadic_count; i < template_args_to_use.size() && all_values_found; ++i) {
+							if (template_args_to_use[i].is_value) {
+								pack_values.push_back(template_args_to_use[i].value);
+								FLASH_LOG(Templates, Debug, "Pack value[", i - non_variadic_count, "] = ", template_args_to_use[i].value);
+							} else {
+								all_values_found = false;
+							}
+						}
+						
+						if (all_values_found && !pack_values.empty()) {
+							// Evaluate the fold expression
+							std::optional<int64_t> result;
+							
+							if (op == "&&") {
+								result = 1;  // Start with true
+								for (int64_t v : pack_values) {
+									result = (*result != 0 && v != 0) ? 1 : 0;
+								}
+							} else if (op == "||") {
+								result = 0;  // Start with false
+								for (int64_t v : pack_values) {
+									result = (*result != 0 || v != 0) ? 1 : 0;
+								}
+							} else if (op == "+") {
+								result = 0;
+								for (int64_t v : pack_values) {
+									*result += v;
+								}
+							} else if (op == "*") {
+								result = 1;
+								for (int64_t v : pack_values) {
+									*result *= v;
+								}
+							} else if (op == "&") {
+								if (!pack_values.empty()) {
+									result = pack_values[0];
+									for (size_t i = 1; i < pack_values.size(); ++i) {
+										*result &= pack_values[i];
+									}
+								}
+							} else if (op == "|") {
+								if (!pack_values.empty()) {
+									result = pack_values[0];
+									for (size_t i = 1; i < pack_values.size(); ++i) {
+										*result |= pack_values[i];
+									}
+								}
+							} else if (op == "^") {
+								if (!pack_values.empty()) {
+									result = pack_values[0];
+									for (size_t i = 1; i < pack_values.size(); ++i) {
+										*result ^= pack_values[i];
+									}
+								}
+							}
+							
+							if (result.has_value()) {
+								FLASH_LOG(Templates, Debug, "Evaluated fold expression to: ", *result);
+								// Create a bool literal for && and ||, numeric for others
+								if (op == "&&" || op == "||") {
+									Token bool_token(Token::Type::Keyword, *result ? "true" : "false", 0, 0, 0);
+									substituted_initializer = emplace_node<ExpressionNode>(
+										BoolLiteralNode(bool_token, *result != 0)
+									);
+								} else {
+									std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*result)).commit();
+									Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+									substituted_initializer = emplace_node<ExpressionNode>(
+										NumericLiteralNode(num_token, static_cast<unsigned long long>(*result), Type::Int, TypeQualifier::None, 64)
+									);
+								}
+							}
+						}
+					}
+				}
+				// Handle TemplateParameterReferenceNode (e.g., static constexpr T value = v;)
+				else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+					const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+					FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
+					if (auto subst = substitute_template_param_in_initializer(tparam_ref.param_name().view(), template_args_to_use, template_params)) {
+						substituted_initializer = subst;
+						FLASH_LOG(Templates, Debug, "Substituted template parameter '", tparam_ref.param_name(), "'");
+					}
+				}
+				// Handle IdentifierNode that might be a template parameter
+				else if (std::holds_alternative<IdentifierNode>(expr)) {
+					const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+					std::string_view id_name = id_node.name();
+					FLASH_LOG(Templates, Debug, "Static member initializer contains IdentifierNode: ", id_name);
+					if (auto subst = substitute_template_param_in_initializer(id_name, template_args_to_use, template_params)) {
+						substituted_initializer = subst;
+						FLASH_LOG(Templates, Debug, "Substituted identifier '", id_name, "' (template parameter)");
+					}
+				}
+			}
+			
+			struct_info->addStaticMember(
+				static_member.getName(),
+				static_member.type,
+				static_member.type_index,
+				static_member.size,
+				static_member.alignment,
+				static_member.access,
+				substituted_initializer,
+				static_member.is_const
+			);
+		}
+	}
+	// Fallback: Process static members from AST node (for patterns/specializations)
+	else if (!class_decl.static_members().empty()) {
+		FLASH_LOG(Templates, Debug, "Processing ", class_decl.static_members().size(), " static members from primary template AST node");
+		for (const auto& static_member : class_decl.static_members()) {
+			FLASH_LOG(Templates, Debug, "Copying static member: ", StringTable::getStringView(static_member.name));
+			
+			// Check if initializer needs substitution (e.g., fold expressions, template parameters)
+			std::optional<ASTNode> substituted_initializer = static_member.initializer;
+		if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
+			const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
+			
+			// Handle FoldExpressionNode (e.g., static constexpr bool value = (Bs && ...);)
+			if (std::holds_alternative<FoldExpressionNode>(expr)) {
+				const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
+				std::string_view pack_name = fold.pack_name();
+				std::string_view op = fold.op();
+				FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
+				
+				// Find the parameter pack in template parameters
+				std::optional<size_t> pack_param_idx;
+				for (size_t p = 0; p < template_params.size(); ++p) {
+					const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+					if (tparam.name() == pack_name && tparam.is_variadic()) {
+						pack_param_idx = p;
+						break;
+					}
+				}
+				
+				if (pack_param_idx.has_value()) {
+					// Collect the values from the variadic pack arguments
+					std::vector<int64_t> pack_values;
+					bool all_values_found = true;
+					
+					// For variadic packs, arguments after non-variadic parameters are the pack values
+					size_t non_variadic_count = 0;
+					for (const auto& param : template_params) {
+						if (!param.as<TemplateParameterNode>().is_variadic()) {
+							non_variadic_count++;
+						}
+					}
+					
+					for (size_t i = non_variadic_count; i < template_args_to_use.size() && all_values_found; ++i) {
+						if (template_args_to_use[i].is_value) {
+							pack_values.push_back(template_args_to_use[i].value);
+							FLASH_LOG(Templates, Debug, "Pack value[", i - non_variadic_count, "] = ", template_args_to_use[i].value);
+						} else {
+							all_values_found = false;
+						}
+					}
+					
+					if (all_values_found && !pack_values.empty()) {
+						// Evaluate the fold expression
+						std::optional<int64_t> result;
+						
+						if (op == "&&") {
+							result = 1;  // Start with true
+							for (int64_t v : pack_values) {
+								result = (*result != 0 && v != 0) ? 1 : 0;
+							}
+						} else if (op == "||") {
+							result = 0;  // Start with false
+							for (int64_t v : pack_values) {
+								result = (*result != 0 || v != 0) ? 1 : 0;
+							}
+						} else if (op == "+") {
+							result = 0;
+							for (int64_t v : pack_values) {
+								*result += v;
+							}
+						} else if (op == "*") {
+							result = 1;
+							for (int64_t v : pack_values) {
+								*result *= v;
+							}
+						} else if (op == "&") {
+							if (!pack_values.empty()) {
+								result = pack_values[0];
+								for (size_t i = 1; i < pack_values.size(); ++i) {
+									*result &= pack_values[i];
+								}
+							}
+						} else if (op == "|") {
+							if (!pack_values.empty()) {
+								result = pack_values[0];
+								for (size_t i = 1; i < pack_values.size(); ++i) {
+									*result |= pack_values[i];
+								}
+							}
+						} else if (op == "^") {
+							if (!pack_values.empty()) {
+								result = pack_values[0];
+								for (size_t i = 1; i < pack_values.size(); ++i) {
+									*result ^= pack_values[i];
+								}
+							}
+						}
+						
+						if (result.has_value()) {
+							FLASH_LOG(Templates, Debug, "Evaluated fold expression to: ", *result);
+							// Create a bool literal for && and ||, numeric for others
+							if (op == "&&" || op == "||") {
+								Token bool_token(Token::Type::Keyword, *result ? "true" : "false", 0, 0, 0);
+								substituted_initializer = emplace_node<ExpressionNode>(
+									BoolLiteralNode(bool_token, *result != 0)
+								);
+							} else {
+								std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*result)).commit();
+								Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+								substituted_initializer = emplace_node<ExpressionNode>(
+									NumericLiteralNode(num_token, static_cast<unsigned long long>(*result), Type::Int, TypeQualifier::None, 64)
+								);
+							}
+						}
+					}
+				}
+			}
+			// Handle TemplateParameterReferenceNode (e.g., static constexpr T value = v;)
+			else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+				const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+				FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
+				if (auto subst = substitute_template_param_in_initializer(tparam_ref.param_name().view(), template_args_to_use, template_params)) {
+					substituted_initializer = subst;
+					FLASH_LOG(Templates, Debug, "Substituted template parameter '", tparam_ref.param_name(), "'");
+				}
+			}
+			// Handle IdentifierNode that might be a template parameter
+			else if (std::holds_alternative<IdentifierNode>(expr)) {
+				const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+				std::string_view id_name = id_node.name();
+				FLASH_LOG(Templates, Debug, "Static member initializer contains IdentifierNode: ", id_name);
+				if (auto subst = substitute_template_param_in_initializer(id_name, template_args_to_use, template_params)) {
+					substituted_initializer = subst;
+					FLASH_LOG(Templates, Debug, "Substituted identifier '", id_name, "' (template parameter)");
+				}
+			}
+		}
+		
+		struct_info->addStaticMember(
+			static_member.name,
+			static_member.type,
+			static_member.type_index,
+			static_member.size,
+			static_member.alignment,
+			static_member.access,
+			substituted_initializer,
+			static_member.is_const
+		);
+		}
+	}
 
 	// Copy nested classes from the template with template parameter substitution
 	for (const auto& nested_class : class_decl.nested_classes()) {
