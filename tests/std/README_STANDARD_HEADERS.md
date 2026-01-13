@@ -9,7 +9,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | - |
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | - |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | - |
-| `<utility>` | `test_std_utility.cpp` | ❌ Failed | `stl_pair.h` - dependent template type resolution |
+| `<utility>` | `test_std_utility.cpp` | ❌ Failed | `c++config.h` - variable template brace initialization |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template instantiation volume |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template instantiation volume |
@@ -47,11 +47,13 @@ cd tests/std
 
 ## Current Blockers
 
-### 1. `<utility>` - Dependent Template Type Resolution
+### 1. `<utility>` - Variable Template Brace Initialization
 
-**Location:** `stl_pair.h` - pattern `enable_if<__is_swappable<_Tp>::value>::type`
+**Location:** `c++config.h` - pattern `inline constexpr in_place_type_t<_Tp> in_place_type{};`
 
-When parsing `enable_if<dependent_expr>::type`, the parser tries to resolve the `::type` member on a dependent template instantiation. This should be deferred until the template is actually instantiated with concrete types.
+The parser expects a function parameter list `()` after a variable template declaration but encounters brace initialization `{}` instead. The fix requires supporting brace-initialized variable templates.
+
+**Previous blocker resolved:** The `enable_if<__is_swappable<_Tp>::value>::type` pattern in `stl_pair.h` now works correctly. Library type traits like `__is_swappable<T>` (which use template syntax `<>`) are now properly distinguished from compiler intrinsics like `__is_void(T)` (which use function call syntax `()`).
 
 ### 2. Template Instantiation Performance
 
@@ -92,6 +94,7 @@ The following features have been implemented to support standard headers:
 
 **Type System:**
 - Type traits intrinsics (`__is_same`, `__is_class`, `__is_pod`, etc.)
+- Library type traits vs. intrinsic disambiguation (`__is_swappable<T>` vs `__is_void(T)`)
 - Conversion operators (`operator T()`)
 - Function pointer typedefs
 - Variable templates with partial specializations

@@ -15676,12 +15676,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	// Check for type trait intrinsics: __is_void(T), __is_integral(T), __has_unique_object_representations(T), etc.
 	// Also support GCC/Clang __builtin_ prefix variants (e.g., __builtin_is_constant_evaluated)
 	// But exclude regular builtin functions like __builtin_labs, __builtin_abs, etc.
+	// IMPORTANT: Only treat as type trait intrinsic if followed by '(' - if followed by '<', it's a
+	// template class name (e.g., __is_swappable<T> from the standard library)
 	else if (current_token_->type() == Token::Type::Identifier && 
 	         (current_token_->value().starts_with("__is_") || 
 	          current_token_->value().starts_with("__has_") ||
 	          (current_token_->value().starts_with("__builtin_") && 
 	           (current_token_->value().starts_with("__builtin_is_") || 
-	            current_token_->value().starts_with("__builtin_has_"))))) {
+	            current_token_->value().starts_with("__builtin_has_")))) &&
+	         // Only parse as intrinsic if NEXT token is '(' - otherwise it's a template class name
+	         peek_token(1).has_value() && peek_token(1)->value() == "(") {
 		// Parse type trait intrinsics
 		std::string_view trait_name = current_token_->value();
 		Token trait_token = *current_token_;
@@ -15775,6 +15779,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 		auto it = trait_map.find(normalized_view);
 		if (it == trait_map.end()) {
+			// Unknown type trait intrinsic - this shouldn't happen since we only reach here
+			// if followed by '(' which means it was intended as a type trait call
 			return ParseResult::error("Unknown type trait intrinsic", trait_token);
 		}
 
