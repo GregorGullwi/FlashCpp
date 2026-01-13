@@ -30258,6 +30258,73 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return default_init;  // Return original if no substitution was performed
 	};
 	
+	// Helper lambda to evaluate a fold expression with concrete pack values
+	// Used in multiple places for static member initializer substitution
+	auto evaluate_fold_expression = [this](std::string_view op, const std::vector<int64_t>& pack_values) -> std::optional<ASTNode> {
+		if (pack_values.empty()) {
+			return std::nullopt;
+		}
+		
+		std::optional<int64_t> result;
+		
+		if (op == "&&") {
+			result = 1;  // Start with true
+			for (int64_t v : pack_values) {
+				result = (*result != 0 && v != 0) ? 1 : 0;
+			}
+		} else if (op == "||") {
+			result = 0;  // Start with false
+			for (int64_t v : pack_values) {
+				result = (*result != 0 || v != 0) ? 1 : 0;
+			}
+		} else if (op == "+") {
+			result = 0;
+			for (int64_t v : pack_values) {
+				*result += v;
+			}
+		} else if (op == "*") {
+			result = 1;
+			for (int64_t v : pack_values) {
+				*result *= v;
+			}
+		} else if (op == "&") {
+			result = pack_values[0];
+			for (size_t i = 1; i < pack_values.size(); ++i) {
+				*result &= pack_values[i];
+			}
+		} else if (op == "|") {
+			result = pack_values[0];
+			for (size_t i = 1; i < pack_values.size(); ++i) {
+				*result |= pack_values[i];
+			}
+		} else if (op == "^") {
+			result = pack_values[0];
+			for (size_t i = 1; i < pack_values.size(); ++i) {
+				*result ^= pack_values[i];
+			}
+		}
+		
+		if (!result.has_value()) {
+			return std::nullopt;
+		}
+		
+		FLASH_LOG(Templates, Debug, "Evaluated fold expression to: ", *result);
+		
+		// Create a bool literal for && and ||, numeric for others
+		if (op == "&&" || op == "||") {
+			Token bool_token(Token::Type::Keyword, *result ? "true" : "false", 0, 0, 0);
+			return emplace_node<ExpressionNode>(
+				BoolLiteralNode(bool_token, *result != 0)
+			);
+		} else {
+			std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*result)).commit();
+			Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+			return emplace_node<ExpressionNode>(
+				NumericLiteralNode(num_token, static_cast<unsigned long long>(*result), Type::Int, TypeQualifier::None, 64)
+			);
+		}
+	};
+	
 	// Helper lambda to append type name suffix based on TemplateTypeArg
 	// Used to build instantiated template names like "wrapper_int" from "wrapper" + int argument
 	auto append_type_name_suffix = [](StringBuilder& builder, const TemplateTypeArg& arg) {
@@ -31259,67 +31326,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 								
 								if (all_values_found && !pack_values.empty()) {
-									// Evaluate the fold expression
-									std::optional<int64_t> result;
-									
-									if (op == "&&") {
-										result = 1;  // Start with true
-										for (int64_t v : pack_values) {
-											result = (*result != 0 && v != 0) ? 1 : 0;
-										}
-									} else if (op == "||") {
-										result = 0;  // Start with false
-										for (int64_t v : pack_values) {
-											result = (*result != 0 || v != 0) ? 1 : 0;
-										}
-									} else if (op == "+") {
-										result = 0;
-										for (int64_t v : pack_values) {
-											*result += v;
-										}
-									} else if (op == "*") {
-										result = 1;
-										for (int64_t v : pack_values) {
-											*result *= v;
-										}
-									} else if (op == "&") {
-										if (!pack_values.empty()) {
-											result = pack_values[0];
-											for (size_t i = 1; i < pack_values.size(); ++i) {
-												*result &= pack_values[i];
-											}
-										}
-									} else if (op == "|") {
-										if (!pack_values.empty()) {
-											result = pack_values[0];
-											for (size_t i = 1; i < pack_values.size(); ++i) {
-												*result |= pack_values[i];
-											}
-										}
-									} else if (op == "^") {
-										if (!pack_values.empty()) {
-											result = pack_values[0];
-											for (size_t i = 1; i < pack_values.size(); ++i) {
-												*result ^= pack_values[i];
-											}
-										}
-									}
-									
-									if (result.has_value()) {
-										FLASH_LOG(Templates, Debug, "Evaluated fold expression to: ", *result);
-										// Create a bool literal for && and ||, numeric for others
-										if (op == "&&" || op == "||") {
-											Token bool_token(Token::Type::Keyword, *result ? "true" : "false", 0, 0, 0);
-											substituted_initializer = emplace_node<ExpressionNode>(
-												BoolLiteralNode(bool_token, *result != 0)
-											);
-										} else {
-											std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*result)).commit();
-											Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-											substituted_initializer = emplace_node<ExpressionNode>(
-												NumericLiteralNode(num_token, static_cast<unsigned long long>(*result), Type::Int, TypeQualifier::None, 64)
-											);
-										}
+									auto fold_result = evaluate_fold_expression(op, pack_values);
+									if (fold_result.has_value()) {
+										substituted_initializer = *fold_result;
 									}
 								}
 							}
@@ -32966,67 +32975,9 @@ if (struct_type_info.getStructInfo()) {
 						}
 						
 						if (all_values_found && !pack_values.empty()) {
-							// Evaluate the fold expression
-							std::optional<int64_t> result;
-							
-							if (op == "&&") {
-								result = 1;  // Start with true
-								for (int64_t v : pack_values) {
-									result = (*result != 0 && v != 0) ? 1 : 0;
-								}
-							} else if (op == "||") {
-								result = 0;  // Start with false
-								for (int64_t v : pack_values) {
-									result = (*result != 0 || v != 0) ? 1 : 0;
-								}
-							} else if (op == "+") {
-								result = 0;
-								for (int64_t v : pack_values) {
-									*result += v;
-								}
-							} else if (op == "*") {
-								result = 1;
-								for (int64_t v : pack_values) {
-									*result *= v;
-								}
-							} else if (op == "&") {
-								if (!pack_values.empty()) {
-									result = pack_values[0];
-									for (size_t i = 1; i < pack_values.size(); ++i) {
-										*result &= pack_values[i];
-									}
-								}
-							} else if (op == "|") {
-								if (!pack_values.empty()) {
-									result = pack_values[0];
-									for (size_t i = 1; i < pack_values.size(); ++i) {
-										*result |= pack_values[i];
-									}
-								}
-							} else if (op == "^") {
-								if (!pack_values.empty()) {
-									result = pack_values[0];
-									for (size_t i = 1; i < pack_values.size(); ++i) {
-										*result ^= pack_values[i];
-									}
-								}
-							}
-							
-							if (result.has_value()) {
-								FLASH_LOG(Templates, Debug, "Evaluated fold expression to: ", *result);
-								// Create a bool literal for && and ||, numeric for others
-								if (op == "&&" || op == "||") {
-									Token bool_token(Token::Type::Keyword, *result ? "true" : "false", 0, 0, 0);
-									substituted_initializer = emplace_node<ExpressionNode>(
-										BoolLiteralNode(bool_token, *result != 0)
-									);
-								} else {
-									std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*result)).commit();
-									Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-									substituted_initializer = emplace_node<ExpressionNode>(
-										NumericLiteralNode(num_token, static_cast<unsigned long long>(*result), Type::Int, TypeQualifier::None, 64)
-									);
-								}
+							auto fold_result = evaluate_fold_expression(op, pack_values);
+							if (fold_result.has_value()) {
+								substituted_initializer = *fold_result;
 							}
 						}
 					}
@@ -33115,67 +33066,9 @@ if (struct_type_info.getStructInfo()) {
 					}
 					
 					if (all_values_found && !pack_values.empty()) {
-						// Evaluate the fold expression
-						std::optional<int64_t> result;
-						
-						if (op == "&&") {
-							result = 1;  // Start with true
-							for (int64_t v : pack_values) {
-								result = (*result != 0 && v != 0) ? 1 : 0;
-							}
-						} else if (op == "||") {
-							result = 0;  // Start with false
-							for (int64_t v : pack_values) {
-								result = (*result != 0 || v != 0) ? 1 : 0;
-							}
-						} else if (op == "+") {
-							result = 0;
-							for (int64_t v : pack_values) {
-								*result += v;
-							}
-						} else if (op == "*") {
-							result = 1;
-							for (int64_t v : pack_values) {
-								*result *= v;
-							}
-						} else if (op == "&") {
-							if (!pack_values.empty()) {
-								result = pack_values[0];
-								for (size_t i = 1; i < pack_values.size(); ++i) {
-									*result &= pack_values[i];
-								}
-							}
-						} else if (op == "|") {
-							if (!pack_values.empty()) {
-								result = pack_values[0];
-								for (size_t i = 1; i < pack_values.size(); ++i) {
-									*result |= pack_values[i];
-								}
-							}
-						} else if (op == "^") {
-							if (!pack_values.empty()) {
-								result = pack_values[0];
-								for (size_t i = 1; i < pack_values.size(); ++i) {
-									*result ^= pack_values[i];
-								}
-							}
-						}
-						
-						if (result.has_value()) {
-							FLASH_LOG(Templates, Debug, "Evaluated fold expression to: ", *result);
-							// Create a bool literal for && and ||, numeric for others
-							if (op == "&&" || op == "||") {
-								Token bool_token(Token::Type::Keyword, *result ? "true" : "false", 0, 0, 0);
-								substituted_initializer = emplace_node<ExpressionNode>(
-									BoolLiteralNode(bool_token, *result != 0)
-								);
-							} else {
-								std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*result)).commit();
-								Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-								substituted_initializer = emplace_node<ExpressionNode>(
-									NumericLiteralNode(num_token, static_cast<unsigned long long>(*result), Type::Int, TypeQualifier::None, 64)
-								);
-							}
+						auto fold_result = evaluate_fold_expression(op, pack_values);
+						if (fold_result.has_value()) {
+							substituted_initializer = *fold_result;
 						}
 					}
 				}
