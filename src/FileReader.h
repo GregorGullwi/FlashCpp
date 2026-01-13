@@ -247,6 +247,46 @@ static std::string_view extractNameBetweenParens(std::string_view sv) {
 	return {};
 }
 
+// Check if a line has an incomplete macro invocation (unmatched parentheses)
+// Returns true if there's an unmatched opening paren that could be from a macro
+static bool hasIncompleteMacroInvocation(std::string_view line) {
+	int paren_depth = 0;
+	int angle_depth = 0;
+	bool in_string = false;
+	bool in_char = false;
+	
+	for (size_t i = 0; i < line.size(); ++i) {
+		char c = line[i];
+		
+		// Handle escape sequences
+		if ((in_string || in_char) && c == '\\' && i + 1 < line.size()) {
+			i++;
+			continue;
+		}
+		
+		// Handle string literals
+		if (!in_char && c == '"') {
+			in_string = !in_string;
+			continue;
+		}
+		
+		// Handle char literals
+		if (!in_string && c == '\'') {
+			in_char = !in_char;
+			continue;
+		}
+		
+		if (!in_string && !in_char) {
+			if (c == '(') paren_depth++;
+			else if (c == ')') paren_depth--;
+			else if (c == '<') angle_depth++;
+			else if (c == '>') angle_depth--;
+		}
+	}
+	
+	return paren_depth > 0;  // Unmatched opening parens
+}
+
 static size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) {
 	int nesting = 1;
 	size_t pos = opening_pos + 1;
@@ -320,6 +360,7 @@ static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
 
     size_t arg_start = i;
     int paren_depth = 0;
+    int angle_depth = 0;  // Track template angle brackets
     bool in_string = false;
     bool in_char = false;
     char string_delimiter = '\0';
@@ -355,7 +396,7 @@ static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
             continue;
         }
 
-        // Only process parentheses and commas outside of string/char literals
+        // Only process parentheses, angle brackets, and commas outside of string/char literals
         if (!in_string && !in_char) {
             if (c == '(') {
                 paren_depth++;
@@ -369,8 +410,19 @@ static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
                 paren_depth--;
                 continue;
             }
-            if (c == ',' && paren_depth == 0) {
-                // Argument ended
+            // Track template angle brackets for correct comma handling
+            if (c == '<') {
+                angle_depth++;
+                continue;
+            }
+            if (c == '>') {
+                if (angle_depth > 0) {
+                    angle_depth--;
+                }
+                continue;
+            }
+            if (c == ',' && paren_depth == 0 && angle_depth == 0) {
+                // Argument ended - only if not inside parens or angle brackets
                 size_t end = i;
 
                 // Trim trailing whitespace
@@ -807,6 +859,17 @@ public:
 				processLineDirective(line);
 			}
 			else {
+				// Handle multiline macro invocations.
+				// If a line has an incomplete macro invocation (unmatched parens),
+				// keep reading lines until we have matching parens.
+				while (hasIncompleteMacroInvocation(line)) {
+					std::string next_line;
+					if (!std::getline(stream, next_line)) break;
+					++line_number;
+					// Join with the previous line (preserving whitespace)
+					line += "\n" + next_line;
+				}
+				
 				// Expand macros in non-directive lines (regular source code).
 				// Only expand if the line is non-empty to avoid unnecessary processing.
 				if (line.size() > 0)
