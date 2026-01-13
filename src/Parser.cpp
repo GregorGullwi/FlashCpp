@@ -27464,6 +27464,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 
 		// Successfully parsed a type
 		TypeSpecifierNode& type_node = type_result.node()->as<TypeSpecifierNode>();
+		FLASH_LOG_FORMAT(Templates, Debug, "parse_explicit_template_arguments: parsed type, next token = '{}'", 
+			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 		
 		MemberPointerKind member_pointer_kind = MemberPointerKind::None;
 
@@ -27643,6 +27645,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// Rvalue reference - single && token
 			consume_token(); // consume '&&'
 			type_node.set_reference(true);  // is_rvalue = true
+			FLASH_LOG(Templates, Debug, "Parsed rvalue reference modifier");
 		} else if (peek_token().has_value() && peek_token()->value() == "&") {
 			consume_token(); // consume '&'
 			
@@ -27650,8 +27653,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			if (peek_token().has_value() && peek_token()->value() == "&") {
 				consume_token(); // consume second '&'
 				type_node.set_reference(true);  // is_rvalue = true
+				FLASH_LOG(Templates, Debug, "Parsed rvalue reference modifier (two & tokens)");
 			} else {
 				type_node.set_reference(false); // is_rvalue = false (lvalue reference)
+				FLASH_LOG(Templates, Debug, "Parsed lvalue reference modifier");
 			}
 		}
 
@@ -27701,6 +27706,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		}
 
 		// Create TemplateTypeArg from the fully parsed type
+		FLASH_LOG_FORMAT(Templates, Debug, "Creating TemplateTypeArg from TypeSpecifierNode: is_reference={}, is_rvalue_reference={}", 
+		                 type_node.is_reference(), type_node.is_rvalue_reference());
 		TemplateTypeArg arg(type_node);
 		arg.is_pack = is_pack_expansion;
 		arg.member_pointer_kind = member_pointer_kind;
