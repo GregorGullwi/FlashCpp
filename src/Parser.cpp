@@ -1525,6 +1525,35 @@ ParseResult Parser::parse_type_and_name() {
                 return ParseResult::error("Unsupported operator overload: operator" + std::string(operator_symbol), operator_symbol_token);
             }
         }
+        // Check for operator new, delete, new[], delete[]
+        else if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+                 (peek_token()->value() == "new" || peek_token()->value() == "delete")) {
+            std::string_view keyword_value = peek_token()->value();
+            consume_token(); // consume 'new' or 'delete'
+            
+            // Check for array version: new[] or delete[]
+            bool is_array = false;
+            if (peek_token().has_value() && peek_token()->value() == "[") {
+                consume_token(); // consume '['
+                if (peek_token().has_value() && peek_token()->value() == "]") {
+                    consume_token(); // consume ']'
+                    is_array = true;
+                } else {
+                    return ParseResult::error("Expected ']' after 'operator " + std::string(keyword_value) + "['", operator_keyword_token);
+                }
+            }
+            
+            // Build operator name
+            if (keyword_value == "new") {
+                static const std::string op_new = "operator new";
+                static const std::string op_new_array = "operator new[]";
+                operator_name = is_array ? op_new_array : op_new;
+            } else {
+                static const std::string op_delete = "operator delete";
+                static const std::string op_delete_array = "operator delete[]";
+                operator_name = is_array ? op_delete_array : op_delete;
+            }
+        }
         else {
             // Try to parse conversion operator: operator type()
             auto type_result = parse_type_specifier();
@@ -25773,10 +25802,29 @@ ParseResult Parser::parse_template_function_declaration_body(
 		final_requires_clause
 	);
 
-	// Handle function body: semicolon (declaration only) or braces (definition)
+	// Handle function body: semicolon (declaration only), = delete, = default, or braces (definition)
 	if (peek_token().has_value() && peek_token()->value() == ";") {
 		// Just a declaration, consume the semicolon
 		consume_token();
+	} else if (peek_token().has_value() && peek_token()->value() == "=") {
+		// Handle = delete or = default
+		consume_token(); // consume '='
+		if (peek_token().has_value()) {
+			if (peek_token()->value() == "delete") {
+				consume_token(); // consume 'delete'
+				// For deleted template functions, we just record the pattern
+				// The function is still registered as a template but will be rejected if called
+			} else if (peek_token()->value() == "default") {
+				consume_token(); // consume 'default'
+				// For defaulted template functions, the compiler generates the implementation
+			} else {
+				return ParseResult::error("Expected 'delete' or 'default' after '=' in function declaration", *peek_token());
+			}
+		}
+		// Expect semicolon after = delete or = default
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after '= delete' or '= default'", *current_token_);
+		}
 	} else if (peek_token().has_value() && peek_token()->value() == "{") {
 		// Has a body - save positions for re-parsing during instantiation
 		SaveHandle body_start = save_token_position();
