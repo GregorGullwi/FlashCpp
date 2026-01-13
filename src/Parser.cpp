@@ -22563,6 +22563,18 @@ ParseResult Parser::parse_template_declaration() {
 		// Register the concept in the global concept registry
 		gConceptRegistry.registerConcept(concept_name_token.value(), concept_node);
 		
+		// Also register with namespace-qualified name if we're in a namespace
+		auto namespace_path = gSymbolTable.build_current_namespace_path();
+		if (!namespace_path.empty()) {
+			std::string qualified_name;
+			for (const auto& ns : namespace_path) {
+				qualified_name += ns;
+				qualified_name += "::";
+			}
+			qualified_name += concept_name_token.value();
+			gConceptRegistry.registerConcept(qualified_name, concept_node);
+		}
+		
 		return saved_position.success(concept_node);
 	} else if (is_alias_template) {
 		// Consume 'using' keyword
@@ -25564,15 +25576,35 @@ ParseResult Parser::parse_template_parameter() {
 		return saved_position.success(param_node);
 	}
 
-	// Check for concept-constrained type parameter: Concept T, Concept<U> T
+	// Check for concept-constrained type parameter: Concept T, Concept<U> T, namespace::Concept T
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-		std::string_view potential_concept = peek_token()->value();
+		auto concept_check_pos = save_token_position();
+		
+		// Build potential concept name (possibly namespace-qualified)
+		std::string potential_concept_str(peek_token()->value());
+		Token concept_token = *peek_token();
+		consume_token(); // consume first identifier
+		
+		// Check for namespace-qualified concept: ns::concept or ns::ns2::concept
+		while (peek_token().has_value() && peek_token()->value() == "::") {
+			consume_token(); // consume '::'
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+				// Not a valid qualified name, restore and continue
+				restore_token_position(concept_check_pos);
+				break;
+			}
+			potential_concept_str += "::";
+			potential_concept_str += peek_token()->value();
+			concept_token = *peek_token();
+			consume_token(); // consume next identifier
+		}
+		
+		// Intern the concept name string and get a stable string_view
+		StringHandle concept_handle = StringTable::getOrInternStringHandle(potential_concept_str);
+		std::string_view potential_concept = StringTable::getStringView(concept_handle);
 		
 		// Check if this identifier is a registered concept
 		if (gConceptRegistry.hasConcept(potential_concept)) {
-			Token concept_token = *peek_token();
-			consume_token(); // consume concept name
-			
 			// Check for template arguments: Concept<U>
 			// For now, we'll skip template argument parsing for concepts
 			// and just expect the parameter name
@@ -25636,6 +25668,9 @@ ParseResult Parser::parse_template_parameter() {
 			}
 			
 			return saved_position.success(param_node);
+		} else {
+			// Not a concept, restore position and let other parsing handle it
+			restore_token_position(concept_check_pos);
 		}
 	}
 	
