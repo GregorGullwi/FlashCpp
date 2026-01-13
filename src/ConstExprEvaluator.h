@@ -3106,4 +3106,73 @@ public:
 	}
 };
 
+// Evaluate a fold expression with concrete pack values
+// This is used during template instantiation for patterns like:
+//   template<bool... Bs> struct __and_ { static constexpr bool value = (Bs && ...); };
+// Supported operators: &&, ||, +, *, &, |, ^
+// Returns the evaluated result, or nullopt if evaluation fails (e.g., unsupported operator)
+// Note: For empty packs, C++17 defines identity values for &&, ||, + and * only.
+//       For &, |, ^ with empty packs, this returns nullopt (ill-formed per C++17).
+inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, const std::vector<int64_t>& pack_values) {
+	// Handle empty packs according to C++17 fold expression semantics
+	// Empty packs have identity values for some operators:
+	// - (... && pack) with empty pack -> true (1)
+	// - (... || pack) with empty pack -> false (0)  
+	// - (... + pack) with empty pack -> 0
+	// - (... * pack) with empty pack -> 1
+	// - Other operators with empty pack are ill-formed
+	if (pack_values.empty()) {
+		if (op == "&&") return 1;  // true
+		if (op == "||") return 0;  // false
+		if (op == "+") return 0;
+		if (op == "*") return 1;
+		// &, |, ^ with empty pack is ill-formed
+		return std::nullopt;
+	}
+	
+	std::optional<int64_t> result;
+	
+	if (op == "&&") {
+		result = 1;  // Start with true
+		for (int64_t v : pack_values) {
+			result = (*result != 0 && v != 0) ? 1 : 0;
+			if (*result == 0) break;  // Short-circuit: stop on first false
+		}
+	} else if (op == "||") {
+		result = 0;  // Start with false
+		for (int64_t v : pack_values) {
+			result = (*result != 0 || v != 0) ? 1 : 0;
+			if (*result != 0) break;  // Short-circuit: stop on first true
+		}
+	} else if (op == "+") {
+		result = 0;
+		for (int64_t v : pack_values) {
+			*result += v;
+		}
+	} else if (op == "*") {
+		result = 1;
+		for (int64_t v : pack_values) {
+			*result *= v;
+		}
+	} else if (op == "&") {
+		result = pack_values[0];
+		for (size_t i = 1; i < pack_values.size(); ++i) {
+			*result &= pack_values[i];
+		}
+	} else if (op == "|") {
+		result = pack_values[0];
+		for (size_t i = 1; i < pack_values.size(); ++i) {
+			*result |= pack_values[i];
+		}
+	} else if (op == "^") {
+		result = pack_values[0];
+		for (size_t i = 1; i < pack_values.size(); ++i) {
+			*result ^= pack_values[i];
+		}
+	}
+	// Unsupported operator returns nullopt (result stays unset)
+	
+	return result;
+}
+
 } // namespace ConstExpr
