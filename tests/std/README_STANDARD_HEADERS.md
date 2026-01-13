@@ -11,23 +11,23 @@ These files test FlashCpp's ability to compile and use various C++ standard libr
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | Successfully compiles! Function ref types added Jan 12, 2026 |
-| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Complex template instantiation |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Failed | Blocked by function pointer typedef `void (*handler)()` in `<new>` |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Virtual inheritance, locales |
-| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Variadic templates, SFINAE |
-| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Allocators, exceptions |
-| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | constexpr support |
-| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Iterators, concepts |
-| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | std::pair, std::move (template volume) |
+| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Variadic templates, times out during compilation |
+| `<vector>` | `test_std_vector.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
+| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Times out during compilation |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
+| `<utility>` | `test_std_utility.cpp` | ❌ Failed | Blocked at `move.h:168` - "Expected type specifier" |
 | `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Smart pointers, allocators |
 | `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | std::function, type erasure |
-| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Red-black trees, allocators |
-| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Red-black trees, allocators |
-| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | Union templates |
-| `<variant>` | `test_std_variant.cpp` | ⏱️ Timeout | Advanced union handling |
+| `<map>` | `test_std_map.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
+| `<set>` | `test_std_set.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
+| `<optional>` | `test_std_optional.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
+| `<variant>` | `test_std_variant.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
 | `<any>` | `test_std_any.cpp` | ❌ Failed | Type erasure, RTTI |
-| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | constexpr support |
-| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Requires clauses work, but template volume causes timeout |
+| `<span>` | `test_std_span.cpp` | ❌ Failed | Blocked by `<new>` function pointer typedef |
+| `<concepts>` | `test_std_concepts.cpp` | ❌ Failed | Blocked at `concepts:130` - compound requirement in requires |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Concepts, views |
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | Successfully compiles in ~1.8s! |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Ratio templates, duration |
@@ -140,7 +140,88 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 12, 2026 - Function Reference/Pointer Types)
+## Latest Investigation (January 12, 2026 - Named Anonymous Unions in Typedef & Direct Initialization)
+
+### ✅ IMPLEMENTED: Named Anonymous Unions in Typedef Struct Bodies
+
+**Pattern Now Supported:** Named anonymous unions/structs inside typedef struct bodies, commonly found in system headers like `<wchar.h>` and `<bits/types/__mbstate_t.h>`:
+```cpp
+typedef struct
+{
+  int __count;
+  union
+  {
+    unsigned int __wch;
+    char __wchb[4];
+  } __value;		// Named anonymous union member
+} __mbstate_t;
+```
+
+**What Was Fixed:**
+1. ✅ **Named anonymous union detection in typedef struct parsing** - Added peek-ahead logic to check if there's an identifier after the closing `}` of the union
+2. ✅ **Anonymous union type creation** - Creates a unique anonymous type with proper member layout
+3. ✅ **Member declaration creation** - Adds the named member to the enclosing typedef struct
+
+**Implementation:**
+- Modified `parse_typedef_declaration()` in the inline struct body parsing section
+- After seeing `union {` or `struct {`, skips balanced braces to peek if an identifier follows
+- If identifier follows, creates an anonymous type, parses members into it, and adds the named member
+- If no identifier, treats as true anonymous union (flattened into parent)
+
+**Test Cases:**
+- ✅ `test_named_anonymous_union_in_typedef_ret42.cpp` - Named anonymous union inside typedef struct
+
+**Impact:**
+- ✅ `<string_view>` header now progresses past `__mbstate_t.h`!
+- Previously blocked at `/usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h:20`
+
+---
+
+### ✅ IMPLEMENTED: Improved Direct Initialization Detection
+
+**Pattern Now Supported:** Direct initialization with dereference expressions like `*this` or `*ptr`:
+```cpp
+struct fpos {
+    fpos copy_self() const {
+        fpos __pos(*this);  // Direct initialization with *this
+        return __pos;
+    }
+};
+```
+
+**What Was Fixed:**
+- ✅ **`*this` and `*variable` in direct initialization** - The `looks_like_function_parameters()` heuristic was incorrectly treating `*` at the start of parentheses as a pointer parameter type
+- Modified the function to check what follows the `*` operator:
+  - If followed by `this`, it's `*this` = expression (direct init)
+  - If followed by a known variable, it's `*var` = expression (direct init)
+  - If followed by a literal or open paren, it's an expression
+  - Otherwise, assume function parameter
+
+**Test Cases:**
+- ✅ `test_direct_init_variable_ret42.cpp` - Direct initialization with named variable
+
+**Impact:**
+- ✅ `<string_view>` header now progresses past `fpos` copy patterns!
+- Previously blocked at `/usr/include/c++/14/bits/postypes.h:156`
+
+---
+
+### Current Blocker for `<string_view>`: Function Pointer Typedef
+
+**Pattern Not Yet Supported:**
+```cpp
+typedef void (*new_handler)();
+```
+
+This is a function pointer typedef - declaring a type alias for a pointer to a function returning void with no parameters. This pattern is common in `<new>` header.
+
+**Next Steps:**
+- Implement function pointer typedef parsing
+- Pattern: `typedef return_type (*alias_name)(parameters);`
+
+---
+
+## Previous Investigation (January 12, 2026 - Function Reference/Pointer Types)
 
 ### ✅ IMPLEMENTED: Function Reference and Pointer Types in Type Aliases and Template Arguments
 
