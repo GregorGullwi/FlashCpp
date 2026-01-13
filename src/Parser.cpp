@@ -18279,6 +18279,75 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								consume_token(); // consume the identifier
 							}
 							
+							// Check for member template arguments: Template<T>::member<U>
+							std::optional<std::vector<TemplateTypeArg>> member_template_args;
+							if (peek_token().has_value() && peek_token()->value() == "<") {
+								member_template_args = parse_explicit_template_arguments();
+								// If parsing failed, it might be a less-than operator, but that's rare
+							}
+							
+							// Check for function call: Template<T>::member() or Template<T>::member<U>()
+							if (peek_token().has_value() && peek_token()->value() == "(") {
+								consume_token(); // consume '('
+								
+								// Parse function arguments
+								ChunkedVector<ASTNode> call_args;
+								while (peek_token().has_value() && peek_token()->value() != ")") {
+									auto argResult = parse_expression();
+									if (argResult.is_error()) {
+										return argResult;
+									}
+									
+									if (argResult.node().has_value()) {
+										call_args.push_back(*argResult.node());
+									}
+									
+									// Check for comma between arguments
+									if (peek_token().has_value() && peek_token()->value() == ",") {
+										consume_token(); // consume ','
+									} else if (peek_token().has_value() && peek_token()->value() != ")") {
+										return ParseResult::error("Expected ',' or ')' in function arguments", *peek_token());
+									}
+								}
+								
+								// Expect closing parenthesis
+								if (!consume_punctuator(")")) {
+									return ParseResult::error("Expected ')' after function arguments", *current_token_);
+								}
+								
+								// Build qualified function name including template args
+								StringBuilder func_name_builder;
+								func_name_builder.append(instantiated_name);
+								func_name_builder.append("::");
+								func_name_builder.append(final_identifier.value());
+								
+								// If member has template args, append them to the function name
+								if (member_template_args.has_value() && !member_template_args->empty()) {
+									func_name_builder.append("_");
+									for (size_t i = 0; i < member_template_args->size(); ++i) {
+										if (i > 0) func_name_builder.append("_");
+										const auto& arg = (*member_template_args)[i];
+										append_type_name_suffix(func_name_builder, arg);
+									}
+								}
+								std::string_view func_name = func_name_builder.commit();
+								
+								// Create function call token
+								Token func_token(Token::Type::Identifier, func_name, 
+								                final_identifier.line(), 
+								                final_identifier.column(),
+								                final_identifier.file_index());
+								
+								// Create a forward declaration for the function
+								auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, func_token);
+								auto forward_decl = emplace_node<DeclarationNode>(type_node, func_token);
+								const DeclarationNode* decl_ptr = &forward_decl.as<DeclarationNode>();
+								
+								result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(call_args), func_token));
+								pending_explicit_template_args_.reset();
+								return ParseResult::success(*result);
+							}
+							
 							// Create a QualifiedIdentifierNode with the instantiated type name
 							auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
 							const auto& qualified_node = qualified_node_ast.as<QualifiedIdentifierNode>();
@@ -18748,6 +18817,78 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					auto qualified_result = parse_qualified_identifier_after_template(idenfifier_token);
 					if (!qualified_result.is_error() && qualified_result.node().has_value()) {
 						auto qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
+						
+						// Check for member template arguments: Template<T>::member<U>
+						std::optional<std::vector<TemplateTypeArg>> member_template_args;
+						if (peek_token().has_value() && peek_token()->value() == "<") {
+							member_template_args = parse_explicit_template_arguments();
+							// If parsing failed, it might be a less-than operator, but that's rare for member access
+						}
+						
+						// Check for function call: Template<T>::member() or Template<T>::member<U>()
+						if (peek_token().has_value() && peek_token()->value() == "(") {
+							consume_token(); // consume '('
+							
+							// Parse function arguments
+							ChunkedVector<ASTNode> args;
+							while (peek_token().has_value() && peek_token()->value() != ")") {
+								ParseResult argResult = parse_expression();
+								if (argResult.is_error()) {
+									return argResult;
+								}
+								
+								if (argResult.node().has_value()) {
+									args.push_back(*argResult.node());
+								}
+								
+								// Check for comma between arguments
+								if (peek_token().has_value() && peek_token()->value() == ",") {
+									consume_token(); // consume ','
+								} else if (peek_token().has_value() && peek_token()->value() != ")") {
+									return ParseResult::error("Expected ',' or ')' in function arguments", *peek_token());
+								}
+							}
+							
+							// Expect closing parenthesis
+							if (!consume_punctuator(")")) {
+								return ParseResult::error("Expected ')' after function arguments", *current_token_);
+							}
+							
+							// Build qualified function name including template args
+							StringBuilder func_name_builder;
+							// First append the base template instantiation (e.g., "Helper_int")
+							func_name_builder.append(get_instantiated_class_name(idenfifier_token.value(), *explicit_template_args));
+							func_name_builder.append("::");
+							func_name_builder.append(qualified_node.name());
+							
+							// If member has template args, append them to the function name
+							if (member_template_args.has_value() && !member_template_args->empty()) {
+								func_name_builder.append("_");
+								for (size_t i = 0; i < member_template_args->size(); ++i) {
+									if (i > 0) func_name_builder.append("_");
+									const auto& arg = (*member_template_args)[i];
+									// Use the standard helper function to append type name suffix
+									append_type_name_suffix(func_name_builder, arg);
+								}
+							}
+							std::string_view func_name = func_name_builder.commit();
+							
+							// Create function call node with the qualified name
+							Token func_token(Token::Type::Identifier, func_name, 
+							                qualified_node.identifier_token().line(), 
+							                qualified_node.identifier_token().column(),
+							                qualified_node.identifier_token().file_index());
+							
+							// Create a forward declaration for the function
+							auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, func_token);
+							auto forward_decl = emplace_node<DeclarationNode>(type_node, func_token);
+							const DeclarationNode* decl_ptr = &forward_decl.as<DeclarationNode>();
+							
+							result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), func_token));
+							return ParseResult::success(*result);
+						}
+						
+						// Not a function call - return as qualified identifier
 						result = emplace_node<ExpressionNode>(qualified_node);
 						return ParseResult::success(*result);
 					}
