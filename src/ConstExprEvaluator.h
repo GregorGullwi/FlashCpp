@@ -3110,9 +3110,23 @@ public:
 // This is used during template instantiation for patterns like:
 //   template<bool... Bs> struct __and_ { static constexpr bool value = (Bs && ...); };
 // Supported operators: &&, ||, +, *, &, |, ^
-// Returns the evaluated result, or nullopt if evaluation fails
+// Returns the evaluated result, or nullopt if evaluation fails (e.g., unsupported operator)
+// Note: For empty packs, C++17 defines identity values for &&, ||, + and * only.
+//       For &, |, ^ with empty packs, this returns nullopt (ill-formed per C++17).
 inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, const std::vector<int64_t>& pack_values) {
+	// Handle empty packs according to C++17 fold expression semantics
+	// Empty packs have identity values for some operators:
+	// - (... && pack) with empty pack -> true (1)
+	// - (... || pack) with empty pack -> false (0)  
+	// - (... + pack) with empty pack -> 0
+	// - (... * pack) with empty pack -> 1
+	// - Other operators with empty pack are ill-formed
 	if (pack_values.empty()) {
+		if (op == "&&") return 1;  // true
+		if (op == "||") return 0;  // false
+		if (op == "+") return 0;
+		if (op == "*") return 1;
+		// &, |, ^ with empty pack is ill-formed
 		return std::nullopt;
 	}
 	
@@ -3156,6 +3170,7 @@ inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, cons
 			*result ^= pack_values[i];
 		}
 	}
+	// Unsupported operator returns nullopt (result stays unset)
 	
 	return result;
 }
