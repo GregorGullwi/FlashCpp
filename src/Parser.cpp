@@ -14913,7 +14913,42 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				
 				result = function_call_node;
 				continue; // Check for more postfix operators
-			} else if (qualified_symbol.has_value()) {
+			} else if (template_args.has_value() && !peek_token()->value().empty() && peek_token()->value() != "(") {
+				// This might be a variable template usage with qualified name: ns::var_template<Args>
+				// Build the qualified name for lookup
+				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
+				FLASH_LOG(Templates, Debug, "Checking for qualified variable template: ", qualified_name);
+				
+				auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
+				if (var_template_opt.has_value()) {
+					auto instantiated_var = try_instantiate_variable_template(qualified_name, *template_args);
+					if (instantiated_var.has_value()) {
+						// Get the instantiated variable name
+						std::string_view inst_name;
+						if (instantiated_var->is<VariableDeclarationNode>()) {
+							const auto& var_decl = instantiated_var->as<VariableDeclarationNode>();
+							const auto& decl = var_decl.declaration();
+							inst_name = decl.identifier_token().value();
+						} else if (instantiated_var->is<DeclarationNode>()) {
+							const auto& decl = instantiated_var->as<DeclarationNode>();
+							inst_name = decl.identifier_token().value();
+						} else {
+							inst_name = qualified_name;  // Fallback
+						}
+						
+						// Return identifier reference to the instantiated variable
+						Token inst_token(Token::Type::Identifier, inst_name, 
+						                final_identifier.line(), final_identifier.column(), final_identifier.file_index());
+						result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
+						FLASH_LOG(Templates, Debug, "Successfully instantiated qualified variable template: ", qualified_name);
+						continue; // Check for more postfix operators
+					}
+				}
+				
+				// Fall through to handle as regular qualified identifier if not a variable template
+			}
+			
+			if (qualified_symbol.has_value()) {
 				// Just a qualified identifier reference (e.g., Namespace::globalValue)
 				auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
 				result = emplace_node<ExpressionNode>(qualified_node_ast.as<QualifiedIdentifierNode>());
@@ -16307,6 +16342,44 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			if (template_args.has_value()) {
 				FLASH_LOG_FORMAT(Parser, Debug, "Successfully parsed {} template arguments for '{}'", template_args->size(), qualified_name);
 				
+				// First, check if this is a variable template (most common case for traits like is_reference_v<T>)
+				auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
+				if (!var_template_opt.has_value()) {
+					// Try with simple name
+					var_template_opt = gTemplateRegistry.lookupVariableTemplate(qual_id.name());
+				}
+				
+				if (var_template_opt.has_value()) {
+					FLASH_LOG(Templates, Debug, "Found variable template, instantiating: ", qualified_name);
+					// Try instantiation with qualified name first, fall back to simple name
+					auto instantiated_var = try_instantiate_variable_template(qualified_name, *template_args);
+					if (!instantiated_var.has_value()) {
+						instantiated_var = try_instantiate_variable_template(qual_id.name(), *template_args);
+					}
+					if (instantiated_var.has_value()) {
+						// Get the instantiated variable name
+						std::string_view inst_name;
+						if (instantiated_var->is<VariableDeclarationNode>()) {
+							const auto& var_decl = instantiated_var->as<VariableDeclarationNode>();
+							const auto& decl = var_decl.declaration();
+							inst_name = decl.identifier_token().value();
+						} else if (instantiated_var->is<DeclarationNode>()) {
+							const auto& decl = instantiated_var->as<DeclarationNode>();
+							inst_name = decl.identifier_token().value();
+						} else {
+							inst_name = qualified_name;  // Fallback
+						}
+						
+						FLASH_LOG(Templates, Debug, "Successfully instantiated variable template: ", qualified_name);
+						
+						// Return identifier reference to the instantiated variable
+						Token inst_token(Token::Type::Identifier, inst_name, 
+						                final_identifier.line(), final_identifier.column(), final_identifier.file_index());
+						result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
+						return ParseResult::success(*result);
+					}
+				}
+				
 				// Try to instantiate the template with these arguments
 				// Note: try_instantiate_class_template returns nullopt on success (type registered in gTypesByName)
 				// Try class template instantiation first (for struct/class templates)
@@ -16901,6 +16974,36 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				std::string_view qualified_template_name = qualified_template_name_builder.preview();
 				
 				FLASH_LOG_FORMAT(Parser, Debug, "Looking up template '{}' with {} template arguments", qualified_template_name, template_args->size());
+				
+				// First, check if this is a variable template
+				auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_template_name);
+				if (var_template_opt.has_value()) {
+					// Instantiate the variable template
+					auto instantiated_var = try_instantiate_variable_template(qualified_template_name, *template_args);
+					if (instantiated_var.has_value()) {
+						// Get the instantiated variable name
+						std::string_view inst_name;
+						if (instantiated_var->is<VariableDeclarationNode>()) {
+							const auto& var_decl = instantiated_var->as<VariableDeclarationNode>();
+							const auto& decl = var_decl.declaration();
+							inst_name = decl.identifier_token().value();
+						} else if (instantiated_var->is<DeclarationNode>()) {
+							const auto& decl = instantiated_var->as<DeclarationNode>();
+							inst_name = decl.identifier_token().value();
+						} else {
+							inst_name = qualified_template_name;  // Fallback
+						}
+						
+						FLASH_LOG(Templates, Debug, "Successfully instantiated qualified variable template: ", qualified_template_name);
+						
+						// Return identifier reference to the instantiated variable
+						Token inst_token(Token::Type::Identifier, inst_name, 
+						                final_identifier.line(), final_identifier.column(), final_identifier.file_index());
+						result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
+						qualified_template_name_builder.reset();
+						return ParseResult::success(*result);
+					}
+				}
 				
 				// Try to instantiate as class template with qualified name first
 				auto instantiated = try_instantiate_class_template(qualified_template_name, *template_args);
@@ -22761,8 +22864,30 @@ ParseResult Parser::parse_template_declaration() {
 			std::string_view pattern_key = pattern_name.commit();
 			gTemplateRegistry.registerVariableTemplate(pattern_key, template_var_node);
 			FLASH_LOG(Parser, Debug, "Registered variable template partial specialization: ", pattern_key);
+			
+			// If in a namespace, also register with qualified pattern name
+			auto namespace_path = gSymbolTable.build_current_namespace_path();
+			if (!namespace_path.empty()) {
+				StringBuilder qualified_pattern_name;
+				for (size_t i = 0; i < namespace_path.size(); ++i) {
+					qualified_pattern_name.append(namespace_path[i]);
+					qualified_pattern_name.append("::");
+				}
+				qualified_pattern_name.append(pattern_key);
+				std::string_view qualified_pattern_key = qualified_pattern_name.commit();
+				gTemplateRegistry.registerVariableTemplate(qualified_pattern_key, template_var_node);
+				FLASH_LOG(Parser, Debug, "Registered variable template partial specialization with qualified name: ", qualified_pattern_key);
+			}
 		} else {
 			gTemplateRegistry.registerVariableTemplate(var_name, template_var_node);
+			
+			// If in a namespace, also register with qualified name for namespace-qualified lookups
+			auto namespace_path = gSymbolTable.build_current_namespace_path();
+			if (!namespace_path.empty()) {
+				std::string_view qualified_name = buildQualifiedName(namespace_path, var_name);
+				FLASH_LOG_FORMAT(Templates, Debug, "Registering variable template with qualified name: {}", qualified_name);
+				gTemplateRegistry.registerVariableTemplate(qualified_name, template_var_node);
+			}
 		}
 		
 		// Also add to symbol table so identifier lookup works
@@ -29374,7 +29499,115 @@ ASTNode Parser::substitute_template_params_in_expression(
 // Try to instantiate a variable template with the given template arguments
 // Returns the instantiated variable declaration node or nullopt if already instantiated
 std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
-	// Look up the variable template
+	// First, try to find a partial specialization that matches the template arguments
+	// For example, is_reference_v<int&> should match is_reference_v<T&>
+	// Pattern names are: template_name_R (lvalue ref), template_name_RR (rvalue ref), template_name_P (pointer)
+	
+	// Extract simple name from template_name (remove namespace prefix if present)
+	std::string_view simple_template_name = template_name;
+	size_t last_colon_pos = template_name.rfind("::");
+	if (last_colon_pos != std::string_view::npos) {
+		simple_template_name = template_name.substr(last_colon_pos + 2);
+	}
+	
+	FLASH_LOG(Templates, Debug, "try_instantiate_variable_template: template_name='", template_name, 
+		"' simple_name='", simple_template_name, "' args.size()=", template_args.size());
+	
+	for (const auto& arg : template_args) {
+		FLASH_LOG(Templates, Debug, "  arg: is_reference=", arg.is_reference, 
+			" is_rvalue_reference=", arg.is_rvalue_reference, 
+			" pointer_depth=", arg.pointer_depth,
+			" toString='", arg.toString(), "'");
+		StringBuilder pattern_builder;
+		// Try with simple name first (how specializations are typically registered)
+		pattern_builder.append(simple_template_name);
+		pattern_builder.append("_");
+		
+		bool has_pattern = false;
+		if (arg.is_reference) {
+			pattern_builder.append("R");  // lvalue reference
+			has_pattern = true;
+		} else if (arg.is_rvalue_reference) {
+			pattern_builder.append("RR");  // rvalue reference
+			has_pattern = true;
+		}
+		for (size_t i = 0; i < arg.pointer_depth; ++i) {
+			pattern_builder.append("P");  // pointer
+			has_pattern = true;
+		}
+		
+		if (has_pattern) {
+			std::string_view pattern_key = pattern_builder.commit();
+			auto spec_opt = gTemplateRegistry.lookupVariableTemplate(pattern_key);
+			
+			// Also try with qualified name if simple name lookup failed
+			StringBuilder qualified_pattern_builder;
+			if (!spec_opt.has_value() && template_name != simple_template_name) {
+				qualified_pattern_builder.append(template_name);
+				qualified_pattern_builder.append("_");
+				if (arg.is_reference) {
+					qualified_pattern_builder.append("R");
+				} else if (arg.is_rvalue_reference) {
+					qualified_pattern_builder.append("RR");
+				}
+				for (size_t i = 0; i < arg.pointer_depth; ++i) {
+					qualified_pattern_builder.append("P");
+				}
+				std::string_view qualified_pattern_key = qualified_pattern_builder.commit();
+				spec_opt = gTemplateRegistry.lookupVariableTemplate(qualified_pattern_key);
+			} else {
+				qualified_pattern_builder.reset();
+			}
+			
+			if (spec_opt.has_value()) {
+				FLASH_LOG(Templates, Debug, "Found variable template partial specialization: ", pattern_key);
+				// Use the specialization instead of the primary template
+				if (spec_opt->is<TemplateVariableDeclarationNode>()) {
+					const TemplateVariableDeclarationNode& spec_template = spec_opt->as<TemplateVariableDeclarationNode>();
+					const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
+					
+					// Generate unique name for this instantiation (use simple name without namespace for symbol table)
+					StringBuilder name_builder;
+					name_builder.append(simple_template_name);
+					for (const auto& targ : template_args) {
+						name_builder.append("_");
+						name_builder.append(targ.toString());
+					}
+					std::string_view persistent_name = name_builder.commit();
+					
+					// Check if already instantiated
+					if (gSymbolTable.lookup(persistent_name).has_value()) {
+						return gSymbolTable.lookup(persistent_name);
+					}
+					
+					// Create instantiated variable using the specialization's initializer
+					Token inst_token(Token::Type::Identifier, persistent_name, 0, 0, 0);
+					TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 1, Token());
+					auto decl_node = emplace_node<DeclarationNode>(
+						emplace_node<TypeSpecifierNode>(bool_type),
+						inst_token
+					);
+					
+					auto var_decl_node = emplace_node<VariableDeclarationNode>(
+						decl_node,
+						spec_var_decl.initializer(),  // Use the specialization's initializer (true for references)
+						StorageClass::None
+					);
+					var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
+					
+					// Register in symbol table
+					gSymbolTable.insert(persistent_name, var_decl_node);
+					
+					return var_decl_node;
+				}
+			}
+		} else {
+			// Reset the StringBuilder if we didn't use it
+			pattern_builder.reset();
+		}
+	}
+	
+	// No partial specialization found - use the primary template
 	auto template_opt = gTemplateRegistry.lookupVariableTemplate(template_name);
 	if (!template_opt.has_value()) {
 		FLASH_LOG(Templates, Error, "Variable template '", template_name, "' not found");
