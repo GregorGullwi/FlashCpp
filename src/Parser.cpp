@@ -7939,7 +7939,9 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 		return ParseResult::error("Expected 'template' keyword", *peek_token());
 	}
 
-	// Consume '<' (note: '<' is tokenized as Operator, not Punctuator)
+	// Consume '<' 
+	// Note: '<' is tokenized as Token::Type::Operator by the lexer, so we check
+	// the value only (matching how other template parsing code handles '<')
 	if (!peek_token().has_value() || peek_token()->value() != "<") {
 		return ParseResult::error("Expected '<' after 'template'", *peek_token());
 	}
@@ -7971,14 +7973,17 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 		consume_token(); // consume 'class'
 	} else {
 		// Not a template friend class/struct declaration - might be a friend function template
-		// For now, just skip until semicolon
+		// We skip the declaration since friend function templates don't affect accessibility
+		// and are primarily for ADL (Argument-Dependent Lookup) purposes.
+		// The empty name is acceptable because we only need to record that a friend 
+		// declaration exists; the actual function resolution happens at call sites.
 		while (peek_token().has_value() && peek_token()->value() != ";") {
 			consume_token();
 		}
 		if (!consume_punctuator(";")) {
 			return ParseResult::error("Expected ';' after template friend declaration", *peek_token());
 		}
-		// Create a minimal friend declaration node with FriendKind::Function
+		// Create a minimal friend declaration node - name is empty since we skipped parsing
 		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, StringHandle{});
 		struct_node.add_friend(friend_node);
 		return saved_position.success(friend_node);
