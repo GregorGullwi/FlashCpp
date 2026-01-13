@@ -4,6 +4,34 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 13, 2026 - Multiple Parsing Improvements for `<new>` and `<utility>` - IMPLEMENTED!)**:
+- ✅ **IMPLEMENTED: Function pointer typedef declarations** 🎉
+  - **Pattern**: `typedef void (*new_handler)();`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Allows typedef declarations for function pointer types with the `(*alias_name)` syntax
+  - **Implementation**: Added detection and parsing of function pointer typedef pattern in `parse_typedef_declaration()`
+  - **Test case**: `tests/test_func_ptr_typedef_ret0.cpp` - Returns 0 ✅
+  - **Impact**: `<new>` header now parses past line 108!
+
+- ✅ **IMPLEMENTED: operator new/delete at global scope** 🎉
+  - **Pattern**: `void* operator new(std::size_t);`, `void operator delete(void*);`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Allows `operator new`, `operator new[]`, `operator delete`, `operator delete[]` as function names at global scope
+  - **Implementation**: Added `new` and `delete` keyword handling in operator name parsing in `parse_type_and_name()`
+  - **Test case**: `tests/test_operator_new_delete_ret0.cpp` - Returns 0 ✅
+  - **Impact**: `<new>` header now parses past line 131!
+
+- ✅ **IMPLEMENTED: Template function = delete / = default** 🎉
+  - **Pattern**: `template<typename T> const T* addressof(const T&&) = delete;`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Allows template function declarations with `= delete` or `= default` specifiers
+  - **Implementation**: Added `= delete` and `= default` handling in `parse_template_function_declaration_body()`
+  - **Test case**: `tests/test_template_func_delete_ret0.cpp` - Returns 0 ✅
+  - **Impact**: `<utility>` header (`bits/move.h`) now parses past line 168!
+
+- 📊 **Session progress**: Multiple std headers now progress further. `<new>` unblocked from line 108 to 204. `<utility>` unblocked from line 168 to 215.
+- 🔬 **Next blocker**: Complex noexcept expressions with dependent templates (e.g., `noexcept(__and_<...>::value)`)
+
 **UPDATE (January 12, 2026 - Multiple Parsing Improvements for type_traits - IMPLEMENTED!)**:
 - ✅ **IMPLEMENTED: Postfix const qualifier in type declarations** 🎉
   - **Pattern**: `__nonesuch(__nonesuch const&) = delete;`

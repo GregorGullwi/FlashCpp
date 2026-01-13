@@ -1,5 +1,11 @@
 // Test function reference types in type aliases and template arguments
 // This tests the new feature allowing types like int(&)() as template arguments
+// Also tests function pointer typedef parsing (pattern used in <new> header)
+
+// Function pointer typedef tests (typedef void (*new_handler)() pattern)
+typedef void (*new_handler)();
+typedef int (*func_ptr_with_params)(int, float);
+typedef const char* (*string_provider)();
 
 // Function that returns 42
 int get_value() { return 42; }
