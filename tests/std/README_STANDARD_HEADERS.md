@@ -47,13 +47,20 @@ cd tests/std
 
 ## Current Blockers
 
-### 1. `<utility>` - Variable Template Brace Initialization
+### 1. `<utility>` - Nested Namespace Declarations
 
-**Location:** `c++config.h` - pattern `inline constexpr in_place_type_t<_Tp> in_place_type{};`
+**Location:** `bits/version.h` - pattern `namespace ranges::__detail { ... }`
 
-The parser expects a function parameter list `()` after a variable template declaration but encounters brace initialization `{}` instead. The fix requires supporting brace-initialized variable templates.
+The parser expects a `{` immediately after a namespace name, but C++17 nested namespace syntax uses `::` between namespace names. This is the current blocker after fixing variable template brace initialization.
 
-**Previous blocker resolved:** The `enable_if<__is_swappable<_Tp>::value>::type` pattern in `stl_pair.h` now works correctly. Library type traits like `__is_swappable<T>` (which use template syntax `<>`) are now properly distinguished from compiler intrinsics like `__is_void(T)` (which use function call syntax `()`).
+**Example pattern:**
+```cpp
+namespace ranges::__detail {  // C++17 nested namespace syntax
+    // ...
+}
+```
+
+**Previous blocker resolved (January 13, 2026):** Variable template brace initialization now works. Pattern `inline constexpr in_place_type_t<_Tp> in_place_type{};` from `c++config.h` is now correctly parsed.
 
 ### 2. Template Instantiation Performance
 
@@ -117,6 +124,18 @@ The following features have been implemented to support standard headers:
 - Global scope `operator new`/`operator delete`
 
 ## Recent Changes
+
+### 2026-01-13: Variable Template Brace Initialization
+
+**Fixed:** Variable templates can now be initialized with brace initialization syntax `{}`.
+
+- Pattern: `template<typename T> inline constexpr Type<T> name{};`
+- Previously: Parser expected `()` after variable template name, failed on `{}`
+- Now: Both `= value` and `{}` initialization are supported
+
+This fix advances `<utility>` parsing past `c++config.h`. The new blocker is nested namespace declarations in `bits/version.h`.
+
+**Test case:** `tests/test_var_template_brace_init_ret0.cpp`
 
 ### 2026-01-13: Library Type Traits vs Compiler Intrinsics
 
