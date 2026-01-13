@@ -251,7 +251,6 @@ static std::string_view extractNameBetweenParens(std::string_view sv) {
 // Returns true if there's an unmatched opening paren that could be from a macro
 static bool hasIncompleteMacroInvocation(std::string_view line) {
 	int paren_depth = 0;
-	int angle_depth = 0;
 	bool in_string = false;
 	bool in_char = false;
 	
@@ -279,8 +278,6 @@ static bool hasIncompleteMacroInvocation(std::string_view line) {
 		if (!in_string && !in_char) {
 			if (c == '(') paren_depth++;
 			else if (c == ')') paren_depth--;
-			else if (c == '<') angle_depth++;
-			else if (c == '>') angle_depth--;
 		}
 	}
 	
@@ -411,6 +408,8 @@ static std::vector<std::string_view> splitArgs(std::string_view argsStr) {
                 continue;
             }
             // Track template angle brackets for correct comma handling
+            // Note: angle_depth > 0 check prevents going negative for standalone > chars
+            // that aren't template closers (e.g., comparison operators)
             if (c == '<') {
                 angle_depth++;
                 continue;
