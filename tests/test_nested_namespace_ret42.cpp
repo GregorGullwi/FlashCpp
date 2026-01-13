@@ -25,8 +25,9 @@ int main() {
     d.x = 42;
     d.y = 0;
     
-    // Inline nested namespace - can access without Y:: prefix
-    X::Point p;  // Works because Y is inline in X
+    // Inline nested namespace - can access with X:: OR X::Y:: prefix
+    // Because Y is inline, both X::Point and X::Y::Point refer to the same type
+    X::Point p;
     p.a = d.x;
     p.b = 0;
     
