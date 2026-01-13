@@ -81,7 +81,9 @@ The main features preventing standard header compilation:
 7. **Function pointer typedef** (`typedef void (*handler)()`) - ✅ Implemented (Jan 13, 2026)
 8. **Operator new/delete at global scope** - ✅ Implemented (Jan 13, 2026)
 9. **Template function = delete/default** - ✅ Implemented (Jan 13, 2026)
-10. **Complex noexcept expressions with dependent templates** - ⚠️ Not yet implemented
+10. **Complex noexcept expressions with dependent templates** - ⚠️ Partially implemented (Jan 13, 2026)
+    - ✅ Fold expression evaluation in static member initializers (`static constexpr bool value = (Bs && ...)`)
+    - ⚠️ `>>` token handling in nested templates still has issues at `move.h:215`
 11. **Namespace-qualified variable templates with partial specializations** - ✅ Implemented (Jan 13, 2026)
 
 ## Test File Characteristics
@@ -145,7 +147,64 @@ As FlashCpp gains more C++ features:
 4. Add link and execution tests
 5. Create more focused unit tests for specific standard library features
 
-## Latest Investigation (January 13, 2026 - Concepts Header Now Compiles!)
+## Latest Investigation (January 13, 2026 - Fold Expression Evaluation in Template Instantiation)
+
+### ✅ IMPLEMENTED: Fold Expression Evaluation in Static Member Initializers
+
+**Pattern Now Supported:** Variadic template classes with fold expressions in static member initializers are now evaluated correctly during template instantiation:
+```cpp
+template<bool... Bs>
+struct __and_ {
+    static constexpr bool value = (Bs && ...);  // Fold expression
+};
+
+// Now works correctly:
+template<typename T>
+typename enable_if<__and_<true, true>::value, T>::type
+test_func(T x) {
+    return x;
+}
+
+// Also works with noexcept:
+template<typename T>
+void swap(T& a, T& b) noexcept(__and_<true, true>::value) {
+    // ...
+}
+```
+
+**What Was Fixed:**
+1. ✅ **Static member copying from StructTypeInfo** - When instantiating a primary template, static members are now correctly copied from the template's `StructTypeInfo`
+2. ✅ **Fold expression evaluation** - Fold expressions like `(Bs && ...)`, `(Bs || ...)`, `(Bs + ...)` are now evaluated with the actual template argument values
+3. ✅ **Variadic pack value collection** - Template arguments for variadic packs are correctly extracted and used for fold evaluation
+
+**Supported Fold Operators:**
+- `&&` - Logical AND fold (returns bool)
+- `||` - Logical OR fold (returns bool)
+- `+` - Addition fold
+- `*` - Multiplication fold
+- `&` - Bitwise AND fold
+- `|` - Bitwise OR fold
+- `^` - Bitwise XOR fold
+
+**Implementation:**
+- Modified `try_instantiate_class_template()` in `Parser.cpp` to:
+  1. Look up static members from the primary template's `StructTypeInfo`
+  2. Check if initializers contain `FoldExpressionNode`
+  3. Collect values from the variadic pack template arguments
+  4. Evaluate the fold expression and create a literal result (`BoolLiteralNode` or `NumericLiteralNode`)
+  5. Add the static member with the evaluated initializer to the instantiated struct
+
+**Test Cases:**
+- ✅ `tests/test_fold_expr_static_member_ret0.cpp` - Tests `__and_`, `__or_`, and noexcept with fold expressions
+- ✅ All 905 existing tests pass
+
+**Impact:**
+- ✅ Standard library patterns like `std::__and_<...>::value` now work
+- ⚠️ `<utility>` header still blocked at `move.h:215` due to `>>` token handling in nested templates (separate issue)
+
+---
+
+## Previous Investigation (January 13, 2026 - Concepts Header Now Compiles!)
 
 ### ✅ IMPLEMENTED: `<concepts>` Header Now Successfully Compiles!
 
