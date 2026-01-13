@@ -1,19 +1,17 @@
-// Test: Nested namespace support
-// This test verifies that the compiler can:
-// 1. Parse nested namespace declarations
-// 2. Define functions inside nested namespaces
-// 3. Generate correct code for nested namespaced functions
+// Test C++17 nested namespace declarations
+// Pattern from bits/version.h: namespace ranges::__detail { }
 
-namespace A {
-    namespace B {
-        int func() {
-            return 42;
-        }
-    }
+// Nested namespace with struct
+namespace A::B {
+    struct Data {
+        int x;
+        int y;
+    };
 }
 
 int main() {
-    int x = A::B::func(42);
-    return x;  // Should return 42
+    A::B::Data d;
+    d.x = 42;
+    d.y = 0;
+    return d.x;
 }
-
