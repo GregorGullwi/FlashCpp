@@ -124,7 +124,6 @@ static unsigned short getTypeSizeFromTemplateArgument(const TemplateArgument& ar
 			}
 			// For template struct instantiations (e.g., "TC_int"), look up by name
 			StringHandle type_name_handle = gTypeInfo[type_index].name();
-		std::string_view type_name = StringTable::getStringView(type_name_handle);
 			auto it = gTypesByName.find(type_name_handle);
 			if (it != gTypesByName.end() && it->second->type_size_ > 0) {
 				return it->second->type_size_;
@@ -278,7 +277,7 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 	// Add more node types as needed
 }
 
-bool Parser::generate_coff(const std::string& outputFilename) {
+bool Parser::generate_coff([[maybe_unused]] const std::string& outputFilename) {
 #ifdef USE_LLVM
     return FlashCpp::GenerateCOFF(ast_nodes_, outputFilename);
 #else
@@ -427,7 +426,7 @@ Parser::SaveHandle Parser::save_token_position() {
     return handle;
 }
 
-void Parser::restore_token_position(SaveHandle handle, const std::source_location location) {
+void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const std::source_location location) {
     auto it = saved_tokens_.find(handle);
     if (it == saved_tokens_.end()) {
         // Handle not found - this shouldn't happen in correct usage
@@ -1576,10 +1575,10 @@ ParseResult Parser::parse_type_and_name() {
             consume_token(); // consume ')'
 
             // Create operator name like "operator int" using StringBuilder
-            const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+            const TypeSpecifierNode& conversion_type_spec = type_result.node()->as<TypeSpecifierNode>();
             StringBuilder op_name_builder;
             op_name_builder.append("operator ");
-            op_name_builder.append(type_spec.getReadableString());
+            op_name_builder.append(conversion_type_spec.getReadableString());
             operator_name = op_name_builder.commit();
         }
 
@@ -1929,7 +1928,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 // NEW: Parse direct declarator (identifier, function, array)
 ParseResult Parser::parse_direct_declarator(TypeSpecifierNode& base_type,
                                              Token& out_identifier,
-                                             Linkage linkage) {
+                                             [[maybe_unused]] Linkage linkage) {
     // For now, we'll handle the simple case: identifier followed by optional function params
     // TODO: Handle parenthesized declarators like (*fp)(params) for function pointers
 
@@ -2124,7 +2123,7 @@ bool Parser::looks_like_function_parameters()
 		}
 		
 		// Type keywords = function parameters
-		static const std::unordered_set<std::string_view> type_keywords = {
+		static const std::unordered_set<std::string_view> param_type_keywords = {
 			"int", "float", "double", "char", "bool", "void",
 			"short", "long", "signed", "unsigned", "const", "volatile",
 			"auto", "decltype", "struct", "class", "enum", "union",
@@ -2132,7 +2131,7 @@ bool Parser::looks_like_function_parameters()
 			"__int8", "__int16", "__int32", "__int64"
 		};
 		
-		if (token_type == Token::Type::Keyword && type_keywords.count(token_value)) {
+		if (token_type == Token::Type::Keyword && param_type_keywords.count(token_value)) {
 			restore_token_position(saved);
 			return true;
 		}
@@ -2160,7 +2159,6 @@ bool Parser::looks_like_function_parameters()
 			// Unknown identifier - check if next token gives us more context
 			// e.g., `int x(MyType y)` where 'y' is identifier = function param
 			// e.g., `int x(a + b)` where '+' follows = expression = direct init
-			SaveHandle inner_saved = save_token_position();
 			consume_token();  // consume the identifier
 			
 			if (peek_token().has_value()) {
@@ -2200,7 +2198,6 @@ bool Parser::looks_like_function_parameters()
 		// Could be function with complex return type, OR dereference expression like *this
 		if (token_value == "*" || token_value == "&") {
 			// Peek ahead to see what follows the operator
-			SaveHandle op_saved = save_token_position();
 			consume_token();  // consume the '*' or '&'
 			
 			if (peek_token().has_value()) {
@@ -2314,9 +2311,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	bool is_constexpr = specs.is_constexpr;
 	bool is_constinit = specs.is_constinit;
 	bool is_consteval = specs.is_consteval;
-	bool is_inline = specs.is_inline;
-	bool is_static = (specs.storage_class == StorageClass::Static);
-	bool is_extern = (specs.storage_class == StorageClass::Extern);
+	[[maybe_unused]] bool is_inline = specs.is_inline;
+	[[maybe_unused]] bool is_static = (specs.storage_class == StorageClass::Static);
+	[[maybe_unused]] bool is_extern = (specs.storage_class == StorageClass::Extern);
 	
 	// Create AttributeInfo for backward compatibility with existing code paths
 	AttributeInfo attr_info;
@@ -2728,12 +2725,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 			if (auto node = function_definition_result.node()) {
 				if (auto block = block_result.node()) {
-					FunctionDeclarationNode& func_decl = node->as<FunctionDeclarationNode>();
+					FunctionDeclarationNode& final_func_decl = node->as<FunctionDeclarationNode>();
 					// Generate mangled name before finalizing (Phase 6 mangling)
-					compute_and_set_mangled_name(func_decl);
-					func_decl.set_definition(*block);
+					compute_and_set_mangled_name(final_func_decl);
+					final_func_decl.set_definition(*block);
 					// Deduce auto return types from function body
-					deduce_and_update_auto_return_type(func_decl);
+					deduce_and_update_auto_return_type(final_func_decl);
 					return saved_position.success(*node);
 				}
 			}
@@ -2782,7 +2779,6 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// e.g., constexpr Point p1(10, 20);
 			// Note: For global scope, we create a ConstructorCallNode instead of InitializerListNode
 			// because the semantics are different (constructor call vs direct init)
-			Token identifier_token = decl_node.identifier_token();
 			Token paren_token = *peek_token(); // Save '(' token for called_from location
 			
 			// Parse the argument list
@@ -3339,7 +3335,6 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				
 				// Calculate member size and alignment
 				auto [member_size_in_bits, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
-				size_t referenced_size_bits = 0;
 				
 				// For struct types, get the actual size from TypeInfo
 				if (member_type_spec.type() == Type::Struct) {
@@ -3352,7 +3347,6 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					}
 					if (member_type_info && member_type_info->getStructInfo()) {
 						member_size_in_bits = member_type_info->getStructInfo()->total_size;
-						referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
 						member_alignment = member_type_info->getStructInfo()->alignment;
 					}
 				}
@@ -3464,11 +3458,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			auto enum_info = std::make_unique<EnumTypeInfo>(enum_name, is_scoped);
 			
 			// Determine underlying type
-			Type underlying_type = Type::Int;
 			int underlying_size = 32;
 			if (enum_ref.has_underlying_type()) {
 				const auto& type_spec_node = enum_ref.underlying_type()->as<TypeSpecifierNode>();
-				underlying_type = type_spec_node.type();
 				underlying_size = type_spec_node.size_in_bits();
 			}
 			
@@ -3857,7 +3849,7 @@ ParseResult Parser::parse_struct_declaration()
 		// Check if this is a decltype base class (e.g., : decltype(expr))
 		std::string_view base_class_name;
 		TypeSpecifierNode base_type_spec;
-		bool is_decltype_base = false;
+		[[maybe_unused]] bool is_decltype_base = false;
 		Token base_name_token;  // For error reporting
 		
 		if (peek_token().has_value() && peek_token()->value() == "decltype") {
@@ -3890,18 +3882,18 @@ ParseResult Parser::parse_struct_declaration()
 			    type_spec_opt->type_index() < gTypeInfo.size()) {
 				// Successfully evaluated - add as regular base class
 				const TypeInfo& base_type_info = gTypeInfo[type_spec_opt->type_index()];
-				std::string_view base_class_name = StringTable::getStringView(base_type_info.name());
+				std::string_view resolved_base_class_name = StringTable::getStringView(base_type_info.name());
 				
-				FLASH_LOG(Templates, Debug, "Resolved decltype base class immediately: ", base_class_name);
+				FLASH_LOG(Templates, Debug, "Resolved decltype base class immediately: ", resolved_base_class_name);
 				
 				// Check if base class is final
 				if (base_type_info.struct_info_ && base_type_info.struct_info_->is_final) {
-					return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", base_name_token);
+					return ParseResult::error("Cannot inherit from final class '" + std::string(resolved_base_class_name) + "'", base_name_token);
 				}
 				
 				// Add base class to struct node and type info
-				struct_ref.add_base_class(base_class_name, base_type_info.type_index_, base_access, is_virtual_base);
-				struct_info->addBaseClass(base_class_name, base_type_info.type_index_, base_access, is_virtual_base);
+				struct_ref.add_base_class(resolved_base_class_name, base_type_info.type_index_, base_access, is_virtual_base);
+				struct_info->addBaseClass(resolved_base_class_name, base_type_info.type_index_, base_access, is_virtual_base);
 				
 				// Continue to next base class - skip the rest of the loop body
 				continue;
@@ -4960,9 +4952,9 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
 		bool is_member_constexpr = false;
-		bool is_member_consteval = false;
-		bool is_member_inline = false;
-		bool is_member_explicit = false;
+		[[maybe_unused]] bool is_member_consteval = false;
+		[[maybe_unused]] bool is_member_inline = false;
+		[[maybe_unused]] bool is_member_explicit = false;
 		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 			std::string_view kw = peek_token()->value();
 			if (kw == "constexpr") {
@@ -4993,8 +4985,8 @@ ParseResult Parser::parse_struct_declaration()
 			if (!name_token_opt.has_value()) {
 				return ParseResult::error("Expected constructor name", Token());
 			}
-			Token name_token = name_token_opt.value();  // Copy the token to keep it alive
-			std::string_view ctor_name = name_token.value();  // Get the string_view from the token
+			Token ctor_name_token = name_token_opt.value();  // Copy the token to keep it alive
+			std::string_view ctor_name = ctor_name_token.value();  // Get the string_view from the token
 
 			if (peek_token().has_value() && peek_token()->value() == "(") {
 				// Discard saved position since we're using this as a constructor
@@ -5159,7 +5151,8 @@ ParseResult Parser::parse_struct_declaration()
 						true,  // is_constructor
 						false,  // is_destructor
 						&ctor_ref,  // ctor_node
-						nullptr   // dtor_node
+						nullptr,   // dtor_node
+						{}  // template_param_names (empty for non-template constructors)
 					});
 				} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
 					// No constructor body - ctor_scope automatically exits scope on return
@@ -5196,8 +5189,8 @@ ParseResult Parser::parse_struct_declaration()
 			    name_token_opt->value() != struct_name) {
 				return ParseResult::error("Expected struct name after '~' in destructor", name_token_opt.value_or(Token()));
 			}
-			Token name_token = name_token_opt.value();  // Copy the token to keep it alive
-			std::string_view dtor_name = name_token.value();  // Get the string_view from the token
+			Token dtor_name_token = name_token_opt.value();  // Copy the token to keep it alive
+			std::string_view dtor_name = dtor_name_token.value();  // Get the string_view from the token
 
 			if (!consume_punctuator("(")) {
 				return ParseResult::error("Expected '(' after destructor name", *peek_token());
@@ -5568,7 +5561,7 @@ ParseResult Parser::parse_struct_declaration()
 				// Check if this is a type name followed by brace initializer: B b = B{ .a = 2 }
 				else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 					// Save position in case this isn't a type name
-					SaveHandle saved_pos = save_token_position();
+					SaveHandle member_init_saved_pos = save_token_position();
 
 					// Try to parse as type specifier
 					ParseResult type_result = parse_type_specifier();
@@ -5616,7 +5609,7 @@ ParseResult Parser::parse_struct_declaration()
 						discard_saved_token(saved_pos);
 					} else {
 						// Not a type name, restore and parse as expression
-						restore_token_position(saved_pos);
+						restore_token_position(member_init_saved_pos);
 						auto init_result = parse_expression();
 						if (init_result.is_error()) {
 							return init_result;
@@ -6823,7 +6816,7 @@ ParseResult Parser::parse_typedef_declaration()
 		consume_token(); // consume 'enum'
 
 		// Check for 'class' or 'struct' keyword (enum class / enum struct)
-		bool has_class_keyword = false;
+		[[maybe_unused]] bool has_class_keyword = false;
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
 		    (peek_token()->value() == "class" || peek_token()->value() == "struct")) {
 			has_class_keyword = true;
@@ -6934,11 +6927,9 @@ ParseResult Parser::parse_typedef_declaration()
 		auto enum_info = std::make_unique<EnumTypeInfo>(enum_name_for_typedef, is_scoped);
 
 		// Determine underlying type (default is int)
-		Type underlying_type = Type::Int;
 		int underlying_size = 32;
 		if (enum_ref.has_underlying_type()) {
 			const auto& type_spec_node = enum_ref.underlying_type()->as<TypeSpecifierNode>();
-			underlying_type = type_spec_node.type();
 			underlying_size = type_spec_node.size_in_bits();
 		}
 
@@ -7965,7 +7956,7 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	}
 
 	// Check for 'struct' or 'class' keyword
-	bool is_struct = false;
+	[[maybe_unused]] bool is_struct = false;
 	if (peek_token().has_value() && peek_token()->value() == "struct") {
 		is_struct = true;
 		consume_token(); // consume 'struct'
@@ -9700,7 +9691,7 @@ ParseResult Parser::parse_type_specifier()
 					// Handle non-deferred aliases (e.g., template<typename T> using Ptr = T*)
 					// Substitute template arguments into the target type
 					TypeSpecifierNode instantiated_type = alias_node.target_type_node();
-					const auto& template_params = alias_node.template_parameters();
+					[[maybe_unused]] const auto& template_params = alias_node.template_parameters();
 					const auto& param_names = alias_node.template_param_names();
 					
 					// Perform substitution for template parameters in the target type
@@ -10162,7 +10153,7 @@ ParseResult Parser::parse_type_specifier()
 							
 							// Instantiate the member template alias with the provided arguments
 							TypeSpecifierNode instantiated_type = alias_node.target_type_node();
-							const auto& template_params = alias_node.template_parameters();
+							[[maybe_unused]] const auto& template_params = alias_node.template_parameters();
 							const auto& param_names = alias_node.template_param_names();
 							
 							// Perform substitution for template parameters in the target type
@@ -11006,7 +10997,7 @@ ParseResult Parser::parse_function_header(
 // This bridges the unified header parsing with the existing AST node creation
 ParseResult Parser::create_function_from_header(
 	const FlashCpp::ParsedFunctionHeader& header,
-	const FlashCpp::FunctionParsingContext& ctx
+	[[maybe_unused]] const FlashCpp::FunctionParsingContext& ctx
 ) {
 	// Create the type specifier node for the return type
 	ASTNode type_node;
@@ -11889,7 +11880,7 @@ ParseResult Parser::parse_variable_declaration()
 	bool is_constexpr = specs.is_constexpr;
 	bool is_constinit = specs.is_constinit;
 	StorageClass storage_class = specs.storage_class;
-	Linkage linkage = specs.linkage;
+	[[maybe_unused]] Linkage linkage = specs.linkage;
 
 	// Parse the type specifier and identifier (name)
 	ParseResult type_and_name_result = parse_type_and_name();
@@ -13150,7 +13141,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 	// Check for '::new' or '::delete' - globally qualified new/delete
 	// This is used in standard library (e.g., concepts header) to call global operator new/delete
-	bool is_global_scope_qualified = false;
+	[[maybe_unused]] bool is_global_scope_qualified = false;
 	if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "::") {
 		// Check if the NEXT token is 'new' or 'delete' (use peek_token(1) to look ahead)
 		auto next = peek_token(1);
@@ -14790,9 +14781,9 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					// Check if this member is a function pointer
 					// We need to look up the struct type and find the member
 					if (!member_function_context_stack_.empty()) {
-						const auto& context = member_function_context_stack_.back();
-						if (context.struct_type_index < gTypeInfo.size()) {
-							const TypeInfo& struct_type_info = gTypeInfo[context.struct_type_index];
+						const auto& member_ctx = member_function_context_stack_.back();
+						if (member_ctx.struct_type_index < gTypeInfo.size()) {
+							const TypeInfo& struct_type_info = gTypeInfo[member_ctx.struct_type_index];
 							const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
 							if (struct_info) {
 								std::string_view member_name = member_access->member_name();
@@ -15311,7 +15302,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					}
 					if (auto arg = arg_result.node()) {
 						// Check for pack expansion (...) after the argument
-						bool is_pack_expansion = false;
+						[[maybe_unused]] bool is_pack_expansion = false;
 						if (peek_token().has_value() && peek_token()->value() == "...") {
 							Token ellipsis_token = *peek_token();
 							consume_token(); // consume '...'
@@ -15647,12 +15638,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		
 		if (is_builtin_type) {
 			Token type_token = *current_token_;
-			std::string_view kw = current_token_->value();
+			std::string_view type_kw = current_token_->value();
 			consume_token(); // consume the type keyword
 			
 			// Check if followed by '(' for functional cast
 			if (current_token_.has_value() && current_token_->value() == "(") {
-				ParseResult cast_result = parse_functional_cast(kw, type_token);
+				ParseResult cast_result = parse_functional_cast(type_kw, type_token);
 				if (!cast_result.is_error() && cast_result.node().has_value()) {
 					return cast_result;
 				}
@@ -16741,8 +16732,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 					
 					// Create QualifiedIdentifierNode with the complete path
-					auto qualified_node = emplace_node<QualifiedIdentifierNode>(full_namespaces, member_token);
-					result = emplace_node<ExpressionNode>(qualified_node.as<QualifiedIdentifierNode>());
+					auto full_qualified_node = emplace_node<QualifiedIdentifierNode>(full_namespaces, member_token);
+					result = emplace_node<ExpressionNode>(full_qualified_node.as<QualifiedIdentifierNode>());
 					return ParseResult::success(*result);
 				}
 				
@@ -17101,9 +17092,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// Finally check StructTypeInfo from gTypesByName (for already-registered types)
 						if (!found_as_type_alias) {
 							StringHandle struct_name_handle = StringTable::getOrInternStringHandle(ctx.struct_name);
-							auto type_it = gTypesByName.find(struct_name_handle);
-							if (type_it != gTypesByName.end() && type_it->second->getStructInfo()) {
-								const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+							auto struct_type_it = gTypesByName.find(struct_name_handle);
+							if (struct_type_it != gTypesByName.end() && struct_type_it->second->getStructInfo()) {
+								const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 								for (const auto& static_member : struct_info->static_members) {
 									if (static_member.getName() == identifier_handle) {
 										FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as static member in StructTypeInfo (struct parsing context)", 
@@ -17624,8 +17615,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 			// If we're inside a member function, check if this is a member variable
 			else if (!member_function_context_stack_.empty()) {
-				const auto& context = member_function_context_stack_.back();
-				const StructDeclarationNode* struct_node = context.struct_node;
+				const auto& member_func_ctx = member_function_context_stack_.back();
+				const StructDeclarationNode* struct_node = member_func_ctx.struct_node;
 
 				// Check if this identifier matches any data member in the struct (including inherited members)
 				// First try AST node members (for regular structs), then fall back to TypeInfo (for template instantiations)
@@ -17690,11 +17681,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// This handles template class instantiations and static member initializers
 				if (!found_in_ast) {
 					// First try local_struct_info (for static member initializers where TypeInfo::struct_info_ isn't populated yet)
-					const StructTypeInfo* struct_info = context.local_struct_info;
+					const StructTypeInfo* struct_info = member_func_ctx.local_struct_info;
 					
 					// Fall back to TypeInfo lookup if no local_struct_info
-					if (!struct_info && context.struct_type_index != 0 && context.struct_type_index < gTypeInfo.size()) {
-						const TypeInfo& struct_type_info = gTypeInfo[context.struct_type_index];
+					if (!struct_info && member_func_ctx.struct_type_index != 0 && member_func_ctx.struct_type_index < gTypeInfo.size()) {
+						const TypeInfo& struct_type_info = gTypeInfo[member_func_ctx.struct_type_index];
 						struct_info = struct_type_info.getStructInfo();
 					}
 					
@@ -17762,8 +17753,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// We need to track if we found a member function so we can create MemberFunctionCallNode with implicit 'this'
 			bool found_member_function_in_context = false;
 			if (!member_function_context_stack_.empty() && peek_token().has_value() && peek_token()->value() == "(") {
-				const auto& context = member_function_context_stack_.back();
-				const StructDeclarationNode* struct_node = context.struct_node;
+				const auto& mf_ctx = member_function_context_stack_.back();
+				const StructDeclarationNode* struct_node = mf_ctx.struct_node;
 				if (struct_node) {
 					// Helper lambda to search for member function in a struct and its base classes
 					// Returns true if found and sets identifierType
@@ -17787,7 +17778,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// If not found in current struct, search in base classes
 					if (!found) {
 						// Get the struct's base classes and search recursively
-						TypeIndex struct_type_index = context.struct_type_index;
+						TypeIndex struct_type_index = mf_ctx.struct_type_index;
 						if (struct_type_index < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[struct_type_index];
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -18433,9 +18424,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							
 							// If not found directly, try looking up as a member alias template of the enclosing class
 							if (!alias_opt.has_value() && !struct_parsing_context_stack_.empty()) {
-								const auto& context = struct_parsing_context_stack_.back();
+								const auto& sp_ctx = struct_parsing_context_stack_.back();
 								StringBuilder qualified_alias_name;
-								qualified_alias_name.append(context.struct_name).append("::"sv).append(idenfifier_token.value());
+								qualified_alias_name.append(sp_ctx.struct_name).append("::"sv).append(idenfifier_token.value());
 								std::string_view qualified_alias_name_sv = qualified_alias_name.commit();
 								alias_opt = gTemplateRegistry.lookup_alias_template(qualified_alias_name_sv);
 								if (alias_opt.has_value()) {
@@ -18511,8 +18502,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Example: __helper<_Tp>({}) where __helper is in the same struct or base class
 							// Template args already parsed at this point
 							if (!struct_parsing_context_stack_.empty() && peek_token().has_value() && peek_token()->value() == "(") {
-								const auto& context = struct_parsing_context_stack_.back();
-								const StructDeclarationNode* struct_node = context.struct_node;
+								const auto& sp_ctx2 = struct_parsing_context_stack_.back();
+								const StructDeclarationNode* struct_node = sp_ctx2.struct_node;
 								if (struct_node) {
 									StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
 									
@@ -18645,10 +18636,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// This handles patterns like: template<typename T, typename U> using cond_t = decltype(...);
 					// used within the same struct as: decltype(cond_t<T, U>())
 					if (!alias_opt.has_value() && !struct_parsing_context_stack_.empty()) {
-						const auto& context = struct_parsing_context_stack_.back();
+						const auto& sp_ctx3 = struct_parsing_context_stack_.back();
 						// Build qualified name: EnclosingClass::MemberAliasTemplate
 						StringBuilder qualified_alias_name;
-						qualified_alias_name.append(context.struct_name).append("::"sv).append(idenfifier_token.value());
+						qualified_alias_name.append(sp_ctx3.struct_name).append("::"sv).append(idenfifier_token.value());
 						std::string_view qualified_alias_name_sv = qualified_alias_name.commit();
 						alias_opt = gTemplateRegistry.lookup_alias_template(qualified_alias_name_sv);
 						if (alias_opt.has_value()) {
@@ -18672,10 +18663,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// This handles patterns like: template<typename T> struct Select<Wrapper<T>> { };
 						// where Wrapper is a member struct template of the same class
 						if (!class_template_opt.has_value() && !struct_parsing_context_stack_.empty()) {
-							const auto& context = struct_parsing_context_stack_.back();
+							const auto& sp_ctx4 = struct_parsing_context_stack_.back();
 							// Build qualified name: EnclosingClass::MemberTemplate
 							StringBuilder qualified_name;
-							qualified_name.append(context.struct_name).append("::"sv).append(idenfifier_token.value());
+							qualified_name.append(sp_ctx4.struct_name).append("::"sv).append(idenfifier_token.value());
 							std::string_view qualified_name_sv = qualified_name.commit();
 							class_template_opt = gTemplateRegistry.lookupTemplate(qualified_name_sv);
 							if (class_template_opt.has_value()) {
@@ -18712,8 +18703,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								
 								// First try member_function_context_stack_ (for code inside member function bodies)
 								if (!member_function_context_stack_.empty()) {
-									const auto& context = member_function_context_stack_.back();
-									TypeIndex struct_type_index = context.struct_type_index;
+									const auto& mf_ctx2 = member_function_context_stack_.back();
+									TypeIndex struct_type_index = mf_ctx2.struct_type_index;
 									if (struct_type_index < gTypeInfo.size()) {
 										const TypeInfo& type_info = gTypeInfo[struct_type_index];
 										const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -18769,8 +18760,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// If not found in member function context, try struct_parsing_context_stack_
 								// This handles expressions in type aliases like: using type = decltype(__test<_Tp>(0));
 								if (!found_inherited_template && !struct_parsing_context_stack_.empty()) {
-									const auto& context = struct_parsing_context_stack_.back();
-									const StructDeclarationNode* struct_node = context.struct_node;
+									const auto& sp_ctx5 = struct_parsing_context_stack_.back();
+									const StructDeclarationNode* struct_node = sp_ctx5.struct_node;
 									if (struct_node) {
 										// Get base classes from the struct AST node
 										StringHandle id_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
@@ -19188,7 +19179,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
 								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
 								if (args[i].is<ExpressionNode>()) {
-									const ExpressionNode& expr = args[i].as<ExpressionNode>();
+									const ExpressionNode& arg_expr = args[i].as<ExpressionNode>();
 									bool is_lvalue = std::visit([](const auto& inner) -> bool {
 										using T = std::decay_t<decltype(inner)>;
 										if constexpr (std::is_same_v<T, IdentifierNode>) {
@@ -19211,7 +19202,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											// All other expressions (literals, temporaries, etc.) are rvalues
 											return false;
 										}
-									}, expr);
+									}, arg_expr);
 									
 									if (is_lvalue) {
 										// For forwarding reference deduction: Args&& deduces to T& for lvalues
@@ -19591,7 +19582,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Next should be the pack identifier
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 					std::string_view pack_name = peek_token()->value();
-					Token pack_token = *peek_token();
 					consume_token(); // consume pack name
 					
 					if (consume_punctuator(")")) {
@@ -19612,7 +19602,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Pattern 2 & 4: Check if starts with identifier (could be pack or init)
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 				std::string_view first_id = peek_token()->value();
-				Token first_id_token = *peek_token();
 				consume_token(); // consume identifier
 				
 				// Check what follows
@@ -20521,7 +20510,7 @@ ParseResult Parser::parse_lambda_expression() {
     if (!return_type.has_value() || 
         (return_type->is<TypeSpecifierNode>() && return_type->as<TypeSpecifierNode>().type() == Type::Auto)) {
         // Search lambda body for return statements to deduce return type
-        const BlockNode& body = body_result.node()->as<BlockNode>();
+        [[maybe_unused]] const BlockNode& body = body_result.node()->as<BlockNode>();
         std::optional<TypeSpecifierNode> deduced_type;
         std::vector<std::pair<TypeSpecifierNode, Token>> all_return_types;  // Track all return types for validation
         
@@ -21904,7 +21893,6 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 	// Handle different expression types
 	if (std::holds_alternative<BoolLiteralNode>(expr)) {
-		const auto& literal = std::get<BoolLiteralNode>(expr);
 		return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
 	}
 	else if (std::holds_alternative<NumericLiteralNode>(expr)) {
@@ -22812,7 +22800,6 @@ ParseResult Parser::parse_template_declaration() {
 		if (!var_type_result.is_error()) {
 			// After type, expect identifier (variable name)
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-				std::string_view var_name = peek_token()->value();
 				consume_token();
 				
 				// After identifier, check what comes next:
