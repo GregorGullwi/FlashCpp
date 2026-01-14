@@ -3366,7 +3366,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Finalize struct layout
-			struct_info->finalize();
+			if (!struct_info->finalize()) {
+				return ParseResult::error(struct_info->getFinalizationError(), Token());
+			}
 			
 			// Store struct info
 			struct_type_info.setStructInfo(std::move(struct_info));
@@ -6491,10 +6493,16 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Finalize struct layout (add padding)
 	// Use finalizeWithBases() if there are base classes, otherwise use finalize()
+	bool finalize_success;
 	if (!struct_info->base_classes.empty()) {
-		struct_info->finalizeWithBases();
+		finalize_success = struct_info->finalizeWithBases();
 	} else {
-		struct_info->finalize();
+		finalize_success = struct_info->finalize();
+	}
+	
+	// Check for semantic errors during finalization (e.g., overriding final function)
+	if (!finalize_success) {
+		return ParseResult::error(struct_info->getFinalizationError(), Token());
 	}
 
 	// Check if template class has static members before moving struct_info
@@ -7662,7 +7670,9 @@ ParseResult Parser::parse_typedef_declaration()
 		}
 
 		// Finalize struct layout (add padding)
-		struct_info->finalize();
+		if (!struct_info->finalize()) {
+			return ParseResult::error(struct_info->getFinalizationError(), Token());
+		}
 
 		// Store struct info
 		struct_type_info.setStructInfo(std::move(struct_info));
@@ -8849,7 +8859,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					add_div_struct_members(struct_info.get(), identifier_token.value());
 					
 					// Finalize the struct layout
-					struct_info->finalize();
+					if (!struct_info->finalize()) {
+						return ParseResult::error(struct_info->getFinalizationError(), Token());
+					}
 					
 					type_info.setStructInfo(std::move(struct_info));
 					if (type_info.getStructInfo()) {
@@ -8890,7 +8902,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				add_div_struct_members(struct_info.get(), identifier_token.value());
 				
 				// Finalize the struct layout
-				struct_info->finalize();
+				if (!struct_info->finalize()) {
+					return ParseResult::error(struct_info->getFinalizationError(), Token());
+				}
 				
 				type_info.setStructInfo(std::move(struct_info));
 				if (type_info.getStructInfo()) {
@@ -24277,10 +24291,16 @@ ParseResult Parser::parse_template_declaration() {
 			FLASH_LOG(Templates, Debug, "Full spec ", instantiated_name, " has_constructor=", has_constructor);
 
 			// Finalize the struct layout with base classes
+			bool finalize_success;
 			if (!struct_ref.base_classes().empty()) {
-				struct_info_ptr->finalizeWithBases();
+				finalize_success = struct_info_ptr->finalizeWithBases();
 			} else {
-				struct_info_ptr->finalize();
+				finalize_success = struct_info_ptr->finalize();
+			}
+			
+			// Check for semantic errors during finalization
+			if (!finalize_success) {
+				return ParseResult::error(struct_info_ptr->getFinalizationError(), Token());
 			}
 
 			// Parse delayed function bodies for specialization member functions
@@ -25105,10 +25125,16 @@ ParseResult Parser::parse_template_declaration() {
 			}
 			
 			// Finalize the struct layout with base classes
+			bool finalize_success;
 			if (!struct_ref.base_classes().empty()) {
-				struct_info->finalizeWithBases();
+				finalize_success = struct_info->finalizeWithBases();
 			} else {
-				struct_info->finalize();
+				finalize_success = struct_info->finalize();
+			}
+			
+			// Check for semantic errors during finalization
+			if (!finalize_success) {
+				return ParseResult::error(struct_info->getFinalizationError(), Token());
 			}
 			
 			// Store struct info
@@ -32238,10 +32264,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		// Finalize the struct layout
+		bool finalize_success;
 		if (!pattern_struct.base_classes().empty()) {
-			struct_info->finalizeWithBases();
+			finalize_success = struct_info->finalizeWithBases();
 		} else {
-			struct_info->finalize();
+			finalize_success = struct_info->finalize();
+		}
+		
+		// Check for semantic errors during finalization
+		if (!finalize_success) {
+			// Log error and return nullopt - compilation will continue but template instantiation fails
+			FLASH_LOG(Parser, Error, struct_info->getFinalizationError());
+			return std::nullopt;
 		}
 		struct_type_info.setStructInfo(std::move(struct_info));
 if (struct_type_info.getStructInfo()) {
@@ -33977,7 +34011,11 @@ if (struct_type_info.getStructInfo()) {
 			}
 			
 			// Finalize the nested struct layout
-			nested_struct_info->finalize();
+			if (!nested_struct_info->finalize()) {
+				// Log error and return nullopt - compilation will continue but template instantiation fails
+				FLASH_LOG(Parser, Error, nested_struct_info->getFinalizationError());
+				return std::nullopt;
+			}
 			
 			// Register the nested class in the type system
 			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size());
@@ -34044,10 +34082,18 @@ if (struct_type_info.getStructInfo()) {
 	}
 
 	// Finalize the struct layout
+	bool finalize_success;
 	if (!struct_info->base_classes.empty()) {
-		struct_info->finalizeWithBases();
+		finalize_success = struct_info->finalizeWithBases();
 	} else {
-		struct_info->finalize();
+		finalize_success = struct_info->finalize();
+	}
+	
+	// Check for semantic errors during finalization
+	if (!finalize_success) {
+		// Log error and return nullopt - compilation will continue but template instantiation fails
+		FLASH_LOG(Parser, Error, struct_info->getFinalizationError());
+		return std::nullopt;
 	}
 
 	// Store struct info in type info

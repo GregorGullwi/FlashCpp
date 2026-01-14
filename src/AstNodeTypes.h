@@ -547,6 +547,9 @@ struct StructTypeInfo {
 	std::vector<StructTypeInfo*> nested_classes_;    // Nested classes
 	StructTypeInfo* enclosing_class_ = nullptr;      // Enclosing class (if this is nested)
 
+	// Error tracking for semantic errors detected during finalization
+	std::string finalization_error_;  // Non-empty if semantic error occurred during finalization
+
 	StructTypeInfo(StringHandle n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false)
 		: name(n), default_access(default_acc), is_union(union_type) {}
 	
@@ -662,9 +665,15 @@ struct StructTypeInfo {
 	// Check if destructor is deleted
 	bool isDestructorDeleted() const { return has_deleted_destructor; }
 
-	void finalize() {
+	// Check if finalization had errors
+	bool hasFinalizationError() const { return !finalization_error_.empty(); }
+	const std::string& getFinalizationError() const { return finalization_error_; }
+
+	bool finalize() {
 		// Build vtable first (if struct has virtual functions)
-		buildVTable();
+		if (!buildVTable()) {
+			return false;  // Semantic error during vtable building
+		}
 
 		// Build RTTI information (after vtable, before layout)
 		buildRTTI();
@@ -687,13 +696,16 @@ struct StructTypeInfo {
 
 		// Pad struct to its alignment
 		total_size = (total_size + alignment - 1) & ~(alignment - 1);
+		return true;
 	}
 
 	// Finalize with base classes - computes layout including base class subobjects
-	void finalizeWithBases();
+	// Returns false if semantic errors were detected
+	bool finalizeWithBases();
 
 	// Build vtable for virtual functions (called during finalization)
-	void buildVTable();
+	// Returns false if semantic errors were detected (e.g., overriding final function)
+	bool buildVTable();
 
 	// Update abstract flag based on pure virtual functions in vtable
 	void updateAbstractFlag();
