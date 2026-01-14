@@ -9,7 +9,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | - |
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | - |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | - |
-| `<utility>` | `test_std_utility.cpp` | ❌ Failed | `stl_pair.h` - member template alias with complex expressions |
+| `<utility>` | `test_std_utility.cpp` | ❌ Failed | `stl_pair.h` - constructor declaration parsing with complex types |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template instantiation volume |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template instantiation volume |
@@ -47,18 +47,22 @@ cd tests/std
 
 ## Current Blockers
 
-### 1. `<utility>` - Non-Type Template Parameter References
+### 1. `<utility>` - Constructor Declaration Parsing
 
-**Location:** `bits/stl_pair.h` - Non-type template parameters like `size_t _Int` in template argument context
+**Location:** `bits/stl_pair.h` - Constructor declarations with complex parameter types
 
-The parser cannot find non-type template parameter references (like `_Int`, `__i`) when they are used in dependent contexts within template arguments.
+The parser encounters issues with constructor declarations inside template classes that have complex parameter types like `piecewise_construct_t`.
 
 **Example pattern:**
 ```cpp
-template<size_t _Int, typename _Tp1, typename _Tp2>
-constexpr typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&
-get(pair<_Tp1, _Tp2>& __p) noexcept;
+template<typename... _Args1, typename... _Args2>
+pair(piecewise_construct_t, tuple<_Args1...>, tuple<_Args2...>);
 ```
+
+**Previous blockers resolved (January 14, 2026):**
+- Non-type template parameters in return types: Pattern `typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&` now works
+  - **Fix:** Set `current_template_param_names_` EARLY in `parse_template_declaration()`, before variable template detection code calls `parse_type_specifier()`
+  - **Test case:** `tests/test_nontype_template_param_return_ret0.cpp`
 
 **Previous blockers resolved (January 13, 2026):**
 - Member template function calls: Pattern `Helper<int>::Check<int>()` now works
@@ -120,6 +124,7 @@ The following features have been implemented to support standard headers:
 - Member template requires clauses
 - Template function `= delete`/`= default`
 - Template friend declarations (`template<typename T1, typename T2> friend struct pair;`)
+- Non-type template parameters in return types (`typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&`)
 
 **C++17/C++20 Features:**
 - C++17 nested namespace declarations (`namespace A::B::C { }`)
@@ -134,6 +139,29 @@ The following features have been implemented to support standard headers:
 - Global scope `operator new`/`operator delete`
 
 ## Recent Changes
+
+### 2026-01-14: Non-Type Template Parameters in Return Types
+
+**Fixed:** Non-type template parameters are now properly recognized in complex return types.
+
+- Pattern: `template<size_t _Int, typename _Tp1, typename _Tp2> typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&`
+- Previously: Parser failed with "Missing identifier: _Int" because `current_template_param_names_` was not set before parsing the return type during variable template detection
+- Now: Template parameters (including non-type parameters like `size_t _Int`) are properly recognized in return type expressions
+- **Test case:** `tests/test_nontype_template_param_return_ret0.cpp`
+
+**Example:**
+```cpp
+template<int _Int, typename _Tp1, typename _Tp2>
+constexpr typename element_type<_Int, _Tp1>::type
+get_element();  // _Int is now recognized in the return type
+```
+
+**Technical details:** 
+- The fix moves the assignment `current_template_param_names_ = template_param_names;` to an earlier position in `parse_template_declaration()`
+- This ensures template parameters are available before the variable template detection code (which calls `parse_type_specifier()`)
+- Also set `parsing_template_body_ = true` at the same point
+
+**Progress:** `<utility>` parsing now advances past the `tuple_element<_Int, ...>` return type patterns to constructor declaration parsing.
 
 ### 2026-01-13: Member Template Function Calls
 
