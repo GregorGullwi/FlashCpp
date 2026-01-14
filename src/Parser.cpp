@@ -26672,7 +26672,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 							return ParseResult::error("Expected member name in initializer list", *peek_token());
 						}
 						
-						std::string_view init_name = peek_token()->value();
 						consume_token();
 						
 						// Expect '(' or '{'
@@ -32407,13 +32406,11 @@ if (struct_type_info.getStructInfo()) {
 	// Count non-variadic parameters
 	size_t non_variadic_param_count = 0;
 	bool has_parameter_pack = false;
-	size_t parameter_pack_index = 0;
 	
 	for (size_t i = 0; i < template_params.size(); ++i) {
 		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
 		if (param.is_variadic()) {
 			has_parameter_pack = true;
-			parameter_pack_index = i;
 		} else {
 			non_variadic_param_count++;
 		}

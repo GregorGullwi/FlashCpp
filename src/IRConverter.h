@@ -8553,8 +8553,8 @@ private:
 										owning_struct_name = StringTable::getStringView(dtor_node.struct_name());
 										
 										// Generate mangled destructor name
-										auto mangled = NameMangling::generateMangledNameFromNode(dtor_node);
-										vtable_info.function_symbols[i] = mangled.view();
+										auto dtor_mangled = NameMangling::generateMangledNameFromNode(dtor_node);
+										vtable_info.function_symbols[i] = dtor_mangled.view();
 									} else if (!vfunc->is_constructor) {
 										// Regular virtual function - get struct name from FunctionDeclarationNode
 										const auto& func_node = vfunc->function_decl.as<FunctionDeclarationNode>();
@@ -8562,14 +8562,14 @@ private:
 										vtable_func_name = StringTable::getStringView(vfunc->getName());
 										
 										// Generate mangled function name using the function's owning struct
-										const auto& return_type = func_node.decl_node().type_node().as<TypeSpecifierNode>();
-										const auto& params = func_node.parameter_nodes();
+										const auto& vfunc_return_type = func_node.decl_node().type_node().as<TypeSpecifierNode>();
+										const auto& vfunc_params = func_node.parameter_nodes();
 										std::vector<std::string_view> empty_ns_path;
-										auto mangled = NameMangling::generateMangledName(
-											func_name, return_type, params, false, 
+										auto vfunc_mangled = NameMangling::generateMangledName(
+											vtable_func_name, vfunc_return_type, vfunc_params, false, 
 											owning_struct_name, empty_ns_path, Linkage::CPlusPlus
 										);
-										vtable_info.function_symbols[i] = mangled.view();
+										vtable_info.function_symbols[i] = vfunc_mangled.view();
 									}
 								}
 							}
@@ -8869,7 +8869,7 @@ private:
 			}
 		} else {
 			// Typed payload path: build ParameterInfo from already-extracted parameter_types
-			const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
+			[[maybe_unused]] const auto& typed_func_decl = instruction.getTypedPayload<FunctionDeclOp>();
 			reference_stack_info_.clear();
 			
 			// Register 'this' as a pointer in reference_stack_info_ (AFTER the clear)
@@ -9035,7 +9035,6 @@ private:
 				constexpr int FLOAT_REG_AREA_SIZE = 8 * 16;   // 128 bytes for XMM registers  
 				constexpr int REG_SAVE_AREA_SIZE = INT_REG_AREA_SIZE + FLOAT_REG_AREA_SIZE;  // 176 bytes
 				constexpr int VA_LIST_STRUCT_SIZE = 24;        // Size of va_list structure
-				constexpr int TOTAL_VA_AREA_SIZE = REG_SAVE_AREA_SIZE + VA_LIST_STRUCT_SIZE;  // 200 bytes
 				
 				// Allocate space: register save area first, then va_list structure
 				int32_t reg_save_area_base = variable_scopes.back().scope_stack_space - REG_SAVE_AREA_SIZE;
@@ -11150,7 +11149,6 @@ private:
 	void handleTruncate(const IrInstruction& instruction) {
 		// Truncation: just use the lower bits by moving to a smaller register
 		const ConversionOp& conv_op = instruction.getTypedPayload<ConversionOp>();
-		int fromSize = conv_op.from.size_in_bits;
 		int toSize = conv_op.to_size;
 
 		// Get source value into a register
@@ -12409,9 +12407,6 @@ private:
 			FLASH_LOG_FORMAT(Codegen, Debug, "ArrayAccess TempVar: base_reg={}, index_reg={}, array_base_offset={}, index_var_offset={}",
 				static_cast<int>(base_reg), static_cast<int>(index_reg), array_base_offset, index_var_offset);
 
-			// Calculate index size in bytes from size_in_bits
-			int index_size_bytes = op.index.size_in_bits / 8;
-
 			if (is_array_pointer || is_object_pointer) {
 				// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
 				auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
@@ -12479,9 +12474,6 @@ private:
 			
 			// Allocate a second register for the index
 			X64Register index_reg = allocateRegisterWithSpilling();
-
-			// Calculate index size in bytes from size_in_bits
-			int index_size_bytes = op.index.size_in_bits / 8;
 
 			if (is_array_pointer || is_object_pointer) {
 				// Array is a pointer/temp var, or member array of a pointer object
@@ -13151,12 +13143,12 @@ private:
 				bool is_float = (op.result.type == Type::Float);
 				emitFloatLoadFromAddressWithOffset(textSectionData, xmm_reg, temp_reg, op.offset, is_float);
 				
-				int32_t result_offset = allocateStackSlotForTempVar(result_var.var_number);
-				auto store_opcodes = generateFloatMovToFrame(xmm_reg, result_offset, is_float);
+				int32_t float_result_offset = allocateStackSlotForTempVar(result_var.var_number);
+				auto store_opcodes = generateFloatMovToFrame(xmm_reg, float_result_offset, is_float);
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 				                       store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 				regAlloc.release(temp_reg);
-				variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = result_offset;
+				variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = float_result_offset;
 				return;
 			} else {
 				// For integers: use standard integer load
@@ -13342,7 +13334,6 @@ private:
 						emitMovImm64(value_reg, imm64);
 					}
 				} else if (is_variable) {
-					const StackVariableScope& current_scope = variable_scopes.back();
 					auto it = current_scope.variables.find(variable_name);
 					if (it == current_scope.variables.end()) {
 						assert(false && "Variable not found in scope");
@@ -13468,7 +13459,6 @@ private:
 			bool pointer_loaded = false;
 			if (is_variable) {
 				// Check if this variable is itself a reference (e.g., reference parameter)
-				const StackVariableScope& current_scope = variable_scopes.back();
 				auto it = current_scope.variables.find(variable_name);
 				if (it != current_scope.variables.end()) {
 					int32_t var_offset = it->second.offset;
@@ -13514,7 +13504,6 @@ private:
 		} else if (is_variable) {
 			// Check if this is a vtable symbol (check vtable_symbol field in MemberStoreOp)
 			// This will be handled separately below
-			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(variable_name);
 			if (it == current_scope.variables.end()) {
 				assert(false && "Variable not found in scope");
@@ -14047,7 +14036,7 @@ private:
 		// Legacy format: Operands: [result_var, type, size, operand]
 		assert(instruction.getOperandCount() == 4 && "Dereference must have 4 operands");
 
-		Type value_type = instruction.getOperandAs<Type>(1);
+		[[maybe_unused]] Type value_type = instruction.getOperandAs<Type>(1);
 		int value_size = instruction.getOperandAs<int>(2);
 
 		// Load the pointer operand into a register
@@ -14297,7 +14286,6 @@ private:
 		flushAllDirtyRegisters();
 
 		auto result_var = std::get<TempVar>(op.result.value);
-		std::string_view func_name = StringTable::getStringView(op.getFunctionName());  // Phase 4: Use helper
 
 		// Get result offset
 		int result_offset = getStackOffsetFromTempVar(result_var);
@@ -14350,7 +14338,6 @@ private:
 		} else {
 			// Function pointer is a variable name
 			StringHandle var_name_handle = std::get<StringHandle>(op.function_pointer);
-			std::string_view var_name = StringTable::getStringView(var_name_handle);
 			int func_ptr_offset = variable_scopes.back().variables[var_name_handle].offset;
 			func_ptr_reg = X64Register::RAX;
 			emitMovFromFrame(func_ptr_reg, func_ptr_offset);
@@ -14381,9 +14368,8 @@ private:
 					);
 				}
 			} else if (std::holds_alternative<StringHandle>(arg.value)) {
-				StringHandle var_name_handle = std::get<StringHandle>(arg.value);
-			std::string_view var_name = StringTable::getStringView(var_name_handle);
-				int arg_offset = variable_scopes.back().variables[var_name_handle].offset;
+				StringHandle arg_var_name_handle = std::get<StringHandle>(arg.value);
+				int arg_offset = variable_scopes.back().variables[arg_var_name_handle].offset;
 				if (is_float_arg) {
 					bool is_float = (argType == Type::Float);
 					auto load_opcodes = generateFloatMovFromFrame(target_reg, arg_offset, is_float);
@@ -14466,7 +14452,7 @@ private:
 	// - Full MSVC template type mangling with argument encoding
 	// ============================================================================
 	
-	void handleTryBegin(const IrInstruction& instruction) {
+	void handleTryBegin([[maybe_unused]] const IrInstruction& instruction) {
 		// Skip exception handling if disabled
 		if (!g_enable_exceptions) {
 			return;
@@ -14486,7 +14472,7 @@ private:
 		// but we don't need it for code generation - we track offsets directly.
 	}
 
-	void handleTryEnd(const IrInstruction& instruction) {
+	void handleTryEnd([[maybe_unused]] const IrInstruction& instruction) {
 		// Skip exception handling if disabled
 		if (!g_enable_exceptions) {
 			return;
@@ -14655,7 +14641,7 @@ private:
 		}
 	}
 
-	void handleCatchEnd(const IrInstruction& instruction) {
+	void handleCatchEnd([[maybe_unused]] const IrInstruction& instruction) {
 		// Skip exception handling if disabled
 		if (!g_enable_exceptions) {
 			return;
@@ -14882,7 +14868,7 @@ private:
 		}
 	}
 
-	void handleRethrow(const IrInstruction& instruction) {
+	void handleRethrow([[maybe_unused]] const IrInstruction& instruction) {
 		// Skip exception handling if disabled - generate abort() instead
 		if (!g_enable_exceptions) {
 			// Call abort() to terminate when exceptions are disabled
@@ -15291,7 +15277,6 @@ private:
 		
 		// Infinite loop (satisfies [[noreturn]])
 		// loop: JMP loop
-		size_t loop_pos = textSectionData.size();
 		emitJumpUnconditional(-2);  // JMP $-2 (jump to self)
 		
 		// Calculate function length

@@ -1149,7 +1149,7 @@ private:
 	bool checkMemberAccess(const StructMember* member,
 	                       const StructTypeInfo* member_owner_struct,
 	                       const StructTypeInfo* accessing_struct,
-	                       const BaseClassSpecifier* inheritance_path = nullptr,
+	                       [[maybe_unused]] const BaseClassSpecifier* inheritance_path = nullptr,
 	                       const std::string_view& accessing_function = "") const {
 		if (!member || !member_owner_struct) {
 			return false;
@@ -1361,7 +1361,6 @@ private:
 	// Helper function to check if a variable is a reference by looking it up in the symbol table
 	// Returns true if the variable is declared as a reference (&  or &&)
 	bool isVariableReference(std::string_view var_name) const {
-		StringHandle var_handle = StringTable::getOrInternStringHandle(var_name);
 		const std::optional<ASTNode> symbol = symbol_table.lookup(var_name);
 		
 		if (symbol.has_value() && symbol->is<DeclarationNode>()) {
@@ -1775,7 +1774,7 @@ private:
 	}
 	
 	// Emit DereferenceStore instruction
-	void emitDereferenceStore(const TypedValue& value, Type pointee_type, int pointee_size_bits,
+	void emitDereferenceStore(const TypedValue& value, Type pointee_type, [[maybe_unused]] int pointee_size_bits,
 	                          std::variant<StringHandle, TempVar> pointer,
 	                          const Token& token) {
 		DereferenceStoreOp store_op;
@@ -2834,7 +2833,7 @@ private:
 		current_function_name_ = saved_enclosing_function;
 	}
 
-	void visitEnumDeclarationNode(const EnumDeclarationNode& node) {
+	void visitEnumDeclarationNode([[maybe_unused]] const EnumDeclarationNode& node) {
 		// Enum declarations themselves don't generate IR - they just define types
 		// The type information is already registered in the global type system
 		// Enumerators are treated as compile-time constants and don't need runtime code generation
@@ -3378,7 +3377,6 @@ private:
 
 		// Visit the constructor body
 		const BlockNode& block = node.get_definition().value().as<BlockNode>();
-		size_t ctor_stmt_index = 0;
 		block.get_statements().visit([&](const ASTNode& statement) {
 			visit(statement);
 		});
@@ -4813,13 +4811,13 @@ private:
 			init_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 		} else {
 			// For non-reference variables, reinterpret iterator as pointer to element type, then dereference
-			auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+			auto deref_begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 			auto loop_ptr_type = ASTNode::emplace_node<TypeSpecifierNode>(
 				loop_type.type(), loop_type.type_index(), static_cast<int>(loop_type.size_in_bits()), Token()
 			);
 			loop_ptr_type.as<TypeSpecifierNode>().add_pointer_level();
 			auto cast_expr = ASTNode::emplace_node<ExpressionNode>(
-				ReinterpretCastNode(loop_ptr_type, begin_ident_expr, Token(Token::Type::Keyword, "reinterpret_cast", 0, 0, 0))
+				ReinterpretCastNode(loop_ptr_type, deref_begin_ident_expr, Token(Token::Type::Keyword, "reinterpret_cast", 0, 0, 0))
 			);
 			init_expr = ASTNode::emplace_node<ExpressionNode>(
 				UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), cast_expr, true)
@@ -5529,10 +5527,10 @@ private:
 															// Get the type of the initializer expression
 															if (std::holds_alternative<IdentifierNode>(expr)) {
 																const auto& ident = std::get<IdentifierNode>(expr);
-																std::optional<ASTNode> symbol = symbol_table.lookup(ident.name());
-																if (symbol.has_value()) {
-																	if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-																		const TypeSpecifierNode& init_type = decl->type_node().as<TypeSpecifierNode>();
+																std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
+																if (init_symbol.has_value()) {
+																	if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
+																		const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
 																		if (init_type.type() == Type::Struct && 
 																			init_type.type_index() == param_type.type_index()) {
 																			init_is_struct_of_same_type = true;
@@ -5634,17 +5632,13 @@ private:
 											
 											if (param_is_ref && is_ident) {
 												const auto& identifier = std::get<IdentifierNode>(init_expr.as<ExpressionNode>());
-												std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-												if (symbol.has_value()) {
-													bool is_decl = symbol->is<DeclarationNode>();
-													bool is_vardecl = symbol->is<VariableDeclarationNode>();
-												}
+												std::optional<ASTNode> arg_symbol = symbol_table.lookup(identifier.name());
 												
 												const DeclarationNode* arg_decl = nullptr;
-												if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-													arg_decl = &symbol->as<DeclarationNode>();
-												} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
-													arg_decl = &symbol->as<VariableDeclarationNode>().declaration();
+												if (arg_symbol.has_value() && arg_symbol->is<DeclarationNode>()) {
+													arg_decl = &arg_symbol->as<DeclarationNode>();
+												} else if (arg_symbol.has_value() && arg_symbol->is<VariableDeclarationNode>()) {
+													arg_decl = &arg_symbol->as<VariableDeclarationNode>().declaration();
 												}
 												
 												if (arg_decl) {
@@ -6274,8 +6268,8 @@ private:
 									auto size_expr = decl.array_size();
 									if (size_expr.has_value()) {
 										// Evaluate the array size expression using ConstExprEvaluator
-										ConstExpr::EvaluationContext ctx(symbol_table);
-										auto eval_result = ConstExpr::Evaluator::evaluate(*size_expr, ctx);
+										ConstExpr::EvaluationContext array_ctx(symbol_table);
+										auto eval_result = ConstExpr::Evaluator::evaluate(*size_expr, array_ctx);
 										if (eval_result.success) {
 											array_count = static_cast<size_t>(eval_result.as_int());
 										}
