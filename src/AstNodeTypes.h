@@ -2088,6 +2088,14 @@ public:
 	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
 	bool is_noexcept() const { return is_noexcept_; }
 
+	// explicit specifier support (for future use)
+	void set_explicit(bool is_explicit) { is_explicit_ = is_explicit; }
+	bool is_explicit() const { return is_explicit_; }
+
+	// constexpr specifier support (for future use)
+	void set_constexpr(bool is_constexpr) { is_constexpr_ = is_constexpr; }
+	bool is_constexpr() const { return is_constexpr_; }
+
 private:
 	StringHandle struct_name_;
 	StringHandle name_;
@@ -2098,6 +2106,8 @@ private:
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	bool is_implicit_;  // True if this is an implicitly generated default constructor
 	bool is_noexcept_ = false;  // noexcept specifier
+	bool is_explicit_ = false;  // explicit specifier
+	bool is_constexpr_ = false;  // constexpr specifier
 	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
 };
 
