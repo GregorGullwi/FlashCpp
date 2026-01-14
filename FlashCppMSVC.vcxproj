@@ -137,6 +137,7 @@
     </ClCompile>
     <Link>
       <OutputFile>$(BenchmarkOutputFile)</OutputFile>
+      <StackReserveSize>8388608</StackReserveSize>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Test|x64'">
@@ -148,6 +149,7 @@
     </ClCompile>
     <Link>
       <OutputFile>$(OutDir)test.exe</OutputFile>
+      <StackReserveSize>8388608</StackReserveSize>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -228,6 +230,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
       <AdditionalDependencies>ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <StackReserveSize>8388608</StackReserveSize>
     </Link>
     <ClCompile>
       <Optimization>Disabled</Optimization>
@@ -239,6 +242,7 @@
         ws2_32.lib;
         %(AdditionalDependencies)
       </AdditionalDependencies>
+      <StackReserveSize>8388608</StackReserveSize>
     </Link>
   </ItemDefinitionGroup>
 </Project>

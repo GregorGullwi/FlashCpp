@@ -338,11 +338,12 @@ int main(int argc, char *argv[]) {
 #endif
 
     Lexer lexer(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
-    Parser parser(lexer, context);
+    // Allocate Parser on the heap to reduce stack usage - Parser has many large member variables
+    auto parser = std::make_unique<Parser>(lexer, context);
     {
         PhaseTimer timer("Parsing", false, &parsing_time);
         // Note: Lexing happens lazily during parsing in this implementation
-        auto parse_result = parser.parse();
+        auto parse_result = parser->parse();
 
         if (parse_result.is_error()) {
             // Print formatted error with file:line:column information and include stack
@@ -351,10 +352,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    const auto& ast = parser.get_nodes();
+    const auto& ast = parser->get_nodes();
     FLASH_LOG(Parser, Debug, "After parsing, AST has ", ast.size(), " nodes\n");
 
-    AstToIr converter(gSymbolTable, context, parser);
+    AstToIr converter(gSymbolTable, context, *parser);
 
     // Reserve space for IR instructions
     // Estimate: ~2 instructions per source line (empirical heuristic)

@@ -9,7 +9,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | - |
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | - |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | - |
-| `<utility>` | `test_std_utility.cpp` | ❌ Failed | `stl_pair.h` - constructor declaration parsing with complex types |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Parsing fixed; template volume |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template instantiation volume |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template instantiation volume |
@@ -47,7 +47,16 @@ cd tests/std
 
 ## Current Blockers
 
-### 1. `<utility>` - Template Name Resolution in std Namespace
+### 1. Template Instantiation Performance
+
+Most headers timeout due to template instantiation volume, not parsing errors. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
+
+**Optimization opportunities:**
+- Improve template cache hit rate (currently ~26%)
+- Optimize string operations in template name generation
+- Consider lazy evaluation strategies
+
+### 2. Template Name Resolution in std Namespace
 
 **Location:** `<type_traits>` header - Variable template lookups during template alias resolution
 
@@ -69,6 +78,9 @@ template<typename _Xp, typename _Yp>
 **Root cause:** The `lookupTemplate` function is called with unqualified name `is_reference_v` but the template is registered with qualified name `std::is_reference_v`.
 
 **Previous blockers resolved (January 14, 2026):**
+- Template member constructors: Pattern `template<typename U> Box(const Box<U>& other)` now parses correctly
+  - **Fix:** Added template constructor detection in `parse_member_function_template()` before calling `parse_template_function_declaration_body()`
+  - **Test case:** `tests/test_template_ctor_ret0.cpp`
 - Namespace-qualified variable template lookup: Variable templates in namespaces can now be used from function templates in the same namespace
   - **Fix:** Added namespace-qualified lookup in multiple code paths for variable templates in `parse_unary_expression()`
   - **Test case:** `tests/test_ns_var_template_ret0.cpp`
@@ -84,7 +96,7 @@ template<typename _Xp, typename _Yp>
 - C++20 inline nested namespaces: Pattern `namespace A::inline B { }` now works
 - `const typename` in type specifiers: Pattern `constexpr const typename T::type` now works
 
-### 2. Template Argument Reference Preservation
+### 3. Template Argument Reference Preservation
 
 **Issue:** Template argument substitution can lose reference qualifiers when substituting type parameters.
 
@@ -149,11 +161,12 @@ The following features have been implemented to support standard headers:
 **Templates:**
 - Fold expression evaluation in static members
 - Namespace-qualified variable templates
-- Namespace-qualified variable template lookup in function templates (NEW)
+- Namespace-qualified variable template lookup in function templates
 - Member template requires clauses
 - Template function `= delete`/`= default`
 - Template friend declarations (`template<typename T1, typename T2> friend struct pair;`)
 - Non-type template parameters in return types (`typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&`)
+- Template member constructors (`template<typename U> Box(const Box<U>& other)`) (NEW)
 
 **C++17/C++20 Features:**
 - C++17 nested namespace declarations (`namespace A::B::C { }`)
@@ -168,6 +181,35 @@ The following features have been implemented to support standard headers:
 - Global scope `operator new`/`operator delete`
 
 ## Recent Changes
+
+### 2026-01-14: Template Member Constructor Parsing
+
+**Fixed:** Template member constructors can now be parsed correctly.
+
+- Pattern: `template<typename U> Box(const Box<U>& other) : value(other.value) {}`
+- Previously: Parser tried to parse `Box(` as a return type and function name, failing with "Expected identifier token" when it encountered `(` after the constructor name
+- Now: `parse_member_function_template()` detects template constructor patterns before calling `parse_template_function_declaration_body()`
+- **Test case:** `tests/test_template_ctor_ret0.cpp`
+
+**Example:**
+```cpp
+template<typename T>
+struct Box {
+    T value;
+    
+    // Template constructor - now parses correctly
+    template<typename U>
+    Box(const Box<U>& other) : value(other.value) {}
+};
+```
+
+**Technical details:**
+- Added lookahead in `parse_member_function_template()` after parsing template parameters and requires clause
+- Skip storage specifiers (constexpr, explicit, inline) and check if next identifier matches the struct name followed by `(`
+- If detected, parse as a constructor with `ConstructorDeclarationNode` instead of routing to `parse_template_function_declaration_body()`
+- Handles initializer lists, noexcept specifier, `= default`, `= delete`, and function bodies
+
+**Progress:** Template constructor declarations now parse successfully. The `<utility>` header progresses to the template instantiation phase before timing out.
 
 ### 2026-01-14: Namespace-Qualified Variable Template Lookup
 
