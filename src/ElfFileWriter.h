@@ -862,7 +862,7 @@ public:
 		// Not needed for ELF - Windows-specific
 	}
 
-	void add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type) {
+	void add_debug_relocation([[maybe_unused]] uint32_t offset, [[maybe_unused]] const std::string& symbol_name, [[maybe_unused]] uint32_t relocation_type) {
 		// Placeholder for DWARF relocations
 	}
 

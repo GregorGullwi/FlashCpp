@@ -6465,7 +6465,7 @@ private:
 				} else if (std::holds_alternative<StringHandle>(arg.value)) {
 					// Load variable
 					StringHandle var_name_handle = std::get<StringHandle>(arg.value);
-			std::string_view var_name = StringTable::getStringView(var_name_handle);
+			[[maybe_unused]] std::string_view var_name = StringTable::getStringView(var_name_handle);
 					int var_offset = variable_scopes.back().variables[var_name_handle].offset;
 					if (is_float_arg) {
 						// For floating-point, use movsd/movss into XMM register
@@ -6498,13 +6498,13 @@ private:
 				if (call_op.is_variadic) {
 					// Count XMM registers actually allocated (need to track float_reg_index)
 					size_t xmm_count = 0;
-					size_t temp_float_idx = 0;
+					size_t va_temp_float_idx = 0;
 					for (size_t i = 0; i < call_op.args.size(); ++i) {
 						const auto& arg = call_op.args[i];
 						if (is_floating_point_type(arg.type)) {
-							if (temp_float_idx < max_float_regs) {
+							if (va_temp_float_idx < max_float_regs) {
 								xmm_count++;
-								temp_float_idx++;
+								va_temp_float_idx++;
 							}
 						}
 					}
@@ -7070,7 +7070,7 @@ private:
 			object_offset = getStackOffsetFromTempVar(temp_var);
 		} else {
 			StringHandle var_name_handle = std::get<StringHandle>(op.object);
-			std::string_view var_name = StringTable::getStringView(var_name_handle);
+			[[maybe_unused]] std::string_view var_name = StringTable::getStringView(var_name_handle);
 			object_offset = variable_scopes.back().variables[var_name_handle].offset;
 		}
 
@@ -7865,7 +7865,7 @@ private:
 
 		bool is_reference = op.is_reference;
 		bool is_rvalue_reference = op.is_rvalue_reference;
-		bool is_array = op.is_array;
+		[[maybe_unused]] bool is_array = op.is_array;
 		bool is_initialized = op.initializer.has_value();
 
 		FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", var_name_str, "', is_reference=", is_reference, ", offset=", var_it->second.offset, ", is_initialized=", is_initialized, ", type=", static_cast<int>(var_type));
@@ -8545,7 +8545,7 @@ private:
 									// Generate mangled name for this function
 									// The function_decl contains information about which class owns this function
 									std::string_view owning_struct_name;
-									std::string_view func_name;
+									[[maybe_unused]] std::string_view vtable_func_name;
 									
 									if (vfunc->is_destructor) {
 										// Destructor - get struct name from DestructorDeclarationNode
@@ -8559,7 +8559,7 @@ private:
 										// Regular virtual function - get struct name from FunctionDeclarationNode
 										const auto& func_node = vfunc->function_decl.as<FunctionDeclarationNode>();
 										owning_struct_name = func_node.parent_struct_name();
-										func_name = StringTable::getStringView(vfunc->getName());
+										vtable_func_name = StringTable::getStringView(vfunc->getName());
 										
 										// Generate mangled function name using the function's owning struct
 										const auto& return_type = func_node.decl_node().type_node().as<TypeSpecifierNode>();
@@ -9627,7 +9627,7 @@ private:
 		// The scope will be popped when we finish processing the entire function.
 	}
 
-	void handleStackAlloc(const IrInstruction& instruction) {
+	void handleStackAlloc([[maybe_unused]] const IrInstruction& instruction) {
 		// StackAlloc is not used in the current implementation
 		// Variables are allocated in handleVariableDecl instead
 		// Just return without doing anything
@@ -10947,7 +10947,7 @@ private:
 		// Extract UnaryOp from typed payload
 		const UnaryOp& unary_op = instruction.getTypedPayload<UnaryOp>();
 
-		Type type = unary_op.value.type;
+		[[maybe_unused]] Type type = unary_op.value.type;
 		int size_in_bits = unary_op.value.size_in_bits;
 
 		// Load the operand into a register
@@ -12560,7 +12560,7 @@ private:
 			int64_t array_base_offset = 0;
 			if (std::holds_alternative<StringHandle>(op.array)) {
 				StringHandle array_name_handle = std::get<StringHandle>(op.array);
-			std::string_view array_name = StringTable::getStringView(array_name_handle);
+			[[maybe_unused]] std::string_view array_name = StringTable::getStringView(array_name_handle);
 				array_base_offset = variable_scopes.back().variables[array_name_handle].offset;
 			} else if (std::holds_alternative<TempVar>(op.array)) {
 				TempVar array_temp = std::get<TempVar>(op.array);

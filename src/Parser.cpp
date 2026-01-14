@@ -24792,7 +24792,8 @@ ParseResult Parser::parse_template_declaration() {
 								true,  // is_constructor
 								false,
 								&ctor_ref,
-								nullptr
+								nullptr,
+								{}  // template_param_names
 							});
 						} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
 							gSymbolTable.exit_scope();
@@ -25423,7 +25424,7 @@ if (struct_type_info.getStructInfo()) {
 			// Check if this specialization has non-type template arguments (like get<0>, get<1>)
 			if (func_for_mangling.has_non_type_template_args()) {
 				// Use the version that includes non-type template arguments in the mangled name
-				const std::vector<int64_t>& non_type_args = func_for_mangling.non_type_template_args();
+				const std::vector<int64_t>& spec_non_type_args = func_for_mangling.non_type_template_args();
 				const DeclarationNode& decl = func_for_mangling.decl_node();
 				const TypeSpecifierNode& return_type = decl.type_node().as<TypeSpecifierNode>();
 				
@@ -25437,7 +25438,7 @@ if (struct_type_info.getStructInfo()) {
 				}
 				
 				specialization_mangled_name = NameMangling::generateMangledNameWithTemplateArgs(
-					func_base_name, return_type, param_types, non_type_args, 
+					func_base_name, return_type, param_types, spec_non_type_args, 
 					func_for_mangling.is_variadic(), "", ns_path);
 			} else if (!spec_template_args.empty()) {
 				// Use the version that includes TYPE template arguments in the mangled name
@@ -25951,7 +25952,7 @@ ParseResult Parser::parse_template_parameter() {
 
 	// Check for template template parameter: template<template<typename> class Container>
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "template") {
-		Token template_keyword = *peek_token();
+		[[maybe_unused]] Token template_keyword = *peek_token();
 		consume_token(); // consume 'template'
 
 		// Expect '<' to start nested template parameter list
@@ -26111,7 +26112,7 @@ ParseResult Parser::parse_template_parameter() {
 		std::string_view keyword = peek_token()->value();
 
 		if (keyword == "typename" || keyword == "class") {
-			Token keyword_token = *peek_token();
+			[[maybe_unused]] Token keyword_token = *peek_token();
 			consume_token(); // consume 'typename' or 'class'
 
 			// Check for ellipsis (parameter pack): typename... Args
@@ -26202,7 +26203,7 @@ ParseResult Parser::parse_template_parameter() {
 	// Check for identifier (parameter name) - it's optional for anonymous parameters
 	std::string_view param_name;
 	Token param_name_token;
-	bool is_anonymous = false;
+	[[maybe_unused]] bool is_anonymous = false;
 	
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 		// Named parameter
@@ -26596,7 +26597,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		// Check if next identifier is the struct name
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
 		    peek_token()->value() == struct_node.name()) {
-			Token name_token = *peek_token();
+			[[maybe_unused]] Token name_token = *peek_token();
 			consume_token();
 			
 			// Check if followed by '('
@@ -26780,7 +26781,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 }
 
 // Parse member template alias: template<typename T, typename U> using type = T;
-ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_node, AccessSpecifier access) {
+ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_node, [[maybe_unused]] AccessSpecifier access) {
 	ScopedTokenPosition saved_position(*this);
 
 	// Consume 'template' keyword
@@ -26956,7 +26957,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 }
 
 // Parse member struct/class template: template<typename T> struct Name { ... };
-ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_node, AccessSpecifier access) {
+ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_node, [[maybe_unused]] AccessSpecifier access) {
 	ScopedTokenPosition saved_position(*this);
 
 	// Consume 'template' keyword
@@ -27012,7 +27013,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	}
 	
 	bool is_class = (peek_token()->value() == "class");
-	Token struct_keyword_token = *peek_token();
+	[[maybe_unused]] Token struct_keyword_token = *peek_token();
 	consume_token(); // consume 'struct' or 'class'
 
 	// Parse the struct name
@@ -27215,7 +27216,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					
 					// Check if it's const or constexpr
 					bool is_const = false;
-					bool is_constexpr = false;
+					[[maybe_unused]] bool is_constexpr = false;
 					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 						std::string_view kw = peek_token()->value();
 						if (kw == "const") {
@@ -28133,7 +28134,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
 				bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) || 
 				                            std::holds_alternative<TemplateParameterReferenceNode>(expr);
-				bool is_function_call_expr = std::holds_alternative<FunctionCallNode>(expr);
+				[[maybe_unused]] bool is_function_call_expr = std::holds_alternative<FunctionCallNode>(expr);
 				bool followed_by_template_args = peek_token().has_value() && peek_token()->value() == "<";
 				bool followed_by_array_declarator = peek_token().has_value() && peek_token()->value() == "[";
 				bool followed_by_pack_expansion = peek_token().has_value() && peek_token()->value() == "...";
@@ -29233,12 +29234,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						// Format: template_name_type1_type2_...
 						size_t first_underscore = instantiated_name.find('_');
 						if (first_underscore != std::string_view::npos) {
-							std::string_view template_name = instantiated_name.substr(0, first_underscore);
+							std::string_view inner_template_name = instantiated_name.substr(0, first_underscore);
 							
 							// Check if this template exists
-							auto template_check = gTemplateRegistry.lookupTemplate(template_name);
+							auto template_check = gTemplateRegistry.lookupTemplate(inner_template_name);
 							if (template_check.has_value()) {
-								template_args.push_back(TemplateArgument::makeTemplate(template_name));
+								template_args.push_back(TemplateArgument::makeTemplate(inner_template_name));
 								
 								// Extract type arguments from the remaining parts
 								std::string_view remaining = instantiated_name.substr(first_underscore + 1);
@@ -29978,13 +29979,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	if (func_decl.has_template_body_position()) {
 		FLASH_LOG(Templates, Debug, "Template has body position, re-parsing function body");
 		// Re-parse the function body with template parameters substituted
-		const std::vector<ASTNode>& template_params = template_func.template_parameters();
+		const std::vector<ASTNode>& func_template_params = template_func.template_parameters();
 		
 		// Temporarily add the concrete types to the type system with template parameter names
 		// Using RAII scope guard (Phase 6) for automatic cleanup
 		FlashCpp::TemplateParameterScope template_scope;
 		std::vector<std::string_view> param_names;
-		for (const auto& tparam_node : template_params) {
+		for (const auto& tparam_node : func_template_params) {
 			if (tparam_node.is<TemplateParameterNode>()) {
 				param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
 			}
@@ -30418,7 +30419,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				// Use the specialization instead of the primary template
 				if (spec_opt->is<TemplateVariableDeclarationNode>()) {
 					const TemplateVariableDeclarationNode& spec_template = spec_opt->as<TemplateVariableDeclarationNode>();
-					const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
+					[[maybe_unused]] const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
 					
 					// Generate unique name for this instantiation (use simple name without namespace for symbol table)
 					StringBuilder name_builder;
@@ -30613,8 +30614,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 						
 						// Try to instantiate the struct/class referenced in the qualified identifier
 						// Look it up to see if it's a template
-						auto template_opt = gTemplateRegistry.lookupTemplate(template_name_to_lookup);
-						if (template_opt.has_value() && template_args.size() > 0) {
+						auto inner_template_opt = gTemplateRegistry.lookupTemplate(template_name_to_lookup);
+						if (inner_template_opt.has_value() && template_args.size() > 0) {
 							// This is a template - try to instantiate it with the concrete arguments
 							// The template arguments from the variable template should be used
 							FLASH_LOG(Templates, Debug, "Phase 3: Triggering instantiation of '", template_name_to_lookup, 
@@ -30663,7 +30664,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	// This is how normal variables are registered
 	// IMPORTANT: Use insertGlobal because we might be called during function parsing
 	// but we need to insert into global scope
-	bool insert_result = gSymbolTable.insertGlobal(persistent_name, new_decl_node);
+	[[maybe_unused]] bool insert_result = gSymbolTable.insertGlobal(persistent_name, new_decl_node);
 	
 	// Verify it's there
 	auto verify = gSymbolTable.lookup(persistent_name);
@@ -33018,7 +33019,7 @@ if (struct_type_info.getStructInfo()) {
 							// Check if the type needs substitution
 							Type base_type = type_spec.type();
 							TypeIndex type_idx = type_spec.type_index();
-							bool substituted = false;
+							[[maybe_unused]] bool substituted = false;
 							TypeSpecifierNode substituted_type_spec = type_spec;
 							
 							if ((base_type == Type::UserDefined || base_type == Type::Struct) && type_idx < gTypeInfo.size()) {
@@ -33220,9 +33221,9 @@ if (struct_type_info.getStructInfo()) {
 						}
 					}
 					
-					std::string_view instantiated_name = instantiate_and_register_base_template(actual_template_name, template_args_to_use);
-					if (!instantiated_name.empty()) {
-						actual_template_name = instantiated_name;
+					std::string_view inner_instantiated_name = instantiate_and_register_base_template(actual_template_name, template_args_to_use);
+					if (!inner_instantiated_name.empty()) {
+						actual_template_name = inner_instantiated_name;
 					}
 					
 					// If we have a member type suffix, look it up from the instantiated template
@@ -33252,9 +33253,9 @@ if (struct_type_info.getStructInfo()) {
 			}
 			
 			std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
-			std::string_view instantiated_name = instantiate_and_register_base_template(base_template_name, resolved_args);
-			if (!instantiated_name.empty()) {
-				base_template_name = instantiated_name;
+			std::string_view outer_instantiated_name = instantiate_and_register_base_template(base_template_name, resolved_args);
+			if (!outer_instantiated_name.empty()) {
+				base_template_name = outer_instantiated_name;
 			}
 			
 			std::string_view final_base_name = base_template_name;
@@ -36398,7 +36399,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 		// Find the struct in the type system
 		auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 		if (struct_type_it != gTypesByName.end()) {
-			const TypeInfo* type_info = struct_type_it->second;
+			[[maybe_unused]] const TypeInfo* type_info = struct_type_it->second;
 			
 			// Add 'this' pointer to global symbol table
 			// Create a token for 'this'
