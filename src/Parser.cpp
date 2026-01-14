@@ -26568,15 +26568,13 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		SaveHandle lookahead_pos = save_token_position();
 		bool found_constructor = false;
 		
-		// Skip storage specifiers
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-			std::string_view kw = peek_token()->value();
-			if (kw == "constexpr" || kw == "explicit" || kw == "inline" || 
-			    kw == "consteval" || kw == "virtual" || kw == "static") {
-				consume_token();
-			} else {
-				break;
-			}
+		// Skip declaration specifiers using existing helper
+		parse_declaration_specifiers();
+		
+		// Also skip 'explicit' which is constructor-specific and not in parse_declaration_specifiers
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+		       peek_token()->value() == "explicit") {
+			consume_token();
 		}
 		
 		// Check if next identifier is the struct name
@@ -26592,19 +26590,15 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				// Restore to parse constructor properly
 				restore_token_position(lookahead_pos);
 				
-				// Skip storage specifiers again (to get to constructor name)
+				// Parse declaration specifiers again to get to constructor name
+				auto specs = parse_declaration_specifiers();
+				
+				// Track 'explicit' separately (constructor-specific, not in DeclarationSpecifiers)
 				bool is_explicit = false;
-				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-					std::string_view kw = peek_token()->value();
-					if (kw == "explicit") {
-						is_explicit = true;
-						consume_token();
-					} else if (kw == "constexpr" || kw == "inline" || kw == "consteval" || 
-					           kw == "virtual" || kw == "static") {
-						consume_token();
-					} else {
-						break;
-					}
+				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+				       peek_token()->value() == "explicit") {
+					is_explicit = true;
+					consume_token();
 				}
 				
 				// Now at the constructor name - consume it
