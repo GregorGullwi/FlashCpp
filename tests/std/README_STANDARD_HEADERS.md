@@ -47,24 +47,21 @@ cd tests/std
 
 ## Current Blockers
 
-### 1. `<utility>` - Member Template Alias with Complex Expressions
+### 1. `<utility>` - Non-Type Template Parameter References
 
-**Location:** `bits/stl_pair.h:767` - member template alias with boolean expression arguments
+**Location:** `bits/stl_pair.h` - Non-type template parameters like `size_t _Int` in template argument context
 
-The parser cannot handle member template aliases where the template arguments contain complex boolean expressions with the `||` operator.
+The parser cannot find non-type template parameter references (like `_Int`, `__i`) when they are used in dependent contexts within template arguments.
 
 **Example pattern:**
 ```cpp
-template<typename _T1, typename _T2>
-struct pair {
-    template <typename _U1, typename _U2>
-    using _PCCFP = _PCC<!is_same<_T1, _U1>::value
-                        || !is_same<_T2, _U2>::value,
-                        _T1, _T2>;
-};
+template<size_t _Int, typename _Tp1, typename _Tp2>
+constexpr typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&
+get(pair<_Tp1, _Tp2>& __p) noexcept;
 ```
 
 **Previous blockers resolved (January 13, 2026):**
+- Member template function calls: Pattern `Helper<int>::Check<int>()` now works
 - Template friend declarations: Pattern `template<typename _U1, typename _U2> friend struct pair;` now works
 - Variable template brace initialization: Pattern `inline constexpr in_place_type_t<_Tp> in_place_type{};` now works
 - C++17 nested namespaces: Pattern `namespace A::B::C { }` now works
@@ -137,6 +134,33 @@ The following features have been implemented to support standard headers:
 - Global scope `operator new`/`operator delete`
 
 ## Recent Changes
+
+### 2026-01-13: Member Template Function Calls
+
+**Fixed:** Calling member template functions with explicit template arguments now works.
+
+- Pattern: `Helper<T>::Check<U>()` - calling a member template function with explicit template args
+- Previously: Parser failed after `Check` when encountering `<U>()` because it didn't recognize member template function call syntax
+- Now: Member template functions can be called with explicit template arguments
+- **Test case:** `tests/test_member_template_call_ret0.cpp` (added)
+
+**Example:**
+```cpp
+template<typename T>
+struct Helper {
+    template<typename U>
+    static constexpr bool Check() { return true; }
+};
+
+int main() {
+    bool x = Helper<int>::Check<int>(); // Now works!
+    return 0;
+}
+```
+
+**Technical details:** Two code paths were updated:
+1. In `parse_unary_expression`: After parsing `Template<T>::member`, check for `<` (member template args) and `(` (function call)
+2. Same pattern in the earlier qualified identifier path at line 18166
 
 ### 2026-01-13: Template Friend Declarations
 

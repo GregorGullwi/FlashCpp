@@ -18279,6 +18279,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								consume_token(); // consume the identifier
 							}
 							
+							// Try to parse member template function call: Template<T>::member<U>()
+							auto func_call_result = try_parse_member_template_function_call(
+								instantiated_name, final_identifier.value(), final_identifier);
+							if (func_call_result.has_value()) {
+								if (func_call_result->is_error()) {
+									return *func_call_result;
+								}
+								result = *func_call_result->node();
+								pending_explicit_template_args_.reset();
+								return ParseResult::success(*result);
+							}
+							
 							// Create a QualifiedIdentifierNode with the instantiated type name
 							auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
 							const auto& qualified_node = qualified_node_ast.as<QualifiedIdentifierNode>();
@@ -18748,6 +18760,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					auto qualified_result = parse_qualified_identifier_after_template(idenfifier_token);
 					if (!qualified_result.is_error() && qualified_result.node().has_value()) {
 						auto qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
+						
+						// Try to parse member template function call: Template<T>::member<U>()
+						std::string_view instantiated_class_name = get_instantiated_class_name(idenfifier_token.value(), *explicit_template_args);
+						auto func_call_result = try_parse_member_template_function_call(
+							instantiated_class_name, qualified_node.name(), qualified_node.identifier_token());
+						if (func_call_result.has_value()) {
+							if (func_call_result->is_error()) {
+								return *func_call_result;
+							}
+							result = *func_call_result->node();
+							return ParseResult::success(*result);
+						}
+						
+						// Not a function call - return as qualified identifier
 						result = emplace_node<ExpressionNode>(qualified_node);
 						return ParseResult::success(*result);
 					}
@@ -21127,6 +21153,109 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 	// Create a QualifiedIdentifierNode
 	auto qualified_node = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
 	return ParseResult::success(qualified_node);
+}
+
+// Helper to parse member template function calls: Template<T>::member<U>()
+// This consolidates the logic for parsing member template arguments and function calls
+// that appears in multiple places when handling qualified identifiers after template instantiation.
+std::optional<ParseResult> Parser::try_parse_member_template_function_call(
+	std::string_view instantiated_class_name,
+	std::string_view member_name,
+	const Token& member_token) {
+	
+	// Check for member template arguments: Template<T>::member<U>
+	std::optional<std::vector<TemplateTypeArg>> member_template_args;
+	if (peek_token().has_value() && peek_token()->value() == "<") {
+		member_template_args = parse_explicit_template_arguments();
+		// If parsing failed, it might be a less-than operator, but that's rare for member access
+	}
+	
+	// Check for function call: Template<T>::member() or Template<T>::member<U>()
+	if (!peek_token().has_value() || peek_token()->value() != "(") {
+		return std::nullopt;  // Not a function call
+	}
+	
+	consume_token(); // consume '('
+	
+	// Parse function arguments
+	ChunkedVector<ASTNode> args;
+	while (peek_token().has_value() && peek_token()->value() != ")") {
+		ParseResult argResult = parse_expression();
+		if (argResult.is_error()) {
+			return argResult;
+		}
+		
+		if (argResult.node().has_value()) {
+			args.push_back(*argResult.node());
+		}
+		
+		// Check for comma between arguments
+		if (peek_token().has_value() && peek_token()->value() == ",") {
+			consume_token(); // consume ','
+		} else if (peek_token().has_value() && peek_token()->value() != ")") {
+			return ParseResult::error("Expected ',' or ')' in function arguments", *peek_token());
+		}
+	}
+	
+	// Expect closing parenthesis
+	if (!consume_punctuator(")")) {
+		return ParseResult::error("Expected ')' after function arguments", *current_token_);
+	}
+	
+	// Try to instantiate the member template function if we have explicit template args
+	std::optional<ASTNode> instantiated_func;
+	if (member_template_args.has_value() && !member_template_args->empty()) {
+		instantiated_func = try_instantiate_member_function_template_explicit(
+			instantiated_class_name,
+			member_name,
+			*member_template_args
+		);
+	}
+	
+	// Build qualified function name including template args
+	StringBuilder func_name_builder;
+	func_name_builder.append(instantiated_class_name);
+	func_name_builder.append("::");
+	func_name_builder.append(member_name);
+	
+	// If member has template args, append them to the function name
+	if (member_template_args.has_value() && !member_template_args->empty()) {
+		func_name_builder.append("_");
+		for (size_t i = 0; i < member_template_args->size(); ++i) {
+			if (i > 0) func_name_builder.append("_");
+			const auto& arg = (*member_template_args)[i];
+			append_type_name_suffix(func_name_builder, arg);
+		}
+	}
+	std::string_view func_name = func_name_builder.commit();
+	
+	// Create function call token
+	Token func_token(Token::Type::Identifier, func_name, 
+	                member_token.line(), 
+	                member_token.column(),
+	                member_token.file_index());
+	
+	// If we successfully instantiated the function, use its declaration
+	const DeclarationNode* decl_ptr = nullptr;
+	const FunctionDeclarationNode* func_decl_ptr = nullptr;
+	if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+		func_decl_ptr = &instantiated_func->as<FunctionDeclarationNode>();
+		decl_ptr = &func_decl_ptr->decl_node();
+	} else {
+		// Fall back to forward declaration if instantiation failed
+		auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, func_token);
+		auto forward_decl = emplace_node<DeclarationNode>(type_node, func_token);
+		decl_ptr = &forward_decl.as<DeclarationNode>();
+	}
+	
+	auto result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), func_token));
+	
+	// Set the mangled name on the function call if we have the function declaration
+	if (func_decl_ptr && func_decl_ptr->has_mangled_name()) {
+		std::get<FunctionCallNode>(result.as<ExpressionNode>()).set_mangled_name(func_decl_ptr->mangled_name());
+	}
+	
+	return ParseResult::success(result);
 }
 
 std::string Parser::buildPrettyFunctionSignature(const FunctionDeclarationNode& func_node) const {
@@ -35154,6 +35283,24 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	
 	// Look up the template in the registry
 	auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
+	
+	// If not found, try with the base template class name
+	// For instantiated classes like Helper_int, try Helper::member
+	std::string_view base_qualified_name;
+	if (!template_opt.has_value()) {
+		size_t underscore_pos = struct_name.rfind('_');
+		if (underscore_pos != std::string_view::npos) {
+			std::string_view base_class_name = struct_name.substr(0, underscore_pos);
+			base_qualified_name = StringBuilder()
+				.append(base_class_name)
+				.append("::")
+				.append(member_name)
+				.commit();
+			template_opt = gTemplateRegistry.lookupTemplate(base_qualified_name);
+			FLASH_LOG(Templates, Debug, "Trying base template class lookup: ", base_qualified_name);
+		}
+	}
+	
 	if (!template_opt.has_value()) {
 		return std::nullopt;  // Not a template
 	}

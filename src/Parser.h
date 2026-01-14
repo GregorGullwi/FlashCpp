@@ -680,6 +680,16 @@ public:  // Public methods for template instantiation
         ParseResult parse_unary_expression(ExpressionContext context = ExpressionContext::Normal);
         ParseResult parse_qualified_identifier();  // Parse namespace::identifier
         ParseResult parse_qualified_identifier_after_template(const Token& template_base_token);  // Parse Template<T>::member
+        
+        // Helper to parse member template function calls: Template<T>::member<U>()
+        // Returns:
+        // - std::nullopt if not a function call (no '(' found after member name)
+        // - ParseResult with success if function call was parsed successfully
+        // - ParseResult with error if parsing failed
+        std::optional<ParseResult> try_parse_member_template_function_call(
+            std::string_view instantiated_class_name,
+            std::string_view member_name,
+            const Token& member_token);
 
         // Utility functions
         bool consume_punctuator(const std::string_view& value);
