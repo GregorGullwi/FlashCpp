@@ -167,6 +167,7 @@ The following features have been implemented to support standard headers:
 - Template friend declarations (`template<typename T1, typename T2> friend struct pair;`)
 - Non-type template parameters in return types (`typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&`)
 - Template member constructors (`template<typename U> Box(const Box<U>& other)`) (NEW)
+- Template alias declarations with requires clauses (NEW)
 
 **C++17/C++20 Features:**
 - C++17 nested namespace declarations (`namespace A::B::C { }`)
@@ -174,6 +175,7 @@ The following features have been implemented to support standard headers:
 - Compound requirement noexcept specifier
 - Template parameter brace initialization
 - Globally qualified `::new`/`::delete`
+- Template alias declarations with requires clauses (`template<typename T> requires Constraint<T> using Alias = T;`)
 
 **Other:**
 - Named anonymous unions in typedef structs
@@ -181,6 +183,46 @@ The following features have been implemented to support standard headers:
 - Global scope `operator new`/`operator delete`
 
 ## Recent Changes
+
+### 2026-01-14: Template Alias with Requires Clause
+
+**Fixed:** Template alias declarations with requires clauses can now be parsed correctly (both global and member aliases).
+
+- Pattern: `template<typename T> requires is_reference_v<T> using RefType = T;`
+- Previously: Parser didn't recognize `using` keyword after requires clause
+- Now: Both global `parse_template_declaration()` and member `parse_member_template_or_function()` properly detect and parse requires clauses before `using`
+- **Test case:** `tests/test_requires_clause_alias_ret0.cpp`
+
+**Example:**
+```cpp
+namespace ns {
+    template<typename _Tp>
+    inline constexpr bool is_reference_v = false;
+    
+    template<typename _Tp>
+    inline constexpr bool is_reference_v<_Tp&> = true;
+    
+    // Global template alias with requires clause
+    template<typename _Xp, typename _Yp>
+        requires is_reference_v<_Xp>  
+    using CondresRef = _Xp;
+    
+    // Member template alias with requires clause
+    template<typename T>
+    struct Test {
+        template<typename U>
+            requires is_reference_v<U>
+        using ValueType = U;
+    };
+}
+```
+
+**Technical details:**
+- Added re-check for `is_alias_template` after parsing requires clause in `parse_template_declaration()` (line 22880)
+- Extended lookahead in `parse_member_template_or_function()` to skip requires clause expressions before checking for `using` keyword
+- Added requires clause parsing to `parse_member_template_alias()` with proper template parameter context setup
+
+**Progress:** Template aliases with requires clauses (like those in `<type_traits>` for `__condres_cvref`) now parse successfully.
 
 ### 2026-01-14: Template Member Constructor Parsing
 
