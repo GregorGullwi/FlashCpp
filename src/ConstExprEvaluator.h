@@ -1539,6 +1539,7 @@ private:
 		// This handles implicit member accesses like 'x' which parser transforms to 'this->x'
 		if (std::holds_alternative<MemberAccessNode>(expr)) {
 			[[maybe_unused]] const auto& member_access = std::get<MemberAccessNode>(expr);
+			// TODO: Handle member access evaluation for 'this->x' pattern
 			// For now, fall back to regular evaluation
 		}
 		
@@ -2435,6 +2436,7 @@ public:
 		[[maybe_unused]] const ArraySubscriptNode& subscript,
 		[[maybe_unused]] std::string_view member_name,
 		[[maybe_unused]] EvaluationContext& context) {
+		// TODO: Implement array subscript followed by member access evaluation
 		// For now, return an error - this is more complex
 		return EvalResult::error("Array subscript followed by member access not yet supported");
 	}

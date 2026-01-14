@@ -1762,7 +1762,7 @@ public:
 			if (ret_type_info != gNativeTypes.end()) {
 				oss << ret_type_info->second->name();
 			}
-			for (size_t i = 0; i < static_cast<size_t>(op.return_pointer_depth); ++i) {
+			for (int i = 0; i < op.return_pointer_depth; ++i) {
 				oss << "*";
 			}
 			oss << op.return_size_in_bits;
@@ -1803,7 +1803,7 @@ public:
 				if (param.is_reference && !param.is_rvalue_reference && effective_pointer_depth > 0) {
 					effective_pointer_depth -= 1;  // Lvalue ref was represented as +1 pointer depth
 				}
-				for (size_t j = 0; j < static_cast<size_t>(effective_pointer_depth); ++j) {
+				for (int j = 0; j < effective_pointer_depth; ++j) {
 					oss << "*";
 				}
 				oss << param.size_in_bits;

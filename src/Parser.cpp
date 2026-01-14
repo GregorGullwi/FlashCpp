@@ -92,11 +92,11 @@ static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifie
 // Used for runtime type size queries when TypeInfo is already populated
 // Helper function to safely get type size - handles both basic types and UserDefined types
 // For UserDefined types, tries to look up size from type registry via type_index
-static unsigned short getTypeSizeForTemplateParameter(Type type, size_t type_index) {
+static size_t getTypeSizeForTemplateParameter(Type type, size_t type_index) {
 	// Check if this is a basic type that get_type_size_bits can handle
 	// Basic types range from Void to MemberObjectPointer in the Type enum
 	if (type >= Type::Void && type <= Type::MemberObjectPointer) {
-		return static_cast<int>(get_type_size_bits(type));
+		return static_cast<size_t>(get_type_size_bits(type));
 	}
 	// For UserDefined and other types (Template, etc), look up size from type registry
 	if (type_index > 0 && type_index < gTypeInfo.size()) {
@@ -106,11 +106,11 @@ static unsigned short getTypeSizeForTemplateParameter(Type type, size_t type_ind
 }
 
 // Helper function to safely get type size from TemplateArgument
-static unsigned short getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
+static size_t getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
 	// Check if this is a basic type that get_type_size_bits can handle
 	// Basic types range from Void to MemberObjectPointer in the Type enum
 	if (arg.type_value >= Type::Void && arg.type_value <= Type::MemberObjectPointer) {
-		return static_cast<int>(get_type_size_bits(arg.type_value));
+		return static_cast<size_t>(get_type_size_bits(arg.type_value));
 	}
 	// For UserDefined and other types (Template, etc), try to extract size from type_specifier
 	if (arg.type_specifier.has_value()) {
@@ -118,7 +118,7 @@ static unsigned short getTypeSizeFromTemplateArgument(const TemplateArgument& ar
 		// Try type_index first
 		size_t type_index = type_spec.type_index();
 		if (type_index > 0 && type_index < gTypeInfo.size()) {
-			unsigned short size = gTypeInfo[type_index].type_size_;
+			size_t size = gTypeInfo[type_index].type_size_;
 			if (size > 0) {
 				return size;
 			}
@@ -2312,8 +2312,6 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	bool is_constinit = specs.is_constinit;
 	bool is_consteval = specs.is_consteval;
 	[[maybe_unused]] bool is_inline = specs.is_inline;
-	[[maybe_unused]] bool is_static = (specs.storage_class == StorageClass::Static);
-	[[maybe_unused]] bool is_extern = (specs.storage_class == StorageClass::Extern);
 	
 	// Create AttributeInfo for backward compatibility with existing code paths
 	AttributeInfo attr_info;
