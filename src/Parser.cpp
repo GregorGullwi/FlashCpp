@@ -8931,12 +8931,12 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		// Use 0.0 for floating point types, 0 for integral types
 		if (cast_type == Type::Double || cast_type == Type::Float) {
 			auto zero_expr = emplace_node<ExpressionNode>(
-				NumericLiteralNode(zero_token, 0.0, cast_type, qualifier, type_size)
+				NumericLiteralNode(zero_token, 0.0, cast_type, qualifier, static_cast<unsigned char>(type_size))
 			);
 			return ParseResult::success(zero_expr);
 		} else {
 			auto zero_expr = emplace_node<ExpressionNode>(
-				NumericLiteralNode(zero_token, 0ULL, cast_type, qualifier, type_size)
+				NumericLiteralNode(zero_token, 0ULL, cast_type, qualifier, static_cast<unsigned char>(type_size))
 			);
 			return ParseResult::success(zero_expr);
 		}
@@ -9698,7 +9698,7 @@ ParseResult Parser::parse_type_specifier()
 					// Handle non-deferred aliases (e.g., template<typename T> using Ptr = T*)
 					// Substitute template arguments into the target type
 					TypeSpecifierNode instantiated_type = alias_node.target_type_node();
-					const auto& template_params = alias_node.template_parameters();
+					[[maybe_unused]] const auto& template_params = alias_node.template_parameters();
 					const auto& param_names = alias_node.template_param_names();
 					
 					// Perform substitution for template parameters in the target type
@@ -9839,7 +9839,7 @@ ParseResult Parser::parse_type_specifier()
 					// Look up the TypeInfo for the template parameter
 					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 					if (type_it != gTypesByName.end()) {
-						TypeIndex type_idx = type_it->second - &gTypeInfo[0];
+						TypeIndex type_idx = static_cast<TypeIndex>(type_it->second - &gTypeInfo[0]);
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
 							Type::UserDefined,
 							type_idx,
@@ -10160,7 +10160,7 @@ ParseResult Parser::parse_type_specifier()
 							
 							// Instantiate the member template alias with the provided arguments
 							TypeSpecifierNode instantiated_type = alias_node.target_type_node();
-							const auto& template_params = alias_node.template_parameters();
+							[[maybe_unused]] const auto& template_params = alias_node.template_parameters();
 							const auto& param_names = alias_node.template_param_names();
 							
 							// Perform substitution for template parameters in the target type
@@ -11004,7 +11004,7 @@ ParseResult Parser::parse_function_header(
 // This bridges the unified header parsing with the existing AST node creation
 ParseResult Parser::create_function_from_header(
 	const FlashCpp::ParsedFunctionHeader& header,
-	const FlashCpp::FunctionParsingContext& ctx
+	[[maybe_unused]] const FlashCpp::FunctionParsingContext& ctx
 ) {
 	// Create the type specifier node for the return type
 	ASTNode type_node;
@@ -11887,7 +11887,7 @@ ParseResult Parser::parse_variable_declaration()
 	bool is_constexpr = specs.is_constexpr;
 	bool is_constinit = specs.is_constinit;
 	StorageClass storage_class = specs.storage_class;
-	Linkage linkage = specs.linkage;
+	[[maybe_unused]] Linkage linkage = specs.linkage;
 
 	// Parse the type specifier and identifier (name)
 	ParseResult type_and_name_result = parse_type_and_name();
@@ -13148,7 +13148,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 	// Check for '::new' or '::delete' - globally qualified new/delete
 	// This is used in standard library (e.g., concepts header) to call global operator new/delete
-	bool is_global_scope_qualified = false;
+	[[maybe_unused]] bool is_global_scope_qualified = false;
 	if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "::") {
 		// Check if the NEXT token is 'new' or 'delete' (use peek_token(1) to look ahead)
 		auto next = peek_token(1);
@@ -14034,17 +14034,17 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	// Integer literal parsing
 	if (is_hex_literal) {
 		// Hexadecimal literal
-		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 4.0 / 8) * 8);
+		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil(static_cast<double>(lowerText.length() - 2) * 4.0 / 8) * 8);
 		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), &end_ptr, 16);
 	}
 	else if (is_binary_literal) {
 		// Binary literal
-		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 1.0 / 8) * 8);
+		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil(static_cast<double>(lowerText.length() - 2) * 1.0 / 8) * 8);
 		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), &end_ptr, 2);
 	}
 	else if (lowerText.find("0") == 0 && lowerText.length() > 1 && lowerText[1] != '.') {
 		// Octal literal (but not "0." which is a float)
-		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 1) * 3.0 / 8) * 8);
+		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil(static_cast<double>(lowerText.length() - 1) * 3.0 / 8) * 8);
 		typeInfo.value = std::strtoull(lowerText.substr(1).c_str(), &end_ptr, 8);
 	}
 	else {
@@ -14064,7 +14064,7 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		// Count the number of 'l' characters
 		auto l_count = std::count(suffix.begin(), suffix.end(), 'l');
 		if (l_count > 0) {
-			typeInfo.sizeInBits = sizeof(long) * static_cast<size_t>(8 + (l_count & 2) * 8);
+			typeInfo.sizeInBits = static_cast<unsigned char>(sizeof(long) * static_cast<size_t>(8 + static_cast<size_t>(l_count & 2) * 8));
 		}
 	} else {
 		// Default for literals without suffix: signed int
@@ -14788,9 +14788,9 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					// Check if this member is a function pointer
 					// We need to look up the struct type and find the member
 					if (!member_function_context_stack_.empty()) {
-						const auto& context = member_function_context_stack_.back();
-						if (context.struct_type_index < gTypeInfo.size()) {
-							const TypeInfo& struct_type_info = gTypeInfo[context.struct_type_index];
+						const auto& member_ctx = member_function_context_stack_.back();
+						if (member_ctx.struct_type_index < gTypeInfo.size()) {
+							const TypeInfo& struct_type_info = gTypeInfo[member_ctx.struct_type_index];
 							const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
 							if (struct_info) {
 								std::string_view member_name = member_access->member_name();
@@ -15309,7 +15309,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					}
 					if (auto arg = arg_result.node()) {
 						// Check for pack expansion (...) after the argument
-						bool is_pack_expansion = false;
+						[[maybe_unused]] bool is_pack_expansion = false;
 						if (peek_token().has_value() && peek_token()->value() == "...") {
 							Token ellipsis_token = *peek_token();
 							consume_token(); // consume '...'
@@ -15645,12 +15645,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		
 		if (is_builtin_type) {
 			Token type_token = *current_token_;
-			std::string_view kw = current_token_->value();
+			std::string_view builtin_kw = current_token_->value();
 			consume_token(); // consume the type keyword
 			
 			// Check if followed by '(' for functional cast
 			if (current_token_.has_value() && current_token_->value() == "(") {
-				ParseResult cast_result = parse_functional_cast(kw, type_token);
+				ParseResult cast_result = parse_functional_cast(builtin_kw, type_token);
 				if (!cast_result.is_error() && cast_result.node().has_value()) {
 					return cast_result;
 				}
@@ -16739,8 +16739,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 					
 					// Create QualifiedIdentifierNode with the complete path
-					auto qualified_node = emplace_node<QualifiedIdentifierNode>(full_namespaces, member_token);
-					result = emplace_node<ExpressionNode>(qualified_node.as<QualifiedIdentifierNode>());
+					auto qual_node = emplace_node<QualifiedIdentifierNode>(full_namespaces, member_token);
+					result = emplace_node<ExpressionNode>(qual_node.as<QualifiedIdentifierNode>());
 					return ParseResult::success(*result);
 				}
 				
@@ -17099,9 +17099,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// Finally check StructTypeInfo from gTypesByName (for already-registered types)
 						if (!found_as_type_alias) {
 							StringHandle struct_name_handle = StringTable::getOrInternStringHandle(ctx.struct_name);
-							auto type_it = gTypesByName.find(struct_name_handle);
-							if (type_it != gTypesByName.end() && type_it->second->getStructInfo()) {
-								const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+							auto struct_type_it = gTypesByName.find(struct_name_handle);
+							if (struct_type_it != gTypesByName.end() && struct_type_it->second->getStructInfo()) {
+								const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 								for (const auto& static_member : struct_info->static_members) {
 									if (static_member.getName() == identifier_handle) {
 										FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as static member in StructTypeInfo (struct parsing context)", 
