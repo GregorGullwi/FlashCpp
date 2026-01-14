@@ -1120,7 +1120,7 @@ public:
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
 		: type_(type), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(0) {}
 
-	// Constructor for struct types
+	// Constructor for struct types - accepts size_t type_index
 	TypeSpecifierNode(Type type, TypeIndex type_index, int sizeInBits,
 		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
 		: type_(type), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index) {}

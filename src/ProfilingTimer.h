@@ -50,11 +50,11 @@ public:
             return;
         }
 
-        double mean = static_cast<double>(total_duration_) / count_;
+        double mean = static_cast<double>(total_duration_) / static_cast<double>(count_);
 
         printf("    %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8.3f μs, max=%8.3f μs\n",
-               name_.c_str(), count_, total_duration_ / 1000.0, mean,
-               min_duration_ / 1.0, max_duration_ / 1.0);
+               name_.c_str(), count_, static_cast<double>(total_duration_) / 1000.0, mean,
+               static_cast<double>(min_duration_) / 1.0, static_cast<double>(max_duration_) / 1.0);
     }
 
 private:

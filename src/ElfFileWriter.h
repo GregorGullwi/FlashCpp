@@ -1,5 +1,20 @@
 #pragma once
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#pragma clang diagnostic ignored "-Wimplicit-int-conversion"
+#pragma clang diagnostic ignored "-Wshadow"
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wconversion"
+#pragma GCC diagnostic ignored "-Wshadow"
+#endif
+
 #include "AstNodeTypes.h"
 #include "ObjectFileCommon.h"
 #include "NameMangling.h"
@@ -98,7 +113,7 @@ public:
 	 * @brief Add a function symbol to the symbol table
 	 */
 	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset, 
-	                        uint32_t stack_space, Linkage linkage = Linkage::None) {
+	                        [[maybe_unused]] uint32_t stack_space, [[maybe_unused]] Linkage linkage = Linkage::None) {
 		if (g_enable_debug_output) {
 			std::cerr << "Adding function symbol: " << mangled_name 
 			          << " at offset " << section_offset << std::endl;
@@ -237,7 +252,7 @@ public:
 		// No collision risk across object files
 		// NOTE: Ideally these would be LOCAL, but deferred symbol approach requires
 		// complex relocation handling. This pragmatic solution works correctly.
-		auto symbol_index = getOrCreateSymbol(symbol_name_sv, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL, 
+		[[maybe_unused]] auto symbol_index = getOrCreateSymbol(symbol_name_sv, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL, 
 		                                      rodata->get_index(), offset, processed_str.size());
 
 		if (g_enable_debug_output) {
@@ -420,8 +435,8 @@ public:
 	void add_vtable(std::string_view vtable_symbol, 
 	               std::span<const std::string_view> function_symbols,
 	               std::string_view class_name,
-	               std::span<const std::string_view> base_class_names,
-	               std::span<const BaseClassDescriptorInfo> base_class_info,
+	               [[maybe_unused]] std::span<const std::string_view> base_class_names,
+	               [[maybe_unused]] std::span<const BaseClassDescriptorInfo> base_class_info,
 	               const RTTITypeInfo* rtti_info = nullptr) {
 		
 		FLASH_LOG_FORMAT(Codegen, Debug, "Adding vtable '{}' for class {} with {} virtual functions",
@@ -500,7 +515,7 @@ public:
 		                  rodata->get_index(), symbol_offset, vtable_data_size - 16);
 		
 		// Add relocations for each function pointer
-		auto* rela_rodata = getOrCreateRelocationSection(".rodata");
+		[[maybe_unused]] auto* rela_rodata = getOrCreateRelocationSection(".rodata");
 		auto* rela_accessor = getRelocationAccessor(".rela.rodata");
 		
 		// Add relocation for RTTI pointer if typeinfo was emitted
@@ -598,7 +613,7 @@ public:
 	}
 
 	// Overload that accepts pre-computed mangled name (without class_name)
-	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
+	void addFunctionSignature([[maybe_unused]] std::string_view name, const TypeSpecifierNode& return_type,
 	                          const std::vector<TypeSpecifierNode>& parameter_types,
 	                          Linkage linkage, bool is_variadic,
 	                          std::string_view mangled_name, bool is_inline = false) {
@@ -622,7 +637,7 @@ public:
 	}
 
 	// Overload that accepts pre-computed mangled name (for function definitions from IR)
-	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
+	void addFunctionSignature([[maybe_unused]] std::string_view name, const TypeSpecifierNode& return_type,
 	                          const std::vector<TypeSpecifierNode>& parameter_types,
 	                          std::string_view class_name, Linkage linkage, bool is_variadic,
 	                          std::string_view mangled_name, bool is_inline = false) {
@@ -635,32 +650,32 @@ public:
 	}
 
 	// Debug info methods (placeholders - DWARF support deferred)
-	void add_source_file(const std::string& filename) {
+	void add_source_file([[maybe_unused]] const std::string& filename) {
 		// Placeholder for DWARF debug info
 	}
 
-	void set_current_function_for_debug(const std::string& name, uint32_t file_id) {
+	void set_current_function_for_debug([[maybe_unused]] const std::string& name, [[maybe_unused]] uint32_t file_id) {
 		// Placeholder
 	}
 
-	void add_line_mapping(uint32_t code_offset, uint32_t line_number) {
+	void add_line_mapping([[maybe_unused]] uint32_t code_offset, [[maybe_unused]] uint32_t line_number) {
 		// Placeholder
 	}
 
-	void add_local_variable(const std::string& name, uint32_t type_index, uint16_t flags,
-	                       const std::vector<CodeView::VariableLocation>& locations) {
+	void add_local_variable([[maybe_unused]] const std::string& name, [[maybe_unused]] uint32_t type_index, [[maybe_unused]] uint16_t flags,
+	                       [[maybe_unused]] const std::vector<CodeView::VariableLocation>& locations) {
 		// Placeholder - DWARF debug info implementation deferred
 	}
 
-	void add_function_parameter(const std::string& name, uint32_t type_index, int32_t stack_offset) {
+	void add_function_parameter([[maybe_unused]] const std::string& name, [[maybe_unused]] uint32_t type_index, [[maybe_unused]] int32_t stack_offset) {
 		// Placeholder
 	}
 
-	void update_function_length(const std::string_view manged_name, uint32_t code_length) {
+	void update_function_length([[maybe_unused]] const std::string_view manged_name, [[maybe_unused]] uint32_t code_length) {
 		// Placeholder
 	}
 
-	void set_function_debug_range(const std::string_view manged_name, uint32_t prologue_size, uint32_t epilogue_size) {
+	void set_function_debug_range([[maybe_unused]] const std::string_view manged_name, [[maybe_unused]] uint32_t prologue_size, [[maybe_unused]] uint32_t epilogue_size) {
 		// Placeholder
 	}
 
@@ -692,7 +707,7 @@ public:
 	// Exception handling (placeholders - not implemented for Linux MVP)
 	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start,
 	                                 uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {},
-	                                 const std::vector<UnwindMapEntryInfo>& unwind_map = {},
+	                                 [[maybe_unused]] const std::vector<UnwindMapEntryInfo>& unwind_map = {},
 	                                 const std::vector<CFIInstruction>& cfi_instructions = {}) {
 		// Check if exception info has already been added for this function
 		for (const auto& existing : added_exception_functions_) {
@@ -854,15 +869,15 @@ public:
 		add_relocation(offset, symbol_name, relocation_type, addend);
 	}
 
-	void add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, uint32_t xdata_offset) {
+	void add_pdata_relocations([[maybe_unused]] uint32_t pdata_offset, [[maybe_unused]] std::string_view mangled_name, [[maybe_unused]] uint32_t xdata_offset) {
 		// Not needed for ELF - Windows-specific
 	}
 
-	void add_xdata_relocation(uint32_t xdata_offset, std::string_view handler_name) {
+	void add_xdata_relocation([[maybe_unused]] uint32_t xdata_offset, [[maybe_unused]] std::string_view handler_name) {
 		// Not needed for ELF - Windows-specific
 	}
 
-	void add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type) {
+	void add_debug_relocation([[maybe_unused]] uint32_t offset, [[maybe_unused]] const std::string& symbol_name, [[maybe_unused]] uint32_t relocation_type) {
 		// Placeholder for DWARF relocations
 	}
 
@@ -1861,3 +1876,11 @@ private:
 
 private:
 };
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif

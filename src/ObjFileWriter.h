@@ -1,7 +1,7 @@
 #pragma once
 
 #if defined(__clang__)
-// Clang compiler - suppress warnings in coffi library
+// Clang compiler - suppress warnings in coffi library and code using coffi types
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Winconsistent-missing-override"
 #pragma clang diagnostic ignored "-Wsign-conversion"
@@ -32,14 +32,6 @@
 #include <unordered_map>
 #include <vector>
 #include "coffi/coffi.hpp"
-
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
-
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
 extern bool g_enable_debug_output;
 
@@ -554,7 +546,7 @@ public:
 	}
 	
 	// Overload that accepts pre-computed mangled name (for function definitions from IR)
-	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false) {
+	void addFunctionSignature([[maybe_unused]] std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.linkage = linkage;
 		sig.is_variadic = is_variadic;
@@ -576,7 +568,7 @@ public:
 	}
 	
 	// Overload that accepts pre-computed mangled name (for member function definitions from IR)
-	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false) {
+	void addFunctionSignature([[maybe_unused]] std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.class_name = class_name;
 		sig.linkage = linkage;
@@ -678,7 +670,7 @@ public:
 	}
 
 	// Add a relocation to the .text section with a custom relocation type
-	void add_text_relocation(uint64_t offset, const std::string& symbol_name, uint32_t relocation_type, int64_t addend = -4) {
+	void add_text_relocation(uint64_t offset, const std::string& symbol_name, uint32_t relocation_type, [[maybe_unused]] int64_t addend = -4) {
 		// For COFF format, addend is not used (it's a REL format, not RELA)
 		// The addend is encoded in the instruction itself
 		// Look up the symbol (could be a global variable, function, etc.)
@@ -702,7 +694,7 @@ public:
 		          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 	}
 
-	void add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, uint32_t xdata_offset) {
+	void add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, [[maybe_unused]] uint32_t xdata_offset) {
 		if (g_enable_debug_output) std::cerr << "Adding PDATA relocations for function: " << mangled_name << " at pdata offset " << pdata_offset << std::endl;
 
 		// Get the function symbol using mangled name
@@ -917,7 +909,7 @@ public:
 		//   ... (other fields for EH4)
 		
 		if (!try_blocks.empty()) {
-			uint32_t funcinfo_offset = static_cast<uint32_t>(xdata.size());
+			[[maybe_unused]] uint32_t funcinfo_offset = static_cast<uint32_t>(xdata.size());
 			
 			// Magic number for FuncInfo4 (0x19930522 = EH4 with continuation addresses)
 			// Using 0x19930521 = EH3 style which is simpler
@@ -943,7 +935,7 @@ public:
 			// UnwindMapEntry is 8 bytes (2 DWORD fields)
 			// TryBlockMapEntry is 20 bytes (5 DWORD fields)
 			uint32_t unwind_map_size = static_cast<uint32_t>(unwind_map.size()) * 8;  // 8 bytes per entry
-			uint32_t tryblock_map_size = static_cast<uint32_t>(try_blocks.size()) * 20;  // 20 bytes per entry
+			[[maybe_unused]] uint32_t tryblock_map_size = static_cast<uint32_t>(try_blocks.size()) * 20;  // 20 bytes per entry
 			
 			// pUnwindMap - RVA to unwind map (will be right after FuncInfo if present)
 			uint32_t unwind_map_offset = 0;
@@ -1358,7 +1350,7 @@ public:
 	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols,
 	                std::string_view class_name, std::span<const std::string_view> base_class_names,
 	                std::span<const BaseClassDescriptorInfo> base_class_info,
-	                const RTTITypeInfo* rtti_info = nullptr) {
+	                [[maybe_unused]] const RTTITypeInfo* rtti_info = nullptr) {
 		auto rdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::RDATA]];
 		
 		if (g_enable_debug_output) std::cerr << "DEBUG: add_vtable - vtable_symbol=" << vtable_symbol 
@@ -1723,3 +1715,11 @@ protected:
 	// Thread-local reusable buffer for string literal processing to avoid repeated allocations
 	inline static thread_local std::string string_literal_buffer_;
 };
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
