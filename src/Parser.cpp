@@ -26561,6 +26561,178 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 			Token(Token::Type::Keyword, "requires", 0, 0, 0));
 	}
 
+	// Check for template constructor: template<typename U> StructName(params)
+	// Skip any storage specifiers (constexpr, explicit, inline) and check if
+	// the first non-specifier identifier matches the struct name followed by '('
+	{
+		SaveHandle lookahead_pos = save_token_position();
+		bool found_constructor = false;
+		
+		// Skip storage specifiers
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			std::string_view kw = peek_token()->value();
+			if (kw == "constexpr" || kw == "explicit" || kw == "inline" || 
+			    kw == "consteval" || kw == "virtual" || kw == "static") {
+				consume_token();
+			} else {
+				break;
+			}
+		}
+		
+		// Check if next identifier is the struct name
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+		    peek_token()->value() == struct_node.name()) {
+			Token name_token = *peek_token();
+			consume_token();
+			
+			// Check if followed by '('
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				found_constructor = true;
+				
+				// Restore to parse constructor properly
+				restore_token_position(lookahead_pos);
+				
+				// Skip storage specifiers again (to get to constructor name)
+				bool is_explicit = false;
+				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+					std::string_view kw = peek_token()->value();
+					if (kw == "explicit") {
+						is_explicit = true;
+						consume_token();
+					} else if (kw == "constexpr" || kw == "inline" || kw == "consteval" || 
+					           kw == "virtual" || kw == "static") {
+						consume_token();
+					} else {
+						break;
+					}
+				}
+				
+				// Now at the constructor name - consume it
+				Token ctor_name_token = *peek_token();
+				consume_token();
+				
+				FLASH_LOG_FORMAT(Parser, Debug, "parse_member_function_template: Detected template constructor {}()", 
+				                 StringTable::getStringView(struct_node.name()));
+				
+				// Create constructor declaration
+				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+					struct_node.name(), StringTable::getOrInternStringHandle(ctor_name_token.value()));
+				
+				// Parse parameters
+				FlashCpp::ParsedParameterList params;
+				auto param_result = parse_parameter_list(params);
+				if (param_result.is_error()) {
+					current_template_param_names_ = std::move(saved_template_param_names);
+					return param_result;
+				}
+				
+				// Apply parsed parameters to the constructor
+				for (const auto& param : params.parameters) {
+					ctor_ref.add_parameter_node(param);
+				}
+				
+				// Enter scope for initializer list parsing
+				FlashCpp::SymbolTableScope ctor_scope(ScopeType::Function);
+				
+				// Add parameters to symbol table
+				for (const auto& param : ctor_ref.parameter_nodes()) {
+					if (param.is<DeclarationNode>()) {
+						const auto& param_decl_node = param.as<DeclarationNode>();
+						const Token& param_token = param_decl_node.identifier_token();
+						gSymbolTable.insert(param_token.value(), param);
+					}
+				}
+				
+				// Parse noexcept specifier if present
+				if (parse_constructor_exception_specifier()) {
+					ctor_ref.set_noexcept(true);
+				}
+				
+				// Parse member initializer list if present
+				if (peek_token().has_value() && peek_token()->value() == ":") {
+					consume_token(); // consume ':'
+					
+					// Parse each initializer
+					do {
+						if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+							current_template_param_names_ = std::move(saved_template_param_names);
+							return ParseResult::error("Expected member name in initializer list", *peek_token());
+						}
+						
+						std::string_view init_name = peek_token()->value();
+						consume_token();
+						
+						// Expect '(' or '{'
+						bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
+						bool is_brace = peek_token().has_value() && peek_token()->value() == "{";
+						if (!is_paren && !is_brace) {
+							current_template_param_names_ = std::move(saved_template_param_names);
+							return ParseResult::error("Expected '(' or '{' after initializer name", *peek_token());
+						}
+						
+						// Skip balanced delimiters - we don't need to parse the expressions for template patterns
+						if (is_paren) {
+							skip_balanced_parens();
+						} else {
+							skip_balanced_braces();
+						}
+						
+					} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+				}
+				
+				// Handle = default, = delete, body, or semicolon
+				if (peek_token().has_value() && peek_token()->value() == "=") {
+					consume_token(); // consume '='
+					if (peek_token().has_value() && peek_token()->value() == "default") {
+						consume_token();
+						ctor_ref.set_is_implicit(true);
+						auto [block_node, block_ref] = create_node_ref(BlockNode());
+						ctor_ref.set_definition(block_node);
+					} else if (peek_token().has_value() && peek_token()->value() == "delete") {
+						consume_token();
+						// Don't add deleted constructors
+						if (!consume_punctuator(";")) {
+							current_template_param_names_ = std::move(saved_template_param_names);
+							return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+						}
+						current_template_param_names_ = std::move(saved_template_param_names);
+						return saved_position.success();
+					}
+					if (!consume_punctuator(";")) {
+						current_template_param_names_ = std::move(saved_template_param_names);
+						return ParseResult::error("Expected ';' after '= default' or '= delete'", *peek_token());
+					}
+				} else if (peek_token().has_value() && peek_token()->value() == "{") {
+					// Parse constructor body
+					auto block_result = parse_block();
+					if (block_result.is_error()) {
+						current_template_param_names_ = std::move(saved_template_param_names);
+						return block_result;
+					}
+					if (auto block = block_result.node()) {
+						ctor_ref.set_definition(*block);
+					}
+				} else if (!consume_punctuator(";")) {
+					current_template_param_names_ = std::move(saved_template_param_names);
+					return ParseResult::error("Expected '{', ';', '= default', or '= delete' after constructor declaration", *peek_token());
+				}
+				
+				// Add constructor to struct
+				struct_node.add_constructor(ctor_node, access);
+				
+				// Restore template param names
+				current_template_param_names_ = std::move(saved_template_param_names);
+				
+				return saved_position.success();
+			}
+		}
+		
+		// Not a constructor, restore and continue with function parsing
+		if (!found_constructor) {
+			restore_token_position(lookahead_pos);
+		}
+	}
+
 	// Use shared helper to parse function declaration body (Phase 6)
 	ASTNode template_func_node;
 	auto body_result = parse_template_function_declaration_body(template_params, requires_clause, template_func_node);
