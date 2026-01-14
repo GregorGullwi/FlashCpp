@@ -207,7 +207,7 @@ The following features have been implemented to support standard headers:
 - **Test case:** `tests/test_variable_template_in_enable_if_ret0.cpp`
 
 **Technical details:**
-1. Added check in `parse_type_specifier()` (Parser.cpp line ~9856) to skip class template instantiation for variable templates
+1. Added check in `parse_type_specifier()` (Parser.cpp, in the template argument handling section) to skip class template instantiation for variable templates
 2. Uses `gTemplateRegistry.lookupVariableTemplate()` with both unqualified and namespace-qualified lookups
 3. Variable templates are expressions, not types - they should not trigger class template instantiation
 
