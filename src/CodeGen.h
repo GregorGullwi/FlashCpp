@@ -6264,19 +6264,19 @@ private:
 								if (decl.is_array()) {
 									// For arrays, we need to call the constructor once for each element
 									// Get array size
-									size_t array_count = 1;
+									size_t ctor_array_count = 1;
 									auto size_expr = decl.array_size();
 									if (size_expr.has_value()) {
 										// Evaluate the array size expression using ConstExprEvaluator
 										ConstExpr::EvaluationContext array_ctx(symbol_table);
 										auto eval_result = ConstExpr::Evaluator::evaluate(*size_expr, array_ctx);
 										if (eval_result.success) {
-											array_count = static_cast<size_t>(eval_result.as_int());
+											ctor_array_count = static_cast<size_t>(eval_result.as_int());
 										}
 									}
 									
 									// Generate constructor call for each array element
-									for (size_t i = 0; i < array_count; i++) {
+									for (size_t i = 0; i < ctor_array_count; i++) {
 										ConstructorCallOp ctor_op;
 										ctor_op.struct_name = type_info.name();
 										// For arrays, we need to specify the element to construct
@@ -6935,7 +6935,6 @@ private:
 		}
 		
 		// Step 6: Aggregate (struct) decomposition
-		aggregate_decomposition:
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Using aggregate decomposition");
 		
 		// Step 6a: Validate that we have the correct number of identifiers
@@ -7134,7 +7133,7 @@ private:
 			return generateSizeofIr(sizeof_node);
 		}
 		else if (std::holds_alternative<SizeofPackNode>(exprNode)) {
-			const auto& expr = std::get<SizeofPackNode>(exprNode);
+			[[maybe_unused]] const auto& sizeof_pack_expr = std::get<SizeofPackNode>(exprNode);
 			// sizeof... should have been replaced with a constant during template instantiation
 			// If we reach here, it means sizeof... wasn't properly substituted
 			// This is an error - sizeof... can only appear in template contexts
@@ -7466,9 +7465,9 @@ private:
 
 							// The ptr_temp now contains the address of the captured variable
 							// We need to dereference it using PointerDereference
-							auto type_it = current_lambda_context_.capture_types.find(var_name_str);
-							if (type_it != current_lambda_context_.capture_types.end()) {
-								const TypeSpecifierNode& orig_type = type_it->second;
+							auto capture_type_it = current_lambda_context_.capture_types.find(var_name_str);
+							if (capture_type_it != current_lambda_context_.capture_types.end()) {
+								const TypeSpecifierNode& orig_type = capture_type_it->second;
 
 								// Generate Dereference to load the value
 								TempVar result_temp = var_counter.next();
@@ -7824,7 +7823,6 @@ private:
 				// Just return it as a pointer (64 bits on x64 architecture).
 				if (type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
-					constexpr int POINTER_SIZE_BITS = 64;  // x64 pointer size
 					return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
 				}
 				
@@ -7964,7 +7962,6 @@ private:
 					// Just return it as a pointer (64 bits on x64 architecture).
 					if (type_node.is_array()) {
 						// Return the array reference as a 64-bit pointer
-						constexpr int POINTER_SIZE_BITS = 64;  // x64 pointer size
 						return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
 					}
 					
@@ -8979,7 +8976,6 @@ private:
 										// Now compute the member address by adding the member offset
 										// We need to add the offset to the pointer value
 										// Treat the pointer as a 64-bit integer for arithmetic purposes
-										constexpr int POINTER_SIZE_BITS = 64;
 										TempVar member_addr_var = var_counter.next();
 										BinaryOp add_offset;
 										add_offset.lhs = { Type::UnsignedLongLong, POINTER_SIZE_BITS, elem_addr_var };  // pointer treated as integer
@@ -9024,7 +9020,6 @@ private:
 								
 								if (member) {
 									TempVar result_var = var_counter.next();
-									constexpr int POINTER_SIZE_BITS = 64;
 									
 									// For simple identifiers, generate a MemberAddressOp or use AddressOf with member context
 									// For now, use a simpler approach: emit AddressOf, then Add offset in generated code
@@ -10875,7 +10870,7 @@ private:
 				// Return the assigned value
 				return { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands[2]), 0ULL };
 			} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
-				TempVar result_var = var_counter.next();
+				[[maybe_unused]] TempVar result_var = var_counter.next();
 				AssignmentOp assign_op;
 				assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
 				assign_op.lhs = { lhsType, lhsSize, std::get<TempVar>(lhsIrOperands[2]) };
@@ -12834,8 +12829,8 @@ private:
 				func_symbol = global_symbol_table_->lookup(func_decl_node.identifier_token().value());
 			}
 			if (func_symbol.has_value() && func_symbol->is<FunctionDeclarationNode>()) {
-				const auto& func_decl = func_symbol->as<FunctionDeclarationNode>();
-				param_nodes = func_decl.parameter_nodes();
+				const auto& resolved_func_decl = func_symbol->as<FunctionDeclarationNode>();
+				param_nodes = resolved_func_decl.parameter_nodes();
 			}
 		}
 		
