@@ -5104,8 +5104,42 @@ ParseResult Parser::parse_struct_declaration()
 								return ParseResult::error("Expected ';' after '= delete'", *peek_token());
 							}
 
-							// For now, we'll just skip deleted constructors
-							// TODO: Track deleted constructors to prevent their use
+							// Track deleted constructors to prevent their use
+							// Determine what kind of constructor this is based on parameters:
+							// - No params = default constructor
+							// - 1 param of lvalue reference to same type = copy constructor
+							// - 1 param of rvalue reference to same type = move constructor
+							if (struct_info) {
+								size_t num_params = params.parameters.size();
+								bool is_copy_ctor = false;
+								bool is_move_ctor = false;
+								
+								if (num_params == 1) {
+									// Check if the parameter is a reference to this type
+									const auto& param = params.parameters[0];
+									if (param.is<DeclarationNode>()) {
+										const auto& param_decl = param.as<DeclarationNode>();
+										// Check if the type specifier matches the struct name
+										const auto& type_node = param_decl.type_node();
+										if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
+											const auto& type_spec = type_node.as<TypeSpecifierNode>();
+											std::string_view param_type_name = type_spec.token().value();
+											if (param_type_name == struct_name || 
+											    param_type_name == qualified_struct_name.view()) {
+												// It's a reference to this type
+												if (type_spec.is_rvalue_reference()) {
+													is_move_ctor = true;
+												} else if (type_spec.is_reference()) {
+													is_copy_ctor = true;
+												}
+											}
+										}
+									}
+								}
+								
+								struct_info->markConstructorDeleted(is_copy_ctor, is_move_ctor);
+							}
+
 							// ctor_scope automatically exits scope on continue
 							continue; // Don't add deleted constructor to struct
 						} else {
@@ -5254,8 +5288,10 @@ ParseResult Parser::parse_struct_declaration()
 							return ParseResult::error("Expected ';' after '= delete'", *peek_token());
 						}
 
-						// For now, we'll just skip deleted destructors
-						// TODO: Track deleted destructors to prevent their use
+						// Track deleted destructors to prevent their use
+						if (struct_info) {
+							struct_info->markDestructorDeleted();
+						}
 						continue; // Don't add deleted destructor to struct
 					} else {
 						return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
@@ -5452,6 +5488,34 @@ ParseResult Parser::parse_struct_declaration()
 				if (!consume_punctuator(";")) {
 					return ParseResult::error("Expected ';' after '= delete'", *peek_token());
 				}
+				
+				// Track deleted assignment operators to prevent their implicit use
+				if (struct_info && decl_node.identifier_token().value() == "operator=") {
+					// Check if it's a move or copy assignment operator based on parameter type
+					bool is_move_assign = false;
+					const auto& params = member_func_ref.parameter_nodes();
+					if (params.size() == 1) {
+						const auto& param = params[0];
+						if (param.is<DeclarationNode>()) {
+							const auto& param_decl = param.as<DeclarationNode>();
+							// Check if the type specifier matches the struct name
+							const auto& type_node = param_decl.type_node();
+							if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
+								const auto& type_spec = type_node.as<TypeSpecifierNode>();
+								std::string_view param_type_name = type_spec.token().value();
+								if (param_type_name == struct_name || 
+								    param_type_name == qualified_struct_name.view()) {
+									// It's a reference to this type
+									if (type_spec.is_rvalue_reference()) {
+										is_move_assign = true;
+									}
+								}
+							}
+						}
+					}
+					struct_info->markAssignmentDeleted(is_move_assign);
+				}
+				
 				// Deleted functions are not added to the struct - they exist only to prevent
 				// implicit generation of special member functions or to disable certain overloads
 				continue;

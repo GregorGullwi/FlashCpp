@@ -518,6 +518,14 @@ struct StructTypeInfo {
 	bool is_final = false;      // True if this class/struct is declared with 'final' keyword
 	bool needs_default_constructor = false;  // True if struct needs an implicit default constructor
 
+	// Deleted special member functions tracking
+	bool has_deleted_default_constructor = false;  // True if default constructor is = delete
+	bool has_deleted_copy_constructor = false;     // True if copy constructor is = delete
+	bool has_deleted_move_constructor = false;     // True if move constructor is = delete
+	bool has_deleted_copy_assignment = false;      // True if copy assignment operator is = delete
+	bool has_deleted_move_assignment = false;      // True if move assignment operator is = delete
+	bool has_deleted_destructor = false;           // True if destructor is = delete
+
 	// Virtual function support (Phase 2)
 	bool has_vtable = false;    // True if this struct has virtual functions
 	bool is_abstract = false;   // True if this struct has pure virtual functions
@@ -610,6 +618,49 @@ struct StructTypeInfo {
 		func.is_override = is_override;
 		func.is_final = is_final_func;
 	}
+
+	// Mark a constructor as deleted
+	void markConstructorDeleted(bool is_copy, bool is_move) {
+		if (is_copy) {
+			has_deleted_copy_constructor = true;
+		} else if (is_move) {
+			has_deleted_move_constructor = true;
+		} else {
+			has_deleted_default_constructor = true;
+		}
+	}
+
+	// Mark an assignment operator as deleted
+	void markAssignmentDeleted(bool is_move) {
+		if (is_move) {
+			has_deleted_move_assignment = true;
+		} else {
+			has_deleted_copy_assignment = true;
+		}
+	}
+
+	// Mark destructor as deleted
+	void markDestructorDeleted() {
+		has_deleted_destructor = true;
+	}
+
+	// Check if default constructor is deleted
+	bool isDefaultConstructorDeleted() const { return has_deleted_default_constructor; }
+
+	// Check if copy constructor is deleted
+	bool isCopyConstructorDeleted() const { return has_deleted_copy_constructor; }
+
+	// Check if move constructor is deleted
+	bool isMoveConstructorDeleted() const { return has_deleted_move_constructor; }
+
+	// Check if copy assignment is deleted
+	bool isCopyAssignmentDeleted() const { return has_deleted_copy_assignment; }
+
+	// Check if move assignment is deleted
+	bool isMoveAssignmentDeleted() const { return has_deleted_move_assignment; }
+
+	// Check if destructor is deleted
+	bool isDestructorDeleted() const { return has_deleted_destructor; }
 
 	void finalize() {
 		// Build vtable first (if struct has virtual functions)

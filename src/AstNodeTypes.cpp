@@ -1,6 +1,7 @@
 #include "AstNodeTypes.h"
 #include "ChunkedString.h"
 #include "NameMangling.h"
+#include "Log.h"
 #include <sstream>
 #include <set>
 #include <unordered_set>
@@ -858,9 +859,9 @@ void StructTypeInfo::buildVTable() {
             // Check if base function is final
             if (base_func_ptr && base_func_ptr->is_final) {
                 // Error: attempting to override a final function
-                // For now, we'll just ignore this - proper error handling would require
-                // access to the parser's error reporting mechanism
-                // TODO: Report error "cannot override final function"
+                FLASH_LOG(Parser, Error, "cannot override final function '", 
+                    StringTable::getStringView(func_name), "' in class '",
+                    StringTable::getStringView(getName()), "'");
             }
             
             // Override existing vtable entry
@@ -875,8 +876,9 @@ void StructTypeInfo::buildVTable() {
         // Validate override keyword usage
         if (func.is_override && override_index < 0) {
             // Error: 'override' specified but no base function to override
-            // For now, we'll just ignore this - proper error handling would require
-            // access to the parser's error reporting mechanism
+            FLASH_LOG(Parser, Error, "function '", 
+                StringTable::getStringView(func_name), "' marked 'override' but does not override any base class function in class '",
+                StringTable::getStringView(getName()), "'");
         }
     }
 
