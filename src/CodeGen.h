@@ -9497,7 +9497,7 @@ private:
 
 		// Get the type of the operand
 		Type operandType = std::get<Type>(operandIrOperands[0]);
-		int operandSize = std::get<int>(operandIrOperands[1]);
+		[[maybe_unused]] int operandSize = std::get<int>(operandIrOperands[1]);
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
@@ -10855,7 +10855,6 @@ private:
 			
 			// Get the assignment target (must be a variable)
 			if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
-				TempVar result_var = var_counter.next();
 				AssignmentOp assign_op;
 				assign_op.result = std::get<StringHandle>(lhsIrOperands[2]);
 				assign_op.lhs = { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands[2]) };
@@ -12331,8 +12330,8 @@ private:
 		auto ptr_ir = visitExpressionNode(ptr_arg.as<ExpressionNode>());
 		
 		// Extract pointer details
-		Type ptr_type = std::get<Type>(ptr_ir[0]);
-		int ptr_size = std::get<int>(ptr_ir[1]);
+		[[maybe_unused]] Type ptr_type = std::get<Type>(ptr_ir[0]);
+		[[maybe_unused]] int ptr_size = std::get<int>(ptr_ir[1]);
 		
 		// For now, we just return the pointer unchanged
 		// In a real implementation, __builtin_launder would:
@@ -12824,12 +12823,12 @@ private:
 		} else {
 			// Try to get from the function declaration stored in FunctionCallNode
 			// Look up the function in symbol table to get full declaration with parameters
-			auto func_symbol = symbol_table.lookup(func_decl_node.identifier_token().value());
-			if (!func_symbol.has_value() && global_symbol_table_) {
-				func_symbol = global_symbol_table_->lookup(func_decl_node.identifier_token().value());
+			auto local_func_symbol = symbol_table.lookup(func_decl_node.identifier_token().value());
+			if (!local_func_symbol.has_value() && global_symbol_table_) {
+				local_func_symbol = global_symbol_table_->lookup(func_decl_node.identifier_token().value());
 			}
-			if (func_symbol.has_value() && func_symbol->is<FunctionDeclarationNode>()) {
-				const auto& resolved_func_decl = func_symbol->as<FunctionDeclarationNode>();
+			if (local_func_symbol.has_value() && local_func_symbol->is<FunctionDeclarationNode>()) {
+				const auto& resolved_func_decl = local_func_symbol->as<FunctionDeclarationNode>();
 				param_nodes = resolved_func_decl.parameter_nodes();
 			}
 		}
@@ -12858,8 +12857,8 @@ private:
 			}
 
 			bool param_is_ref_like = false;
-			bool param_is_rvalue_ref = false;
-			bool param_is_pack = param_decl && param_decl->is_parameter_pack();
+			[[maybe_unused]] bool param_is_rvalue_ref = false;
+			[[maybe_unused]] bool param_is_pack = param_decl && param_decl->is_parameter_pack();
 			if (param_type) {
 				param_is_ref_like = param_type->is_reference() || param_type->is_rvalue_reference();
 				param_is_rvalue_ref = param_type->is_rvalue_reference();
@@ -13794,8 +13793,8 @@ private:
 							// For now, we assume int return type which works for most common cases
 							
 							TempVar ret_var = var_counter.next();
-							std::vector<IrOperand> irOperands;
-							irOperands.emplace_back(ret_var);
+							std::vector<IrOperand> func_ptr_call_operands;
+							func_ptr_call_operands.emplace_back(ret_var);
 							
 							// Get the function pointer member
 							// We need to generate member access to get the pointer value
@@ -14005,7 +14004,7 @@ private:
 						}
 						
 						// Generate the mangled name
-						std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
+						[[maybe_unused]] std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
 						
 						// Template instantiation now happens during parsing
 						// The instantiated function should already be in the AST
@@ -15077,7 +15076,6 @@ private:
 										// For array members, member->size is the total size, we need element size
 										// This is a simplified assumption - we need better array type info
 										// For now, assume arrays of primitives and compute element size
-										int array_length = 1;  // Default if not an array
 										// TODO: Get actual array length from type info
 										// For now, use a heuristic: if size is larger than element type, it's an array
 										int base_element_size = get_type_size_bits(element_type);  // Use existing helper
@@ -16591,8 +16589,8 @@ private:
 		size_t pointer_depth = type_spec.pointer_depth();
 		
 		// Get TypeInfo and StructTypeInfo for use by shared evaluator and binary traits
-		const TypeInfo* type_info = (type_spec.type_index() < gTypeInfo.size()) ? &gTypeInfo[type_spec.type_index()] : nullptr;
-		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		[[maybe_unused]] const TypeInfo* outer_type_info = (type_spec.type_index() < gTypeInfo.size()) ? &gTypeInfo[type_spec.type_index()] : nullptr;
+		[[maybe_unused]] const StructTypeInfo* outer_struct_info = outer_type_info ? outer_type_info->getStructInfo() : nullptr;
 
 		// Handle binary traits that require a second type argument
 		switch (traitNode.kind()) {
@@ -17421,7 +17419,7 @@ private:
 			default:
 				// For all other unary type traits, use the shared evaluator from TypeTraitEvaluator.h
 				{
-					TypeTraitResult eval_result = evaluateTypeTrait(traitNode.kind(), type_spec, type_info, struct_info);
+					TypeTraitResult eval_result = evaluateTypeTrait(traitNode.kind(), type_spec, outer_type_info, outer_struct_info);
 					if (eval_result.success) {
 						result = eval_result.value;
 					} else {

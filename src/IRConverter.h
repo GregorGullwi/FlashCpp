@@ -5177,7 +5177,7 @@ private:
 	void emitMovToFrame(X64Register sourceRegister, int32_t offset) {
 		auto opcodes = generateMovToFrameBySize(sourceRegister, offset, 64);
 		std::string bytes_str;
-		for (int i = 0; i < opcodes.size_in_bytes; i++) {
+		for (size_t i = 0; i < static_cast<size_t>(opcodes.size_in_bytes); i++) {
 			bytes_str += std::format("{:02x} ", static_cast<uint8_t>(opcodes.op_codes[i]));
 		}
 		FLASH_LOG_FORMAT(Codegen, Debug, "emitMovToFrame: reg={} offset={} bytes={}", static_cast<int>(sourceRegister), offset, bytes_str);
@@ -15432,7 +15432,7 @@ private:
 
 	// Prologue patching for stack allocation
 	uint32_t current_function_prologue_offset_ = 0;  // Offset of SUB RSP instruction for patching
-	int max_temp_var_index_ = 0;  // Highest TempVar number used (for stack size calculation)
+	size_t max_temp_var_index_ = 0;  // Highest TempVar number used (for stack size calculation)
 	int next_temp_var_offset_ = 8;  // Next available offset for TempVar allocation (starts at 8, increments by 8)
 	uint32_t current_function_named_vars_size_ = 0;  // Size of named vars + shadow space for current function
 
