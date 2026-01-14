@@ -80,7 +80,7 @@ static MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifie
 		result.size = sizeof(void*);
 		result.alignment = sizeof(void*);
 	} else {
-		result.size = get_type_size_bits(type_spec.type()) / 8;
+		result.size = static_cast<size_t>(get_type_size_bits(type_spec.type())) / 8;
 		result.alignment = get_type_alignment(type_spec.type(), result.size);
 	}
 	
@@ -96,11 +96,11 @@ static unsigned short getTypeSizeForTemplateParameter(Type type, size_t type_ind
 	// Check if this is a basic type that get_type_size_bits can handle
 	// Basic types range from Void to MemberObjectPointer in the Type enum
 	if (type >= Type::Void && type <= Type::MemberObjectPointer) {
-		return static_cast<int>(get_type_size_bits(type));
+		return static_cast<unsigned short>(get_type_size_bits(type));
 	}
 	// For UserDefined and other types (Template, etc), look up size from type registry
 	if (type_index > 0 && type_index < gTypeInfo.size()) {
-		return gTypeInfo[type_index].type_size_;
+		return static_cast<unsigned short>(gTypeInfo[type_index].type_size_);
 	}
 	return 0;  // Will be resolved during member access
 }
@@ -110,7 +110,7 @@ static unsigned short getTypeSizeFromTemplateArgument(const TemplateArgument& ar
 	// Check if this is a basic type that get_type_size_bits can handle
 	// Basic types range from Void to MemberObjectPointer in the Type enum
 	if (arg.type_value >= Type::Void && arg.type_value <= Type::MemberObjectPointer) {
-		return static_cast<int>(get_type_size_bits(arg.type_value));
+		return static_cast<unsigned short>(get_type_size_bits(arg.type_value));
 	}
 	// For UserDefined and other types (Template, etc), try to extract size from type_specifier
 	if (arg.type_specifier.has_value()) {
@@ -118,16 +118,15 @@ static unsigned short getTypeSizeFromTemplateArgument(const TemplateArgument& ar
 		// Try type_index first
 		size_t type_index = type_spec.type_index();
 		if (type_index > 0 && type_index < gTypeInfo.size()) {
-			unsigned short size = gTypeInfo[type_index].type_size_;
+			unsigned short size = static_cast<unsigned short>(gTypeInfo[type_index].type_size_);
 			if (size > 0) {
 				return size;
 			}
 			// For template struct instantiations (e.g., "TC_int"), look up by name
 			StringHandle type_name_handle = gTypeInfo[type_index].name();
-		std::string_view type_name = StringTable::getStringView(type_name_handle);
 			auto it = gTypesByName.find(type_name_handle);
 			if (it != gTypesByName.end() && it->second->type_size_ > 0) {
-				return it->second->type_size_;
+				return static_cast<unsigned short>(it->second->type_size_);
 			}
 		}
 	}
@@ -278,7 +277,7 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 	// Add more node types as needed
 }
 
-bool Parser::generate_coff(const std::string& outputFilename) {
+bool Parser::generate_coff([[maybe_unused]] const std::string& outputFilename) {
 #ifdef USE_LLVM
     return FlashCpp::GenerateCOFF(ast_nodes_, outputFilename);
 #else
@@ -427,7 +426,7 @@ Parser::SaveHandle Parser::save_token_position() {
     return handle;
 }
 
-void Parser::restore_token_position(SaveHandle handle, const std::source_location location) {
+void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const std::source_location location) {
     auto it = saved_tokens_.find(handle);
     if (it == saved_tokens_.end()) {
         // Handle not found - this shouldn't happen in correct usage
@@ -470,7 +469,7 @@ void Parser::restore_token_position(SaveHandle handle, const std::source_locatio
     // 3. Parser finds it's not a fold expression, restores position
     // 4. Without this fix, the instantiation would be erased but remain in cache
     size_t new_size = saved_token.ast_nodes_size_;
-    auto ast_it = ast_nodes_.begin() + new_size;
+    auto ast_it = ast_nodes_.begin() + static_cast<std::ptrdiff_t>(new_size);
     while (ast_it != ast_nodes_.end()) {
         if (ast_it->is<FunctionDeclarationNode>() || ast_it->is<StructDeclarationNode>()) {
             // Keep function and struct declarations - they may be template instantiations

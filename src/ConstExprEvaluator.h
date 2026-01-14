@@ -29,23 +29,23 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{true, val, ""};
+		return EvalResult{true, val, "", false, {}};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{true, val, ""};
+		return EvalResult{true, val, "", false, {}};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{true, val, ""};
+		return EvalResult{true, val, "", false, {}};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{true, val, ""};
+		return EvalResult{true, val, "", false, {}};
 	}
 
 	static EvalResult error(const std::string& msg) {
-		return EvalResult{false, false, msg};
+		return EvalResult{false, false, msg, false, {}};
 	}
 
 	// Convenience helpers for common operations
@@ -306,14 +306,14 @@ private:
 	// Helper function to get the size in bytes for a type specifier
 	// Handles both primitive types and struct types
 	static size_t get_typespec_size_bytes(const TypeSpecifierNode& type_spec) {
-		size_t size_in_bytes = type_spec.size_in_bits() / 8;
+		size_t size_in_bytes = static_cast<size_t>(type_spec.size_in_bits()) / 8;
 		
 		// If size_in_bits is 0, look it up
 		if (size_in_bytes == 0) {
 			if (type_spec.type() == Type::Struct) {
 				size_in_bytes = get_struct_size_from_typeinfo(type_spec);
 			} else {
-				size_in_bytes = get_type_size_bits(type_spec.type()) / 8;
+				size_in_bytes = static_cast<size_t>(get_type_size_bits(type_spec.type())) / 8;
 			}
 		}
 		
@@ -360,7 +360,7 @@ private:
 										}
 									}
 									if (all_evaluated && element_size > 0) {
-										return EvalResult::from_int(static_cast<long long>(element_size * total_count));
+										return EvalResult::from_int(static_cast<long long>(element_size) * static_cast<long long>(total_count));
 									}
 								}
 							}
@@ -418,7 +418,7 @@ private:
 											}
 										}
 										if (all_evaluated && element_size > 0) {
-											return EvalResult::from_int(static_cast<long long>(element_size * total_count));
+											return EvalResult::from_int(static_cast<long long>(element_size) * static_cast<long long>(total_count));
 										}
 									}
 								}
@@ -481,7 +481,7 @@ private:
 				if (size_bits == 0) {
 					size_bits = get_type_size_bits(type_spec.type());
 				}
-				size_t size_in_bytes = size_bits / 8;
+				size_t size_in_bytes = static_cast<size_t>(size_bits) / 8;
 				size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.type());
 				
 				return EvalResult::from_int(static_cast<long long>(alignment));
@@ -526,7 +526,7 @@ private:
 									if (size_bits == 0) {
 										size_bits = get_type_size_bits(type_spec.type());
 									}
-									size_t size_in_bytes = size_bits / 8;
+									size_t size_in_bytes = static_cast<size_t>(size_bits) / 8;
 									size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.type());
 									
 									return EvalResult::from_int(static_cast<long long>(alignment));
@@ -1538,15 +1538,9 @@ private:
 		// For member access on 'this' (e.g., this->x in a member function)
 		// This handles implicit member accesses like 'x' which parser transforms to 'this->x'
 		if (std::holds_alternative<MemberAccessNode>(expr)) {
-			const auto& member_access = std::get<MemberAccessNode>(expr);
-			std::string_view member_name = member_access.member_name();
-			
-			// Check if the object is 'this' (implicit member access)
-			const ASTNode& obj = member_access.object();
-			if (obj.is<ExpressionNode>()) {
-				const ExpressionNode& obj_expr = obj.as<ExpressionNode>();
-				// For now, fall back to regular evaluation
-			}
+			[[maybe_unused]] const auto& member_access = std::get<MemberAccessNode>(expr);
+			// Note: member_name and obj_expr currently unused - will be used for future member evaluation
+			// For now, fall back to regular evaluation below
 		}
 		
 		// For other expression types, use the const version (cast bindings to const)
@@ -1683,9 +1677,9 @@ private:
 			// Get the array expression
 			const ASTNode& array_expr = subscript.array_expr();
 			if (array_expr.is<ExpressionNode>()) {
-				const ExpressionNode& expr = array_expr.as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(expr)) {
-					std::string_view var_name = std::get<IdentifierNode>(expr).name();
+				const ExpressionNode& arr_expr = array_expr.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(arr_expr)) {
+					std::string_view var_name = std::get<IdentifierNode>(arr_expr).name();
 					
 					// Check if it's in bindings (parameter array)
 					auto it = bindings.find(var_name);
@@ -2184,7 +2178,7 @@ public:
 		const ConstructorCallNode& ctor_call,
 		const StructTypeInfo* struct_info,
 		std::string_view member_name,
-		EvaluationContext& context) {
+		[[maybe_unused]] EvaluationContext& context) {
 		
 		const auto& ctor_args = ctor_call.arguments();
 		
@@ -2439,9 +2433,9 @@ public:
 
 	// Evaluate array subscript followed by member access (e.g., arr[0].member)
 	static EvalResult evaluate_array_subscript_member_access(
-		const ArraySubscriptNode& subscript,
-		std::string_view member_name,
-		EvaluationContext& context) {
+		[[maybe_unused]] const ArraySubscriptNode& subscript,
+		[[maybe_unused]] std::string_view member_name,
+		[[maybe_unused]] EvaluationContext& context) {
 		// For now, return an error - this is more complex
 		return EvalResult::error("Array subscript followed by member access not yet supported");
 	}

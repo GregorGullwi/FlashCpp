@@ -36,9 +36,9 @@ struct StackStringStats {
 
         printf("\n=== StackString Performance Stats ===\n");
         printf("Stack allocations: %zu (%.1f%%)\n", stack_allocs,
-               total_allocs > 0 ? 100.0 * stack_allocs / total_allocs : 0.0);
+               total_allocs > 0 ? 100.0 * static_cast<double>(stack_allocs) / static_cast<double>(total_allocs) : 0.0);
         printf("Heap allocations:  %zu (%.1f%%)\n", heap_allocs,
-               total_allocs > 0 ? 100.0 * heap_allocs / total_allocs : 0.0);
+               total_allocs > 0 ? 100.0 * static_cast<double>(heap_allocs) / static_cast<double>(total_allocs) : 0.0);
         printf("Total allocations: %zu\n", total_allocs);
         printf("Stack bytes: %zu\n", stack_bytes);
         printf("Heap bytes:  %zu\n", heap_bytes);

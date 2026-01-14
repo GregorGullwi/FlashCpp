@@ -41,8 +41,9 @@ CXXFLAGS := -std=c++20 -Wall -Wextra -Wconversion -Wshadow -Werror
 SRCDIR := src
 BINDIR := x64
 TESTDIR := tests
-INCLUDES := -I $(SRCDIR)
-TESTINCLUDES := -I $(TESTDIR)/external/doctest/ -I $(SRCDIR) -I external
+# Use -isystem for third-party headers (coffi, elfio) to suppress warnings in those files
+INCLUDES := -I $(SRCDIR) -isystem $(SRCDIR)/coffi -isystem $(SRCDIR)/elfio
+TESTINCLUDES := -I $(TESTDIR)/external/doctest/ -I $(SRCDIR) -I external -isystem $(SRCDIR)/coffi -isystem $(SRCDIR)/elfio
 
 # Build configuration subdirectories (matching MSVC structure)
 DEBUG_DIR := $(BINDIR)/Debug

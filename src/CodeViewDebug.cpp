@@ -43,11 +43,12 @@ namespace {
                 uint32_t w[64];
 
                 // Copy chunk into first 16 words of the message schedule array
-                for (int i = 0; i < 16; i++) {
-                    w[i] = (msg[chunk_start + i * 4] << 24) |
-                           (msg[chunk_start + i * 4 + 1] << 16) |
-                           (msg[chunk_start + i * 4 + 2] << 8) |
-                           (msg[chunk_start + i * 4 + 3]);
+                for (size_t i = 0; i < 16; i++) {
+                    w[i] = static_cast<uint32_t>(
+                           (static_cast<uint32_t>(msg[chunk_start + i * 4]) << 24) |
+                           (static_cast<uint32_t>(msg[chunk_start + i * 4 + 1]) << 16) |
+                           (static_cast<uint32_t>(msg[chunk_start + i * 4 + 2]) << 8) |
+                           static_cast<uint32_t>(msg[chunk_start + i * 4 + 3]));
                 }
 
                 // Extend the first 16 words into the remaining 48 words
@@ -98,11 +99,11 @@ namespace {
 
             // Produce the final hash value as a 256-bit number
             std::array<uint8_t, 32> result;
-            for (int i = 0; i < 8; i++) {
-                result[i * 4] = (h[i] >> 24) & 0xFF;
-                result[i * 4 + 1] = (h[i] >> 16) & 0xFF;
-                result[i * 4 + 2] = (h[i] >> 8) & 0xFF;
-                result[i * 4 + 3] = h[i] & 0xFF;
+            for (size_t i = 0; i < 8; i++) {
+                result[i * 4] = static_cast<uint8_t>((h[i] >> 24) & 0xFF);
+                result[i * 4 + 1] = static_cast<uint8_t>((h[i] >> 16) & 0xFF);
+                result[i * 4 + 2] = static_cast<uint8_t>((h[i] >> 8) & 0xFF);
+                result[i * 4 + 3] = static_cast<uint8_t>(h[i] & 0xFF);
             }
 
             return result;
@@ -430,7 +431,7 @@ void DebugInfoBuilder::alignTo4Bytes(std::vector<uint8_t>& data) {
 void DebugInfoBuilder::addTypeRecordWithPadding(std::vector<uint8_t>& debug_t_data, TypeRecordKind kind, const std::vector<uint8_t>& record_data) {
     // Calculate the total size including header and padding
     size_t data_size = record_data.size() + sizeof(TypeRecordKind);
-    size_t padded_size = (data_size + 3) & ~3; // Round up to 4-byte boundary
+    size_t padded_size = (data_size + 3) & ~static_cast<size_t>(3); // Round up to 4-byte boundary
 
     // Create header with padded length
     TypeRecordHeader header;
@@ -556,8 +557,8 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfo() {
         file_header.num_lines = static_cast<uint32_t>(func.line_offsets.size());
 
         // Calculate block size: Total size of file block INCLUDING header
-        uint32_t line_entries_size = func.line_offsets.size() * sizeof(LineNumberEntry);
-        file_header.block_size = sizeof(FileBlockHeader) + line_entries_size;
+        uint32_t line_entries_size = static_cast<uint32_t>(func.line_offsets.size() * sizeof(LineNumberEntry));
+        file_header.block_size = static_cast<uint32_t>(sizeof(FileBlockHeader)) + line_entries_size;
 
         // DEBUG: Dump the file header bytes
         if (g_enable_debug_output) std::cerr << "DEBUG: FileBlockHeader bytes: ";
@@ -624,7 +625,8 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
               << ", cbCon=" << line_header.code_length << std::endl;
 
     // Track position for relocations - we need to add relocations for the code_offset and segment fields
-    size_t line_header_start = line_data.size();
+    // Note: line_header_start used for calculating relocation offsets in debug output
+    [[maybe_unused]] size_t line_header_start = line_data.size();
 
     line_data.insert(line_data.end(),
                      reinterpret_cast<const uint8_t*>(&line_header),
@@ -644,7 +646,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
     FileBlockHeader file_block;
     file_block.file_id = func.file_id;
     file_block.num_lines = static_cast<uint32_t>(func.line_offsets.size());
-    file_block.block_size = sizeof(FileBlockHeader) + (func.line_offsets.size() * sizeof(LineNumberEntry));
+    file_block.block_size = static_cast<uint32_t>(sizeof(FileBlockHeader) + (func.line_offsets.size() * sizeof(LineNumberEntry)));
 
     if (g_enable_debug_output) std::cerr << "DEBUG: Function line info for function " << func.name
               << " - file_id=" << file_block.file_id
@@ -1107,7 +1109,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             size_t data_size = arglist_data.size();
             size_t content_after_length = sizeof(TypeRecordKind) + data_size; // What comes after length field
             size_t total_record_size = sizeof(uint16_t) + content_after_length; // length field + content
-            size_t aligned_record_size = (total_record_size + 3) & ~3;
+            size_t aligned_record_size = (total_record_size + 3) & ~static_cast<size_t>(3);
             size_t padding_bytes = aligned_record_size - total_record_size;
 
             TypeRecordHeader header;
@@ -1153,7 +1155,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             size_t data_size = proc_data.size();
             size_t content_after_length = sizeof(TypeRecordKind) + data_size;
             size_t total_record_size = sizeof(uint16_t) + content_after_length;
-            size_t aligned_record_size = (total_record_size + 3) & ~3;
+            size_t aligned_record_size = (total_record_size + 3) & ~static_cast<size_t>(3);
             size_t padding_bytes = aligned_record_size - total_record_size;
 
             TypeRecordHeader header;
@@ -1193,7 +1195,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             size_t data_size = func_id_data.size();
             size_t content_after_length = sizeof(TypeRecordKind) + data_size;
             size_t total_record_size = sizeof(uint16_t) + content_after_length;
-            size_t aligned_record_size = (total_record_size + 3) & ~3;
+            size_t aligned_record_size = (total_record_size + 3) & ~static_cast<size_t>(3);
             size_t padding_bytes = aligned_record_size - total_record_size;
 
             TypeRecordHeader header;
@@ -1242,7 +1244,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             size_t data_size = string_data.size();
             size_t content_after_length = sizeof(TypeRecordKind) + data_size;
             size_t total_record_size = sizeof(uint16_t) + content_after_length;
-            size_t aligned_record_size = (total_record_size + 3) & ~3;
+            size_t aligned_record_size = (total_record_size + 3) & ~static_cast<size_t>(3);
             size_t padding_bytes = aligned_record_size - total_record_size;
 
             CodeView::TypeRecordHeader header;
@@ -1270,7 +1272,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
             size_t data_size = string_data.size();
             size_t content_after_length = sizeof(TypeRecordKind) + data_size;
             size_t total_record_size = sizeof(uint16_t) + content_after_length;
-            size_t aligned_record_size = (total_record_size + 3) & ~3;
+            size_t aligned_record_size = (total_record_size + 3) & ~static_cast<size_t>(3);
             size_t padding_bytes = aligned_record_size - total_record_size;
 
             CodeView::TypeRecordHeader header;
@@ -1299,7 +1301,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         size_t data_size = string_data.size();
         size_t content_after_length = sizeof(TypeRecordKind) + data_size;
         size_t total_record_size = sizeof(uint16_t) + content_after_length;
-        size_t aligned_record_size = (total_record_size + 3) & ~3;
+        size_t aligned_record_size = (total_record_size + 3) & ~static_cast<size_t>(3);
         size_t padding_bytes = aligned_record_size - total_record_size;
 
         TypeRecordHeader header;
@@ -1329,7 +1331,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         size_t data_size = string_data.size();
         size_t content_after_length = sizeof(TypeRecordKind) + data_size;
         size_t total_record_size = sizeof(uint16_t) + content_after_length;
-        size_t aligned_record_size = (total_record_size + 3) & ~3;
+        size_t aligned_record_size = (total_record_size + 3) & ~static_cast<size_t>(3);
         size_t padding_bytes = aligned_record_size - total_record_size;
 
         TypeRecordHeader header;
@@ -1359,7 +1361,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         size_t data_size = string_data.size();
         size_t content_after_length = sizeof(TypeRecordKind) + data_size;
         size_t total_record_size = sizeof(uint16_t) + content_after_length;
-        size_t aligned_record_size = (total_record_size + 3) & ~3;
+        size_t aligned_record_size = (total_record_size + 3) & ~static_cast<size_t>(3);
         size_t padding_bytes = aligned_record_size - total_record_size;
 
         TypeRecordHeader header;
@@ -1401,7 +1403,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateDebugT() {
         size_t data_size = buildinfo_data.size();
         size_t content_after_length = sizeof(TypeRecordKind) + data_size;
         size_t total_record_size = sizeof(uint16_t) + content_after_length;
-        size_t aligned_record_size = (total_record_size + 3) & ~3;
+        size_t aligned_record_size = (total_record_size + 3) & ~static_cast<size_t>(3);
         size_t padding_bytes = aligned_record_size - total_record_size;
 
         TypeRecordHeader header;

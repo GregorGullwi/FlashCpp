@@ -568,7 +568,7 @@ public:
 		stream.seekg(0, std::ios::end);
 		std::streampos file_size = stream.tellg();
 		stream.seekg(0, std::ios::beg);
-		std::string file_content(file_size, '\0');
+		std::string file_content(static_cast<size_t>(file_size), '\0');
 		stream.read(file_content.data(), file_size);
 
 		bool result = preprocessFileContent(file_content);
@@ -603,7 +603,7 @@ public:
 			}
 			size_t first_none_tab = line.find_first_not_of('\t');
 			if (first_none_tab != std::string::npos && first_none_tab != 0)
-				line.erase(line.begin(), line.begin() + first_none_tab);
+				line.erase(line.begin(), line.begin() + static_cast<std::string::difference_type>(first_none_tab));
 
 			++line_number;
 
@@ -914,7 +914,7 @@ public:
 	size_t get_file_path_index(std::string_view file_path) const {
 		auto it = std::find(file_paths_.begin(), file_paths_.end(), file_path);
 		if (it != file_paths_.end()) {
-			return std::distance(file_paths_.begin(), it);
+			return static_cast<size_t>(std::distance(file_paths_.begin(), it));
 		}
 		// Should never happen if readFile() properly registers files
 		return 0;
@@ -924,7 +924,7 @@ public:
 	size_t get_or_add_file_path(std::string_view file_path) {
 		auto it = std::find(file_paths_.begin(), file_paths_.end(), file_path);
 		if (it != file_paths_.end()) {
-			return std::distance(file_paths_.begin(), it);
+			return static_cast<size_t>(std::distance(file_paths_.begin(), it));
 		}
 		size_t new_index = file_paths_.size();
 		file_paths_.push_back(std::string(file_path));
@@ -1383,7 +1383,7 @@ private:
 					FLASH_LOG(Lexer, Trace, "  Replacement: ", replace_str.substr(0, std::min<size_t>(100, replace_str.size())));
 				}
 
-				output = output.replace(output.begin() + best_pos, output.begin() + pattern_end, replace_str);
+				output = output.replace(output.begin() + static_cast<std::string::difference_type>(best_pos), output.begin() + static_cast<std::string::difference_type>(pattern_end), replace_str);
 				
 				// Move scan position to after the replacement
 				// This prevents rescanning the replacement we just made
@@ -1573,7 +1573,8 @@ private:
 		size_t eval_loop_guard = 10000;  // Add loop guard
 
 		while (iss && eval_loop_guard-- > 0) {
-			char c = iss.peek();
+			int peeked = iss.peek();
+			char c = static_cast<char>(peeked);
 			if (isdigit(c)) {
 				std::string str_value;
 				iss >> str_value;
@@ -1583,13 +1584,13 @@ private:
 					FLASH_LOG(Lexer, Trace, "  Pushed value: ", value, " (values.size=", values.size(), ")");
 				}
 			}
-			else if (auto it = char_info_table.find(c); it != char_info_table.end()) {
-				CharInfo info = it->second;
-				op_str = iss.get(); // Consume the operator
+			else if (auto char_it = char_info_table.find(c); char_it != char_info_table.end()) {
+				CharInfo info = char_it->second;
+				op_str = static_cast<char>(iss.get()); // Consume the operator
 
 				// Handle multi-character operators
 				if (info.is_multi_char && (iss.peek() == '=' || (c != '!' && iss.peek() == c))) {
-					op_str += iss.get();
+					op_str += static_cast<char>(iss.get());
 				}
 
 				const Operator op = string_to_operator(op_str);
@@ -1699,8 +1700,8 @@ private:
 						long version = 0;
 						std::string_view keyword_sv(keyword);
 						if (auto attribute_name = extractNameBetweenParens(keyword_sv); !attribute_name.empty()) {
-							if (auto it = has_cpp_attribute_versions.find(attribute_name); it != has_cpp_attribute_versions.end()) {
-								version = it->second;
+							if (auto attr_it = has_cpp_attribute_versions.find(attribute_name); attr_it != has_cpp_attribute_versions.end()) {
+								version = attr_it->second;
 							}
 							if (settings_.isVerboseMode()) {
 								std::cout << "__has_cpp_attribute(" << attribute_name << ") = " << version << std::endl;
@@ -1749,9 +1750,9 @@ private:
 						// Don't print stream state here anymore since it was misleading
 					}
 				}
-				else if (auto it = defines_.find(keyword); it != defines_.end()) {
+				else if (auto define_it = defines_.find(keyword); define_it != defines_.end()) {
 					// convert the value to an int
-					const auto& body = it->second.getBody();
+					const auto& body = define_it->second.getBody();
 					if (body.size() == 1) {
 						long value = stol(body);
 						values.push(value);
@@ -1771,7 +1772,7 @@ private:
 				}
 			}
 			else {
-				c = iss.get();
+				peeked = iss.get();
 			}
 		}
 

@@ -76,7 +76,7 @@ inline bool isUnsigned(Type type) {
 inline TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
 	Type base_type,
-	TypeIndex type_idx,
+	[[maybe_unused]] TypeIndex type_idx,
 	bool is_reference,
 	bool is_rvalue_reference,
 	bool is_lvalue_reference,
@@ -85,7 +85,7 @@ inline TypeTraitResult evaluateTypeTrait(
 	bool is_array,
 	std::optional<size_t> array_size,
 	// Additional type info from gTypeInfo - caller provides these
-	const TypeInfo* type_info,
+	[[maybe_unused]] const TypeInfo* type_info,
 	const StructTypeInfo* struct_info
 ) {
 	using namespace TypeTraitEval;

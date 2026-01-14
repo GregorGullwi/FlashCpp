@@ -4,6 +4,15 @@
 // Clang compiler
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Winconsistent-missing-override"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#pragma clang diagnostic ignored "-Wimplicit-int-conversion"
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wconversion"
 #endif
 
 #include "CodeViewDebug.h"
@@ -21,6 +30,14 @@
 #include <unordered_map>
 #include <vector>
 #include "coffi/coffi.hpp"
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 extern bool g_enable_debug_output;
 

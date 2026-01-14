@@ -649,7 +649,7 @@ public:
 		printf("Actual used:       %zu operands\n", operands_.size());
 		printf("Vector capacity:   %zu operands\n", operands_.capacity());
 		if (reserved_capacity_ > 0) {
-			double usage_percent = (operands_.size() * 100.0) / reserved_capacity_;
+			double usage_percent = (static_cast<double>(operands_.size()) * 100.0) / static_cast<double>(reserved_capacity_);
 			printf("Usage:             %.1f%% of reserved\n", usage_percent);
 			if (operands_.size() > reserved_capacity_) {
 				printf("WARNING: Exceeded reserved capacity by %zu operands\n",
@@ -890,7 +890,7 @@ public:
 	}
 
 	// Reserve space (no-op for chunked storage, but kept for API compatibility)
-	void reserve(size_t capacity) {
+	void reserve([[maybe_unused]] size_t capacity) {
 		// No-op: deque doesn't need reservation
 	}
 
@@ -1762,7 +1762,7 @@ public:
 			if (ret_type_info != gNativeTypes.end()) {
 				oss << ret_type_info->second->name();
 			}
-			for (size_t i = 0; i < op.return_pointer_depth; ++i) {
+			for (int i = 0; i < op.return_pointer_depth; ++i) {
 				oss << "*";
 			}
 			oss << op.return_size_in_bits;
@@ -1803,7 +1803,7 @@ public:
 				if (param.is_reference && !param.is_rvalue_reference && effective_pointer_depth > 0) {
 					effective_pointer_depth -= 1;  // Lvalue ref was represented as +1 pointer depth
 				}
-				for (size_t j = 0; j < effective_pointer_depth; ++j) {
+				for (int j = 0; j < effective_pointer_depth; ++j) {
 					oss << "*";
 				}
 				oss << param.size_in_bits;
@@ -2893,7 +2893,7 @@ public:
 		printf("Actual used:       %zu instructions\n", instructions.size());
 		printf("Vector capacity:   %zu instructions\n", instructions.capacity());
 		if (reserved_capacity_ > 0) {
-			double usage_percent = (instructions.size() * 100.0) / reserved_capacity_;
+			double usage_percent = (static_cast<double>(instructions.size()) * 100.0) / static_cast<double>(reserved_capacity_);
 			printf("Usage:             %.1f%% of reserved\n", usage_percent);
 			if (instructions.size() > reserved_capacity_) {
 				printf("WARNING: Exceeded reserved capacity by %zu instructions\n",

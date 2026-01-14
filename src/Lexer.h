@@ -251,7 +251,7 @@ private:
 			current_file_index_ = file_paths_.size() - 1;
 		}
 		else {
-			current_file_index_ = std::distance(file_paths_.begin(), it);
+			current_file_index_ = static_cast<size_t>(std::distance(file_paths_.begin(), it));
 		}
 
 		line_ = line_number;
@@ -507,19 +507,19 @@ private:
 
 			switch (first_char) {
 				case '-': { // -> -- -=
-					int advance = (second_char == '>') | (second_char == '-') | (second_char == '=');
+					size_t advance = static_cast<size_t>((second_char == '>') | (second_char == '-') | (second_char == '='));
 					cursor_ += advance;
 					column_ += advance;
 					break;
 				}
 				case '+': { // ++ +=
-					int advance = (second_char == '+') | (second_char == '=');
+					size_t advance = static_cast<size_t>((second_char == '+') | (second_char == '='));
 					cursor_ += advance;
 					column_ += advance;
 					break;
 				}
 				case '<': { // << <= <<= <=>
-					int advance = (second_char == '<') | (second_char == '=');
+					size_t advance = static_cast<size_t>((second_char == '<') | (second_char == '='));
 					cursor_ += advance;
 					column_ += advance;
 					// Branchless check for three-character operators <<= and <=>
@@ -527,68 +527,68 @@ private:
 					char third_char = has_third ? source_[cursor_] : '\0';
 					int is_shift = (second_char == '<');
 					int is_spaceship = (second_char == '=');
-					int advance3 = (is_shift & (third_char == '=')) | (is_spaceship & (third_char == '>'));
+					size_t advance3 = static_cast<size_t>((is_shift & (third_char == '=')) | (is_spaceship & (third_char == '>')));
 					cursor_ += advance3;
 					column_ += advance3;
 					break;
 				}
 				case '>': { // >> >= >>=
-					int advance = (second_char == '>') | (second_char == '=');
+					size_t advance = static_cast<size_t>((second_char == '>') | (second_char == '='));
 					cursor_ += advance;
 					column_ += advance;
 					// Branchless check for three-character operator >>=
 					int is_shift = (second_char == '>');
 					int has_third = (cursor_ < source_size_);
 					char third_char = has_third ? source_[cursor_] : '\0';
-					int advance3 = is_shift & (third_char == '=');
+					size_t advance3 = static_cast<size_t>(is_shift & (third_char == '='));
 					cursor_ += advance3;
 					column_ += advance3;
 					break;
 				}
 				case '=': { // ==
-					int advance = (second_char == '=');
+					size_t advance = static_cast<size_t>(second_char == '=');
 					cursor_ += advance;
 					column_ += advance;
 					break;
 				}
 				case '!': { // !=
-					int advance = (second_char == '=');
+					size_t advance = static_cast<size_t>(second_char == '=');
 					cursor_ += advance;
 					column_ += advance;
 					break;
 				}
 				case '&': { // && &=
-					int advance = (second_char == '&') | (second_char == '=');
+					size_t advance = static_cast<size_t>((second_char == '&') | (second_char == '='));
 					cursor_ += advance;
 					column_ += advance;
 					break;
 				}
 				case '|': { // || |=
-					int advance = (second_char == '|') | (second_char == '=');
+					size_t advance = static_cast<size_t>((second_char == '|') | (second_char == '='));
 					cursor_ += advance;
 					column_ += advance;
 					break;
 				}
 				case '*': { // *=
-					int advance = (second_char == '=');
+					size_t advance = static_cast<size_t>(second_char == '=');
 					cursor_ += advance;
 					column_ += advance;
 					break;
 				}
 				case '/': { // /=
-					int advance = (second_char == '=');
+					size_t advance = static_cast<size_t>(second_char == '=');
 					cursor_ += advance;
 					column_ += advance;
 					break;
 				}
 				case '%': { // %=
-					int advance = (second_char == '=');
+					size_t advance = static_cast<size_t>(second_char == '=');
 					cursor_ += advance;
 					column_ += advance;
 					break;
 				}
 				case '^': { // ^=
-					int advance = (second_char == '=');
+					size_t advance = static_cast<size_t>(second_char == '=');
 					cursor_ += advance;
 					column_ += advance;
 					break;

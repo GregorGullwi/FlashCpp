@@ -198,7 +198,7 @@ public:
         char buf[32];
         auto [ptr, ec] = std::to_chars(std::begin(buf), std::end(buf), value);
         if (ec == std::errc{}) {
-            append(std::string_view(buf, ptr - buf));
+            append(std::string_view(buf, static_cast<size_t>(ptr - buf)));
         }
         return *this;
     }
@@ -207,7 +207,7 @@ public:
         char buf[32];
         auto [ptr, ec] = std::to_chars(std::begin(buf), std::end(buf), value);
         if (ec == std::errc{}) {
-            append(std::string_view(buf, ptr - buf));
+            append(std::string_view(buf, static_cast<size_t>(ptr - buf)));
         }
         return *this;
     }
@@ -238,7 +238,7 @@ public:
             return std::string_view("", 0);
         }
         
-        size_t len = temp_write_ptr_ - temp_start_;
+        size_t len = static_cast<size_t>(temp_write_ptr_ - temp_start_);
         
         // Copy the temporary buffer to the permanent allocator
         char* ptr = alloc_.allocate(len + 1);
@@ -257,7 +257,7 @@ public:
         if (temp_start_ == nullptr) {
             return std::string_view("", 0);
         }
-        size_t len = temp_write_ptr_ - temp_start_;
+        size_t len = static_cast<size_t>(temp_write_ptr_ - temp_start_);
         return std::string_view(temp_start_, len);
     }
 
@@ -298,7 +298,7 @@ private:
 
     void ensure_temp_capacity(size_t needed) {
         // Handle initial state where temp_start_ is nullptr
-        size_t current_size = (temp_start_ != nullptr) ? (temp_write_ptr_ - temp_start_) : 0;
+        size_t current_size = (temp_start_ != nullptr) ? static_cast<size_t>(temp_write_ptr_ - temp_start_) : 0;
         
         // Check for integer overflow
         if (needed > SIZE_MAX - current_size) {

@@ -158,8 +158,8 @@ public:
 		constexpr uint64_t FNV_PRIME = 1099511628211ULL;
 
 		uint64_t hash = FNV_OFFSET_BASIS;
-		for (unsigned char c : str) {
-			hash ^= static_cast<uint64_t>(c);
+		for (char ch : str) {
+			hash ^= static_cast<uint64_t>(static_cast<unsigned char>(ch));
 			hash *= FNV_PRIME;
 		}
 		return hash;
@@ -190,7 +190,7 @@ public:
 		// Calculate offset within that chunk
 		size_t chunk_idx = gChunkedStringAllocator.getChunkIndex();
 		char* chunk_start = gChunkedStringAllocator.getChunkPointer(chunk_idx, 0);
-		size_t offset = ptr - chunk_start;
+		size_t offset = static_cast<size_t>(ptr - chunk_start);
 
 		// Initialize metadata
 		metadata->hash = hashString(str);

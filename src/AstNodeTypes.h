@@ -579,12 +579,12 @@ struct StructTypeInfo {
 
 	// StringHandle overload for addMemberFunction - Phase 7A
 	void addMemberFunction(StringHandle function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
-	                       bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
+	                       bool is_virtual_func = false, bool is_pure_virtual_func = false, bool is_override_func = false, bool is_final_func = false) {
 		auto& func = member_functions.emplace_back(function_name, function_decl, access, false, false);
-		func.is_virtual = is_virtual;
-		func.is_pure_virtual = is_pure_virtual;
-		func.is_override = is_override;
-		func.is_final = is_final;
+		func.is_virtual = is_virtual_func;
+		func.is_pure_virtual = is_pure_virtual_func;
+		func.is_override = is_override_func;
+		func.is_final = is_final_func;
 	}
 
 	void addConstructor(ASTNode constructor_decl, AccessSpecifier access = AccessSpecifier::Public) {
@@ -600,15 +600,15 @@ struct StructTypeInfo {
 	}
 
 	void addOperatorOverload(std::string_view operator_symbol, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
-	                         bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final = false) {
+	                         bool is_virtual_func = false, bool is_pure_virtual_func = false, bool is_override_func = false, bool is_final_func = false) {
 		StringBuilder sb;
 		sb.append("operator").append(operator_symbol);
 		StringHandle op_name_handle = StringTable::getOrInternStringHandle(sb.commit());
 		auto& func = member_functions.emplace_back(op_name_handle, function_decl, access, false, false, true, operator_symbol);
-		func.is_virtual = is_virtual;
-		func.is_pure_virtual = is_pure_virtual;
-		func.is_override = is_override;
-		func.is_final = is_final;
+		func.is_virtual = is_virtual_func;
+		func.is_pure_virtual = is_pure_virtual_func;
+		func.is_override = is_override_func;
+		func.is_final = is_final_func;
 	}
 
 	void finalize() {
@@ -656,9 +656,9 @@ struct StructTypeInfo {
 	}
 
 	// Find static member by name
-	const StructStaticMember* findStaticMember(StringHandle name) const {
+	const StructStaticMember* findStaticMember(StringHandle member_name) const {
 		for (const auto& static_member : static_members) {
-			if (static_member.getName() == name) {
+			if (static_member.getName() == member_name) {
 				return &static_member;
 			}
 		}
@@ -666,9 +666,9 @@ struct StructTypeInfo {
 	}
 
 	// Add static member
-	void addStaticMember(StringHandle name, Type type, TypeIndex type_index, size_t size, size_t alignment,
+	void addStaticMember(StringHandle member_name, Type type, TypeIndex type_index, size_t member_size, size_t member_alignment,
 	                     AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, bool is_const = false) {
-		static_members.push_back(StructStaticMember(name, type, type_index, size, alignment, access, initializer, is_const));
+		static_members.push_back(StructStaticMember(member_name, type, type_index, member_size, member_alignment, access, initializer, is_const));
 	}
 
 	// Find member recursively through base classes
@@ -686,8 +686,8 @@ struct StructTypeInfo {
 		pack_alignment = align;
 	}
 
-	const StructMember* findMember(std::string_view name) const {
-		StringHandle name_handle = StringTable::getOrInternStringHandle(name);
+	const StructMember* findMember(std::string_view member_name) const {
+		StringHandle name_handle = StringTable::getOrInternStringHandle(member_name);
 		for (const auto& member : members) {
 			if (member.getName() == name_handle) {
 				return &member;
@@ -697,10 +697,10 @@ struct StructTypeInfo {
 	}
 
 	// StringHandle overload for findMember - Phase 7A
-	const StructMember* findMember(StringHandle name) const {
+	const StructMember* findMember(StringHandle member_name) const {
 		for (const auto& member : members) {
 			// Compare by handle directly for O(1) comparison
-			if (member.getName() == name) {
+			if (member.getName() == member_name) {
 				return &member;
 			}
 		}
@@ -708,10 +708,10 @@ struct StructTypeInfo {
 	}
 
 	// StringHandle overload for findMemberFunction - Phase 7A
-	const StructMemberFunction* findMemberFunction(StringHandle name) const {
+	const StructMemberFunction* findMemberFunction(StringHandle func_name) const {
 		for (const auto& func : member_functions) {
 			// Compare by handle directly for O(1) comparison
-			if (func.name == name) {
+			if (func.name == func_name) {
 				return &func;
 			}
 		}
@@ -719,8 +719,8 @@ struct StructTypeInfo {
 	}
 
 	// Convenience overload that interns string_view
-	const StructMemberFunction* findMemberFunction(std::string_view name) const {
-		return findMemberFunction(StringTable::getOrInternStringHandle(name));
+	const StructMemberFunction* findMemberFunction(std::string_view func_name) const {
+		return findMemberFunction(StringTable::getOrInternStringHandle(func_name));
 	}
 
 	// Friend declaration support methods - Phase 7A (StringHandle only)
@@ -1294,7 +1294,7 @@ public:
 	ASTNode type_node() const { return type_node_; }
 	void set_type_node(const ASTNode& type_node) { type_node_ = type_node; }
 	const Token& identifier_token() const { return identifier_; }
-	uint32_t line_number() const { return identifier_.line(); }
+	uint32_t line_number() const { return static_cast<uint32_t>(identifier_.line()); }
 	bool is_array() const { return !array_dimensions_.empty() || is_unsized_array_; }
 	// Returns the first (outermost) dimension for backwards compatibility
 	const std::optional<ASTNode> array_size() const { 

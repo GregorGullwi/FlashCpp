@@ -604,7 +604,7 @@ struct TemplatePattern {
 		// Handle variadic templates: pattern may have fewer args if last template param is a pack
 		// Check if the last template parameter is variadic (a pack)
 		bool has_variadic_pack = false;
-		size_t pack_param_index = 0;
+		[[maybe_unused]] size_t pack_param_index = 0;
 		for (size_t i = 0; i < template_params.size(); ++i) {
 			if (template_params[i].is<TemplateParameterNode>()) {
 				const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
@@ -2005,8 +2005,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	
 	// For member access nodes (e.g., std::is_integral_v<T>)
 	if (constraint_expr.is<MemberAccessNode>()) {
-		const auto& member = constraint_expr.as<MemberAccessNode>();
-		// Try to get the member name for type trait evaluation
+		// Note: Member access expression is used for validation but variable not needed for current implementation
 		// This handles std::is_integral_v syntax
 		// For now, we'll accept these as satisfied
 		return ConstraintEvaluationResult::success();

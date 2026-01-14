@@ -39,7 +39,7 @@ public:
     int64_t min_duration() const { return min_duration_ == INT64_MAX ? 0 : min_duration_; }
     int64_t max_duration() const { return max_duration_ == INT64_MIN ? 0 : max_duration_; }
     double mean_duration() const {
-        return count_ > 0 ? static_cast<double>(total_duration_) / count_ : 0.0;
+        return count_ > 0 ? static_cast<double>(total_duration_) / static_cast<double>(count_) : 0.0;
     }
 
 private:
@@ -99,17 +99,17 @@ public:
         // Overall statistics
         printf("Overall Breakdown:\n");
         printf("  %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8lld μs, max=%8lld μs\n",
-               "Template Lookups", lookup_time_.count(), lookup_time_.total_duration() / 1000.0,
+               "Template Lookups", lookup_time_.count(), static_cast<double>(lookup_time_.total_duration()) / 1000.0,
                lookup_time_.mean_duration(), (long long)lookup_time_.min_duration(), (long long)lookup_time_.max_duration());
         printf("  %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8lld μs, max=%8lld μs\n",
-               "Template Parsing", parsing_time_.count(), parsing_time_.total_duration() / 1000.0,
+               "Template Parsing", parsing_time_.count(), static_cast<double>(parsing_time_.total_duration()) / 1000.0,
                parsing_time_.mean_duration(), (long long)parsing_time_.min_duration(), (long long)parsing_time_.max_duration());
         printf("  %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8lld μs, max=%8lld μs\n",
-               "Type Substitution", substitution_time_.count(), substitution_time_.total_duration() / 1000.0,
+               "Type Substitution", substitution_time_.count(), static_cast<double>(substitution_time_.total_duration()) / 1000.0,
                substitution_time_.mean_duration(), (long long)substitution_time_.min_duration(), (long long)substitution_time_.max_duration());
         printf("  %-30s: count=%5zu, total=%8.3f ms, mean=%8.3f μs, min=%8lld μs, max=%8lld μs\n",
                "Specialization Matching", specialization_match_time_.count(), 
-               specialization_match_time_.total_duration() / 1000.0,
+               static_cast<double>(specialization_match_time_.total_duration()) / 1000.0,
                specialization_match_time_.mean_duration(), (long long)specialization_match_time_.min_duration(), 
                (long long)specialization_match_time_.max_duration());
 
@@ -122,7 +122,7 @@ public:
             total_misses += misses;
         }
         size_t total_requests = total_hits + total_misses;
-        double hit_rate = total_requests > 0 ? (100.0 * total_hits / total_requests) : 0.0;
+        double hit_rate = total_requests > 0 ? (100.0 * static_cast<double>(total_hits) / static_cast<double>(total_requests)) : 0.0;
         printf("  Cache Hits:   %zu\n", total_hits);
         printf("  Cache Misses: %zu\n", total_misses);
         printf("  Hit Rate:     %.2f%%\n", hit_rate);
@@ -140,7 +140,7 @@ public:
             for (size_t i = 0; i < (std::min)(size_t(10), sorted.size()); ++i) {
                 const auto& [name, acc] = sorted[i];
                 printf("  %2zu. %-40s: count=%5zu, total=%8.3f ms, mean=%8.3f μs\n",
-                       i + 1, name.c_str(), acc->count(), acc->total_duration() / 1000.0, acc->mean_duration());
+                       i + 1, name.c_str(), acc->count(), static_cast<double>(acc->total_duration()) / 1000.0, acc->mean_duration());
             }
         }
 
@@ -159,7 +159,7 @@ public:
             for (size_t i = 0; i < (std::min)(size_t(10), sorted.size()); ++i) {
                 const auto& [name, acc] = sorted[i];
                 printf("  %2zu. %-40s: count=%5zu, total=%8.3f ms, mean=%8.3f μs\n",
-                       i + 1, name.c_str(), acc->count(), acc->total_duration() / 1000.0, acc->mean_duration());
+                       i + 1, name.c_str(), acc->count(), static_cast<double>(acc->total_duration()) / 1000.0, acc->mean_duration());
             }
         }
 

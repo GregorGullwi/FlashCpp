@@ -199,10 +199,10 @@ public:
 	bool isActive() const { return active_; }
 
 private:
-	Parser& parser_;
+	[[maybe_unused]] Parser& parser_;
 	FunctionParsingContext ctx_;
 	SymbolTableScope scope_;
-	void* previous_function_;  // FunctionDeclarationNode* - forward declared
+	[[maybe_unused]] void* previous_function_;  // FunctionDeclarationNode* - forward declared
 	bool active_;
 };
 
