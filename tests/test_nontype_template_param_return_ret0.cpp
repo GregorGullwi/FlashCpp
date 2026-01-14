@@ -13,11 +13,13 @@ struct element_type {
 template<int _Int, typename _Tp1, typename _Tp2>
 constexpr typename element_type<_Int, _Tp1>::type
 get_element() {
-    return 0;  // Return value-initialized result
+    // When called as get_element<0, int, float>(), the return type is element_type<0, int>::type = int
+    // So returning 0 is valid since int{} is 0
+    return 0;
 }
 
 int main() {
-    // Call with int as first type parameter
+    // Call with int as first type parameter - return type becomes int
     int result = get_element<0, int, float>();
     return result;  // Should return 0
 }

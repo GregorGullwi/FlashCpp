@@ -25368,11 +25368,8 @@ if (struct_type_info.getStructInfo()) {
 		}
 
 		// Otherwise, parse as function template using shared helper (Phase 6)
-		// Set template parameter context BEFORE parsing return type and function declaration
-		// This allows template parameters like _Int, _Tp1, _Tp2 to be recognized when used in
-		// complex return types like: typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&
-		current_template_param_names_ = template_param_names;
-		parsing_template_body_ = true;
+		// Note: current_template_param_names_ was already set earlier (line ~22659) after template parameter
+		// parsing, so template parameters are recognized when parsing the return type.
 		
 		ASTNode template_func_node;
 		auto body_result = parse_template_function_declaration_body(template_params, requires_clause, template_func_node);
