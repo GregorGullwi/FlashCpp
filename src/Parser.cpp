@@ -27764,9 +27764,12 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 // Returns a vector of types if successful, nullopt otherwise
 std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes) {
 	// Recursion depth guard to prevent stack overflow on deeply nested template arguments
-	// This is especially important on MSVC which has smaller default stack size
+	// This is especially important on MSVC which has smaller default stack size (1MB)
+	// Each recursive cycle through parse_explicit_template_arguments → parse_expression →
+	// parse_primary_expression → parse_explicit_template_arguments consumes significant
+	// stack space due to large local variables in parse_primary_expression
 	static thread_local int template_arg_recursion_depth = 0;
-	constexpr int MAX_TEMPLATE_ARG_RECURSION_DEPTH = 20;
+	constexpr int MAX_TEMPLATE_ARG_RECURSION_DEPTH = 5;  // Conservative limit for MSVC stack
 	
 	struct RecursionGuard {
 		int& depth;
