@@ -175,7 +175,7 @@ The following features have been implemented to support standard headers:
 - Compound requirement noexcept specifier
 - Template parameter brace initialization
 - Globally qualified `::new`/`::delete`
-- Template alias declarations with requires clauses (`template<typename T> requires Constraint using Alias = T;`)
+- Template alias declarations with requires clauses (`template<typename T> requires Constraint<T> using Alias = T;`)
 
 **Other:**
 - Named anonymous unions in typedef structs
