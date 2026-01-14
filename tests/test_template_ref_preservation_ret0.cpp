@@ -25,20 +25,22 @@ namespace ns {
 
 int main() {
     // Direct use of variable template
-    constexpr bool direct_nonref = ns::is_reference_v<int>;     // false
-    constexpr bool direct_lref = ns::is_reference_v<int&>;      // true
-    constexpr bool direct_rref = ns::is_reference_v<int&&>;     // true
+    constexpr bool direct_nonref = ns::is_reference_v<int>;     // false (0)
+    constexpr bool direct_lref = ns::is_reference_v<int&>;      // true (1)
+    constexpr bool direct_rref = ns::is_reference_v<int&&>;     // true (1)
 
     // Use through function template - reference preservation must work
-    constexpr bool func_nonref = ns::test_is_ref<int>();        // should be false
-    constexpr bool func_lref = ns::test_is_ref<int&>();         // should be true
-    constexpr bool func_rref = ns::test_is_ref<int&&>();        // should be true
+    constexpr bool func_nonref = ns::test_is_ref<int>();        // false (0)
+    constexpr bool func_lref = ns::test_is_ref<int&>();         // true (1)
+    constexpr bool func_rref = ns::test_is_ref<int&&>();        // true (1)
 
-    // Check all values
-    // If reference preservation works: 0 + 1 + 1 + 0 + 1 + 1 = 4
+    // Calculate total: direct_nonref(0) + direct_lref(1) + direct_rref(1) +
+    //                  func_nonref(0) + func_lref(1) + func_rref(1) = 4
+    constexpr int EXPECTED_TOTAL = 4;  // 2 direct refs + 2 function template refs
+    
     int result = direct_nonref + direct_lref + direct_rref + 
                  func_nonref + func_lref + func_rref;
 
-    // Return 0 if correct (result should be 4)
-    return (result == 4) ? 0 : result;
+    // Return 0 if all reference types were correctly detected
+    return (result == EXPECTED_TOTAL) ? 0 : result;
 }

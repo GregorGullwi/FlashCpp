@@ -543,10 +543,11 @@ inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
 		
 		// Set reference type
 		// Check is_rvalue_reference FIRST because is_reference is true for BOTH lvalue and rvalue refs
+		// Note: set_reference(true) = rvalue reference (&&), set_reference(false) = lvalue reference (&)
 		if (arg.is_rvalue_reference) {
-			ts.set_reference(true);   // rvalue reference
+			ts.set_reference(true);   // T&& - rvalue reference
 		} else if (arg.is_reference) {
-			ts.set_reference(false);  // lvalue reference
+			ts.set_reference(false);  // T& - lvalue reference
 		}
 		
 		// Set array info if present
