@@ -26591,15 +26591,19 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				restore_token_position(lookahead_pos);
 				
 				// Parse declaration specifiers again to get to constructor name
+				// Note: specs like constexpr/inline are parsed but not currently tracked in ConstructorDeclarationNode
 				auto specs = parse_declaration_specifiers();
+				(void)specs;  // Parsed for future use but not tracked in ConstructorDeclarationNode
 				
 				// Track 'explicit' separately (constructor-specific, not in DeclarationSpecifiers)
+				// Note: explicit is parsed but not currently tracked in ConstructorDeclarationNode
 				bool is_explicit = false;
 				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
 				       peek_token()->value() == "explicit") {
 					is_explicit = true;
 					consume_token();
 				}
+				(void)is_explicit;  // Parsed for future use but not tracked in ConstructorDeclarationNode
 				
 				// Now at the constructor name - consume it
 				Token ctor_name_token = *peek_token();
