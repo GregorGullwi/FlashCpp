@@ -9,7 +9,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | - |
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | - |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | - |
-| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Template instantiation volume (parsing now succeeds) |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Parsing fixed; template volume |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template instantiation volume |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template instantiation volume |
@@ -209,7 +209,7 @@ struct Box {
 - If detected, parse as a constructor with `ConstructorDeclarationNode` instead of routing to `parse_template_function_declaration_body()`
 - Handles initializer lists, noexcept specifier, `= default`, `= delete`, and function bodies
 
-**Progress:** `<utility>` parsing now advances past template constructor declarations to timeout on template instantiation volume.
+**Progress:** Template constructor declarations now parse successfully. The `<utility>` header progresses to the template instantiation phase before timing out.
 
 ### 2026-01-14: Namespace-Qualified Variable Template Lookup
 
