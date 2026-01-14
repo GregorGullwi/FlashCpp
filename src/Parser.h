@@ -682,7 +682,10 @@ public:  // Public methods for template instantiation
         ParseResult parse_qualified_identifier_after_template(const Token& template_base_token);  // Parse Template<T>::member
         
         // Helper to parse member template function calls: Template<T>::member<U>()
-        // Returns the parsed FunctionCallNode wrapped in ExpressionNode, or nullopt if not a function call
+        // Returns:
+        // - std::nullopt if not a function call (no '(' found after member name)
+        // - ParseResult with success if function call was parsed successfully
+        // - ParseResult with error if parsing failed
         std::optional<ParseResult> try_parse_member_template_function_call(
             std::string_view instantiated_class_name,
             std::string_view member_name,
