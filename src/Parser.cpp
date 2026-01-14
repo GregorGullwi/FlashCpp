@@ -22869,6 +22869,15 @@ ParseResult Parser::parse_template_declaration() {
 			FLASH_LOG(Parser, Debug, "Re-detected class template after requires clause");
 		}
 		
+		// Also re-check for alias template after requires clause
+		// Pattern: template<typename T> requires Constraint using Alias = T;
+		if (!is_alias_template && peek_token().has_value() &&
+		    peek_token()->type() == Token::Type::Keyword &&
+		    peek_token()->value() == "using") {
+			is_alias_template = true;
+			FLASH_LOG(Parser, Debug, "Re-detected alias template after requires clause");
+		}
+		
 		// Also re-check for variable template after requires clause
 		// Pattern: template<T> requires Constraint inline constexpr bool var<T> = value;
 		if (!is_class_template && !is_variable_template && peek_token().has_value()) {
@@ -26812,14 +26821,50 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			}
 		}
 	}
+	
+	// Set template parameter context for parsing the requires clause
+	auto saved_template_param_names = current_template_param_names_;
+	current_template_param_names_ = template_param_names;
+	bool saved_parsing_template_body = parsing_template_body_;
+	parsing_template_body_ = true;
+
+	// Handle optional requires clause
+	// Pattern: template<typename T> requires Constraint using Alias = T;
+	std::optional<ASTNode> requires_clause;
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+	    peek_token()->value() == "requires") {
+		Token requires_token = *peek_token();
+		consume_token(); // consume 'requires'
+		
+		// Parse the constraint expression
+		auto constraint_result = parse_expression();
+		if (constraint_result.is_error()) {
+			// Clean up template parameter context before returning
+			current_template_param_names_ = saved_template_param_names;
+			parsing_template_body_ = saved_parsing_template_body;
+			return constraint_result;
+		}
+		
+		// Create RequiresClauseNode
+		requires_clause = emplace_node<RequiresClauseNode>(
+			*constraint_result.node(),
+			requires_token
+		);
+		
+		FLASH_LOG(Parser, Debug, "Parsed requires clause for member template alias");
+	}
 
 	// Expect 'using' keyword
 	if (!consume_keyword("using")) {
+		current_template_param_names_ = saved_template_param_names;
+		parsing_template_body_ = saved_parsing_template_body;
 		return ParseResult::error("Expected 'using' keyword in member template alias", *peek_token());
 	}
 
 	// Parse alias name
 	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+		current_template_param_names_ = saved_template_param_names;
+		parsing_template_body_ = saved_parsing_template_body;
 		return ParseResult::error("Expected alias name after 'using' in member template alias", *current_token_);
 	}
 	Token alias_name_token = *peek_token();
@@ -26828,6 +26873,8 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Expect '='
 	if (!peek_token().has_value() || peek_token()->value() != "=") {
+		current_template_param_names_ = saved_template_param_names;
+		parsing_template_body_ = saved_parsing_template_body;
 		return ParseResult::error("Expected '=' after alias name in member template alias", *current_token_);
 	}
 	consume_token(); // consume '='
@@ -26835,6 +26882,8 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	// Parse the target type
 	ParseResult type_result = parse_type_specifier();
 	if (type_result.is_error()) {
+		current_template_param_names_ = saved_template_param_names;
+		parsing_template_body_ = saved_parsing_template_body;
 		return type_result;
 	}
 
@@ -26870,6 +26919,8 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Expect semicolon
 	if (!consume_punctuator(";")) {
+		current_template_param_names_ = saved_template_param_names;
+		parsing_template_body_ = saved_parsing_template_body;
 		return ParseResult::error("Expected ';' after member template alias declaration", *current_token_);
 	}
 
@@ -26888,6 +26939,10 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", qualified_name);
 
+	// Restore template parameter context
+	current_template_param_names_ = saved_template_param_names;
+	parsing_template_body_ = saved_parsing_template_body;
+	
 	// template_scope automatically cleans up template parameters when it goes out of scope
 
 	return saved_position.success();
@@ -27530,6 +27585,63 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 		}
 		
 		// Now check what comes after the template parameters
+		// Handle requires clause: template<typename T> requires Constraint using Alias = T;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+		    peek_token()->value() == "requires") {
+			consume_token(); // consume 'requires'
+			
+			// Skip the constraint expression by counting balanced brackets/parens
+			// The constraint expression ends before 'using', 'struct', 'class', 'friend', or a type specifier
+			int paren_depth = 0;
+			int angle_depth = 0;
+			int brace_depth = 0;
+			while (peek_token().has_value()) {
+				std::string_view tok_val = peek_token()->value();
+				
+				// Track nested brackets
+				if (tok_val == "(") paren_depth++;
+				else if (tok_val == ")") paren_depth--;
+				else if (tok_val == "<") angle_depth++;
+				else if (tok_val == ">") angle_depth--;
+				else if (tok_val == "{") brace_depth++;
+				else if (tok_val == "}") brace_depth--;
+				
+				// At top level, check for the actual declaration keyword
+				if (paren_depth == 0 && angle_depth == 0 && brace_depth == 0) {
+					if (peek_token()->type() == Token::Type::Keyword) {
+						std::string_view kw = tok_val;
+						if (kw == "using" || kw == "struct" || kw == "class" || kw == "friend") {
+							break;
+						}
+						// Common function specifiers that indicate we've reached the declaration
+						if (kw == "constexpr" || kw == "static" || kw == "inline" || 
+						    kw == "virtual" || kw == "explicit" || kw == "const" || kw == "volatile") {
+							break;
+						}
+					}
+					// Type specifiers (identifiers not in constraint) indicate end of requires clause
+					// BUT only if the identifier is NOT followed by '<' (which would indicate a template)
+					else if (peek_token()->type() == Token::Type::Identifier) {
+						// Peek ahead to see if this is a template instantiation (part of constraint)
+						// Save position, check next token, then restore
+						SaveHandle id_check_pos = save_token_position();
+						consume_token(); // consume the identifier
+						bool is_template_part = peek_token().has_value() && peek_token()->value() == "<";
+						restore_token_position(id_check_pos);
+						
+						if (!is_template_part) {
+							// This identifier is followed by something other than '<'
+							// It's likely the start of the declaration (a type), not part of the constraint
+							break;
+						}
+						// Otherwise, it's a template like is_reference_v<T> - continue skipping
+					}
+				}
+				
+				consume_token();
+			}
+		}
+		
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 			std::string_view next_keyword = peek_token()->value();
 			if (next_keyword == "using") {
