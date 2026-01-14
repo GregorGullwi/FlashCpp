@@ -1,6 +1,7 @@
 #include "AstNodeTypes.h"
 #include "ChunkedString.h"
 #include "NameMangling.h"
+#include "Log.h"
 #include <sstream>
 #include <set>
 #include <unordered_set>
@@ -640,9 +641,12 @@ const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator() const {
 }
 
 // Finalize struct layout with base classes
-void StructTypeInfo::finalizeWithBases() {
+// Returns false if semantic errors were detected
+bool StructTypeInfo::finalizeWithBases() {
     // Step 0: Build vtable first (before layout)
-    buildVTable();
+    if (!buildVTable()) {
+        return false;  // Semantic error during vtable building
+    }
 
     // Step 0.1: Build RTTI information (after vtable, before layout)
     buildRTTI();
@@ -793,10 +797,15 @@ void StructTypeInfo::finalizeWithBases() {
     // Step 5: Pad to alignment
     alignment = max_alignment;
     total_size = (current_offset + alignment - 1) & ~(alignment - 1);
+    
+    return true;
 }
 
 // Build vtable for virtual functions
-void StructTypeInfo::buildVTable() {
+// Returns false if semantic errors were detected
+bool StructTypeInfo::buildVTable() {
+    bool success = true;
+    
     // Step 1: Copy base class vtable entries (if any)
     for (const auto& base : base_classes) {
         if (base.type_index >= gTypeInfo.size()) {
@@ -821,7 +830,7 @@ void StructTypeInfo::buildVTable() {
 
     // Step 2: Process this class's virtual functions
     if (member_functions.empty()) {
-        return;  // No member functions to process
+        return true;  // No member functions to process
     }
 
     for (auto& func : member_functions) {
@@ -858,9 +867,12 @@ void StructTypeInfo::buildVTable() {
             // Check if base function is final
             if (base_func_ptr && base_func_ptr->is_final) {
                 // Error: attempting to override a final function
-                // For now, we'll just ignore this - proper error handling would require
-                // access to the parser's error reporting mechanism
-                // TODO: Report error "cannot override final function"
+                std::string error_msg = "cannot override final function '" + 
+                    std::string(StringTable::getStringView(func_name)) + "' in class '" +
+                    std::string(StringTable::getStringView(getName())) + "'";
+                FLASH_LOG(Parser, Error, error_msg);
+                finalization_error_ = error_msg;
+                success = false;
             }
             
             // Override existing vtable entry
@@ -875,8 +887,13 @@ void StructTypeInfo::buildVTable() {
         // Validate override keyword usage
         if (func.is_override && override_index < 0) {
             // Error: 'override' specified but no base function to override
-            // For now, we'll just ignore this - proper error handling would require
-            // access to the parser's error reporting mechanism
+            std::string error_msg = "function '" + 
+                std::string(StringTable::getStringView(func_name)) + 
+                "' marked 'override' but does not override any base class function in class '" +
+                std::string(StringTable::getStringView(getName())) + "'";
+            FLASH_LOG(Parser, Error, error_msg);
+            finalization_error_ = error_msg;
+            success = false;
         }
     }
 
@@ -905,6 +922,8 @@ void StructTypeInfo::buildVTable() {
         
         vtable_symbol = vtable_sb.commit();
     }
+    
+    return success;
 }
 
 // Update abstract flag based on pure virtual functions in vtable

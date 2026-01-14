@@ -7,13 +7,13 @@ struct Point {
     Point() = default;
     
     // Explicitly defaulted copy constructor
-    Point(Point& other) = default;
+    Point(const Point& other) = default;
     
     // Explicitly defaulted move constructor
     Point(Point&& other) = default;
     
     // Explicitly defaulted copy assignment operator
-    Point& operator=(Point& other) = default;
+    Point& operator=(const Point& other) = default;
     
     // Explicitly defaulted move assignment operator
     Point& operator=(Point&& other) = default;
@@ -22,4 +22,3 @@ struct Point {
 int main() {
     return 0;
 }
-

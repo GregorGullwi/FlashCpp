@@ -3366,7 +3366,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Finalize struct layout
-			struct_info->finalize();
+			if (!struct_info->finalize()) {
+				return ParseResult::error(struct_info->getFinalizationError(), Token());
+			}
 			
 			// Store struct info
 			struct_type_info.setStructInfo(std::move(struct_info));
@@ -5104,8 +5106,42 @@ ParseResult Parser::parse_struct_declaration()
 								return ParseResult::error("Expected ';' after '= delete'", *peek_token());
 							}
 
-							// For now, we'll just skip deleted constructors
-							// TODO: Track deleted constructors to prevent their use
+							// Track deleted constructors to prevent their use
+							// Determine what kind of constructor this is based on parameters:
+							// - No params = default constructor
+							// - 1 param of lvalue reference to same type = copy constructor
+							// - 1 param of rvalue reference to same type = move constructor
+							if (struct_info) {
+								size_t num_params = params.parameters.size();
+								bool is_copy_ctor = false;
+								bool is_move_ctor = false;
+								
+								if (num_params == 1) {
+									// Check if the parameter is a reference to this type
+									const auto& param = params.parameters[0];
+									if (param.is<DeclarationNode>()) {
+										const auto& param_decl = param.as<DeclarationNode>();
+										// Check if the type specifier matches the struct name
+										const auto& type_node = param_decl.type_node();
+										if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
+											const auto& type_spec = type_node.as<TypeSpecifierNode>();
+											std::string_view param_type_name = type_spec.token().value();
+											if (param_type_name == struct_name || 
+											    param_type_name == qualified_struct_name.view()) {
+												// It's a reference to this type
+												if (type_spec.is_rvalue_reference()) {
+													is_move_ctor = true;
+												} else if (type_spec.is_reference()) {
+													is_copy_ctor = true;
+												}
+											}
+										}
+									}
+								}
+								
+								struct_info->markConstructorDeleted(is_copy_ctor, is_move_ctor);
+							}
+
 							// ctor_scope automatically exits scope on continue
 							continue; // Don't add deleted constructor to struct
 						} else {
@@ -5254,8 +5290,10 @@ ParseResult Parser::parse_struct_declaration()
 							return ParseResult::error("Expected ';' after '= delete'", *peek_token());
 						}
 
-						// For now, we'll just skip deleted destructors
-						// TODO: Track deleted destructors to prevent their use
+						// Track deleted destructors to prevent their use
+						if (struct_info) {
+							struct_info->markDestructorDeleted();
+						}
 						continue; // Don't add deleted destructor to struct
 					} else {
 						return ParseResult::error("Expected 'default' or 'delete' after '='", *peek_token());
@@ -5452,6 +5490,34 @@ ParseResult Parser::parse_struct_declaration()
 				if (!consume_punctuator(";")) {
 					return ParseResult::error("Expected ';' after '= delete'", *peek_token());
 				}
+				
+				// Track deleted assignment operators to prevent their implicit use
+				if (struct_info && decl_node.identifier_token().value() == "operator=") {
+					// Check if it's a move or copy assignment operator based on parameter type
+					bool is_move_assign = false;
+					const auto& params = member_func_ref.parameter_nodes();
+					if (params.size() == 1) {
+						const auto& param = params[0];
+						if (param.is<DeclarationNode>()) {
+							const auto& param_decl = param.as<DeclarationNode>();
+							// Check if the type specifier matches the struct name
+							const auto& type_node = param_decl.type_node();
+							if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
+								const auto& type_spec = type_node.as<TypeSpecifierNode>();
+								std::string_view param_type_name = type_spec.token().value();
+								if (param_type_name == struct_name || 
+								    param_type_name == qualified_struct_name.view()) {
+									// It's a reference to this type
+									if (type_spec.is_rvalue_reference()) {
+										is_move_assign = true;
+									}
+								}
+							}
+						}
+					}
+					struct_info->markAssignmentDeleted(is_move_assign);
+				}
+				
 				// Deleted functions are not added to the struct - they exist only to prevent
 				// implicit generation of special member functions or to disable certain overloads
 				continue;
@@ -6427,10 +6493,16 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Finalize struct layout (add padding)
 	// Use finalizeWithBases() if there are base classes, otherwise use finalize()
+	bool finalize_success;
 	if (!struct_info->base_classes.empty()) {
-		struct_info->finalizeWithBases();
+		finalize_success = struct_info->finalizeWithBases();
 	} else {
-		struct_info->finalize();
+		finalize_success = struct_info->finalize();
+	}
+	
+	// Check for semantic errors during finalization (e.g., overriding final function)
+	if (!finalize_success) {
+		return ParseResult::error(struct_info->getFinalizationError(), Token());
 	}
 
 	// Check if template class has static members before moving struct_info
@@ -7598,7 +7670,9 @@ ParseResult Parser::parse_typedef_declaration()
 		}
 
 		// Finalize struct layout (add padding)
-		struct_info->finalize();
+		if (!struct_info->finalize()) {
+			return ParseResult::error(struct_info->getFinalizationError(), Token());
+		}
 
 		// Store struct info
 		struct_type_info.setStructInfo(std::move(struct_info));
@@ -8785,7 +8859,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					add_div_struct_members(struct_info.get(), identifier_token.value());
 					
 					// Finalize the struct layout
-					struct_info->finalize();
+					if (!struct_info->finalize()) {
+						return ParseResult::error(struct_info->getFinalizationError(), Token());
+					}
 					
 					type_info.setStructInfo(std::move(struct_info));
 					if (type_info.getStructInfo()) {
@@ -8826,7 +8902,9 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				add_div_struct_members(struct_info.get(), identifier_token.value());
 				
 				// Finalize the struct layout
-				struct_info->finalize();
+				if (!struct_info->finalize()) {
+					return ParseResult::error(struct_info->getFinalizationError(), Token());
+				}
 				
 				type_info.setStructInfo(std::move(struct_info));
 				if (type_info.getStructInfo()) {
@@ -24213,10 +24291,16 @@ ParseResult Parser::parse_template_declaration() {
 			FLASH_LOG(Templates, Debug, "Full spec ", instantiated_name, " has_constructor=", has_constructor);
 
 			// Finalize the struct layout with base classes
+			bool finalize_success;
 			if (!struct_ref.base_classes().empty()) {
-				struct_info_ptr->finalizeWithBases();
+				finalize_success = struct_info_ptr->finalizeWithBases();
 			} else {
-				struct_info_ptr->finalize();
+				finalize_success = struct_info_ptr->finalize();
+			}
+			
+			// Check for semantic errors during finalization
+			if (!finalize_success) {
+				return ParseResult::error(struct_info_ptr->getFinalizationError(), Token());
 			}
 
 			// Parse delayed function bodies for specialization member functions
@@ -25041,10 +25125,16 @@ ParseResult Parser::parse_template_declaration() {
 			}
 			
 			// Finalize the struct layout with base classes
+			bool finalize_success;
 			if (!struct_ref.base_classes().empty()) {
-				struct_info->finalizeWithBases();
+				finalize_success = struct_info->finalizeWithBases();
 			} else {
-				struct_info->finalize();
+				finalize_success = struct_info->finalize();
+			}
+			
+			// Check for semantic errors during finalization
+			if (!finalize_success) {
+				return ParseResult::error(struct_info->getFinalizationError(), Token());
 			}
 			
 			// Store struct info
@@ -32174,10 +32264,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		// Finalize the struct layout
+		bool finalize_success;
 		if (!pattern_struct.base_classes().empty()) {
-			struct_info->finalizeWithBases();
+			finalize_success = struct_info->finalizeWithBases();
 		} else {
-			struct_info->finalize();
+			finalize_success = struct_info->finalize();
+		}
+		
+		// Check for semantic errors during finalization
+		if (!finalize_success) {
+			// Log error and return nullopt - compilation will continue but template instantiation fails
+			FLASH_LOG(Parser, Error, struct_info->getFinalizationError());
+			return std::nullopt;
 		}
 		struct_type_info.setStructInfo(std::move(struct_info));
 if (struct_type_info.getStructInfo()) {
@@ -33913,7 +34011,11 @@ if (struct_type_info.getStructInfo()) {
 			}
 			
 			// Finalize the nested struct layout
-			nested_struct_info->finalize();
+			if (!nested_struct_info->finalize()) {
+				// Log error and return nullopt - compilation will continue but template instantiation fails
+				FLASH_LOG(Parser, Error, nested_struct_info->getFinalizationError());
+				return std::nullopt;
+			}
 			
 			// Register the nested class in the type system
 			auto& nested_type_info = gTypeInfo.emplace_back(qualified_name, Type::Struct, gTypeInfo.size());
@@ -33980,10 +34082,18 @@ if (struct_type_info.getStructInfo()) {
 	}
 
 	// Finalize the struct layout
+	bool finalize_success;
 	if (!struct_info->base_classes.empty()) {
-		struct_info->finalizeWithBases();
+		finalize_success = struct_info->finalizeWithBases();
 	} else {
-		struct_info->finalize();
+		finalize_success = struct_info->finalize();
+	}
+	
+	// Check for semantic errors during finalization
+	if (!finalize_success) {
+		// Log error and return nullopt - compilation will continue but template instantiation fails
+		FLASH_LOG(Parser, Error, struct_info->getFinalizationError());
+		return std::nullopt;
 	}
 
 	// Store struct info in type info

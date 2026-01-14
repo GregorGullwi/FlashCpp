@@ -6,13 +6,12 @@ struct NonCopyable {
     NonCopyable() = default;
     
     // Delete copy constructor
-    NonCopyable(NonCopyable& other) = delete;
+    NonCopyable(const NonCopyable& other) = delete;
     
     // Delete copy assignment operator
-    NonCopyable& operator=(NonCopyable& other) = delete;
+    NonCopyable& operator=(const NonCopyable& other) = delete;
 };
 
 int main() {
     return 0;
 }
-
