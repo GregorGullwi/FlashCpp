@@ -4957,9 +4957,9 @@ ParseResult Parser::parse_struct_declaration()
 
 		// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
 		bool is_member_constexpr = false;
-		bool is_member_consteval = false;
-		bool is_member_inline = false;
-		bool is_member_explicit = false;
+		[[maybe_unused]] bool is_member_consteval = false;
+		[[maybe_unused]] bool is_member_inline = false;
+		[[maybe_unused]] bool is_member_explicit = false;
 		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 			std::string_view kw = peek_token()->value();
 			if (kw == "constexpr") {
@@ -4986,12 +4986,12 @@ ParseResult Parser::parse_struct_declaration()
 		    peek_token()->value() == struct_name) {
 			// Look ahead to see if this is a constructor (next token is '(')
 			// We need to consume the struct name token and check the next token
-			auto name_token_opt = consume_token();
-			if (!name_token_opt.has_value()) {
+			auto ctor_name_token_opt = consume_token();
+			if (!ctor_name_token_opt.has_value()) {
 				return ParseResult::error("Expected constructor name", Token());
 			}
-			Token name_token = name_token_opt.value();  // Copy the token to keep it alive
-			std::string_view ctor_name = name_token.value();  // Get the string_view from the token
+			Token ctor_name_token = ctor_name_token_opt.value();  // Copy the token to keep it alive
+			std::string_view ctor_name = ctor_name_token.value();  // Get the string_view from the token
 
 			if (peek_token().has_value() && peek_token()->value() == "(") {
 				// Discard saved position since we're using this as a constructor
@@ -5156,7 +5156,8 @@ ParseResult Parser::parse_struct_declaration()
 						true,  // is_constructor
 						false,  // is_destructor
 						&ctor_ref,  // ctor_node
-						nullptr   // dtor_node
+						nullptr,   // dtor_node
+						{}  // template_param_names
 					});
 				} else if (!is_defaulted && !is_deleted && !consume_punctuator(";")) {
 					// No constructor body - ctor_scope automatically exits scope on return
@@ -5188,13 +5189,13 @@ ParseResult Parser::parse_struct_declaration()
 		if (peek_token().has_value() && peek_token()->value() == "~") {
 			consume_token();  // consume '~'
 
-			auto name_token_opt = consume_token();
-			if (!name_token_opt.has_value() || name_token_opt->type() != Token::Type::Identifier ||
-			    name_token_opt->value() != struct_name) {
-				return ParseResult::error("Expected struct name after '~' in destructor", name_token_opt.value_or(Token()));
+			auto dtor_name_token_opt = consume_token();
+			if (!dtor_name_token_opt.has_value() || dtor_name_token_opt->type() != Token::Type::Identifier ||
+			    dtor_name_token_opt->value() != struct_name) {
+				return ParseResult::error("Expected struct name after '~' in destructor", dtor_name_token_opt.value_or(Token()));
 			}
-			Token name_token = name_token_opt.value();  // Copy the token to keep it alive
-			std::string_view dtor_name = name_token.value();  // Get the string_view from the token
+			Token dtor_name_token = dtor_name_token_opt.value();  // Copy the token to keep it alive
+			std::string_view dtor_name = dtor_name_token.value();  // Get the string_view from the token
 
 			if (!consume_punctuator("(")) {
 				return ParseResult::error("Expected '(' after destructor name", *peek_token());
@@ -5565,7 +5566,7 @@ ParseResult Parser::parse_struct_declaration()
 				// Check if this is a type name followed by brace initializer: B b = B{ .a = 2 }
 				else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 					// Save position in case this isn't a type name
-					SaveHandle saved_pos = save_token_position();
+					SaveHandle init_saved_pos = save_token_position();
 
 					// Try to parse as type specifier
 					ParseResult type_result = parse_type_specifier();
@@ -5610,10 +5611,10 @@ ParseResult Parser::parse_struct_declaration()
 							}
 							default_initializer = init_list_node;
 						}
-						discard_saved_token(saved_pos);
+						discard_saved_token(init_saved_pos);
 					} else {
 						// Not a type name, restore and parse as expression
-						restore_token_position(saved_pos);
+						restore_token_position(init_saved_pos);
 						auto init_result = parse_expression();
 						if (init_result.is_error()) {
 							return init_result;
@@ -5848,7 +5849,7 @@ ParseResult Parser::parse_struct_declaration()
 		// Get member size and alignment
 		// Calculate member size and alignment
 		auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
-		size_t referenced_size_bits = type_spec.size_in_bits();
+		size_t referenced_size_bits = static_cast<size_t>(type_spec.size_in_bits());
 
 		// For struct types, get size and alignment from the struct type info
 		if (type_spec.type() == Type::Struct && !type_spec.is_pointer() && !type_spec.is_reference()) {
@@ -5893,7 +5894,7 @@ ParseResult Parser::parse_struct_declaration()
 		// Reference size and alignment were already set above
 		if (is_ref_member) {
 			// Update referenced_size_bits if not already set
-			referenced_size_bits = referenced_size_bits ? referenced_size_bits : (type_spec.size_in_bits());
+			referenced_size_bits = referenced_size_bits ? referenced_size_bits : static_cast<size_t>(type_spec.size_in_bits());
 		}
 		// Phase 7B: Intern member name and use StringHandle overload
 		StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
@@ -6449,7 +6450,7 @@ ParseResult Parser::parse_struct_declaration()
 	struct_type_info.setStructInfo(std::move(struct_info));
 	// Update type_size_ from the finalized struct's total size
 	if (struct_type_info.getStructInfo()) {
-		struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+		struct_type_info.type_size_ = static_cast<int>(struct_type_info.getStructInfo()->total_size);
 	}
 
 	// If this is a nested class, also register it with its qualified name
@@ -6618,7 +6619,7 @@ ParseResult Parser::parse_enum_declaration()
 		underlying_size = type_spec.size_in_bits();
 	}
 	enum_info->underlying_type = underlying_type;
-	enum_info->underlying_size = underlying_size;
+	enum_info->underlying_size = static_cast<unsigned char>(underlying_size);
 
 	// Parse enumerators
 	long long next_value = 0;
@@ -6820,7 +6821,7 @@ ParseResult Parser::parse_typedef_declaration()
 		consume_token(); // consume 'enum'
 
 		// Check for 'class' or 'struct' keyword (enum class / enum struct)
-		bool has_class_keyword = false;
+		[[maybe_unused]] bool has_class_keyword = false;
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
 		    (peek_token()->value() == "class" || peek_token()->value() == "struct")) {
 			has_class_keyword = true;
@@ -6931,7 +6932,7 @@ ParseResult Parser::parse_typedef_declaration()
 		auto enum_info = std::make_unique<EnumTypeInfo>(enum_name_for_typedef, is_scoped);
 
 		// Determine underlying type (default is int)
-		Type underlying_type = Type::Int;
+		[[maybe_unused]] Type underlying_type = Type::Int;
 		int underlying_size = 32;
 		if (enum_ref.has_underlying_type()) {
 			const auto& type_spec_node = enum_ref.underlying_type()->as<TypeSpecifierNode>();
@@ -7565,7 +7566,7 @@ ParseResult Parser::parse_typedef_declaration()
 
 			// Calculate member size and alignment
 			auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
-			size_t referenced_size_bits = member_type_spec.size_in_bits();
+			size_t referenced_size_bits = static_cast<size_t>(member_type_spec.size_in_bits());
 
 			if (member_type_spec.type() == Type::Struct) {
 				const TypeInfo* member_type_info = nullptr;
@@ -7587,7 +7588,7 @@ ParseResult Parser::parse_typedef_declaration()
 			bool is_rvalue_ref_member = member_type_spec.is_rvalue_reference();
 			if (is_ref_member) {
 				// Size and alignment were already set correctly above for references
-				referenced_size_bits = referenced_size_bits ? referenced_size_bits : member_type_spec.size_in_bits();
+				referenced_size_bits = referenced_size_bits ? referenced_size_bits : static_cast<size_t>(member_type_spec.size_in_bits());
 			}
 			// Phase 7B: Intern member name and use StringHandle overload
 			StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
@@ -7612,7 +7613,7 @@ ParseResult Parser::parse_typedef_declaration()
 		struct_type_info.setStructInfo(std::move(struct_info));
 		// Update type_size_ from the finalized struct's total size
 		if (struct_type_info.getStructInfo()) {
-			struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+			struct_type_info.type_size_ = static_cast<int>(struct_type_info.getStructInfo()->total_size);
 		}
 
 		// Create type specifier for the struct
@@ -7962,7 +7963,7 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	}
 
 	// Check for 'struct' or 'class' keyword
-	bool is_struct = false;
+	[[maybe_unused]] bool is_struct = false;
 	if (peek_token().has_value() && peek_token()->value() == "struct") {
 		is_struct = true;
 		consume_token(); // consume 'struct'
@@ -8784,10 +8785,10 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				if ((is_from_global || is_from_gnu_cxx) && type_it != c_library_types.end()) {
 					// Create opaque C library type
 					auto& type_info = gTypeInfo.emplace_back(target_type_name, Type::Struct, gTypeInfo.size());
-					type_info.type_size_ = type_it->second;
+					type_info.type_size_ = static_cast<int>(type_it->second);
 					
 					auto struct_info = std::make_unique<StructTypeInfo>(target_type_name, AccessSpecifier::Public);
-					struct_info->total_size = type_it->second / 8;
+					struct_info->total_size = static_cast<size_t>(type_it->second) / 8;
 					
 					// Add members for div_t, ldiv_t, and lldiv_t
 					add_div_struct_members(struct_info.get(), identifier_token.value());
@@ -8797,7 +8798,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					
 					type_info.setStructInfo(std::move(struct_info));
 					if (type_info.getStructInfo()) {
-						type_info.type_size_ = type_info.getStructInfo()->total_size;
+						type_info.type_size_ = static_cast<int>(type_info.getStructInfo()->total_size);
 					}
 					
 					gTypesByName.emplace(target_type_name, &type_info);
@@ -8825,10 +8826,10 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			if (gTypesByName.find(type_name) == gTypesByName.end()) {
 				// Create opaque C library type in global namespace
 				auto& type_info = gTypeInfo.emplace_back(type_name, Type::Struct, gTypeInfo.size());
-				type_info.type_size_ = type_it->second;
+				type_info.type_size_ = static_cast<int>(type_it->second);
 				
 				auto struct_info = std::make_unique<StructTypeInfo>(type_name, AccessSpecifier::Public);
-				struct_info->total_size = type_it->second / 8;
+				struct_info->total_size = static_cast<size_t>(type_it->second) / 8;
 				
 				// Add members for div_t, ldiv_t, and lldiv_t
 				add_div_struct_members(struct_info.get(), identifier_token.value());
@@ -8838,7 +8839,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				
 				type_info.setStructInfo(std::move(struct_info));
 				if (type_info.getStructInfo()) {
-					type_info.type_size_ = type_info.getStructInfo()->total_size;
+					type_info.type_size_ = static_cast<int>(type_info.getStructInfo()->total_size);
 				}
 				
 				gTypesByName.emplace(type_name, &type_info);
