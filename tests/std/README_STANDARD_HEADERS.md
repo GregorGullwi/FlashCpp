@@ -96,23 +96,30 @@ template<typename _Xp, typename _Yp>
 - C++20 inline nested namespaces: Pattern `namespace A::inline B { }` now works
 - `const typename` in type specifiers: Pattern `constexpr const typename T::type` now works
 
-### 3. Template Argument Reference Preservation
+### 3. Template Argument Reference Preservation (FIXED - 2026-01-14)
 
-**Issue:** Template argument substitution can lose reference qualifiers when substituting type parameters.
+**Issue:** ~~Template argument substitution can lose reference qualifiers when substituting type parameters.~~ **RESOLVED**
 
 **Example pattern:**
 ```cpp
 template<typename T>
 constexpr bool test() {
-    return is_reference_v<T>;  // T=int& becomes just int
+    return is_reference_v<T>;  // T=int& now correctly preserves reference
 }
 
-test<int&>();  // Should return true, but returns false
+test<int&>();  // Now correctly returns true
+test<int&&>(); // Now correctly returns true
 ```
 
-**Root cause:** When instantiating function templates, reference qualifiers on template arguments are not properly preserved when passed to nested variable templates.
+**Fix applied:** Updated three code paths in `Parser.cpp` and `TemplateRegistry.h`:
+1. `toTemplateArgument()`: Check `is_rvalue_reference` BEFORE `is_reference` since both flags are true for rvalue references
+2. `try_instantiate_template_explicit()`: Use `toTemplateArgument()` to preserve full type info including references instead of just `makeType(base_type)`
+3. `mangleTemplateName()`: Include reference qualifiers (`R` for `&`, `RR` for `&&`) in mangled names to generate distinct instantiations
+4. Template parameter registration: Preserve `is_reference_` and `is_rvalue_reference_` in `TypeInfo` when setting up type aliases during template body re-parsing
 
-### 3. Template Instantiation Performance
+**Test case:** `tests/test_template_ref_preservation_ret0.cpp`
+
+### 4. Template Instantiation Performance
 
 Most headers timeout due to template instantiation volume, not parsing errors. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
 
@@ -176,6 +183,7 @@ The following features have been implemented to support standard headers:
 - Template parameter brace initialization
 - Globally qualified `::new`/`::delete`
 - Template alias declarations with requires clauses (`template<typename T> requires Constraint<T> using Alias = T;`)
+- Template argument reference preservation in function template instantiation
 
 **Other:**
 - Named anonymous unions in typedef structs
@@ -183,6 +191,23 @@ The following features have been implemented to support standard headers:
 - Global scope `operator new`/`operator delete`
 
 ## Recent Changes
+
+### 2026-01-14: Template Argument Reference Preservation
+
+**Fixed:** Reference qualifiers (`&` and `&&`) are now properly preserved when instantiating function templates with reference type arguments.
+
+- Pattern: `template<typename T> bool test() { return is_reference_v<T>; }` called with `test<int&>()` or `test<int&&>()`
+- Previously: Reference qualifiers were lost during template instantiation, causing `is_reference_v<T>` to always return `false` for reference types passed through a function template
+- Now: Each combination of base type and reference qualifier generates a distinct template instantiation (e.g., `test_int`, `test_intR`, `test_intRR`)
+- **Test case:** `tests/test_template_ref_preservation_ret0.cpp`
+
+**Technical details:**
+1. Fixed `toTemplateArgument()` in `TemplateRegistry.h` to check `is_rvalue_reference` BEFORE `is_reference` (both flags are true for rvalue references)
+2. Updated `try_instantiate_template_explicit()` to use `toTemplateArgument()` instead of `makeType(base_type)` to preserve full type info
+3. Extended `mangleTemplateName()` to include `R` suffix for lvalue references and `RR` suffix for rvalue references
+4. Set `is_reference_` and `is_rvalue_reference_` in `TypeInfo` during template parameter registration
+
+**Progress:** Type traits using variable template partial specializations (like `is_reference_v<T&>`) now work correctly when accessed from within function templates.
 
 ### 2026-01-14: Template Alias with Requires Clause
 
