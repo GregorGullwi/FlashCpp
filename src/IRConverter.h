@@ -2121,7 +2121,7 @@ struct RegisterAllocator
 			result.op_codes[0] = rex;
 			result.op_codes[1] = 0x89;  // MOV r64, r64
 			// ModR/M: Mod=11 (register-to-register), Reg=src_reg (lower 3 bits), R/M=dst_reg (lower 3 bits)
-			result.op_codes[2] = 0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07);
+			result.op_codes[2] = static_cast<uint8_t>(0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07));
 			result.size_in_bytes = 3;
 		}
 		// For 32-bit moves, we may need REX prefix for R8-R15
@@ -2137,11 +2137,11 @@ struct RegisterAllocator
 				}
 				result.op_codes[0] = rex;
 				result.op_codes[1] = 0x89;  // MOV r32, r32
-				result.op_codes[2] = 0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07);
+				result.op_codes[2] = static_cast<uint8_t>(0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07));
 				result.size_in_bytes = 3;
 			} else {
 				result.op_codes[0] = 0x89;  // MOV r32, r32
-				result.op_codes[1] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
+				result.op_codes[1] = static_cast<uint8_t>(0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg));
 				result.size_in_bytes = 2;
 			}
 		}
@@ -2159,11 +2159,11 @@ struct RegisterAllocator
 				}
 				result.op_codes[1] = rex;
 				result.op_codes[2] = 0x89;  // MOV r16, r16
-				result.op_codes[3] = 0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07);
+				result.op_codes[3] = static_cast<uint8_t>(0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07));
 				result.size_in_bytes = 4;
 			} else {
 				result.op_codes[1] = 0x89;  // MOV r16, r16
-				result.op_codes[2] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
+				result.op_codes[2] = static_cast<uint8_t>(0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg));
 				result.size_in_bytes = 3;
 			}
 		}
@@ -2187,11 +2187,11 @@ struct RegisterAllocator
 				}
 				result.op_codes[0] = rex;
 				result.op_codes[1] = 0x88;  // MOV r8, r8
-				result.op_codes[2] = 0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07);
+				result.op_codes[2] = static_cast<uint8_t>(0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07));
 				result.size_in_bytes = 3;
 			} else {
 				result.op_codes[0] = 0x88;  // MOV r8, r8
-				result.op_codes[1] = 0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg);
+				result.op_codes[1] = static_cast<uint8_t>(0xC0 + (static_cast<uint8_t>(src_reg) << 3) + static_cast<uint8_t>(dst_reg));
 				result.size_in_bytes = 2;
 			}
 		}
@@ -2210,9 +2210,9 @@ struct RegisterAllocator
 		for (auto reg : caller_saved_gpr) {
 			int idx = static_cast<int>(reg);
 			// Don't release if not allocated, but clear the stack variable mapping
-			if (registers[idx].isAllocated) {
-				registers[idx].stackVariableOffset = INT_MIN;
-				registers[idx].isDirty = false;
+			if (registers[static_cast<size_t>(idx)].isAllocated) {
+				registers[static_cast<size_t>(idx)].stackVariableOffset = INT_MIN;
+				registers[static_cast<size_t>(idx)].isDirty = false;
 			}
 		}
 		
@@ -2287,7 +2287,7 @@ inline void emitLoadFromAddressInReg(std::vector<char>& textSectionData, X64Regi
 	// For normal indirect: mod=00, reg=dest_bits, r/m=addr_bits
 	// For RBP/R13 with disp8=0: mod=01, reg=dest_bits, r/m=addr_bits
 	uint8_t mod = needs_disp0 ? 0x40 : 0x00;  // 0x40 = mod=01
-	uint8_t modrm = mod | (dest_bits << 3) | addr_bits;
+	uint8_t modrm = static_cast<uint8_t>(mod | (dest_bits << 3) | addr_bits);
 	// SIB byte for RSP/R12: scale=00, index=100 (none), base=100 (RSP or R12)
 	uint8_t sib = 0x24;  // scale=00, index=100, base=100
 	
@@ -2300,7 +2300,7 @@ inline void emitLoadFromAddressInReg(std::vector<char>& textSectionData, X64Regi
 		textSectionData.push_back(0x0F);
 		textSectionData.push_back(0xB6); // MOVZX r32, r/m8
 		textSectionData.push_back(static_cast<char>(modrm));
-		if (needs_sib) textSectionData.push_back(sib);
+		if (needs_sib) textSectionData.push_back(static_cast<char>(sib));
 		if (needs_disp0) textSectionData.push_back(0x00);  // disp8 = 0
 	} else if (element_size_bytes == 2) {
 		// MOVZX dest32, WORD PTR [addr_reg]
@@ -2311,7 +2311,7 @@ inline void emitLoadFromAddressInReg(std::vector<char>& textSectionData, X64Regi
 		textSectionData.push_back(0x0F);
 		textSectionData.push_back(0xB7); // MOVZX r32, r/m16
 		textSectionData.push_back(static_cast<char>(modrm));
-		if (needs_sib) textSectionData.push_back(sib);
+		if (needs_sib) textSectionData.push_back(static_cast<char>(sib));
 		if (needs_disp0) textSectionData.push_back(0x00);  // disp8 = 0
 	} else if (element_size_bytes == 4) {
 		// MOV dest32, DWORD PTR [addr_reg]
@@ -2321,7 +2321,7 @@ inline void emitLoadFromAddressInReg(std::vector<char>& textSectionData, X64Regi
 		if (rex != 0x40) textSectionData.push_back(static_cast<char>(rex));
 		textSectionData.push_back(0x8B); // MOV r32, r/m32
 		textSectionData.push_back(static_cast<char>(modrm));
-		if (needs_sib) textSectionData.push_back(sib);
+		if (needs_sib) textSectionData.push_back(static_cast<char>(sib));
 		if (needs_disp0) textSectionData.push_back(0x00);  // disp8 = 0
 	} else {
 		// MOV dest64, QWORD PTR [addr_reg]
@@ -2331,7 +2331,7 @@ inline void emitLoadFromAddressInReg(std::vector<char>& textSectionData, X64Regi
 		textSectionData.push_back(static_cast<char>(rex));
 		textSectionData.push_back(0x8B); // MOV r64, r/m64
 		textSectionData.push_back(static_cast<char>(modrm));
-		if (needs_sib) textSectionData.push_back(sib);
+		if (needs_sib) textSectionData.push_back(static_cast<char>(sib));
 		if (needs_disp0) textSectionData.push_back(0x00);  // disp8 = 0
 	}
 }
@@ -2360,7 +2360,7 @@ inline void emitFloatLoadFromAddressInReg(std::vector<char>& textSectionData, X6
 	textSectionData.push_back(0x10); // MOVSD/MOVSS xmm, m (load variant)
 	
 	// ModR/M: mod=00 (indirect), reg=xmm_bits, r/m=addr_bits
-	uint8_t modrm = (xmm_bits << 3) | addr_bits;
+	uint8_t modrm = static_cast<uint8_t>((xmm_bits << 3) | addr_bits);
 	textSectionData.push_back(static_cast<char>(modrm));
 }
 
@@ -2391,12 +2391,12 @@ inline void emitFloatLoadFromAddressWithOffset(std::vector<char>& textSectionDat
 	// ModR/M and displacement
 	if (offset >= -128 && offset <= 127) {
 		// Use disp8: mod=01
-		uint8_t modrm = 0x40 | (xmm_bits << 3) | addr_bits;
+		uint8_t modrm = static_cast<uint8_t>(0x40 | (xmm_bits << 3) | addr_bits);
 		textSectionData.push_back(static_cast<char>(modrm));
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	} else {
 		// Use disp32: mod=10
-		uint8_t modrm = 0x80 | (xmm_bits << 3) | addr_bits;
+		uint8_t modrm = static_cast<uint8_t>(0x80 | (xmm_bits << 3) | addr_bits);
 		textSectionData.push_back(static_cast<char>(modrm));
 		textSectionData.push_back((offset >> 0) & 0xFF);
 		textSectionData.push_back((offset >> 8) & 0xFF);
@@ -2432,12 +2432,12 @@ inline void emitFloatStoreToAddressWithOffset(std::vector<char>& textSectionData
 	// ModR/M and displacement
 	if (offset >= -128 && offset <= 127) {
 		// Use disp8: mod=01
-		uint8_t modrm = 0x40 | (xmm_bits << 3) | addr_bits;
+		uint8_t modrm = static_cast<uint8_t>(0x40 | (xmm_bits << 3) | addr_bits);
 		textSectionData.push_back(static_cast<char>(modrm));
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	} else {
 		// Use disp32: mod=10
-		uint8_t modrm = 0x80 | (xmm_bits << 3) | addr_bits;
+		uint8_t modrm = static_cast<uint8_t>(0x80 | (xmm_bits << 3) | addr_bits);
 		textSectionData.push_back(static_cast<char>(modrm));
 		textSectionData.push_back((offset >> 0) & 0xFF);
 		textSectionData.push_back((offset >> 8) & 0xFF);
@@ -2461,7 +2461,7 @@ inline void emitMovqXmmToGpr(std::vector<char>& textSectionData, X64Register xmm
 	textSectionData.push_back(0x7E);
 	uint8_t xmm_bits = static_cast<uint8_t>(xmm_src) & 0x07;
 	uint8_t gpr_bits = static_cast<uint8_t>(gpr_dest) & 0x07;
-	textSectionData.push_back(0xC0 | (xmm_bits << 3) | gpr_bits);
+	textSectionData.push_back(static_cast<char>(0xC0 | (xmm_bits << 3) | gpr_bits));
 }
 
 /**
@@ -2479,7 +2479,7 @@ inline void emitMovqGprToXmm(std::vector<char>& textSectionData, X64Register gpr
 	textSectionData.push_back(0x6E);
 	uint8_t xmm_bits = static_cast<uint8_t>(xmm_dest) & 0x07;
 	uint8_t gpr_bits = static_cast<uint8_t>(gpr_src) & 0x07;
-	textSectionData.push_back(0xC0 | (xmm_bits << 3) | gpr_bits);
+	textSectionData.push_back(static_cast<char>(0xC0 | (xmm_bits << 3) | gpr_bits));
 }
 
 /**
@@ -2505,7 +2505,7 @@ inline void emitMultiplyRCXByElementSize(std::vector<char>& textSectionData, int
 		textSectionData.push_back(0x48); // REX.W prefix for 64-bit operation
 		textSectionData.push_back(0xC1); // SHL r/m64, imm8
 		textSectionData.push_back(0xE1); // ModR/M: RCX (11 100 001)
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(shift_amount)); // Shift amount
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(shift_amount))); // Shift amount
 	} else {
 		// General case: IMUL RCX, RCX, element_size_bytes
 		textSectionData.push_back(0x48); // REX.W prefix for 64-bit operation
@@ -2513,10 +2513,10 @@ inline void emitMultiplyRCXByElementSize(std::vector<char>& textSectionData, int
 		textSectionData.push_back(0xC9); // ModR/M: RCX, RCX (11 001 001)
 		// Little-endian 32-bit immediate
 		uint32_t size_u32 = static_cast<uint32_t>(element_size_bytes);
-		textSectionData.push_back(size_u32 & 0xFF);
-		textSectionData.push_back((size_u32 >> 8) & 0xFF);
-		textSectionData.push_back((size_u32 >> 16) & 0xFF);
-		textSectionData.push_back((size_u32 >> 24) & 0xFF);
+		textSectionData.push_back(static_cast<char>(size_u32 & 0xFF));
+		textSectionData.push_back(static_cast<char>((size_u32 >> 8) & 0xFF));
+		textSectionData.push_back(static_cast<char>((size_u32 >> 16) & 0xFF));
+		textSectionData.push_back(static_cast<char>((size_u32 >> 24) & 0xFF));
 	}
 }
 
@@ -2549,19 +2549,19 @@ inline void emitMultiplyRegByElementSize(std::vector<char>& textSectionData, X64
 		textSectionData.push_back(static_cast<char>(rex));
 		textSectionData.push_back(0xC1); // SHL r/m64, imm8
 		textSectionData.push_back(0xE0 | reg_bits); // ModR/M: mod=11, reg=100 (SHL), r/m=reg
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(shift_amount));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(shift_amount)));
 	} else {
 		// IMUL reg, reg, imm32
 		uint8_t rex = 0x48;
 		if (reg_extended) rex |= 0x05; // R and B bits (same register for src and dest)
 		textSectionData.push_back(static_cast<char>(rex));
 		textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
-		textSectionData.push_back(0xC0 | (reg_bits << 3) | reg_bits); // ModR/M: mod=11, reg, r/m
+		textSectionData.push_back(static_cast<char>(0xC0 | (reg_bits << 3) | reg_bits)); // ModR/M: mod=11, reg, r/m
 		uint32_t size_u32 = static_cast<uint32_t>(element_size_bytes);
-		textSectionData.push_back(size_u32 & 0xFF);
-		textSectionData.push_back((size_u32 >> 8) & 0xFF);
-		textSectionData.push_back((size_u32 >> 16) & 0xFF);
-		textSectionData.push_back((size_u32 >> 24) & 0xFF);
+		textSectionData.push_back(static_cast<char>(size_u32 & 0xFF));
+		textSectionData.push_back(static_cast<char>((size_u32 >> 8) & 0xFF));
+		textSectionData.push_back(static_cast<char>((size_u32 >> 16) & 0xFF));
+		textSectionData.push_back(static_cast<char>((size_u32 >> 24) & 0xFF));
 	}
 }
 
@@ -2642,10 +2642,10 @@ inline void emitAddRegs(std::vector<char>& textSectionData, X64Register dest_reg
 	bool src_extended = static_cast<uint8_t>(src_reg) >= static_cast<uint8_t>(X64Register::R8);
 	
 	// REX.W with branchless R and B bits
-	uint8_t rex = 0x48 | (static_cast<uint8_t>(src_extended) << 2) | static_cast<uint8_t>(dest_extended);
+	uint8_t rex = static_cast<uint8_t>(0x48 | (static_cast<uint8_t>(src_extended) << 2) | static_cast<uint8_t>(dest_extended));
 	textSectionData.push_back(static_cast<char>(rex));
 	textSectionData.push_back(0x01); // ADD r/m64, r64
-	textSectionData.push_back(0xC0 | (src_bits << 3) | dest_bits); // ModR/M: mod=11, reg=src, r/m=dest
+	textSectionData.push_back(static_cast<char>(0xC0 | (src_bits << 3) | dest_bits)); // ModR/M: mod=11, reg=src, r/m=dest
 }
 
 /**
@@ -2676,10 +2676,10 @@ inline void emitAddImmToReg(std::vector<char>& textSectionData, X64Register reg,
 	textSectionData.insert(textSectionData.end(), opcodes, opcodes + opcode_size);
 	
 	uint32_t imm_u32 = static_cast<uint32_t>(imm);
-	textSectionData.push_back(imm_u32 & 0xFF);
-	textSectionData.push_back((imm_u32 >> 8) & 0xFF);
-	textSectionData.push_back((imm_u32 >> 16) & 0xFF);
-	textSectionData.push_back((imm_u32 >> 24) & 0xFF);
+	textSectionData.push_back(static_cast<char>(imm_u32 & 0xFF));
+	textSectionData.push_back(static_cast<char>((imm_u32 >> 8) & 0xFF));
+	textSectionData.push_back(static_cast<char>((imm_u32 >> 16) & 0xFF));
+	textSectionData.push_back(static_cast<char>((imm_u32 >> 24) & 0xFF));
 }
 
 /**
@@ -2712,15 +2712,15 @@ inline void emitLoadIndexIntoRCX(std::vector<char>& textSectionData, int64_t off
 	if (offset >= -128 && offset <= 127) {
 		// 8-bit displacement
 		textSectionData.push_back(0x4D); // ModR/M: [RBP + disp8], RCX (01 001 101)
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	} else {
 		// 32-bit displacement
 		textSectionData.push_back(0x8D); // ModR/M: [RBP + disp32], RCX (10 001 101)
 		uint32_t offset_u32 = static_cast<uint32_t>(offset);
-		textSectionData.push_back(offset_u32 & 0xFF);
-		textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+		textSectionData.push_back(static_cast<char>(offset_u32 & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 8) & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 16) & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 24) & 0xFF));
 	}
 }
 
@@ -2743,16 +2743,16 @@ inline void emitLoadFromFrame(std::vector<char>& textSectionData, X64Register re
 	// Branchless ModR/M + displacement emission
 	auto emitModRM = [&]() {
 		uint8_t modrm_base = (offset >= -128 && offset <= 127) ? 0x40 : 0x80;
-		textSectionData.push_back(modrm_base | (reg_bits << 3) | 0x05);
+		textSectionData.push_back(static_cast<char>(modrm_base | (reg_bits << 3) | 0x05));
 		
 		if (offset >= -128 && offset <= 127) {
-			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 		} else {
 			uint32_t offset_u32 = static_cast<uint32_t>(offset);
-			textSectionData.push_back(offset_u32 & 0xFF);
-			textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			textSectionData.push_back(static_cast<char>(offset_u32 & 0xFF));
+			textSectionData.push_back(static_cast<char>((offset_u32 >> 8) & 0xFF));
+			textSectionData.push_back(static_cast<char>((offset_u32 >> 16) & 0xFF));
+			textSectionData.push_back(static_cast<char>((offset_u32 >> 24) & 0xFF));
 		}
 	};
 	
@@ -2760,7 +2760,7 @@ inline void emitLoadFromFrame(std::vector<char>& textSectionData, X64Register re
 	// Index 0 = with REX, Index 1 = without REX (we skip first byte)
 	if (size_bytes == 8) {
 		// MOV r64, [RBP + offset] - always needs REX.W, optionally REX.R
-		uint8_t rex = 0x48 | (reg_extended << 2); // REX.W, optionally REX.R
+		uint8_t rex = static_cast<uint8_t>(0x48 | (reg_extended << 2)); // REX.W, optionally REX.R
 		textSectionData.push_back(static_cast<char>(rex));
 		textSectionData.push_back(static_cast<char>(0x8B));
 		emitModRM();
@@ -2807,10 +2807,10 @@ inline void emitStoreToFrame(std::vector<char>& textSectionData, X64Register reg
 			// [RBP + disp32]: Mod=10, Reg=reg_bits, R/M=101 (RBP)
 			textSectionData.push_back(static_cast<char>(0x80 | (reg_bits << 3) | 0x05));
 			uint32_t offset_u32 = static_cast<uint32_t>(offset);
-			textSectionData.push_back(offset_u32 & 0xFF);
-			textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			textSectionData.push_back(static_cast<char>(offset_u32 & 0xFF));
+			textSectionData.push_back(static_cast<char>((offset_u32 >> 8) & 0xFF));
+			textSectionData.push_back(static_cast<char>((offset_u32 >> 16) & 0xFF));
+			textSectionData.push_back(static_cast<char>((offset_u32 >> 24) & 0xFF));
 		}
 	};
 	
@@ -2915,21 +2915,21 @@ inline void emitStoreToMemory(std::vector<char>& textSectionData, X64Register va
 	// Emit ModR/M byte and displacement
 	if (offset == 0) {
 		// [base_reg] with no displacement
-		textSectionData.push_back(0x00 | (value_reg_bits << 3) | base_reg_bits);
+		textSectionData.push_back(static_cast<char>(0x00 | (value_reg_bits << 3) | base_reg_bits));
 	} else if (offset >= -128 && offset <= 127) {
 		// [base_reg + disp8]
-		uint8_t modrm = 0x40 | (value_reg_bits << 3) | base_reg_bits;
+		uint8_t modrm = static_cast<uint8_t>(0x40 | (value_reg_bits << 3) | base_reg_bits);
 		uint8_t disp = static_cast<uint8_t>(offset);
 		textSectionData.push_back(static_cast<char>(modrm));
-		textSectionData.push_back(disp);
+		textSectionData.push_back(static_cast<char>(disp));
 	} else {
 		// [base_reg + disp32]
-		textSectionData.push_back(0x80 | (value_reg_bits << 3) | base_reg_bits);
+		textSectionData.push_back(static_cast<char>(0x80 | (value_reg_bits << 3) | base_reg_bits));
 		uint32_t offset_u32 = static_cast<uint32_t>(offset);
-		textSectionData.push_back(offset_u32 & 0xFF);
-		textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+		textSectionData.push_back(static_cast<char>(offset_u32 & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 8) & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 16) & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 24) & 0xFF));
 	}
 }
 
@@ -2948,7 +2948,7 @@ inline void emitStoreToRSP(std::vector<char>& textSectionData, X64Register value
 	bool reg_extended = static_cast<uint8_t>(value_reg) >= static_cast<uint8_t>(X64Register::R8);
 	
 	// REX.W prefix for 64-bit, REX.R if source register is R8-R15 (branchless)
-	uint8_t rex = 0x48 | (reg_extended << 2);
+	uint8_t rex = static_cast<uint8_t>(0x48 | (reg_extended << 2));
 	textSectionData.push_back(static_cast<char>(rex));
 	
 	textSectionData.push_back(0x89); // MOV r/m64, r64
@@ -2957,7 +2957,7 @@ inline void emitStoreToRSP(std::vector<char>& textSectionData, X64Register value
 	bool use_disp8 = (offset >= -128 && offset <= 127);
 	
 	// ModR/M byte: 0x44 for disp8, 0x84 for disp32, both with r/m=100 (SIB follows)
-	uint8_t modrm = (0x44 + (!use_disp8 * 0x40)) | (reg_bits << 3);
+	uint8_t modrm = static_cast<uint8_t>((0x44 + (!use_disp8 * 0x40)) | (reg_bits << 3));
 	textSectionData.push_back(static_cast<char>(modrm));
 	textSectionData.push_back(0x24); // SIB: scale=00, index=100 (none), base=100 (RSP)
 	
@@ -2966,7 +2966,7 @@ inline void emitStoreToRSP(std::vector<char>& textSectionData, X64Register value
 	static constexpr int disp_sizes[] = { 4, 1 }; // disp32=4 bytes, disp8=1 byte
 	int num_bytes = disp_sizes[use_disp8];
 	for (int i = 0; i < num_bytes; ++i) {
-		textSectionData.push_back((offset_u32 >> (i * 8)) & 0xFF);
+		textSectionData.push_back(static_cast<char>((offset_u32 >> (i * 8)) & 0xFF));
 	}
 }
 
@@ -3009,7 +3009,7 @@ inline void emitFloatStoreToRSP(std::vector<char>& textSectionData, X64Register 
 	
 	// Displacement
 	if (use_disp8) {
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	} else {
 		textSectionData.push_back((offset >> 0) & 0xFF);
 		textSectionData.push_back((offset >> 8) & 0xFF);
@@ -3039,15 +3039,15 @@ inline void emitLEAArrayBase(std::vector<char>& textSectionData, int64_t offset)
 	if (offset >= -128 && offset <= 127) {
 		// 8-bit displacement
 		textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX (01 000 101)
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	} else {
 		// 32-bit displacement
 		textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX (10 000 101)
 		uint32_t offset_u32 = static_cast<uint32_t>(offset);
-		textSectionData.push_back(offset_u32 & 0xFF);
-		textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+		textSectionData.push_back(static_cast<char>(offset_u32 & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 8) & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 16) & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 24) & 0xFF));
 	}
 }
 
@@ -3071,15 +3071,15 @@ inline void emitLEAFromFrame(std::vector<char>& textSectionData, X64Register reg
 	if (offset >= -128 && offset <= 127) {
 		// 8-bit displacement: Mod=01, Reg=reg_bits, R/M=101 (RBP)
 		textSectionData.push_back(0x40 | (reg_bits << 3) | 0x05);
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	} else {
 		// 32-bit displacement: Mod=10, Reg=reg_bits, R/M=101 (RBP)
-		textSectionData.push_back(0x80 | (reg_bits << 3) | 0x05);
+		textSectionData.push_back(static_cast<char>(0x80 | (reg_bits << 3) | 0x05));
 		uint32_t offset_u32 = static_cast<uint32_t>(offset);
-		textSectionData.push_back(offset_u32 & 0xFF);
-		textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+		textSectionData.push_back(static_cast<char>(offset_u32 & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 8) & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 16) & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 24) & 0xFF));
 	}
 }
 
@@ -3100,18 +3100,18 @@ inline void emitMOVFromFrame(std::vector<uint8_t>& textSectionData, X64Register 
 
 	if (offset >= -128 && offset <= 127) {
 		// [RBP + disp8]
-		modrm = 0x45 | (reg_field << 3);
-		textSectionData.push_back(static_cast<char>(modrm));
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		modrm = static_cast<uint8_t>(0x45 | (reg_field << 3));
+		textSectionData.push_back(modrm);
+		textSectionData.push_back(static_cast<uint8_t>(offset));
 	} else {
 		// [RBP + disp32]
-		modrm = 0x85 | (reg_field << 3);
-		textSectionData.push_back(static_cast<char>(modrm));
+		modrm = static_cast<uint8_t>(0x85 | (reg_field << 3));
+		textSectionData.push_back(modrm);
 		uint32_t offset_u32 = static_cast<uint32_t>(offset);
-		textSectionData.push_back(offset_u32 & 0xFF);
-		textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+		textSectionData.push_back(static_cast<uint8_t>(offset_u32 & 0xFF));
+		textSectionData.push_back(static_cast<uint8_t>((offset_u32 >> 8) & 0xFF));
+		textSectionData.push_back(static_cast<uint8_t>((offset_u32 >> 16) & 0xFF));
+		textSectionData.push_back(static_cast<uint8_t>((offset_u32 >> 24) & 0xFF));
 	}
 }
 
@@ -3134,16 +3134,16 @@ inline void emitMOVToFrame(std::vector<uint8_t>& textSectionData, X64Register re
 		// [RBP + disp8]
 		modrm = 0x45 | (reg_field << 3);
 		textSectionData.push_back(static_cast<char>(modrm));
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	} else {
 		// [RBP + disp32]
 		modrm = 0x85 | (reg_field << 3);
 		textSectionData.push_back(static_cast<char>(modrm));
 		uint32_t offset_u32 = static_cast<uint32_t>(offset);
-		textSectionData.push_back(offset_u32 & 0xFF);
-		textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-		textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+		textSectionData.push_back(static_cast<char>(offset_u32 & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 8) & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 16) & 0xFF));
+		textSectionData.push_back(static_cast<char>((offset_u32 >> 24) & 0xFF));
 	}
 }
 
@@ -5200,7 +5200,7 @@ private:
 		textSectionData.push_back(0x0F);
 		textSectionData.push_back(0x7E);
 		// ModR/M: mod=11 (register), reg=xmm, r/m=gpr
-		textSectionData.push_back(0xC0 | (xmm_bits << 3) | gpr_bits);
+		textSectionData.push_back(static_cast<char>(0xC0 | (xmm_bits << 3) | gpr_bits));
 	}
 
 	// Helper to emit MOVQ from GPR to XMM (for moving float bits to XMM register)
@@ -5219,7 +5219,7 @@ private:
 		textSectionData.push_back(0x0F);
 		textSectionData.push_back(0x6E);
 		// ModR/M: mod=11 (register), reg=xmm, r/m=gpr
-		textSectionData.push_back(0xC0 | (xmm_bits << 3) | gpr_bits);
+		textSectionData.push_back(static_cast<char>(0xC0 | (xmm_bits << 3) | gpr_bits));
 	}
 
 	// Helper to emit CVTSS2SD (convert float to double in XMM register)
@@ -5280,7 +5280,7 @@ private:
 		if (offset >= -128 && offset <= 127) {
 			uint8_t modrm = 0x45 | ((xmm_idx & 0x07) << 3);  // Mod=01, Reg=XMM, R/M=101 (RBP)
 			textSectionData.push_back(static_cast<char>(modrm));
-			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 		} else {
 			uint8_t modrm = 0x85 | ((xmm_idx & 0x07) << 3);  // Mod=10, Reg=XMM, R/M=101 (RBP)
 			textSectionData.push_back(static_cast<char>(modrm));
@@ -5307,7 +5307,7 @@ private:
 		} else if (offset >= -128 && offset <= 127) {
 			// Mod=01, 8-bit displacement
 			textSectionData.push_back(0x40 | base_bits);
-			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 		} else {
 			// Mod=10, 32-bit displacement
 			textSectionData.push_back(0x80 | base_bits);
@@ -5343,7 +5343,7 @@ private:
 		} else if (offset >= -128 && offset <= 127) {
 			// Mod=01, 8-bit displacement
 			textSectionData.push_back(0x40 | base_bits);
-			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 		} else {
 			// Mod=10, 32-bit displacement
 			textSectionData.push_back(0x80 | base_bits);
@@ -5387,7 +5387,7 @@ private:
 		} else if (offset >= -128 && offset <= 127) {
 			// Mod=01, 8-bit displacement
 			textSectionData.push_back(0x40 | src_bits | base_bits);
-			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 		} else {
 			// Mod=10, 32-bit displacement
 			textSectionData.push_back(0x80 | src_bits | base_bits);
@@ -5746,22 +5746,22 @@ private:
 
 	void emitJumpIfZero(int8_t offset) {
 		textSectionData.push_back(0x74); // JZ rel8
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	}
 
 	void emitJumpIfEqual(int8_t offset) {
 		textSectionData.push_back(0x74); // JE rel8 (same as JZ)
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	}
 
 	void emitJumpIfNotZero(int8_t offset) {
 		textSectionData.push_back(0x75); // JNZ rel8
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	}
 
 	void emitJumpUnconditional(int8_t offset) {
 		textSectionData.push_back(0xEB); // JMP rel8
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	}
 
 	void emitXorRegReg(X64Register reg) {
@@ -5892,12 +5892,12 @@ private:
 
 	void emitJumpIfAbove(int8_t offset) {
 		textSectionData.push_back(0x77); // JA rel8 (unsigned >)
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	}
 
 	void emitJumpIfBelow(int8_t offset) {
 		textSectionData.push_back(0x72); // JB rel8 (unsigned <)
-		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 	}
 
 	void emitLeaRegScaledIndex(X64Register dest, X64Register base, X64Register index, uint8_t scale, int8_t disp) {
@@ -5922,7 +5922,7 @@ private:
 		else if (scale == 8) scale_bits = 3;
 		
 		uint8_t sib = (scale_bits << 6) | ((static_cast<uint8_t>(index) & 0x07) << 3) | (static_cast<uint8_t>(base) & 0x07);
-		textSectionData.push_back(sib);
+		textSectionData.push_back(static_cast<char>(sib));
 		
 		// disp8
 		textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(disp));
@@ -10585,13 +10585,13 @@ private:
 		uint8_t modrm = static_cast<uint8_t>((mod_field << 6) | (reg_bits << 3) | 0x05;
 		textSectionData.push_back(static_cast<char>(modrm));
 		if (mod_field == 0x01) {
-			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 		} else {
 			uint32_t offset_u32 = static_cast<uint32_t>(offset);
-			textSectionData.push_back(offset_u32 & 0xFF);
-			textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			textSectionData.push_back(static_cast<char>(offset_u32 & 0xFF));
+			textSectionData.push_back(static_cast<char>((offset_u32 >> 8) & 0xFF));
+			textSectionData.push_back(static_cast<char>((offset_u32 >> 16) & 0xFF));
+			textSectionData.push_back(static_cast<char>((offset_u32 >> 24) & 0xFF));
 		}
 	}
 
@@ -10610,13 +10610,13 @@ private:
 		uint8_t modrm = static_cast<uint8_t>((mod_field << 6) | (reg_bits << 3) | 0x05;
 		textSectionData.push_back(static_cast<char>(modrm));
 		if (mod_field == 0x01) {
-			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset));
+			textSectionData.push_back(static_cast<char>(static_cast<uint8_t>(offset)));
 		} else {
 			uint32_t offset_u32 = static_cast<uint32_t>(offset);
-			textSectionData.push_back(offset_u32 & 0xFF);
-			textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-			textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-			textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+			textSectionData.push_back(static_cast<char>(offset_u32 & 0xFF));
+			textSectionData.push_back(static_cast<char>((offset_u32 >> 8) & 0xFF));
+			textSectionData.push_back(static_cast<char>((offset_u32 >> 16) & 0xFF));
+			textSectionData.push_back(static_cast<char>((offset_u32 >> 24) & 0xFF));
 		}
 	}
 
@@ -12585,10 +12585,10 @@ private:
 				} else {
 					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
 					uint32_t offset_u32 = static_cast<uint32_t>(static_cast<int32_t>(element_offset));
-					textSectionData.push_back(offset_u32 & 0xFF);
-					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+					textSectionData.push_back(static_cast<char>(offset_u32 & 0xFF));
+					textSectionData.push_back(static_cast<char>((offset_u32 >> 8) & 0xFF));
+					textSectionData.push_back(static_cast<char>((offset_u32 >> 16) & 0xFF));
+					textSectionData.push_back(static_cast<char>((offset_u32 >> 24) & 0xFF));
 				}
 			} else if (std::holds_alternative<TempVar>(op.index.value)) {
 				TempVar index_var = std::get<TempVar>(op.index.value);
