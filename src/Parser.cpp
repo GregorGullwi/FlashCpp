@@ -22652,6 +22652,12 @@ ParseResult Parser::parse_template_declaration() {
 	// Set the flag to enable fold expression parsing if we have parameter packs
 	bool saved_has_packs = has_parameter_packs_;
 	has_parameter_packs_ = has_packs;
+	
+	// Set template parameter context EARLY, before any code that might call parse_type_specifier()
+	// This includes variable template detection below which needs to recognize template params
+	// like _Int in return types: typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&
+	current_template_param_names_ = template_param_names;
+	parsing_template_body_ = true;
 
 	// Check if it's a concept template: template<typename T> concept Name = ...;
 	bool is_concept_template = peek_token().has_value() &&
@@ -22735,10 +22741,9 @@ ParseResult Parser::parse_template_declaration() {
 		restore_token_position(var_check_pos);
 	}
 
-	// Set template parameter context for parsing requires clauses and template bodies
-	// This allows template parameters to be recognized in expressions
-	current_template_param_names_ = template_param_names;  // copy the param names
-	parsing_template_body_ = true;
+	// Note: current_template_param_names_ and parsing_template_body_ were set earlier
+	// (after template_param_names was populated) so that variable template detection
+	// can recognize template parameters in type specifiers.
 
 	// Check for requires clause after template parameters
 	// Syntax: template<typename T> requires Concept<T> ...
@@ -25363,8 +25368,19 @@ if (struct_type_info.getStructInfo()) {
 		}
 
 		// Otherwise, parse as function template using shared helper (Phase 6)
+		// Set template parameter context BEFORE parsing return type and function declaration
+		// This allows template parameters like _Int, _Tp1, _Tp2 to be recognized when used in
+		// complex return types like: typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&
+		current_template_param_names_ = template_param_names;
+		parsing_template_body_ = true;
+		
 		ASTNode template_func_node;
 		auto body_result = parse_template_function_declaration_body(template_params, requires_clause, template_func_node);
+		
+		// Clean up template parameter context
+		current_template_param_names_.clear();
+		parsing_template_body_ = false;
+		
 		if (body_result.is_error()) {
 			return body_result;
 		}
