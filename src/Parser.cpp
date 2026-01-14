@@ -22753,7 +22753,7 @@ ParseResult Parser::parse_template_declaration() {
 	}
 	
 	// Set the flag to enable fold expression parsing if we have parameter packs
-	bool saved_has_packs = has_parameter_packs_;
+	[[maybe_unused]] bool saved_has_packs = has_parameter_packs_;
 	has_parameter_packs_ = has_packs;
 	
 	// Set template parameter context EARLY, before any code that might call parse_type_specifier()
@@ -23204,10 +23204,8 @@ ParseResult Parser::parse_template_declaration() {
 				}
 				
 				// Check if this is a non-type value (numeric literal)
-				bool is_value_arg = false;
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Literal) {
 					// It's a numeric literal - treat as non-type value
-					is_value_arg = true;
 					Token value_token = *peek_token();
 					consume_token();
 					
@@ -23403,7 +23401,6 @@ ParseResult Parser::parse_template_declaration() {
 			if (consume_keyword("struct") || consume_keyword("class")) {
 				// Try to get class name
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
-					std::string_view class_name = peek_token()->value();
 					consume_token();
 					
 					// Check if template arguments follow
@@ -23543,15 +23540,15 @@ ParseResult Parser::parse_template_declaration() {
 					Token base_name_token = *base_name_token_opt;
 					std::string_view base_class_name = base_name_token_opt->value();
 					std::vector<ASTNode> template_arg_nodes;
-					std::optional<std::vector<TemplateTypeArg>> template_args_opt;
+					std::optional<std::vector<TemplateTypeArg>> base_template_args_opt;
 					std::optional<StringHandle> member_type_name;
 					std::optional<Token> member_name_token;
 					
 					// Check if this is a template base class (e.g., Base<T>)
 						if (peek_token().has_value() && peek_token()->value() == "<") {
 							// Parse template arguments
-							template_args_opt = parse_explicit_template_arguments(&template_arg_nodes);
-							if (!template_args_opt.has_value()) {
+							base_template_args_opt = parse_explicit_template_arguments(&template_arg_nodes);
+							if (!base_template_args_opt.has_value()) {
 								return ParseResult::error("Failed to parse template arguments for base class", *peek_token());
 							}
 						
@@ -23586,11 +23583,11 @@ ParseResult Parser::parse_template_declaration() {
 							consume_token();
 						}
 
-						std::vector<TemplateTypeArg> template_args = *template_args_opt;
+						std::vector<TemplateTypeArg> base_template_args = *base_template_args_opt;
 						
 						// Check if any template arguments are dependent
 						bool has_dependent_args = false;
-						for (const auto& arg : template_args) {
+						for (const auto& arg : base_template_args) {
 							if (arg.is_dependent) {
 								has_dependent_args = true;
 								break;
@@ -23602,11 +23599,11 @@ ParseResult Parser::parse_template_declaration() {
 							FLASH_LOG_FORMAT(Templates, Debug, "Base class {} has dependent template arguments - deferring resolution", base_class_name);
 
 							std::vector<TemplateArgumentNodeInfo> arg_infos;
-							arg_infos.reserve(template_args.size());
-							for (size_t i = 0; i < template_args.size(); ++i) {
+							arg_infos.reserve(base_template_args.size());
+							for (size_t i = 0; i < base_template_args.size(); ++i) {
 								TemplateArgumentNodeInfo info;
-								info.is_pack = template_args[i].is_pack;
-								info.is_dependent = template_args[i].is_dependent;
+								info.is_pack = base_template_args[i].is_pack;
+								info.is_dependent = base_template_args[i].is_dependent;
 								if (i < template_arg_nodes.size()) {
 									info.node = template_arg_nodes[i];
 								}
@@ -23619,7 +23616,7 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						
 						// Instantiate base class template if needed and register in AST
-						std::optional<std::string_view> instantiated_base_name = instantiate_and_register_base_template(base_class_name, template_args);
+						std::optional<std::string_view> instantiated_base_name = instantiate_and_register_base_template(base_class_name, base_template_args);
 						if (instantiated_base_name.has_value()) {
 							base_class_name = *instantiated_base_name;
 						}
@@ -23804,8 +23801,8 @@ ParseResult Parser::parse_template_declaration() {
 								// Check for template arguments: Tuple<Rest...>(...)
 								if (peek_token().has_value() && peek_token()->value() == "<") {
 									// Parse and skip template arguments - they're part of the base class name
-									auto template_args_opt = parse_explicit_template_arguments();
-									if (!template_args_opt.has_value()) {
+									auto init_template_args_opt = parse_explicit_template_arguments();
+									if (!init_template_args_opt.has_value()) {
 										return ParseResult::error("Failed to parse template arguments in initializer", *peek_token());
 									}
 									// Modify init_name to include instantiated template name if needed

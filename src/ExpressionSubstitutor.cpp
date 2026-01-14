@@ -576,7 +576,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 void ExpressionSubstitutor::ensureTemplateInstantiated(
 	std::string_view template_name,
-	const std::vector<TemplateTypeArg>& args) {
+	[[maybe_unused]] const std::vector<TemplateTypeArg>& args) {
 	
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Ensuring template instantiated: ", template_name);
 	
