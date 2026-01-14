@@ -342,10 +342,10 @@ struct TemplateTypeArgHash {
 
 // Template instantiation key - uniquely identifies a template instantiation
 struct TemplateInstantiationKey {
-	std::string template_name;
+	StringHandle template_name;
 	std::vector<Type> type_arguments;  // For type parameters
 	std::vector<int64_t> value_arguments;  // For non-type parameters
-	std::vector<std::string> template_arguments;  // For template template parameters
+	std::vector<StringHandle> template_arguments;  // For template template parameters
 	
 	bool operator==(const TemplateInstantiationKey& other) const {
 		return template_name == other.template_name &&
@@ -358,7 +358,7 @@ struct TemplateInstantiationKey {
 // Hash function for TemplateInstantiationKey
 struct TemplateInstantiationKeyHash {
 	std::size_t operator()(const TemplateInstantiationKey& key) const {
-		std::size_t hash = std::hash<std::string>{}(key.template_name);
+		std::size_t hash = std::hash<StringHandle>{}(key.template_name);
 		for (const auto& type : key.type_arguments) {
 			hash ^= std::hash<int>{}(static_cast<int>(type)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
@@ -366,7 +366,7 @@ struct TemplateInstantiationKeyHash {
 			hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		for (const auto& tmpl : key.template_arguments) {
-			hash ^= std::hash<std::string>{}(tmpl) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			hash ^= std::hash<StringHandle>{}(tmpl) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		return hash;
 	}

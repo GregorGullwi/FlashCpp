@@ -13879,7 +13879,7 @@ private:
 			std::string_view func_name = func_decl_node.identifier_token().value();
 			StringBuilder qualified_name_sb;
 			qualified_name_sb.append(StringTable::getStringView(struct_info->getName())).append("::").append(func_name);
-			std::string qualified_template_name(qualified_name_sb.commit());
+			StringHandle qualified_template_name = StringTable::getOrInternStringHandle(qualified_name_sb);
 			// DEBUG removed
 			
 			// Look up if this is a template
