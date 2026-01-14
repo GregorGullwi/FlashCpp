@@ -12441,7 +12441,16 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 	// Handle scalar type brace initialization (C++11): int x = {10}; or int x{};
 	// For scalar types, braced initializer should have exactly one element or be empty (value initialization)
-	if (type_specifier.type() != Type::Struct) {
+	// Note: Template instantiations are stored as Type::UserDefined, so we need to check if it's a struct-like type
+	bool is_struct_like_type = (type_specifier.type() == Type::Struct);
+	if (!is_struct_like_type && type_specifier.type() == Type::UserDefined) {
+		// Check if this UserDefined type is actually a struct (e.g., instantiated template)
+		TypeIndex type_index = type_specifier.type_index();
+		if (type_index < gTypeInfo.size() && gTypeInfo[type_index].struct_info_) {
+			is_struct_like_type = true;
+		}
+	}
+	if (!is_struct_like_type) {
 		// Check if this is an empty brace initializer: int x{};
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
 			// Empty braces mean value initialization (zero for scalar types)
