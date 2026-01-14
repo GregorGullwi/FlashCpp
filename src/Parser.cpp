@@ -1575,10 +1575,10 @@ ParseResult Parser::parse_type_and_name() {
             consume_token(); // consume ')'
 
             // Create operator name like "operator int" using StringBuilder
-            const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+            const TypeSpecifierNode& conv_type_spec = type_result.node()->as<TypeSpecifierNode>();
             StringBuilder op_name_builder;
             op_name_builder.append("operator ");
-            op_name_builder.append(type_spec.getReadableString());
+            op_name_builder.append(conv_type_spec.getReadableString());
             operator_name = op_name_builder.commit();
         }
 
@@ -1928,7 +1928,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 // NEW: Parse direct declarator (identifier, function, array)
 ParseResult Parser::parse_direct_declarator(TypeSpecifierNode& base_type,
                                              Token& out_identifier,
-                                             Linkage linkage) {
+                                             [[maybe_unused]] Linkage linkage) {
     // For now, we'll handle the simple case: identifier followed by optional function params
     // TODO: Handle parenthesized declarators like (*fp)(params) for function pointers
 
@@ -2123,7 +2123,7 @@ bool Parser::looks_like_function_parameters()
 		}
 		
 		// Type keywords = function parameters
-		static const std::unordered_set<std::string_view> type_keywords = {
+		static const std::unordered_set<std::string_view> local_type_keywords = {
 			"int", "float", "double", "char", "bool", "void",
 			"short", "long", "signed", "unsigned", "const", "volatile",
 			"auto", "decltype", "struct", "class", "enum", "union",
@@ -2131,7 +2131,7 @@ bool Parser::looks_like_function_parameters()
 			"__int8", "__int16", "__int32", "__int64"
 		};
 		
-		if (token_type == Token::Type::Keyword && type_keywords.count(token_value)) {
+		if (token_type == Token::Type::Keyword && local_type_keywords.count(token_value)) {
 			restore_token_position(saved);
 			return true;
 		}
@@ -2159,7 +2159,7 @@ bool Parser::looks_like_function_parameters()
 			// Unknown identifier - check if next token gives us more context
 			// e.g., `int x(MyType y)` where 'y' is identifier = function param
 			// e.g., `int x(a + b)` where '+' follows = expression = direct init
-			SaveHandle inner_saved = save_token_position();
+			[[maybe_unused]] SaveHandle inner_saved = save_token_position();
 			consume_token();  // consume the identifier
 			
 			if (peek_token().has_value()) {
@@ -2199,7 +2199,7 @@ bool Parser::looks_like_function_parameters()
 		// Could be function with complex return type, OR dereference expression like *this
 		if (token_value == "*" || token_value == "&") {
 			// Peek ahead to see what follows the operator
-			SaveHandle op_saved = save_token_position();
+			[[maybe_unused]] SaveHandle op_saved = save_token_position();
 			consume_token();  // consume the '*' or '&'
 			
 			if (peek_token().has_value()) {
@@ -2313,9 +2313,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	bool is_constexpr = specs.is_constexpr;
 	bool is_constinit = specs.is_constinit;
 	bool is_consteval = specs.is_consteval;
-	bool is_inline = specs.is_inline;
-	bool is_static = (specs.storage_class == StorageClass::Static);
-	bool is_extern = (specs.storage_class == StorageClass::Extern);
+	[[maybe_unused]] bool is_inline = specs.is_inline;
+	[[maybe_unused]] bool is_static = (specs.storage_class == StorageClass::Static);
+	[[maybe_unused]] bool is_extern = (specs.storage_class == StorageClass::Extern);
 	
 	// Create AttributeInfo for backward compatibility with existing code paths
 	AttributeInfo attr_info;
@@ -2727,12 +2727,12 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 			if (auto node = function_definition_result.node()) {
 				if (auto block = block_result.node()) {
-					FunctionDeclarationNode& func_decl = node->as<FunctionDeclarationNode>();
+					FunctionDeclarationNode& inner_func_decl = node->as<FunctionDeclarationNode>();
 					// Generate mangled name before finalizing (Phase 6 mangling)
-					compute_and_set_mangled_name(func_decl);
-					func_decl.set_definition(*block);
+					compute_and_set_mangled_name(inner_func_decl);
+					inner_func_decl.set_definition(*block);
 					// Deduce auto return types from function body
-					deduce_and_update_auto_return_type(func_decl);
+					deduce_and_update_auto_return_type(inner_func_decl);
 					return saved_position.success(*node);
 				}
 			}
@@ -2781,7 +2781,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			// e.g., constexpr Point p1(10, 20);
 			// Note: For global scope, we create a ConstructorCallNode instead of InitializerListNode
 			// because the semantics are different (constructor call vs direct init)
-			Token identifier_token = decl_node.identifier_token();
+			[[maybe_unused]] Token identifier_token = decl_node.identifier_token();
 			Token paren_token = *peek_token(); // Save '(' token for called_from location
 			
 			// Parse the argument list
@@ -3338,7 +3338,6 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				
 				// Calculate member size and alignment
 				auto [member_size_in_bits, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
-				size_t referenced_size_bits = 0;
 				
 				// For struct types, get the actual size from TypeInfo
 				if (member_type_spec.type() == Type::Struct) {
@@ -3351,7 +3350,6 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					}
 					if (member_type_info && member_type_info->getStructInfo()) {
 						member_size_in_bits = member_type_info->getStructInfo()->total_size;
-						referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
 						member_alignment = member_type_info->getStructInfo()->alignment;
 					}
 				}
@@ -3368,7 +3366,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					std::nullopt,
 					member_type_spec.is_reference(),
 					member_type_spec.is_rvalue_reference(),
-					member_type_spec.size_in_bits()
+					static_cast<size_t>(member_type_spec.size_in_bits())
 				);
 			}
 			
@@ -3379,7 +3377,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			struct_type_info.setStructInfo(std::move(struct_info));
 			// Update type_size_ from the finalized struct's total size
 			if (struct_type_info.getStructInfo()) {
-				struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+				struct_type_info.type_size_ = static_cast<int>(struct_type_info.getStructInfo()->total_size);
 			}
 			
 			// Parse the typedef alias name
@@ -3463,7 +3461,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			auto enum_info = std::make_unique<EnumTypeInfo>(enum_name, is_scoped);
 			
 			// Determine underlying type
-			Type underlying_type = Type::Int;
+			[[maybe_unused]] Type underlying_type = Type::Int;
 			int underlying_size = 32;
 			if (enum_ref.has_underlying_type()) {
 				const auto& type_spec_node = enum_ref.underlying_type()->as<TypeSpecifierNode>();
@@ -3856,7 +3854,7 @@ ParseResult Parser::parse_struct_declaration()
 		// Check if this is a decltype base class (e.g., : decltype(expr))
 		std::string_view base_class_name;
 		TypeSpecifierNode base_type_spec;
-		bool is_decltype_base = false;
+		[[maybe_unused]] bool is_decltype_base = false;
 		Token base_name_token;  // For error reporting
 		
 		if (peek_token().has_value() && peek_token()->value() == "decltype") {
@@ -3889,17 +3887,17 @@ ParseResult Parser::parse_struct_declaration()
 			    type_spec_opt->type_index() < gTypeInfo.size()) {
 				// Successfully evaluated - add as regular base class
 				const TypeInfo& base_type_info = gTypeInfo[type_spec_opt->type_index()];
-				std::string_view base_class_name = StringTable::getStringView(base_type_info.name());
+				std::string_view resolved_base_class_name = StringTable::getStringView(base_type_info.name());
 				
-				FLASH_LOG(Templates, Debug, "Resolved decltype base class immediately: ", base_class_name);
+				FLASH_LOG(Templates, Debug, "Resolved decltype base class immediately: ", resolved_base_class_name);
 				
 				// Check if base class is final
 				if (base_type_info.struct_info_ && base_type_info.struct_info_->is_final) {
-					return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", base_name_token);
+					return ParseResult::error("Cannot inherit from final class '" + std::string(resolved_base_class_name) + "'", base_name_token);
 				}
 				
 				// Add base class to struct node and type info
-				struct_ref.add_base_class(base_class_name, base_type_info.type_index_, base_access, is_virtual_base);
+				struct_ref.add_base_class(resolved_base_class_name, base_type_info.type_index_, base_access, is_virtual_base);
 				struct_info->addBaseClass(base_class_name, base_type_info.type_index_, base_access, is_virtual_base);
 				
 				// Continue to next base class - skip the rest of the loop body
@@ -4807,7 +4805,7 @@ ParseResult Parser::parse_struct_declaration()
 						
 						// Calculate member size and alignment
 						auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(anon_member_type_spec);
-						size_t referenced_size_bits = anon_member_type_spec.size_in_bits();
+						size_t referenced_size_bits = static_cast<size_t>(anon_member_type_spec.size_in_bits());
 						
 						// For struct types, get size and alignment from the struct type info
 						if (anon_member_type_spec.type() == Type::Struct && !anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference()) {
@@ -4846,7 +4844,7 @@ ParseResult Parser::parse_struct_declaration()
 						bool is_ref_member = anon_member_type_spec.is_reference();
 						bool is_rvalue_ref_member = anon_member_type_spec.is_rvalue_reference();
 						if (is_ref_member) {
-							referenced_size_bits = referenced_size_bits ? referenced_size_bits : (anon_member_type_spec.size_in_bits());
+							referenced_size_bits = referenced_size_bits ? referenced_size_bits : static_cast<size_t>(anon_member_type_spec.size_in_bits());
 						}
 						
 						StringHandle member_name_handle = StringTable::getOrInternStringHandle(anon_member_name_token->value());
