@@ -21202,6 +21202,16 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		return ParseResult::error("Expected ')' after function arguments", *current_token_);
 	}
 	
+	// Try to instantiate the member template function if we have explicit template args
+	std::optional<ASTNode> instantiated_func;
+	if (member_template_args.has_value() && !member_template_args->empty()) {
+		instantiated_func = try_instantiate_member_function_template_explicit(
+			instantiated_class_name,
+			member_name,
+			*member_template_args
+		);
+	}
+	
 	// Build qualified function name including template args
 	StringBuilder func_name_builder;
 	func_name_builder.append(instantiated_class_name);
@@ -21225,12 +21235,26 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	                member_token.column(),
 	                member_token.file_index());
 	
-	// Create a forward declaration for the function
-	auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, func_token);
-	auto forward_decl = emplace_node<DeclarationNode>(type_node, func_token);
-	const DeclarationNode* decl_ptr = &forward_decl.as<DeclarationNode>();
+	// If we successfully instantiated the function, use its declaration
+	const DeclarationNode* decl_ptr = nullptr;
+	const FunctionDeclarationNode* func_decl_ptr = nullptr;
+	if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+		func_decl_ptr = &instantiated_func->as<FunctionDeclarationNode>();
+		decl_ptr = &func_decl_ptr->decl_node();
+	} else {
+		// Fall back to forward declaration if instantiation failed
+		auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, func_token);
+		auto forward_decl = emplace_node<DeclarationNode>(type_node, func_token);
+		decl_ptr = &forward_decl.as<DeclarationNode>();
+	}
 	
 	auto result = emplace_node<ExpressionNode>(FunctionCallNode(const_cast<DeclarationNode&>(*decl_ptr), std::move(args), func_token));
+	
+	// Set the mangled name on the function call if we have the function declaration
+	if (func_decl_ptr && func_decl_ptr->has_mangled_name()) {
+		std::get<FunctionCallNode>(result.as<ExpressionNode>()).set_mangled_name(func_decl_ptr->mangled_name());
+	}
+	
 	return ParseResult::success(result);
 }
 
@@ -35259,6 +35283,24 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	
 	// Look up the template in the registry
 	auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
+	
+	// If not found, try with the base template class name
+	// For instantiated classes like Helper_int, try Helper::member
+	std::string_view base_qualified_name;
+	if (!template_opt.has_value()) {
+		size_t underscore_pos = struct_name.rfind('_');
+		if (underscore_pos != std::string_view::npos) {
+			std::string_view base_class_name = struct_name.substr(0, underscore_pos);
+			base_qualified_name = StringBuilder()
+				.append(base_class_name)
+				.append("::")
+				.append(member_name)
+				.commit();
+			template_opt = gTemplateRegistry.lookupTemplate(base_qualified_name);
+			FLASH_LOG(Templates, Debug, "Trying base template class lookup: ", base_qualified_name);
+		}
+	}
+	
 	if (!template_opt.has_value()) {
 		return std::nullopt;  // Not a template
 	}
