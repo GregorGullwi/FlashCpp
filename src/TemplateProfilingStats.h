@@ -234,20 +234,25 @@ private:
 };
 
 // Convenience macros for profiling
+// Use __COUNTER__ to generate unique variable names, preventing shadowing warnings
+#define PROFILE_TEMPLATE_CONCAT_IMPL(a, b) a##b
+#define PROFILE_TEMPLATE_CONCAT(a, b) PROFILE_TEMPLATE_CONCAT_IMPL(a, b)
+#define PROFILE_TEMPLATE_UNIQUE_VAR PROFILE_TEMPLATE_CONCAT(_template_prof_timer_, __COUNTER__)
+
 #define PROFILE_TEMPLATE_INSTANTIATION(name) \
-    TemplateProfilingTimer _template_prof_timer(TemplateProfilingTimer::Operation::Instantiation, name)
+    TemplateProfilingTimer PROFILE_TEMPLATE_UNIQUE_VAR(TemplateProfilingTimer::Operation::Instantiation, name)
 
 #define PROFILE_TEMPLATE_LOOKUP() \
-    TemplateProfilingTimer _template_prof_timer(TemplateProfilingTimer::Operation::Lookup)
+    TemplateProfilingTimer PROFILE_TEMPLATE_UNIQUE_VAR(TemplateProfilingTimer::Operation::Lookup)
 
 #define PROFILE_TEMPLATE_PARSING() \
-    TemplateProfilingTimer _template_prof_timer(TemplateProfilingTimer::Operation::Parsing)
+    TemplateProfilingTimer PROFILE_TEMPLATE_UNIQUE_VAR(TemplateProfilingTimer::Operation::Parsing)
 
 #define PROFILE_TEMPLATE_SUBSTITUTION() \
-    TemplateProfilingTimer _template_prof_timer(TemplateProfilingTimer::Operation::Substitution)
+    TemplateProfilingTimer PROFILE_TEMPLATE_UNIQUE_VAR(TemplateProfilingTimer::Operation::Substitution)
 
 #define PROFILE_TEMPLATE_SPECIALIZATION_MATCH() \
-    TemplateProfilingTimer _template_prof_timer(TemplateProfilingTimer::Operation::SpecializationMatch)
+    TemplateProfilingTimer PROFILE_TEMPLATE_UNIQUE_VAR(TemplateProfilingTimer::Operation::SpecializationMatch)
 
 #define PROFILE_TEMPLATE_CACHE_HIT(name) \
     TemplateProfilingStats::getInstance().recordCacheHit(name)

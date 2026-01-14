@@ -69,7 +69,7 @@ TypeInfo& add_user_type(StringHandle name) {
     return type_info;
 }
 
-TypeInfo& add_function_type(StringHandle name, Type return_type) {
+TypeInfo& add_function_type(StringHandle name, [[maybe_unused]] Type return_type) {
     auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Function, gTypeInfo.size());
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
@@ -1060,7 +1060,7 @@ void StructTypeInfo::buildRTTI() {
     }
 
     // Build ??_R1 - Base Class Descriptors (one for each base, plus one for self)
-    size_t total_bases = base_classes.size() + 1;  // +1 for self
+    [[maybe_unused]] size_t total_bases = base_classes.size() + 1;  // +1 for self
     
     // Self descriptor (always first)
     MSVCBaseClassDescriptor self_bcd;
@@ -1150,21 +1150,21 @@ void StructTypeInfo::buildRTTI() {
     
     // Calculate required size for "LENGTH" + name + null terminator
     size_t length_digits = std::to_string(name_sv.length()).length();
-    size_t total_size = length_digits + name_sv.length() + 1;
+    size_t itanium_total_size = length_digits + name_sv.length() + 1;
     
     // Allocate permanent storage for the name string (persists for program lifetime)
-    char* itanium_name = (char*)malloc(total_size);
+    char* itanium_name = (char*)malloc(itanium_total_size);
     if (!itanium_name) {
         // Allocation failed - Itanium RTTI won't be available
         return;
     }
     
     // Write length prefix and name directly to buffer
-    int written = snprintf(itanium_name, total_size, "%zu%.*s", 
+    int written = snprintf(itanium_name, itanium_total_size, "%zu%.*s", 
                           name_sv.length(), 
                           static_cast<int>(name_sv.length()), 
                           name_sv.data());
-    if (written < 0 || static_cast<size_t>(written) >= total_size) {
+    if (written < 0 || static_cast<size_t>(written) >= itanium_total_size) {
         free(itanium_name);
         return;
     }
@@ -1217,7 +1217,7 @@ void StructTypeInfo::buildRTTI() {
         
         // Calculate flags
         vmi_ti->flags = 0;
-        bool has_virtual_bases = false;
+        [[maybe_unused]] bool has_virtual_bases = false;
         for (const auto& base : base_classes) {
             if (base.is_virtual) {
                 has_virtual_bases = true;

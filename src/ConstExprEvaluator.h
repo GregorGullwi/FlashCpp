@@ -29,23 +29,23 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{true, val, ""};
+		return EvalResult{true, val, "", false, {}};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{true, val, ""};
+		return EvalResult{true, val, "", false, {}};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{true, val, ""};
+		return EvalResult{true, val, "", false, {}};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{true, val, ""};
+		return EvalResult{true, val, "", false, {}};
 	}
 
 	static EvalResult error(const std::string& msg) {
-		return EvalResult{false, false, msg};
+		return EvalResult{false, false, msg, false, {}};
 	}
 
 	// Convenience helpers for common operations
@@ -1538,15 +1538,9 @@ private:
 		// For member access on 'this' (e.g., this->x in a member function)
 		// This handles implicit member accesses like 'x' which parser transforms to 'this->x'
 		if (std::holds_alternative<MemberAccessNode>(expr)) {
-			const auto& member_access = std::get<MemberAccessNode>(expr);
-			std::string_view member_name = member_access.member_name();
-			
-			// Check if the object is 'this' (implicit member access)
-			const ASTNode& obj = member_access.object();
-			if (obj.is<ExpressionNode>()) {
-				const ExpressionNode& obj_expr = obj.as<ExpressionNode>();
-				// For now, fall back to regular evaluation
-			}
+			[[maybe_unused]] const auto& member_access = std::get<MemberAccessNode>(expr);
+			// TODO: Handle member access evaluation for 'this->x' pattern
+			// For now, fall back to regular evaluation
 		}
 		
 		// For other expression types, use the const version (cast bindings to const)
@@ -1683,9 +1677,9 @@ private:
 			// Get the array expression
 			const ASTNode& array_expr = subscript.array_expr();
 			if (array_expr.is<ExpressionNode>()) {
-				const ExpressionNode& expr = array_expr.as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(expr)) {
-					std::string_view var_name = std::get<IdentifierNode>(expr).name();
+				const ExpressionNode& array_expr_node = array_expr.as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(array_expr_node)) {
+					std::string_view var_name = std::get<IdentifierNode>(array_expr_node).name();
 					
 					// Check if it's in bindings (parameter array)
 					auto it = bindings.find(var_name);
@@ -2183,8 +2177,8 @@ public:
 	static std::optional<ASTNode> get_member_initializer(
 		const ConstructorCallNode& ctor_call,
 		const StructTypeInfo* struct_info,
-		std::string_view member_name,
-		EvaluationContext& context) {
+		std::string_view member_name_param,
+		[[maybe_unused]] EvaluationContext& context) {
 		
 		const auto& ctor_args = ctor_call.arguments();
 		
@@ -2206,13 +2200,13 @@ public:
 		
 		// Look for the member in the initializer list
 		for (const auto& mem_init : matching_ctor->member_initializers()) {
-			if (mem_init.member_name == member_name) {
+			if (mem_init.member_name == member_name_param) {
 				return mem_init.initializer_expr;
 			}
 		}
 		
 		// Check for default member initializer
-		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name_param);
 		for (const auto& member : struct_info->members) {
 			if (member.getName() == member_name_handle && member.default_initializer.has_value()) {
 				return member.default_initializer.value();
@@ -2439,9 +2433,10 @@ public:
 
 	// Evaluate array subscript followed by member access (e.g., arr[0].member)
 	static EvalResult evaluate_array_subscript_member_access(
-		const ArraySubscriptNode& subscript,
-		std::string_view member_name,
-		EvaluationContext& context) {
+		[[maybe_unused]] const ArraySubscriptNode& subscript,
+		[[maybe_unused]] std::string_view member_name,
+		[[maybe_unused]] EvaluationContext& context) {
+		// TODO: Implement array subscript followed by member access evaluation
 		// For now, return an error - this is more complex
 		return EvalResult::error("Array subscript followed by member access not yet supported");
 	}

@@ -34,8 +34,8 @@ endif
 # Usage: make CXX=g++ to use gcc instead
 CXX ?= clang++
 
-# Compiler flags - add -Wall -Wextra -pedantic for better warnings
-CXXFLAGS := -std=c++20
+# Compiler flags - enable strict warnings for clean code
+CXXFLAGS := -std=c++20 -Wall -Wextra -Wshadow -Werror
 
 # Directories
 SRCDIR := src

@@ -624,7 +624,7 @@ std::vector<uint8_t> DebugInfoBuilder::generateLineInfoForFunction(const Functio
               << ", cbCon=" << line_header.code_length << std::endl;
 
     // Track position for relocations - we need to add relocations for the code_offset and segment fields
-    size_t line_header_start = line_data.size();
+    [[maybe_unused]] size_t line_header_start = line_data.size();
 
     line_data.insert(line_data.end(),
                      reinterpret_cast<const uint8_t*>(&line_header),

@@ -122,7 +122,7 @@ inline bool signaturesMatch(const std::vector<Type>& sig1, const std::vector<Typ
 
 class SymbolTable {
 public:
-	bool insert(const std::string& identifier, ASTNode node) {
+	bool insert([[maybe_unused]] const std::string& identifier, [[maybe_unused]] ASTNode node) {
 		assert(false && "Use StringBuilder to pass a string_view to SymbolTable::insert, don't use std::string");
 		return false;
 	}
@@ -601,7 +601,7 @@ public:
 		return lookup_function(identifier, arg_types, get_current_scope_handle());
 	}
 
-	std::optional<ASTNode> lookup_function(std::string_view identifier, const std::vector<Type>& arg_types, ScopeHandle scope_limit_handle) const {
+	std::optional<ASTNode> lookup_function(std::string_view identifier, [[maybe_unused]] const std::vector<Type>& arg_types, ScopeHandle scope_limit_handle) const {
 		// Get all overloads
 		auto overloads = lookup_all(identifier, scope_limit_handle);
 		if (overloads.empty()) {
@@ -623,7 +623,7 @@ public:
 		return get_scope_handle(identifier, get_current_scope_handle());
 	}
 
- 	std::optional<SymbolScopeHandle> get_scope_handle(std::string_view identifier, ScopeHandle scope_limit_handle) const {
+ 	std::optional<SymbolScopeHandle> get_scope_handle(std::string_view identifier, [[maybe_unused]] ScopeHandle scope_limit_handle) const {
  		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
  			const Scope& scope = *stackIt;
  			auto symbolIt = scope.symbols.find(identifier);

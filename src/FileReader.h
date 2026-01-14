@@ -1699,8 +1699,8 @@ private:
 						long version = 0;
 						std::string_view keyword_sv(keyword);
 						if (auto attribute_name = extractNameBetweenParens(keyword_sv); !attribute_name.empty()) {
-							if (auto it = has_cpp_attribute_versions.find(attribute_name); it != has_cpp_attribute_versions.end()) {
-								version = it->second;
+							if (auto attr_it = has_cpp_attribute_versions.find(attribute_name); attr_it != has_cpp_attribute_versions.end()) {
+								version = attr_it->second;
 							}
 							if (settings_.isVerboseMode()) {
 								std::cout << "__has_cpp_attribute(" << attribute_name << ") = " << version << std::endl;
@@ -1749,9 +1749,9 @@ private:
 						// Don't print stream state here anymore since it was misleading
 					}
 				}
-				else if (auto it = defines_.find(keyword); it != defines_.end()) {
+				else if (auto define_it = defines_.find(keyword); define_it != defines_.end()) {
 					// convert the value to an int
-					const auto& body = it->second.getBody();
+					const auto& body = define_it->second.getBody();
 					if (body.size() == 1) {
 						long value = stol(body);
 						values.push(value);

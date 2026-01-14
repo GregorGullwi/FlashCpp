@@ -1149,7 +1149,7 @@ private:
 	bool checkMemberAccess(const StructMember* member,
 	                       const StructTypeInfo* member_owner_struct,
 	                       const StructTypeInfo* accessing_struct,
-	                       const BaseClassSpecifier* inheritance_path = nullptr,
+	                       [[maybe_unused]] const BaseClassSpecifier* inheritance_path = nullptr,
 	                       const std::string_view& accessing_function = "") const {
 		if (!member || !member_owner_struct) {
 			return false;
@@ -1361,7 +1361,6 @@ private:
 	// Helper function to check if a variable is a reference by looking it up in the symbol table
 	// Returns true if the variable is declared as a reference (&  or &&)
 	bool isVariableReference(std::string_view var_name) const {
-		StringHandle var_handle = StringTable::getOrInternStringHandle(var_name);
 		const std::optional<ASTNode> symbol = symbol_table.lookup(var_name);
 		
 		if (symbol.has_value() && symbol->is<DeclarationNode>()) {
@@ -1775,7 +1774,7 @@ private:
 	}
 	
 	// Emit DereferenceStore instruction
-	void emitDereferenceStore(const TypedValue& value, Type pointee_type, int pointee_size_bits,
+	void emitDereferenceStore(const TypedValue& value, Type pointee_type, [[maybe_unused]] int pointee_size_bits,
 	                          std::variant<StringHandle, TempVar> pointer,
 	                          const Token& token) {
 		DereferenceStoreOp store_op;
@@ -2834,7 +2833,7 @@ private:
 		current_function_name_ = saved_enclosing_function;
 	}
 
-	void visitEnumDeclarationNode(const EnumDeclarationNode& node) {
+	void visitEnumDeclarationNode([[maybe_unused]] const EnumDeclarationNode& node) {
 		// Enum declarations themselves don't generate IR - they just define types
 		// The type information is already registered in the global type system
 		// Enumerators are treated as compile-time constants and don't need runtime code generation
@@ -3378,7 +3377,6 @@ private:
 
 		// Visit the constructor body
 		const BlockNode& block = node.get_definition().value().as<BlockNode>();
-		size_t ctor_stmt_index = 0;
 		block.get_statements().visit([&](const ASTNode& statement) {
 			visit(statement);
 		});
@@ -4813,13 +4811,13 @@ private:
 			init_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 		} else {
 			// For non-reference variables, reinterpret iterator as pointer to element type, then dereference
-			auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
+			auto deref_begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 			auto loop_ptr_type = ASTNode::emplace_node<TypeSpecifierNode>(
 				loop_type.type(), loop_type.type_index(), static_cast<int>(loop_type.size_in_bits()), Token()
 			);
 			loop_ptr_type.as<TypeSpecifierNode>().add_pointer_level();
 			auto cast_expr = ASTNode::emplace_node<ExpressionNode>(
-				ReinterpretCastNode(loop_ptr_type, begin_ident_expr, Token(Token::Type::Keyword, "reinterpret_cast", 0, 0, 0))
+				ReinterpretCastNode(loop_ptr_type, deref_begin_ident_expr, Token(Token::Type::Keyword, "reinterpret_cast", 0, 0, 0))
 			);
 			init_expr = ASTNode::emplace_node<ExpressionNode>(
 				UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), cast_expr, true)
@@ -5529,10 +5527,10 @@ private:
 															// Get the type of the initializer expression
 															if (std::holds_alternative<IdentifierNode>(expr)) {
 																const auto& ident = std::get<IdentifierNode>(expr);
-																std::optional<ASTNode> symbol = symbol_table.lookup(ident.name());
-																if (symbol.has_value()) {
-																	if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-																		const TypeSpecifierNode& init_type = decl->type_node().as<TypeSpecifierNode>();
+																std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
+																if (init_symbol.has_value()) {
+																	if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
+																		const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
 																		if (init_type.type() == Type::Struct && 
 																			init_type.type_index() == param_type.type_index()) {
 																			init_is_struct_of_same_type = true;
@@ -5634,17 +5632,13 @@ private:
 											
 											if (param_is_ref && is_ident) {
 												const auto& identifier = std::get<IdentifierNode>(init_expr.as<ExpressionNode>());
-												std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
-												if (symbol.has_value()) {
-													bool is_decl = symbol->is<DeclarationNode>();
-													bool is_vardecl = symbol->is<VariableDeclarationNode>();
-												}
+												std::optional<ASTNode> arg_symbol = symbol_table.lookup(identifier.name());
 												
 												const DeclarationNode* arg_decl = nullptr;
-												if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-													arg_decl = &symbol->as<DeclarationNode>();
-												} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
-													arg_decl = &symbol->as<VariableDeclarationNode>().declaration();
+												if (arg_symbol.has_value() && arg_symbol->is<DeclarationNode>()) {
+													arg_decl = &arg_symbol->as<DeclarationNode>();
+												} else if (arg_symbol.has_value() && arg_symbol->is<VariableDeclarationNode>()) {
+													arg_decl = &arg_symbol->as<VariableDeclarationNode>().declaration();
 												}
 												
 												if (arg_decl) {
@@ -6270,19 +6264,19 @@ private:
 								if (decl.is_array()) {
 									// For arrays, we need to call the constructor once for each element
 									// Get array size
-									size_t array_count = 1;
+									size_t ctor_array_count = 1;
 									auto size_expr = decl.array_size();
 									if (size_expr.has_value()) {
 										// Evaluate the array size expression using ConstExprEvaluator
-										ConstExpr::EvaluationContext ctx(symbol_table);
-										auto eval_result = ConstExpr::Evaluator::evaluate(*size_expr, ctx);
+										ConstExpr::EvaluationContext array_ctx(symbol_table);
+										auto eval_result = ConstExpr::Evaluator::evaluate(*size_expr, array_ctx);
 										if (eval_result.success) {
-											array_count = static_cast<size_t>(eval_result.as_int());
+											ctor_array_count = static_cast<size_t>(eval_result.as_int());
 										}
 									}
 									
 									// Generate constructor call for each array element
-									for (size_t i = 0; i < array_count; i++) {
+									for (size_t i = 0; i < ctor_array_count; i++) {
 										ConstructorCallOp ctor_op;
 										ctor_op.struct_name = type_info.name();
 										// For arrays, we need to specify the element to construct
@@ -6941,7 +6935,6 @@ private:
 		}
 		
 		// Step 6: Aggregate (struct) decomposition
-		aggregate_decomposition:
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Using aggregate decomposition");
 		
 		// Step 6a: Validate that we have the correct number of identifiers
@@ -7140,7 +7133,7 @@ private:
 			return generateSizeofIr(sizeof_node);
 		}
 		else if (std::holds_alternative<SizeofPackNode>(exprNode)) {
-			const auto& expr = std::get<SizeofPackNode>(exprNode);
+			[[maybe_unused]] const auto& sizeof_pack_expr = std::get<SizeofPackNode>(exprNode);
 			// sizeof... should have been replaced with a constant during template instantiation
 			// If we reach here, it means sizeof... wasn't properly substituted
 			// This is an error - sizeof... can only appear in template contexts
@@ -7472,9 +7465,9 @@ private:
 
 							// The ptr_temp now contains the address of the captured variable
 							// We need to dereference it using PointerDereference
-							auto type_it = current_lambda_context_.capture_types.find(var_name_str);
-							if (type_it != current_lambda_context_.capture_types.end()) {
-								const TypeSpecifierNode& orig_type = type_it->second;
+							auto capture_type_it = current_lambda_context_.capture_types.find(var_name_str);
+							if (capture_type_it != current_lambda_context_.capture_types.end()) {
+								const TypeSpecifierNode& orig_type = capture_type_it->second;
 
 								// Generate Dereference to load the value
 								TempVar result_temp = var_counter.next();
@@ -7830,7 +7823,6 @@ private:
 				// Just return it as a pointer (64 bits on x64 architecture).
 				if (type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
-					constexpr int POINTER_SIZE_BITS = 64;  // x64 pointer size
 					return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
 				}
 				
@@ -7970,7 +7962,6 @@ private:
 					// Just return it as a pointer (64 bits on x64 architecture).
 					if (type_node.is_array()) {
 						// Return the array reference as a 64-bit pointer
-						constexpr int POINTER_SIZE_BITS = 64;  // x64 pointer size
 						return { type_node.type(), POINTER_SIZE_BITS, StringTable::getOrInternStringHandle(identifierNode.name()), 0ULL };
 					}
 					
@@ -8985,7 +8976,6 @@ private:
 										// Now compute the member address by adding the member offset
 										// We need to add the offset to the pointer value
 										// Treat the pointer as a 64-bit integer for arithmetic purposes
-										constexpr int POINTER_SIZE_BITS = 64;
 										TempVar member_addr_var = var_counter.next();
 										BinaryOp add_offset;
 										add_offset.lhs = { Type::UnsignedLongLong, POINTER_SIZE_BITS, elem_addr_var };  // pointer treated as integer
@@ -9030,7 +9020,6 @@ private:
 								
 								if (member) {
 									TempVar result_var = var_counter.next();
-									constexpr int POINTER_SIZE_BITS = 64;
 									
 									// For simple identifiers, generate a MemberAddressOp or use AddressOf with member context
 									// For now, use a simpler approach: emit AddressOf, then Add offset in generated code
@@ -9508,7 +9497,7 @@ private:
 
 		// Get the type of the operand
 		Type operandType = std::get<Type>(operandIrOperands[0]);
-		int operandSize = std::get<int>(operandIrOperands[1]);
+		[[maybe_unused]] int operandSize = std::get<int>(operandIrOperands[1]);
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
@@ -10866,7 +10855,6 @@ private:
 			
 			// Get the assignment target (must be a variable)
 			if (std::holds_alternative<StringHandle>(lhsIrOperands[2])) {
-				TempVar result_var = var_counter.next();
 				AssignmentOp assign_op;
 				assign_op.result = std::get<StringHandle>(lhsIrOperands[2]);
 				assign_op.lhs = { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands[2]) };
@@ -10881,7 +10869,7 @@ private:
 				// Return the assigned value
 				return { lhsType, lhsSize, std::get<StringHandle>(lhsIrOperands[2]), 0ULL };
 			} else if (std::holds_alternative<TempVar>(lhsIrOperands[2])) {
-				TempVar result_var = var_counter.next();
+				[[maybe_unused]] TempVar result_var = var_counter.next();
 				AssignmentOp assign_op;
 				assign_op.result = std::get<TempVar>(lhsIrOperands[2]);
 				assign_op.lhs = { lhsType, lhsSize, std::get<TempVar>(lhsIrOperands[2]) };
@@ -12342,8 +12330,8 @@ private:
 		auto ptr_ir = visitExpressionNode(ptr_arg.as<ExpressionNode>());
 		
 		// Extract pointer details
-		Type ptr_type = std::get<Type>(ptr_ir[0]);
-		int ptr_size = std::get<int>(ptr_ir[1]);
+		[[maybe_unused]] Type ptr_type = std::get<Type>(ptr_ir[0]);
+		[[maybe_unused]] int ptr_size = std::get<int>(ptr_ir[1]);
 		
 		// For now, we just return the pointer unchanged
 		// In a real implementation, __builtin_launder would:
@@ -12835,13 +12823,13 @@ private:
 		} else {
 			// Try to get from the function declaration stored in FunctionCallNode
 			// Look up the function in symbol table to get full declaration with parameters
-			auto func_symbol = symbol_table.lookup(func_decl_node.identifier_token().value());
-			if (!func_symbol.has_value() && global_symbol_table_) {
-				func_symbol = global_symbol_table_->lookup(func_decl_node.identifier_token().value());
+			auto local_func_symbol = symbol_table.lookup(func_decl_node.identifier_token().value());
+			if (!local_func_symbol.has_value() && global_symbol_table_) {
+				local_func_symbol = global_symbol_table_->lookup(func_decl_node.identifier_token().value());
 			}
-			if (func_symbol.has_value() && func_symbol->is<FunctionDeclarationNode>()) {
-				const auto& func_decl = func_symbol->as<FunctionDeclarationNode>();
-				param_nodes = func_decl.parameter_nodes();
+			if (local_func_symbol.has_value() && local_func_symbol->is<FunctionDeclarationNode>()) {
+				const auto& resolved_func_decl = local_func_symbol->as<FunctionDeclarationNode>();
+				param_nodes = resolved_func_decl.parameter_nodes();
 			}
 		}
 		
@@ -12869,8 +12857,8 @@ private:
 			}
 
 			bool param_is_ref_like = false;
-			bool param_is_rvalue_ref = false;
-			bool param_is_pack = param_decl && param_decl->is_parameter_pack();
+			[[maybe_unused]] bool param_is_rvalue_ref = false;
+			[[maybe_unused]] bool param_is_pack = param_decl && param_decl->is_parameter_pack();
 			if (param_type) {
 				param_is_ref_like = param_type->is_reference() || param_type->is_rvalue_reference();
 				param_is_rvalue_ref = param_type->is_rvalue_reference();
@@ -13805,8 +13793,8 @@ private:
 							// For now, we assume int return type which works for most common cases
 							
 							TempVar ret_var = var_counter.next();
-							std::vector<IrOperand> irOperands;
-							irOperands.emplace_back(ret_var);
+							std::vector<IrOperand> func_ptr_call_operands;
+							func_ptr_call_operands.emplace_back(ret_var);
 							
 							// Get the function pointer member
 							// We need to generate member access to get the pointer value
@@ -14016,7 +14004,7 @@ private:
 						}
 						
 						// Generate the mangled name
-						std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
+						[[maybe_unused]] std::string_view mangled_func_name = TemplateRegistry::mangleTemplateName(func_name, template_args);
 						
 						// Template instantiation now happens during parsing
 						// The instantiated function should already be in the AST
@@ -15088,7 +15076,6 @@ private:
 										// For array members, member->size is the total size, we need element size
 										// This is a simplified assumption - we need better array type info
 										// For now, assume arrays of primitives and compute element size
-										int array_length = 1;  // Default if not an array
 										// TODO: Get actual array length from type info
 										// For now, use a heuristic: if size is larger than element type, it's an array
 										int base_element_size = get_type_size_bits(element_type);  // Use existing helper
@@ -16602,8 +16589,8 @@ private:
 		size_t pointer_depth = type_spec.pointer_depth();
 		
 		// Get TypeInfo and StructTypeInfo for use by shared evaluator and binary traits
-		const TypeInfo* type_info = (type_spec.type_index() < gTypeInfo.size()) ? &gTypeInfo[type_spec.type_index()] : nullptr;
-		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		[[maybe_unused]] const TypeInfo* outer_type_info = (type_spec.type_index() < gTypeInfo.size()) ? &gTypeInfo[type_spec.type_index()] : nullptr;
+		[[maybe_unused]] const StructTypeInfo* outer_struct_info = outer_type_info ? outer_type_info->getStructInfo() : nullptr;
 
 		// Handle binary traits that require a second type argument
 		switch (traitNode.kind()) {
@@ -17432,7 +17419,7 @@ private:
 			default:
 				// For all other unary type traits, use the shared evaluator from TypeTraitEvaluator.h
 				{
-					TypeTraitResult eval_result = evaluateTypeTrait(traitNode.kind(), type_spec, type_info, struct_info);
+					TypeTraitResult eval_result = evaluateTypeTrait(traitNode.kind(), type_spec, outer_type_info, outer_struct_info);
 					if (eval_result.success) {
 						result = eval_result.value;
 					} else {

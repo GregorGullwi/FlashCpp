@@ -223,9 +223,6 @@ int main(int argc, char *argv[]) {
     bool show_perf_stats = argsparser.hasFlag("perf-stats"sv) || argsparser.hasFlag("stats"sv);
     bool show_timing = argsparser.hasFlag("time"sv) || argsparser.hasFlag("timing"sv) || show_perf_stats;
 
-    // Always show basic timing information (total time + breakdown)
-    bool show_basic_timing = true;
-
     // Set global debug flag (also enabled by verbose mode)
     g_enable_debug_output = show_debug || context.isVerboseMode();
 

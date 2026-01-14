@@ -320,7 +320,7 @@ template<typename OutputType>
 inline void generateItaniumMangledName(
 	OutputType& output,
 	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
+	[[maybe_unused]] const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	bool is_variadic,
 	std::string_view struct_name,
@@ -553,7 +553,7 @@ template<typename OutputType>
 inline void generateItaniumMangledNameWithTypeTemplateArgs(
 	OutputType& output,
 	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
+	[[maybe_unused]] const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<TemplateTypeArg>& type_template_args,
 	bool is_variadic,
@@ -638,7 +638,7 @@ template<typename OutputType>
 inline void generateItaniumMangledNameWithTemplateArgs(
 	OutputType& output,
 	std::string_view func_name,
-	const TypeSpecifierNode& return_type,
+	[[maybe_unused]] const TypeSpecifierNode& return_type,
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<int64_t>& non_type_template_args,
 	bool is_variadic,
