@@ -47,19 +47,31 @@ cd tests/std
 
 ## Current Blockers
 
-### 1. `<utility>` - Constructor Declaration Parsing
+### 1. `<utility>` - Template Name Resolution in std Namespace
 
-**Location:** `bits/stl_pair.h` - Constructor declarations with complex parameter types
+**Location:** `<type_traits>` header - Variable template lookups during template alias resolution
 
-The parser encounters issues with constructor declarations inside template classes that have complex parameter types like `piecewise_construct_t`.
+The compiler encounters issues when resolving variable template names during parsing of the standard library headers. Variable templates like `is_reference_v` are registered with qualified names (`std::is_reference_v`) but some internal lookups use unqualified names.
 
 **Example pattern:**
 ```cpp
-template<typename... _Args1, typename... _Args2>
-pair(piecewise_construct_t, tuple<_Args1...>, tuple<_Args2...>);
+// In std::, this pattern requires proper namespace resolution:
+template <typename _Tp>
+  inline constexpr bool is_reference_v = __is_reference(_Tp);
+
+// When used inside template aliases:
+template<typename _Xp, typename _Yp>
+  requires is_reference_v<__condres_cvref<_Xp, _Yp>>  // lookup fails for 'is_reference_v'
 ```
 
+**Error:** `No primary template found for 'is_reference_v'`
+
+**Root cause:** The `lookupTemplate` function is called with unqualified name `is_reference_v` but the template is registered with qualified name `std::is_reference_v`.
+
 **Previous blockers resolved (January 14, 2026):**
+- Namespace-qualified variable template lookup: Variable templates in namespaces can now be used from function templates in the same namespace
+  - **Fix:** Added namespace-qualified lookup in multiple code paths for variable templates in `parse_unary_expression()`
+  - **Test case:** `tests/test_ns_var_template_ret0.cpp`
 - Non-type template parameters in return types: Pattern `typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&` now works
   - **Fix:** Set `current_template_param_names_` EARLY in `parse_template_declaration()`, before variable template detection code calls `parse_type_specifier()`
   - **Test case:** `tests/test_nontype_template_param_return_ret0.cpp`
@@ -72,7 +84,23 @@ pair(piecewise_construct_t, tuple<_Args1...>, tuple<_Args2...>);
 - C++20 inline nested namespaces: Pattern `namespace A::inline B { }` now works
 - `const typename` in type specifiers: Pattern `constexpr const typename T::type` now works
 
-### 2. Template Instantiation Performance
+### 2. Template Argument Reference Preservation
+
+**Issue:** Template argument substitution can lose reference qualifiers when substituting type parameters.
+
+**Example pattern:**
+```cpp
+template<typename T>
+constexpr bool test() {
+    return is_reference_v<T>;  // T=int& becomes just int
+}
+
+test<int&>();  // Should return true, but returns false
+```
+
+**Root cause:** When instantiating function templates, reference qualifiers on template arguments are not properly preserved when passed to nested variable templates.
+
+### 3. Template Instantiation Performance
 
 Most headers timeout due to template instantiation volume, not parsing errors. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
 
@@ -81,7 +109,7 @@ Most headers timeout due to template instantiation volume, not parsing errors. I
 - Optimize string operations in template name generation
 - Consider lazy evaluation strategies
 
-### 3. Missing Infrastructure
+### 4. Missing Infrastructure
 
 - **Exception handling** - Required for containers (`<vector>`, `<string>`)
 - **Allocator support** - Required for `<vector>`, `<string>`, `<map>`, `<set>`
@@ -121,6 +149,7 @@ The following features have been implemented to support standard headers:
 **Templates:**
 - Fold expression evaluation in static members
 - Namespace-qualified variable templates
+- Namespace-qualified variable template lookup in function templates (NEW)
 - Member template requires clauses
 - Template function `= delete`/`= default`
 - Template friend declarations (`template<typename T1, typename T2> friend struct pair;`)
@@ -139,6 +168,35 @@ The following features have been implemented to support standard headers:
 - Global scope `operator new`/`operator delete`
 
 ## Recent Changes
+
+### 2026-01-14: Namespace-Qualified Variable Template Lookup
+
+**Fixed:** Variable templates defined in namespaces can now be used from within function templates in the same namespace.
+
+- Pattern: `namespace ns { template<typename T> constexpr bool is_foo_v = ...; template<typename T> bool test() { return is_foo_v<T>; } }`
+- Previously: Parser failed with "Missing identifier: is_foo_v" when the variable template was registered with qualified name `ns::is_foo_v` but looked up with unqualified name
+- Now: Multiple code paths try namespace-qualified lookup when unqualified lookup fails
+- **Test case:** `tests/test_ns_var_template_ret0.cpp`
+
+**Example:**
+```cpp
+namespace ns {
+    template<typename _Tp>
+    inline constexpr bool is_simple_v = true;
+    
+    template<typename T>
+    constexpr bool test() {
+        return is_simple_v<T>;  // Now correctly resolves to ns::is_simple_v
+    }
+}
+```
+
+**Technical details:** 
+- Added namespace-qualified lookup in `parse_unary_expression()` after template argument parsing
+- When `gTemplateRegistry.lookupVariableTemplate(name)` fails, now tries `buildQualifiedName(current_ns_path, name)` and looks up again
+- This fix applies to variable templates used inside function templates where the variable template is in the same namespace
+
+**Remaining issue:** Full std library parsing still fails due to similar namespace resolution issues during template alias evaluation.
 
 ### 2026-01-14: Non-Type Template Parameters in Return Types
 
