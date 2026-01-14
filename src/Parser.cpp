@@ -9853,7 +9853,30 @@ ParseResult Parser::parse_type_specifier()
 					}
 				}
 				
-				auto instantiated_class = try_instantiate_class_template(type_name, *template_args);
+				// Check if this is a variable template (like is_reference_v<T>) - if so, don't try to
+				// instantiate as a class template. Variable templates are expressions, not types.
+				// First try unqualified, then try namespace-qualified lookup
+				auto var_template_check = gTemplateRegistry.lookupVariableTemplate(type_name);
+				if (!var_template_check.has_value()) {
+					auto current_ns_path = gSymbolTable.build_current_namespace_path();
+					if (!current_ns_path.empty()) {
+						std::string_view qualified_name = buildQualifiedName(current_ns_path, type_name);
+						var_template_check = gTemplateRegistry.lookupVariableTemplate(qualified_name);
+					}
+				}
+				if (var_template_check.has_value()) {
+					// This is a variable template, not a class template
+					// In a type context, this is an error - return a failure so caller can handle
+					FLASH_LOG_FORMAT(Templates, Debug, "Skipping class template instantiation for variable template '{}'", type_name);
+					// Don't call try_instantiate_class_template - just continue to look up the type
+					// The variable template instantiation should happen in expression context, not type context
+				}
+				
+				std::optional<ASTNode> instantiated_class;
+				if (!var_template_check.has_value()) {
+					// Only try class template instantiation if this is NOT a variable template
+					instantiated_class = try_instantiate_class_template(type_name, *template_args);
+				}
 				
 				// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
 				if (instantiated_class.has_value() && instantiated_class->is<StructDeclarationNode>()) {
