@@ -56,28 +56,33 @@ Most headers timeout due to template instantiation volume, not parsing errors. I
 - Optimize string operations in template name generation
 - Consider lazy evaluation strategies
 
-### 2. Template Name Resolution in std Namespace
+### 2. Variable Templates in Type Context (FIXED - 2026-01-14)
 
-**Location:** `<type_traits>` header - Variable template lookups during template alias resolution
-
-The compiler encounters issues when resolving variable template names during parsing of the standard library headers. Variable templates like `is_reference_v` are registered with qualified names (`std::is_reference_v`) but some internal lookups use unqualified names.
+**Issue:** ~~Variable templates used as non-type arguments in class template contexts were causing "No primary template found" errors.~~ **RESOLVED**
 
 **Example pattern:**
 ```cpp
-// In std::, this pattern requires proper namespace resolution:
-template <typename _Tp>
-  inline constexpr bool is_reference_v = __is_reference(_Tp);
+// Variable template like std::is_reference_v
+template<typename _Tp>
+inline constexpr bool is_reference_v = false;
 
-// When used inside template aliases:
+// Used as non-type argument in class template:
 template<typename _Xp, typename _Yp>
-  requires is_reference_v<__condres_cvref<_Xp, _Yp>>  // lookup fails for 'is_reference_v'
+struct common_ref_impl : enable_if<is_reference_v<condres_cvref<_Xp>>, condres_cvref<_Xp>> {};
 ```
 
-**Error:** `No primary template found for 'is_reference_v'`
+**Previous error:** `No primary template found for 'is_reference_v'`
 
-**Root cause:** The `lookupTemplate` function is called with unqualified name `is_reference_v` but the template is registered with qualified name `std::is_reference_v`.
+**Root cause:** When parsing `is_reference_v<T>` in a type context (as an argument to `enable_if`), the parser was calling `try_instantiate_class_template()` without first checking if the identifier was a variable template. Variable templates are expressions, not types.
+
+**Fix applied:** Added a check in `parse_type_specifier()` (Parser.cpp) to skip class template instantiation if the identifier is a variable template. The check uses `gTemplateRegistry.lookupVariableTemplate()` with both unqualified and namespace-qualified lookups.
+
+**Test case:** `tests/test_variable_template_in_enable_if_ret0.cpp`
 
 **Previous blockers resolved (January 14, 2026):**
+- Variable templates in type context: Pattern `enable_if<is_reference_v<T>, U>` where `is_reference_v` is a variable template
+  - **Fix:** Added variable template check in `parse_type_specifier()` before calling `try_instantiate_class_template()`
+  - **Test case:** `tests/test_variable_template_in_enable_if_ret0.cpp`
 - Template member constructors: Pattern `template<typename U> Box(const Box<U>& other)` now parses correctly
   - **Fix:** Added template constructor detection in `parse_member_function_template()` before calling `parse_template_function_declaration_body()`
   - **Test case:** `tests/test_template_ctor_ret0.cpp`
@@ -191,6 +196,22 @@ The following features have been implemented to support standard headers:
 - Global scope `operator new`/`operator delete`
 
 ## Recent Changes
+
+### 2026-01-14: Variable Templates in Type Context
+
+**Fixed:** Variable templates used as non-type template arguments in class template contexts no longer cause "No primary template found" errors.
+
+- Pattern: `enable_if<is_reference_v<T>, U>` where `is_reference_v` is a variable template, not a class template
+- Previously: Parser tried to instantiate `is_reference_v` as a class template, failing with "No primary template found"
+- Now: Parser checks if an identifier is a variable template before calling `try_instantiate_class_template()`
+- **Test case:** `tests/test_variable_template_in_enable_if_ret0.cpp`
+
+**Technical details:**
+1. Added check in `parse_type_specifier()` (Parser.cpp line ~9856) to skip class template instantiation for variable templates
+2. Uses `gTemplateRegistry.lookupVariableTemplate()` with both unqualified and namespace-qualified lookups
+3. Variable templates are expressions, not types - they should not trigger class template instantiation
+
+**Progress:** The `<type_traits>` header now compiles in ~8 seconds (was previously failing with the above error).
 
 ### 2026-01-14: Template Argument Reference Preservation
 
