@@ -28839,32 +28839,26 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			// TODO: Implement proper template template argument parsing
 			template_args.push_back(TemplateArgument::makeTemplate(""));  // Placeholder
 		} else {
-			// Convert TemplateTypeArg to Type for now (losing reference information in this path)
-			// TODO: Extend TemplateArgument to support full type information
-			template_args.push_back(TemplateArgument::makeType(explicit_types[i].base_type));
+			// Use toTemplateArgument() to preserve full type info including references
+			template_args.push_back(toTemplateArgument(explicit_types[i]));
 		}
 	}
 
-	// Check if we already have this instantiation
+	// Instantiate the template (same logic as try_instantiate_template)
+	// Generate mangled name first - it now includes reference qualifiers
+	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
+
+	// Check if we already have this instantiation using the mangled name as key
+	// This ensures that int, int&, and int&& are treated as distinct instantiations
 	TemplateInstantiationKey key;
-	key.template_name = std::string(template_name);
-	for (const auto& arg : template_args) {
-		if (arg.kind == TemplateArgument::Kind::Type) {
-			key.type_arguments.push_back(arg.type_value);
-		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			key.template_arguments.push_back(arg.template_name);
-		} else {
-			key.value_arguments.push_back(arg.int_value);
-		}
-	}
+	key.template_name = std::string(mangled_name);  // Use mangled name for uniqueness
+	// Note: We don't need to populate type_arguments since the mangled name already 
+	// includes all type info including references
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
 		return *existing_inst;  // Return existing instantiation
 	}
-
-	// Instantiate the template (same logic as try_instantiate_template)
-	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
 
 	const DeclarationNode& orig_decl = func_decl.decl_node();
 
@@ -28957,6 +28951,15 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
 			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
+			
+			// Preserve reference qualifiers from template arguments
+			// This ensures that when T=int&, the type T is properly marked as a reference
+			if (template_args[i].type_specifier.has_value()) {
+				const auto& ts = *template_args[i].type_specifier;
+				type_info.is_reference_ = ts.is_reference();
+				type_info.is_rvalue_reference_ = ts.is_rvalue_reference();
+			}
+			
 			gTypesByName.emplace(type_info.name(), &type_info);
 			template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 		}

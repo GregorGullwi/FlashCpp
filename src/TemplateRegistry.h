@@ -542,10 +542,11 @@ inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
 		}
 		
 		// Set reference type
-		if (arg.is_reference) {
-			ts.set_reference(false);  // lvalue reference
-		} else if (arg.is_rvalue_reference) {
+		// Check is_rvalue_reference FIRST because is_reference is true for BOTH lvalue and rvalue refs
+		if (arg.is_rvalue_reference) {
 			ts.set_reference(true);   // rvalue reference
+		} else if (arg.is_reference) {
+			ts.set_reference(false);  // lvalue reference
 		}
 		
 		// Set array info if present
@@ -1103,6 +1104,16 @@ public:
 
 			if (args[i].kind == TemplateArgument::Kind::Type) {
 				mangled.append(typeToString(args[i].type_value));
+				// Include reference qualifiers in mangled name for unique instantiations
+				// This ensures int, int&, and int&& generate different mangled names
+				if (args[i].type_specifier.has_value()) {
+					const auto& ts = *args[i].type_specifier;
+					if (ts.is_rvalue_reference()) {
+						mangled.append("RR");  // Rvalue reference suffix
+					} else if (ts.is_reference()) {
+						mangled.append("R");   // Lvalue reference suffix
+					}
+				}
 			} else if (args[i].kind == TemplateArgument::Kind::Value) {
 				mangled.append(args[i].int_value);
 			} else if (args[i].kind == TemplateArgument::Kind::Template) {
