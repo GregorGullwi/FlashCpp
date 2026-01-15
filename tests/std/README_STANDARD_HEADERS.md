@@ -6,13 +6,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Blocker |
 |--------|-----------|--------|---------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | - |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | - |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~2s |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~5.6s |
 | `<compare>` | N/A | ✅ Compiled | ~0.4s |
-| `<version>` | N/A | ✅ Compiled | ~0.4s |
+| `<version>` | N/A | ✅ Compiled | ~0.6s |
 | `<source_location>` | N/A | ✅ Compiled | ~0.6s |
-| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Includes `<type_traits>` (~6s) |
-| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Parsing fixed; template volume |
+| `<numbers>` | N/A | ✅ Compiled | ~6.3s (NEW!) |
+| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Heavy template instantiation |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Heavy template instantiation |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template instantiation volume |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template instantiation volume |
@@ -30,9 +31,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Concepts, views |
 | `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Virtual inheritance, locales |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Ratio templates |
-| `<initializer_list>` | `test_std_initializer_list.cpp` | ❌ Failed | Requires special compiler support |
 | `<bit>` | N/A | ⏱️ Timeout | Includes heavy headers |
-| `<numbers>` | N/A | ⏱️ Timeout | Includes `<type_traits>` (~6s) |
+| `<atomic>` | N/A | ⏱️ Timeout | Heavy headers |
+| `<initializer_list>` | `test_std_initializer_list.cpp` | ❌ Failed | Requires special compiler support |
+| `<new>` | N/A | ❌ Failed | Function pointer parameter syntax |
+| `<exception>` | N/A | ❌ Failed | `void*` in function declarations |
+| `<ratio>` | N/A | ❌ Failed | Template args with ternary operators |
+| `<csetjmp>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
+| `<csignal>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
 
 **Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s)
 
@@ -40,10 +46,17 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Notes |
 |--------|-----------|-------|
-| `<cstddef>` | `test_cstddef.cpp` | `size_t`, `ptrdiff_t`, `nullptr_t` |
+| `<cstddef>` | `test_cstddef.cpp` | `size_t`, `ptrdiff_t`, `nullptr_t` (~0.7s) |
 | `<cstdlib>` | `test_cstdlib.cpp` | `malloc`, `free`, etc. |
 | `<cstdio>` | `test_cstdio_puts.cpp` | `printf`, `puts`, etc. |
 | `<cstdint>` | N/A | `int32_t`, `uint64_t`, etc. (~0.2s) |
+| `<cstring>` | N/A | `memcpy`, `strlen`, etc. (~0.8s) (NEW!) |
+| `<ctime>` | N/A | `time_t`, `clock`, etc. (~0.6s) (NEW!) |
+| `<climits>` | N/A | `INT_MAX`, `LONG_MAX`, etc. (~0.2s) (NEW!) |
+| `<cfloat>` | N/A | `FLT_MAX`, `DBL_MIN`, etc. (~0.2s) (NEW!) |
+| `<cassert>` | N/A | `assert` macro (~0.2s) (NEW!) |
+| `<cerrno>` | N/A | `errno` (~0.2s) (NEW!) |
+| `<clocale>` | N/A | `setlocale`, `localeconv` (~0.2s) (NEW!) |
 
 ## Running the Tests
 
@@ -232,8 +245,46 @@ The following features have been implemented to support standard headers:
 - Named anonymous unions in typedef structs
 - Direct initialization with `*this`
 - Global scope `operator new`/`operator delete`
+- Typedef array syntax (`typedef type name[size];`) (NEW)
 
 ## Recent Changes
+
+### 2026-01-15: Typedef Array Syntax Support
+
+**Fixed:** Typedef declarations with array syntax are now properly parsed.
+
+- Pattern: `typedef long int __jmp_buf[8];` - creates a type alias for an array type
+- Previously: Parser expected `;` immediately after the type alias name, failing on `[`
+- Now: Parser checks for `[` after the alias name and parses array dimensions
+- **Test case:** `tests/test_typedef_array_ret0.cpp`
+
+**Example:**
+```cpp
+// System header patterns that now work
+typedef long int __jmp_buf[8];
+typedef char Buffer[256];
+
+int main() {
+    __jmp_buf jb;
+    jb[0] = 42;
+    return 0;
+}
+```
+
+**Technical details:**
+- Added array dimension parsing in `parse_typedef_declaration()` after consuming the alias name
+- Uses `ConstExpr::Evaluator::evaluate()` to resolve constant expressions for array sizes
+- Updates `TypeSpecifierNode` with `add_array_dimension()` for each dimension
+- Supports multidimensional arrays (`typedef int Matrix[3][3];`)
+
+**Impact:**
+- Unblocks system headers that use typedef array patterns (e.g., `__jmp_buf` in setjmp.h)
+- Enables more C library wrappers to compile
+- Note: Some headers like `<csetjmp>` still fail due to preprocessor issues with `sizeof` in macros
+
+**Files Modified:**
+- `src/Parser.cpp` - Added typedef array parsing logic
+- `tests/test_typedef_array_ret0.cpp` - New test case for typedef array syntax
 
 ### 2026-01-14: Brace Initialization for Instantiated Template Structs
 
