@@ -16853,18 +16853,57 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 		// Check if qualified identifier is followed by template arguments: ns::Template<Args>
 		// This must come BEFORE we try to use current_token_ as an operator
-		// Phase 1: C++20 Template Argument Disambiguation - always try to parse template arguments
-		// after qualified identifiers, regardless of context
+		// Phase 1: C++20 Template Argument Disambiguation - try to parse template arguments
+		// after qualified identifiers, BUT check if the member is actually a template first
+		// to avoid misinterpreting comparisons like _R1::num < _R2::num
 		std::optional<std::vector<TemplateTypeArg>> template_args;
 		std::vector<ASTNode> template_arg_nodes;  // Store the actual expression nodes
 		if (current_token_.has_value() && current_token_->value() == "<") {
 			// Build the qualified name from namespaces
 			std::string_view qualified_name = buildQualifiedNameFromStrings(qual_id.namespaces(), qual_id.name());
+			std::string_view member_name = qual_id.name();
 			
-			// Phase 1: Always try to parse template arguments speculatively
-			// C++20 spec: After :: in qualified-id, '<' is always template argument delimiter
-			FLASH_LOG_FORMAT(Parser, Debug, "Qualified identifier '{}' followed by '<', attempting template argument parsing", qualified_name);
-			template_args = parse_explicit_template_arguments(&template_arg_nodes);
+			// Check if the member is a known template before parsing < as template arguments
+			// This prevents misinterpreting patterns like _R1::num < _R2::num> where < is comparison
+			auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
+			auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
+			auto full_template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
+			auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
+			
+			bool is_known_template = member_template_opt.has_value() || member_var_template_opt.has_value() ||
+			                         full_template_opt.has_value() || full_var_template_opt.has_value();
+			
+			// Also check if the base is a template parameter - if so, the member is likely NOT a template
+			bool base_is_template_param = false;
+			if (!qual_id.namespaces().empty()) {
+				std::string_view base_name;
+#if USE_OLD_STRING_APPROACH
+				base_name = qual_id.namespaces()[0];
+#else
+				base_name = qual_id.namespaces()[0].view();
+#endif
+				for (const auto& param_name : current_template_param_names_) {
+					if (StringTable::getStringView(param_name) == base_name) {
+						base_is_template_param = true;
+						break;
+					}
+				}
+			}
+			
+			// Decide whether to parse template arguments
+			bool should_parse_template_args = true;
+			if (!is_known_template && (context == ExpressionContext::TemplateArgument || base_is_template_param)) {
+				// Member is NOT a known template and we're in a context where < is likely comparison
+				FLASH_LOG_FORMAT(Parser, Debug, 
+				    "Qualified identifier '{}' member is not a known template - treating '<' as comparison operator (context={}, base_is_param={})",
+				    qualified_name, static_cast<int>(context), base_is_template_param);
+				should_parse_template_args = false;
+			}
+			
+			if (should_parse_template_args) {
+				FLASH_LOG_FORMAT(Parser, Debug, "Qualified identifier '{}' followed by '<', attempting template argument parsing", qualified_name);
+				template_args = parse_explicit_template_arguments(&template_arg_nodes);
+			}
 			
 			if (template_args.has_value()) {
 				FLASH_LOG_FORMAT(Parser, Debug, "Successfully parsed {} template arguments for '{}'", template_args->size(), qualified_name);
@@ -16958,7 +16997,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										
 										if (!qual_id_default.namespaces().empty()) {
 											std::string type_name_str = qual_id_default.namespaces()[0];
-											std::string_view member_name = qual_id_default.name();
+											std::string_view default_member_name = qual_id_default.name();
 											
 											if (type_name_str.ends_with("_void") && !filled_template_args.empty()) {
 												std::string_view template_base_name(type_name_str.data(), type_name_str.size() - 5);
@@ -16976,7 +17015,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 													if (type_info->getStructInfo()) {
 														const StructTypeInfo* struct_info = type_info->getStructInfo();
 														for (const auto& static_member : struct_info->static_members) {
-															if (StringTable::getStringView(static_member.getName()) == member_name) {
+															if (StringTable::getStringView(static_member.getName()) == default_member_name) {
 																if (static_member.initializer.has_value()) {
 																	const ASTNode& init_node = *static_member.initializer;
 																	if (init_node.is<ExpressionNode>()) {

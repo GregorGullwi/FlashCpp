@@ -36,7 +36,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<initializer_list>` | `test_std_initializer_list.cpp` | ❌ Failed | Requires special compiler support |
 | `<new>` | N/A | ✅ Compiled | ~0.5s (FIXED 2026-01-15) |
 | `<exception>` | N/A | ❌ Failed | Missing `_Hash_bytes` function |
-| `<ratio>` | N/A | ❌ Failed | Type alias as base class (see blocker #3) |
+| `<ratio>` | N/A | ⏱️ Partial | `<` disambiguation fixed; remaining issue with local variable visibility in templates |
 | `<csetjmp>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
 | `<csignal>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
 
@@ -100,6 +100,17 @@ struct common_ref_impl : enable_if<is_reference_v<condres_cvref<_Xp>>, condres_c
 **Test case:** `tests/test_variable_template_in_enable_if_ret0.cpp`
 
 **Previous blockers resolved (January 15, 2026):**
+- Less-than vs template argument disambiguation: Pattern `integral_constant<bool, _R1::num < _R2::num>` now works
+  - **Issue:** When parsing template arguments, `<` was incorrectly interpreted as starting template arguments instead of as a comparison operator in patterns like `_R1::num < _R2::num>`
+  - **Root cause:** Multiple code paths would see `<` after a qualified identifier like `_R1::num` and immediately try to parse template arguments without checking if `num` was actually a template
+  - **Fix:** Added checks in 6 code paths to verify if the member is a known template before parsing `<` as template arguments:
+    1. `try_parse_member_template_function_call()` - member template function call parsing
+    2. `parse_qualified_identifier_after_template()` - added `template` keyword tracking to honor explicit `::template` syntax
+    3. `parse_type_specifier()` qualified name handling - check if base is template param and member is not a template  
+    4. `parse_type_specifier()` dependent template handling - check template registry before parsing template args
+    5. `parse_expression()` binary operator loop - check for QualifiedIdentifierNode/MemberAccessNode and verify template status
+    6. Qualified identifier template argument parsing in expression context - check if member is known template
+  - **Test case:** `tests/test_less_in_base_class_ret0.cpp`
 - noexcept(expr) as template argument: Pattern `bool_constant<noexcept(declval<T&>().~T())>` now works
   - **Fix:** Added handling in `parse_explicit_template_arguments()` to accept NoexceptExprNode, SizeofExprNode, AlignofExprNode, and TypeTraitExprNode as dependent template arguments when constant evaluation fails
   - **Test case:** `tests/test_noexcept_template_arg_ret0.cpp`
