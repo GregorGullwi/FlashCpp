@@ -13290,7 +13290,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 										current_token_->file_index());
 
 				// Parse the expression to cast
-				ParseResult expr_result = parse_unary_expression();
+				ParseResult expr_result = parse_unary_expression(ExpressionContext::Normal);
 				if (expr_result.is_error() || !expr_result.node().has_value()) {
 					return ParseResult::error("Expected expression after C-style cast", *current_token_);
 				}
@@ -13456,7 +13456,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse the expression to delete
-		ParseResult expr_result = parse_unary_expression();
+		ParseResult expr_result = parse_unary_expression(ExpressionContext::Normal);
 		if (expr_result.is_error()) {
 			return expr_result;
 		}
@@ -13875,7 +13875,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			consume_token();
 
 			// Parse the operand (recursively handle unary expressions)
-			ParseResult operand_result = parse_unary_expression();
+			ParseResult operand_result = parse_unary_expression(ExpressionContext::Normal);
 			if (operand_result.is_error()) {
 				return operand_result;
 			}
@@ -19822,7 +19822,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// Try to parse as a simple expression
 			SaveHandle init_pos = save_token_position();
-			ParseResult init_result = parse_primary_expression();
+			ParseResult init_result = parse_primary_expression(ExpressionContext::Normal);
 			
 			if (!init_result.is_error() && init_result.node().has_value()) {
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {

@@ -678,9 +678,9 @@ public:  // Public methods for template instantiation
         // Use ExpressionContext::Normal for most cases; TemplateArgument when inside <...>.
         ParseResult parse_expression(int precedence, ExpressionContext context);
         ParseResult parse_expression_statement() { return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal); }  // Wrapper for keyword map
-        ParseResult parse_primary_expression(ExpressionContext context = ExpressionContext::Normal);
-        ParseResult parse_postfix_expression(ExpressionContext context = ExpressionContext::Normal);  // Phase 3: New postfix operator layer
-        ParseResult parse_unary_expression(ExpressionContext context = ExpressionContext::Normal);
+        ParseResult parse_primary_expression(ExpressionContext context);
+        ParseResult parse_postfix_expression(ExpressionContext context);  // Phase 3: New postfix operator layer
+        ParseResult parse_unary_expression(ExpressionContext context);
         ParseResult parse_qualified_identifier();  // Parse namespace::identifier
         ParseResult parse_qualified_identifier_after_template(const Token& template_base_token);  // Parse Template<T>::member
         
