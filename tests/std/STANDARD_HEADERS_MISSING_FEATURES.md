@@ -4,6 +4,41 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 15, 2026 - Multiple Parsing Improvements for `<ratio>` - IMPLEMENTED!)**:
+- ✅ **IMPLEMENTED: noexcept(expr) as template argument** 🎉
+  - **Pattern**: `bool_constant<noexcept(declval<T&>().~T())>`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Allows `noexcept(expr)` expressions as template arguments in non-type parameter context
+  - **Implementation**: Added handling in `parse_explicit_template_arguments()` to accept NoexceptExprNode, SizeofExprNode, AlignofExprNode, and TypeTraitExprNode as dependent template arguments when constant evaluation fails
+  - **Test case**: `tests/test_noexcept_template_arg_ret0.cpp` - Returns 0 ✅
+  - **Impact**: `<type_traits>` noexcept-based patterns now parse correctly!
+
+- ✅ **IMPLEMENTED: Static const member visibility in static_assert** 🎉
+  - **Pattern**: `static_assert(value == 42, "msg");` within struct where `value` is a static member
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Allows static const/constexpr members to be referenced in static_assert conditions within the same struct
+  - **Implementation**: Added early lookup for static members in `parse_expression()` via struct_parsing_context_stack_ and passed struct context to ConstExprEvaluator
+  - **Test case**: `tests/test_static_assert_member_visibility_ret0.cpp` - Returns 0 ✅
+  - **Impact**: `<ratio>` header static_asserts now work!
+
+- ✅ **IMPLEMENTED: String literal concatenation in static_assert** 🎉
+  - **Pattern**: `static_assert(cond, "long message " "continued on next line");`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Allows multi-line string literal messages in static_assert by concatenating adjacent string literals
+  - **Implementation**: Modified `parse_static_assert()` to consume multiple adjacent StringLiteral tokens
+  - **Test case**: `tests/test_static_assert_string_concat_ret0.cpp` - Returns 0 ✅
+  - **Impact**: `<ratio>` header with long error messages now parses!
+
+- ✅ **IMPLEMENTED: `__INTMAX_MAX__`, `__INTMAX_MIN__`, `__UINTMAX_MAX__` predefined macros** 🎉
+  - **Pattern**: `static_assert(__b0 * __a0 <= __INTMAX_MAX__, "overflow");`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Provides standard predefined macros for intmax_t/uintmax_t limits
+  - **Implementation**: Added macro definitions in FileReader.h
+  - **Impact**: `<ratio>` header limit checks now work!
+
+- 📊 **Session progress**: `<ratio>` header now progresses from line 189 to line 417
+- 🔬 **Next blocker**: Type alias as base class (e.g., `struct Test : std::false_type {}`)
+
 **UPDATE (January 13, 2026 - Multiple Parsing Improvements for `<new>` and `<utility>` - IMPLEMENTED!)**:
 - ✅ **IMPLEMENTED: Function pointer typedef declarations** 🎉
   - **Pattern**: `typedef void (*new_handler)();`

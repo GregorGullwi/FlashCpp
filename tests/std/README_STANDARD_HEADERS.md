@@ -36,7 +36,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<initializer_list>` | `test_std_initializer_list.cpp` | ❌ Failed | Requires special compiler support |
 | `<new>` | N/A | ✅ Compiled | ~0.5s (FIXED 2026-01-15) |
 | `<exception>` | N/A | ❌ Failed | Missing `_Hash_bytes` function |
-| `<ratio>` | N/A | ❌ Failed | Static member visibility in static_assert (ternary parsing FIXED 2026-01-15) |
+| `<ratio>` | N/A | ❌ Failed | Type alias as base class (see blocker #3) |
 | `<csetjmp>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
 | `<csignal>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
 
@@ -99,6 +99,18 @@ struct common_ref_impl : enable_if<is_reference_v<condres_cvref<_Xp>>, condres_c
 
 **Test case:** `tests/test_variable_template_in_enable_if_ret0.cpp`
 
+**Previous blockers resolved (January 15, 2026):**
+- noexcept(expr) as template argument: Pattern `bool_constant<noexcept(declval<T&>().~T())>` now works
+  - **Fix:** Added handling in `parse_explicit_template_arguments()` to accept NoexceptExprNode, SizeofExprNode, AlignofExprNode, and TypeTraitExprNode as dependent template arguments when constant evaluation fails
+  - **Test case:** `tests/test_noexcept_template_arg_ret0.cpp`
+- Static const member visibility in static_assert: Pattern `static_assert(value == 42, "msg");` within struct now works
+  - **Fix:** Added early lookup for static members in `parse_expression()` and passed struct context to ConstExprEvaluator
+  - **Test case:** `tests/test_static_assert_member_visibility_ret0.cpp`
+- String literal concatenation in static_assert: Multi-line string messages now work
+  - **Fix:** Modified `parse_static_assert()` to consume multiple adjacent string literals
+  - **Test case:** `tests/test_static_assert_string_concat_ret0.cpp`
+- Added `__INTMAX_MAX__`, `__INTMAX_MIN__`, `__UINTMAX_MAX__` predefined macros required by `<ratio>` header
+
 **Previous blockers resolved (January 14, 2026):**
 - Variable templates in type context: Pattern `enable_if<is_reference_v<T>, U>` where `is_reference_v` is a variable template
   - **Fix:** Added variable template check in `parse_type_specifier()` before calling `try_instantiate_class_template()`
@@ -144,7 +156,29 @@ test<int&&>(); // Now correctly returns true
 
 **Test case:** `tests/test_template_ref_preservation_ret0.cpp`
 
-### 4. Template Instantiation Performance
+### 4. Type Alias as Base Class (FIXED - 2026-01-15)
+
+**Issue:** ~~Type aliases (using declarations) cannot currently be used as base classes when qualified with a namespace.~~ **RESOLVED**
+
+**Example that now works:**
+```cpp
+namespace std {
+    template<typename T, T v>
+    struct integral_constant { static constexpr T value = v; };
+    
+    using false_type = integral_constant<bool, false>;
+}
+
+struct Test : std::false_type {};  // Now works!
+```
+
+**Fix applied:** Two changes in `Parser.cpp`:
+1. Type aliases in namespaces now register with namespace-qualified names in `gTypesByName`
+2. `validate_and_add_base_class()` now resolves type aliases by following `type_index_` chain to find the underlying struct type
+
+**Test case:** `tests/test_type_alias_base_class_ret0.cpp`
+
+### 5. Template Instantiation Performance
 
 Most headers timeout due to template instantiation volume, not parsing errors. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
 
