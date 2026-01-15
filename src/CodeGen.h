@@ -7483,6 +7483,12 @@ private:
 			FLASH_LOG(Codegen, Error, "PackExpansionExprNode found during code generation - should have been expanded during template instantiation");
 			return {};
 		}
+		else if (std::holds_alternative<InitializerListConstructionNode>(exprNode)) {
+			// Compiler-generated initializer_list construction
+			// This is the "compiler magic" for std::initializer_list
+			const auto& init_list = std::get<InitializerListConstructionNode>(exprNode);
+			return generateInitializerListConstructionIr(init_list);
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
@@ -19532,6 +19538,120 @@ private:
 		std::cerr << "This indicates a bug in template instantiation - template parameters should be replaced with concrete types/values\n";
 		assert(false && "Template parameter reference found during code generation - should have been substituted");
 		return {};
+	}
+
+	// Generate IR for std::initializer_list construction
+	// This is the "compiler magic" that creates a backing array on the stack
+	// and constructs an initializer_list pointing to it
+	std::vector<IrOperand> generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list) {
+		FLASH_LOG(Codegen, Debug, "Generating IR for InitializerListConstructionNode with ", 
+		          init_list.size(), " elements");
+		
+		// Get the target initializer_list type
+		const ASTNode& target_type_node = init_list.target_type();
+		if (!target_type_node.is<TypeSpecifierNode>()) {
+			FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: target_type is not TypeSpecifierNode");
+			return {};
+		}
+		const TypeSpecifierNode& target_type = target_type_node.as<TypeSpecifierNode>();
+		
+		// Get element type (default to int for now)
+		int element_size_bits = 32;  // Default: int
+		Type element_type = Type::Int;
+		
+		// Infer element type from first element if available
+		std::vector<std::vector<IrOperand>> element_operands;
+		for (size_t i = 0; i < init_list.elements().size(); ++i) {
+			const ASTNode& elem = init_list.elements()[i];
+			if (elem.is<ExpressionNode>()) {
+				auto operands = visitExpressionNode(elem.as<ExpressionNode>());
+				element_operands.push_back(operands);
+				if (i == 0 && operands.size() >= 2) {
+					if (std::holds_alternative<Type>(operands[0])) {
+						element_type = std::get<Type>(operands[0]);
+					}
+					if (std::holds_alternative<int>(operands[1])) {
+						element_size_bits = std::get<int>(operands[1]);
+					}
+				}
+			}
+		}
+		
+		// Step 1: Create a backing array on the stack using VariableDecl
+		size_t array_size = init_list.size();
+		size_t total_size_bits = array_size * element_size_bits;
+		
+		// Create a temporary variable for the backing array
+		TempVar array_var = var_counter.next();
+		VariableDeclOp array_decl;
+		array_decl.name = array_var;
+		array_decl.type = element_type;
+		array_decl.size_in_bits = static_cast<int>(total_size_bits);
+		array_decl.is_array = true;
+		array_decl.array_size = static_cast<int>(array_size);
+		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(array_decl), init_list.called_from()));
+		
+		// Step 2: Store each element into the backing array using ArrayStore
+		for (size_t i = 0; i < element_operands.size(); ++i) {
+			if (element_operands[i].size() < 3) continue;
+			
+			ArrayStoreOp store_op;
+			store_op.array = array_var;
+			store_op.index = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(i), 0};
+			store_op.value = toTypedValue(element_operands[i]);
+			store_op.element_size = element_size_bits;
+			ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), init_list.called_from()));
+		}
+		
+		// Step 3: Create the initializer_list struct
+		TypeIndex init_list_type_index = target_type.type_index();
+		if (init_list_type_index >= gTypeInfo.size()) {
+			FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: invalid type index");
+			return {};
+		}
+		
+		const TypeInfo& init_list_type_info = gTypeInfo[init_list_type_index];
+		const StructTypeInfo* init_list_struct_info = init_list_type_info.getStructInfo();
+		if (!init_list_struct_info) {
+			FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: target type is not a struct");
+			return {};
+		}
+		
+		int init_list_size_bits = static_cast<int>(init_list_struct_info->total_size * 8);
+		
+		// Allocate the initializer_list struct
+		TempVar init_list_var = var_counter.next();
+		VariableDeclOp init_list_decl;
+		init_list_decl.name = init_list_var;
+		init_list_decl.type = Type::Struct;
+		init_list_decl.size_in_bits = init_list_size_bits;
+		init_list_decl.type_index = init_list_type_index;
+		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(init_list_decl), init_list.called_from()));
+		
+		// Store pointer to array (first member)
+		if (init_list_struct_info->members.size() >= 1) {
+			const auto& ptr_member = init_list_struct_info->members[0];
+			MemberStoreOp store_ptr;
+			store_ptr.object = init_list_var;
+			store_ptr.member_name = ptr_member.getName();
+			store_ptr.offset = static_cast<int>(ptr_member.offset);
+			store_ptr.value = TypedValue{element_type, 64, array_var, 1};  // pointer to array
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_ptr), init_list.called_from()));
+		}
+		
+		// Store size (second member)
+		if (init_list_struct_info->members.size() >= 2) {
+			const auto& size_member = init_list_struct_info->members[1];
+			MemberStoreOp store_size;
+			store_size.object = init_list_var;
+			store_size.member_name = size_member.getName();
+			store_size.offset = static_cast<int>(size_member.offset);
+			store_size.value = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(array_size), 0};
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_size), init_list.called_from()));
+		}
+		
+		// Return operands for the constructed initializer_list
+		return { Type::Struct, init_list_size_bits, init_list_var, static_cast<unsigned long long>(init_list_type_index) };
 	}
 
 	std::vector<IrOperand> generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
