@@ -182,6 +182,36 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 // - Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 // This distinction is critical for matching lvalue refs vs rvalue refs in overloaded functions.
 inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	// Check pointer compatibility FIRST
+	// This handles pointer types with lvalue/rvalue flags (which indicate value category, not actual reference types)
+	// Pointers with lvalue flags can still be passed to functions expecting pointer parameters
+	if (from.is_pointer() || to.is_pointer()) {
+		// Both must be pointers for conversion
+		if (from.is_pointer() != to.is_pointer()) {
+			// Special case: nullptr (represented as 0) can convert to any pointer
+			// But we don't have a way to detect that here yet
+			return TypeConversionResult::no_match();
+		}
+
+		// Pointer depth must match
+		if (from.pointer_depth() != to.pointer_depth()) {
+			return TypeConversionResult::no_match();
+		}
+
+		// Exact type match for pointers
+		if (from.type() == to.type()) {
+			return TypeConversionResult::exact_match();
+		}
+
+		// Pointer conversions: any pointer can implicitly convert to void*
+		// This is a standard C/C++ implicit conversion
+		if (to.type() == Type::Void) {
+			return TypeConversionResult::conversion();
+		}
+
+		return TypeConversionResult::no_match();
+	}
+
 	// Check reference compatibility
 	if (from.is_reference() || to.is_reference()) {
 		// If 'to' is a reference, 'from' must be compatible
@@ -247,29 +277,6 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 			}
 			return can_convert_type(from.type(), to.type());
 		}
-	}
-	
-	// Check pointer compatibility
-	if (from.is_pointer() || to.is_pointer()) {
-		// Both must be pointers for conversion
-		if (from.is_pointer() != to.is_pointer()) {
-			// Special case: nullptr (represented as 0) can convert to any pointer
-			// But we don't have a way to detect that here yet
-			return TypeConversionResult::no_match();
-		}
-
-		// Pointer depth must match
-		if (from.pointer_depth() != to.pointer_depth()) {
-			return TypeConversionResult::no_match();
-		}
-
-		// For now, require exact type match for pointers
-		// TODO: Handle pointer conversions (derived to base, void*, etc.)
-		if (from.type() == to.type()) {
-			return TypeConversionResult::exact_match();
-		}
-
-		return TypeConversionResult::no_match();
 	}
 
 	// Check for user-defined conversion operators
