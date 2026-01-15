@@ -2033,26 +2033,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
         // Check for noexcept specifier on function pointer type
         // Pattern: void (*)(Args...) noexcept or void (*)(Args...) noexcept(expr)
-        [[maybe_unused]] bool is_noexcept = false;
-        if (peek_token().has_value() && peek_token()->value() == "noexcept") {
-            consume_token(); // consume 'noexcept'
-            is_noexcept = true;
-            
-            // Check for noexcept(expr) form
-            if (peek_token().has_value() && peek_token()->value() == "(") {
-                consume_token(); // consume '('
-                // Skip the expression inside noexcept()
-                int paren_depth = 1;
-                while (paren_depth > 0 && peek_token().has_value()) {
-                    if (peek_token()->value() == "(") {
-                        paren_depth++;
-                    } else if (peek_token()->value() == ")") {
-                        paren_depth--;
-                    }
-                    consume_token();
-                }
-            }
-        }
+        skip_noexcept_specifier();
 
         // This is a function pointer!
         // The base_type is the return type
