@@ -508,6 +508,12 @@ private:
         // parent_name_prefix: prefix for generating unique anonymous type names
         ParseResult parse_anonymous_struct_union_members(StructTypeInfo* out_struct_info, std::string_view parent_name_prefix);
         
+        // Helper function to try parsing a function pointer member in struct/union context
+        // Pattern: type (*name)(params);
+        // Returns std::optional<StructMember> - empty if not a function pointer pattern
+        // Advances token position if successful, restores on failure
+        std::optional<StructMember> try_parse_function_pointer_member();
+        
         // Helper function to get Type and size for built-in type keywords
         std::optional<std::pair<Type, unsigned char>> get_builtin_type_info(std::string_view type_name);
         

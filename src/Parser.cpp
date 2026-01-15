@@ -4580,6 +4580,13 @@ ParseResult Parser::parse_struct_declaration()
 								member_type_spec.add_pointer_level(ptr_cv);
 							}
 							
+							// Check for function pointer member pattern: type (*name)(params);
+							// This handles patterns like: void (*sa_sigaction)(int, siginfo_t *, void *);
+							if (auto funcptr_member = try_parse_function_pointer_member()) {
+								anon_struct_info->members.push_back(*funcptr_member);
+								continue;  // Continue with next member
+							}
+							
 							// Parse member name
 							auto member_name_token = peek_token();
 							if (!member_name_token.has_value() || member_name_token->type() != Token::Type::Identifier) {
@@ -6911,6 +6918,95 @@ ParseResult Parser::parse_static_assert()
 	return saved_position.success();
 }
 
+// Helper function to try parsing a function pointer member in struct/union context
+// Pattern: type (*name)(params);
+// This assumes parse_type_specifier has already been called and the next token is '('
+// Returns std::optional<StructMember> - empty if not a function pointer pattern
+std::optional<StructMember> Parser::try_parse_function_pointer_member()
+{
+	// Check for function pointer pattern: '(' followed by '*'
+	if (!peek_token().has_value() || peek_token()->value() != "(") {
+		return std::nullopt;
+	}
+	
+	SaveHandle funcptr_saved_pos = save_token_position();
+	consume_token(); // consume '('
+	
+	if (!peek_token().has_value() || peek_token()->value() != "*") {
+		restore_token_position(funcptr_saved_pos);
+		return std::nullopt;
+	}
+	consume_token(); // consume '*'
+	
+	// Parse optional CV-qualifiers after *
+	parse_cv_qualifiers();
+	
+	// Parse function pointer name
+	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+		restore_token_position(funcptr_saved_pos);
+		return std::nullopt;
+	}
+	Token funcptr_name_token = *peek_token();
+	consume_token(); // consume the name
+	
+	// Expect closing ')' after the name
+	if (!peek_token().has_value() || peek_token()->value() != ")") {
+		restore_token_position(funcptr_saved_pos);
+		return std::nullopt;
+	}
+	consume_token(); // consume ')'
+	
+	// Expect '(' for function parameters
+	if (!peek_token().has_value() || peek_token()->value() != "(") {
+		restore_token_position(funcptr_saved_pos);
+		return std::nullopt;
+	}
+	
+	// Parse function parameters - skip through until matching ')'
+	consume_token(); // consume '('
+	int paren_depth = 1;
+	while (peek_token().has_value() && paren_depth > 0) {
+		if (peek_token()->value() == "(") {
+			paren_depth++;
+		} else if (peek_token()->value() == ")") {
+			paren_depth--;
+		}
+		consume_token();
+	}
+	
+	// Expect semicolon after function pointer declaration
+	if (!peek_token().has_value() || peek_token()->value() != ";") {
+		restore_token_position(funcptr_saved_pos);
+		return std::nullopt;
+	}
+	consume_token(); // consume ';'
+	
+	// Create StructMember for the function pointer
+	// Use pointer size from target architecture (defaulting to 64-bit)
+	constexpr size_t pointer_size = sizeof(void*);
+	constexpr size_t pointer_alignment = alignof(void*);
+	
+	StringHandle funcptr_name_handle = StringTable::getOrInternStringHandle(funcptr_name_token.value());
+	
+	discard_saved_token(funcptr_saved_pos);
+	
+	return StructMember{
+		funcptr_name_handle,
+		Type::FunctionPointer,
+		0,  // type_index for function pointers
+		0,  // offset will be calculated later
+		pointer_size,
+		pointer_alignment,
+		AccessSpecifier::Public,
+		std::nullopt,  // no default initializer
+		false,  // is_reference
+		false,  // is_rvalue_reference
+		0,      // referenced_size_bits
+		false,  // is_array
+		{}      // array_dimensions
+	};
+}
+
 // Helper function to parse members of anonymous struct/union (handles recursive nesting)
 // This is used when parsing anonymous structs/unions inside typedef declarations
 // Example: typedef struct { union { struct { int a; } inner; } outer; } MyStruct;
@@ -7063,6 +7159,13 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 			consume_token(); // consume '*'
 			CVQualifier ptr_cv = parse_cv_qualifiers();
 			member_type_spec.add_pointer_level(ptr_cv);
+		}
+		
+		// Check for function pointer member pattern: type (*name)(params);
+		// This handles patterns like: void (*_function)(__sigval_t);
+		if (auto funcptr_member = try_parse_function_pointer_member()) {
+			out_struct_info->members.push_back(*funcptr_member);
+			continue;  // Continue with next member
 		}
 		
 		// Parse member name

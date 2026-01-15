@@ -4,6 +4,28 @@ This document lists the missing features in FlashCpp that prevent successful com
 
 ## Test Results Summary
 
+**UPDATE (January 15, 2026 - Function Pointer Members in Anonymous Structs - IMPLEMENTED!)**:
+- ✅ **IMPLEMENTED: Function pointer members in named anonymous struct/union** 🎉
+  - **Pattern**: `void (*_function) (__sigval_t);` inside `struct { ... } member_name;`
+  - **Status**: **NOW FULLY SUPPORTED**
+  - **What it does**: Allows function pointer declarations as members of named anonymous struct/union types
+  - **Implementation**: Added function pointer detection in `parse_anonymous_struct_union_members()` (for typedef contexts) and in struct member parsing (for regular struct contexts) to handle the `type (*name)(params);` pattern
+  - **Test case**: `tests/test_funcptr_in_named_anon_struct_ret0.cpp` - Returns 0 ✅
+  - **Impact**: Patterns from `<csignal>` headers like `sigevent_t` and `sigaction` now parse correctly!
+
+- ✅ **VERIFIED: `<initializer_list>` header now compiles** 🎉
+  - **Status**: Header compiles in ~0.2s
+  - **Previously listed as**: ❌ Failed ("Requires special compiler support")
+  - **Impact**: Core C++ feature for brace initialization now supported
+
+- ✅ **VERIFIED: Additional C library wrappers now compile** 🎉
+  - `<cstdarg>` - `va_list`, `va_start`, etc. (~0.15s)
+  - `<cfenv>` - `fenv_t`, `fegetenv`, etc. (~0.15s)
+  - `<cinttypes>` - `imaxabs`, `imaxdiv`, etc. (~0.27s)
+  - `<cctype>` - `isalpha`, `isdigit`, etc. (~0.37s)
+  - `<cuchar>` - `char16_t`, `char32_t` conversions (~0.74s)
+  - `<cwchar>` - `wchar_t` functions (~0.56s)
+
 **UPDATE (January 15, 2026 - Multiple Parsing Improvements for `<ratio>` - IMPLEMENTED!)**:
 - ✅ **IMPLEMENTED: noexcept(expr) as template argument** 🎉
   - **Pattern**: `bool_constant<noexcept(declval<T&>().~T())>`
