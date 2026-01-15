@@ -1825,6 +1825,19 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
         // Parse CV-qualifiers after the * (if any)
         CVQualifier ptr_cv = parse_cv_qualifiers();
 
+        // Check for unnamed function pointer parameter: type (*)(params)
+        // In this case, after '*' we immediately see ')' instead of an identifier
+        if (peek_token().has_value() && peek_token()->value() == ")") {
+            // This is an unnamed function pointer parameter
+            consume_token(); // consume ')'
+            
+            // Now parse the function parameters: '(' params ')'
+            // Create a dummy identifier token for the unnamed parameter
+            Token dummy_identifier(Token::Type::Identifier, "", 0, 0, 0);
+            
+            return parse_postfix_declarator(base_type, dummy_identifier);
+        }
+
         // Parse identifier
         if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
             return ParseResult::error("Expected identifier in function pointer declarator", *current_token_);
@@ -1966,7 +1979,37 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
                 TypeSpecifierNode& param_type =
                     param_type_result.node()->as<TypeSpecifierNode>();
+                
+                // Parse pointer declarators: * [const] [volatile] *...
+                // Example: void* or const int* const*
+                while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+                       peek_token()->value() == "*") {
+                    consume_token(); // consume '*'
+                    
+                    // Check for CV-qualifiers after the *
+                    CVQualifier ptr_cv = parse_cv_qualifiers();
+                    
+                    param_type.add_pointer_level(ptr_cv);
+                }
+                
                 param_types.push_back(param_type.type());
+
+                // Check for pack expansion '...' after the type (e.g., Args...)
+                // This handles function pointer parameters like void (*)(Args...)
+                if (peek_token().has_value() && peek_token()->value() == "...") {
+                    consume_token(); // consume '...'
+                    // The pack expansion will be resolved during template instantiation
+                    // For now, we just consume the ... token to allow parsing to continue
+                    // Mark the function signature as having a pack expansion
+                    param_type.set_pack_expansion(true);
+                    
+                    // Check for additional '...' for C-style variadic after pack expansion
+                    // Pattern: Args...... (6 dots = pack expansion + C variadic)
+                    if (peek_token().has_value() && peek_token()->value() == "...") {
+                        consume_token(); // consume second '...'
+                        // This marks the function as C-style variadic as well
+                    }
+                }
 
                 // Optional parameter name (we can ignore it for function pointers)
                 if (peek_token().has_value() &&
@@ -1987,6 +2030,10 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
             return ParseResult::error("Expected ')' after function parameters",
                                      *current_token_);
         }
+
+        // Check for noexcept specifier on function pointer type
+        // Pattern: void (*)(Args...) noexcept or void (*)(Args...) noexcept(expr)
+        skip_noexcept_specifier();
 
         // This is a function pointer!
         // The base_type is the return type
