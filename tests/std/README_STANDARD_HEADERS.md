@@ -268,7 +268,7 @@ The following features have been implemented to support standard headers:
 ```cpp
 // From <new> header - now compiles!
 template<typename _Ret, typename... _Args, bool _NE>
-void launder(_Ret (*)(_Args...) noexcept (_NE)) = delete;
+void launder(_Ret (*)(_Args...) noexcept(_NE)) = delete;
 
 // Named function pointer parameter - now works!
 void test(void (*callback)(void*)) { }
