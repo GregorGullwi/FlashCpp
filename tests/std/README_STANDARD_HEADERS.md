@@ -8,7 +8,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 |--------|-----------|--------|---------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | - |
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | - |
-| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | - |
+| `<compare>` | N/A | ✅ Compiled | ~0.4s |
+| `<version>` | N/A | ✅ Compiled | ~0.4s |
+| `<source_location>` | N/A | ✅ Compiled | ~0.6s |
+| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Includes `<type_traits>` (~6s) |
 | `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Parsing fixed; template volume |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template instantiation volume |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
@@ -27,6 +30,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Concepts, views |
 | `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Virtual inheritance, locales |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Ratio templates |
+| `<initializer_list>` | `test_std_initializer_list.cpp` | ❌ Failed | Requires special compiler support |
+| `<bit>` | N/A | ⏱️ Timeout | Includes heavy headers |
+| `<numbers>` | N/A | ⏱️ Timeout | Includes `<type_traits>` (~6s) |
 
 **Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s)
 
@@ -37,6 +43,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<cstddef>` | `test_cstddef.cpp` | `size_t`, `ptrdiff_t`, `nullptr_t` |
 | `<cstdlib>` | `test_cstdlib.cpp` | `malloc`, `free`, etc. |
 | `<cstdio>` | `test_cstdio_puts.cpp` | `printf`, `puts`, etc. |
+| `<cstdint>` | N/A | `int32_t`, `uint64_t`, etc. (~0.2s) |
 
 ## Running the Tests
 
@@ -133,7 +140,37 @@ Most headers timeout due to template instantiation volume, not parsing errors. I
 - Optimize string operations in template name generation
 - Consider lazy evaluation strategies
 
-### 4. Missing Infrastructure
+### 5. std::initializer_list Compiler Magic (Known Limitation)
+
+**Issue:** `std::initializer_list<T>` requires special compiler support that is not yet implemented.
+
+**Example that fails:**
+```cpp
+#include <initializer_list>
+int main() {
+    std::initializer_list<int> list = {1, 2, 3};  // Error: Too many initializers
+    return 0;
+}
+```
+
+**Expected behavior in standard C++:**
+1. The compiler creates a temporary array `int __temp[] = {1, 2, 3}` on the stack
+2. The compiler constructs `std::initializer_list` using its private constructor with a pointer to the array and size 3
+3. This is compiler magic - the private constructor is only accessible to the compiler
+
+**Current behavior in FlashCpp:**
+- FlashCpp treats `std::initializer_list` like any other struct and tries aggregate initialization
+- Since `std::initializer_list` only has 2 members (`_M_array` pointer and `_M_len` size), `{1, 2, 3}` fails with "too many initializers"
+
+**Workaround:** Use the default constructor and don't rely on brace-enclosed initializer lists for `std::initializer_list`:
+```cpp
+std::initializer_list<int> empty_list;  // Works - default constructor
+std::initializer_list<int> two = {ptr, 2};  // Works - matches member count
+```
+
+**Note:** This is a fundamental limitation that affects many standard library patterns like range-based for loops with initializer lists (`for (int x : {1, 2, 3})`).
+
+### 6. Missing Infrastructure
 
 - **Exception handling** - Required for containers (`<vector>`, `<string>`)
 - **Allocator support** - Required for `<vector>`, `<string>`, `<map>`, `<set>`
@@ -180,6 +217,7 @@ The following features have been implemented to support standard headers:
 - Non-type template parameters in return types (`typename tuple_element<_Int, pair<_Tp1, _Tp2>>::type&`)
 - Template member constructors (`template<typename U> Box(const Box<U>& other)`) (NEW)
 - Template alias declarations with requires clauses (NEW)
+- Brace initialization for instantiated template structs (NEW)
 
 **C++17/C++20 Features:**
 - C++17 nested namespace declarations (`namespace A::B::C { }`)
@@ -196,6 +234,38 @@ The following features have been implemented to support standard headers:
 - Global scope `operator new`/`operator delete`
 
 ## Recent Changes
+
+### 2026-01-14: Brace Initialization for Instantiated Template Structs
+
+**Fixed:** Brace initialization now works correctly for instantiated template structs stored as `Type::UserDefined`.
+
+- Pattern: `TemplateStruct<int> x = {1, 2};` where the struct has 2 members
+- Previously: Parser treated `Type::UserDefined` as a scalar type and tried single-value initialization, failing on the comma
+- Now: Parser checks if `Type::UserDefined` has `struct_info_` and handles it as a struct-like type
+- **Test case:** `tests/test_template_brace_init_userdefined_ret3.cpp`
+
+**Example:**
+```cpp
+namespace ns {
+    template<typename T>
+    struct Pair {
+        T first;
+        T second;
+    };
+}
+
+int main() {
+    ns::Pair<int> p = {1, 2};  // Now works correctly
+    return p.first + p.second; // Returns 3
+}
+```
+
+**Technical details:**
+- Modified `parse_brace_initializer()` in `Parser.cpp` (line ~12444)
+- Added check: if `type_specifier.type() == Type::UserDefined`, verify if it's a struct-like type by checking `gTypeInfo[type_index].struct_info_`
+- If it has struct info, treat it as a struct for aggregate initialization purposes
+
+**Note:** This fix does NOT enable `std::initializer_list` brace initialization (see Known Limitation section above), as that requires special compiler magic.
 
 ### 2026-01-14: Variable Templates in Type Context
 
