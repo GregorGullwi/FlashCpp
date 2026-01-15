@@ -6914,7 +6914,7 @@ ParseResult Parser::parse_static_assert()
 // Helper function to parse members of anonymous struct/union (handles recursive nesting)
 // This is used when parsing anonymous structs/unions inside typedef declarations
 // Example: typedef struct { union { struct { int a; } inner; } outer; } MyStruct;
-ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_struct_info, const std::string& parent_name_prefix)
+ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_struct_info, std::string_view parent_name_prefix)
 {
 	static int recursive_anonymous_counter = 0;
 	
@@ -6931,9 +6931,12 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 				consume_token(); // consume '{'
 				
 				// Generate a unique name for the nested anonymous type
-				std::string nested_anon_type_name = parent_name_prefix + "_" + 
-					(nested_is_union ? "union_" : "struct_") + 
-					std::to_string(recursive_anonymous_counter++);
+				std::string_view nested_anon_type_name = StringBuilder()
+					.append(parent_name_prefix)
+					.append("_")
+					.append(nested_is_union ? "union_" : "struct_")
+					.append(static_cast<int64_t>(recursive_anonymous_counter++))
+					.commit();
 				StringHandle nested_anon_type_name_handle = StringTable::getOrInternStringHandle(nested_anon_type_name);
 				
 				// Create the nested anonymous struct/union type
@@ -7442,8 +7445,7 @@ ParseResult Parser::parse_typedef_declaration()
 						}
 						
 						// Parse all members using the recursive helper
-						std::string anon_type_name_str(anon_type_name);
-						ParseResult members_result = parse_anonymous_struct_union_members(anon_struct_info, anon_type_name_str);
+						ParseResult members_result = parse_anonymous_struct_union_members(anon_struct_info, anon_type_name);
 						if (members_result.is_error()) {
 							return members_result;
 						}

@@ -506,7 +506,7 @@ private:
         // Returns the StructMember info for each member parsed
         // out_members: vector to add parsed members to
         // parent_name_prefix: prefix for generating unique anonymous type names
-        ParseResult parse_anonymous_struct_union_members(StructTypeInfo* out_struct_info, const std::string& parent_name_prefix);
+        ParseResult parse_anonymous_struct_union_members(StructTypeInfo* out_struct_info, std::string_view parent_name_prefix);
         
         // Helper function to get Type and size for built-in type keywords
         std::optional<std::pair<Type, unsigned char>> get_builtin_type_info(std::string_view type_name);
