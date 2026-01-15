@@ -2008,7 +2008,8 @@ private:
 		bool is_function_like = (open_paren != std::string::npos);
 
 		if (is_function_like) {
-			// Function-like macro: move the '(' and everything after from name to rest_of_line
+			// Function-like macro: prepend the '(' and everything after it from name to rest_of_line
+			// E.g., name="FOO(x)" -> name="FOO", rest_of_line="(x) body"
 			rest_of_line.insert(0, name.substr(open_paren));
 			name.erase(open_paren);
 		}
