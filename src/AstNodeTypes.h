@@ -1147,6 +1147,24 @@ bool is_floating_point_type(Type type);
 bool is_struct_type(Type type);  // Check if type is Struct or UserDefined
 int get_integer_rank(Type type);
 int get_floating_point_rank(Type type);
+
+// Target data model - controls the size of 'long' type
+// Windows uses LLP64: long is 32-bit, long long is 64-bit
+// Linux/Unix uses LP64: long is 64-bit, long long is 64-bit
+enum class TargetDataModel {
+	LLP64,     // Windows x64: long = 32 bits (COFF)
+	LP64       // Linux/Unix x64: long = 64 bits (ELF)
+};
+
+// Global data model setting - set by main.cpp based on target platform
+// Default is platform-dependent
+extern TargetDataModel g_target_data_model;
+
+// Get the size of 'long' in bits based on the target data model
+inline int get_long_size_bits() {
+	return (g_target_data_model == TargetDataModel::LLP64) ? 32 : 64;
+}
+
 int get_type_size_bits(Type type);
 Type promote_integer_type(Type type);
 Type promote_floating_point_type(Type type);

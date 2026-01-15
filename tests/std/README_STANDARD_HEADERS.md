@@ -37,8 +37,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<new>` | N/A | ✅ Compiled | ~0.5s (FIXED 2026-01-15) |
 | `<exception>` | N/A | ❌ Failed | Missing `_Hash_bytes` function |
 | `<ratio>` | N/A | ⏱️ Timeout | Local variable visibility fixed (2026-01-15); times out during template instantiation |
-| `<csetjmp>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
-| `<csignal>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
+| `<csetjmp>` | N/A | ✅ Compiled | ~0.2s (FIXED 2026-01-15: Object-like macros with parenthesized bodies) |
+| `<csignal>` | N/A | ❌ Failed | Anonymous structs in unions (unrelated to macro fix) |
 
 **Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s)
 
@@ -297,6 +297,77 @@ The following features have been implemented to support standard headers:
 - Function pointer parameters with pack expansion and noexcept (NEW)
 
 ## Recent Changes
+
+### 2026-01-15: Target-Dependent `long` Type Size (LLP64 vs LP64 Data Models)
+
+**Fixed:** The size of `long` and `unsigned long` now correctly depends on the target platform:
+- Windows (COFF): 32 bits (LLP64 data model)
+- Linux/Unix (ELF): 64 bits (LP64 data model)
+
+**The Problem:**
+```cpp
+// Previously, FlashCpp used sizeof(long) from the host machine, which was incorrect
+// when cross-compiling (e.g., building Linux code on Windows or vice versa)
+sizeof(long);  // Was always host-dependent, now target-dependent
+```
+
+**Implementation:**
+- Added `TargetDataModel` enum in `AstNodeTypes.h` (LLP64 or LP64)
+- Added `g_target_data_model` global variable to track the current target
+- Added `get_long_size_bits()` helper function that returns 32 or 64 based on target
+- Data model is automatically set based on mangling style (MSVC → LLP64, Itanium → LP64)
+
+**Usage:**
+```bash
+# Linux/Unix target (default on Linux): long = 8 bytes
+./FlashCpp test.cpp -o test.o
+
+# Windows target (via --fmangling=msvc): long = 4 bytes
+./FlashCpp test.cpp -o test.o --fmangling=msvc
+```
+
+**Impact:**
+- Code targeting Windows correctly generates 4-byte `long` variables
+- Code targeting Linux correctly generates 8-byte `long` variables
+- System headers using `sizeof(long)` now work correctly on their intended platform
+
+**Files Modified:**
+- `src/CompileContext.h` - Added `DataModel` enum and accessors
+- `src/AstNodeTypes.h` - Added `TargetDataModel` enum, `g_target_data_model`, and `get_long_size_bits()`
+- `src/AstNodeTypes.cpp` - Define `g_target_data_model` and update `get_type_size_bits()`
+- `src/Parser.cpp` - Use `get_long_size_bits()` instead of `sizeof(long)`
+- `src/main.cpp` - Sync global data model when setting mangling style
+
+### 2026-01-15: Object-Like Macros with Parenthesized Bodies
+
+**Fixed:** Object-like macros with parenthesized bodies containing `sizeof` were incorrectly parsed as function-like macros.
+
+**The Bug:**
+```cpp
+// This was incorrectly parsed as a function-like macro:
+#define _SIGSET_NWORDS (1024 / (8 * sizeof (unsigned long int)))
+
+// The preprocessor incorrectly saw:
+// - Name: _SIGSET_NWORDS
+// - Args: 1024 / (8 * sizeof (unsigned long int
+// - Body: ))
+```
+
+**Root cause:** The `handleDefine` function in `FileReader.h` checked if the rest of the line started with `(` to determine if it was a function-like macro. However, this check should only be done if the original macro name contained `(` (i.e., no space between name and opening paren). The C standard specifies that a function-like macro requires `(` immediately after the name with NO space.
+
+**Fix applied:** 
+- Added `is_function_like` flag to track whether the original name contained `(`
+- Only parse as function-like macro arguments if `is_function_like` is true
+
+**Test case:** `tests/test_object_macro_with_parens_ret32.cpp`
+
+**Impact:**
+- The `<csetjmp>` header now compiles successfully (~0.2s)
+- System headers using `sizeof` in macro bodies now work correctly
+- `<csignal>` still fails due to a different issue (anonymous structs in unions)
+
+**Files Modified:**
+- `src/FileReader.h` - Fix `handleDefine()` to properly distinguish object-like vs function-like macros
 
 ### 2026-01-15: Static Constexpr Member Visibility in Template Partial Specializations
 

@@ -60,6 +60,13 @@ public:
 thread_local std::unordered_set<const StructTypeInfo*> RecursionGuard::resolution_stack_;
 thread_local int RecursionGuard::recursion_depth_ = 0;
 
+// Global target data model - default is platform-dependent
+#if defined(_WIN32) || defined(_WIN64)
+TargetDataModel g_target_data_model = TargetDataModel::LLP64;  // Windows: long = 32 bits
+#else
+TargetDataModel g_target_data_model = TargetDataModel::LP64;   // Linux/Unix: long = 64 bits
+#endif
+
 std::deque<TypeInfo> gTypeInfo;
 std::unordered_map<StringHandle, const TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<Type, const TypeInfo*> gNativeTypes;
@@ -275,7 +282,7 @@ int get_type_size_bits(Type type) {
             return 32;
         case Type::Long:
         case Type::UnsignedLong:
-            return sizeof(long) * 8;  // Platform dependent
+            return get_long_size_bits();  // Target-dependent: 32 bits (LLP64) or 64 bits (LP64)
         case Type::LongLong:
         case Type::UnsignedLongLong:
             return 64;

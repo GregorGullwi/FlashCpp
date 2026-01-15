@@ -2009,7 +2009,7 @@ private:
 
 		if (is_function_like) {
 			// Function-like macro: move the '(' and everything after from name to rest_of_line
-			rest_of_line.insert(0, std::string_view(name.data() + open_paren));
+			rest_of_line.insert(0, name.substr(open_paren));
 			name.erase(open_paren);
 		}
 
