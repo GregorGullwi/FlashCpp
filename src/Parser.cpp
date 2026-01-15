@@ -7866,6 +7866,42 @@ ParseResult Parser::parse_typedef_declaration()
 		// (or potentially attribute specifiers, which we'll skip in the semicolon check)
 	}
 
+	// Check for array typedef: typedef type name[size];
+	// This creates a type alias for an array type
+	if (peek_token().has_value() && peek_token()->value() == "[") {
+		// Parse array dimensions
+		while (peek_token().has_value() && peek_token()->value() == "[") {
+			consume_token(); // consume '['
+			
+			// Parse the array size expression
+			ParseResult size_result = parse_expression();
+			if (size_result.is_error()) {
+				return size_result;
+			}
+			
+			// Try to evaluate the array size using constexpr evaluator
+			size_t array_size = 0;
+			if (size_result.node().has_value()) {
+				ConstExpr::EvaluationContext ctx(gSymbolTable);
+				auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), ctx);
+				if (eval_result.success && eval_result.as_int() > 0) {
+					array_size = static_cast<size_t>(eval_result.as_int());
+				}
+			}
+			
+			// Add array dimension to the type specifier
+			type_spec.add_array_dimension(array_size);
+			
+			// Expect closing ']'
+			if (!consume_punctuator("]")) {
+				return ParseResult::error("Expected ']' after array size in typedef", *current_token_);
+			}
+		}
+		
+		// Update type_node with the array type
+		type_node = emplace_node<TypeSpecifierNode>(type_spec);
+	}
+
 	// Expect semicolon
 	if (!consume_punctuator(";")) {
 		return ParseResult::error("Expected ';' after typedef declaration", *current_token_);
