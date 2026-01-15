@@ -35,5 +35,5 @@ int main() {
     ratio_less_paren<int> y;
     (void)x;
     (void)y;
-    return 0;  // Return 0 for success
+    return 0;
 }
