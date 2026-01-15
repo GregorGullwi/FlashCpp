@@ -35,7 +35,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<atomic>` | N/A | ⏱️ Timeout | Heavy headers |
 | `<initializer_list>` | `test_std_initializer_list.cpp` | ❌ Failed | Requires special compiler support |
 | `<new>` | N/A | ✅ Compiled | ~0.5s (FIXED 2026-01-15) |
-| `<exception>` | N/A | ❌ Failed | Missing `_Hash_bytes` function |
+| `<exception>` | N/A | ⏱️ Timeout | FIXED 2026-01-15: Pointer-to-void conversion; now times out during template instantiation |
 | `<ratio>` | N/A | ⏱️ Timeout | Local variable visibility fixed (2026-01-15); times out during template instantiation |
 | `<csetjmp>` | N/A | ✅ Compiled | ~0.2s (FIXED 2026-01-15: Object-like macros with parenthesized bodies) |
 | `<csignal>` | N/A | ⚠️ Partial | Function pointer members in anonymous structs (2026-01-15: Fixed nested anonymous struct/union) |
@@ -295,8 +295,41 @@ The following features have been implemented to support standard headers:
 - Global scope `operator new`/`operator delete`
 - Typedef array syntax (`typedef type name[size];`)
 - Function pointer parameters with pack expansion and noexcept (NEW)
+- Pointer-to-void implicit conversion in overload resolution (NEW)
 
 ## Recent Changes
+
+### 2026-01-15: Pointer-to-Void Implicit Conversion in Overload Resolution
+
+**Fixed:** Any pointer type can now implicitly convert to `void*` during overload resolution.
+
+**Patterns that now work:**
+```cpp
+// Function expecting void* parameter
+void process_bytes(const void* ptr, size_t len, size_t seed);
+
+// All pointer types can now be passed:
+const char* str = "hello";
+const int* nums = nullptr;
+process_bytes(str, 5, 0);   // char* -> void* conversion
+process_bytes(nums, 0, 0);  // int* -> void* conversion
+```
+
+**Root cause:** The overload resolution code in `can_convert_type()` checked references before pointers. When a pointer variable was an lvalue (had `is_lvalue_reference` flag set for value category tracking), the reference handling code path was entered, missing the pointer conversion logic entirely.
+
+**Fix applied:** 
+- Reordered `can_convert_type()` in `src/OverloadResolution.h` to check pointer compatibility BEFORE reference compatibility
+- Added pointer-to-void conversion: when target type is `void*`, any source pointer type with matching depth is accepted as a valid conversion
+
+**Test case:** `tests/test_ptr_to_void_conversion_ret0.cpp`
+
+**Impact:**
+- `<exception>` header now progresses past the `_Hash_bytes` function call (which takes `const void*`)
+- `<exception>` now times out during template instantiation instead of failing with "No matching function for call to '_Hash_bytes'"
+- Standard library functions with `void*` parameters now work correctly
+
+**Files Modified:**
+- `src/OverloadResolution.h` - Reordered pointer check before reference check; added void* conversion
 
 ### 2026-01-15: Nested Anonymous Struct/Union in Typedef Declarations
 

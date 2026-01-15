@@ -182,6 +182,47 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 // - Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 // This distinction is critical for matching lvalue refs vs rvalue refs in overloaded functions.
 inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	// Check pointer-to-pointer compatibility FIRST
+	// This handles pointer types with lvalue/rvalue flags (which indicate value category, not actual reference types)
+	// Pointers with lvalue flags can still be passed to functions expecting pointer parameters
+	// IMPORTANT: We use AND (not OR) here. If only one is a pointer, we fall through to allow
+	// other conversions like pointer-to-integer for builtins (e.g., __builtin_va_start).
+	// Using OR would break va_args since it returns no_match when from is pointer but to is not.
+	if (from.is_pointer() && to.is_pointer()) {
+		// Pointer depth must match
+		if (from.pointer_depth() != to.pointer_depth()) {
+			return TypeConversionResult::no_match();
+		}
+
+		// Exact type match for pointers
+		if (from.type() == to.type()) {
+			return TypeConversionResult::exact_match();
+		}
+
+		// Pointer conversions: any pointer can implicitly convert to void*
+		// This is a standard C/C++ implicit conversion
+		// Const-correctness rules:
+		//   - const T* → const void*  : allowed (preserves const)
+		//   - T*       → const void*  : allowed (adding const is safe)
+		//   - const T* → void*        : REJECTED (would violate const correctness)
+		//   - T*       → void*        : allowed
+		// Note: For "const T*", the const applies to the pointed-to type (checked via is_const()),
+		//       while "T* const" would have const on the pointer level itself.
+		if (to.type() == Type::Void) {
+			// Check const-correctness for the pointed-to type
+			// from.is_const() checks if the pointee is const (e.g., "const char*")
+			// to.is_const() checks if the target pointee is const (e.g., "const void*")
+			// Rule: const T* cannot convert to non-const void* (would violate const correctness)
+			if (from.is_const() && !to.is_const()) {
+				return TypeConversionResult::no_match();
+			}
+			// All other cases are valid: T*→void*, T*→const void*, const T*→const void*
+			return TypeConversionResult::conversion();
+		}
+
+		return TypeConversionResult::no_match();
+	}
+
 	// Check reference compatibility
 	if (from.is_reference() || to.is_reference()) {
 		// If 'to' is a reference, 'from' must be compatible
@@ -247,29 +288,6 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 			}
 			return can_convert_type(from.type(), to.type());
 		}
-	}
-	
-	// Check pointer compatibility
-	if (from.is_pointer() || to.is_pointer()) {
-		// Both must be pointers for conversion
-		if (from.is_pointer() != to.is_pointer()) {
-			// Special case: nullptr (represented as 0) can convert to any pointer
-			// But we don't have a way to detect that here yet
-			return TypeConversionResult::no_match();
-		}
-
-		// Pointer depth must match
-		if (from.pointer_depth() != to.pointer_depth()) {
-			return TypeConversionResult::no_match();
-		}
-
-		// For now, require exact type match for pointers
-		// TODO: Handle pointer conversions (derived to base, void*, etc.)
-		if (from.type() == to.type()) {
-			return TypeConversionResult::exact_match();
-		}
-
-		return TypeConversionResult::no_match();
 	}
 
 	// Check for user-defined conversion operators
