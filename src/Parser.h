@@ -667,6 +667,13 @@ public:  // Public methods for template instantiation
         bool are_types_compatible(const TypeSpecifierNode& type1, const TypeSpecifierNode& type2) const;  // Check if two types are compatible
         std::string type_to_string(const TypeSpecifierNode& type) const;  // Convert type to string for error messages
         // Note: Use global ::get_type_size_bits() from AstNodeTypes.h for type sizes
+        
+        // Helper functions for std::initializer_list support
+        // Check if a type is std::initializer_list<T>, returns element type index if so
+        std::optional<TypeIndex> is_initializer_list_type(const TypeSpecifierNode& type_spec) const;
+        // Find a constructor that takes std::initializer_list<T> as its parameter
+        std::optional<std::pair<const StructMemberFunction*, TypeIndex>> 
+            find_initializer_list_constructor(const StructTypeInfo& struct_info) const;
 
         // Helper function for counting pack elements in template parameter packs
         size_t count_pack_elements(std::string_view pack_name) const;

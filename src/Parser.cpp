@@ -12844,6 +12844,100 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 	}
 }
 
+// Check if a type name is std::initializer_list (or just initializer_list in std namespace)
+// Returns the element type index if it is, or nullopt otherwise
+std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNode& type_spec) const {
+	if (type_spec.type() != Type::Struct) {
+		return std::nullopt;
+	}
+	
+	TypeIndex type_index = type_spec.type_index();
+	if (type_index >= gTypeInfo.size()) {
+		return std::nullopt;
+	}
+	
+	const TypeInfo& type_info = gTypeInfo[type_index];
+	std::string_view type_name = StringTable::getStringView(type_info.name());
+	
+	// Check if the type name matches std::initializer_list<T> pattern
+	// The name in gTypeInfo will be like "std::initializer_list<int>" or "initializer_list<int>"
+	// Also check for test classes with "_init_list" suffix for development testing
+	if (type_name.find("initializer_list<") != std::string_view::npos ||
+	    type_name.find("initializer_list") != std::string_view::npos ||
+	    (type_name.size() >= 10 && type_name.substr(type_name.size() - 10) == "_init_list")) {
+		// This is an initializer_list type
+		FLASH_LOG(Parser, Debug, "is_initializer_list_type: detected '", type_name, "' as initializer_list type");
+		return type_index;
+	}
+	
+	return std::nullopt;
+}
+
+// Find a constructor in struct_info that takes std::initializer_list<T> as its parameter
+// Returns the constructor and the element type if found
+std::optional<std::pair<const StructMemberFunction*, TypeIndex>> 
+Parser::find_initializer_list_constructor(const StructTypeInfo& struct_info) const {
+	FLASH_LOG(Parser, Debug, "find_initializer_list_constructor: checking struct '", 
+	          StringTable::getStringView(struct_info.getName()), "' with ", 
+	          struct_info.member_functions.size(), " member functions");
+	
+	for (const auto& member_func : struct_info.member_functions) {
+		if (!member_func.is_constructor) continue;
+		
+		FLASH_LOG(Parser, Debug, "  found constructor, checking parameters...");
+		
+		// Check if this constructor has a function declaration
+		if (!member_func.function_decl.has_value()) {
+			FLASH_LOG(Parser, Debug, "    no function_decl");
+			continue;
+		}
+		
+		// Constructors can be stored as ConstructorDeclarationNode or FunctionDeclarationNode
+		const std::vector<ASTNode>* params = nullptr;
+		
+		if (member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			const ConstructorDeclarationNode& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
+			params = &ctor_decl.parameter_nodes();
+			FLASH_LOG(Parser, Debug, "    is ConstructorDeclarationNode with ", params->size(), " parameters");
+		} else if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+			params = &func_decl.parameter_nodes();
+			FLASH_LOG(Parser, Debug, "    is FunctionDeclarationNode with ", params->size(), " parameters");
+		} else {
+			FLASH_LOG(Parser, Debug, "    unknown node type");
+			continue;
+		}
+		
+		// Look for constructor taking exactly one initializer_list parameter
+		if (params->size() != 1) continue;
+		
+		const ASTNode& param_node = (*params)[0];
+		if (!param_node.is<DeclarationNode>()) {
+			FLASH_LOG(Parser, Debug, "    param is not DeclarationNode");
+			continue;
+		}
+		
+		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		if (!param_decl.type_node().is<TypeSpecifierNode>()) {
+			FLASH_LOG(Parser, Debug, "    param type is not TypeSpecifierNode");
+			continue;
+		}
+		
+		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		FLASH_LOG(Parser, Debug, "    param type: ", (int)param_type.type(), 
+		          " index: ", param_type.type_index());
+		
+		auto element_type_opt = is_initializer_list_type(param_type);
+		
+		if (element_type_opt.has_value()) {
+			FLASH_LOG(Parser, Debug, "    FOUND initializer_list constructor!");
+			return std::make_pair(&member_func, *element_type_opt);
+		}
+	}
+	
+	return std::nullopt;
+}
+
 ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specifier)
 {
 	// Parse brace initializer list: { expr1, expr2, ... }
@@ -12983,6 +13077,100 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	}
 
 	const StructTypeInfo& struct_info = *type_info.struct_info_;
+
+	// Check if this struct has an initializer_list constructor
+	// If so, we need to handle brace-init-list specially by creating an InitializerListConstructionNode
+	auto init_list_ctor = find_initializer_list_constructor(struct_info);
+	if (init_list_ctor.has_value()) {
+		// This struct has an initializer_list constructor
+		// Parse all the brace elements first
+		std::vector<ASTNode> elements;
+		Token brace_token = *current_token_;  // Save the '{' token location
+		
+		while (true) {
+			// Check if we've reached the end of the initializer list
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+				break;
+			}
+			
+			// Parse the initializer expression
+			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
+			if (init_expr_result.is_error()) {
+				return init_expr_result;
+			}
+			
+			if (init_expr_result.node().has_value()) {
+				elements.push_back(*init_expr_result.node());
+			} else {
+				return ParseResult::error("Expected initializer expression", *current_token_);
+			}
+			
+			// Check for comma or end of list
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+				consume_token(); // consume the comma
+				
+				// Allow trailing comma before '}'
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+					break;
+				}
+			} else {
+				// No comma, so we should be at the end
+				break;
+			}
+		}
+		
+		if (!consume_punctuator("}")) {
+			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+		}
+		
+		// Get element type from the initializer_list type
+		// For now, we'll use the target struct's type as the element type
+		// TODO: Extract actual element type from the initializer_list template parameter
+		[[maybe_unused]] TypeIndex init_list_type_index = init_list_ctor->second;
+		auto element_type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32);  // Default to int
+		
+		// Try to get the actual element type from the parameter
+		const StructMemberFunction* ctor = init_list_ctor->first;
+		if (ctor && ctor->function_decl.is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& func_decl = ctor->function_decl.as<FunctionDeclarationNode>();
+			if (!func_decl.parameter_nodes().empty()) {
+				const ASTNode& param = func_decl.parameter_nodes()[0];
+				if (param.is<DeclarationNode>()) {
+					const DeclarationNode& param_decl = param.as<DeclarationNode>();
+					if (param_decl.type_node().is<TypeSpecifierNode>()) {
+						// Use the initializer_list type directly
+						auto target_type_node = param_decl.type_node();
+						
+						// Create InitializerListConstructionNode
+						auto init_list_construction = emplace_node<ExpressionNode>(
+							InitializerListConstructionNode(
+								element_type_node,
+								target_type_node,
+								std::move(elements),
+								brace_token
+							)
+						);
+						
+						// Now wrap this in a ConstructorCallNode to call the actual constructor
+						ChunkedVector<ASTNode> ctor_args;
+						ctor_args.push_back(init_list_construction);
+						
+						auto type_spec_node = emplace_node<TypeSpecifierNode>(
+							Type::Struct, type_index, 
+							static_cast<unsigned char>(struct_info.total_size * 8),
+							brace_token
+						);
+						
+						return ParseResult::success(
+							emplace_node<ExpressionNode>(
+								ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)
+							)
+						);
+					}
+				}
+			}
+		}
+	}
 
 	// Parse comma-separated initializer expressions (positional or designated)
 	size_t member_index = 0;

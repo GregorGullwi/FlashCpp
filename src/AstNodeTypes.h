@@ -3278,10 +3278,37 @@ private:
 	Token token_;                  // Token for error reporting
 };
 
+// InitializerListConstructionNode - represents the compiler-generated construction of std::initializer_list
+// This is the "compiler magic" that creates a backing array and initializer_list from a braced-init-list
+// e.g., Container c{1, 2, 3}; where Container takes std::initializer_list<int>
+// The backing array lives until the end of the full-expression (on the stack)
+class InitializerListConstructionNode {
+public:
+	InitializerListConstructionNode(
+		ASTNode element_type,           // Type of elements (e.g., int in initializer_list<int>)
+		ASTNode target_type,            // The full initializer_list type
+		std::vector<ASTNode> elements,  // The initializer expressions {1, 2, 3}
+		Token called_from
+	) : element_type_(std::move(element_type)), target_type_(std::move(target_type)),
+	    elements_(std::move(elements)), called_from_(called_from) {}
+
+	const ASTNode& element_type() const { return element_type_; }
+	const ASTNode& target_type() const { return target_type_; }
+	const std::vector<ASTNode>& elements() const { return elements_; }
+	size_t size() const { return elements_.size(); }
+	const Token& called_from() const { return called_from_; }
+
+private:
+	ASTNode element_type_;           // Element type (e.g., TypeSpecifierNode for int)
+	ASTNode target_type_;            // Full initializer_list type
+	std::vector<ASTNode> elements_;  // The braced initializer expressions
+	Token called_from_;              // For error reporting
+};
+
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
-	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode>;
+	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode, InitializerListConstructionNode>;
 
 /*class FunctionDefinitionNode {
 public:
