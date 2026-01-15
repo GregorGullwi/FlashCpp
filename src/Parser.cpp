@@ -6911,6 +6911,215 @@ ParseResult Parser::parse_static_assert()
 	return saved_position.success();
 }
 
+// Helper function to parse members of anonymous struct/union (handles recursive nesting)
+// This is used when parsing anonymous structs/unions inside typedef declarations
+// Example: typedef struct { union { struct { int a; } inner; } outer; } MyStruct;
+ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_struct_info, const std::string& parent_name_prefix)
+{
+	static int recursive_anonymous_counter = 0;
+	
+	while (peek_token().has_value() && peek_token()->value() != "}") {
+		// Check for nested named anonymous struct/union: struct { ... } member_name;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+		    (peek_token()->value() == "union" || peek_token()->value() == "struct")) {
+			SaveHandle nested_saved_pos = save_token_position();
+			bool nested_is_union = (peek_token()->value() == "union");
+			consume_token(); // consume 'union' or 'struct'
+			
+			if (peek_token().has_value() && peek_token()->value() == "{") {
+				// Nested anonymous struct/union pattern - consume body and member name
+				consume_token(); // consume '{'
+				
+				// Generate a unique name for the nested anonymous type
+				std::string nested_anon_type_name = parent_name_prefix + "_" + 
+					(nested_is_union ? "union_" : "struct_") + 
+					std::to_string(recursive_anonymous_counter++);
+				StringHandle nested_anon_type_name_handle = StringTable::getOrInternStringHandle(nested_anon_type_name);
+				
+				// Create the nested anonymous struct/union type
+				TypeInfo& nested_anon_type_info = add_struct_type(nested_anon_type_name_handle);
+				
+				// Create StructTypeInfo
+				auto nested_anon_struct_info_ptr = std::make_unique<StructTypeInfo>(nested_anon_type_name_handle, AccessSpecifier::Public);
+				StructTypeInfo* nested_anon_struct_info = nested_anon_struct_info_ptr.get();
+				
+				// Set the union flag if this is a union
+				if (nested_is_union) {
+					nested_anon_struct_info->is_union = true;
+				}
+				
+				// Recursively parse members of the nested anonymous struct/union
+				ParseResult nested_result = parse_anonymous_struct_union_members(nested_anon_struct_info, nested_anon_type_name);
+				if (nested_result.is_error()) {
+					return nested_result;
+				}
+				
+				// Expect closing brace
+				if (!consume_punctuator("}")) {
+					return ParseResult::error("Expected '}' after nested anonymous struct/union members", *peek_token());
+				}
+				
+				// Calculate the layout for the nested anonymous type
+				if (nested_is_union) {
+					// Union layout: all members at offset 0, size is max of all member sizes
+					size_t max_size = 0;
+					size_t max_alignment = 1;
+					for (auto& nested_member : nested_anon_struct_info->members) {
+						nested_member.offset = 0;  // All union members at offset 0
+						if (nested_member.size > max_size) {
+							max_size = nested_member.size;
+						}
+						if (nested_member.alignment > max_alignment) {
+							max_alignment = nested_member.alignment;
+						}
+					}
+					nested_anon_struct_info->total_size = max_size;
+					nested_anon_struct_info->alignment = max_alignment;
+				} else {
+					// Struct layout: sequential members with alignment
+					size_t current_offset = 0;
+					size_t max_alignment = 1;
+					for (auto& nested_member : nested_anon_struct_info->members) {
+						// Align current offset
+						if (nested_member.alignment > 0) {
+							current_offset = (current_offset + nested_member.alignment - 1) & ~(nested_member.alignment - 1);
+						}
+						nested_member.offset = current_offset;
+						current_offset += nested_member.size;
+						if (nested_member.alignment > max_alignment) {
+							max_alignment = nested_member.alignment;
+						}
+					}
+					// Final alignment padding
+					if (max_alignment > 0) {
+						current_offset = (current_offset + max_alignment - 1) & ~(max_alignment - 1);
+					}
+					nested_anon_struct_info->total_size = current_offset;
+					nested_anon_struct_info->alignment = max_alignment;
+				}
+				
+				// Set the struct info on the type info
+				nested_anon_type_info.setStructInfo(std::move(nested_anon_struct_info_ptr));
+				
+				// Now parse the member name for the enclosing anonymous struct/union
+				auto outer_member_name_token = peek_token();
+				if (!outer_member_name_token.has_value() || outer_member_name_token->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected member name after nested anonymous struct/union", outer_member_name_token.value_or(Token()));
+				}
+				consume_token(); // consume the member name
+				
+				// Calculate size for the nested anonymous type
+				size_t nested_type_size = nested_anon_type_info.getStructInfo()->total_size;
+				size_t nested_type_alignment = nested_anon_type_info.getStructInfo()->alignment;
+				
+				// Add member to the outer anonymous type
+				StringHandle outer_member_name_handle = StringTable::getOrInternStringHandle(outer_member_name_token->value());
+				out_struct_info->members.push_back(StructMember{
+					outer_member_name_handle,
+					Type::Struct,
+					nested_anon_type_info.type_index_,
+					0,  // offset will be calculated later
+					nested_type_size,
+					nested_type_alignment,
+					AccessSpecifier::Public,
+					std::nullopt,  // no default initializer
+					false,  // is_reference
+					false,  // is_rvalue_reference
+					0,      // referenced_size_bits
+					false,  // is_array
+					{}      // array_dimensions
+				});
+				
+				// Expect semicolon
+				if (!consume_punctuator(";")) {
+					return ParseResult::error("Expected ';' after nested anonymous struct/union member", *current_token_);
+				}
+				
+				discard_saved_token(nested_saved_pos);
+				continue;  // Continue with next member
+			} else {
+				// Not an anonymous struct/union - restore position and parse normally
+				restore_token_position(nested_saved_pos);
+			}
+		}
+		
+		// Parse member type normally
+		auto member_type_result = parse_type_specifier();
+		if (member_type_result.is_error()) {
+			return member_type_result;
+		}
+		
+		if (!member_type_result.node().has_value()) {
+			return ParseResult::error("Expected type specifier in anonymous struct/union", *current_token_);
+		}
+		
+		// Handle pointer declarators
+		TypeSpecifierNode& member_type_spec = member_type_result.node()->as<TypeSpecifierNode>();
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+		       peek_token()->value() == "*") {
+			consume_token(); // consume '*'
+			CVQualifier ptr_cv = parse_cv_qualifiers();
+			member_type_spec.add_pointer_level(ptr_cv);
+		}
+		
+		// Parse member name
+		auto member_name_token = peek_token();
+		if (!member_name_token.has_value() || member_name_token->type() != Token::Type::Identifier) {
+			return ParseResult::error("Expected member name in anonymous struct/union", member_name_token.value_or(Token()));
+		}
+		consume_token(); // consume the member name
+		
+		// Check for array declarator
+		std::vector<ASTNode> array_dimensions;
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
+		       peek_token()->value() == "[") {
+			consume_token(); // consume '['
+			
+			// Parse the array size expression
+			ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (size_result.is_error()) {
+				return size_result;
+			}
+			array_dimensions.push_back(*size_result.node());
+			
+			// Expect closing ']'
+			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Punctuator ||
+			    peek_token()->value() != "]") {
+				return ParseResult::error("Expected ']' after array size", *current_token_);
+			}
+			consume_token(); // consume ']'
+		}
+		
+		// Calculate member size and alignment
+		auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
+		
+		// Add member to the anonymous type
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name_token->value());
+		out_struct_info->members.push_back(StructMember{
+			member_name_handle,
+			member_type_spec.type(),
+			member_type_spec.type_index(),
+			0,  // offset will be calculated later
+			member_size,
+			member_alignment,
+			AccessSpecifier::Public,
+			std::nullopt,  // no default initializer
+			false,  // is_reference
+			false,  // is_rvalue_reference
+			0,      // referenced_size_bits
+			!array_dimensions.empty(),  // is_array
+			{}      // array_dimensions
+		});
+		
+		// Expect semicolon
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after member in anonymous struct/union", *current_token_);
+		}
+	}
+	
+	return ParseResult::success();
+}
+
 ParseResult Parser::parse_typedef_declaration()
 {
 	ScopedTokenPosition saved_position(*this);
@@ -7232,80 +7441,11 @@ ParseResult Parser::parse_typedef_declaration()
 							anon_struct_info->is_union = true;
 						}
 						
-						// Parse all members of the anonymous struct/union and add them to the anonymous type
-						while (peek_token().has_value() && peek_token()->value() != "}") {
-							// Parse member type
-							auto member_type_result = parse_type_specifier();
-							if (member_type_result.is_error()) {
-								return member_type_result;
-							}
-							
-							if (!member_type_result.node().has_value()) {
-								return ParseResult::error("Expected type specifier in named anonymous union/struct in typedef", *current_token_);
-							}
-							
-							// Handle pointer declarators
-							TypeSpecifierNode& member_type_spec = member_type_result.node()->as<TypeSpecifierNode>();
-							while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-							       peek_token()->value() == "*") {
-								consume_token(); // consume '*'
-								CVQualifier ptr_cv = parse_cv_qualifiers();
-								member_type_spec.add_pointer_level(ptr_cv);
-							}
-							
-							// Parse member name
-							auto member_name_token = peek_token();
-							if (!member_name_token.has_value() || member_name_token->type() != Token::Type::Identifier) {
-								return ParseResult::error("Expected member name in named anonymous union/struct in typedef", member_name_token.value_or(Token()));
-							}
-							consume_token(); // consume the member name
-							
-							// Check for array declarator
-							std::vector<ASTNode> array_dimensions;
-							while (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
-							       peek_token()->value() == "[") {
-								consume_token(); // consume '['
-								
-								// Parse the array size expression
-								ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-								if (size_result.is_error()) {
-									return size_result;
-								}
-								array_dimensions.push_back(*size_result.node());
-								
-								// Expect closing ']'
-								if (!peek_token().has_value() || peek_token()->type() != Token::Type::Punctuator ||
-								    peek_token()->value() != "]") {
-									return ParseResult::error("Expected ']' after array size", *current_token_);
-								}
-								consume_token(); // consume ']'
-							}
-							
-							// Calculate member size and alignment
-							auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
-							
-							// Add member to the anonymous type
-							StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name_token->value());
-							anon_struct_info->members.push_back(StructMember{
-								member_name_handle,
-								member_type_spec.type(),
-								member_type_spec.type_index(),
-								0,  // offset will be calculated below
-								member_size,
-								member_alignment,
-								AccessSpecifier::Public,
-								std::nullopt,  // no default initializer
-								false,  // is_reference
-								false,  // is_rvalue_reference
-								0,      // referenced_size_bits
-								!array_dimensions.empty(),  // is_array
-								{}      // array_dimensions (TODO: convert to size_t vector if needed)
-							});
-							
-							// Expect semicolon
-							if (!consume_punctuator(";")) {
-								return ParseResult::error("Expected ';' after member in named anonymous union/struct in typedef", *current_token_);
-							}
+						// Parse all members using the recursive helper
+						std::string anon_type_name_str(anon_type_name);
+						ParseResult members_result = parse_anonymous_struct_union_members(anon_struct_info, anon_type_name_str);
+						if (members_result.is_error()) {
+							return members_result;
 						}
 						
 						// Expect closing brace
