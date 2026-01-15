@@ -1421,8 +1421,9 @@ private:
 			if (!nested_type_info.isStruct()) {
 				return false;
 			}
+			// Convert size from bytes to bits for TypeSpecifierNode
 			base_type = TypeSpecifierNode(Type::Struct, nested_member->type_index, 
-			                               nested_member->size * 8, Token());
+			                               nested_member->size * 8, Token());  // size in bits
 		} else {
 			// Unsupported base expression type
 			return false;
@@ -13796,7 +13797,7 @@ private:
 									member_load.offset = static_cast<int>(member.offset);
 									member_load.is_reference = member.is_reference;
 									member_load.is_rvalue_reference = member.is_rvalue_reference;
-									member_load.struct_type_info = &member_type_info;  // TypeInfo*, not StructTypeInfo*
+									member_load.struct_type_info = &member_type_info;  // MemberLoadOp expects TypeInfo*
 									
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 									
@@ -13825,14 +13826,15 @@ private:
 									};
 									ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
 									
-									// Return with void type (most common for callbacks)
+									// TODO: Return type should be determined from the function pointer's signature
+									// For now, return void as most callbacks are void-returning
 									return { Type::Void, 0, ret_var, 0ULL };
 								}
 							}
 							
 							// Not a function pointer member - set object_type for regular member function lookup
 							object_type = TypeSpecifierNode(Type::Struct, resolved_member->type_index,
-							                                 resolved_member->size * 8, Token());
+							                                 resolved_member->size * 8, Token());  // size in bits
 						}
 					}
 				}
