@@ -314,7 +314,9 @@ sizeof(long);  // Was always host-dependent, now target-dependent
 **Implementation:**
 - Added `TargetDataModel` enum in `AstNodeTypes.h` (LLP64 or LP64)
 - Added `g_target_data_model` global variable to track the current target
-- Added `get_long_size_bits()` helper function that returns 32 or 64 based on target
+- Added `get_long_size_bits()` helper in `AstNodeTypes.h` that returns 32 or 64 based on target
+- **Consolidated type size handling:** All type size lookups now go through `::get_type_size_bits()` in `AstNodeTypes.cpp`, which internally calls `get_long_size_bits()` for `Type::Long` and `Type::UnsignedLong`
+- Removed duplicate `Parser::get_type_size_bits()` method that had hardcoded sizes
 - Data model is automatically set based on mangling style (MSVC → LLP64, Itanium → LP64)
 
 **Usage:**
@@ -334,8 +336,9 @@ sizeof(long);  // Was always host-dependent, now target-dependent
 **Files Modified:**
 - `src/CompileContext.h` - Added `DataModel` enum and accessors
 - `src/AstNodeTypes.h` - Added `TargetDataModel` enum, `g_target_data_model`, and `get_long_size_bits()`
-- `src/AstNodeTypes.cpp` - Define `g_target_data_model` and update `get_type_size_bits()`
-- `src/Parser.cpp` - Use `get_long_size_bits()` instead of `sizeof(long)`
+- `src/AstNodeTypes.cpp` - Define `g_target_data_model` and update `get_type_size_bits()` (single source of truth)
+- `src/Parser.h` - Removed duplicate `get_type_size_bits()` declaration
+- `src/Parser.cpp` - Removed duplicate `get_type_size_bits()` implementation; now uses global `::get_type_size_bits()`
 - `src/main.cpp` - Sync global data model when setting mangling style
 
 ### 2026-01-15: Object-Like Macros with Parenthesized Bodies

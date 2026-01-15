@@ -9054,7 +9054,7 @@ std::optional<std::pair<Type, unsigned char>> Parser::get_builtin_type_info(std:
 	// Handle "long" specially since its size depends on target data model
 	// Windows (LLP64): long = 32 bits, Linux/Unix (LP64): long = 64 bits
 	if (type_name == "long") {
-		return std::make_pair(Type::Long, static_cast<unsigned char>(get_long_size_bits()));
+		return std::make_pair(Type::Long, static_cast<unsigned char>(get_type_size_bits(Type::Long)));
 	}
 	
 	auto it = builtin_types.find(type_name);
@@ -9439,7 +9439,7 @@ ParseResult Parser::parse_type_specifier()
 		// Handle "long" specially due to target-dependent size
 		if (current_token_opt->value() == "long") {
 			type = Type::Long;
-			type_size = get_long_size_bits();
+			type_size = get_type_size_bits(Type::Long);
 			has_explicit_type = true;
 		} else {
 			const auto& it = type_map.find(current_token_opt->value());
@@ -9471,7 +9471,7 @@ ParseResult Parser::parse_type_specifier()
 					break;
 				case Type::Long:
 					type = Type::UnsignedLong;
-					type_size = get_long_size_bits();
+					type_size = get_type_size_bits(Type::UnsignedLong);
 					break;
 				default:
 					break;
@@ -9489,7 +9489,7 @@ ParseResult Parser::parse_type_specifier()
 					type_size = 32;
 					break;
 				case Type::Long:
-					type_size = get_long_size_bits();
+					type_size = get_type_size_bits(Type::Long);
 					break;
 				default:
 					break;
@@ -9550,7 +9550,7 @@ ParseResult Parser::parse_type_specifier()
 		if (long_count == 1) {
 			// "long" or "const long" -> long int
 			type = (qualifier == TypeQualifier::Unsigned) ? Type::UnsignedLong : Type::Long;
-			type_size = get_long_size_bits();
+			type_size = get_type_size_bits(type);
 		} else if (long_count == 2) {
 			// "long long" or "const long long" -> long long int
 			type = (qualifier == TypeQualifier::Unsigned) ? Type::UnsignedLongLong : Type::LongLong;
@@ -14398,7 +14398,7 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 			if (l_count >= 2) {
 				typeInfo.sizeInBits = 64;  // long long is always 64 bits
 			} else {
-				typeInfo.sizeInBits = static_cast<size_t>(get_long_size_bits());  // long is target-dependent
+				typeInfo.sizeInBits = static_cast<size_t>(get_type_size_bits(Type::Long));  // long is target-dependent
 			}
 		}
 	} else {
@@ -23052,33 +23052,8 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 	return result;
 }
 
-unsigned char Parser::get_type_size_bits(Type type) {
-	switch (type) {
-		case Type::Void:
-			return 0;
-		case Type::Bool:
-		case Type::Char:
-		case Type::UnsignedChar:
-			return 8;
-		case Type::Short:
-		case Type::UnsignedShort:
-			return 16;
-		case Type::Int:
-		case Type::UnsignedInt:
-		case Type::Float:
-			return 32;
-		case Type::Long:
-		case Type::UnsignedLong:
-		case Type::LongLong:
-		case Type::UnsignedLongLong:
-		case Type::Double:
-			return 64;
-		case Type::LongDouble:
-			return 80;
-		default:
-			return 32;  // Default to 32 bits
-	}
-}
+// Note: Type size lookup is now unified in ::get_type_size_bits() from AstNodeTypes.h
+// This ensures consistent handling of target-dependent types like 'long' (LLP64 vs LP64)
 
 // Parse template declaration: template<typename T> ...
 // Also handles explicit template instantiation: template void Func<int>(); or template class Container<int>;
