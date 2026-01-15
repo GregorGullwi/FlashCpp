@@ -335,7 +335,7 @@ d.outer_union.inner_struct.nested_union.key = 42;
 - Before calling `parse_type_specifier()`, the helper checks if the next tokens are `struct {` or `union {` and handles them as nested anonymous types
 - Each nested anonymous type gets a unique generated name and proper layout calculation
 
-**Test case:** `tests/test_deep_nested_anon.cpp` (new)
+**Test case:** `tests/test_deep_nested_anon_struct_ret0.cpp` (new)
 
 **Impact:**
 - `<csignal>` now parses past the `siginfo_t` structure with its complex nested anonymous unions
