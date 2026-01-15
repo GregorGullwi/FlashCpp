@@ -1300,7 +1300,7 @@ ParseResult Parser::parse_type_and_name() {
                         consume_token(); // consume '['
                         
                         // Parse array size expression
-                        auto size_result = parse_expression();
+                        auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
                         if (size_result.is_error()) {
                             restore_token_position(saved_pos);
                         } else {
@@ -1640,7 +1640,7 @@ ParseResult Parser::parse_type_and_name() {
             }
         } else {
             // Parse the array size expression
-            ParseResult size_result = parse_expression();
+            ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
             if (size_result.is_error()) {
                 return size_result;
             }
@@ -1744,7 +1744,7 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
         consume_token(); // consume '='
         
         // Parse the initializer expression
-        auto init_result = parse_expression();
+        auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
         if (init_result.is_error()) {
             return init_result;
         }
@@ -1753,7 +1753,7 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
     } else if (peek_token()->value() == "{") {
         // Brace initializer: auto [a, b] {expr};
         // For now, we'll parse this as an expression that starts with '{'
-        auto init_result = parse_expression();
+        auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
         if (init_result.is_error()) {
             return init_result;
         }
@@ -1870,7 +1870,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
                 consume_token(); // consume '['
 
                 // Parse array size expression
-                auto size_result = parse_expression();
+                auto size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
                 if (size_result.is_error()) {
                     return size_result;
                 }
@@ -2831,7 +2831,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			ChunkedVector<ASTNode> arguments;
 			
 			while (peek_token().has_value() && peek_token()->value() != ")") {
-				auto arg_result = parse_expression();
+				auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (arg_result.is_error()) {
 					return arg_result;
 				}
@@ -3529,7 +3529,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				
 				if (peek_token().has_value() && peek_token()->value() == "=") {
 					consume_token(); // consume '='
-					auto value_expr_result = parse_expression();
+					auto value_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (value_expr_result.is_error()) {
 						return value_expr_result;
 					}
@@ -4457,7 +4457,7 @@ ParseResult Parser::parse_struct_declaration()
 					member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info.get()});
 					
 					// Parse the initializer expression
-					auto init_result = parse_expression();
+					auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					
 					// Pop context after parsing
 					member_function_context_stack_.pop_back();
@@ -4750,7 +4750,7 @@ ParseResult Parser::parse_struct_declaration()
 										consume_token(); // consume '['
 										
 										// Parse the array size expression
-										ParseResult size_result = parse_expression();
+										ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (size_result.is_error()) {
 											return size_result;
 										}
@@ -4831,7 +4831,7 @@ ParseResult Parser::parse_struct_declaration()
 							consume_token(); // consume '['
 							
 							// Parse the array size expression
-							ParseResult size_result = parse_expression();
+							ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 							if (size_result.is_error()) {
 								return size_result;
 							}
@@ -5697,7 +5697,7 @@ ParseResult Parser::parse_struct_declaration()
 							std::vector<ASTNode> init_args;
 							if (!peek_token().has_value() || peek_token()->value() != ")") {
 								do {
-									ParseResult arg_result = parse_expression();
+									ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 									if (arg_result.is_error()) {
 										return arg_result;
 									}
@@ -5721,7 +5721,7 @@ ParseResult Parser::parse_struct_declaration()
 					} else {
 						// Not a type name, restore and parse as expression
 						restore_token_position(member_init_saved_pos);
-						auto init_result = parse_expression();
+						auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (init_result.is_error()) {
 							return init_result;
 						}
@@ -5731,7 +5731,7 @@ ParseResult Parser::parse_struct_declaration()
 					}
 				} else {
 					// Parse regular expression initializer
-					auto init_result = parse_expression();
+					auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (init_result.is_error()) {
 						return init_result;
 					}
@@ -5794,7 +5794,7 @@ ParseResult Parser::parse_struct_declaration()
 						}
 					} else {
 						// Parse expression with precedence > comma operator (precedence 1)
-						auto init_result = parse_expression(2);
+						auto init_result = parse_expression(2, ExpressionContext::Normal);
 						if (init_result.is_error()) {
 							return init_result;
 						}
@@ -6750,7 +6750,7 @@ ParseResult Parser::parse_enum_declaration()
 		if (peek_token().has_value() && peek_token()->value() == "=") {
 			consume_token(); // consume '='
 
-			auto value_result = parse_expression();
+			auto value_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (value_result.is_error()) {
 				return value_result;
 			}
@@ -6839,7 +6839,7 @@ ParseResult Parser::parse_static_assert()
 	}
 
 	// Parse the condition expression
-	ParseResult condition_result = parse_expression();
+	ParseResult condition_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 	if (condition_result.is_error()) {
 		return condition_result;
 	}
@@ -7067,7 +7067,7 @@ ParseResult Parser::parse_typedef_declaration()
 				consume_token(); // consume '='
 
 				// Parse constant expression
-				auto value_expr_result = parse_expression();
+				auto value_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (value_expr_result.is_error()) {
 					return value_expr_result;
 				}
@@ -7258,7 +7258,7 @@ ParseResult Parser::parse_typedef_declaration()
 								consume_token(); // consume '['
 								
 								// Parse the array size expression
-								ParseResult size_result = parse_expression();
+								ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 								if (size_result.is_error()) {
 									return size_result;
 								}
@@ -7439,7 +7439,7 @@ ParseResult Parser::parse_typedef_declaration()
 										consume_token(); // consume '['
 										
 										// Parse the array size expression
-										ParseResult size_result = parse_expression();
+										ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (size_result.is_error()) {
 											return size_result;
 										}
@@ -7520,7 +7520,7 @@ ParseResult Parser::parse_typedef_declaration()
 							consume_token(); // consume '['
 							
 							// Parse the array size expression
-							ParseResult size_result = parse_expression();
+							ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 							if (size_result.is_error()) {
 								return size_result;
 							}
@@ -7612,7 +7612,7 @@ ParseResult Parser::parse_typedef_declaration()
 				consume_token(); // consume '['
 
 				// Parse the array size expression
-				ParseResult size_result = parse_expression();
+				ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (size_result.is_error()) {
 					return size_result;
 				}
@@ -7921,7 +7921,7 @@ ParseResult Parser::parse_typedef_declaration()
 			consume_token(); // consume '['
 			
 			// Parse the array size expression
-			ParseResult size_result = parse_expression();
+			ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (size_result.is_error()) {
 				return size_result;
 			}
@@ -9095,7 +9095,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	}
 	
 	// Parse the expression inside the parentheses
-	ParseResult expr_result = parse_expression();
+	ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 	if (expr_result.is_error()) {
 		return expr_result;
 	}
@@ -10828,7 +10828,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator && peek_token()->value() == "=") {
 			consume_token(); // consume '='
 			// Parse the default value expression
-			auto default_value = parse_expression();
+			auto default_value = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (default_value.is_error()) {
 				return default_value;
 			}
@@ -10933,7 +10933,7 @@ ParseResult Parser::parse_function_trailing_specifiers(
 				consume_token(); // consume '('
 
 				// Parse the constant expression
-				auto expr_result = parse_expression();
+				auto expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (expr_result.is_error()) {
 					return expr_result;
 				}
@@ -11466,7 +11466,7 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 				std::vector<ASTNode> init_args;
 				if (!peek_token().has_value() || peek_token()->value() != close_delim) {
 					do {
-						ParseResult arg_result = parse_expression();
+						ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (arg_result.is_error()) {
 							// Clean up
 							current_function_ = nullptr;
@@ -11965,7 +11965,7 @@ ParseResult Parser::parse_statement_or_declaration()
 					// Restore position before the identifier so parse_expression can handle it
 					restore_token_position(saved_pos);
 					// This is a function call, parse as expression
-					return parse_expression();
+					return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				}
 			}
 			// Restore position before the identifier so parse_variable_declaration can handle it
@@ -11988,14 +11988,14 @@ ParseResult Parser::parse_statement_or_declaration()
 
 		// If it starts with an identifier, it could be an assignment, expression,
 		// or function call statement
-		return parse_expression();
+		return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 	}
 	else if (current_token.type() == Token::Type::Operator) {
 		// Handle prefix operators as expression statements
 		// e.g., ++i; or --i; or *p = 42; or +[](){}; or -x;
 		std::string_view op = current_token.value();
 		if (op == "++" || op == "--" || op == "*" || op == "&" || op == "+" || op == "-" || op == "!" || op == "~") {
-			return parse_expression();
+			return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		}
 		// Unknown operator - consume token to avoid infinite loop and return error
 		consume_token();
@@ -12007,11 +12007,11 @@ ParseResult Parser::parse_statement_or_declaration()
 		std::string_view punct = current_token.value();
 		if (punct == "[") {
 			// Lambda expression
-			return parse_expression();
+			return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		}
 		else if (punct == "(") {
 			// Parenthesized expression
-			return parse_expression();
+			return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		}
 		// Unknown punctuator - consume token to avoid infinite loop and return error
 		consume_token();
@@ -12020,7 +12020,7 @@ ParseResult Parser::parse_statement_or_declaration()
 	}
 	else if (current_token.type() == Token::Type::Literal) {
 		// Handle literal expression statements (e.g., "42;")
-		return parse_expression();
+		return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 	}
 	else {
 		// Unknown token type - consume token to avoid infinite loop and return error
@@ -12290,7 +12290,7 @@ ParseResult Parser::parse_variable_declaration()
 					// Parse expression with precedence > comma operator (precedence 1)
 					// This prevents comma from being treated as an operator in declaration lists
 					FLASH_LOG(Parser, Debug, "parse_variable_declaration: About to parse initializer expression, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
-					ParseResult init_expr_result = parse_expression(2);
+					ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
 					if (init_expr_result.is_error()) {
 						return init_expr_result;
 					}
@@ -12337,7 +12337,7 @@ std::optional<ASTNode> Parser::parse_direct_initialization()
 			break;
 		}
 
-		ParseResult arg_result = parse_expression();
+		ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (arg_result.is_error()) {
 			// Return nullopt on error - caller should handle
 			return std::nullopt;
@@ -12411,7 +12411,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 		return initializer;
 	} else {
 		// Regular expression initializer
-		ParseResult init_expr_result = parse_expression();
+		ParseResult init_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (init_expr_result.is_error()) {
 			return std::nullopt;
 		}
@@ -12487,7 +12487,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			// Parse the initializer expression with precedence > comma operator (precedence 1)
 			// This prevents comma from being treated as an operator in initializer lists
-			ParseResult init_expr_result = parse_expression(2);
+			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
 			if (init_expr_result.is_error()) {
 				return init_expr_result;
 			}
@@ -12558,7 +12558,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		
 		// Parse the single initializer expression with precedence > comma operator (precedence 1)
 		// This prevents comma from being treated as an operator in initializer lists
-		ParseResult init_expr_result = parse_expression(2);
+		ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
 		if (init_expr_result.is_error()) {
 			return init_expr_result;
 		}
@@ -12643,7 +12643,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			// Parse the initializer expression with precedence > comma operator (precedence 1)
 			// This prevents comma from being treated as an operator in initializer lists
-			ParseResult init_expr_result = parse_expression(2);
+			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
 			if (init_expr_result.is_error()) {
 				return init_expr_result;
 			}
@@ -12667,7 +12667,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 			// Parse the initializer expression with precedence > comma operator (precedence 1)
 			// This prevents comma from being treated as an operator in initializer lists
-			ParseResult init_expr_result = parse_expression(2);
+			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
 			if (init_expr_result.is_error()) {
 				return init_expr_result;
 			}
@@ -12962,7 +12962,7 @@ ParseResult Parser::parse_return_statement()
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: About to parse_expression. current_token={}, peek={}", 
 			current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
 			peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
-		return_expr_result = parse_expression();
+		return_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (return_expr_result.is_error()) {
 			return return_expr_result;
 		}
@@ -13037,7 +13037,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse the expression to cast
-		ParseResult expr_result = parse_expression();
+		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (expr_result.is_error() || !expr_result.node().has_value()) {
 			return ParseResult::error("Expected expression in static_cast", *current_token_);
 		}
@@ -13103,7 +13103,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse the expression to cast
-		ParseResult expr_result = parse_expression();
+		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (expr_result.is_error() || !expr_result.node().has_value()) {
 			return ParseResult::error("Expected expression in dynamic_cast", *current_token_);
 		}
@@ -13169,7 +13169,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse the expression to cast
-		ParseResult expr_result = parse_expression();
+		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (expr_result.is_error() || !expr_result.node().has_value()) {
 			return ParseResult::error("Expected expression in const_cast", *current_token_);
 		}
@@ -13235,7 +13235,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse the expression to cast
-		ParseResult expr_result = parse_expression();
+		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (expr_result.is_error() || !expr_result.node().has_value()) {
 			return ParseResult::error("Expected expression in reinterpret_cast", *current_token_);
 		}
@@ -13290,7 +13290,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 										current_token_->file_index());
 
 				// Parse the expression to cast
-				ParseResult expr_result = parse_unary_expression();
+				ParseResult expr_result = parse_unary_expression(ExpressionContext::Normal);
 				if (expr_result.is_error() || !expr_result.node().has_value()) {
 					return ParseResult::error("Expected expression after C-style cast", *current_token_);
 				}
@@ -13342,7 +13342,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			consume_token(); // consume '('
 
 			// Try to parse placement address expression
-			ParseResult placement_result = parse_expression();
+			ParseResult placement_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (!placement_result.is_error() &&
 			    peek_token().has_value() && peek_token()->value() == ")") {
 				consume_token(); // consume ')'
@@ -13384,7 +13384,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			consume_token(); // consume '['
 
 			// Parse the size expression
-			ParseResult size_result = parse_expression();
+			ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (size_result.is_error()) {
 				return size_result;
 			}
@@ -13407,7 +13407,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			// Parse constructor arguments
 			if (!peek_token().has_value() || peek_token()->value() != ")") {
 				while (true) {
-					ParseResult arg_result = parse_expression();
+					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (arg_result.is_error()) {
 						return arg_result;
 					}
@@ -13456,7 +13456,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse the expression to delete
-		ParseResult expr_result = parse_unary_expression();
+		ParseResult expr_result = parse_unary_expression(ExpressionContext::Normal);
 		if (expr_result.is_error()) {
 			return expr_result;
 		}
@@ -13564,7 +13564,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			else {
 				// Not a type (or doesn't look like one), try parsing as expression
 				restore_token_position(saved_pos);
-				ParseResult expr_result = parse_expression();
+				ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (expr_result.is_error()) {
 					discard_saved_token(saved_pos);
 					return ParseResult::error("Expected type or expression after 'sizeof('", *current_token_);
@@ -13615,7 +13615,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		else {
 			// Not a type (or doesn't look like one), try parsing as expression
 			restore_token_position(saved_pos);
-			ParseResult expr_result = parse_expression();
+			ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (expr_result.is_error()) {
 				discard_saved_token(saved_pos);
 				return ParseResult::error("Expected type or expression after '" + std::string(alignof_name) + "('", *current_token_);
@@ -13643,7 +13643,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse the expression inside noexcept(...)
-		ParseResult expr_result = parse_expression();
+		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (expr_result.is_error()) {
 			return ParseResult::error("Expected expression after 'noexcept('", *current_token_);
 		}
@@ -13688,7 +13688,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		else {
 			// Not a type (or doesn't look like one), try parsing as expression
 			restore_token_position(saved_pos);
-			ParseResult expr_result = parse_expression();
+			ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (expr_result.is_error()) {
 				discard_saved_token(saved_pos);
 				return ParseResult::error("Expected type or expression after 'typeid('", *current_token_);
@@ -13716,7 +13716,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse argument: any expression
-		ParseResult arg_result = parse_expression();
+		ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (arg_result.is_error()) {
 			return ParseResult::error("Expected expression as argument to __builtin_constant_p", *current_token_);
 		}
@@ -13755,7 +13755,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse first argument: va_list variable (expression)
-		ParseResult first_arg_result = parse_expression();
+		ParseResult first_arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (first_arg_result.is_error()) {
 			return ParseResult::error("Expected va_list variable as first argument to __builtin_va_arg", *current_token_);
 		}
@@ -13841,7 +13841,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		}
 
 		// Parse argument: the object to get the address of
-		ParseResult arg_result = parse_expression();
+		ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (arg_result.is_error()) {
 			return ParseResult::error("Expected expression as argument to __builtin_addressof", *current_token_);
 		}
@@ -13875,7 +13875,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			consume_token();
 
 			// Parse the operand (recursively handle unary expressions)
-			ParseResult operand_result = parse_unary_expression();
+			ParseResult operand_result = parse_unary_expression(ExpressionContext::Normal);
 			if (operand_result.is_error()) {
 				return operand_result;
 			}
@@ -14106,7 +14106,10 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		Token question_token = *current_token_;  // Save the '?' token
 
 		// Parse the true expression (allow lower precedence on the right)
-		ParseResult true_result = parse_expression(0);
+		// IMPORTANT: Pass the context to preserve template argument parsing mode
+		// This ensures that '<' and '>' inside ternary branches are handled correctly
+		// when the ternary is itself inside template arguments (e.g., integral_constant<int, (x < 0) ? -1 : 1>)
+		ParseResult true_result = parse_expression(0, context);
 		if (true_result.is_error()) {
 			return true_result;
 		}
@@ -14118,7 +14121,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		consume_token();  // Consume ':'
 
 		// Parse the false expression (use precedence 5 for right-associativity)
-		ParseResult false_result = parse_expression(5);
+		// IMPORTANT: Pass the context to preserve template argument parsing mode
+		ParseResult false_result = parse_expression(5, context);
 		if (false_result.is_error()) {
 			return false_result;
 		}
@@ -14677,7 +14681,7 @@ ParseResult Parser::parse_static_member_block(
 		member_function_context_stack_.push_back({struct_name_handle, struct_type_index, &struct_ref, struct_info});
 		
 		// Parse initializer expression
-		auto init_result = parse_expression();
+		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		
 		// Pop context after parsing
 		member_function_context_stack_.pop_back();
@@ -14976,7 +14980,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			ChunkedVector<ASTNode> args;
 			if (!peek_token().has_value() || peek_token()->value() != ")") {
 				while (true) {
-					auto arg_result = parse_expression();
+					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (arg_result.is_error()) {
 						return arg_result;
 					}
@@ -15057,7 +15061,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			consume_token(); // consume '['
 
 			// Parse the index expression
-			ParseResult index_result = parse_expression();
+			ParseResult index_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (index_result.is_error()) {
 				return index_result;
 			}
@@ -15141,7 +15145,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				ChunkedVector<ASTNode> args;
 				if (current_token_.has_value() && current_token_->value() != ")") {
 					while (true) {
-						auto arg_result = parse_expression();
+						auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (arg_result.is_error()) {
 							return arg_result;
 						}
@@ -15464,7 +15468,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			
 			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
 				while (true) {
-					auto arg_result = parse_expression();
+					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (arg_result.is_error()) {
 						return arg_result;
 					}
@@ -15727,7 +15731,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// Parse brace initializer arguments
 			while (current_token_.has_value() && current_token_->value() != "}") {
-				auto arg_result = parse_expression();
+				auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (arg_result.is_error()) {
 					type_name_sb.reset(); // Must reset before early return
 					return arg_result;
@@ -15754,7 +15758,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// Parse parenthesized arguments
 			while (current_token_.has_value() && current_token_->value() != ")") {
-				auto arg_result = parse_expression();
+				auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (arg_result.is_error()) {
 					type_name_sb.reset(); // Must reset before early return
 					return arg_result;
@@ -15872,7 +15876,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		ChunkedVector<ASTNode> args;
 		if (current_token_.has_value() && current_token_->value() != ")") {
 			while (true) {
-				auto arg_result = parse_expression();
+				auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (arg_result.is_error()) {
 					return arg_result;
 				}
@@ -16179,7 +16183,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				std::optional<size_t> array_size_val;
 				if (peek_token().has_value() && peek_token()->value() != "]") {
 					// Parse array size expression
-					ParseResult size_result = parse_expression();
+					ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (size_result.is_error()) {
 						return ParseResult::error("Expected array size expression", *current_token_);
 					}
@@ -16240,7 +16244,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						consume_token();  // consume '['
 						
 						if (peek_token().has_value() && peek_token()->value() != "]") {
-							ParseResult size_result = parse_expression();
+							ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 							if (size_result.is_error()) {
 								return ParseResult::error("Expected array size expression", *current_token_);
 							}
@@ -16309,7 +16313,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					consume_token();  // consume '['
 					
 					if (peek_token().has_value() && peek_token()->value() != "]") {
-						ParseResult size_result = parse_expression();
+						ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (size_result.is_error()) {
 							return ParseResult::error("Expected array size expression", *current_token_);
 						}
@@ -16413,7 +16417,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			ChunkedVector<ASTNode> args;
 			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
 				while (true) {
-					auto arg_result = parse_expression();
+					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (arg_result.is_error()) {
 						return arg_result;
 					}
@@ -16681,7 +16685,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			consume_token(); // consume '('
 			
 			// Parse the single argument
-			auto arg_result = parse_expression();
+			auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (arg_result.is_error()) {
 				return arg_result;
 			}
@@ -16922,7 +16926,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			ChunkedVector<ASTNode> args;
 			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
 				while (true) {
-					auto arg_result = parse_expression();
+					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (arg_result.is_error()) {
 						return arg_result;
 					}
@@ -17428,7 +17432,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				ChunkedVector<ASTNode> args;
 				if (current_token_.has_value() && current_token_->value() != ")") {
 					while (true) {
-						auto arg_result = parse_expression();
+						auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (arg_result.is_error()) {
 							return arg_result;
 						}
@@ -17580,7 +17584,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				ChunkedVector<ASTNode> args;
 				while (current_token_.has_value() && 
 				       (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")")) {
-					auto argResult = parse_expression();
+					auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (argResult.is_error()) {
 						return argResult;
 					}
@@ -17628,7 +17632,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Parse brace initializer arguments
 				ChunkedVector<ASTNode> args;
 				while (current_token_.has_value() && current_token_->value() != "}") {
-					auto argResult = parse_expression();
+					auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (argResult.is_error()) {
 						return argResult;
 					}
@@ -17680,7 +17684,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			std::vector<TypeSpecifierNode> arg_types;
 			
 			while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
-				ParseResult argResult = parse_expression();
+				ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (argResult.is_error()) {
 					return argResult;
 				}
@@ -18051,7 +18055,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					ChunkedVector<ASTNode> args;
 					while (current_token_.has_value() && 
 					       (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")")) {
-						ParseResult argResult = parse_expression();
+						ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (argResult.is_error()) {
 							return argResult;
 						}
@@ -18102,7 +18106,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					std::vector<TypeSpecifierNode> arg_types;
 					
 					while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
-						ParseResult argResult = parse_expression();
+						ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (argResult.is_error()) {
 							return argResult;
 						}
@@ -18191,7 +18195,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 				ChunkedVector<ASTNode> args;
 				while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
-					ParseResult argResult = parse_expression();
+					ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (argResult.is_error()) {
 						return argResult;
 					}
@@ -18508,7 +18512,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// Skip the brace content - should be empty {} for value-initialization
 									ChunkedVector<ASTNode> args;
 									while (peek_token().has_value() && peek_token()->value() != "}") {
-										auto argResult = parse_expression();
+										auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (argResult.is_error()) {
 											return argResult;
 										}
@@ -18550,7 +18554,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									
 									ChunkedVector<ASTNode> args;
 									while (peek_token().has_value() && peek_token()->value() != "}") {
-										auto argResult = parse_expression();
+										auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (argResult.is_error()) {
 											return argResult;
 										}
@@ -19150,7 +19154,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 				ChunkedVector<ASTNode> args;
 				while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")"sv) {
-					ParseResult argResult = parse_expression();
+					ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (argResult.is_error()) {
 						return argResult;
 					}
@@ -19788,7 +19792,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Binary right fold: (pack op ... op init)
 							consume_token(); // consume second operator
 							
-							ParseResult init_result = parse_expression();
+							ParseResult init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 							if (!init_result.is_error() && init_result.node().has_value() &&
 								consume_punctuator(")")) {
 								discard_saved_token(fold_check_pos);
@@ -19818,7 +19822,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// Try to parse as a simple expression
 			SaveHandle init_pos = save_token_position();
-			ParseResult init_result = parse_primary_expression();
+			ParseResult init_result = parse_primary_expression(ExpressionContext::Normal);
 			
 			if (!init_result.is_error() && init_result.node().has_value()) {
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
@@ -19953,7 +19957,7 @@ ParseResult Parser::parse_for_loop() {
                 init_statement = init.node();
             } else {
                 // Not a type keyword, try parsing as expression
-                ParseResult init = parse_expression();
+                ParseResult init = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
                 if (init.is_error()) {
                     return init;
                 }
@@ -19961,7 +19965,7 @@ ParseResult Parser::parse_for_loop() {
             }
         } else {
             // Handle expression
-            ParseResult init = parse_expression();
+            ParseResult init = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
             if (init.is_error()) {
                 return init;
             }
@@ -19976,7 +19980,7 @@ ParseResult Parser::parse_for_loop() {
             }
 
             // Parse the range expression
-            ParseResult range_result = parse_expression();
+            ParseResult range_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
             if (range_result.is_error()) {
                 return range_result;
             }
@@ -20047,7 +20051,7 @@ ParseResult Parser::parse_for_loop() {
         consume_punctuator(":"sv);  // consume the ':'
         
         // Parse the range expression
-        ParseResult range_result = parse_expression();
+        ParseResult range_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
         if (range_result.is_error()) {
             return range_result;
         }
@@ -20093,7 +20097,7 @@ ParseResult Parser::parse_for_loop() {
     // Check if condition is empty (next token is semicolon)
     if (!consume_punctuator(";"sv)) {
         // Not empty, parse condition expression
-        ParseResult cond_result = parse_expression();
+        ParseResult cond_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
         if (cond_result.is_error()) {
             return cond_result;
         }
@@ -20110,7 +20114,7 @@ ParseResult Parser::parse_for_loop() {
     // Check if increment is empty (next token is closing paren)
     if (!consume_punctuator(")"sv)) {
         // Not empty, parse increment expression (allow comma operator)
-        ParseResult inc_result = parse_expression(MIN_PRECEDENCE);
+        ParseResult inc_result = parse_expression(MIN_PRECEDENCE, ExpressionContext::Normal);
         if (inc_result.is_error()) {
             return inc_result;
         }
@@ -20154,7 +20158,7 @@ ParseResult Parser::parse_while_loop() {
     }
 
     // Parse condition
-    ParseResult condition_result = parse_expression();
+    ParseResult condition_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
     if (condition_result.is_error()) {
         return condition_result;
     }
@@ -20203,7 +20207,7 @@ ParseResult Parser::parse_do_while_loop() {
     }
 
     // Parse condition
-    ParseResult condition_result = parse_expression();
+    ParseResult condition_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
     if (condition_result.is_error()) {
         return condition_result;
     }
@@ -20410,7 +20414,7 @@ ParseResult Parser::parse_throw_statement() {
     }
 
     // Parse the expression to throw
-    auto expr_result = parse_expression();
+    auto expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
     if (expr_result.is_error()) {
         return expr_result;
     }
@@ -20458,7 +20462,7 @@ ParseResult Parser::parse_lambda_expression() {
                     // Check for init-capture: [&x = expr]
                     if (peek_token().has_value() && peek_token()->value() == "=") {
                         consume_token(); // consume '='
-                        auto init_expr = parse_expression();
+                        auto init_expr = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
                         if (init_expr.is_error()) {
                             return init_expr;
                         }
@@ -20497,7 +20501,7 @@ ParseResult Parser::parse_lambda_expression() {
                     // Check for init-capture: [x = expr]
                     if (peek_token().has_value() && peek_token()->value() == "=") {
                         consume_token(); // consume '='
-                        auto init_expr = parse_expression();
+                        auto init_expr = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
                         if (init_expr.is_error()) {
                             return init_expr;
                         }
@@ -21169,7 +21173,7 @@ ParseResult Parser::parse_if_statement() {
     }
 
     // Parse condition
-    auto condition = parse_expression();
+    auto condition = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
     if (condition.is_error()) {
         return condition;
     }
@@ -21236,7 +21240,7 @@ ParseResult Parser::parse_switch_statement() {
     }
 
     // Parse the switch condition expression
-    auto condition = parse_expression();
+    auto condition = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
     if (condition.is_error()) {
         return condition;
     }
@@ -21262,7 +21266,7 @@ ParseResult Parser::parse_switch_statement() {
             consume_token(); // consume 'case'
 
             // Parse case value (must be a constant expression)
-            auto case_value = parse_expression();
+            auto case_value = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
             if (case_value.is_error()) {
                 return case_value;
             }
@@ -21452,7 +21456,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	// Parse function arguments
 	ChunkedVector<ASTNode> args;
 	while (peek_token().has_value() && peek_token()->value() != ")") {
-		ParseResult argResult = parse_expression();
+		ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (argResult.is_error()) {
 			return argResult;
 		}
@@ -23023,7 +23027,7 @@ ParseResult Parser::parse_template_declaration() {
 		consume_token(); // consume 'requires'
 		
 		// Parse the constraint expression
-		auto constraint_result = parse_expression();
+		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
 			// Clean up template parameter context before returning
 			current_template_param_names_.clear();
@@ -23118,7 +23122,7 @@ ParseResult Parser::parse_template_declaration() {
 		consume_token(); // consume '='
 		
 		// Parse the constraint expression
-		auto constraint_result = parse_expression();
+		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
 			return constraint_result;
 		}
@@ -23466,7 +23470,7 @@ ParseResult Parser::parse_template_declaration() {
 			consume_token(); // consume '='
 			
 			// Parse the initializer expression
-			auto init_result = parse_expression();
+			auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (init_result.is_error()) {
 				return init_result;
 			}
@@ -23990,7 +23994,7 @@ ParseResult Parser::parse_template_declaration() {
 								std::vector<ASTNode> init_args;
 								if (!peek_token().has_value() || peek_token()->value() != close_delim) {
 									do {
-										ParseResult arg_result = parse_expression();
+										ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (arg_result.is_error()) {
 											return arg_result;
 										}
@@ -24212,7 +24216,7 @@ ParseResult Parser::parse_template_declaration() {
 						consume_token(); // consume '='
 
 						// Parse the initializer expression
-						auto init_result = parse_expression();
+						auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (init_result.is_error()) {
 							return init_result;
 						}
@@ -24237,7 +24241,7 @@ ParseResult Parser::parse_template_declaration() {
 						std::optional<ASTNode> additional_init;
 						if (peek_token().has_value() && peek_token()->value() == "=") {
 							consume_token(); // consume '='
-							auto init_result = parse_expression(2);
+							auto init_result = parse_expression(2, ExpressionContext::Normal);
 							if (init_result.is_error()) {
 								return init_result;
 							}
@@ -24869,7 +24873,7 @@ ParseResult Parser::parse_template_declaration() {
 								std::vector<ASTNode> init_args;
 								if (!peek_token().has_value() || peek_token()->value() != close_delim) {
 									do {
-										ParseResult arg_result = parse_expression();
+										ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (arg_result.is_error()) {
 											return arg_result;
 										}
@@ -25070,7 +25074,7 @@ ParseResult Parser::parse_template_declaration() {
 						if (peek_token().has_value() && peek_token()->value() == "=") {
 							consume_token(); // consume '='
 							// Parse the initializer expression
-							auto init_result = parse_expression();
+							auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 							if (init_result.is_error()) {
 								return init_result;
 							}
@@ -25094,7 +25098,7 @@ ParseResult Parser::parse_template_declaration() {
 							std::optional<ASTNode> additional_init;
 							if (peek_token().has_value() && peek_token()->value() == "=") {
 								consume_token(); // consume '='
-								auto init_result = parse_expression(2);
+								auto init_result = parse_expression(2, ExpressionContext::Normal);
 								if (init_result.is_error()) {
 									return init_result;
 								}
@@ -25790,7 +25794,7 @@ ParseResult Parser::parse_concept_declaration() {
 	// Parse the constraint expression
 	// This is typically a requires expression, a type trait, or a boolean expression
 	// For now, we'll accept any expression
-	auto constraint_result = parse_expression();
+	auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 	if (constraint_result.is_error()) {
 		return constraint_result;
 	}
@@ -25967,7 +25971,7 @@ ParseResult Parser::parse_requires_expression() {
 			consume_token(); // consume '{'
 			
 			// Parse the expression
-			auto expr_result = parse_expression();
+			auto expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (expr_result.is_error()) {
 				return expr_result;
 			}
@@ -26022,7 +26026,7 @@ ParseResult Parser::parse_requires_expression() {
 			consume_token(); // consume 'requires'
 			
 			// Parse the nested constraint expression
-			auto constraint_result = parse_expression();
+			auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (constraint_result.is_error()) {
 				return constraint_result;
 			}
@@ -26042,7 +26046,7 @@ ParseResult Parser::parse_requires_expression() {
 		}
 		
 		// Simple requirement: just an expression
-		auto req_result = parse_expression();
+		auto req_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (req_result.is_error()) {
 			return req_result;
 		}
@@ -26621,7 +26625,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		consume_token(); // consume 'requires'
 		
 		// Parse the constraint expression
-		auto constraint_result = parse_expression();
+		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
 			return constraint_result;
 		}
@@ -26747,7 +26751,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		consume_token(); // consume 'requires'
 		
 		// Parse the constraint expression
-		auto constraint_result = parse_expression();
+		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
 			current_template_param_names_ = std::move(saved_template_param_names);
 			return constraint_result;
@@ -27024,7 +27028,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		consume_token(); // consume 'requires'
 		
 		// Parse the constraint expression
-		auto constraint_result = parse_expression();
+		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
 			// Clean up template parameter context before returning
 			current_template_param_names_ = saved_template_param_names;
@@ -27424,7 +27428,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						consume_token(); // consume '='
 						
 						// Parse the initializer expression
-						auto init_result = parse_expression();
+						auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (init_result.is_error()) {
 							return init_result;
 						}
@@ -27623,7 +27627,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					consume_token(); // consume '='
 					
 					// Parse the initializer expression
-					auto init_result = parse_expression();
+					auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (init_result.is_error()) {
 						return init_result;
 					}
@@ -28056,6 +28060,33 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		return ConstantValue{eval_result.value ? 1 : 0, Type::Bool};
 	}
 	
+	// Handle ternary operator expressions (e.g., (5 < 0) ? -1 : 1)
+	// Use the ConstExprEvaluator for complex expression evaluation
+	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+		FLASH_LOG(Templates, Debug, "Evaluating ternary operator expression");
+		ConstExpr::EvaluationContext ctx(gSymbolTable);
+		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
+		if (eval_result.success) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Ternary evaluated to: {}", eval_result.as_int());
+			return ConstantValue{eval_result.as_int(), Type::Int};
+		}
+		FLASH_LOG(Templates, Debug, "Failed to evaluate ternary operator");
+		return std::nullopt;
+	}
+	
+	// Handle binary operator expressions (e.g., 5 < 0, 1 + 2)
+	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+		FLASH_LOG(Templates, Debug, "Evaluating binary operator expression");
+		ConstExpr::EvaluationContext ctx(gSymbolTable);
+		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
+		if (eval_result.success) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Binary op evaluated to: {}", eval_result.as_int());
+			return ConstantValue{eval_result.as_int(), Type::Int};
+		}
+		FLASH_LOG(Templates, Debug, "Failed to evaluate binary operator");
+		return std::nullopt;
+	}
+	
 	return std::nullopt;
 }
 
@@ -28234,10 +28265,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 
 			// Expression is not a numeric literal - try to evaluate it as a constant expression
 			// This handles cases like is_int<T>::value where the expression needs evaluation
-			// IMPORTANT: Only evaluate during template instantiation (SFINAE context), not during
-			// template declaration when template parameters are not yet instantiated
-			if (in_sfinae_context_) {
-				FLASH_LOG(Templates, Debug, "Trying to evaluate non-literal expression as constant (in SFINAE context)");
+			// Evaluate constant expressions in two cases:
+			// 1. During SFINAE context (template instantiation with concrete arguments)
+			// 2. When NOT parsing a template body (e.g., global scope type alias like `using X = holder<1 ? 2 : 3>`)
+			// Only skip evaluation during template DECLARATION when template parameters are not yet instantiated
+			bool should_try_constant_eval = in_sfinae_context_ || !parsing_template_body_;
+			if (should_try_constant_eval) {
+				FLASH_LOG(Templates, Debug, "Trying to evaluate non-literal expression as constant (in_sfinae=", 
+				          in_sfinae_context_, ", parsing_template_body=", parsing_template_body_, ")");
 				auto const_value = try_evaluate_constant_expression(*expr_result.node());
 				if (const_value.has_value()) {
 					// Successfully evaluated as a constant expression
@@ -28282,7 +28317,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					return std::nullopt;
 				}
 			} else {
-				FLASH_LOG(Templates, Debug, "Skipping constant expression evaluation (not in SFINAE context - during template declaration)");
+				FLASH_LOG(Templates, Debug, "Skipping constant expression evaluation (in template body with dependent context)");
 				
 				// During template declaration, expressions like is_int<T>::value are dependent
 				// and cannot be evaluated yet. Check if we successfully parsed such an expression
@@ -36424,7 +36459,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		consume_token();  // consume '='
 		
 		// Parse initializer expression
-		auto init_result = parse_expression();
+		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (init_result.is_error() || !init_result.node().has_value()) {
 			FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable");
 			return std::nullopt;

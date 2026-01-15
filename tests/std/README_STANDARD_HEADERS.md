@@ -36,7 +36,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<initializer_list>` | `test_std_initializer_list.cpp` | ❌ Failed | Requires special compiler support |
 | `<new>` | N/A | ✅ Compiled | ~0.5s (FIXED 2026-01-15) |
 | `<exception>` | N/A | ❌ Failed | Missing `_Hash_bytes` function |
-| `<ratio>` | N/A | ❌ Failed | Template args with ternary operators |
+| `<ratio>` | N/A | ❌ Failed | Static member visibility in static_assert (ternary parsing FIXED 2026-01-15) |
 | `<csetjmp>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
 | `<csignal>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
 
@@ -252,6 +252,42 @@ The following features have been implemented to support standard headers:
 - Function pointer parameters with pack expansion and noexcept (NEW)
 
 ## Recent Changes
+
+### 2026-01-15: Ternary Operators in Template Arguments - Fully Working
+
+**Fixed:** Ternary operators (`?:`) inside template arguments are now properly parsed AND evaluated at compile time for runtime use.
+
+**Patterns that now work:**
+```cpp
+template<intmax_t _Pn>
+struct __static_sign
+    : integral_constant<intmax_t, (_Pn < 0) ? -1 : 1>
+{ };
+
+// Type aliases with ternary template arguments
+using positive = holder<(5 < 0) ? -1 : 1>;   // value = 1
+using negative = holder<(-5 < 0) ? -1 : 1>;  // value = -1
+```
+
+**Fixes applied:**
+1. **Parsing fix:** Modified `parse_expression()` to pass `ExpressionContext` to recursive calls for ternary branch parsing, ensuring `>` is recognized as template terminator.
+
+2. **Evaluation fix:** Extended constant expression evaluation in `parse_explicit_template_arguments()` to:
+   - Evaluate ternary and binary operator expressions at global scope (not just in SFINAE context)
+   - Added `TernaryOperatorNode` and `BinaryOperatorNode` handling to `try_evaluate_constant_expression()`
+   - Used `ConstExpr::Evaluator` for complex expression evaluation
+
+3. **API safety:** Removed default `ExpressionContext` argument from `parse_expression()`, `parse_primary_expression()`, `parse_postfix_expression()`, and `parse_unary_expression()` to prevent future context-loss bugs.
+
+**Test case:** `tests/test_ternary_in_template_arg_ret0.cpp` - now verifies runtime values are correct
+
+**Impact:**
+- The `<ratio>` header now parses past line 61 (previously failed with ternary parsing error)
+- `<ratio>` now fails at line 189 with a different issue: static const members not visible in static_assert within the same struct
+
+**Files Modified:**
+- `src/Parser.cpp` - Pass context to ternary branch expression parsing, add ternary/binary evaluation
+- `src/Parser.h` - Remove default context arguments
 
 ### 2026-01-15: Function Pointer Parameters with Pack Expansion and noexcept
 
