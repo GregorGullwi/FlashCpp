@@ -1372,6 +1372,97 @@ private:
 		return false;
 	}
 
+	// Helper function to resolve the struct type and member info for a member access chain
+	// Handles nested member access like o.inner.callback by recursively resolving types
+	// Returns true if successfully resolved, with the struct_info and member populated
+	bool resolveMemberAccessType(const MemberAccessNode& member_access,
+	                            const StructTypeInfo*& out_struct_info,
+	                            const StructMember*& out_member) const {
+		// Get the base object expression
+		const ASTNode& base_node = member_access.object();
+		if (!base_node.is<ExpressionNode>()) {
+			return false;
+		}
+		
+		const ExpressionNode& base_expr = base_node.as<ExpressionNode>();
+		TypeSpecifierNode base_type;
+		
+		if (std::holds_alternative<IdentifierNode>(base_expr)) {
+			// Simple identifier - look it up in the symbol table
+			const IdentifierNode& base_ident = std::get<IdentifierNode>(base_expr);
+			std::optional<ASTNode> symbol = symbol_table.lookup(base_ident.name());
+			if (!symbol.has_value() && global_symbol_table_) {
+				symbol = global_symbol_table_->lookup(base_ident.name());
+			}
+			if (!symbol.has_value()) {
+				return false;
+			}
+			const DeclarationNode* base_decl = get_decl_from_symbol(*symbol);
+			if (!base_decl) {
+				return false;
+			}
+			base_type = base_decl->type_node().as<TypeSpecifierNode>();
+		} else if (std::holds_alternative<MemberAccessNode>(base_expr)) {
+			// Nested member access - recursively resolve
+			const MemberAccessNode& nested_access = std::get<MemberAccessNode>(base_expr);
+			const StructTypeInfo* nested_struct_info = nullptr;
+			const StructMember* nested_member = nullptr;
+			if (!resolveMemberAccessType(nested_access, nested_struct_info, nested_member)) {
+				return false;
+			}
+			if (!nested_member || nested_member->type != Type::Struct) {
+				return false;
+			}
+			// Get the type info for the nested member's struct type
+			if (nested_member->type_index >= gTypeInfo.size()) {
+				return false;
+			}
+			const TypeInfo& nested_type_info = gTypeInfo[nested_member->type_index];
+			if (!nested_type_info.isStruct()) {
+				return false;
+			}
+			base_type = TypeSpecifierNode(Type::Struct, nested_member->type_index, 
+			                               nested_member->size * 8, Token());
+		} else {
+			// Unsupported base expression type
+			return false;
+		}
+		
+		// If the base type is a pointer, dereference it
+		if (base_type.pointer_levels().size() > 0) {
+			base_type.remove_pointer_level();
+		}
+		
+		// The base type should now be a struct type
+		if (base_type.type() != Type::Struct) {
+			return false;
+		}
+		
+		// Look up the struct info
+		size_t struct_type_index = base_type.type_index();
+		if (struct_type_index >= gTypeInfo.size()) {
+			return false;
+		}
+		const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
+		const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+		if (!struct_info) {
+			return false;
+		}
+		
+		// Find the member in the struct
+		std::string_view member_name = member_access.member_name();
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		for (const auto& member : struct_info->members) {
+			if (member.getName() == member_name_handle) {
+				out_struct_info = struct_info;
+				out_member = &member;
+				return true;
+			}
+		}
+		
+		return false;
+	}
+
 	// Helper function to handle assignment using lvalue metadata
 	// Queries LValueInfo::Kind and routes to appropriate store instruction
 	// Returns true if assignment was handled via lvalue metadata, false otherwise
@@ -13660,10 +13751,94 @@ private:
 				}
 			}
 		} else if (std::holds_alternative<MemberAccessNode>(object_expr)) {
-			// Handle member access (from this->operation transformation for function pointer calls)
-			const MemberAccessNode& member_access = std::get<MemberAccessNode>(object_expr);
+			// Handle member access for function pointer calls
+			// This handles both simple cases like "this->callback" and nested cases like "o.inner.callback"
+			// When we see o.inner.callback():
+			// - object_expr is o.inner (a MemberAccessNode)
+			// - func_name (from function_declaration) is "callback"
+			// We need to resolve the type of o.inner to get Inner, then check if callback is a function pointer member
 			
-			// Get the base object (should be "this")
+			const MemberAccessNode& member_access = std::get<MemberAccessNode>(object_expr);
+			const FunctionDeclarationNode& check_func_decl = memberFunctionCallNode.function_declaration();
+			std::string_view called_func_name = check_func_decl.decl_node().identifier_token().value();
+			
+			// Try to resolve the type of the object (e.g., o.inner resolves to type Inner)
+			const StructTypeInfo* resolved_struct_info = nullptr;
+			const StructMember* resolved_member = nullptr;
+			if (resolveMemberAccessType(member_access, resolved_struct_info, resolved_member)) {
+				// We resolved the member access - now check if it's a struct type
+				if (resolved_member && resolved_member->type == Type::Struct) {
+					// Get the struct info for the member's type
+					if (resolved_member->type_index < gTypeInfo.size()) {
+						const TypeInfo& member_type_info = gTypeInfo[resolved_member->type_index];
+						const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
+						if (member_struct_info) {
+							// Look for the called function name in this struct's members
+							StringHandle func_name_handle = StringTable::getOrInternStringHandle(called_func_name);
+							for (const auto& member : member_struct_info->members) {
+								if (member.getName() == func_name_handle && member.type == Type::FunctionPointer) {
+									// Found a function pointer member! Generate indirect call
+									TempVar ret_var = var_counter.next();
+									
+									// Generate member access chain for o.inner.callback
+									// First get o.inner
+									std::vector<IrOperand> base_result = visitExpressionNode(object_expr);
+									TempVar base_temp = std::get<TempVar>(base_result[2]);
+									
+									// Now access the callback member from that
+									TempVar func_ptr_temp = var_counter.next();
+									MemberLoadOp member_load;
+									member_load.result.value = func_ptr_temp;
+									member_load.result.type = Type::FunctionPointer;
+									member_load.result.size_in_bits = static_cast<int>(member.size * 8);
+									member_load.object = base_temp;
+									member_load.member_name = func_name_handle;
+									member_load.offset = static_cast<int>(member.offset);
+									member_load.is_reference = member.is_reference;
+									member_load.is_rvalue_reference = member.is_rvalue_reference;
+									member_load.struct_type_info = &member_type_info;  // TypeInfo*, not StructTypeInfo*
+									
+									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+									
+									// Build arguments for the indirect call
+									std::vector<TypedValue> arguments;
+									memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+										auto argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
+										Type arg_type = std::get<Type>(argumentIrOperands[0]);
+										int arg_size = std::get<int>(argumentIrOperands[1]);
+										IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
+											using T = std::decay_t<decltype(arg)>;
+											if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, std::string_view> ||
+											              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+												return arg;
+											} else {
+												return 0ULL;
+											}
+										}, argumentIrOperands[2]);
+										arguments.push_back(TypedValue{arg_type, arg_size, arg_value});
+									});
+									
+									IndirectCallOp op{
+										.result = ret_var,
+										.function_pointer = func_ptr_temp,
+										.arguments = std::move(arguments)
+									};
+									ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
+									
+									// Return with void type (most common for callbacks)
+									return { Type::Void, 0, ret_var, 0ULL };
+								}
+							}
+							
+							// Not a function pointer member - set object_type for regular member function lookup
+							object_type = TypeSpecifierNode(Type::Struct, resolved_member->type_index,
+							                                 resolved_member->size * 8, Token());
+						}
+					}
+				}
+			}
+			
+			// Fall back to simple base object handling for "this->member" pattern
 			const ASTNode& base_node = member_access.object();
 			if (base_node.is<ExpressionNode>()) {
 				const ExpressionNode& base_expr = base_node.as<ExpressionNode>();

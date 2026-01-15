@@ -11,6 +11,11 @@ typedef struct {
     } attr_t;
 } ThreadAttr;
 
+// Handler function that matches the sigevent callback signature
+void mySignalHandler(SignalValue sv) {
+    // Just return without doing anything - we're testing the call mechanism
+}
+
 // Pattern from sigevent_t (csignal)
 typedef struct sigevent
 {
@@ -39,6 +44,11 @@ struct siginfo_t {
     int si_signo;
 };
 
+// Handler function for sigaction-style callback
+void mySimpleHandler(int sig) {
+    // Just return without doing anything
+}
+
 struct sigaction
 {
     // Named anonymous union with function pointer member
@@ -57,11 +67,20 @@ struct sigaction
 };
 
 int main() {
+    // Test sigevent_t pattern - assign and call function pointer
     sigevent_t se;
     se.sigev_signo = 1;
+    se._sigev_un._sigev_thread._function = mySignalHandler;
     
+    SignalValue sv;
+    sv.i = 42;
+    se._sigev_un._sigev_thread._function(sv);  // Call through nested member access
+    
+    // Test sigaction pattern - assign and call function pointer
     sigaction sa;
     sa.sa_flags = 0;
+    sa.__sigaction_handler.sa_handler = mySimpleHandler;
+    sa.__sigaction_handler.sa_handler(99);  // Call through union member
     
     return 0;
 }
