@@ -38,7 +38,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<exception>` | N/A | ❌ Failed | Missing `_Hash_bytes` function |
 | `<ratio>` | N/A | ⏱️ Timeout | Local variable visibility fixed (2026-01-15); times out during template instantiation |
 | `<csetjmp>` | N/A | ✅ Compiled | ~0.2s (FIXED 2026-01-15: Object-like macros with parenthesized bodies) |
-| `<csignal>` | N/A | ❌ Failed | Anonymous structs in unions (unrelated to macro fix) |
+| `<csignal>` | N/A | ⚠️ Partial | Function pointer members in anonymous structs (2026-01-15: Fixed nested anonymous struct/union) |
 
 **Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s)
 
@@ -297,6 +297,62 @@ The following features have been implemented to support standard headers:
 - Function pointer parameters with pack expansion and noexcept (NEW)
 
 ## Recent Changes
+
+### 2026-01-15: Nested Anonymous Struct/Union in Typedef Declarations
+
+**Fixed:** Named anonymous struct/union patterns can now be nested arbitrarily deep inside typedef declarations.
+
+**Patterns that now work:**
+```cpp
+// Deep nesting of anonymous struct/union with member names
+typedef struct {
+    int outer_val;
+    union {
+        int pad[4];
+        struct {
+            int inner_val;
+            union {
+                struct {
+                    void* lower;
+                    void* upper;
+                } bounds;
+                int key;
+            } nested_union;
+        } inner_struct;
+    } outer_union;
+} DeepNested;
+
+// Accessing members at all levels works correctly:
+DeepNested d;
+d.outer_union.inner_struct.nested_union.bounds.lower = 0;
+d.outer_union.inner_struct.nested_union.key = 42;
+```
+
+**Root cause:** When parsing members of a named anonymous union/struct inside a typedef, the parser would call `parse_type_specifier()` which fails on `struct {` (anonymous struct without a type name). This blocked parsing of system headers like `<csignal>` which use deeply nested anonymous struct/union patterns in structures like `siginfo_t`.
+
+**Fix applied:** 
+- Created new helper function `parse_anonymous_struct_union_members()` that recursively handles nested named anonymous struct/union patterns
+- Before calling `parse_type_specifier()`, the helper checks if the next tokens are `struct {` or `union {` and handles them as nested anonymous types
+- Each nested anonymous type gets a unique generated name and proper layout calculation
+
+**Test case:** `tests/test_deep_nested_anon_struct_ret0.cpp` (new)
+
+**Impact:**
+- `<csignal>` now parses past the `siginfo_t` structure with its complex nested anonymous unions
+- Other system headers with similar patterns should work better
+- Note: `<csignal>` still fails on a different issue (function pointer members in anonymous structs)
+
+**Remaining blocker for `<csignal>`:**
+```cpp
+struct {
+    void (*_function) (__sigval_t);  // Function pointer member - not yet supported
+    pthread_attr_t *_attribute;
+} _sigev_thread;
+```
+
+**Files Modified:**
+- `src/Parser.h` - Added `parse_anonymous_struct_union_members()` declaration
+- `src/Parser.cpp` - Implemented recursive helper function and refactored typedef anonymous struct parsing to use it
 
 ### 2026-01-15: Target-Dependent `long` Type Size (LLP64 vs LP64 Data Models)
 
