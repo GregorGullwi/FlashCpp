@@ -185,8 +185,9 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 	// Check pointer-to-pointer compatibility FIRST
 	// This handles pointer types with lvalue/rvalue flags (which indicate value category, not actual reference types)
 	// Pointers with lvalue flags can still be passed to functions expecting pointer parameters
-	// Note: We only enter this block when BOTH are pointers. If only one is a pointer,
-	// we fall through to allow other conversions (e.g., pointer-to-integer for builtins)
+	// IMPORTANT: We use AND (not OR) here. If only one is a pointer, we fall through to allow
+	// other conversions like pointer-to-integer for builtins (e.g., __builtin_va_start).
+	// Using OR would break va_args since it returns no_match when from is pointer but to is not.
 	if (from.is_pointer() && to.is_pointer()) {
 		// Pointer depth must match
 		if (from.pointer_depth() != to.pointer_depth()) {
@@ -200,8 +201,11 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 
 		// Pointer conversions: any pointer can implicitly convert to void*
 		// This is a standard C/C++ implicit conversion
-		// Const-correctness: const T* can convert to const void*, but not to void*
-		//                    T* (non-const) can convert to both void* and const void*
+		// Const-correctness rules:
+		//   - const T* → const void*  : allowed (preserves const)
+		//   - T*       → const void*  : allowed (adding const is safe)
+		//   - const T* → void*        : REJECTED (would violate const correctness)
+		//   - T*       → void*        : allowed
 		// Note: For "const T*", the const applies to the pointed-to type (checked via is_const()),
 		//       while "T* const" would have const on the pointer level itself.
 		if (to.type() == Type::Void) {
@@ -212,7 +216,7 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 			if (from.is_const() && !to.is_const()) {
 				return TypeConversionResult::no_match();
 			}
-			
+			// All other cases are valid: T*→void*, T*→const void*, const T*→const void*
 			return TypeConversionResult::conversion();
 		}
 
