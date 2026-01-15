@@ -14106,7 +14106,10 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		Token question_token = *current_token_;  // Save the '?' token
 
 		// Parse the true expression (allow lower precedence on the right)
-		ParseResult true_result = parse_expression(0);
+		// IMPORTANT: Pass the context to preserve template argument parsing mode
+		// This ensures that '<' and '>' inside ternary branches are handled correctly
+		// when the ternary is itself inside template arguments (e.g., integral_constant<int, (x < 0) ? -1 : 1>)
+		ParseResult true_result = parse_expression(0, context);
 		if (true_result.is_error()) {
 			return true_result;
 		}
@@ -14118,7 +14121,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 		consume_token();  // Consume ':'
 
 		// Parse the false expression (use precedence 5 for right-associativity)
-		ParseResult false_result = parse_expression(5);
+		// IMPORTANT: Pass the context to preserve template argument parsing mode
+		ParseResult false_result = parse_expression(5, context);
 		if (false_result.is_error()) {
 			return false_result;
 		}

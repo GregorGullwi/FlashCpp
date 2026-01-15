@@ -36,7 +36,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<initializer_list>` | `test_std_initializer_list.cpp` | ❌ Failed | Requires special compiler support |
 | `<new>` | N/A | ✅ Compiled | ~0.5s (FIXED 2026-01-15) |
 | `<exception>` | N/A | ❌ Failed | Missing `_Hash_bytes` function |
-| `<ratio>` | N/A | ❌ Failed | Template args with ternary operators |
+| `<ratio>` | N/A | ❌ Failed | Static member visibility in static_assert (ternary parsing FIXED 2026-01-15) |
 | `<csetjmp>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
 | `<csignal>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
 
@@ -252,6 +252,42 @@ The following features have been implemented to support standard headers:
 - Function pointer parameters with pack expansion and noexcept (NEW)
 
 ## Recent Changes
+
+### 2026-01-15: Ternary Operators in Template Arguments (FIXED)
+
+**Fixed:** Ternary operators (`?:`) inside template arguments are now properly parsed when the template is used as a base class.
+
+**Pattern that now works:**
+```cpp
+template<intmax_t _Pn>
+struct __static_sign
+    : integral_constant<intmax_t, (_Pn < 0) ? -1 : 1>
+{ };
+```
+
+**Previous error:** `Failed to parse template arguments for base class` at the `<` inside `(_Pn < 0)`
+
+**Root cause:** When parsing ternary expressions inside template arguments, the `ExpressionContext` was not being passed to the recursive `parse_expression()` calls for the true and false branches. This caused the parser to lose track of the template argument context, and when parsing the false expression (e.g., `1`), it would treat the `>` as a greater-than operator instead of the template argument closing bracket.
+
+**Fix applied:** Modified `parse_expression()` in `src/Parser.cpp` (around line 14109-14121) to pass the `context` parameter to the recursive calls for ternary branch parsing:
+```cpp
+// Before:
+ParseResult true_result = parse_expression(0);
+ParseResult false_result = parse_expression(5);
+
+// After:
+ParseResult true_result = parse_expression(0, context);
+ParseResult false_result = parse_expression(5, context);
+```
+
+**Test case:** `tests/test_ternary_in_template_arg_ret0.cpp`
+
+**Impact:**
+- The `<ratio>` header now parses past line 61 (previously failed with ternary parsing error)
+- `<ratio>` now fails at line 189 with a different issue: static const members not visible in static_assert within the same struct
+
+**Files Modified:**
+- `src/Parser.cpp` - Pass context to ternary branch expression parsing
 
 ### 2026-01-15: Function Pointer Parameters with Pack Expansion and noexcept
 
