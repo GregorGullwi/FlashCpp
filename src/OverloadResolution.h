@@ -205,7 +205,18 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 
 		// Pointer conversions: any pointer can implicitly convert to void*
 		// This is a standard C/C++ implicit conversion
+		// Const-correctness: const T* can convert to const void*, but not to void*
+		//                    T* (non-const) can convert to both void* and const void*
+		// Note: For "const T*", the const applies to the pointed-to type (checked via is_const()),
+		//       while "T* const" would have const on the pointer level itself.
 		if (to.type() == Type::Void) {
+			// Check const-correctness for the pointed-to type
+			// from.is_const() checks if the pointee is const (e.g., "const char*")
+			// to.is_const() checks if the target pointee is const (e.g., "const void*")
+			if (from.is_const() && !to.is_const()) {
+				return TypeConversionResult::no_match();
+			}
+			
 			return TypeConversionResult::conversion();
 		}
 
