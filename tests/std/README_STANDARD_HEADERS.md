@@ -11,7 +11,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<compare>` | N/A | ✅ Compiled | ~0.4s |
 | `<version>` | N/A | ✅ Compiled | ~0.6s |
 | `<source_location>` | N/A | ✅ Compiled | ~0.6s |
-| `<numbers>` | N/A | ✅ Compiled | ~6.3s (NEW!) |
+| `<numbers>` | N/A | ✅ Compiled | ~6.3s |
+| `<initializer_list>` | `test_std_initializer_list.cpp` | ✅ Compiled | ~0.2s (FIXED 2026-01-15) |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Heavy template instantiation |
 | `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Heavy template instantiation |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template instantiation volume |
@@ -33,12 +34,11 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Ratio templates |
 | `<bit>` | N/A | ⏱️ Timeout | Includes heavy headers |
 | `<atomic>` | N/A | ⏱️ Timeout | Heavy headers |
-| `<initializer_list>` | `test_std_initializer_list.cpp` | ❌ Failed | Requires special compiler support |
-| `<new>` | N/A | ✅ Compiled | ~0.5s (FIXED 2026-01-15) |
-| `<exception>` | N/A | ⏱️ Timeout | FIXED 2026-01-15: Pointer-to-void conversion; now times out during template instantiation |
-| `<ratio>` | N/A | ⏱️ Timeout | Local variable visibility fixed (2026-01-15); times out during template instantiation |
-| `<csetjmp>` | N/A | ✅ Compiled | ~0.2s (FIXED 2026-01-15: Object-like macros with parenthesized bodies) |
-| `<csignal>` | N/A | ⚠️ Partial | Function pointer members in anonymous structs (2026-01-15: Fixed nested anonymous struct/union) |
+| `<new>` | N/A | ✅ Compiled | ~0.5s |
+| `<exception>` | N/A | ⏱️ Timeout | Times out during template instantiation |
+| `<ratio>` | N/A | ⏱️ Timeout | Times out during template instantiation |
+| `<csetjmp>` | N/A | ✅ Compiled | ~0.2s |
+| `<csignal>` | N/A | ⏱️ Timeout | Parsing fixed; times out due to heavy headers (2026-01-15: Fixed function pointer members in anonymous structs) |
 
 **Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s)
 
@@ -47,16 +47,22 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Notes |
 |--------|-----------|-------|
 | `<cstddef>` | `test_cstddef.cpp` | `size_t`, `ptrdiff_t`, `nullptr_t` (~0.7s) |
-| `<cstdlib>` | `test_cstdlib.cpp` | `malloc`, `free`, etc. |
+| `<cstdlib>` | `test_cstdlib.cpp` | `malloc`, `free`, etc. (~0.2s) |
 | `<cstdio>` | `test_cstdio_puts.cpp` | `printf`, `puts`, etc. |
 | `<cstdint>` | N/A | `int32_t`, `uint64_t`, etc. (~0.2s) |
-| `<cstring>` | N/A | `memcpy`, `strlen`, etc. (~0.8s) (NEW!) |
-| `<ctime>` | N/A | `time_t`, `clock`, etc. (~0.6s) (NEW!) |
-| `<climits>` | N/A | `INT_MAX`, `LONG_MAX`, etc. (~0.2s) (NEW!) |
-| `<cfloat>` | N/A | `FLT_MAX`, `DBL_MIN`, etc. (~0.2s) (NEW!) |
-| `<cassert>` | N/A | `assert` macro (~0.2s) (NEW!) |
-| `<cerrno>` | N/A | `errno` (~0.2s) (NEW!) |
-| `<clocale>` | N/A | `setlocale`, `localeconv` (~0.2s) (NEW!) |
+| `<cstring>` | N/A | `memcpy`, `strlen`, etc. (~0.8s) |
+| `<ctime>` | N/A | `time_t`, `clock`, etc. (~0.6s) |
+| `<climits>` | N/A | `INT_MAX`, `LONG_MAX`, etc. (~0.2s) |
+| `<cfloat>` | N/A | `FLT_MAX`, `DBL_MIN`, etc. (~0.2s) |
+| `<cassert>` | N/A | `assert` macro (~0.2s) |
+| `<cerrno>` | N/A | `errno` (~0.2s) |
+| `<clocale>` | N/A | `setlocale`, `localeconv` (~0.2s) |
+| `<cstdarg>` | N/A | `va_list`, `va_start`, etc. (~0.15s) (NEW!) |
+| `<cfenv>` | N/A | `fenv_t`, `fegetenv`, etc. (~0.15s) (NEW!) |
+| `<cinttypes>` | N/A | `imaxabs`, `imaxdiv`, etc. (~0.27s) (NEW!) |
+| `<cctype>` | N/A | `isalpha`, `isdigit`, etc. (~0.37s) (NEW!) |
+| `<cuchar>` | N/A | `char16_t`, `char32_t` conversions (~0.74s) (NEW!) |
+| `<cwchar>` | N/A | `wchar_t` functions (~0.56s) (NEW!) |
 
 ## Running the Tests
 
