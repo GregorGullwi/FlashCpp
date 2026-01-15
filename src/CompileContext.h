@@ -119,6 +119,42 @@ public:
 		return manglingStyle_ == ManglingStyle::Itanium;
 	}
 
+	// Target data model - controls the size of 'long' and related types
+	// Windows uses LLP64: long is 32-bit, long long is 64-bit
+	// Linux/Unix uses LP64: long is 64-bit, long long is 64-bit
+	enum class DataModel {
+		LLP64,     // Windows x64: long = 32 bits (COFF)
+		LP64       // Linux/Unix x64: long = 64 bits (ELF)
+	};
+
+	DataModel getDataModel() const {
+		return dataModel_;
+	}
+
+	void setDataModel(DataModel model) {
+		dataModel_ = model;
+	}
+
+	bool isLLP64() const {
+		return dataModel_ == DataModel::LLP64;
+	}
+
+	bool isLP64() const {
+		return dataModel_ == DataModel::LP64;
+	}
+
+	// Get the size of 'long' in bits based on the target data model
+	// Windows (LLP64): long = 32 bits
+	// Linux (LP64): long = 64 bits
+	int getLongSizeBits() const {
+		return isLLP64() ? 32 : 64;
+	}
+
+	// Get the size of 'long' in bytes based on the target data model
+	int getLongSizeBytes() const {
+		return getLongSizeBits() / 8;
+	}
+
 	// #pragma pack state management
 	// Returns the current pack alignment value (0 = no packing, use natural alignment)
 	size_t getCurrentPackAlignment() const {
@@ -234,6 +270,12 @@ private:
 		ManglingStyle::MSVC;  // Windows default
 #else
 		ManglingStyle::Itanium;  // Linux/Unix default
+#endif
+	DataModel dataModel_ = 
+#if defined(_WIN32) || defined(_WIN64)
+		DataModel::LLP64;  // Windows default (long = 32 bits)
+#else
+		DataModel::LP64;   // Linux/Unix default (long = 64 bits)
 #endif
 	std::vector<std::string> dependencies_;
 

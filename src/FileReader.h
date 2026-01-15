@@ -1999,18 +1999,27 @@ private:
 		iss >> name;
 
 		// Check for the presence of a macro argument list
+		// A function-like macro has '(' immediately after the name (no space).
+		// When parsed with >>, the name will include the '(' if there's no space.
+		// An object-like macro may have '(' in its body, but there's a space before it.
 		std::string rest_of_line;
 		std::getline(iss >> std::ws, rest_of_line);
 		size_t open_paren = name.find("(");
+		bool is_function_like = (open_paren != std::string::npos);
 
-		if (open_paren != std::string::npos) {
-			rest_of_line.insert(0, std::string_view(name.data() + open_paren));
+		if (is_function_like) {
+			// Function-like macro: prepend the '(' and everything after it from name to rest_of_line
+			// E.g., name="FOO(x)" -> name="FOO", rest_of_line="(x) body"
+			rest_of_line.insert(0, name.substr(open_paren));
 			name.erase(open_paren);
 		}
 
 		if (!rest_of_line.empty()) {
 			open_paren = rest_of_line.find("(");
-			if (open_paren != std::string::npos && rest_of_line.find_first_not_of(' ') == open_paren) {
+			// Only parse as function-like macro arguments if:
+			// 1. We detected this is a function-like macro (name originally had '(')
+			// 2. rest_of_line starts with '('
+			if (is_function_like && open_paren != std::string::npos && rest_of_line.find_first_not_of(' ') == open_paren) {
 				size_t close_paren = rest_of_line.find(")", open_paren);
 
 				if (close_paren == std::string::npos) {

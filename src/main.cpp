@@ -25,6 +25,7 @@
 #include "ObjFileWriter.h"
 #include "NameMangling.h"
 #include "TemplateProfilingStats.h"
+#include "AstNodeTypes.h"
 
 // Only include ELF writer on non-Windows platforms
 #if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
@@ -107,10 +108,25 @@ void printTimingSummary(double preprocessing_time, double lexer_setup_time, doub
 }
 
 // Helper function to set mangling style in both CompileContext and NameMangling namespace
+// Also sets the data model to match (MSVC -> LLP64, Itanium -> LP64)
+// This automatic association assumes typical platform conventions:
+//   MSVC mangling = Windows target = LLP64 (long is 32-bit)
+//   Itanium mangling = Linux/Unix target = LP64 (long is 64-bit)
+// For cross-compilation with different data models, a separate --data-model option
+// could be added in the future to override this default behavior.
 static void setManglingStyle(CompileContext& context, CompileContext::ManglingStyle style) {
     context.setManglingStyle(style);
     // Sync with NameMangling global (enum values match by design)
     NameMangling::g_mangling_style = static_cast<NameMangling::ManglingStyle>(static_cast<int>(style));
+    
+    // Set data model based on mangling style (see comment above for rationale)
+    if (style == CompileContext::ManglingStyle::MSVC) {
+        context.setDataModel(CompileContext::DataModel::LLP64);
+        g_target_data_model = TargetDataModel::LLP64;
+    } else {
+        context.setDataModel(CompileContext::DataModel::LP64);
+        g_target_data_model = TargetDataModel::LP64;
+    }
 }
 
 int main(int argc, char *argv[]) {
