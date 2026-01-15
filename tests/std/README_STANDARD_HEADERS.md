@@ -34,8 +34,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<bit>` | N/A | ⏱️ Timeout | Includes heavy headers |
 | `<atomic>` | N/A | ⏱️ Timeout | Heavy headers |
 | `<initializer_list>` | `test_std_initializer_list.cpp` | ❌ Failed | Requires special compiler support |
-| `<new>` | N/A | ❌ Failed | Function pointer parameter syntax |
-| `<exception>` | N/A | ❌ Failed | `void*` in function declarations |
+| `<new>` | N/A | ✅ Compiled | ~0.5s (FIXED 2026-01-15) |
+| `<exception>` | N/A | ❌ Failed | Missing `_Hash_bytes` function |
 | `<ratio>` | N/A | ❌ Failed | Template args with ternary operators |
 | `<csetjmp>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
 | `<csignal>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
@@ -219,6 +219,9 @@ The following features have been implemented to support standard headers:
 - Variable templates with partial specializations
 - Variable templates with brace initialization (`constexpr Type<T> name{};`)
 - Function reference/pointer types in template arguments
+- Function pointer parameters with pack expansion (`void (*)(Args...)`) (NEW)
+- Function pointer parameters with noexcept specifier (`void (*)() noexcept`) (NEW)
+- Unnamed function pointer parameters (`void (*)()`) (NEW)
 
 **Templates:**
 - Fold expression evaluation in static members
@@ -245,9 +248,49 @@ The following features have been implemented to support standard headers:
 - Named anonymous unions in typedef structs
 - Direct initialization with `*this`
 - Global scope `operator new`/`operator delete`
-- Typedef array syntax (`typedef type name[size];`) (NEW)
+- Typedef array syntax (`typedef type name[size];`)
+- Function pointer parameters with pack expansion and noexcept (NEW)
 
 ## Recent Changes
+
+### 2026-01-15: Function Pointer Parameters with Pack Expansion and noexcept
+
+**Fixed:** Function pointer type declarations now properly handle pack expansion, noexcept specifiers, and pointer parameters.
+
+**Patterns that now work:**
+- `void (*)(Args...)` - Unnamed function pointer with pack expansion
+- `void (*callback)(void*)` - Named function pointer with pointer parameters
+- `void (*)() noexcept` - Function pointer with noexcept specifier
+- `void (*)() noexcept(expr)` - Function pointer with noexcept expression
+- `Args......` - Pack expansion followed by C-style variadic (6 dots)
+
+**Example:**
+```cpp
+// From <new> header - now compiles!
+template<typename _Ret, typename... _Args, bool _NE>
+void launder(_Ret (*)(_Args...) noexcept (_NE)) = delete;
+
+// Named function pointer parameter - now works!
+void test(void (*callback)(void*)) { }
+```
+
+**Technical details:**
+- Modified `parse_declarator()` to handle unnamed function pointers (when `*` is followed by `)`)
+- Extended `parse_postfix_declarator()` to:
+  - Handle pointer levels after parsing parameter types (`void*`, `const int*`, etc.)
+  - Consume pack expansion `...` after template parameter types
+  - Handle double pack expansion `......` (pack + C variadic)
+  - Parse noexcept specifier and noexcept(expr) on function pointer types
+
+**Impact:**
+- Unblocks `<new>` header - now compiles successfully (~0.5s)
+- Unblocks parsing of `<exception>` header (now fails at function lookup stage, not parsing)
+- Enables standard library patterns using complex function pointer types
+
+**Test case:** `tests/test_funcptr_param_pack_ret0.cpp`
+
+**Files Modified:**
+- `src/Parser.cpp` - Extended function pointer parsing in `parse_declarator()` and `parse_postfix_declarator()`
 
 ### 2026-01-15: Typedef Array Syntax Support
 
