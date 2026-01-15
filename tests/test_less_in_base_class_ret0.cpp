@@ -9,12 +9,12 @@ struct bool_constant {
 
 template<typename T>
 struct R1 {
-    static constexpr long num = 10;
+    static constexpr T num = 10;
 };
 
 template<typename T>
 struct R2 {
-    static constexpr long num = 5;
+    static constexpr T num = 5;
 };
 
 // This pattern previously failed - comparison in template argument in base class
@@ -30,10 +30,7 @@ struct ratio_less_paren
     { };
 
 int main() {
-    // Just verify the template can be instantiated
-    ratio_less<int> x;
-    ratio_less_paren<int> y;
-    (void)x;
-    (void)y;
-    return 0;
+    // Verify the template can be instantiated and return based on template value
+    // ratio_less<long>::value should be false (10 < 5 is false), so return 0
+    return ratio_less<long>::value ? 1 : 0;
 }
