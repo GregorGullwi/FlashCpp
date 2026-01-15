@@ -8677,7 +8677,19 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					if (type_spec.has_function_signature()) {
 						alias_type_info.function_signature_ = type_spec.function_signature();
 					}
+					
 					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
+					
+					// Also register with namespace-qualified name for type aliases defined in namespaces
+					auto current_namespace_path = gSymbolTable.build_current_namespace_path();
+					if (!current_namespace_path.empty()) {
+						auto full_qualified_name = buildQualifiedNameHandle(current_namespace_path, alias_token->value());
+						if (gTypesByName.find(full_qualified_name) == gTypesByName.end()) {
+							gTypesByName.emplace(full_qualified_name, &alias_type_info);
+							FLASH_LOG_FORMAT(Parser, Debug, "Registered type alias '{}' with namespace-qualified name '{}'",
+							                 alias_token->value(), StringTable::getStringView(full_qualified_name));
+						}
+					}
 
 					// Return success (no AST node needed for type aliases)
 					return saved_position.success();
@@ -21847,6 +21859,18 @@ ParseResult Parser::validate_and_add_base_class(
 	}
 
 	const TypeInfo* base_type_info = base_type_it->second;
+	
+	// Resolve type aliases: if base_type_info points to another type (type alias),
+	// follow the chain to find the actual struct type
+	size_t max_alias_depth = 10;  // Prevent infinite loops
+	while (base_type_info->type_ != Type::Struct && base_type_info->type_index_ < gTypeInfo.size() && max_alias_depth-- > 0) {
+		const TypeInfo& underlying = gTypeInfo[base_type_info->type_index_];
+		// Stop if we're pointing to ourselves (not a valid alias)
+		if (&underlying == base_type_info) break;
+		FLASH_LOG_FORMAT(Parser, Debug, "Resolving type alias '{}' -> type_index {}", 
+		                 base_class_name, base_type_info->type_index_);
+		base_type_info = &underlying;
+	}
 	
 	// Check if base class is a template parameter
 	bool is_template_param = is_base_class_template_parameter(base_class_name);

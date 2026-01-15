@@ -156,11 +156,11 @@ test<int&&>(); // Now correctly returns true
 
 **Test case:** `tests/test_template_ref_preservation_ret0.cpp`
 
-### 4. Type Alias as Base Class (CURRENT BLOCKER)
+### 4. Type Alias as Base Class (FIXED - 2026-01-15)
 
-**Issue:** Type aliases (using declarations) cannot currently be used as base classes when qualified with a namespace.
+**Issue:** ~~Type aliases (using declarations) cannot currently be used as base classes when qualified with a namespace.~~ **RESOLVED**
 
-**Example that fails:**
+**Example that now works:**
 ```cpp
 namespace std {
     template<typename T, T v>
@@ -169,19 +169,14 @@ namespace std {
     using false_type = integral_constant<bool, false>;
 }
 
-struct Test : std::false_type {};  // Error: Base class 'std::false_type' not found
+struct Test : std::false_type {};  // Now works!
 ```
 
-**Error:** `Base class 'std::false_type' not found`
+**Fix applied:** Two changes in `Parser.cpp`:
+1. Type aliases in namespaces now register with namespace-qualified names in `gTypesByName`
+2. `validate_and_add_base_class()` now resolves type aliases by following `type_index_` chain to find the underlying struct type
 
-**Root cause:** The base class parsing code looks up the qualified name `std::false_type` in `gTypesByName`, but type aliases are stored without proper resolution. When the lookup fails, the parser rejects the base class.
-
-**Impact:** Blocks `<ratio>` header which uses `std::false_type` and `std::integral_constant<bool, expr>` as base classes extensively.
-
-**Workaround:** Use the underlying type directly instead of the type alias:
-```cpp
-struct Test : std::integral_constant<bool, false> {};  // Works
-```
+**Test case:** `tests/test_type_alias_base_class_ret0.cpp`
 
 ### 5. Template Instantiation Performance
 
