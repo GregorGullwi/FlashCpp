@@ -66,8 +66,8 @@ struct PhaseTimer {
 };
 
 // Helper function to print timing summary
-void printTimingSummary(double preprocessing_time, double parsing_time, double ir_conversion_time,
-                       double template_time, double codegen_time,
+void printTimingSummary(double preprocessing_time, double lexer_setup_time, double parsing_time, 
+                       double ir_conversion_time, double codegen_time,
                        std::chrono::high_resolution_clock::time_point total_start) {
     auto total_end = std::chrono::high_resolution_clock::now();
     auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start);
@@ -75,12 +75,18 @@ void printTimingSummary(double preprocessing_time, double parsing_time, double i
 
     FLASH_LOG(General, Info, "\n=== Compilation Timing ===");
 
+    // Calculate sum of tracked phases and other (untracked) time
+    double tracked_time = preprocessing_time + lexer_setup_time + parsing_time + ir_conversion_time + codegen_time;
+    double other_time = total_ms - tracked_time;
+    if (other_time < 0) other_time = 0;  // Avoid negative due to timing imprecision
+
     // Calculate percentages
     double prep_pct = (preprocessing_time / total_ms) * 100.0;
+    double lexer_pct = (lexer_setup_time / total_ms) * 100.0;
     double parse_pct = (parsing_time / total_ms) * 100.0;
     double ir_pct = (ir_conversion_time / total_ms) * 100.0;
-    double temp_pct = (template_time / total_ms) * 100.0;
     double code_pct = (codegen_time / total_ms) * 100.0;
+    double other_pct = (other_time / total_ms) * 100.0;
 
     // Print table header
     FLASH_LOG(General, Info, "Phase            | Time (ms)  | Percentage");
@@ -88,10 +94,11 @@ void printTimingSummary(double preprocessing_time, double parsing_time, double i
 
     // Print each phase
     FLASH_LOG(General, Info, "Preprocessing    | ", std::fixed, std::setprecision(3), std::setw(10), preprocessing_time, " | ", std::setw(9), prep_pct, "%");
+    FLASH_LOG(General, Info, "Lexer Setup      | ", std::fixed, std::setprecision(3), std::setw(10), lexer_setup_time, " | ", std::setw(9), lexer_pct, "%");
     FLASH_LOG(General, Info, "Parsing          | ", std::fixed, std::setprecision(3), std::setw(10), parsing_time, " | ", std::setw(9), parse_pct, "%");
     FLASH_LOG(General, Info, "IR Conversion    | ", std::fixed, std::setprecision(3), std::setw(10), ir_conversion_time, " | ", std::setw(9), ir_pct, "%");
-    FLASH_LOG(General, Info, "Template Inst    | ", std::fixed, std::setprecision(3), std::setw(10), template_time, " | ", std::setw(9), temp_pct, "%");
     FLASH_LOG(General, Info, "Code Generation  | ", std::fixed, std::setprecision(3), std::setw(10), codegen_time, " | ", std::setw(9), code_pct, "%");
+    FLASH_LOG(General, Info, "Other            | ", std::fixed, std::setprecision(3), std::setw(10), other_time, " | ", std::setw(9), other_pct, "%");
     FLASH_LOG(General, Info, "-----------------|------------|-----------");
     FLASH_LOG(General, Info, "TOTAL            | ", std::fixed, std::setprecision(3), std::setw(10), total_ms, " | ", std::setw(9), 100.0, "%");
     FLASH_LOG(General, Info, "\n");
@@ -279,7 +286,7 @@ int main(int argc, char *argv[]) {
     #endif
 
     // Collect timing data silently
-    double preprocessing_time = 0.0, parsing_time = 0.0, ir_conversion_time = 0.0, template_time = 0.0, codegen_time = 0.0;
+    double preprocessing_time = 0.0, lexer_setup_time = 0.0, parsing_time = 0.0, ir_conversion_time = 0.0, codegen_time = 0.0;
 
     FileTree file_tree;
     FileReader file_reader(context, file_tree);
@@ -334,12 +341,22 @@ int main(int argc, char *argv[]) {
     FLASH_LOG(General, Debug, "String approach: StackString<32> (optimized)");
 #endif
 
-    Lexer lexer(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
-    // Allocate Parser on the heap to reduce stack usage - Parser has many large member variables
-    auto parser = std::make_unique<Parser>(lexer, context);
+    // Create lexer and parser, timing their construction
+    // Lexer is allocated on heap so it can be constructed inside the timed block
+    // but outlive it (since Parser stores a reference to it)
+    std::unique_ptr<Lexer> lexer_ptr;
+    std::unique_ptr<Parser> parser;
+    {
+        PhaseTimer timer("Lexer Setup", false, &lexer_setup_time);
+        lexer_ptr = std::make_unique<Lexer>(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
+        // Allocate Parser on the heap to reduce stack usage - Parser has many large member variables
+        parser = std::make_unique<Parser>(*lexer_ptr, context);
+    }
+    Lexer& lexer = *lexer_ptr;
     {
         PhaseTimer timer("Parsing", false, &parsing_time);
         // Note: Lexing happens lazily during parsing in this implementation
+        // Template instantiation also happens during parsing
         auto parse_result = parser->parse();
 
         if (parse_result.is_error()) {
@@ -394,19 +411,14 @@ int main(int argc, char *argv[]) {
             }
             converter.visit(node_handle);
         }
-    }
 
-    // Template instantiation (if any remaining)
-    {
-        PhaseTimer template_timer("Template Inst", false, &template_time);
         // Generate all collected lambdas after visiting all nodes
         converter.generateCollectedLambdas();
 
         // Generate all collected local struct member functions after visiting all nodes
         converter.generateCollectedLocalStructMembers();
 
-        // Template instantiations now happen during parsing
-        // converter.generateCollectedTemplateInstantiations();
+        // Note: Template instantiations happen during parsing, not here
     }
 
     const auto& ir = converter.getIr();
@@ -451,14 +463,14 @@ int main(int argc, char *argv[]) {
         FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] After irConverter destructor");
     } catch (const std::exception& e) {
         FLASH_LOG(General, Error, "Code generation failed: ", e.what());
-        printTimingSummary(preprocessing_time, parsing_time, ir_conversion_time, template_time, codegen_time, total_start);
+        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, codegen_time, total_start);
         if (show_perf_stats) {
             StackStringStats::print_stats();
         }
         return 1;
     } catch (...) {
         FLASH_LOG(General, Error, "Code generation failed with unknown exception");
-        printTimingSummary(preprocessing_time, parsing_time, ir_conversion_time, template_time, codegen_time, total_start);
+        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, codegen_time, total_start);
         if (show_perf_stats) {
             StackStringStats::print_stats();
         }
@@ -466,13 +478,15 @@ int main(int argc, char *argv[]) {
     }
 
     // Print final timing summary
-    printTimingSummary(preprocessing_time, parsing_time, ir_conversion_time, template_time, codegen_time, total_start);
+    printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, codegen_time, total_start);
 
     // Show additional details if --time flag is used
     if (show_timing) {
         FLASH_LOG(General, Info, "Phase Details:");
-        FLASH_LOG(General, Info, "  Parsing includes: lexing + template instantiation from parsing phase");
-        FLASH_LOG(General, Info, "  Template Inst: lambda/struct member function generation");
+        FLASH_LOG(General, Info, "  Lexer Setup: lexer and parser object construction");
+        FLASH_LOG(General, Info, "  Parsing: lexing, parsing, and template instantiation");
+        FLASH_LOG(General, Info, "  IR Conversion: AST to IR translation including lambda/local struct generation");
+        FLASH_LOG(General, Info, "  Other: setup, teardown, and miscellaneous operations");
         
         // Print template profiling statistics
         #if ENABLE_TEMPLATE_PROFILING
