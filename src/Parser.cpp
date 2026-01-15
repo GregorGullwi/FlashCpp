@@ -9630,7 +9630,59 @@ ParseResult Parser::parse_type_specifier()
 		std::optional<std::vector<TemplateTypeArg>> template_args;
 		auto next_token = peek_token();
 		if (next_token.has_value() && next_token->value() == "<") {
-			template_args = parse_explicit_template_arguments();
+			// Before parsing < as template arguments, check if the type name is actually a template
+			// This prevents misinterpreting patterns like _R1::num < _R2::num> where < is comparison
+			bool should_parse_as_template = true;
+			
+			// Check if this is a qualified name (contains ::)
+			size_t last_colon_pos = type_name.rfind("::");
+			if (last_colon_pos != std::string::npos) {
+				// Extract the member name (part after the last ::)
+				std::string_view member_name(type_name.c_str() + last_colon_pos + 2);
+				
+				// Check if the member is a known template
+				auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
+				auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
+				
+				// Also check with the full qualified name
+				auto full_template_opt = gTemplateRegistry.lookupTemplate(type_name);
+				auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(type_name);
+				
+				bool member_is_template = member_template_opt.has_value() || 
+				                          member_var_template_opt.has_value() ||
+				                          full_template_opt.has_value() ||
+				                          full_var_template_opt.has_value();
+				
+				if (!member_is_template) {
+					// Member is NOT a known template
+					// Check if the base (before ::) is a template parameter - if so, this is dependent
+					// and we should NOT parse < as template arguments
+					std::string_view base_name(type_name.c_str(), last_colon_pos);
+					
+					// Check if base is a template parameter
+					bool base_is_template_param = false;
+					for (const auto& param_name : current_template_param_names_) {
+						if (StringTable::getStringView(param_name) == base_name) {
+							base_is_template_param = true;
+							break;
+						}
+					}
+					
+					if (base_is_template_param) {
+						// Pattern like _R1::num where _R1 is a template parameter
+						// The member 'num' is likely a static data member, not a template
+						// Treat < as comparison operator
+						FLASH_LOG_FORMAT(Templates, Debug, 
+						    "Qualified name '{}' has template param base and non-template member - treating '<' as comparison operator",
+						    type_name);
+						should_parse_as_template = false;
+					}
+				}
+			}
+			
+			if (should_parse_as_template) {
+				template_args = parse_explicit_template_arguments();
+			}
 			// If parsing succeeded, check if this is an alias template first
 			if (template_args.has_value()) {
 				// Check if this is an alias template
@@ -10180,7 +10232,8 @@ ParseResult Parser::parse_type_specifier()
 				// Check for qualified name after template arguments: Template<T>::nested or Template<T>::type
 				if (peek_token().has_value() && peek_token()->value() == "::") {
 					// Parse the qualified identifier path (e.g., Template<int>::Inner)
-					auto qualified_result = parse_qualified_identifier_after_template(type_name_token);
+					bool had_template_keyword = false;
+					auto qualified_result = parse_qualified_identifier_after_template(type_name_token, &had_template_keyword);
 					if (qualified_result.is_error()) {
 						FLASH_LOG(Parser, Error, "parse_qualified_identifier_after_template failed");
 						return qualified_result;
@@ -10214,6 +10267,35 @@ ParseResult Parser::parse_type_specifier()
 						if (qual_type_it == gTypesByName.end()) {
 							// Type not found
 							// If there are template arguments, we need to parse them and include in the type name
+							// BUT: Check if the member is actually a known template first.
+							// This avoids misinterpreting comparison operators like `R1::num < R2::num>`
+							// as template arguments for `num`.
+							// EXCEPTION: If the 'template' keyword was present (e.g., ::template type<Args>),
+							// then we MUST treat the member as a template regardless of registry lookup.
+							if (has_template_args && !had_template_keyword) {
+								// Check if the member is a known template before parsing < as template arguments
+								auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
+								auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
+								
+								// Also check with the full qualified name
+								auto full_template_opt = gTemplateRegistry.lookupTemplate(qualified_type_name);
+								auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_type_name);
+								
+								bool member_is_template = member_template_opt.has_value() || 
+								                          member_var_template_opt.has_value() ||
+								                          full_template_opt.has_value() ||
+								                          full_var_template_opt.has_value();
+								
+								if (!member_is_template) {
+									// Member is NOT a known template, so < is likely a comparison operator
+									// Don't parse it as template arguments - create placeholder without template args
+									FLASH_LOG_FORMAT(Templates, Debug, 
+									    "Member '{}' is not a known template - treating '<' as comparison operator, not template args",
+									    member_name);
+									has_template_args = false;  // Reset flag to skip template arg parsing
+								}
+							}
+							
 							if (has_template_args) {
 								// Parse template arguments for the member (e.g., type<_If, _Else>)
 								auto member_template_args = parse_explicit_template_arguments();
@@ -14061,6 +14143,52 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					// Note: This is safe because if a function returns a template type, the template
 					// instantiation happens at the function definition, not at the call site.
 					could_be_template_name = false;
+				} else if (std::holds_alternative<QualifiedIdentifierNode>(expr) ||
+				           std::holds_alternative<MemberAccessNode>(expr)) {
+					// For qualified identifiers like R1<T>::num or member access expressions,
+					// we need to check if the final member could be a template.
+					// In TemplateArgument context, patterns like _R1::num < _R2::num> should be
+					// parsed as comparisons, not as _R1::num<_R2::num> (template instantiation).
+					// 
+					// The key insight is: for dependent member access (where the base is a template
+					// parameter), the member is likely a static data member, not a member template.
+					// Even if could_be_template_arguments() succeeds (because _R2::num> looks like
+					// valid template arguments), we should prefer treating < as comparison in
+					// TemplateArgument context.
+					//
+					// Strategy:
+					// 1. Extract the final member name from the qualified identifier
+					// 2. Check if it's a known template (class or variable template)
+					// 3. If not a known template AND we're in TemplateArgument context,
+					//    treat < as comparison operator
+					
+					std::string_view member_name;
+					if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+						const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
+						member_name = qual_id.name();
+					} else {
+						const auto& member_access = std::get<MemberAccessNode>(expr);
+						member_name = member_access.member_name();
+					}
+					
+					// Check if the member is a known template
+					auto template_opt = gTemplateRegistry.lookupTemplate(member_name);
+					auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
+					
+					if (template_opt.has_value() || var_template_opt.has_value()) {
+						// Member is a known template, allow template argument parsing
+						could_be_template_name = true;
+					} else if (context == ExpressionContext::TemplateArgument) {
+						// Member is NOT a known template and we're parsing template arguments
+						// This is likely a pattern like: integral_constant<bool, _R1::num < _R2::num>
+						// where < is a comparison operator, not template arguments
+						FLASH_LOG(Parser, Debug, "In TemplateArgument context, member '", member_name, 
+						          "' is not a known template - treating '<' as comparison operator");
+						could_be_template_name = false;
+					} else {
+						// Not in TemplateArgument context, be conservative and allow template parsing
+						could_be_template_name = true;
+					}
 				} else {
 					// Not a simple identifier, could be a complex expression that needs template args
 					could_be_template_name = true;
@@ -17384,9 +17512,48 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			std::optional<std::vector<TemplateTypeArg>> template_args;
 			std::vector<ASTNode> template_arg_nodes;  // Store the actual expression nodes
 			if (peek_token().has_value() && peek_token()->value() == "<") {
-				FLASH_LOG(Parser, Debug, "Qualified identifier followed by '<', attempting to parse template arguments");
-				template_args = parse_explicit_template_arguments(&template_arg_nodes);
-				// If parsing failed, it might be a less-than operator, continue normally
+				// Before parsing < as template arguments, check if the identifier is actually a template
+				// This prevents misinterpreting patterns like R1<T>::num < R2<T>::num> where < is comparison
+				
+				// Build the full qualified name for template lookup
+				StringBuilder lookup_name_builder;
+				for (const auto& ns : namespaces) {
+					lookup_name_builder.append(ns.c_str()).append("::");
+				}
+				lookup_name_builder.append(final_identifier.value());
+				std::string_view qualified_lookup_name = lookup_name_builder.preview();
+				
+				// Check if this is a known template (class or variable template)
+				auto template_opt = gTemplateRegistry.lookupTemplate(qualified_lookup_name);
+				auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_lookup_name);
+				
+				// Also check with just the simple name
+				auto simple_template_opt = gTemplateRegistry.lookupTemplate(final_identifier.value());
+				auto simple_var_template_opt = gTemplateRegistry.lookupVariableTemplate(final_identifier.value());
+				
+				bool is_known_template = template_opt.has_value() || var_template_opt.has_value() ||
+				                         simple_template_opt.has_value() || simple_var_template_opt.has_value();
+				
+				lookup_name_builder.reset();
+				
+				if (is_known_template) {
+					FLASH_LOG(Parser, Debug, "Qualified identifier followed by '<', attempting to parse template arguments");
+					template_args = parse_explicit_template_arguments(&template_arg_nodes);
+					// If parsing failed, it might be a less-than operator, continue normally
+				} else if (context == ExpressionContext::TemplateArgument) {
+					// In template argument context, if the identifier is NOT a known template,
+					// treat '<' as a comparison operator (e.g., R1<T>::num < R2<T>::num>)
+					FLASH_LOG_FORMAT(Parser, Debug, 
+					    "In TemplateArgument context, qualified identifier '{}' is not a known template - treating '<' as comparison operator",
+					    final_identifier.value());
+					// Don't parse template arguments - let the binary operator loop handle '<' as comparison
+				} else {
+					// Not in template argument context and not a known template
+					// Try parsing template arguments anyway (might be a forward-declared template)
+					FLASH_LOG(Parser, Debug, "Qualified identifier followed by '<', attempting to parse template arguments (unknown template)");
+					template_args = parse_explicit_template_arguments(&template_arg_nodes);
+					// If parsing failed, it might be a less-than operator, continue normally
+				}
 			}
 			
 			// Create a QualifiedIdentifierNode
@@ -21455,9 +21622,10 @@ ParseResult Parser::parse_qualified_identifier() {
 // Helper: Parse qualified identifier path after template arguments (Template<T>::member)
 // Assumes we're positioned right after template arguments and next token is ::
 // Returns a QualifiedIdentifierNode wrapped in ExpressionNode if successful
-ParseResult Parser::parse_qualified_identifier_after_template(const Token& template_base_token) {
+ParseResult Parser::parse_qualified_identifier_after_template(const Token& template_base_token, bool* had_template_keyword) {
 	std::vector<StringType<32>> namespaces;
 	Token final_identifier = template_base_token;  // Start with the template name
+	bool encountered_template_keyword = false;
 	
 	// Collect the qualified path after ::
 	while (peek_token().has_value() && peek_token()->value() == "::") {
@@ -21469,6 +21637,7 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 		// e.g., typename Base<T>::template member<U>
 		if (peek_token().has_value() && peek_token()->value() == "template") {
 			consume_token(); // consume 'template'
+			encountered_template_keyword = true;  // Track that we saw 'template' keyword
 		}
 		
 		// Get next identifier
@@ -21477,6 +21646,11 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 		}
 		final_identifier = *peek_token();
 		consume_token(); // consume the identifier
+	}
+	
+	// Report whether we encountered a 'template' keyword
+	if (had_template_keyword) {
+		*had_template_keyword = encountered_template_keyword;
 	}
 	
 	// Create a QualifiedIdentifierNode
@@ -21495,8 +21669,36 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	// Check for member template arguments: Template<T>::member<U>
 	std::optional<std::vector<TemplateTypeArg>> member_template_args;
 	if (peek_token().has_value() && peek_token()->value() == "<") {
-		member_template_args = parse_explicit_template_arguments();
-		// If parsing failed, it might be a less-than operator, but that's rare for member access
+		// Before parsing < as template arguments, check if the member is actually a template
+		// This prevents misinterpreting patterns like R1<T>::num < R2<T>::num> where < is comparison
+		
+		// Check if the member is a known template (class or variable template)
+		auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
+		auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
+		
+		// Also check with the qualified name (instantiated_class_name::member_name)
+		StringBuilder qualified_member_builder;
+		qualified_member_builder.append(instantiated_class_name).append("::").append(member_name);
+		std::string_view qualified_member_name = qualified_member_builder.preview();
+		
+		auto qual_template_opt = gTemplateRegistry.lookupTemplate(qualified_member_name);
+		auto qual_var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_member_name);
+		
+		bool is_known_template = member_template_opt.has_value() || member_var_template_opt.has_value() ||
+		                         qual_template_opt.has_value() || qual_var_template_opt.has_value();
+		
+		qualified_member_builder.reset();
+		
+		if (is_known_template) {
+			member_template_args = parse_explicit_template_arguments();
+			// If parsing failed, it might be a less-than operator, but that's rare for member access
+		} else {
+			// Member is NOT a known template - don't parse < as template arguments
+			// This handles patterns like integral_constant<bool, R1::num < R2::num>
+			FLASH_LOG_FORMAT(Parser, Debug, 
+			    "Member '{}' is not a known template - not parsing '<' as template arguments",
+			    member_name);
+		}
 	}
 	
 	// Check for function call: Template<T>::member() or Template<T>::member<U>()

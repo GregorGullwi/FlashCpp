@@ -682,7 +682,7 @@ public:  // Public methods for template instantiation
         ParseResult parse_postfix_expression(ExpressionContext context);  // Phase 3: New postfix operator layer
         ParseResult parse_unary_expression(ExpressionContext context);
         ParseResult parse_qualified_identifier();  // Parse namespace::identifier
-        ParseResult parse_qualified_identifier_after_template(const Token& template_base_token);  // Parse Template<T>::member
+        ParseResult parse_qualified_identifier_after_template(const Token& template_base_token, bool* had_template_keyword = nullptr);  // Parse Template<T>::member
         
         // Helper to parse member template function calls: Template<T>::member<U>()
         // Returns:
