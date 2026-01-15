@@ -6847,16 +6847,17 @@ ParseResult Parser::parse_static_assert()
 	// Check for optional comma and message
 	std::string message;
 	if (consume_punctuator(",")) {
-		// Parse the message string literal
-		if (peek_token().has_value() && peek_token()->type() == Token::Type::StringLiteral) {
+		// Parse the message string literal(s) - C++ allows adjacent string literals to be concatenated
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::StringLiteral) {
 			auto message_token = consume_token();
 			if (message_token->value().size() >= 2 && 
 			    message_token->value().front() == '"' && 
 			    message_token->value().back() == '"') {
-				// Extract the message content (remove quotes)
-				message = std::string(message_token->value().substr(1, message_token->value().size() - 2));
+				// Extract the message content (remove quotes) and append
+				message += std::string(message_token->value().substr(1, message_token->value().size() - 2));
 			}
-		} else {
+		}
+		if (message.empty()) {
 			return ParseResult::error("Expected string literal for static_assert message", *current_token_);
 		}
 	}
@@ -6880,6 +6881,14 @@ ParseResult Parser::parse_static_assert()
 
 	// Evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable);
+	
+	// Pass struct context for static member lookup in static_assert within struct body
+	if (!struct_parsing_context_stack_.empty()) {
+		const auto& struct_ctx = struct_parsing_context_stack_.back();
+		ctx.struct_node = struct_ctx.struct_node;
+		ctx.struct_info = struct_ctx.local_struct_info;
+	}
+	
 	auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
 	
 	if (!eval_result.success) {
@@ -17153,14 +17162,46 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		
 		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}'", idenfifier_token.value(), identifierType.has_value() ? "found" : "not found", peek_token().has_value() ? peek_token()->value() : "N/A");
 		
+		// BUGFIX: If identifier not found in symbol table, check static members of current struct first.
+		// This handles cases like: static_assert(value == 42, "msg"); where value is a static member.
+		// Static members should be visible in expressions within the same struct.
+		bool found_as_type_alias = false;
+		if (!identifierType && !struct_parsing_context_stack_.empty()) {
+			StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+			const auto& ctx = struct_parsing_context_stack_.back();
+			
+			// Check the struct_node's static_members (for non-template structs)
+			if (ctx.struct_node != nullptr) {
+				for (const auto& static_member : ctx.struct_node->static_members()) {
+					if (static_member.name == identifier_handle) {
+						FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as static member in current struct node (early lookup)", 
+							idenfifier_token.value());
+						found_as_type_alias = true;  // Reuse this flag to prevent "Missing identifier" error
+						break;
+					}
+				}
+			}
+			
+			// Check local_struct_info (for template classes being parsed)
+			if (!found_as_type_alias && ctx.local_struct_info != nullptr) {
+				for (const auto& static_member : ctx.local_struct_info->static_members) {
+					if (static_member.getName() == identifier_handle) {
+						FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as static member in local_struct_info (early lookup)", 
+							idenfifier_token.value());
+						found_as_type_alias = true;
+						break;
+					}
+				}
+			}
+		}
+		
 		// BUGFIX: If identifier not found in symbol table, check if it's a type alias in gTypesByName
 		// This allows type aliases like false_type, true_type, enable_if_t to be used in specific contexts
 		// Only apply this fallback when the identifier is followed by '::' or '(' to ensure
 		// we don't break legitimate cases where an identifier should be an error
 		// ENHANCED: In TemplateArgument context, also check for ',' or '>' or '<' because type aliases
 		// and template class names are commonly used as template arguments in <type_traits>
-		bool found_as_type_alias = false;
-		if (!identifierType && peek_token().has_value()) {
+		if (!identifierType && !found_as_type_alias && peek_token().has_value()) {
 			std::string_view peek = peek_token()->value();
 			// Check gTypesByName if identifier is followed by :: (qualified name) or ( (constructor call)
 			bool should_check_types = (peek == "::" || peek == "(");
@@ -28315,6 +28356,61 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					restore_token_position(saved_pos);
 					last_failed_template_arg_parse_handle_ = saved_pos;
 					return std::nullopt;
+				}
+				
+				// Constant evaluation failed - check if this is a noexcept or similar expression
+				// that should be accepted as a dependent template argument.
+				// NoexceptExprNode, SizeofExprNode, AlignofExprNode, and TypeTraitExprNode are
+				// compile-time expressions that may contain dependent expressions.
+				// If the next token is a valid delimiter, accept the expression as dependent.
+				bool is_compile_time_expr = std::holds_alternative<NoexceptExprNode>(expr) ||
+				                            std::holds_alternative<SizeofExprNode>(expr) ||
+				                            std::holds_alternative<AlignofExprNode>(expr) ||
+				                            std::holds_alternative<TypeTraitExprNode>(expr);
+				
+				if (is_compile_time_expr && peek_token().has_value()) {
+					// Handle >> token splitting for nested templates
+					if (peek_token()->value() == ">>") {
+						split_right_shift_token();
+					}
+					
+					if (peek_token()->value() == ">" || peek_token()->value() == "," || peek_token()->value() == "...") {
+						FLASH_LOG(Templates, Debug, "Accepting dependent compile-time expression as template argument");
+						// Create a dependent template argument
+						TemplateTypeArg dependent_arg;
+						dependent_arg.base_type = Type::Bool;  // noexcept, sizeof, alignof return bool/size_t
+						dependent_arg.type_index = 0;
+						dependent_arg.is_value = true;  // This is a non-type (value) template argument
+						dependent_arg.is_dependent = true;
+						
+						// Check for pack expansion (...)
+						if (peek_token()->value() == "...") {
+							consume_token(); // consume '...'
+							dependent_arg.is_pack = true;
+							FLASH_LOG(Templates, Debug, "Marked compile-time expression as pack expansion");
+						}
+						
+						template_args.push_back(dependent_arg);
+						if (out_type_nodes && expr_result.node().has_value()) {
+							out_type_nodes->push_back(*expr_result.node());
+						}
+						discard_saved_token(arg_saved_pos);
+						
+						// Handle >> token splitting again after pack expansion check
+						if (peek_token().has_value() && peek_token()->value() == ">>") {
+							split_right_shift_token();
+						}
+						
+						if (peek_token().has_value() && peek_token()->value() == ">") {
+							consume_token(); // consume '>'
+							break;
+						}
+						
+						if (peek_token().has_value() && peek_token()->value() == ",") {
+							consume_token(); // consume ','
+							continue;
+						}
+					}
 				}
 			} else {
 				FLASH_LOG(Templates, Debug, "Skipping constant expression evaluation (in template body with dependent context)");

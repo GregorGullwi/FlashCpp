@@ -2223,6 +2223,12 @@ private:
 		defines_["__LONG_LONG_MAX__"] = DefineDirective{ "9223372036854775807LL", {} };
 		defines_["__WCHAR_MAX__"] = DefineDirective{ "2147483647", {} };
 		defines_["__WINT_MAX__"] = DefineDirective{ "4294967295U", {} };
+		
+		// intmax_t and uintmax_t limits - required by <ratio> and <cstdint> headers
+		// intmax_t is 64-bit on x64 platforms
+		defines_["__INTMAX_MAX__"] = DefineDirective{ "9223372036854775807LL", {} };
+		defines_["__INTMAX_MIN__"] = DefineDirective{ "(-9223372036854775807LL - 1)", {} };
+		defines_["__UINTMAX_MAX__"] = DefineDirective{ "18446744073709551615ULL", {} };
 
 		// Platform-specific __LONG_MAX__ (differs between Windows and Linux x64)
 		if (settings_.isMsvcMode()) {

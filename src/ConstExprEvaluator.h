@@ -127,6 +127,10 @@ struct EvaluationContext {
 
 	// Track current recursion depth
 	size_t current_depth = 0;
+	
+	// Struct being parsed (for looking up static members in static_assert within struct)
+	const StructDeclarationNode* struct_node = nullptr;
+	const StructTypeInfo* struct_info = nullptr;
 
 	// Constructor requires symbol table to prevent missing it
 	explicit EvaluationContext(const SymbolTable& symbol_table)
@@ -625,7 +629,41 @@ private:
 
 		std::string_view var_name = identifier.name();
 		auto symbol_opt = context.symbols->lookup(var_name);
+		
+		// If not found in symbol table, check for static members in the current struct
 		if (!symbol_opt.has_value()) {
+			// Check StructDeclarationNode first (for AST-based static members)
+			if (context.struct_node != nullptr) {
+				StringHandle name_handle = StringTable::getOrInternStringHandle(var_name);
+				for (const auto& static_member : context.struct_node->static_members()) {
+					if (static_member.name == name_handle) {
+						// Found static member in struct AST node
+						if (static_member.initializer.has_value()) {
+							// Recursively evaluate the initializer
+							return evaluate(static_member.initializer.value(), context);
+						} else {
+							return EvalResult::error("Static member has no initializer: " + std::string(var_name));
+						}
+					}
+				}
+			}
+			
+			// Check StructTypeInfo (for runtime-built struct info)
+			if (context.struct_info != nullptr) {
+				StringHandle name_handle = StringTable::getOrInternStringHandle(var_name);
+				for (const auto& static_member : context.struct_info->static_members) {
+					if (static_member.getName() == name_handle) {
+						// Found static member in StructTypeInfo
+						if (static_member.initializer.has_value()) {
+							// Recursively evaluate the initializer
+							return evaluate(static_member.initializer.value(), context);
+						} else {
+							return EvalResult::error("Static member has no initializer: " + std::string(var_name));
+						}
+					}
+				}
+			}
+			
 			return EvalResult::error("Undefined variable in constant expression: " + std::string(var_name));
 		}
 
