@@ -25027,7 +25027,10 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Set up struct parsing context for inherited member lookups (e.g., _S_test from base class)
 			// This enables using type = decltype(_S_test<_Tp1, _Tp2>(0)); to find _S_test in base classes
-			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref, nullptr});
+			// BUGFIX: Pass local_struct_info for static member visibility in template partial specializations
+			// This fixes the issue where static constexpr members (e.g., __g, __d2) are not visible
+			// when used as template arguments in typedef declarations within the same struct body
+			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref, struct_info.get()});
 			
 			// Parse class body (same as full specialization)
 			while (peek_token().has_value() && peek_token()->value() != "}") {
@@ -25094,6 +25097,13 @@ ParseResult Parser::parse_template_declaration() {
 						auto template_result = parse_member_template_or_function(struct_ref, current_access);
 						if (template_result.is_error()) {
 							return template_result;
+						}
+						continue;
+					} else if (peek_token()->value() == "static_assert") {
+						// Handle static_assert inside partial specialization body
+						auto static_assert_result = parse_static_assert();
+						if (static_assert_result.is_error()) {
+							return static_assert_result;
 						}
 						continue;
 					}
@@ -28384,6 +28394,12 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		FLASH_LOG(Templates, Debug, "Evaluating binary operator expression");
 		ConstExpr::EvaluationContext ctx(gSymbolTable);
+		// Set struct context for static member lookup (fixes __d2 = 10 / __g where __g is a static member)
+		if (!struct_parsing_context_stack_.empty()) {
+			const auto& struct_ctx = struct_parsing_context_stack_.back();
+			ctx.struct_node = struct_ctx.struct_node;
+			ctx.struct_info = struct_ctx.local_struct_info;
+		}
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Binary op evaluated to: {}", eval_result.as_int());
@@ -28679,6 +28695,76 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				}
 			} else {
 				FLASH_LOG(Templates, Debug, "Skipping constant expression evaluation (in template body with dependent context)");
+				
+				// BUGFIX: Even in a template body, static constexpr members like __g and __d2
+				// in a partial specialization have concrete values and should be evaluated.
+				// Try constant evaluation for simple identifiers that refer to static members.
+				bool evaluated_static_member = false;
+				std::optional<ConstantValue> static_member_value;
+				
+				if (std::holds_alternative<IdentifierNode>(expr) && !struct_parsing_context_stack_.empty()) {
+					const auto& id = std::get<IdentifierNode>(expr);
+					StringHandle id_handle = StringTable::getOrInternStringHandle(id.name());
+					const auto& ctx = struct_parsing_context_stack_.back();
+					
+					// Check local_struct_info for static constexpr members
+					if (ctx.local_struct_info != nullptr) {
+						for (const auto& static_member : ctx.local_struct_info->static_members) {
+							if (static_member.getName() == id_handle && static_member.initializer.has_value()) {
+								// Try to evaluate the static member's initializer
+								static_member_value = try_evaluate_constant_expression(*static_member.initializer);
+								if (static_member_value.has_value()) {
+									FLASH_LOG(Templates, Debug, "Evaluated static constexpr member '", id.name(), 
+									          "' to value ", static_member_value->value);
+									evaluated_static_member = true;
+								}
+								break;
+							}
+						}
+					}
+					
+					// Also check struct_node's static_members
+					if (!evaluated_static_member && ctx.struct_node != nullptr) {
+						for (const auto& static_member : ctx.struct_node->static_members()) {
+							if (static_member.name == id_handle && static_member.initializer.has_value()) {
+								static_member_value = try_evaluate_constant_expression(*static_member.initializer);
+								if (static_member_value.has_value()) {
+									FLASH_LOG(Templates, Debug, "Evaluated static constexpr member '", id.name(),
+									          "' (from struct_node) to value ", static_member_value->value);
+									evaluated_static_member = true;
+								}
+								break;
+							}
+						}
+					}
+				}
+				
+				if (evaluated_static_member && static_member_value.has_value()) {
+					// Successfully evaluated static member - create template argument
+					TemplateTypeArg const_arg(static_member_value->value, static_member_value->type);
+					
+					// Check for pack expansion (...)
+					if (peek_token().has_value() && peek_token()->value() == "...") {
+						consume_token();
+						const_arg.is_pack = true;
+					}
+					
+					template_args.push_back(const_arg);
+					discard_saved_token(arg_saved_pos);
+					
+					// Handle next token
+					if (peek_token().has_value() && peek_token()->value() == ">>") {
+						split_right_shift_token();
+					}
+					if (peek_token().has_value() && peek_token()->value() == ">") {
+						consume_token();
+						break;  // Break from outer while loop
+					}
+					if (peek_token().has_value() && peek_token()->value() == ",") {
+						consume_token();
+						continue;  // Continue to next template argument
+					}
+				}
 				
 				// During template declaration, expressions like is_int<T>::value are dependent
 				// and cannot be evaluated yet. Check if we successfully parsed such an expression
