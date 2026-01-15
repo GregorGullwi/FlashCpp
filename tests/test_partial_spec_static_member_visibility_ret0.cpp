@@ -44,6 +44,7 @@ int main() {
     using R2 = ratio<3, 4>;
     
     // This triggers instantiation of __ratio_add_impl<R1, R2, true, true, false>
+    // which matches the partial specialization pattern <_R1, _R2, true, true, __b>
     using impl = __ratio_add_impl<R1, R2, true, true, false>;
     
     // Verify the static members are correctly computed
