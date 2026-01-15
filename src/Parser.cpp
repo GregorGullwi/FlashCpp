@@ -28060,6 +28060,33 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		return ConstantValue{eval_result.value ? 1 : 0, Type::Bool};
 	}
 	
+	// Handle ternary operator expressions (e.g., (5 < 0) ? -1 : 1)
+	// Use the ConstExprEvaluator for complex expression evaluation
+	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+		FLASH_LOG(Templates, Debug, "Evaluating ternary operator expression");
+		ConstExpr::EvaluationContext ctx(gSymbolTable);
+		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
+		if (eval_result.success) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Ternary evaluated to: {}", eval_result.as_int());
+			return ConstantValue{eval_result.as_int(), Type::Int};
+		}
+		FLASH_LOG(Templates, Debug, "Failed to evaluate ternary operator");
+		return std::nullopt;
+	}
+	
+	// Handle binary operator expressions (e.g., 5 < 0, 1 + 2)
+	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+		FLASH_LOG(Templates, Debug, "Evaluating binary operator expression");
+		ConstExpr::EvaluationContext ctx(gSymbolTable);
+		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
+		if (eval_result.success) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Binary op evaluated to: {}", eval_result.as_int());
+			return ConstantValue{eval_result.as_int(), Type::Int};
+		}
+		FLASH_LOG(Templates, Debug, "Failed to evaluate binary operator");
+		return std::nullopt;
+	}
+	
 	return std::nullopt;
 }
 
@@ -28238,10 +28265,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 
 			// Expression is not a numeric literal - try to evaluate it as a constant expression
 			// This handles cases like is_int<T>::value where the expression needs evaluation
-			// IMPORTANT: Only evaluate during template instantiation (SFINAE context), not during
-			// template declaration when template parameters are not yet instantiated
-			if (in_sfinae_context_) {
-				FLASH_LOG(Templates, Debug, "Trying to evaluate non-literal expression as constant (in SFINAE context)");
+			// Evaluate constant expressions in two cases:
+			// 1. During SFINAE context (template instantiation with concrete arguments)
+			// 2. When NOT parsing a template body (e.g., global scope type alias like `using X = holder<1 ? 2 : 3>`)
+			// Only skip evaluation during template DECLARATION when template parameters are not yet instantiated
+			bool should_try_constant_eval = in_sfinae_context_ || !parsing_template_body_;
+			if (should_try_constant_eval) {
+				FLASH_LOG(Templates, Debug, "Trying to evaluate non-literal expression as constant (in_sfinae=", 
+				          in_sfinae_context_, ", parsing_template_body=", parsing_template_body_, ")");
 				auto const_value = try_evaluate_constant_expression(*expr_result.node());
 				if (const_value.has_value()) {
 					// Successfully evaluated as a constant expression
@@ -28286,7 +28317,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					return std::nullopt;
 				}
 			} else {
-				FLASH_LOG(Templates, Debug, "Skipping constant expression evaluation (not in SFINAE context - during template declaration)");
+				FLASH_LOG(Templates, Debug, "Skipping constant expression evaluation (in template body with dependent context)");
 				
 				// During template declaration, expressions like is_int<T>::value are dependent
 				// and cannot be evaluated yet. Check if we successfully parsed such an expression
