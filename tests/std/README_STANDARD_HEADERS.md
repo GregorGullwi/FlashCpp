@@ -36,7 +36,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<initializer_list>` | `test_std_initializer_list.cpp` | ❌ Failed | Requires special compiler support |
 | `<new>` | N/A | ✅ Compiled | ~0.5s (FIXED 2026-01-15) |
 | `<exception>` | N/A | ❌ Failed | Missing `_Hash_bytes` function |
-| `<ratio>` | N/A | ⏱️ Partial | `<` disambiguation fixed; remaining issue with local variable visibility in templates |
+| `<ratio>` | N/A | ⏱️ Timeout | Local variable visibility fixed (2026-01-15); times out during template instantiation |
 | `<csetjmp>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
 | `<csignal>` | N/A | ❌ Failed | Preprocessor `sizeof` in macro |
 
@@ -297,6 +297,39 @@ The following features have been implemented to support standard headers:
 - Function pointer parameters with pack expansion and noexcept (NEW)
 
 ## Recent Changes
+
+### 2026-01-15: Static Constexpr Member Visibility in Template Partial Specializations
+
+**Fixed:** Static constexpr members defined in template partial specializations are now visible when used as template arguments in typedef declarations within the same struct body.
+
+**Patterns that now work:**
+```cpp
+// Partial specialization with static members used as template arguments
+template<typename _R1, typename _R2, bool __b>
+struct __ratio_add_impl<_R1, _R2, true, true, __b> {
+private:
+    static constexpr uintmax_t __g = __static_gcd<_R1::den, _R2::den>::value;
+    static constexpr uintmax_t __d2 = _R2::den / __g;  // Uses __g
+    typedef __big_mul<_R1::den, __d2> __d;             // __d2 now visible!
+    typedef __big_mul<_R1::num, _R2::den / __g> __x;   // __g now visible!
+};
+```
+
+**Root cause:** When setting up the struct parsing context for partial specializations, `local_struct_info` was set to `nullptr`, preventing static member lookup during expression parsing within the struct body.
+
+**Fix applied:** 
+- Updated `struct_parsing_context_stack_.push_back()` in the partial specialization handler to pass `struct_info.get()` as the `local_struct_info` parameter
+- Added `static_assert` handling in partial specialization body parsing
+
+**Test case:** `tests/test_partial_spec_static_member_visibility_ret0.cpp`
+
+**Impact:**
+- The `<ratio>` header parsing now progresses much further
+- Static members like `__g` and `__d2` are correctly found when used as template arguments
+- `<ratio>` still times out during template instantiation phase (not a parsing issue)
+
+**Files Modified:**
+- `src/Parser.cpp` - Fix struct_parsing_context for partial specializations
 
 ### 2026-01-15: Ternary Operators in Template Arguments - Fully Working
 

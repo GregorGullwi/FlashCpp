@@ -25027,7 +25027,10 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Set up struct parsing context for inherited member lookups (e.g., _S_test from base class)
 			// This enables using type = decltype(_S_test<_Tp1, _Tp2>(0)); to find _S_test in base classes
-			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref, nullptr});
+			// BUGFIX: Pass local_struct_info for static member visibility in template partial specializations
+			// This fixes the issue where static constexpr members (e.g., __g, __d2) are not visible
+			// when used as template arguments in typedef declarations within the same struct body
+			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref, struct_info.get()});
 			
 			// Parse class body (same as full specialization)
 			while (peek_token().has_value() && peek_token()->value() != "}") {
@@ -25094,6 +25097,13 @@ ParseResult Parser::parse_template_declaration() {
 						auto template_result = parse_member_template_or_function(struct_ref, current_access);
 						if (template_result.is_error()) {
 							return template_result;
+						}
+						continue;
+					} else if (peek_token()->value() == "static_assert") {
+						// Handle static_assert inside partial specialization body
+						auto static_assert_result = parse_static_assert();
+						if (static_assert_result.is_error()) {
+							return static_assert_result;
 						}
 						continue;
 					}
