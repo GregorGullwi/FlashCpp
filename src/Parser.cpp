@@ -3757,6 +3757,16 @@ ParseResult Parser::parse_struct_declaration()
 	// For top-level classes, qualified_struct_name equals struct_name
 	StringHandle qualified_struct_name = struct_name;
 	StringHandle type_name = struct_name;
+	
+	// Get namespace path early so we can use it for both TypeInfo and StructTypeInfo
+	auto current_namespace_path = gSymbolTable.build_current_namespace_path();
+	
+	// Build the full qualified name for use in mangling
+	// - For nested classes: Parent::Child
+	// - For namespace classes: ns::Class  
+	// - For top-level classes: just the simple name
+	StringHandle full_qualified_name;
+	
 	if (is_nested_class) {
 		// We're inside a struct, so this is a nested class
 		// Use the qualified name (e.g., "Outer::Inner") for the TypeInfo entry
@@ -3767,6 +3777,11 @@ ParseResult Parser::parse_struct_declaration()
 			.append("::")
 			.append(struct_name));
 		type_name = qualified_struct_name;
+		full_qualified_name = qualified_struct_name;
+	} else if (!current_namespace_path.empty()) {
+		// Top-level class in a namespace - use namespace-qualified name for proper mangling
+		full_qualified_name = buildQualifiedNameHandle(current_namespace_path, struct_name);
+		type_name = full_qualified_name;  // TypeInfo should also use fully qualified name
 	}
 
 	TypeInfo& struct_type_info = add_struct_type(type_name);
@@ -3776,9 +3791,17 @@ ParseResult Parser::parse_struct_declaration()
 	if (is_nested_class) {
 		gTypesByName.emplace(struct_name, &struct_type_info);
 	}
+	
+	// For namespace classes, also register with the simple name for 'this' pointer lookup
+	// during member function code generation. The TypeInfo's name is fully qualified (ns::Test)
+	// but parent_struct_name is just "Test", so we need this alias for lookups.
+	if (!is_nested_class && !current_namespace_path.empty()) {
+		if (gTypesByName.find(struct_name) == gTypesByName.end()) {
+			gTypesByName.emplace(struct_name, &struct_type_info);
+		}
+	}
 
 	// If inside an inline namespace, register the parent-qualified name (e.g., outer::Foo)
-	auto current_namespace_path = gSymbolTable.build_current_namespace_path();
 	if (!current_namespace_path.empty() && !inline_namespace_stack_.empty() && inline_namespace_stack_.back() && !parsing_template_class_) {
 		auto parent_path = current_namespace_path;
 		parent_path.pop_back();
@@ -3788,16 +3811,12 @@ ParseResult Parser::parse_struct_declaration()
 		}
 	}
 	
-	// Also register with namespace-qualified names for all levels of the namespace path
+	// Register with namespace-qualified names for all levels of the namespace path
 	// This allows lookups like "inner::Base" when we're in namespace "ns" to find "ns::inner::Base"
 	if (!current_namespace_path.empty() && !is_nested_class) {
-		// Register with full namespace path (e.g., "ns::inner::Base")
-		auto full_qualified_name = buildQualifiedNameHandle(current_namespace_path, struct_name);
-		if (gTypesByName.find(full_qualified_name) == gTypesByName.end()) {
-			gTypesByName.emplace(full_qualified_name, &struct_type_info);
-			FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name), 
-			          "' with namespace-qualified name '", StringTable::getStringView(full_qualified_name), "'");
-		}
+		// full_qualified_name already computed above, just log if needed
+		FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name), 
+		          "' with namespace-qualified name '", StringTable::getStringView(full_qualified_name), "'");
 		
 		// Also register intermediate names (e.g., "inner::Base" for "ns::inner::Base")
 		// This allows sibling namespace access patterns like:
@@ -3840,9 +3859,17 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Create StructTypeInfo early so we can add base classes to it
 	// For nested classes, use the qualified name so getName() returns the full name for mangling
-	// For top-level classes, use the simple name to avoid incorrectly treating them as nested
-	// (the stack might not be empty due to early returns in previous struct parsing)
-	StringHandle struct_info_name = is_nested_class ? qualified_struct_name : struct_name;
+	// For top-level classes in a namespace, use full_qualified_name for correct mangling
+	// For top-level classes not in a namespace, use the simple name
+	StringHandle struct_info_name;
+	if (is_nested_class) {
+		struct_info_name = qualified_struct_name;
+	} else if (full_qualified_name.isValid()) {
+		// Top-level class in a namespace - use namespace-qualified name for proper mangling
+		struct_info_name = full_qualified_name;
+	} else {
+		struct_info_name = struct_name;
+	}
 	auto struct_info = std::make_unique<StructTypeInfo>(struct_info_name, struct_ref.default_access());
 	struct_info->is_union = is_union;
 	

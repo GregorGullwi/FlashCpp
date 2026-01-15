@@ -2361,17 +2361,12 @@ private:
 		// This is critical for member variable lookup in generateIdentifierIr
 		if (node.is_member_function()) {
 			// For member functions, set current_struct_name_ from parent_struct_name
-			// This handles lazy-instantiated template member functions that are visited
-			// at the top level, not through visitStructDeclarationNode
+			// Use the parent_struct_name directly (simple name like "Test") rather than
+			// looking up the TypeInfo's name (which may be namespace-qualified like "ns::Test").
+			// The namespace will be added during mangling from current_namespace_stack_.
 			std::string_view parent_name = node.parent_struct_name();
 			if (!parent_name.empty()) {
-				// Look up the struct type to get its canonical name (important for templates)
-				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(parent_name));
-				if (type_it != gTypesByName.end()) {
-					current_struct_name_ = type_it->second->name();
-				} else {
-					current_struct_name_ = StringTable::getOrInternStringHandle(parent_name);
-				}
+				current_struct_name_ = StringTable::getOrInternStringHandle(parent_name);
 			}
 		} else {
 			// Clear current_struct_name_ to prevent struct context from leaking into free functions

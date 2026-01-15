@@ -106,6 +106,13 @@ struct common_ref_impl : enable_if<is_reference_v<condres_cvref<_Xp>>, condres_c
 **Test case:** `tests/test_variable_template_in_enable_if_ret0.cpp`
 
 **Previous blockers resolved (January 15, 2026):**
+- Namespace class member function call mangling: Member function calls on classes defined in namespaces now link correctly
+  - **Issue:** When calling `t.get_value()` where `t` is of type `ns::Test`, the function call was mangled as `_ZN4Test9get_valueEv` (missing namespace) while the function was defined as `_ZN2ns4Test9get_valueEv` (with namespace), causing linker errors
+  - **Root cause:** The StructTypeInfo was created with the simple name (`Test`) instead of the namespace-qualified name (`ns::Test`), causing mismatched mangling between function definitions and calls
+  - **Fix:** 
+    1. Modified Parser.cpp `parse_struct_declaration()` to use namespace-qualified names for TypeInfo and StructTypeInfo creation
+    2. Modified CodeGen.h to use parent_struct_name directly instead of looking up TypeInfo's name (which could cause double-namespace in mangling)
+  - **Test case:** `tests/test_namespace_class_member_call_ret42.cpp`
 - Less-than vs template argument disambiguation: Pattern `integral_constant<bool, _R1::num < _R2::num>` now works
   - **Issue:** When parsing template arguments, `<` was incorrectly interpreted as starting template arguments instead of as a comparison operator in patterns like `_R1::num < _R2::num>`
   - **Root cause:** Multiple code paths would see `<` after a qualified identifier like `_R1::num` and immediately try to parse template arguments without checking if `num` was actually a template
