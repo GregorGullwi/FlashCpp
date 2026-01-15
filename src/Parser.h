@@ -673,8 +673,11 @@ public:  // Public methods for template instantiation
         // Default precedence excludes comma operator (precedence 1) to prevent it from being
         // treated as an operator in contexts where it's a separator (declarations, arguments, etc.)
         static constexpr int DEFAULT_PRECEDENCE = 2;
-        ParseResult parse_expression(int precedence = DEFAULT_PRECEDENCE, ExpressionContext context = ExpressionContext::Normal);
-        ParseResult parse_expression_statement() { return parse_expression(); }  // Wrapper for keyword map
+        // NOTE: ExpressionContext is required (no default) to prevent bugs where context
+        // is accidentally not passed in recursive calls (e.g., ternary branch parsing).
+        // Use ExpressionContext::Normal for most cases; TemplateArgument when inside <...>.
+        ParseResult parse_expression(int precedence, ExpressionContext context);
+        ParseResult parse_expression_statement() { return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal); }  // Wrapper for keyword map
         ParseResult parse_primary_expression(ExpressionContext context = ExpressionContext::Normal);
         ParseResult parse_postfix_expression(ExpressionContext context = ExpressionContext::Normal);  // Phase 3: New postfix operator layer
         ParseResult parse_unary_expression(ExpressionContext context = ExpressionContext::Normal);
