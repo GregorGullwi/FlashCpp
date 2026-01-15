@@ -182,18 +182,12 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 // - Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 // This distinction is critical for matching lvalue refs vs rvalue refs in overloaded functions.
 inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
-	// Check pointer compatibility FIRST
+	// Check pointer-to-pointer compatibility FIRST
 	// This handles pointer types with lvalue/rvalue flags (which indicate value category, not actual reference types)
 	// Pointers with lvalue flags can still be passed to functions expecting pointer parameters
-	if (from.is_pointer() || to.is_pointer()) {
-		// Both must be pointers for conversion
-		if (from.is_pointer() != to.is_pointer()) {
-			// Known limitation: nullptr conversion to pointer types is not yet detected here.
-			// This is because we don't have a way to identify nullptr expressions at this point.
-			// Currently, nullptr_t types are handled separately during parsing.
-			return TypeConversionResult::no_match();
-		}
-
+	// Note: We only enter this block when BOTH are pointers. If only one is a pointer,
+	// we fall through to allow other conversions (e.g., pointer-to-integer for builtins)
+	if (from.is_pointer() && to.is_pointer()) {
 		// Pointer depth must match
 		if (from.pointer_depth() != to.pointer_depth()) {
 			return TypeConversionResult::no_match();
