@@ -188,8 +188,9 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 	if (from.is_pointer() || to.is_pointer()) {
 		// Both must be pointers for conversion
 		if (from.is_pointer() != to.is_pointer()) {
-			// Special case: nullptr (represented as 0) can convert to any pointer
-			// But we don't have a way to detect that here yet
+			// Known limitation: nullptr conversion to pointer types is not yet detected here.
+			// This is because we don't have a way to identify nullptr expressions at this point.
+			// Currently, nullptr_t types are handled separately during parsing.
 			return TypeConversionResult::no_match();
 		}
 
@@ -213,6 +214,7 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 			// Check const-correctness for the pointed-to type
 			// from.is_const() checks if the pointee is const (e.g., "const char*")
 			// to.is_const() checks if the target pointee is const (e.g., "const void*")
+			// Rule: const T* cannot convert to non-const void* (would violate const correctness)
 			if (from.is_const() && !to.is_const()) {
 				return TypeConversionResult::no_match();
 			}
