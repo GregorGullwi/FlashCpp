@@ -91,21 +91,10 @@ struct PairHash {
 // Forward declaration
 struct NamespaceHandle;
 
-// Namespace entry stored in the registry
-struct NamespaceEntry {
-    StringHandle name;           // Name of this namespace segment (e.g., "std")
-    NamespaceHandle parent;      // Handle to parent namespace (invalid for global)
-    StringHandle qualified_name; // Pre-computed "std::chrono::seconds" format
-    uint32_t depth;              // Nesting depth (0 for global, 1 for top-level, etc.)
-    
-    // Optional: cache frequently accessed data
-    // uint64_t path_hash;       // Pre-computed hash for fast comparisons
-};
-
-// Lightweight handle to a namespace entry
+// Lightweight handle to a namespace entry (16-bit for up to 65535 namespaces)
 struct NamespaceHandle {
-    static constexpr uint32_t INVALID_HANDLE = UINT32_MAX;
-    uint32_t index = INVALID_HANDLE;
+    static constexpr uint16_t INVALID_HANDLE = UINT16_MAX;
+    uint16_t index = INVALID_HANDLE;
     
     bool isValid() const { return index != INVALID_HANDLE; }
     bool isGlobal() const { return index == 0; }
@@ -113,6 +102,19 @@ struct NamespaceHandle {
     bool operator==(NamespaceHandle other) const { return index == other.index; }
     bool operator!=(NamespaceHandle other) const { return index != other.index; }
     bool operator<(NamespaceHandle other) const { return index < other.index; }
+};
+
+// Namespace entry stored in the registry
+// Members ordered by size (largest to smallest) for optimal struct packing
+struct NamespaceEntry {
+    StringHandle name;           // Name of this namespace segment (e.g., "std") - 4 bytes
+    StringHandle qualified_name; // Pre-computed "std::chrono::seconds" format - 4 bytes
+    NamespaceHandle parent;      // Handle to parent namespace (invalid for global) - 2 bytes
+    uint8_t depth;               // Nesting depth (0 for global, 1 for top-level, etc.) - 1 byte
+    // Total: 11 bytes, padded to 12 bytes
+    
+    // Optional: cache frequently accessed data
+    // uint64_t path_hash;       // Pre-computed hash for fast comparisons
 };
 
 // Hash support for unordered containers
@@ -134,7 +136,13 @@ public:
     // Global namespace is always entry 0
     static constexpr NamespaceHandle GLOBAL_NAMESPACE = NamespaceHandle{0};
     
+    // Default capacity for namespace entries (can be tuned based on profiling)
+    static constexpr size_t DEFAULT_CAPACITY = 1024;
+    
     NamespaceRegistry() {
+        // Pre-allocate capacity to avoid reallocations during compilation
+        entries_.reserve(DEFAULT_CAPACITY);
+        
         // Reserve entry 0 for global namespace
         NamespaceEntry global;
         global.name = StringHandle{};  // Empty name
@@ -143,6 +151,11 @@ public:
         global.depth = 0;
         entries_.push_back(global);
     }
+    
+    // Check if we exceeded initial capacity (for tuning DEFAULT_CAPACITY)
+    bool didReallocate() const { return entries_.capacity() > DEFAULT_CAPACITY; }
+    size_t currentSize() const { return entries_.size(); }
+    size_t currentCapacity() const { return entries_.capacity(); }
     
     // Get or create a namespace, returning its handle
     // parent_handle is the parent namespace (use GLOBAL_NAMESPACE for top-level)
@@ -163,7 +176,7 @@ public:
         // Build qualified name
         entry.qualified_name = buildQualifiedNameForEntry(parent_handle, name);
         
-        NamespaceHandle new_handle{static_cast<uint32_t>(entries_.size())};
+        NamespaceHandle new_handle{static_cast<uint16_t>(entries_.size())};
         entries_.push_back(entry);
         namespace_map_[key] = new_handle;
         
