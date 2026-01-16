@@ -11,6 +11,7 @@
 #include "StackString.h"
 #include "Log.h"
 #include "ChunkedString.h"
+#include "NamespaceRegistry.h"
 
 enum class ScopeType {
 	Global,
@@ -77,9 +78,11 @@ struct Scope {
 	std::unordered_map<std::string_view, std::vector<ASTNode>> symbols;
 	ScopeHandle scope_handle;
 	StringType<> namespace_name;  // Only used for Namespace scopes
+	NamespaceHandle namespace_handle;  // Only used for Namespace scopes
 
 	// Using directives: namespaces to search when looking up unqualified names
-	std::vector<NamespacePath> using_directives;
+	std::vector<NamespaceHandle> using_directives;
+	std::vector<NamespacePath> using_directive_paths;
 
 	// Using declarations: specific symbols imported from namespaces
 	// Maps: local_name -> (namespace_path, original_name)
@@ -392,7 +395,7 @@ public:
 			}
 
 			// Third, check using directives in this scope
-			for (const auto& using_ns : scope.using_directives) {
+			for (const auto& using_ns : scope.using_directive_paths) {
 				auto result = lookup_qualified(using_ns, identifier);
 				if (result.has_value()) {
 					return result;
@@ -500,7 +503,7 @@ public:
 			}
 			
 			// Third, check using directives in this scope
-			for (const auto& using_ns : scope.using_directives) {
+			for (const auto& using_ns : scope.using_directive_paths) {
 				auto result = lookup_qualified_all(using_ns, identifier);
 				if (!result.empty()) {
 					return result;
@@ -639,8 +642,23 @@ public:
 		symbol_table_stack_.emplace_back(Scope(scopeType, symbol_table_stack_.size()));
 	}
 
+	void enter_namespace(NamespaceHandle ns_handle) {
+		Scope scope(ScopeType::Namespace, symbol_table_stack_.size());
+		scope.namespace_handle = ns_handle;
+		if (ns_handle.isValid() && !ns_handle.isGlobal()) {
+			const NamespaceEntry& entry = gNamespaceRegistry.getEntry(ns_handle);
+			scope.namespace_name = StringType<>(StringTable::getStringView(entry.name));
+		}
+		symbol_table_stack_.push_back(std::move(scope));
+	}
+
 	void enter_namespace(std::string_view namespace_name) {
-		symbol_table_stack_.emplace_back(Scope(ScopeType::Namespace, symbol_table_stack_.size(), StringType<>(namespace_name)));
+		NamespaceHandle parent_handle = get_current_namespace_handle();
+		StringHandle name_handle = StringTable::getOrInternStringHandle(namespace_name);
+		NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(parent_handle, name_handle);
+		Scope scope(ScopeType::Namespace, symbol_table_stack_.size(), StringType<>(namespace_name));
+		scope.namespace_handle = ns_handle;
+		symbol_table_stack_.push_back(std::move(scope));
 	}
 
 	void exit_scope() {
@@ -652,7 +670,7 @@ public:
 		if (symbol_table_stack_.empty()) return;
 
 		Scope& current_scope = symbol_table_stack_.back();
-		current_scope.using_directives.push_back(namespace_path);
+		current_scope.using_directive_paths.push_back(namespace_path);
 	}
 
 	// Add a using declaration to the current scope
@@ -829,11 +847,20 @@ public:
 		return "";
 	}
 
+	NamespaceHandle get_current_namespace_handle() const {
+		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
+			if (stackIt->scope_type == ScopeType::Namespace) {
+				return stackIt->namespace_handle;
+			}
+		}
+		return NamespaceRegistry::GLOBAL_NAMESPACE;
+	}
+
 	// Get all using directives from the current scope and all enclosing scopes
 	std::vector<NamespacePath> get_current_using_directives() const {
 		std::vector<NamespacePath> result;
 		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
-			for (const auto& using_dir : stackIt->using_directives) {
+			for (const auto& using_dir : stackIt->using_directive_paths) {
 				result.push_back(using_dir);
 			}
 		}
