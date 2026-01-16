@@ -34,6 +34,7 @@ struct NamespaceHandle {
 };
 
 // Members ordered by size (largest to smallest) for optimal struct packing.
+// StringHandle: 4 bytes, NamespaceHandle: 2 bytes, uint8_t: 1 byte.
 // Total: 11 bytes, padded to 12 bytes.
 struct NamespaceEntry {
 	StringHandle name;
