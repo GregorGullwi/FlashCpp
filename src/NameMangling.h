@@ -288,16 +288,26 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 						
 						std::string_view component = struct_name.substr(start, end - start);
 						if (!component.empty()) {
-							output += std::to_string(component.size());
-							output += component;
+							// Use "St" substitution for std namespace per Itanium C++ ABI
+							if (component == "std") {
+								output += "St";
+							} else {
+								output += std::to_string(component.size());
+								output += component;
+							}
 						}
 						
 						start = (end == struct_name.size()) ? end : end + 2;  // Skip "::"
 					}
 				} else {
 					// Simple class name, encode as-is
-					output += std::to_string(struct_name.size());
-					output += struct_name;
+					// Check for "std" substitution
+					if (struct_name == "std") {
+						output += "St";
+					} else {
+						output += std::to_string(struct_name.size());
+						output += struct_name;
+					}
 				}
 			} else {
 				// Unknown struct type, use 'v' for void as fallback
@@ -357,7 +367,7 @@ inline void generateItaniumMangledName(
 		if (!struct_name.empty()) {
 			// For nested classes, struct_name may contain "::" separators
 			// We need to encode each component separately
-			// e.g., "Outer::Inner" -> "5Outer5Inner"
+			// e.g., "Outer::Inner" -> "5Outer5Inner", "std::simple" -> "St6simple"
 			size_t start = 0;
 			while (start < struct_name.size()) {
 				size_t end = struct_name.find("::", start);
@@ -367,8 +377,13 @@ inline void generateItaniumMangledName(
 				
 				std::string_view component = struct_name.substr(start, end - start);
 				if (!component.empty()) {
-					output += std::to_string(component.size());
-					output += component;
+					// Use "St" substitution for std namespace per Itanium C++ ABI
+					if (component == "std") {
+						output += "St";
+					} else {
+						output += std::to_string(component.size());
+						output += component;
+					}
 				}
 				
 				start = (end == struct_name.size()) ? end : end + 2;  // Skip "::"
@@ -591,8 +606,13 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 				if (end == std::string_view::npos) end = struct_name.size();
 				std::string_view component = struct_name.substr(start, end - start);
 				if (!component.empty()) {
-					output += std::to_string(component.size());
-					output += component;
+					// Use "St" substitution for std namespace per Itanium C++ ABI
+					if (component == "std") {
+						output += "St";
+					} else {
+						output += std::to_string(component.size());
+						output += component;
+					}
 				}
 				start = (end == struct_name.size()) ? end : end + 2;
 			}
@@ -676,8 +696,13 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 				if (end == std::string_view::npos) end = struct_name.size();
 				std::string_view component = struct_name.substr(start, end - start);
 				if (!component.empty()) {
-					output += std::to_string(component.size());
-					output += component;
+					// Use "St" substitution for std namespace per Itanium C++ ABI
+					if (component == "std") {
+						output += "St";
+					} else {
+						output += std::to_string(component.size());
+						output += component;
+					}
 				}
 				start = (end == struct_name.size()) ? end : end + 2;
 			}

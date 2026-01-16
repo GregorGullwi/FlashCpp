@@ -2474,6 +2474,17 @@ private:
 		// Use pre-computed mangled name from AST node if available (Phase 6 migration)
 		// Fall back to generating it here if not (for backward compatibility during migration)
 		std::string_view mangled_name;
+		
+		// Don't pass namespace_stack when struct_name already includes the namespace
+		// (e.g., "std::simple" already has the namespace embedded, so we shouldn't also pass ["std"])
+		// This avoids double-encoding the namespace in the mangled name
+		std::vector<std::string> namespace_for_mangling;
+		if (struct_name_for_function.find("::") == std::string_view::npos) {
+			// struct_name doesn't contain namespace, use current_namespace_stack_
+			namespace_for_mangling = current_namespace_stack_;
+		}
+		// else: struct_name already contains namespace prefix, don't add it again
+		
 		if (node.has_mangled_name()) {
 			mangled_name = node.mangled_name();
 		} else if (node.has_non_type_template_args()) {
@@ -2486,11 +2497,11 @@ private:
 			auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 				func_decl.identifier_token().value(), return_type, param_types, 
 				node.non_type_template_args(), node.is_variadic(), 
-				struct_name_for_function, current_namespace_stack_);
+				struct_name_for_function, namespace_for_mangling);
 			mangled_name = mangled.view();
 		} else {
 			// Generate mangled name using the FunctionDeclarationNode overload
-			mangled_name = generateMangledNameForCall(node, struct_name_for_function, current_namespace_stack_);
+			mangled_name = generateMangledNameForCall(node, struct_name_for_function, namespace_for_mangling);
 		}
 		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled_name);
 
@@ -2781,7 +2792,7 @@ private:
 			                     .append(struct_name);
 			lookup_name = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 		} else {
-			// Top-level class - use simple name
+			// Top-level class - first try simple name, then look for namespace-qualified version
 			lookup_name = StringTable::getOrInternStringHandle(struct_name);
 		}
 		
@@ -2789,7 +2800,25 @@ private:
 		if (type_it != gTypesByName.end()) {
 			current_struct_name_ = type_it->second->name();
 		} else {
-			current_struct_name_ = lookup_name;
+			// If simple name lookup failed, search for namespace-qualified version
+			// e.g., for "simple", look for "std::simple" or other qualified names
+			bool found_qualified = false;
+			for (const auto& [name_handle, type_info] : gTypesByName) {
+				std::string_view qualified_name = StringTable::getStringView(name_handle);
+				// Check if this name ends with "::" + struct_name
+				if (qualified_name.size() > struct_name.size() + 2) {
+					size_t expected_pos = qualified_name.size() - struct_name.size();
+					if (qualified_name.substr(expected_pos) == struct_name &&
+					    qualified_name.substr(expected_pos - 2, 2) == "::") {
+						current_struct_name_ = name_handle;
+						found_qualified = true;
+						break;
+					}
+				}
+			}
+			if (!found_qualified) {
+				current_struct_name_ = lookup_name;
+			}
 		}
 		
 		// For local structs, collect member functions for deferred generation

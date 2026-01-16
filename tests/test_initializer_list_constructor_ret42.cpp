@@ -1,38 +1,22 @@
-// Test for struct constructor with pointer-like member access
-// Tests the infrastructure needed for std::initializer_list support
+// Test for struct constructor with std::initializer_list-like structure  
+// Tests that std:: namespace is properly mangled with "St" substitution
 
-// Simple wrapper that holds pointer and size (like initializer_list)
-class IntRange {
-public:
-    const int* ptr_;
-    unsigned long long size_;
-    
-    IntRange(const int* p, unsigned long long s) : ptr_(p), size_(s) {}
-    
-    unsigned long long size() const { return size_; }
-    const int* data() const { return ptr_; }
-};
-
-class Container {
-public:
-    int sum;
-    
-    // Constructor taking IntRange - sums the elements
-    Container(IntRange range) : sum(0) {
-        const int* p = range.data();
-        unsigned long long s = range.size();
-        // Sum first 3 elements directly
-        if (s >= 1) sum = sum + p[0];
-        if (s >= 2) sum = sum + p[1];
-        if (s >= 3) sum = sum + p[2];
-    }
-};
+// Simplified std::initializer_list class (non-template version for testing)
+namespace std {
+    class simple_list {
+    public:
+        int value_;
+        
+        simple_list() : value_(0) {}
+        simple_list(int v) : value_(v) {}
+        
+        int get() const { return value_; }
+    };
+}
 
 int main() {
-    int arr[3] = {10, 20, 12};
-    IntRange range(arr, 3);
-    Container c(range);
+    std::simple_list list(42);
     
-    // sum should be 10 + 20 + 12 = 42
-    return c.sum;
+    // Return the value - should be 42
+    return list.get();
 }

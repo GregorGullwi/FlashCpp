@@ -3781,6 +3781,7 @@ ParseResult Parser::parse_struct_declaration()
 	} else if (!current_namespace_path.empty()) {
 		// Top-level class in a namespace - use namespace-qualified name for proper mangling
 		full_qualified_name = buildQualifiedNameHandle(current_namespace_path, struct_name);
+		qualified_struct_name = full_qualified_name;  // Also update qualified_struct_name for implicit constructors
 		type_name = full_qualified_name;  // TypeInfo should also use fully qualified name
 	}
 
@@ -6165,9 +6166,10 @@ ParseResult Parser::parse_struct_declaration()
 	// Skip implicit function generation for template classes (they'll be generated during instantiation)
 	if (!has_user_defined_constructor && !parsing_template_class_) {
 		// Create a default constructor node
+		// Use qualified_struct_name to include namespace for proper mangling
 		auto [default_ctor_node, default_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-			struct_name,
-			struct_name
+			qualified_struct_name,
+			qualified_struct_name
 		);
 
 		// Create an empty block for the constructor body
@@ -6194,9 +6196,10 @@ ParseResult Parser::parse_struct_declaration()
 	// Skip implicit function generation for template classes (they'll be generated during instantiation)
 	if (!has_user_defined_copy_constructor && !has_user_defined_move_constructor && !parsing_template_class_) {
 		// Create a copy constructor node: Type(const Type& other)
+		// Use qualified_struct_name to include namespace for proper mangling
 		auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-			struct_name,
-			struct_name
+			qualified_struct_name,
+			qualified_struct_name
 		);
 
 		// Create parameter: const Type& other
@@ -6316,9 +6319,10 @@ ParseResult Parser::parse_struct_declaration()
 	if (!has_user_defined_copy_constructor && !has_user_defined_copy_assignment &&
 	    !has_user_defined_move_assignment && !has_user_defined_destructor && !parsing_template_class_) {
 		// Create a move constructor node: Type(Type&& other)
+		// Use qualified_struct_name to include namespace for proper mangling
 		auto [move_ctor_node, move_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-			struct_name,
-			struct_name
+			qualified_struct_name,
+			qualified_struct_name
 		);
 
 		// Create parameter: Type&& other (rvalue reference)
@@ -12080,12 +12084,27 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 	}
 	
 	// Build namespace path from current symbol table state as string_view vector
-	auto namespace_path = gSymbolTable.build_current_namespace_path();
+	// But only if the parent_struct_name doesn't already contain the namespace
+	// (to avoid double-encoding the namespace in the mangled name)
 	std::vector<std::string_view> ns_path;
-	ns_path.reserve(namespace_path.size());
-	for (const auto& ns : namespace_path) {
-		// Both StackString and std::string have implicit conversion to std::string_view
-		ns_path.push_back(static_cast<std::string_view>(ns));
+	if (func_node.is_member_function()) {
+		std::string_view parent_name = func_node.parent_struct_name();
+		// If parent_struct_name already contains "::", namespace is embedded in struct name
+		// so we don't need to pass it separately
+		if (parent_name.find("::") == std::string_view::npos) {
+			auto namespace_path = gSymbolTable.build_current_namespace_path();
+			ns_path.reserve(namespace_path.size());
+			for (const auto& ns : namespace_path) {
+				ns_path.push_back(static_cast<std::string_view>(ns));
+			}
+		}
+	} else {
+		// Non-member function - use namespace path
+		auto namespace_path = gSymbolTable.build_current_namespace_path();
+		ns_path.reserve(namespace_path.size());
+		for (const auto& ns : namespace_path) {
+			ns_path.push_back(static_cast<std::string_view>(ns));
+		}
 	}
 	
 	// Generate the mangled name using the NameMangling helper
