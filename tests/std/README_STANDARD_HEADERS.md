@@ -351,13 +351,13 @@ The following features have been implemented to support standard headers:
 ```cpp
 // This was previously incorrectly parsed as a C-style cast:
 int x = 5;
-int y = (x) < 8 ? 10 : 20;  // Now correctly parsed as: (x < 8) ? 10 : 20
+int y = (x) < 8 ? 10 : 20;  // Now correctly parsed as: ((x) < 8) ? 10 : 20
 
 // Ternary chains with parenthesized expressions:
 int z = (x) < 3 ? 100 : ((x) < 6 ? 200 : 300);
 ```
 
-**Root cause:** When the parser encountered `(identifier)`, it would call `parse_type_specifier()` which would succeed for any identifier (creating a placeholder `Type::UserDefined` with `type_index == 0` for unknown identifiers). The C-style cast detection code would then treat this as a valid type cast and fail when parsing the expression after `<`.
+**Root cause:** When the parser encountered `(identifier)`, it would call `parse_type_specifier()` which would succeed for any identifier (creating a placeholder `Type::UserDefined` with `type_index == 0` for unknown identifiers). The C-style cast detection code would then treat `(x)` as a type cast and fail when parsing the expression after `<`.
 
 **Fix applied:** 
 - Added validation in `parse_unary_expression()` to check if a parsed "type" is actually a known type before treating the expression as a C-style cast
