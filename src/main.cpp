@@ -26,6 +26,7 @@
 #include "NameMangling.h"
 #include "TemplateProfilingStats.h"
 #include "AstNodeTypes.h"
+#include "NamespaceRegistry.h"
 
 // Only include ELF writer on non-Windows platforms
 #if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
@@ -37,6 +38,8 @@ bool g_enable_debug_output = false;
 
 // Global exception handling control
 bool g_enable_exceptions = true;
+
+NamespaceRegistry gNamespaceRegistry;
 
 // Timing helper
 struct PhaseTimer {
