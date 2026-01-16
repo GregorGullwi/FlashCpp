@@ -76,9 +76,9 @@ public:
 			return it->second;
 		}
 
-		if (entries_.size() >= NamespaceHandle::INVALID_HANDLE) {
+		if (entries_.size() >= static_cast<size_t>(NamespaceHandle::INVALID_HANDLE)) {
 			assert(false && "Namespace registry capacity exceeded (65535 entries)");
-			return NamespaceHandle{};
+			return NamespaceHandle{NamespaceHandle::INVALID_HANDLE};
 		}
 
 		NamespaceEntry entry;
@@ -103,6 +103,9 @@ public:
 		for (std::string_view component : components) {
 			StringHandle name_handle = StringTable::getOrInternStringHandle(component);
 			current = getOrCreateNamespace(current, name_handle);
+			if (!current.isValid()) {
+				return current;
+			}
 		}
 		return current;
 	}
@@ -111,6 +114,9 @@ public:
 		NamespaceHandle current = start;
 		for (StringHandle name_handle : components) {
 			current = getOrCreateNamespace(current, name_handle);
+			if (!current.isValid()) {
+				return current;
+			}
 		}
 		return current;
 	}
