@@ -858,15 +858,20 @@ inline MangledName generateMangledName(
 	appendTypeCode(builder, return_type);
 
 	// Add parameter type codes
-	for (const auto& param_type : param_types) {
-		appendTypeCode(builder, param_type);
+	// For MSVC, if there are no parameters, use 'X' to indicate void parameter list
+	if (param_types.empty()) {
+		builder.append('X');
+	} else {
+		for (const auto& param_type : param_types) {
+			appendTypeCode(builder, param_type);
+		}
 	}
 
 	// End marker - different for variadic vs non-variadic
 	if (is_variadic) {
 		builder.append("ZZ");  // Variadic functions end with 'ZZ' in MSVC mangling
 	} else {
-		builder.append("@Z");  // Non-variadic functions end with '@Z'
+		builder.append('Z');  // Non-variadic functions end with 'Z'
 	}
 
 	return MangledName(builder.commit());
@@ -947,16 +952,21 @@ inline MangledName generateMangledName(
 	appendTypeCode(builder, return_type);
 
 	// Add parameter type codes directly from param nodes
-	for (const auto& param : param_nodes) {
-		const DeclarationNode& param_decl = param.as<DeclarationNode>();
-		appendTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
+	// For MSVC, if there are no parameters, use 'X' to indicate void parameter list
+	if (param_nodes.empty()) {
+		builder.append('X');
+	} else {
+		for (const auto& param : param_nodes) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			appendTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
+		}
 	}
 
 	// End marker
 	if (is_variadic) {
 		builder.append("ZZ");
 	} else {
-		builder.append("@Z");
+		builder.append('Z');
 	}
 
 	return MangledName(builder.commit());
