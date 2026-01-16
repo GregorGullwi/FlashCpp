@@ -10771,11 +10771,19 @@ private:
 					const auto& decl = var_decl.declaration();
 					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 					lhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+					// Arrays decay to pointers in expressions - treat them as pointer_depth == 1
+					if (decl.is_array() && lhs_pointer_depth == 0) {
+						lhs_pointer_depth = 1;
+					}
 					lhs_type_node = &type_node;
 				} else if (symbol && symbol->is<DeclarationNode>()) {
 					const auto& decl = symbol->as<DeclarationNode>();
 					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 					lhs_pointer_depth = static_cast<int>(type_node.pointer_depth());
+					// Arrays decay to pointers in expressions - treat them as pointer_depth == 1
+					if (decl.is_array() && lhs_pointer_depth == 0) {
+						lhs_pointer_depth = 1;
+					}
 					lhs_type_node = &type_node;
 				}
 			}

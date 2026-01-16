@@ -3937,6 +3937,10 @@ private:
 							// Now dereference: load from [register + 0]
 							int value_size_bytes = ref_it->second.value_size_bits / 8;
 							emitMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0, value_size_bytes);
+						} else if (lhs_var_id->second.is_array) {
+							// Source is an array - use LEA to get its address (array-to-pointer decay)
+							ctx.result_physical_reg = allocateRegisterWithSpilling();
+							emitLeaFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
 						} else {
 							// Not a reference, load normally
 							// For integers, use regular MOV
@@ -4599,6 +4603,7 @@ private:
 	struct VariableInfo {
 		int offset = INT_MIN;  // Stack offset from RBP (INT_MIN = unallocated)
 		int size_in_bits = 0;  // Size in bits
+		bool is_array = false; // True if this variable is an array (for array-to-pointer decay)
 	};
 
 	struct StackVariableScope
@@ -4679,6 +4684,7 @@ private:
 			StringHandle var_name{};  // Phase 5: StringHandle for efficient storage
 			int size_in_bits{};
 			size_t alignment{};  // Custom alignment from alignas(n), 0 = use natural alignment
+			bool is_array{};     // True if this variable is an array (for array-to-pointer decay)
 		};
 		std::vector<VarDecl> local_vars;
 
@@ -4748,7 +4754,7 @@ private:
 				
 				func_stack_space.named_vars_size += (total_size_bits / 8);
 				// Phase 5: Store StringHandle directly for efficient variable tracking
-				local_vars.push_back(VarDecl{ .var_name = StringTable::getOrInternStringHandle(var_name), .size_in_bits = total_size_bits, .alignment = custom_alignment });
+				local_vars.push_back(VarDecl{ .var_name = StringTable::getOrInternStringHandle(var_name), .size_in_bits = total_size_bits, .alignment = custom_alignment, .is_array = is_array });
 			}
 			else {
 				// Track TempVars and their sizes from typed payloads or legacy operand format
@@ -4885,8 +4891,8 @@ private:
 			// Allocate space for the variable
 			stack_offset = aligned_offset - (local_var.size_in_bits / 8);
 
-			// Store both offset and size in unified structure
-			var_scope.variables.insert_or_assign(local_var.var_name, VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits});
+			// Store both offset and size in unified structure, including is_array flag
+			var_scope.variables.insert_or_assign(local_var.var_name, VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits, local_var.is_array});
 		}
 
 		// Calculate space needed for TempVars
@@ -8076,6 +8082,19 @@ private:
 					}
 					assert(src_it != current_scope.variables.end());
 					src_offset = src_it->second.offset;
+					
+					// Check if source is an array - for array-to-pointer decay, we need LEA
+					if (src_it->second.is_array) {
+						// Source is an array being assigned to a pointer - use LEA to get address
+						X64Register addr_reg = allocateRegisterWithSpilling();
+						emitLeaFromFrame(addr_reg, src_offset);
+						emitMovToFrameSized(
+							SizedRegister{addr_reg, 64, false},
+							SizedStackSlot{dst_offset, 64, false}
+						);
+						regAlloc.release(addr_reg);
+						return;  // Early return - we've handled this case
+					}
 				}
 
 				if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {

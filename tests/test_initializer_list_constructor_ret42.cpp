@@ -3,6 +3,7 @@
 // 1. std:: namespace is properly mangled with "St" substitution
 // 2. Large struct parameters (>64 bits) are passed by pointer correctly
 // 3. Compiler generates backing array and initializer_list struct for brace initialization
+// 4. While loops work correctly with pointer arithmetic
 
 namespace std {
     template<typename T>
@@ -27,10 +28,12 @@ public:
     Container(std::initializer_list<int> list) : sum_(0) {
         const int* ptr = list.begin();
         unsigned long sz = list.size();
-        // Sum first 3 elements
-        if (sz > 0) sum_ = sum_ + *ptr;
-        if (sz > 1) sum_ = sum_ + *(ptr + 1);
-        if (sz > 2) sum_ = sum_ + *(ptr + 2);
+        unsigned long i = 0;
+        // Sum all elements using a while loop
+        while (i < sz) {
+            sum_ = sum_ + *(ptr + i);
+            i = i + 1;
+        }
     }
     
     int get_sum() const { return sum_; }
