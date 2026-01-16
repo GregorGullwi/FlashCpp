@@ -133,6 +133,23 @@ static size_t getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
 	return 0;  // Will be resolved during member access
 }
 
+static std::vector<std::string_view> buildNamespaceComponentViews(NamespaceHandle handle) {
+	std::vector<std::string_view> components;
+	if (!handle.isValid() || handle.isGlobal()) {
+		return components;
+	}
+	std::vector<NamespaceHandle> ancestors = gNamespaceRegistry.getAncestors(handle);
+	if (ancestors.empty()) {
+		return components;
+	}
+	components.reserve(ancestors.size());
+	for (auto it = ancestors.rbegin(); it != ancestors.rend(); ++it) {
+		const NamespaceEntry& entry = gNamespaceRegistry.getEntry(*it);
+		components.push_back(StringTable::getStringView(entry.name));
+	}
+	return components;
+}
+
 // Helper function to find all local variable declarations in an AST node
 static void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<StringHandle>& var_names) {
 	if (node.is<VariableDeclarationNode>()) {
@@ -12109,12 +12126,10 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 		return;
 	}
 
-	// Build namespace path from current symbol table state as string vector
+	// Build namespace path from current symbol table state as string_view vector
 	// For member functions, only build namespace path if parent_struct_name doesn't already contain namespace
 	// (to avoid double-encoding the namespace in the mangled name)
-	// NOTE: We use std::string instead of std::string_view to avoid dangling references
-	// when the NamespacePath (vector<StringType>) goes out of scope
-	std::vector<std::string> ns_path;
+	std::vector<std::string_view> ns_path;
 	bool should_get_namespace = true;
 	
 	if (func_node.is_member_function()) {
@@ -12127,16 +12142,8 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 	}
 	
 	if (should_get_namespace) {
-		auto namespace_path = gSymbolTable.build_current_namespace_path();
-		ns_path.reserve(namespace_path.size());
-		for (const auto& ns : namespace_path) {
-			// Convert StringType to std::string to avoid dangling string_view
-#if USE_OLD_STRING_APPROACH
-			ns_path.push_back(ns);
-#else
-			ns_path.push_back(std::string(ns.view()));
-#endif
-		}
+		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+		ns_path = buildNamespaceComponentViews(current_handle);
 	}
 	
 	// Generate the mangled name using the NameMangling helper
@@ -22434,13 +22441,11 @@ std::string Parser::buildPrettyFunctionSignature(const FunctionDeclarationNode& 
 	result += " ";
 
 	// Add namespace prefix if we're in a namespace
-	auto namespace_path = gSymbolTable.build_current_namespace_path();
-	for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-		result += ns + "::";
-#else
-		result += std::string(ns.view()) + "::";
-#endif
+	NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+	std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_handle);
+	if (!qualified_namespace.empty()) {
+		result += qualified_namespace;
+		result += "::";
 	}
 
 	// Add class/struct prefix if this is a member function
@@ -22667,17 +22672,18 @@ ParseResult Parser::validate_and_add_base_class(
 	// This handles cases like: struct Derived : public inner::Base { }
 	// where inner::Base is actually ns::inner::Base and we're inside ns
 	if (base_type_it == gTypesByName.end()) {
-		auto namespace_path = gSymbolTable.build_current_namespace_path();
-		if (!namespace_path.empty()) {
+		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+		auto namespace_components = buildNamespaceComponentViews(current_handle);
+		if (!namespace_components.empty()) {
 			// Try prepending each level of the namespace path from outermost to innermost
 			// E.g., if we're in ns::outer and looking for "inner::Base", try:
 			// 1. "ns::outer::inner::Base" (not likely, but check)
 			// 2. "ns::inner::Base" (more likely for sibling namespaces)
-			for (size_t i = namespace_path.size(); i > 0 && base_type_it == gTypesByName.end(); --i) {
+			for (size_t i = namespace_components.size(); i > 0 && base_type_it == gTypesByName.end(); --i) {
 				StringBuilder qualified_name;
 				for (size_t j = 0; j < i; ++j) {
 					if (j > 0) qualified_name.append("::");
-					qualified_name.append(namespace_path[j]);
+					qualified_name.append(namespace_components[j]);
 				}
 				qualified_name.append("::").append(base_class_name);
 				std::string_view qualified_name_view = qualified_name.commit();
@@ -24029,15 +24035,11 @@ ParseResult Parser::parse_template_declaration() {
 		gConceptRegistry.registerConcept(concept_name_token.value(), concept_node);
 		
 		// Also register with namespace-qualified name if we're in a namespace
-		auto namespace_path = gSymbolTable.build_current_namespace_path();
-		if (!namespace_path.empty()) {
-			std::string qualified_name;
-			for (const auto& ns : namespace_path) {
-				qualified_name += ns;
-				qualified_name += "::";
-			}
-			qualified_name += concept_name_token.value();
-			gConceptRegistry.registerConcept(qualified_name, concept_node);
+		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+		if (!current_handle.isGlobal()) {
+			StringHandle concept_handle = StringTable::getOrInternStringHandle(concept_name_token.value());
+			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, concept_handle);
+			gConceptRegistry.registerConcept(StringTable::getStringView(qualified_handle), concept_node);
 		}
 		
 		return saved_position.success(concept_node);
@@ -24408,15 +24410,11 @@ ParseResult Parser::parse_template_declaration() {
 			FLASH_LOG(Parser, Debug, "Registered variable template partial specialization: ", pattern_key);
 			
 			// If in a namespace, also register with qualified pattern name
-			auto namespace_path = gSymbolTable.build_current_namespace_path();
-			if (!namespace_path.empty()) {
-				StringBuilder qualified_pattern_name;
-				for (size_t i = 0; i < namespace_path.size(); ++i) {
-					qualified_pattern_name.append(namespace_path[i]);
-					qualified_pattern_name.append("::");
-				}
-				qualified_pattern_name.append(pattern_key);
-				std::string_view qualified_pattern_key = qualified_pattern_name.commit();
+			NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+			if (!current_handle.isGlobal()) {
+				StringHandle pattern_handle = StringTable::getOrInternStringHandle(pattern_key);
+				StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, pattern_handle);
+				std::string_view qualified_pattern_key = StringTable::getStringView(qualified_handle);
 				gTemplateRegistry.registerVariableTemplate(qualified_pattern_key, template_var_node);
 				FLASH_LOG(Parser, Debug, "Registered variable template partial specialization with qualified name: ", qualified_pattern_key);
 			}
@@ -24424,9 +24422,11 @@ ParseResult Parser::parse_template_declaration() {
 			gTemplateRegistry.registerVariableTemplate(var_name, template_var_node);
 			
 			// If in a namespace, also register with qualified name for namespace-qualified lookups
-			auto namespace_path = gSymbolTable.build_current_namespace_path();
-			if (!namespace_path.empty()) {
-				std::string_view qualified_name = buildQualifiedName(namespace_path, var_name);
+			NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+			if (!current_handle.isGlobal()) {
+				StringHandle var_handle = StringTable::getOrInternStringHandle(var_name);
+				StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, var_handle);
+				std::string_view qualified_name = StringTable::getStringView(qualified_handle);
 				FLASH_LOG_FORMAT(Templates, Debug, "Registering variable template with qualified name: {}", qualified_name);
 				gTemplateRegistry.registerVariableTemplate(qualified_name, template_var_node);
 			}
@@ -26471,22 +26471,16 @@ if (struct_type_info.getStructInfo()) {
 			// Register the specialization with the template registry
 			// This makes it available when the template is instantiated with these args
 			// Build the qualified name including current namespace path
-			auto namespace_path = gSymbolTable.build_current_namespace_path();
-			std::string_view qualified_specialization_name = buildQualifiedName(namespace_path, func_base_name);
+			NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+			StringHandle func_handle = StringTable::getOrInternStringHandle(func_base_name);
+			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, func_handle);
+			std::string_view qualified_specialization_name = StringTable::getStringView(qualified_handle);
 			
 			ASTNode func_node_copy = *func_result.node();
 			
 			// Compute and set the proper mangled name for the specialization
 			// Extract namespace path as string_view vector
-			std::vector<std::string_view> ns_path;
-			ns_path.reserve(namespace_path.size());
-			for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-				ns_path.push_back(ns);
-#else
-				ns_path.push_back(StringTable::getStringView(ns));
-#endif
-			}
+			std::vector<std::string_view> ns_path = buildNamespaceComponentViews(current_handle);
 			
 			// Generate proper C++ ABI mangled name
 			FunctionDeclarationNode& func_for_mangling = func_node_copy.as<FunctionDeclarationNode>();
@@ -26575,9 +26569,11 @@ if (struct_type_info.getStructInfo()) {
 		gTemplateRegistry.registerTemplate(simple_name, template_func_node);
 		
 		// If in a namespace, also register with qualified name for namespace-qualified lookups
-		auto namespace_path = gSymbolTable.build_current_namespace_path();
-		if (!namespace_path.empty()) {
-			std::string_view qualified_name = buildQualifiedName(namespace_path, simple_name);
+		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+		if (!current_handle.isGlobal()) {
+			StringHandle name_handle = StringTable::getOrInternStringHandle(simple_name);
+			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, name_handle);
+			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
 			FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
 			gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
 		}
@@ -26633,9 +26629,11 @@ if (struct_type_info.getStructInfo()) {
 		gTemplateRegistry.registerTemplate(simple_name, template_class_node);
 		
 		// If in a namespace, also register with qualified name for namespace-qualified lookups
-		auto namespace_path = gSymbolTable.build_current_namespace_path();
-		if (!namespace_path.empty()) {
-			std::string_view qualified_name = buildQualifiedName(namespace_path, simple_name);
+		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+		if (!current_handle.isGlobal()) {
+			StringHandle name_handle = StringTable::getOrInternStringHandle(simple_name);
+			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, name_handle);
+			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
 			FLASH_LOG_FORMAT(Templates, Debug, "Registering template with qualified name: {}", qualified_name);
 			gTemplateRegistry.registerTemplate(qualified_name, template_class_node);
 		}
@@ -30319,13 +30317,15 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	// we need to also try "std::__detail::__or_fn" since templates are registered
 	// with their fully-qualified names.
 	if (!all_templates || all_templates->empty()) {
-		auto namespace_path = gSymbolTable.build_current_namespace_path();
-		if (!namespace_path.empty()) {
+		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+		if (!current_handle.isGlobal()) {
 			// Build the fully-qualified name by prepending the current namespace path
-			std::string_view qualified_name_view = buildQualifiedName(namespace_path, template_name);
-			// Note: qualified_name_view points to StringBuilder's internal buffer,
-			// which is valid for the duration of this function. The lookup only
-			// needs the string_view temporarily, so no std::string allocation needed.
+			StringHandle template_handle = StringTable::getOrInternStringHandle(template_name);
+			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, template_handle);
+			std::string_view qualified_name_view = StringTable::getStringView(qualified_handle);
+			// Note: qualified_name_view points to StringTable storage, which remains
+			// valid for the duration of this function. The lookup only needs the
+			// string_view temporarily, so no std::string allocation needed.
 			
 			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Template '{}' not found, trying qualified name '{}'",
 				recursion_depth, template_name, qualified_name_view);
