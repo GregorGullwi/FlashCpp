@@ -3,7 +3,7 @@
 // 1. std:: namespace is properly mangled with "St" substitution
 // 2. Large struct parameters (>64 bits) are passed by pointer correctly
 // 3. Compiler generates backing array and initializer_list struct for brace initialization
-// 4. While loops work correctly with pointer arithmetic
+// 4. Array-to-pointer decay works correctly in pointer arithmetic expressions (ptr + index)
 
 namespace std {
     template<typename T>

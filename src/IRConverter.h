@@ -4603,7 +4603,7 @@ private:
 	struct VariableInfo {
 		int offset = INT_MIN;  // Stack offset from RBP (INT_MIN = unallocated)
 		int size_in_bits = 0;  // Size in bits
-		bool is_array = false; // True if this variable is an array (for array-to-pointer decay)
+		bool is_array = false; // True if this is an array declaration (enables array-to-pointer decay in expressions and assignments)
 	};
 
 	struct StackVariableScope
