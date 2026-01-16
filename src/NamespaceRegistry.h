@@ -58,7 +58,7 @@ public:
 
 		NamespaceEntry global;
 		global.name = StringHandle{};
-		global.parent = NamespaceHandle{NamespaceHandle::INVALID_HANDLE};
+		global.parent = GLOBAL_NAMESPACE;
 		global.qualified_name = StringHandle{};
 		global.depth = 0;
 		entries_.push_back(global);
@@ -76,7 +76,7 @@ public:
 			return it->second;
 		}
 
-		if (entries_.size() >= static_cast<size_t>(NamespaceHandle::INVALID_HANDLE)) {
+		if (entries_.size() > static_cast<size_t>(NamespaceHandle::INVALID_HANDLE) - 1) {
 			assert(false && "Namespace registry capacity exceeded (65535 entries)");
 			return NamespaceHandle{NamespaceHandle::INVALID_HANDLE};
 		}

@@ -656,9 +656,10 @@ public:
 		NamespaceHandle parent_handle = get_current_namespace_handle();
 		StringHandle name_handle = StringTable::getOrInternStringHandle(namespace_name);
 		NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(parent_handle, name_handle);
-		Scope scope(ScopeType::Namespace, symbol_table_stack_.size(), StringType<>(namespace_name));
-		scope.namespace_handle = ns_handle;
-		symbol_table_stack_.push_back(std::move(scope));
+		enter_namespace(ns_handle);
+		if (!ns_handle.isValid() && !symbol_table_stack_.empty()) {
+			symbol_table_stack_.back().namespace_name = StringType<>(namespace_name);
+		}
 	}
 
 	void exit_scope() {
