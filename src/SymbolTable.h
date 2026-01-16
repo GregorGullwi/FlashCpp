@@ -167,7 +167,7 @@ public:
 									if (current_scope.scope_type == ScopeType::Namespace || current_scope.scope_type == ScopeType::Global) {
 										NamespaceHandle ns_handle = get_current_namespace_handle();
 										auto& ns_symbols = namespace_symbols_[ns_handle];
-										StringType<32> key(identifier);
+										StringHandle key = StringTable::getOrInternStringHandle(identifier);
 										
 										auto ns_it = ns_symbols.find(key);
 										if (ns_it != ns_symbols.end()) {
@@ -215,7 +215,7 @@ public:
 		if (current_scope.scope_type == ScopeType::Namespace || current_scope.scope_type == ScopeType::Global) {
 			NamespaceHandle ns_handle = get_current_namespace_handle();
 			auto& ns_symbols = namespace_symbols_[ns_handle];
-			StringType<32> key(identifier);
+			StringHandle key = StringTable::getOrInternStringHandle(identifier);
 
 			auto ns_it = ns_symbols.find(key);
 			if (ns_it == ns_symbols.end()) {
@@ -336,7 +336,7 @@ public:
 				if (!scope_namespace.isGlobal()) {
 					auto ns_it = namespace_symbols_.find(scope_namespace);
 					if (ns_it != namespace_symbols_.end()) {
-						StringType<32> key(identifier);
+						StringHandle key = StringTable::getOrInternStringHandle(identifier);
 						auto symbol_it = ns_it->second.find(key);
 						if (symbol_it != ns_it->second.end() && !symbol_it->second.empty()) {
 							return symbol_it->second[0];
@@ -409,7 +409,7 @@ public:
 				if (!scope_namespace.isGlobal()) {
 					auto ns_it = namespace_symbols_.find(scope_namespace);
 					if (ns_it != namespace_symbols_.end()) {
-						StringType<32> key(identifier);
+						StringHandle key = StringTable::getOrInternStringHandle(identifier);
 						auto symbol_it = ns_it->second.find(key);
 						if (symbol_it != ns_it->second.end()) {
 							return symbol_it->second;
@@ -434,7 +434,7 @@ public:
 			return {};
 		}
 
-		StringType<32> key(identifier);
+		StringHandle key = StringTable::getOrInternStringHandle(identifier);
 		auto symbol_it = ns_it->second.find(key);
 		if (symbol_it == ns_it->second.end()) {
 			return {};
@@ -649,7 +649,7 @@ public:
 			return std::nullopt;
 		}
 
-		StringType<32> key(identifier);
+		StringHandle key = StringTable::getOrInternStringHandle(identifier);
 		auto symbol_it = ns_it->second.find(key);
 		if (symbol_it == ns_it->second.end() || symbol_it->second.empty()) {
 			return std::nullopt;
@@ -752,7 +752,7 @@ private:
 	// Persistent map of namespace contents
 	// Uses NamespaceHandle as key to avoid string concatenation
 	// Maps: namespace_handle -> (symbol_name -> vector<ASTNode>) to support overloading
-	std::unordered_map<NamespaceHandle, std::unordered_map<StringType<32>, std::vector<ASTNode>>> namespace_symbols_;
+	std::unordered_map<NamespaceHandle, std::unordered_map<StringHandle, std::vector<ASTNode>>> namespace_symbols_;
 	
 	// Dedicated string allocator for symbol table keys
 	// Ensures string_view keys remain valid for the lifetime of the symbol table

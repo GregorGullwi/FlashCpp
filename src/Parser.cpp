@@ -133,19 +133,22 @@ static size_t getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
 	return 0;  // Will be resolved during member access
 }
 
-// Returns namespace components ordered from outermost to innermost for string building/mangling.
-static std::vector<std::string_view> buildNamespaceComponentViews(NamespaceHandle handle) {
+// Split a qualified namespace string ("a::b::c") into components for mangling.
+static std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified_namespace) {
 	std::vector<std::string_view> components;
-	if (!handle.isValid() || handle.isGlobal()) {
+	if (qualified_namespace.empty()) {
 		return components;
 	}
-	NamespaceHandle current = handle;
-	while (current.isValid() && !current.isGlobal()) {
-		const NamespaceEntry& entry = gNamespaceRegistry.getEntry(current);
-		components.push_back(StringTable::getStringView(entry.name));
-		current = entry.parent;
+	size_t start = 0;
+	while (true) {
+		size_t pos = qualified_namespace.find("::", start);
+		if (pos == std::string_view::npos) {
+			components.push_back(qualified_namespace.substr(start));
+			break;
+		}
+		components.push_back(qualified_namespace.substr(start, pos - start));
+		start = pos + 2;
 	}
-	std::reverse(components.begin(), components.end());
 	return components;
 }
 
@@ -3774,9 +3777,9 @@ ParseResult Parser::parse_struct_declaration()
 	StringHandle qualified_struct_name = struct_name;
 	StringHandle type_name = struct_name;
 	
-	// Get namespace handle and components early so we can use it for both TypeInfo and StructTypeInfo
+	// Get namespace handle and qualified name early so we can use it for both TypeInfo and StructTypeInfo
 	NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
-	auto namespace_components = buildNamespaceComponentViews(current_namespace_handle);
+	std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_namespace_handle);
 	
 	// Build the full qualified name for use in mangling
 	// - For nested classes: Parent::Child
@@ -3795,7 +3798,7 @@ ParseResult Parser::parse_struct_declaration()
 			.append(struct_name));
 		type_name = qualified_struct_name;
 		full_qualified_name = qualified_struct_name;
-	} else if (!namespace_components.empty()) {
+	} else if (!qualified_namespace.empty()) {
 		// Top-level class in a namespace - use namespace-qualified name for proper mangling
 		full_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, struct_name);
 		qualified_struct_name = full_qualified_name;  // Also update qualified_struct_name for implicit constructors
@@ -3813,14 +3816,14 @@ ParseResult Parser::parse_struct_declaration()
 	// For namespace classes, also register with the simple name for 'this' pointer lookup
 	// during member function code generation. The TypeInfo's name is fully qualified (ns::Test)
 	// but parent_struct_name is just "Test", so we need this alias for lookups.
-	if (!is_nested_class && !namespace_components.empty()) {
+	if (!is_nested_class && !qualified_namespace.empty()) {
 		if (gTypesByName.find(struct_name) == gTypesByName.end()) {
 			gTypesByName.emplace(struct_name, &struct_type_info);
 		}
 	}
 
 	// If inside an inline namespace, register the parent-qualified name (e.g., outer::Foo)
-	if (!namespace_components.empty() && !inline_namespace_stack_.empty() && inline_namespace_stack_.back() && !parsing_template_class_) {
+	if (!qualified_namespace.empty() && !inline_namespace_stack_.empty() && inline_namespace_stack_.back() && !parsing_template_class_) {
 		NamespaceHandle parent_namespace_handle = gNamespaceRegistry.getParent(current_namespace_handle);
 		StringHandle parent_handle = gNamespaceRegistry.buildQualifiedIdentifier(parent_namespace_handle, struct_name);
 		if (gTypesByName.find(parent_handle) == gTypesByName.end()) {
@@ -3830,7 +3833,7 @@ ParseResult Parser::parse_struct_declaration()
 	
 	// Register with namespace-qualified names for all levels of the namespace path
 	// This allows lookups like "inner::Base" when we're in namespace "ns" to find "ns::inner::Base"
-	if (!namespace_components.empty() && !is_nested_class) {
+	if (!qualified_namespace.empty() && !is_nested_class) {
 		// full_qualified_name already computed above, just log if needed
 		FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name), 
 		          "' with namespace-qualified name '", StringTable::getStringView(full_qualified_name), "'");
@@ -3838,13 +3841,10 @@ ParseResult Parser::parse_struct_declaration()
 		// Also register intermediate names (e.g., "inner::Base" for "ns::inner::Base")
 		// This allows sibling namespace access patterns like:
 		// namespace ns { namespace inner { struct Base {}; } struct Derived : public inner::Base {}; }
-		for (size_t start = 1; start < namespace_components.size(); ++start) {
+		for (size_t pos = qualified_namespace.find("::"); pos != std::string_view::npos; pos = qualified_namespace.find("::", pos + 2)) {
+			std::string_view suffix = qualified_namespace.substr(pos + 2);
 			StringBuilder partial_qualified;
-			for (size_t j = start; j < namespace_components.size(); ++j) {
-				if (j > start) partial_qualified.append("::");
-				partial_qualified.append(namespace_components[j]);
-			}
-			partial_qualified.append("::").append(struct_name);
+			partial_qualified.append(suffix).append("::").append(struct_name);
 			std::string_view partial_view = partial_qualified.commit();
 			auto partial_handle = StringTable::getOrInternStringHandle(partial_view);
 			if (gTypesByName.find(partial_handle) == gTypesByName.end()) {
@@ -12145,7 +12145,8 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 	
 	if (should_get_namespace) {
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		ns_path = buildNamespaceComponentViews(current_handle);
+		std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_handle);
+		ns_path = splitQualifiedNamespace(qualified_namespace);
 	}
 	
 	// Generate the mangled name using the NameMangling helper
@@ -22434,50 +22435,47 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 }
 
 std::string Parser::buildPrettyFunctionSignature(const FunctionDeclarationNode& func_node) const {
-	std::string result;
+	StringBuilder result;
 
 	// Get return type from the function's declaration node
 	const DeclarationNode& decl = func_node.decl_node();
 	const TypeSpecifierNode& ret_type = decl.type_node().as<TypeSpecifierNode>();
-	result += ret_type.getReadableString();
-	result += " ";
+	result.append(ret_type.getReadableString()).append(" ");
 
 	// Add namespace prefix if we're in a namespace
 	NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
 	std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_handle);
 	if (!qualified_namespace.empty()) {
-		result += qualified_namespace;
-		result += "::";
+		result.append(qualified_namespace).append("::");
 	}
 
 	// Add class/struct prefix if this is a member function
 	if (func_node.is_member_function()) {
-		result += func_node.parent_struct_name();
-		result += "::";
+		result.append(func_node.parent_struct_name()).append("::");
 	}
 
 	// Add function name
-	result += decl.identifier_token().value();
+	result.append(decl.identifier_token().value());
 
 	// Add parameters
-	result += "(";
+	result.append("(");
 	const auto& params = func_node.parameter_nodes();
 	for (size_t i = 0; i < params.size(); ++i) {
-		if (i > 0) result += ", ";
+		if (i > 0) result.append(", ");
 		const auto& param_decl = params[i].as<DeclarationNode>();
 		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-		result += param_type.getReadableString();
+		result.append(param_type.getReadableString());
 	}
 
 	// Add variadic ellipsis if this is a variadic function
 	if (func_node.is_variadic()) {
-		if (!params.empty()) result += ", ";
-		result += "...";
+		if (!params.empty()) result.append(", ");
+		result.append("...");
 	}
 
-	result += ")";
+	result.append(")");
 
-	return result;
+	return std::string(result.commit());
 }
 
 // Check if an identifier name is a template parameter in current scope
@@ -22675,20 +22673,26 @@ ParseResult Parser::validate_and_add_base_class(
 	// where inner::Base is actually ns::inner::Base and we're inside ns
 	if (base_type_it == gTypesByName.end()) {
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		auto namespace_components = buildNamespaceComponentViews(current_handle);
-		if (!namespace_components.empty()) {
-			// Try prepending each level of the namespace path from outermost to innermost
-			// E.g., if we're in ns::outer and looking for "inner::Base", try:
-			// 1. "ns::outer::inner::Base" (not likely, but check)
-			// 2. "ns::inner::Base" (more likely for sibling namespaces)
-			for (size_t i = namespace_components.size(); i > 0 && base_type_it == gTypesByName.end(); --i) {
-				StringBuilder qualified_name;
-				for (size_t j = 0; j < i; ++j) {
-					if (j > 0) qualified_name.append("::");
-					qualified_name.append(namespace_components[j]);
-				}
-				qualified_name.append("::").append(base_class_name);
-				std::string_view qualified_name_view = qualified_name.commit();
+		std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_handle);
+		if (!qualified_namespace.empty()) {
+			// Try the full namespace qualification first (e.g., ns::outer::inner::Base).
+			StringBuilder qualified_name;
+			qualified_name.append(qualified_namespace).append("::").append(base_class_name);
+			std::string_view qualified_name_view = qualified_name.commit();
+			base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name_view));
+			if (base_type_it != gTypesByName.end()) {
+				FLASH_LOG(Parser, Debug, "Found base class '", base_class_name, 
+				          "' as '", qualified_name_view, "' in current namespace context");
+			}
+			
+			// Try suffixes like inner::Base, deep::Base for sibling namespace access.
+			for (size_t pos = qualified_namespace.find("::");
+			     pos != std::string_view::npos && base_type_it == gTypesByName.end();
+			     pos = qualified_namespace.find("::", pos + 2)) {
+				std::string_view suffix = qualified_namespace.substr(pos + 2);
+				StringBuilder suffix_builder;
+				suffix_builder.append(suffix).append("::").append(base_class_name);
+				qualified_name_view = suffix_builder.commit();
 				base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name_view));
 				
 				if (base_type_it != gTypesByName.end()) {
@@ -26482,7 +26486,8 @@ if (struct_type_info.getStructInfo()) {
 			
 			// Compute and set the proper mangled name for the specialization
 			// Extract namespace path as string_view vector
-			std::vector<std::string_view> ns_path = buildNamespaceComponentViews(current_handle);
+			std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(current_handle);
+			std::vector<std::string_view> ns_path = splitQualifiedNamespace(qualified_namespace);
 			
 			// Generate proper C++ ABI mangled name
 			FunctionDeclarationNode& func_for_mangling = func_node_copy.as<FunctionDeclarationNode>();

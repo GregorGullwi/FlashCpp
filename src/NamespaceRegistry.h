@@ -175,13 +175,12 @@ public:
 		}
 
 		StringBuilder sb;
-		bool first = true;
-		for (StringHandle component : components) {
-			if (!first) {
-				sb.append("::");
-			}
-			first = false;
-			sb.append(StringTable::getStringView(component));
+		auto it = components.begin();
+		sb.append(StringTable::getStringView(*it));
+		++it;
+		for (; it != components.end(); ++it) {
+			sb.append("::");
+			sb.append(StringTable::getStringView(*it));
 		}
 		return StringTable::createStringHandle(sb);
 	}
