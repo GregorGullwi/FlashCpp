@@ -139,12 +139,13 @@ static std::vector<std::string_view> buildNamespaceComponentViews(NamespaceHandl
 	if (!handle.isValid() || handle.isGlobal()) {
 		return components;
 	}
-	std::vector<NamespaceHandle> ancestors = gNamespaceRegistry.getAncestors(handle);
-	components.reserve(ancestors.size());
-	for (auto it = ancestors.rbegin(); it != ancestors.rend(); ++it) {
-		const NamespaceEntry& entry = gNamespaceRegistry.getEntry(*it);
+	NamespaceHandle current = handle;
+	while (current.isValid() && !current.isGlobal()) {
+		const NamespaceEntry& entry = gNamespaceRegistry.getEntry(current);
 		components.push_back(StringTable::getStringView(entry.name));
+		current = entry.parent;
 	}
+	std::reverse(components.begin(), components.end());
 	return components;
 }
 

@@ -7781,9 +7781,9 @@ private:
 			// This handles cases like: using namespace X; int y = X_var;
 			// where X_var is defined in namespace X
 			if (!symbol.has_value()) {
-				auto using_directives = symbol_table.get_current_using_directives();
-				for (const auto& ns_path : using_directives) {
-					symbol = global_symbol_table_->lookup_qualified(ns_path, identifierNode.name());
+				auto using_directives = symbol_table.get_current_using_directive_handles();
+				for (NamespaceHandle ns_handle : using_directives) {
+					symbol = global_symbol_table_->lookup_qualified(ns_handle, identifierNode.name());
 					if (symbol.has_value()) {
 						is_global = true;
 						break;

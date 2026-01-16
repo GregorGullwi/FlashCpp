@@ -210,23 +210,6 @@ public:
 		return false;
 	}
 
-	std::vector<NamespaceHandle> getAncestors(NamespaceHandle handle) const {
-		std::vector<NamespaceHandle> result;
-		if (!handle.isValid()) {
-			return result;
-		}
-		const size_t reserve_depth = getEntry(handle).depth;
-		if (reserve_depth > 0) {
-			result.reserve(reserve_depth);
-		}
-		NamespaceHandle current = handle;
-		while (current.isValid() && !current.isGlobal()) {
-			result.push_back(current);
-			current = getParent(current);
-		}
-		return result;
-	}
-
 private:
 	std::vector<NamespaceEntry> entries_;
 	size_t max_size_reached_ = 0;
