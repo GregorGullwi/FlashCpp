@@ -341,7 +341,7 @@ public:
 	std::optional<ASTNode> lookup(std::string_view identifier, ScopeHandle scope_limit_handle) const {
 		NamespaceHandle namespace_handle = get_current_namespace_handle();
 		std::vector<NamespaceHandle> namespace_chain = gNamespaceRegistry.getAncestors(namespace_handle);
-		auto namespace_it = namespace_chain.begin();
+		auto namespace_it = namespace_chain.cbegin();
 
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
@@ -366,11 +366,9 @@ public:
 			}
 
 			// Third, check using directives in this scope
-			for (const auto& using_ns : scope.using_directive_paths) {
-				auto result = lookup_qualified(using_ns, identifier);
-				if (result.has_value()) {
-					return result;
-				}
+			auto using_result = lookup_using_directives_first(scope, identifier);
+			if (using_result.has_value()) {
+				return using_result;
 			}
 
 			// If we're in a namespace scope, also check namespace_symbols_ for symbols
@@ -422,7 +420,7 @@ public:
 	std::vector<ASTNode> lookup_all(std::string_view identifier, ScopeHandle scope_limit_handle) const {
 		NamespaceHandle namespace_handle = get_current_namespace_handle();
 		std::vector<NamespaceHandle> namespace_chain = gNamespaceRegistry.getAncestors(namespace_handle);
-		auto namespace_it = namespace_chain.begin();
+		auto namespace_it = namespace_chain.cbegin();
 		
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
@@ -446,11 +444,9 @@ public:
 			}
 			
 			// Third, check using directives in this scope
-			for (const auto& using_ns : scope.using_directive_paths) {
-				auto result = lookup_qualified_all(using_ns, identifier);
-				if (!result.empty()) {
-					return result;
-				}
+			auto using_result = lookup_all_using_directives_first(scope, identifier);
+			if (!using_result.empty()) {
+				return using_result;
 			}
 			
 			// If we're in a namespace scope, also check namespace_symbols_ for symbols
@@ -573,6 +569,14 @@ public:
 
 		Scope& current_scope = symbol_table_stack_.back();
 		current_scope.using_directive_paths.push_back(namespace_path);
+	}
+
+	void add_using_directive(NamespaceHandle namespace_handle) {
+		if (symbol_table_stack_.empty()) return;
+		if (!namespace_handle.isValid()) return;
+
+		Scope& current_scope = symbol_table_stack_.back();
+		current_scope.using_directives.push_back(namespace_handle);
 	}
 
 	// Add a using declaration to the current scope
@@ -803,6 +807,41 @@ private:
 		std::string_view interned = sb.append(str).commit();
 		interned_strings_.insert(interned);
 		return interned;
+	}
+
+	// Inline namespace directives are stored as handles and are checked first to preserve insertion order.
+	// The first match is returned to match the legacy lookup behavior.
+	std::optional<ASTNode> lookup_using_directives_first(const Scope& scope, std::string_view identifier) const {
+		for (const NamespaceHandle& using_ns : scope.using_directives) {
+			auto result = lookup_qualified(using_ns, identifier);
+			if (result.has_value()) {
+				return result;
+			}
+		}
+		for (const auto& using_ns : scope.using_directive_paths) {
+			auto result = lookup_qualified(using_ns, identifier);
+			if (result.has_value()) {
+				return result;
+			}
+		}
+		return std::nullopt;
+	}
+
+	// Returns the first non-empty result to match the legacy lookup_all behavior.
+	std::vector<ASTNode> lookup_all_using_directives_first(const Scope& scope, std::string_view identifier) const {
+		for (const NamespaceHandle& using_ns : scope.using_directives) {
+			auto result = lookup_qualified_all(using_ns, identifier);
+			if (!result.empty()) {
+				return result;
+			}
+		}
+		for (const auto& using_ns : scope.using_directive_paths) {
+			auto result = lookup_qualified_all(using_ns, identifier);
+			if (!result.empty()) {
+				return result;
+			}
+		}
+		return {};
 	}
 
 	NamespaceHandle nextNamespaceHandle(std::vector<NamespaceHandle>::const_iterator& namespace_it,

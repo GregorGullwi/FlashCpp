@@ -8241,10 +8241,11 @@ ParseResult Parser::parse_typedef_declaration()
 
 	// Build the qualified name for the typedef if we're in a namespace
 	std::string_view qualified_alias_name;
-	auto namespace_path = gSymbolTable.build_current_namespace_path();
-	if (!namespace_path.empty()) {
-		// Build qualified name: ns1::ns2::alias_name
-		qualified_alias_name = buildQualifiedName(namespace_path, alias_name);
+	NamespaceHandle namespace_handle = gSymbolTable.get_current_namespace_handle();
+	if (!namespace_handle.isGlobal()) {
+		StringHandle alias_handle = StringTable::getOrInternStringHandle(alias_name);
+		StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, alias_handle);
+		qualified_alias_name = StringTable::getStringView(qualified_handle);
 	} else {
 		qualified_alias_name = alias_name;
 	}
@@ -8564,24 +8565,27 @@ ParseResult Parser::parse_namespace() {
 	// while still getting unique linkage names
 	// For nested namespaces (A::B::C), enter each scope in order
 	if (!is_anonymous) {
-		NamespacePath current_path = gSymbolTable.build_current_namespace_path();
+		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
 		
 		for (size_t i = 0; i < nested_names.size(); ++i) {
 			const auto& ns_name = nested_names[i];
 			bool this_ns_is_inline = nested_inline_flags.size() > i && nested_inline_flags[i];
+			StringHandle name_handle = StringTable::getOrInternStringHandle(ns_name);
+			NamespaceHandle next_handle = gNamespaceRegistry.getOrCreateNamespace(current_handle, name_handle);
 			
 			// If this namespace is inline, add a using directive BEFORE entering
 			// This makes members visible in the current (parent) scope
-			if (this_ns_is_inline) {
-				NamespacePath inline_path = current_path;
-				inline_path.push_back(StringType<>(ns_name));
-				gSymbolTable.add_using_directive(inline_path);
+			if (this_ns_is_inline && next_handle.isValid()) {
+				gSymbolTable.add_using_directive(next_handle);
 			}
 			
-			gSymbolTable.enter_namespace(ns_name);
-			
-			// Update current path for the next iteration
-			current_path.push_back(StringType<>(ns_name));
+			if (next_handle.isValid()) {
+				gSymbolTable.enter_namespace(next_handle);
+				current_handle = next_handle;
+			} else {
+				gSymbolTable.enter_namespace(ns_name);
+				current_handle = gSymbolTable.get_current_namespace_handle();
+			}
 		}
 	}
 
@@ -8957,9 +8961,10 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					gTypesByName.emplace(alias_type_info.name(), &alias_type_info);
 					
 					// Also register with namespace-qualified name for type aliases defined in namespaces
-					auto current_namespace_path = gSymbolTable.build_current_namespace_path();
-					if (!current_namespace_path.empty()) {
-						auto full_qualified_name = buildQualifiedNameHandle(current_namespace_path, alias_token->value());
+					NamespaceHandle namespace_handle = gSymbolTable.get_current_namespace_handle();
+					if (!namespace_handle.isGlobal()) {
+						StringHandle alias_handle = StringTable::getOrInternStringHandle(alias_token->value());
+						auto full_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, alias_handle);
 						if (gTypesByName.find(full_qualified_name) == gTypesByName.end()) {
 							gTypesByName.emplace(full_qualified_name, &alias_type_info);
 							FLASH_LOG_FORMAT(Parser, Debug, "Registered type alias '{}' with namespace-qualified name '{}'",
@@ -9190,10 +9195,11 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	
 	// If we're inside a namespace, we need to register the type with a qualified name
 	// so that "std::lldiv_t" can be recognized as a type
-	auto current_namespace_path = gSymbolTable.build_current_namespace_path();
-	if (!current_namespace_path.empty()) {
+	NamespaceHandle namespace_handle = gSymbolTable.get_current_namespace_handle();
+	if (!namespace_handle.isGlobal()) {
 		// Build qualified name for the target: std::identifier
-		StringHandle target_type_name = buildQualifiedNameHandle(current_namespace_path, identifier_token.value());
+		StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier_token.value());
+		StringHandle target_type_name = gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, identifier_handle);
 		
 		// Check if target name is already registered (avoid duplicates)
 		if (gTypesByName.find(target_type_name) == gTypesByName.end()) {
