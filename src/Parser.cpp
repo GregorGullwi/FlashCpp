@@ -12082,11 +12082,13 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 		func_node.set_mangled_name(func_name);
 		return;
 	}
-	
-	// Build namespace path from current symbol table state as string_view vector
+
+	// Build namespace path from current symbol table state as string vector
 	// For member functions, only build namespace path if parent_struct_name doesn't already contain namespace
 	// (to avoid double-encoding the namespace in the mangled name)
-	std::vector<std::string_view> ns_path;
+	// NOTE: We use std::string instead of std::string_view to avoid dangling references
+	// when the NamespacePath (vector<StringType>) goes out of scope
+	std::vector<std::string> ns_path;
 	bool should_get_namespace = true;
 	
 	if (func_node.is_member_function()) {
@@ -12102,7 +12104,12 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 		auto namespace_path = gSymbolTable.build_current_namespace_path();
 		ns_path.reserve(namespace_path.size());
 		for (const auto& ns : namespace_path) {
-			ns_path.push_back(static_cast<std::string_view>(ns));
+			// Convert StringType to std::string to avoid dangling string_view
+#if USE_OLD_STRING_APPROACH
+			ns_path.push_back(ns);
+#else
+			ns_path.push_back(std::string(ns.view()));
+#endif
 		}
 	}
 	
