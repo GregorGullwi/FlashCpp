@@ -155,7 +155,7 @@ public:
 	}
 
 	StringHandle buildQualifiedIdentifier(std::initializer_list<StringHandle> components) const {
-		if (components.empty()) {
+		if (components.size() == 0) {
 			return StringHandle{};
 		}
 		if (components.size() == 1) {
