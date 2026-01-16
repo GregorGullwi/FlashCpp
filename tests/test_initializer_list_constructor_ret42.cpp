@@ -1,22 +1,42 @@
-// Test for struct constructor with std::initializer_list-like structure  
-// Tests that std:: namespace is properly mangled with "St" substitution
+// Test for std::initializer_list template class constructor
+// Tests that:
+// 1. std:: namespace is properly mangled with "St" substitution
+// 2. Large struct parameters (>64 bits) are passed by pointer correctly
+// 3. Compiler generates backing array and initializer_list struct for brace initialization
 
-// Simplified std::initializer_list class (non-template version for testing)
 namespace std {
-    class simple_list {
+    template<typename T>
+    class initializer_list {
     public:
-        int value_;
+        const T* data_;
+        unsigned long size_;
         
-        simple_list() : value_(0) {}
-        simple_list(int v) : value_(v) {}
+        initializer_list() : data_(nullptr), size_(0) {}
         
-        int get() const { return value_; }
+        const T* begin() const { return data_; }
+        unsigned long size() const { return size_; }
     };
 }
 
-int main() {
-    std::simple_list list(42);
+class Container {
+public:
+    int sum_;
     
-    // Return the value - should be 42
-    return list.get();
+    Container() : sum_(0) {}
+    
+    Container(std::initializer_list<int> list) : sum_(0) {
+        const int* ptr = list.begin();
+        unsigned long sz = list.size();
+        // Sum first 3 elements
+        if (sz > 0) sum_ = sum_ + *ptr;
+        if (sz > 1) sum_ = sum_ + *(ptr + 1);
+        if (sz > 2) sum_ = sum_ + *(ptr + 2);
+    }
+    
+    int get_sum() const { return sum_; }
+};
+
+int main() {
+    Container c{10, 20, 12};  // Compiler creates backing array and initializer_list
+    return c.get_sum();       // Should return 42 (10 + 20 + 12)
 }

@@ -209,6 +209,9 @@ public:
 			visitExpressionNode(node.as<ExpressionNode>());
 		}
 		else if (node.is<StructDeclarationNode>()) {
+			// Clear struct context for top-level structs to prevent them from being
+			// mistakenly treated as nested classes of the previous struct
+			current_struct_name_ = StringHandle();
 			visitStructDeclarationNode(node.as<StructDeclarationNode>());
 		}
 		else if (node.is<EnumDeclarationNode>()) {
@@ -19676,7 +19679,13 @@ private:
 			store_ptr.object = init_list_name;  // Use StringHandle
 			store_ptr.member_name = ptr_member.getName();
 			store_ptr.offset = static_cast<int>(ptr_member.offset);
-			store_ptr.value = TypedValue{element_type, 64, array_name, 1};  // pointer to array (use StringHandle)
+			// Create TypedValue for pointer to array - need to set pointer_depth explicitly
+			TypedValue ptr_value;
+			ptr_value.type = element_type;
+			ptr_value.size_in_bits = 64;  // pointer size
+			ptr_value.value = array_name;
+			ptr_value.pointer_depth = 1;  // This is a pointer to the array
+			store_ptr.value = ptr_value;
 			store_ptr.struct_type_info = nullptr;
 			store_ptr.is_reference = false;
 			store_ptr.is_rvalue_reference = false;
