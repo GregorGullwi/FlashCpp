@@ -153,9 +153,9 @@ public:
     }
     
     // Check if we exceeded initial capacity (for tuning DEFAULT_CAPACITY)
-    bool didReallocate() const { return entries_.capacity() > DEFAULT_CAPACITY; }
+    bool exceededInitialCapacity() const { return max_size_reached_ > DEFAULT_CAPACITY; }
     size_t currentSize() const { return entries_.size(); }
-    size_t currentCapacity() const { return entries_.capacity(); }
+    size_t maxSizeReached() const { return max_size_reached_; }
     
     // Get or create a namespace, returning its handle
     // parent_handle is the parent namespace (use GLOBAL_NAMESPACE for top-level)
@@ -165,6 +165,12 @@ public:
         auto it = namespace_map_.find(key);
         if (it != namespace_map_.end()) {
             return it->second;
+        }
+        
+        // Validate we haven't exceeded uint16_t capacity
+        if (entries_.size() >= NamespaceHandle::INVALID_HANDLE) {
+            assert(false && "Namespace registry capacity exceeded (65535 entries)");
+            return NamespaceHandle{};  // Return invalid handle
         }
         
         // Create new entry
@@ -179,6 +185,11 @@ public:
         NamespaceHandle new_handle{static_cast<uint16_t>(entries_.size())};
         entries_.push_back(entry);
         namespace_map_[key] = new_handle;
+        
+        // Track high water mark for capacity tuning
+        if (entries_.size() > max_size_reached_) {
+            max_size_reached_ = entries_.size();
+        }
         
         return new_handle;
     }
@@ -276,6 +287,9 @@ private:
     
     // Storage for namespace entries - provides stable indices
     std::vector<NamespaceEntry> entries_;
+    
+    // Track high water mark for capacity tuning
+    size_t max_size_reached_ = 0;
     
     // Map from (parent_handle, name) -> handle for quick lookup
     // Uses PairHash defined in "New Utilities Required" section above
