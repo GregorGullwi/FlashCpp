@@ -35,7 +35,7 @@ struct NamespaceHandle {
 
 // Members ordered by size (largest to smallest) for optimal struct packing.
 // name/qualified_name: 4 bytes each, parent: 2 bytes, depth (uint8_t): 1 byte.
-// Total: 11 bytes, padded to 12 bytes.
+// Total: 11 bytes, padded to 12 bytes for 4-byte alignment.
 struct NamespaceEntry {
 	StringHandle name;
 	StringHandle qualified_name;

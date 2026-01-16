@@ -377,9 +377,7 @@ public:
 			// from other blocks of the same namespace (e.g., reopened namespace blocks)
 			// This needs to happen BEFORE checking parent/global scopes.
 			if (scope.scope_type == ScopeType::Namespace) {
-				NamespaceHandle scope_namespace = namespace_it != namespace_chain.end()
-					? *namespace_it++
-					: NamespaceRegistry::GLOBAL_NAMESPACE;
+				NamespaceHandle scope_namespace = nextNamespaceHandle(namespace_it, namespace_chain);
 				if (!scope_namespace.isGlobal()) {
 					auto ns_it = namespace_symbols_.find(scope_namespace);
 					if (ns_it != namespace_symbols_.end()) {
@@ -458,9 +456,7 @@ public:
 			// If we're in a namespace scope, also check namespace_symbols_ for symbols
 			// from other blocks of the same namespace (e.g., reopened namespace blocks).
 			if (scope.scope_type == ScopeType::Namespace) {
-				NamespaceHandle scope_namespace = namespace_it != namespace_chain.end()
-					? *namespace_it++
-					: NamespaceRegistry::GLOBAL_NAMESPACE;
+				NamespaceHandle scope_namespace = nextNamespaceHandle(namespace_it, namespace_chain);
 				if (!scope_namespace.isGlobal()) {
 					auto ns_it = namespace_symbols_.find(scope_namespace);
 					if (ns_it != namespace_symbols_.end()) {
@@ -807,6 +803,16 @@ private:
 		std::string_view interned = sb.append(str).commit();
 		interned_strings_.insert(interned);
 		return interned;
+	}
+
+	NamespaceHandle nextNamespaceHandle(std::vector<NamespaceHandle>::const_iterator& namespace_it,
+		const std::vector<NamespaceHandle>& namespace_chain) const {
+		if (namespace_it == namespace_chain.end()) {
+			return NamespaceRegistry::GLOBAL_NAMESPACE;
+		}
+		NamespaceHandle handle = *namespace_it;
+		++namespace_it;
+		return handle;
 	}
 
 	NamespaceHandle get_or_create_namespace_handle_from_path(const NamespacePath& namespaces) const {
