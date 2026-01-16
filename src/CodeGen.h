@@ -7729,35 +7729,17 @@ private:
 		std::optional<StringHandle> resolved_qualified_name;  // Track the qualified name from using declaration
 		
 		if (global_symbol_table_) {
-			auto using_declarations = symbol_table.get_current_using_declarations();
+			auto using_declarations = symbol_table.get_current_using_declaration_handles();
 			for (const auto& [local_name, target_info] : using_declarations) {
 				if (local_name == identifierNode.name()) {
-					const auto& [namespace_path, original_name] = target_info;
-					
-					// Construct the qualified name for this symbol
-					// For empty namespace_path (global namespace), use just the original name
-					// For non-empty namespace_path, construct Namespace::...::name
-					if (namespace_path.empty()) {
-						resolved_qualified_name = StringTable::getOrInternStringHandle(original_name);
-					} else {
-						// Build qualified name: namespace1::namespace2::...::name
-						StringBuilder qualified_builder;
-						for (size_t i = 0; i < namespace_path.size(); ++i) {
-							if (i > 0) qualified_builder.append("::"sv);
-							qualified_builder.append(std::string_view(namespace_path[i]));
-						}
-						qualified_builder.append("::"sv).append(original_name);
-						resolved_qualified_name = StringTable::getOrInternStringHandle(qualified_builder.commit());
-					}
+					const auto& [namespace_handle, original_name] = target_info;
+					StringHandle original_handle = StringTable::getOrInternStringHandle(original_name);
+					resolved_qualified_name = namespace_handle.isGlobal()
+						? original_handle
+						: gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, original_handle);
 					
 					// Resolve using the global symbol table
-					if (namespace_path.empty()) {
-						// Empty namespace path means global namespace (::name)
-						std::vector<StringType<>> empty_ns_path;
-						symbol = global_symbol_table_->lookup_qualified(empty_ns_path, original_name);
-					} else {
-						symbol = global_symbol_table_->lookup_qualified(namespace_path, original_name);
-					}
+					symbol = global_symbol_table_->lookup_qualified(namespace_handle, original_handle);
 					if (symbol.has_value()) {
 						is_global = true;
 						break;

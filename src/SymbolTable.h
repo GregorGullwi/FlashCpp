@@ -502,6 +502,10 @@ public:
 		return symbol_it->second;
 	}
 
+	std::vector<ASTNode> lookup_qualified_all(NamespaceHandle namespace_handle, StringHandle identifier) const {
+		return lookup_qualified_all(namespace_handle, StringTable::getStringView(identifier));
+	}
+
 	template<typename StringContainer>
 	std::vector<ASTNode> lookup_qualified_all(const StringContainer& namespaces, std::string_view identifier) const {
 		return lookup_qualified_all(resolve_namespace_handle_impl(namespaces), identifier);
@@ -745,6 +749,10 @@ public:
 		return symbol_it->second[0];
 	}
 
+	std::optional<ASTNode> lookup_qualified(NamespaceHandle namespace_handle, StringHandle identifier) const {
+		return lookup_qualified(namespace_handle, StringTable::getStringView(identifier));
+	}
+
 	template<typename StringContainer>
 	std::optional<ASTNode> lookup_qualified(const StringContainer& namespaces, std::string_view identifier) const {
 		return lookup_qualified(resolve_namespace_handle_impl(namespaces), identifier);
@@ -806,6 +814,21 @@ public:
 		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			for (const auto& [local_name, target_info] : stackIt->using_declarations) {
 				// Only add if not already present (inner scopes shadow outer scopes)
+				if (result.find(local_name) == result.end()) {
+					result[local_name] = target_info;
+				}
+			}
+		}
+		return result;
+	}
+
+	// Get all using declarations from the current scope and all enclosing scopes as handles.
+	// Inner scopes shadow outer scopes, matching get_current_using_declarations semantics.
+	// Returns a map of local_name -> (namespace_handle, original_name)
+	std::unordered_map<std::string_view, std::pair<NamespaceHandle, std::string_view>> get_current_using_declaration_handles() const {
+		std::unordered_map<std::string_view, std::pair<NamespaceHandle, std::string_view>> result;
+		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
+			for (const auto& [local_name, target_info] : stackIt->using_declarations_handles) {
 				if (result.find(local_name) == result.end()) {
 					result[local_name] = target_info;
 				}
