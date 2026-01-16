@@ -27,12 +27,11 @@ public:
     
     Container(std::initializer_list<int> list) : sum_(0) {
         const int* ptr = list.begin();
-        unsigned long sz = list.size();
-        unsigned long i = 0;
-        // Sum all elements using a while loop
-        while (i < sz) {
-            sum_ = sum_ + *(ptr + i);
-            i = i + 1;
+        const int* end = ptr + list.size();
+        // Sum all elements using a while loop with pointer increment
+        while (ptr < end) {
+            sum_ = sum_ + *ptr;
+            ++ptr;
         }
     }
     
