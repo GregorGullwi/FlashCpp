@@ -340,9 +340,6 @@ public:
 	std::optional<ASTNode> lookup(std::string_view identifier, ScopeHandle scope_limit_handle) const {
 		NamespaceHandle namespace_handle = get_current_namespace_handle();
 		std::vector<NamespaceHandle> namespace_chain = gNamespaceRegistry.getAncestors(namespace_handle);
-		if (!namespace_handle.isValid() && namespace_chain.empty()) {
-			namespace_chain.push_back(namespace_handle);
-		}
 		size_t namespace_index = 0;
 
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
@@ -432,9 +429,6 @@ public:
 	std::vector<ASTNode> lookup_all(std::string_view identifier, ScopeHandle scope_limit_handle) const {
 		NamespaceHandle namespace_handle = get_current_namespace_handle();
 		std::vector<NamespaceHandle> namespace_chain = gNamespaceRegistry.getAncestors(namespace_handle);
-		if (!namespace_handle.isValid() && namespace_chain.empty()) {
-			namespace_chain.push_back(namespace_handle);
-		}
 		size_t namespace_index = 0;
 		
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
