@@ -19607,8 +19607,8 @@ private:
 			store_op.array = array_name;
 			store_op.index = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(i), 0};
 			store_op.value = toTypedValue(element_operands[i]);
-			store_op.member_offset = 0;
-			store_op.is_pointer_to_array = false;
+			store_op.member_offset = 0;  // Not a member array - direct local array
+			store_op.is_pointer_to_array = false;  // This is an actual array, not a pointer
 			ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), init_list.called_from()));
 		}
 		
