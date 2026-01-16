@@ -89,10 +89,14 @@ struct Scope {
 	// Maps: local_name -> (namespace_path, original_name)
 	// Use string_view with dedicated allocator for both key and original_name
 	std::unordered_map<std::string_view, std::pair<NamespacePath, std::string_view>> using_declarations;
+	// Maps: local_name -> (namespace_handle, original_name)
+	std::unordered_map<std::string_view, std::pair<NamespaceHandle, std::string_view>> using_declarations_handles;
 
 	// Namespace aliases: Maps alias -> target namespace path
 	// Use string_view keys with dedicated allocator
 	std::unordered_map<std::string_view, NamespacePath> namespace_aliases;
+	// Namespace aliases: Maps alias -> target namespace handle
+	std::unordered_map<std::string_view, NamespaceHandle> namespace_alias_handles;
 };
 
 // Helper function to extract parameter types from a FunctionDeclarationNode
@@ -347,6 +351,14 @@ public:
 			const Scope& scope = *stackIt;
 
 			// First, check using declarations in this scope (they introduce names into the current scope)
+			auto using_handle_it = scope.using_declarations_handles.find(identifier);
+			if (using_handle_it != scope.using_declarations_handles.end()) {
+				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
+				auto result = lookup_qualified(using_namespace_handle, original_name);
+				if (result.has_value()) {
+					return result;
+				}
+			}
 			auto usingIt = scope.using_declarations.find(identifier);
 			if (usingIt != scope.using_declarations.end()) {
 				const auto& [namespace_path, original_name] = usingIt->second;
@@ -426,6 +438,14 @@ public:
 			const Scope& scope = *stackIt;
 			
 			// First, check using declarations in this scope
+			auto using_handle_it = scope.using_declarations_handles.find(identifier);
+			if (using_handle_it != scope.using_declarations_handles.end()) {
+				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
+				auto result = lookup_qualified_all(using_namespace_handle, original_name);
+				if (!result.empty()) {
+					return result;
+				}
+			}
 			auto usingIt = scope.using_declarations.find(identifier);
 			if (usingIt != scope.using_declarations.end()) {
 				const auto& [namespace_path, original_name] = usingIt->second;
@@ -490,7 +510,7 @@ public:
 
 	template<typename StringContainer>
 	std::vector<ASTNode> lookup_qualified_all(const StringContainer& namespaces, std::string_view identifier) const {
-		return lookup_qualified_all(resolve_namespace_handle(namespaces), identifier);
+		return lookup_qualified_all(resolve_namespace_handle_impl(namespaces), identifier);
 	}
 
 	// Resolve function overload based on argument types
@@ -569,6 +589,10 @@ public:
 
 		Scope& current_scope = symbol_table_stack_.back();
 		current_scope.using_directive_paths.push_back(namespace_path);
+		NamespaceHandle namespace_handle = resolve_namespace_handle_impl(namespace_path);
+		if (namespace_handle.isValid()) {
+			current_scope.using_directives.push_back(namespace_handle);
+		}
 	}
 
 	void add_using_directive(NamespaceHandle namespace_handle) {
@@ -577,6 +601,7 @@ public:
 
 		Scope& current_scope = symbol_table_stack_.back();
 		current_scope.using_directives.push_back(namespace_handle);
+		current_scope.using_directive_paths.push_back(build_namespace_path_from_handle(namespace_handle));
 	}
 
 	// Add a using declaration to the current scope
@@ -584,23 +609,40 @@ public:
 		if (symbol_table_stack_.empty()) return;
 
 		Scope& current_scope = symbol_table_stack_.back();
-		// Check if key already exists
-		auto it = current_scope.using_declarations.find(local_name);
-		if (it != current_scope.using_declarations.end()) {
-			// Key exists, reuse it
-			std::string_view orig_name = intern_string(original_name);  // Still need to intern the value
-			it->second = std::make_pair(namespace_path, orig_name);
-		} else {
-			// New key, intern both key and value
-			std::string_view key = intern_string(local_name);
-			std::string_view orig_name = intern_string(original_name);
-			current_scope.using_declarations[key] = std::make_pair(namespace_path, orig_name);
+		std::string_view key = intern_string(local_name);
+		std::string_view orig_name = intern_string(original_name);
+		update_or_insert(current_scope.using_declarations, key, std::make_pair(namespace_path, orig_name));
+		NamespaceHandle namespace_handle = resolve_namespace_handle_impl(namespace_path);
+		if (namespace_handle.isValid()) {
+			update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
 		}
 
 		// Also materialize the referenced symbol into the current scope for faster/unambiguous lookup
-		auto resolved = lookup_qualified(namespace_path, original_name);
+		auto resolved = namespace_handle.isValid()
+			? lookup_qualified(namespace_handle, orig_name)
+			: lookup_qualified(namespace_path, orig_name);  // Fallback if handle resolution fails
 		if (resolved.has_value()) {
-			std::string_view key = intern_string(local_name);
+			auto sym_it = current_scope.symbols.find(key);
+			if (sym_it == current_scope.symbols.end()) {
+				current_scope.symbols[key] = std::vector<ASTNode>{ resolved.value() };
+			}
+		}
+	}
+
+	void add_using_declaration(std::string_view local_name, NamespaceHandle namespace_handle, std::string_view original_name) {
+		if (symbol_table_stack_.empty()) return;
+		if (!namespace_handle.isValid()) return;
+
+		Scope& current_scope = symbol_table_stack_.back();
+		std::string_view key = intern_string(local_name);
+		std::string_view orig_name = intern_string(original_name);
+		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
+		NamespacePath resolved_path = build_namespace_path_from_handle(namespace_handle);
+		update_or_insert(current_scope.using_declarations, key, std::make_pair(std::move(resolved_path), orig_name));
+
+		// Also materialize the referenced symbol into the current scope for faster/unambiguous lookup
+		auto resolved = lookup_qualified(namespace_handle, orig_name);
+		if (resolved.has_value()) {
 			auto sym_it = current_scope.symbols.find(key);
 			if (sym_it == current_scope.symbols.end()) {
 				current_scope.symbols[key] = std::vector<ASTNode>{ resolved.value() };
@@ -613,16 +655,23 @@ public:
 		if (symbol_table_stack_.empty()) return;
 
 		Scope& current_scope = symbol_table_stack_.back();
-		// Check if key already exists
-		auto it = current_scope.namespace_aliases.find(alias);
-		if (it != current_scope.namespace_aliases.end()) {
-			// Key exists, reuse it and just update the value
-			it->second = target_namespace;
-		} else {
-			// New key, intern it
-			std::string_view key = intern_string(alias);
-			current_scope.namespace_aliases[key] = target_namespace;
+		std::string_view key = intern_string(alias);
+		update_or_insert(current_scope.namespace_aliases, key, target_namespace);
+		NamespaceHandle target_handle = resolve_namespace_handle_impl(target_namespace);
+		if (target_handle.isValid()) {
+			update_or_insert(current_scope.namespace_alias_handles, key, target_handle);
 		}
+	}
+
+	void add_namespace_alias(std::string_view alias, NamespaceHandle target_namespace) {
+		if (symbol_table_stack_.empty()) return;
+		if (!target_namespace.isValid()) return;
+
+		Scope& current_scope = symbol_table_stack_.back();
+		std::string_view key = intern_string(alias);
+		update_or_insert(current_scope.namespace_alias_handles, key, target_namespace);
+		NamespacePath resolved_path = build_namespace_path_from_handle(target_namespace);
+		update_or_insert(current_scope.namespace_aliases, key, std::move(resolved_path));
 	}
 
 	// Merge all symbols from an inline namespace into its parent namespace map
@@ -651,11 +700,12 @@ public:
 
 	// Resolve a namespace alias (returns the target namespace path if alias exists)
 	std::optional<NamespacePath> resolve_namespace_alias(std::string_view alias) const {
-		// Search from current scope backwards
-		for (auto it = symbol_table_stack_.rbegin(); it != symbol_table_stack_.rend(); ++it) {
-			auto alias_it = it->namespace_aliases.find(alias);
-			if (alias_it != it->namespace_aliases.end()) {
-				return alias_it->second;
+		if (auto alias_entry = resolve_namespace_alias_entry(alias); alias_entry.has_value()) {
+			if (alias_entry->handle.has_value()) {
+				return build_namespace_path_from_handle(*alias_entry->handle);
+			}
+			if (alias_entry->path.has_value()) {
+				return *alias_entry->path;
 			}
 		}
 		return std::nullopt;
@@ -696,7 +746,7 @@ public:
 
 	template<typename StringContainer>
 	std::optional<ASTNode> lookup_qualified(const StringContainer& namespaces, std::string_view identifier) const {
-		return lookup_qualified(resolve_namespace_handle(namespaces), identifier);
+		return lookup_qualified(resolve_namespace_handle_impl(namespaces), identifier);
 	}
 
 	// Get the current namespace name (empty if not in a namespace)
@@ -809,6 +859,16 @@ private:
 		return interned;
 	}
 
+	template<typename Map, typename Key, typename Value>
+	void update_or_insert(Map& map, const Key& key, Value value) {
+		auto it = map.find(key);
+		if (it != map.end()) {
+			it->second = std::move(value);
+		} else {
+			map.emplace(key, std::move(value));
+		}
+	}
+
 	// Inline namespace directives are stored as handles and are checked first to preserve insertion order.
 	// The first match is returned to match the legacy lookup behavior.
 	std::optional<ASTNode> lookup_using_directives_first(const Scope& scope, std::string_view identifier) const {
@@ -874,35 +934,81 @@ private:
 		return get_or_create_namespace_handle_from_path(std::span<const StringType<>>{namespaces});
 	}
 
+public:
+	// Exposed for parser namespace-handle resolution while preserving SymbolTable alias rules.
+	NamespaceHandle resolve_namespace_handle(const NamespacePath& namespaces) const {
+		return resolve_namespace_handle_impl(namespaces);
+	}
+
+private:
 	template<typename StringContainer>
-	NamespaceHandle resolve_namespace_handle(const StringContainer& namespaces) const {
+	NamespaceHandle resolve_namespace_handle_impl(const StringContainer& namespaces) const {
 		if (namespaces.empty()) {
 			return NamespaceRegistry::GLOBAL_NAMESPACE;
 		}
 
 		NamespaceHandle current = NamespaceRegistry::GLOBAL_NAMESPACE;
 		std::string_view first_component(namespaces[0]);
-		auto alias_resolution = resolve_namespace_alias(first_component);
-		if (alias_resolution.has_value()) {
-			current = get_or_create_namespace_handle_from_path(*alias_resolution);
-			for (size_t i = 1; i < namespaces.size(); ++i) {
-				StringHandle name_handle = StringTable::getOrInternStringHandle(std::string_view(namespaces[i]));
-				current = gNamespaceRegistry.getOrCreateNamespace(current, name_handle);
-				if (!current.isValid()) {
-					return current;
-				}
+		if (auto alias_entry = resolve_namespace_alias_entry(first_component); alias_entry.has_value()) {
+			if (alias_entry->handle.has_value()) {
+				return append_namespace_components(*alias_entry->handle, namespaces, 1);
 			}
-			return current;
+			if (alias_entry->path.has_value()) {
+				current = get_or_create_namespace_handle_from_path(*alias_entry->path);
+				return append_namespace_components(current, namespaces, 1);
+			}
 		}
 
-		for (const auto& ns : namespaces) {
-			StringHandle name_handle = StringTable::getOrInternStringHandle(std::string_view(ns));
+		return append_namespace_components(current, namespaces, 0);
+	}
+
+	template<typename StringContainer>
+	NamespaceHandle append_namespace_components(NamespaceHandle current,
+		const StringContainer& namespaces,
+		size_t start_index) const {
+		for (size_t i = start_index; i < namespaces.size(); ++i) {
+			StringHandle name_handle = StringTable::getOrInternStringHandle(std::string_view(namespaces[i]));
 			current = gNamespaceRegistry.getOrCreateNamespace(current, name_handle);
 			if (!current.isValid()) {
 				return current;
 			}
 		}
 		return current;
+	}
+
+	struct NamespaceAliasEntry {
+		std::optional<NamespaceHandle> handle;
+		std::optional<NamespacePath> path;
+	};
+
+	std::optional<NamespaceAliasEntry> resolve_namespace_alias_entry(std::string_view alias) const {
+		for (auto it = symbol_table_stack_.rbegin(); it != symbol_table_stack_.rend(); ++it) {
+			auto alias_handle_it = it->namespace_alias_handles.find(alias);
+			if (alias_handle_it != it->namespace_alias_handles.end()) {
+				return NamespaceAliasEntry{alias_handle_it->second, std::nullopt};
+			}
+			auto alias_path_it = it->namespace_aliases.find(alias);
+			if (alias_path_it != it->namespace_aliases.end()) {
+				return NamespaceAliasEntry{std::nullopt, alias_path_it->second};
+			}
+		}
+		return std::nullopt;
+	}
+
+	NamespacePath build_namespace_path_from_handle(NamespaceHandle handle) const {
+		NamespacePath path;
+		if (!handle.isValid() || handle.isGlobal()) {
+			return path;
+		}
+		size_t depth = gNamespaceRegistry.getEntry(handle).depth;
+		path.resize(depth);
+		NamespaceHandle current = handle;
+		for (size_t i = depth; i > 0 && current.isValid() && !current.isGlobal(); --i) {
+			const NamespaceEntry& entry = gNamespaceRegistry.getEntry(current);
+			path[i - 1] = StringType<>(StringTable::getStringView(entry.name));
+			current = entry.parent;
+		}
+		return path;
 	}
 };
 

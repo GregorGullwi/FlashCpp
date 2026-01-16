@@ -9022,7 +9022,12 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			}
 
 			// Add the namespace alias to the symbol table for name lookup during parsing
-			gSymbolTable.add_namespace_alias(alias_token->value(), target_namespace);
+			NamespaceHandle target_handle = gSymbolTable.resolve_namespace_handle(target_namespace);
+			if (target_handle.isValid()) {
+				gSymbolTable.add_namespace_alias(alias_token->value(), target_handle);
+			} else {
+				gSymbolTable.add_namespace_alias(alias_token->value(), target_namespace);
+			}
 
 			auto alias_node = emplace_node<NamespaceAliasNode>(*alias_token, std::move(target_namespace));
 			return saved_position.success(alias_node);
@@ -9058,7 +9063,12 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		}
 
 		// Add the using directive to the symbol table for name lookup during parsing
-		gSymbolTable.add_using_directive(namespace_path);
+		NamespaceHandle namespace_handle = gSymbolTable.resolve_namespace_handle(namespace_path);
+		if (namespace_handle.isValid()) {
+			gSymbolTable.add_using_directive(namespace_handle);
+		} else {
+			gSymbolTable.add_using_directive(namespace_path);
+		}
 
 		auto directive_node = emplace_node<UsingDirectiveNode>(std::move(namespace_path), using_token);
 		return saved_position.success(directive_node);
@@ -9117,11 +9127,20 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	}
 
 	// Add the using declaration to the symbol table for name lookup during parsing
-	gSymbolTable.add_using_declaration(
-		std::string_view(identifier_token.value()),
-		namespace_path,
-		std::string_view(identifier_token.value())
-	);
+	NamespaceHandle namespace_handle = gSymbolTable.resolve_namespace_handle(namespace_path);
+	if (namespace_handle.isValid()) {
+		gSymbolTable.add_using_declaration(
+			std::string_view(identifier_token.value()),
+			namespace_handle,
+			std::string_view(identifier_token.value())
+		);
+	} else {
+		gSymbolTable.add_using_declaration(
+			std::string_view(identifier_token.value()),
+			namespace_path,
+			std::string_view(identifier_token.value())
+		);
+	}
 
 	// Helper function to add standard members to C library div_t-style structs
 	auto add_div_struct_members = [](StructTypeInfo* struct_info, std::string_view type_name) {
@@ -9195,11 +9214,11 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	
 	// If we're inside a namespace, we need to register the type with a qualified name
 	// so that "std::lldiv_t" can be recognized as a type
-	NamespaceHandle namespace_handle = gSymbolTable.get_current_namespace_handle();
-	if (!namespace_handle.isGlobal()) {
+	NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
+	if (!current_namespace_handle.isGlobal()) {
 		// Build qualified name for the target: std::identifier
 		StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier_token.value());
-		StringHandle target_type_name = gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, identifier_handle);
+		StringHandle target_type_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, identifier_handle);
 		
 		// Check if target name is already registered (avoid duplicates)
 		if (gTypesByName.find(target_type_name) == gTypesByName.end()) {
@@ -10378,10 +10397,11 @@ ParseResult Parser::parse_type_specifier()
 				// First try unqualified, then try namespace-qualified lookup
 				auto var_template_check = gTemplateRegistry.lookupVariableTemplate(type_name);
 				if (!var_template_check.has_value()) {
-					auto current_ns_path = gSymbolTable.build_current_namespace_path();
-					if (!current_ns_path.empty()) {
-						std::string_view qualified_name = buildQualifiedName(current_ns_path, type_name);
-						var_template_check = gTemplateRegistry.lookupVariableTemplate(qualified_name);
+					NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+					if (!current_namespace.isGlobal()) {
+						StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
+						StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, type_handle);
+						var_template_check = gTemplateRegistry.lookupVariableTemplate(StringTable::getStringView(qualified_handle));
 					}
 				}
 				if (var_template_check.has_value()) {
@@ -17977,10 +17997,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				} else {
 					// Try namespace-qualified lookup: if we're inside a namespace, the type alias
 					// might be registered with a qualified name (e.g., "std::size_t")
-					auto current_ns_path = gSymbolTable.build_current_namespace_path();
-					if (!current_ns_path.empty()) {
-						std::string_view qualified_name_str = buildQualifiedName(current_ns_path, idenfifier_token.value());
-						StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name_str);
+					NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+					if (!current_namespace.isGlobal()) {
+						StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, identifier_handle);
 						auto qualified_type_it = gTypesByName.find(qualified_handle);
 						if (qualified_type_it != gTypesByName.end()) {
 							FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as namespace-qualified type alias '{}' in gTypesByName", 
@@ -19449,9 +19468,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							
 							// If not found directly, try namespace-qualified lookup
 							if (!var_template_opt.has_value()) {
-								auto current_ns_path = gSymbolTable.build_current_namespace_path();
-								if (!current_ns_path.empty()) {
-									std::string_view qualified_name = buildQualifiedName(current_ns_path, idenfifier_token.value());
+								NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+								if (!current_namespace.isGlobal()) {
+									StringHandle name_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+									StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, name_handle);
+									std::string_view qualified_name = StringTable::getStringView(qualified_handle);
 									var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
 									if (var_template_opt.has_value()) {
 										FLASH_LOG_FORMAT(Parser, Debug, "Found variable template '{}' as '{}'", idenfifier_token.value(), qualified_name);
@@ -19685,9 +19706,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							
 							// If not found directly, try namespace-qualified lookup
 							if (!var_template_opt.has_value()) {
-								auto current_ns_path = gSymbolTable.build_current_namespace_path();
-								if (!current_ns_path.empty()) {
-									std::string_view qualified_name = buildQualifiedName(current_ns_path, idenfifier_token.value());
+								NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+								if (!current_namespace.isGlobal()) {
+									StringHandle name_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+									StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, name_handle);
+									std::string_view qualified_name = StringTable::getStringView(qualified_handle);
 									var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
 									if (var_template_opt.has_value()) {
 										FLASH_LOG(Parser, Debug, "Found variable template '", idenfifier_token.value(), "' as '", qualified_name, "'");
@@ -19881,9 +19904,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					
 					// If not found, try namespace-qualified lookup
 					if (!var_template_opt.has_value()) {
-						auto current_ns_path = gSymbolTable.build_current_namespace_path();
-						if (!current_ns_path.empty()) {
-							std::string_view qualified_name = buildQualifiedName(current_ns_path, idenfifier_token.value());
+						NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+						if (!current_namespace.isGlobal()) {
+							StringHandle name_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+							StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, name_handle);
+							std::string_view qualified_name = StringTable::getStringView(qualified_handle);
 							var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
 							if (var_template_opt.has_value()) {
 								template_name_to_use = qualified_name;
