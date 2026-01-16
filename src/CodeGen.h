@@ -19581,14 +19581,20 @@ private:
 		size_t array_size = init_list.size();
 		size_t total_size_bits = array_size * element_size_bits;
 		
-		// Create a temporary variable for the backing array
+		// Create a unique name for the backing array using the temp var number
 		TempVar array_var = var_counter.next();
+		StringBuilder array_name_builder;
+		array_name_builder.append("__init_list_array_"sv).append(array_var.var_number);
+		StringHandle array_name = StringTable::getOrInternStringHandle(array_name_builder.commit());
+		
 		VariableDeclOp array_decl;
-		array_decl.name = array_var;
+		array_decl.var_name = array_name;
 		array_decl.type = element_type;
 		array_decl.size_in_bits = static_cast<int>(total_size_bits);
 		array_decl.is_array = true;
-		array_decl.array_size = static_cast<int>(array_size);
+		array_decl.array_element_type = element_type;
+		array_decl.array_element_size = element_size_bits;
+		array_decl.array_count = array_size;
 		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(array_decl), init_list.called_from()));
 		
 		// Step 2: Store each element into the backing array using ArrayStore
@@ -19596,10 +19602,13 @@ private:
 			if (element_operands[i].size() < 3) continue;
 			
 			ArrayStoreOp store_op;
-			store_op.array = array_var;
+			store_op.element_type = element_type;
+			store_op.element_size_in_bits = element_size_bits;
+			store_op.array = array_name;
 			store_op.index = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(i), 0};
 			store_op.value = toTypedValue(element_operands[i]);
-			store_op.element_size = element_size_bits;
+			store_op.member_offset = 0;
+			store_op.is_pointer_to_array = false;
 			ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), init_list.called_from()));
 		}
 		
@@ -19619,23 +19628,29 @@ private:
 		
 		int init_list_size_bits = static_cast<int>(init_list_struct_info->total_size * 8);
 		
-		// Allocate the initializer_list struct
+		// Create a unique name for the initializer_list struct using the temp var number
 		TempVar init_list_var = var_counter.next();
+		StringBuilder init_list_name_builder;
+		init_list_name_builder.append("__init_list_"sv).append(init_list_var.var_number);
+		StringHandle init_list_name = StringTable::getOrInternStringHandle(init_list_name_builder.commit());
+		
 		VariableDeclOp init_list_decl;
-		init_list_decl.name = init_list_var;
+		init_list_decl.var_name = init_list_name;
 		init_list_decl.type = Type::Struct;
 		init_list_decl.size_in_bits = init_list_size_bits;
-		init_list_decl.type_index = init_list_type_index;
 		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(init_list_decl), init_list.called_from()));
 		
 		// Store pointer to array (first member)
 		if (init_list_struct_info->members.size() >= 1) {
 			const auto& ptr_member = init_list_struct_info->members[0];
 			MemberStoreOp store_ptr;
-			store_ptr.object = init_list_var;
+			store_ptr.object = init_list_name;  // Use StringHandle
 			store_ptr.member_name = ptr_member.getName();
 			store_ptr.offset = static_cast<int>(ptr_member.offset);
-			store_ptr.value = TypedValue{element_type, 64, array_var, 1};  // pointer to array
+			store_ptr.value = TypedValue{element_type, 64, array_name, 1};  // pointer to array (use StringHandle)
+			store_ptr.struct_type_info = nullptr;
+			store_ptr.is_reference = false;
+			store_ptr.is_rvalue_reference = false;
 			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_ptr), init_list.called_from()));
 		}
 		
@@ -19643,15 +19658,19 @@ private:
 		if (init_list_struct_info->members.size() >= 2) {
 			const auto& size_member = init_list_struct_info->members[1];
 			MemberStoreOp store_size;
-			store_size.object = init_list_var;
+			store_size.object = init_list_name;  // Use StringHandle
 			store_size.member_name = size_member.getName();
 			store_size.offset = static_cast<int>(size_member.offset);
 			store_size.value = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(array_size), 0};
+			store_size.struct_type_info = nullptr;
+			store_size.is_reference = false;
+			store_size.is_rvalue_reference = false;
 			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_size), init_list.called_from()));
 		}
 		
 		// Return operands for the constructed initializer_list
-		return { Type::Struct, init_list_size_bits, init_list_var, static_cast<unsigned long long>(init_list_type_index) };
+		// Return the StringHandle for the variable name so the caller can use it
+		return { Type::Struct, init_list_size_bits, init_list_name, static_cast<unsigned long long>(init_list_type_index) };
 	}
 
 	std::vector<IrOperand> generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
