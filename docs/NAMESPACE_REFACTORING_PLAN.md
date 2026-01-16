@@ -150,6 +150,7 @@ public:
         global.qualified_name = StringHandle{};  // Empty qualified name
         global.depth = 0;
         entries_.push_back(global);
+        max_size_reached_ = 1;  // Track the global namespace entry
     }
     
     // Check if we exceeded initial capacity (for tuning DEFAULT_CAPACITY)
