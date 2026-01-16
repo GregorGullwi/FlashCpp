@@ -58,11 +58,32 @@ NamespacePath build_current_namespace_path() const {
 
 ### Dependencies on Existing Infrastructure
 
-This refactoring builds on several existing FlashCpp types and utilities:
+This refactoring builds on several existing FlashCpp types and utilities (all verified to exist in the codebase):
 
 - **`StringHandle`** (defined in `src/StringTable.h`): A 32-bit handle to an interned string, providing O(1) string comparisons and hash lookups
-- **`StringTable`** (defined in `src/StringTable.h`): Global string interning system with `getOrInternStringHandle()` and `getStringView()` methods
+- **`StringTable`** (defined in `src/StringTable.h`): Global string interning system with:
+  - `getOrInternStringHandle(std::string_view)` - Get or create a handle for a string
+  - `createStringHandle(std::string_view)` - Create a new handle (does not deduplicate)
+  - `createStringHandle(StringBuilder&)` - Create handle from StringBuilder
+  - `getStringView(StringHandle)` - Resolve handle back to string_view
 - **`StringBuilder`** (defined in `src/ChunkedString.h`): Efficient string builder that commits to the global allocator
+
+### New Utilities Required
+
+The following utility needs to be added as part of this refactoring:
+
+```cpp
+// PairHash - Generic hash combiner for std::pair
+// Place in a common header or in NamespaceRegistry.h
+template<typename T1, typename T2>
+struct PairHash {
+    size_t operator()(const std::pair<T1, T2>& p) const {
+        size_t h1 = std::hash<T1>{}(p.first);
+        size_t h2 = std::hash<T2>{}(p.second);
+        return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+    }
+};
+```
 
 ### Core Data Structures
 
@@ -244,15 +265,7 @@ private:
     std::vector<NamespaceEntry> entries_;
     
     // Map from (parent_handle, name) -> handle for quick lookup
-    // PairHash is a simple hash combiner:
-    //   template<typename T1, typename T2>
-    //   struct PairHash {
-    //       size_t operator()(const std::pair<T1, T2>& p) const {
-    //           size_t h1 = std::hash<T1>{}(p.first);
-    //           size_t h2 = std::hash<T2>{}(p.second);
-    //           return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
-    //       }
-    //   };
+    // Uses PairHash defined in "New Utilities Required" section above
     std::unordered_map<std::pair<NamespaceHandle, StringHandle>, NamespaceHandle,
         PairHash<NamespaceHandle, StringHandle>> namespace_map_;
 };
