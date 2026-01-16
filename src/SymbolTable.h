@@ -657,6 +657,7 @@ public:
 		StringHandle name_handle = StringTable::getOrInternStringHandle(namespace_name);
 		NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(parent_handle, name_handle);
 		if (!ns_handle.isValid()) {
+			FLASH_LOG(Symbols, Error, "Namespace handle creation failed for '", namespace_name, "'");
 			symbol_table_stack_.emplace_back(Scope(ScopeType::Namespace, symbol_table_stack_.size(), StringType<>(namespace_name)));
 			return;
 		}
