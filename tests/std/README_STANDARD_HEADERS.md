@@ -106,6 +106,13 @@ struct common_ref_impl : enable_if<is_reference_v<condres_cvref<_Xp>>, condres_c
 **Test case:** `tests/test_variable_template_in_enable_if_ret0.cpp`
 
 **Previous blockers resolved (January 15, 2026):**
+- Namespace class member function call mangling: Member function calls on classes defined in namespaces now link correctly
+  - **Issue:** When calling `t.get_value()` where `t` is of type `ns::Test`, the function call was mangled as `_ZN4Test9get_valueEv` (missing namespace) while the function was defined as `_ZN2ns4Test9get_valueEv` (with namespace), causing linker errors
+  - **Root cause:** The StructTypeInfo was created with the simple name (`Test`) instead of the namespace-qualified name (`ns::Test`), causing mismatched mangling between function definitions and calls
+  - **Fix:** 
+    1. Modified Parser.cpp `parse_struct_declaration()` to use namespace-qualified names for TypeInfo and StructTypeInfo creation
+    2. Modified CodeGen.h to use parent_struct_name directly instead of looking up TypeInfo's name (which could cause double-namespace in mangling)
+  - **Test case:** `tests/test_namespace_class_member_call_ret42.cpp`
 - Less-than vs template argument disambiguation: Pattern `integral_constant<bool, _R1::num < _R2::num>` now works
   - **Issue:** When parsing template arguments, `<` was incorrectly interpreted as starting template arguments instead of as a comparison operator in patterns like `_R1::num < _R2::num>`
   - **Root cause:** Multiple code paths would see `<` after a qualified identifier like `_R1::num` and immediately try to parse template arguments without checking if `num` was actually a template
@@ -217,6 +224,32 @@ int main() {
 }
 ```
 
+**Using initializer_list as constructor argument also fails:**
+```cpp
+#include <initializer_list>
+
+class Container {
+public:
+    int sum;
+    Container(std::initializer_list<int> list) : sum(0) {
+        for (const int* it = list.begin(); it != list.end(); ++it) {
+            sum += *it;
+        }
+    }
+};
+
+int main() {
+    Container c{1, 2, 3};  // Error: "Too many initializers for struct"
+    return c.sum;
+}
+```
+
+**Root cause:** When parsing `Container c{1, 2, 3}`, FlashCpp attempts to match the 3 integer arguments to constructor parameters, but Container only has one constructor taking `std::initializer_list<int>`. The compiler magic needed would:
+1. Detect that Container has an initializer_list constructor
+2. Create a temporary array on the stack
+3. Construct an `std::initializer_list` pointing to that array
+4. Call the constructor with that initializer_list
+
 **Expected behavior in standard C++:**
 1. The compiler creates a temporary array `int __temp[] = {1, 2, 3}` on the stack
 2. The compiler constructs `std::initializer_list` using its private constructor with a pointer to the array and size 3
@@ -225,6 +258,7 @@ int main() {
 **Current behavior in FlashCpp:**
 - FlashCpp treats `std::initializer_list` like any other struct and tries aggregate initialization
 - Since `std::initializer_list` only has 2 members (`_M_array` pointer and `_M_len` size), `{1, 2, 3}` fails with "too many initializers"
+- For constructor calls, FlashCpp tries to match braced values to constructor parameters directly
 
 **Workaround:** Use the default constructor and don't rely on brace-enclosed initializer lists for `std::initializer_list`:
 ```cpp
@@ -232,7 +266,7 @@ std::initializer_list<int> empty_list;  // Works - default constructor
 std::initializer_list<int> two = {ptr, 2};  // Works - matches member count
 ```
 
-**Note:** This is a fundamental limitation that affects many standard library patterns like range-based for loops with initializer lists (`for (int x : {1, 2, 3})`).
+**Note:** This is a fundamental limitation that affects many standard library patterns like range-based for loops with initializer lists (`for (int x : {1, 2, 3})`), container construction (`std::vector<int> v{1,2,3}`), and any class with an initializer_list constructor.
 
 ### 6. Missing Infrastructure
 

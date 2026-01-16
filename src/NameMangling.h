@@ -288,16 +288,26 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 						
 						std::string_view component = struct_name.substr(start, end - start);
 						if (!component.empty()) {
-							output += std::to_string(component.size());
-							output += component;
+							// Use "St" substitution for std namespace per Itanium C++ ABI
+							if (component == "std") {
+								output += "St";
+							} else {
+								output += std::to_string(component.size());
+								output += component;
+							}
 						}
 						
 						start = (end == struct_name.size()) ? end : end + 2;  // Skip "::"
 					}
 				} else {
 					// Simple class name, encode as-is
-					output += std::to_string(struct_name.size());
-					output += struct_name;
+					// Check for "std" substitution
+					if (struct_name == "std") {
+						output += "St";
+					} else {
+						output += std::to_string(struct_name.size());
+						output += struct_name;
+					}
 				}
 			} else {
 				// Unknown struct type, use 'v' for void as fallback
@@ -357,7 +367,7 @@ inline void generateItaniumMangledName(
 		if (!struct_name.empty()) {
 			// For nested classes, struct_name may contain "::" separators
 			// We need to encode each component separately
-			// e.g., "Outer::Inner" -> "5Outer5Inner"
+			// e.g., "Outer::Inner" -> "5Outer5Inner", "std::simple" -> "St6simple"
 			size_t start = 0;
 			while (start < struct_name.size()) {
 				size_t end = struct_name.find("::", start);
@@ -367,8 +377,13 @@ inline void generateItaniumMangledName(
 				
 				std::string_view component = struct_name.substr(start, end - start);
 				if (!component.empty()) {
-					output += std::to_string(component.size());
-					output += component;
+					// Use "St" substitution for std namespace per Itanium C++ ABI
+					if (component == "std") {
+						output += "St";
+					} else {
+						output += std::to_string(component.size());
+						output += component;
+					}
 				}
 				
 				start = (end == struct_name.size()) ? end : end + 2;  // Skip "::"
@@ -591,8 +606,13 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 				if (end == std::string_view::npos) end = struct_name.size();
 				std::string_view component = struct_name.substr(start, end - start);
 				if (!component.empty()) {
-					output += std::to_string(component.size());
-					output += component;
+					// Use "St" substitution for std namespace per Itanium C++ ABI
+					if (component == "std") {
+						output += "St";
+					} else {
+						output += std::to_string(component.size());
+						output += component;
+					}
 				}
 				start = (end == struct_name.size()) ? end : end + 2;
 			}
@@ -676,8 +696,13 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 				if (end == std::string_view::npos) end = struct_name.size();
 				std::string_view component = struct_name.substr(start, end - start);
 				if (!component.empty()) {
-					output += std::to_string(component.size());
-					output += component;
+					// Use "St" substitution for std namespace per Itanium C++ ABI
+					if (component == "std") {
+						output += "St";
+					} else {
+						output += std::to_string(component.size());
+						output += component;
+					}
 				}
 				start = (end == struct_name.size()) ? end : end + 2;
 			}
@@ -833,15 +858,20 @@ inline MangledName generateMangledName(
 	appendTypeCode(builder, return_type);
 
 	// Add parameter type codes
-	for (const auto& param_type : param_types) {
-		appendTypeCode(builder, param_type);
+	// For MSVC, if there are no parameters, use 'X' to indicate void parameter list
+	if (param_types.empty()) {
+		builder.append('X');
+	} else {
+		for (const auto& param_type : param_types) {
+			appendTypeCode(builder, param_type);
+		}
 	}
 
 	// End marker - different for variadic vs non-variadic
 	if (is_variadic) {
 		builder.append("ZZ");  // Variadic functions end with 'ZZ' in MSVC mangling
 	} else {
-		builder.append("@Z");  // Non-variadic functions end with '@Z'
+		builder.append('Z');  // Non-variadic functions end with 'Z'
 	}
 
 	return MangledName(builder.commit());
@@ -922,16 +952,21 @@ inline MangledName generateMangledName(
 	appendTypeCode(builder, return_type);
 
 	// Add parameter type codes directly from param nodes
-	for (const auto& param : param_nodes) {
-		const DeclarationNode& param_decl = param.as<DeclarationNode>();
-		appendTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
+	// For MSVC, if there are no parameters, use 'X' to indicate void parameter list
+	if (param_nodes.empty()) {
+		builder.append('X');
+	} else {
+		for (const auto& param : param_nodes) {
+			const DeclarationNode& param_decl = param.as<DeclarationNode>();
+			appendTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
+		}
 	}
 
 	// End marker
 	if (is_variadic) {
 		builder.append("ZZ");
 	} else {
-		builder.append("@Z");
+		builder.append('Z');
 	}
 
 	return MangledName(builder.commit());

@@ -6922,8 +6922,11 @@ private:
 				auto it = variable_scopes.back().variables.find(var_name_handle);
 				if (it != variable_scopes.back().variables.end()) {
 					int param_offset = it->second.offset;
-					if (is_reference_param) {
-						// For reference parameters, load address (LEA)
+					// For large struct parameters (> 64 bits), pass by pointer according to System V AMD64 ABI
+					// This includes std::initializer_list which is 128 bits (16 bytes)
+					bool pass_by_pointer = is_reference_param || (paramType == Type::Struct && paramSize > 64);
+					if (pass_by_pointer) {
+						// For reference parameters or large structs, load address (LEA)
 						// LEA target_reg, [RBP + param_offset]
 						emitLeaFromFrame(target_reg, param_offset);
 					} else {
@@ -8813,7 +8816,10 @@ private:
 
 				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
 				// Also track pointer parameters (T*) since they also contain addresses that need dereferencing
-				if (is_reference || param_pointer_depth > 0) {
+				// Also track large struct parameters (> 64 bits) which are passed by pointer
+				bool is_passed_by_pointer = is_reference || param_pointer_depth > 0 ||
+				                            (param_type == Type::Struct && param_size > 64);
+				if (is_passed_by_pointer) {
 					setReferenceInfo(offset, param_type, param_size, 
 						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE));
 				}
@@ -8923,7 +8929,10 @@ private:
 
 				// Track reference parameters and pointer parameters
 				// Both need pointer dereferencing when accessing their members
-				if (param.is_reference || param.pointer_depth > 0) {
+				// Also track large struct parameters (> 64 bits) which are passed by pointer
+				bool is_passed_by_pointer = param.is_reference || param.pointer_depth > 0 ||
+				                            (param.type == Type::Struct && param.size_in_bits > 64);
+				if (is_passed_by_pointer) {
 					setReferenceInfo(offset, param.type, param.size_in_bits, param.is_rvalue_reference);
 				}
 
@@ -8997,7 +9006,10 @@ private:
 				} else {
 					// For integer parameters, use size-appropriate MOV
 					// References are always passed as 64-bit pointers regardless of the type they refer to
-					int store_size = (param.is_reference || param.pointer_depth > 0) ? 64 : param.param_size;
+					// Large struct parameters (> 64 bits) are passed by pointer according to System V AMD64 ABI
+					bool is_passed_by_pointer = param.is_reference || param.pointer_depth > 0 ||
+					                            (param.param_type == Type::Struct && param.param_size > 64);
+					int store_size = is_passed_by_pointer ? 64 : param.param_size;
 					emitMovToFrameSized(
 						SizedRegister{param.src_reg, 64, false},  // source: 64-bit register
 						SizedStackSlot{param.offset, store_size, isSignedType(param.param_type)}  // dest
@@ -13510,7 +13522,14 @@ private:
 				return;
 			}
 			int32_t value_offset = it->second.offset;
-			emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits);
+			// If pointer_depth > 0, we need to store the address of the variable (LEA)
+			// not the value at that address (MOV). This is used for initializer_list
+			// backing arrays where we need to store &array[0], not array[0].
+			if (op.value.pointer_depth > 0) {
+				emitLeaFromFrame(value_reg, value_offset);
+			} else {
+				emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits);
+			}
 		} else {
 			auto value_var = std::get<TempVar>(op.value.value);
 			int32_t value_offset = getStackOffsetFromTempVar(value_var);

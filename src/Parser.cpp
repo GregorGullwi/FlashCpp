@@ -3757,6 +3757,16 @@ ParseResult Parser::parse_struct_declaration()
 	// For top-level classes, qualified_struct_name equals struct_name
 	StringHandle qualified_struct_name = struct_name;
 	StringHandle type_name = struct_name;
+	
+	// Get namespace path early so we can use it for both TypeInfo and StructTypeInfo
+	auto current_namespace_path = gSymbolTable.build_current_namespace_path();
+	
+	// Build the full qualified name for use in mangling
+	// - For nested classes: Parent::Child
+	// - For namespace classes: ns::Class  
+	// - For top-level classes: just the simple name
+	StringHandle full_qualified_name;
+	
 	if (is_nested_class) {
 		// We're inside a struct, so this is a nested class
 		// Use the qualified name (e.g., "Outer::Inner") for the TypeInfo entry
@@ -3767,6 +3777,12 @@ ParseResult Parser::parse_struct_declaration()
 			.append("::")
 			.append(struct_name));
 		type_name = qualified_struct_name;
+		full_qualified_name = qualified_struct_name;
+	} else if (!current_namespace_path.empty()) {
+		// Top-level class in a namespace - use namespace-qualified name for proper mangling
+		full_qualified_name = buildQualifiedNameHandle(current_namespace_path, struct_name);
+		qualified_struct_name = full_qualified_name;  // Also update qualified_struct_name for implicit constructors
+		type_name = full_qualified_name;  // TypeInfo should also use fully qualified name
 	}
 
 	TypeInfo& struct_type_info = add_struct_type(type_name);
@@ -3776,9 +3792,17 @@ ParseResult Parser::parse_struct_declaration()
 	if (is_nested_class) {
 		gTypesByName.emplace(struct_name, &struct_type_info);
 	}
+	
+	// For namespace classes, also register with the simple name for 'this' pointer lookup
+	// during member function code generation. The TypeInfo's name is fully qualified (ns::Test)
+	// but parent_struct_name is just "Test", so we need this alias for lookups.
+	if (!is_nested_class && !current_namespace_path.empty()) {
+		if (gTypesByName.find(struct_name) == gTypesByName.end()) {
+			gTypesByName.emplace(struct_name, &struct_type_info);
+		}
+	}
 
 	// If inside an inline namespace, register the parent-qualified name (e.g., outer::Foo)
-	auto current_namespace_path = gSymbolTable.build_current_namespace_path();
 	if (!current_namespace_path.empty() && !inline_namespace_stack_.empty() && inline_namespace_stack_.back() && !parsing_template_class_) {
 		auto parent_path = current_namespace_path;
 		parent_path.pop_back();
@@ -3788,16 +3812,12 @@ ParseResult Parser::parse_struct_declaration()
 		}
 	}
 	
-	// Also register with namespace-qualified names for all levels of the namespace path
+	// Register with namespace-qualified names for all levels of the namespace path
 	// This allows lookups like "inner::Base" when we're in namespace "ns" to find "ns::inner::Base"
 	if (!current_namespace_path.empty() && !is_nested_class) {
-		// Register with full namespace path (e.g., "ns::inner::Base")
-		auto full_qualified_name = buildQualifiedNameHandle(current_namespace_path, struct_name);
-		if (gTypesByName.find(full_qualified_name) == gTypesByName.end()) {
-			gTypesByName.emplace(full_qualified_name, &struct_type_info);
-			FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name), 
-			          "' with namespace-qualified name '", StringTable::getStringView(full_qualified_name), "'");
-		}
+		// full_qualified_name already computed above, just log if needed
+		FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name), 
+		          "' with namespace-qualified name '", StringTable::getStringView(full_qualified_name), "'");
 		
 		// Also register intermediate names (e.g., "inner::Base" for "ns::inner::Base")
 		// This allows sibling namespace access patterns like:
@@ -3840,9 +3860,17 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Create StructTypeInfo early so we can add base classes to it
 	// For nested classes, use the qualified name so getName() returns the full name for mangling
-	// For top-level classes, use the simple name to avoid incorrectly treating them as nested
-	// (the stack might not be empty due to early returns in previous struct parsing)
-	StringHandle struct_info_name = is_nested_class ? qualified_struct_name : struct_name;
+	// For top-level classes in a namespace, use full_qualified_name for correct mangling
+	// For top-level classes not in a namespace, use the simple name
+	StringHandle struct_info_name;
+	if (is_nested_class) {
+		struct_info_name = qualified_struct_name;
+	} else if (full_qualified_name.isValid()) {
+		// Top-level class in a namespace - use namespace-qualified name for proper mangling
+		struct_info_name = full_qualified_name;
+	} else {
+		struct_info_name = struct_name;
+	}
 	auto struct_info = std::make_unique<StructTypeInfo>(struct_info_name, struct_ref.default_access());
 	struct_info->is_union = is_union;
 	
@@ -6138,9 +6166,10 @@ ParseResult Parser::parse_struct_declaration()
 	// Skip implicit function generation for template classes (they'll be generated during instantiation)
 	if (!has_user_defined_constructor && !parsing_template_class_) {
 		// Create a default constructor node
+		// Use qualified_struct_name to include namespace for proper mangling
 		auto [default_ctor_node, default_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-			struct_name,
-			struct_name
+			qualified_struct_name,
+			qualified_struct_name
 		);
 
 		// Create an empty block for the constructor body
@@ -6167,9 +6196,10 @@ ParseResult Parser::parse_struct_declaration()
 	// Skip implicit function generation for template classes (they'll be generated during instantiation)
 	if (!has_user_defined_copy_constructor && !has_user_defined_move_constructor && !parsing_template_class_) {
 		// Create a copy constructor node: Type(const Type& other)
+		// Use qualified_struct_name to include namespace for proper mangling
 		auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-			struct_name,
-			struct_name
+			qualified_struct_name,
+			qualified_struct_name
 		);
 
 		// Create parameter: const Type& other
@@ -6289,9 +6319,10 @@ ParseResult Parser::parse_struct_declaration()
 	if (!has_user_defined_copy_constructor && !has_user_defined_copy_assignment &&
 	    !has_user_defined_move_assignment && !has_user_defined_destructor && !parsing_template_class_) {
 		// Create a move constructor node: Type(Type&& other)
+		// Use qualified_struct_name to include namespace for proper mangling
 		auto [move_ctor_node, move_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-			struct_name,
-			struct_name
+			qualified_struct_name,
+			qualified_struct_name
 		);
 
 		// Create parameter: Type&& other (rvalue reference)
@@ -12051,14 +12082,35 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node)
 		func_node.set_mangled_name(func_name);
 		return;
 	}
+
+	// Build namespace path from current symbol table state as string vector
+	// For member functions, only build namespace path if parent_struct_name doesn't already contain namespace
+	// (to avoid double-encoding the namespace in the mangled name)
+	// NOTE: We use std::string instead of std::string_view to avoid dangling references
+	// when the NamespacePath (vector<StringType>) goes out of scope
+	std::vector<std::string> ns_path;
+	bool should_get_namespace = true;
 	
-	// Build namespace path from current symbol table state as string_view vector
-	auto namespace_path = gSymbolTable.build_current_namespace_path();
-	std::vector<std::string_view> ns_path;
-	ns_path.reserve(namespace_path.size());
-	for (const auto& ns : namespace_path) {
-		// Both StackString and std::string have implicit conversion to std::string_view
-		ns_path.push_back(static_cast<std::string_view>(ns));
+	if (func_node.is_member_function()) {
+		std::string_view parent_name = func_node.parent_struct_name();
+		// If parent_struct_name already contains "::", namespace is embedded in struct name
+		// so we don't need to pass it separately
+		if (parent_name.find("::") != std::string_view::npos) {
+			should_get_namespace = false;
+		}
+	}
+	
+	if (should_get_namespace) {
+		auto namespace_path = gSymbolTable.build_current_namespace_path();
+		ns_path.reserve(namespace_path.size());
+		for (const auto& ns : namespace_path) {
+			// Convert StringType to std::string to avoid dangling string_view
+#if USE_OLD_STRING_APPROACH
+			ns_path.push_back(ns);
+#else
+			ns_path.push_back(std::string(ns.view()));
+#endif
+		}
 	}
 	
 	// Generate the mangled name using the NameMangling helper
@@ -12817,6 +12869,100 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 	}
 }
 
+// Check if a type name is std::initializer_list (or just initializer_list in std namespace)
+// Returns the element type index if it is, or nullopt otherwise
+std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNode& type_spec) const {
+	if (type_spec.type() != Type::Struct) {
+		return std::nullopt;
+	}
+	
+	TypeIndex type_index = type_spec.type_index();
+	if (type_index >= gTypeInfo.size()) {
+		return std::nullopt;
+	}
+	
+	const TypeInfo& type_info = gTypeInfo[type_index];
+	std::string_view type_name = StringTable::getStringView(type_info.name());
+	
+	// Check if the type name matches std::initializer_list pattern
+	// Template instantiations are named like "std::initializer_list_int" (with underscore)
+	// or "std::initializer_list<int>" (with angle brackets)
+	// We must check for "std::" prefix to ensure it's the standard library type
+	if ((type_name.find("std::initializer_list<") != std::string_view::npos ||
+	     type_name.find("std::initializer_list_") != std::string_view::npos)) {
+		// This is an initializer_list type from the std namespace
+		FLASH_LOG(Parser, Debug, "is_initializer_list_type: detected '", type_name, "' as initializer_list type");
+		return type_index;
+	}
+	
+	return std::nullopt;
+}
+
+// Find a constructor in struct_info that takes std::initializer_list<T> as its parameter
+// Returns the constructor and the element type if found
+std::optional<std::pair<const StructMemberFunction*, TypeIndex>> 
+Parser::find_initializer_list_constructor(const StructTypeInfo& struct_info) const {
+	FLASH_LOG(Parser, Debug, "find_initializer_list_constructor: checking struct '", 
+	          StringTable::getStringView(struct_info.getName()), "' with ", 
+	          struct_info.member_functions.size(), " member functions");
+	
+	for (const auto& member_func : struct_info.member_functions) {
+		if (!member_func.is_constructor) continue;
+		
+		FLASH_LOG(Parser, Debug, "  found constructor, checking parameters...");
+		
+		// Check if this constructor has a function declaration
+		if (!member_func.function_decl.has_value()) {
+			FLASH_LOG(Parser, Debug, "    no function_decl");
+			continue;
+		}
+		
+		// Constructors can be stored as ConstructorDeclarationNode or FunctionDeclarationNode
+		const std::vector<ASTNode>* params = nullptr;
+		
+		if (member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			const ConstructorDeclarationNode& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
+			params = &ctor_decl.parameter_nodes();
+			FLASH_LOG(Parser, Debug, "    is ConstructorDeclarationNode with ", params->size(), " parameters");
+		} else if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+			params = &func_decl.parameter_nodes();
+			FLASH_LOG(Parser, Debug, "    is FunctionDeclarationNode with ", params->size(), " parameters");
+		} else {
+			FLASH_LOG(Parser, Debug, "    unknown node type");
+			continue;
+		}
+		
+		// Look for constructor taking exactly one initializer_list parameter
+		if (params->size() != 1) continue;
+		
+		const ASTNode& param_node = (*params)[0];
+		if (!param_node.is<DeclarationNode>()) {
+			FLASH_LOG(Parser, Debug, "    param is not DeclarationNode");
+			continue;
+		}
+		
+		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		if (!param_decl.type_node().is<TypeSpecifierNode>()) {
+			FLASH_LOG(Parser, Debug, "    param type is not TypeSpecifierNode");
+			continue;
+		}
+		
+		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		FLASH_LOG(Parser, Debug, "    param type: ", (int)param_type.type(), 
+		          " index: ", param_type.type_index());
+		
+		auto element_type_opt = is_initializer_list_type(param_type);
+		
+		if (element_type_opt.has_value()) {
+			FLASH_LOG(Parser, Debug, "    FOUND initializer_list constructor!");
+			return std::make_pair(&member_func, *element_type_opt);
+		}
+	}
+	
+	return std::nullopt;
+}
+
 ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specifier)
 {
 	// Parse brace initializer list: { expr1, expr2, ... }
@@ -12956,6 +13102,159 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	}
 
 	const StructTypeInfo& struct_info = *type_info.struct_info_;
+
+	// Check if this struct has an initializer_list constructor
+	// If so, we need to handle brace-init-list specially by creating an InitializerListConstructionNode
+	auto init_list_ctor = find_initializer_list_constructor(struct_info);
+	if (init_list_ctor.has_value()) {
+		// This struct has an initializer_list constructor
+		// Parse all the brace elements first
+		std::vector<ASTNode> elements;
+		Token brace_token = *current_token_;  // Save the '{' token location
+		
+		while (true) {
+			// Check if we've reached the end of the initializer list
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+				break;
+			}
+			
+			// Parse the initializer expression
+			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
+			if (init_expr_result.is_error()) {
+				return init_expr_result;
+			}
+			
+			if (init_expr_result.node().has_value()) {
+				elements.push_back(*init_expr_result.node());
+			} else {
+				return ParseResult::error("Expected initializer expression", *current_token_);
+			}
+			
+			// Check for comma or end of list
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+				consume_token(); // consume the comma
+				
+				// Allow trailing comma before '}'
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+					break;
+				}
+			} else {
+				// No comma, so we should be at the end
+				break;
+			}
+		}
+		
+		if (!consume_punctuator("}")) {
+			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+		}
+		
+		// Get element type from the initializer_list type
+		// The initializer_list struct stores the element type in its first member's type_index
+		TypeIndex init_list_type_index = init_list_ctor->second;
+		ASTNode element_type_node;
+		
+		// Extract element type from the initializer_list struct's first member
+		// The first member is typically a pointer (const T*), and type_index points to T
+		if (init_list_type_index < gTypeInfo.size()) {
+			const TypeInfo& init_list_info = gTypeInfo[init_list_type_index];
+			if (init_list_info.struct_info_ && !init_list_info.struct_info_->members.empty()) {
+				const StructMember& first_member = init_list_info.struct_info_->members[0];
+				// The first member's type_index should point to the element type
+				if (first_member.type_index > 0 && first_member.type_index < gTypeInfo.size()) {
+					const TypeInfo& elem_info = gTypeInfo[first_member.type_index];
+					Type elem_type = elem_info.type_;
+					int elem_size = elem_info.type_size_ > 0 ? elem_info.type_size_ : get_type_size_bits(elem_type);
+					
+					auto elem_type_spec = emplace_node<TypeSpecifierNode>(
+						elem_type, 
+						TypeQualifier::None,
+						static_cast<unsigned char>(elem_size),
+						brace_token
+					);
+					// If it's a struct type, preserve the type_index
+					if (elem_type == Type::Struct) {
+						elem_type_spec.as<TypeSpecifierNode>().set_type_index(first_member.type_index);
+					}
+					element_type_node = elem_type_spec;
+				} else {
+					// Fall back to using the member's type directly (for primitive types)
+					int elem_size = get_type_size_bits(first_member.type);
+					element_type_node = emplace_node<TypeSpecifierNode>(
+						first_member.type,
+						TypeQualifier::None,
+						static_cast<unsigned char>(elem_size),
+						brace_token
+					);
+				}
+			}
+		}
+		
+		// Fallback to int if we couldn't extract the element type
+		if (!element_type_node.has_value()) {
+			element_type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, brace_token);
+		}
+		
+		// Try to get the actual element type from the parameter
+		const StructMemberFunction* ctor = init_list_ctor->first;
+		ASTNode target_type_node;
+		
+		// Constructors can be stored as ConstructorDeclarationNode or FunctionDeclarationNode
+		if (ctor && ctor->function_decl.is<ConstructorDeclarationNode>()) {
+			const ConstructorDeclarationNode& ctor_decl = ctor->function_decl.as<ConstructorDeclarationNode>();
+			if (!ctor_decl.parameter_nodes().empty()) {
+				const ASTNode& param = ctor_decl.parameter_nodes()[0];
+				if (param.is<DeclarationNode>()) {
+					const DeclarationNode& param_decl = param.as<DeclarationNode>();
+					if (param_decl.type_node().is<TypeSpecifierNode>()) {
+						target_type_node = param_decl.type_node();
+					}
+				}
+			}
+		} else if (ctor && ctor->function_decl.is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& func_decl = ctor->function_decl.as<FunctionDeclarationNode>();
+			if (!func_decl.parameter_nodes().empty()) {
+				const ASTNode& param = func_decl.parameter_nodes()[0];
+				if (param.is<DeclarationNode>()) {
+					const DeclarationNode& param_decl = param.as<DeclarationNode>();
+					if (param_decl.type_node().is<TypeSpecifierNode>()) {
+						target_type_node = param_decl.type_node();
+					}
+				}
+			}
+		}
+		
+		// If we found the target type, create the InitializerListConstructionNode
+		if (target_type_node.has_value()) {
+			// Create InitializerListConstructionNode
+			auto init_list_construction = emplace_node<ExpressionNode>(
+				InitializerListConstructionNode(
+					element_type_node,
+					target_type_node,
+					std::move(elements),
+					brace_token
+				)
+			);
+			
+			// Now wrap this in a ConstructorCallNode to call the actual constructor
+			ChunkedVector<ASTNode> ctor_args;
+			ctor_args.push_back(init_list_construction);
+			
+			auto type_spec_node = emplace_node<TypeSpecifierNode>(
+				Type::Struct, type_index, 
+				static_cast<unsigned char>(struct_info.total_size * 8),
+				brace_token
+			);
+			
+			return ParseResult::success(
+				emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)
+				)
+			);
+		}
+		
+		// Fallback: if we couldn't get the target type, return an error
+		return ParseResult::error("Could not determine initializer_list element type", brace_token);
+	}
 
 	// Parse comma-separated initializer expressions (positional or designated)
 	size_t member_index = 0;

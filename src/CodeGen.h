@@ -209,6 +209,9 @@ public:
 			visitExpressionNode(node.as<ExpressionNode>());
 		}
 		else if (node.is<StructDeclarationNode>()) {
+			// Clear struct context for top-level structs to prevent them from being
+			// mistakenly treated as nested classes of the previous struct
+			current_struct_name_ = StringHandle();
 			visitStructDeclarationNode(node.as<StructDeclarationNode>());
 		}
 		else if (node.is<EnumDeclarationNode>()) {
@@ -2361,17 +2364,12 @@ private:
 		// This is critical for member variable lookup in generateIdentifierIr
 		if (node.is_member_function()) {
 			// For member functions, set current_struct_name_ from parent_struct_name
-			// This handles lazy-instantiated template member functions that are visited
-			// at the top level, not through visitStructDeclarationNode
+			// Use the parent_struct_name directly (simple name like "Test") rather than
+			// looking up the TypeInfo's name (which may be namespace-qualified like "ns::Test").
+			// The namespace will be added during mangling from current_namespace_stack_.
 			std::string_view parent_name = node.parent_struct_name();
 			if (!parent_name.empty()) {
-				// Look up the struct type to get its canonical name (important for templates)
-				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(parent_name));
-				if (type_it != gTypesByName.end()) {
-					current_struct_name_ = type_it->second->name();
-				} else {
-					current_struct_name_ = StringTable::getOrInternStringHandle(parent_name);
-				}
+				current_struct_name_ = StringTable::getOrInternStringHandle(parent_name);
 			}
 		} else {
 			// Clear current_struct_name_ to prevent struct context from leaking into free functions
@@ -2479,6 +2477,17 @@ private:
 		// Use pre-computed mangled name from AST node if available (Phase 6 migration)
 		// Fall back to generating it here if not (for backward compatibility during migration)
 		std::string_view mangled_name;
+		
+		// Don't pass namespace_stack when struct_name already includes the namespace
+		// (e.g., "std::simple" already has the namespace embedded, so we shouldn't also pass ["std"])
+		// This avoids double-encoding the namespace in the mangled name
+		std::vector<std::string> namespace_for_mangling;
+		if (struct_name_for_function.find("::") == std::string_view::npos) {
+			// struct_name doesn't contain namespace, use current_namespace_stack_
+			namespace_for_mangling = current_namespace_stack_;
+		}
+		// else: struct_name already contains namespace prefix, don't add it again
+		
 		if (node.has_mangled_name()) {
 			mangled_name = node.mangled_name();
 		} else if (node.has_non_type_template_args()) {
@@ -2491,11 +2500,11 @@ private:
 			auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 				func_decl.identifier_token().value(), return_type, param_types, 
 				node.non_type_template_args(), node.is_variadic(), 
-				struct_name_for_function, current_namespace_stack_);
+				struct_name_for_function, namespace_for_mangling);
 			mangled_name = mangled.view();
 		} else {
 			// Generate mangled name using the FunctionDeclarationNode overload
-			mangled_name = generateMangledNameForCall(node, struct_name_for_function, current_namespace_stack_);
+			mangled_name = generateMangledNameForCall(node, struct_name_for_function, namespace_for_mangling);
 		}
 		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled_name);
 
@@ -2786,7 +2795,7 @@ private:
 			                     .append(struct_name);
 			lookup_name = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 		} else {
-			// Top-level class - use simple name
+			// Top-level class - first try simple name, then look for namespace-qualified version
 			lookup_name = StringTable::getOrInternStringHandle(struct_name);
 		}
 		
@@ -2794,7 +2803,25 @@ private:
 		if (type_it != gTypesByName.end()) {
 			current_struct_name_ = type_it->second->name();
 		} else {
-			current_struct_name_ = lookup_name;
+			// If simple name lookup failed, search for namespace-qualified version
+			// e.g., for "simple", look for "std::simple" or other qualified names
+			bool found_qualified = false;
+			for (const auto& [name_handle, type_info] : gTypesByName) {
+				std::string_view qualified_name = StringTable::getStringView(name_handle);
+				// Check if this name ends with "::" + struct_name
+				if (qualified_name.size() > struct_name.size() + 2) {
+					size_t expected_pos = qualified_name.size() - struct_name.size();
+					if (qualified_name.substr(expected_pos) == struct_name &&
+					    qualified_name.substr(expected_pos - 2, 2) == "::") {
+						current_struct_name_ = name_handle;
+						found_qualified = true;
+						break;
+					}
+				}
+			}
+			if (!found_qualified) {
+				current_struct_name_ = lookup_name;
+			}
 		}
 		
 		// For local structs, collect member functions for deferred generation
@@ -7487,6 +7514,12 @@ private:
 			// If we reach here, it means the pack wasn't properly substituted
 			FLASH_LOG(Codegen, Error, "PackExpansionExprNode found during code generation - should have been expanded during template instantiation");
 			return {};
+		}
+		else if (std::holds_alternative<InitializerListConstructionNode>(exprNode)) {
+			// Compiler-generated initializer_list construction
+			// This is the "compiler magic" for std::initializer_list
+			const auto& init_list = std::get<InitializerListConstructionNode>(exprNode);
+			return generateInitializerListConstructionIr(init_list);
 		}
 		else {
 			assert(false && "Not implemented yet");
@@ -19537,6 +19570,145 @@ private:
 		std::cerr << "This indicates a bug in template instantiation - template parameters should be replaced with concrete types/values\n";
 		assert(false && "Template parameter reference found during code generation - should have been substituted");
 		return {};
+	}
+
+	// Generate IR for std::initializer_list construction
+	// This is the "compiler magic" that creates a backing array on the stack
+	// and constructs an initializer_list pointing to it
+	std::vector<IrOperand> generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list) {
+		FLASH_LOG(Codegen, Debug, "Generating IR for InitializerListConstructionNode with ", 
+		          init_list.size(), " elements");
+		
+		// Get the target initializer_list type
+		const ASTNode& target_type_node = init_list.target_type();
+		if (!target_type_node.is<TypeSpecifierNode>()) {
+			FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: target_type is not TypeSpecifierNode");
+			return {};
+		}
+		const TypeSpecifierNode& target_type = target_type_node.as<TypeSpecifierNode>();
+		
+		// Get element type (default to int for now)
+		int element_size_bits = 32;  // Default: int
+		Type element_type = Type::Int;
+		
+		// Infer element type from first element if available
+		std::vector<std::vector<IrOperand>> element_operands;
+		for (size_t i = 0; i < init_list.elements().size(); ++i) {
+			const ASTNode& elem = init_list.elements()[i];
+			if (elem.is<ExpressionNode>()) {
+				auto operands = visitExpressionNode(elem.as<ExpressionNode>());
+				element_operands.push_back(operands);
+				if (i == 0 && operands.size() >= 2) {
+					if (std::holds_alternative<Type>(operands[0])) {
+						element_type = std::get<Type>(operands[0]);
+					}
+					if (std::holds_alternative<int>(operands[1])) {
+						element_size_bits = std::get<int>(operands[1]);
+					}
+				}
+			}
+		}
+		
+		// Step 1: Create a backing array on the stack using VariableDecl
+		size_t array_size = init_list.size();
+		size_t total_size_bits = array_size * element_size_bits;
+		
+		// Create a unique name for the backing array using the temp var number
+		TempVar array_var = var_counter.next();
+		StringBuilder array_name_builder;
+		array_name_builder.append("__init_list_array_"sv).append(array_var.var_number);
+		StringHandle array_name = StringTable::getOrInternStringHandle(array_name_builder.commit());
+		
+		VariableDeclOp array_decl;
+		array_decl.var_name = array_name;
+		array_decl.type = element_type;
+		array_decl.size_in_bits = static_cast<int>(total_size_bits);
+		array_decl.is_array = true;
+		array_decl.array_element_type = element_type;
+		array_decl.array_element_size = element_size_bits;
+		array_decl.array_count = array_size;
+		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(array_decl), init_list.called_from()));
+		
+		// Step 2: Store each element into the backing array using ArrayStore
+		for (size_t i = 0; i < element_operands.size(); ++i) {
+			if (element_operands[i].size() < 3) continue;
+			
+			ArrayStoreOp store_op;
+			store_op.element_type = element_type;
+			store_op.element_size_in_bits = element_size_bits;
+			store_op.array = array_name;
+			store_op.index = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(i), 0};
+			store_op.value = toTypedValue(element_operands[i]);
+			store_op.member_offset = 0;  // Not a member array - direct local array
+			store_op.is_pointer_to_array = false;  // This is an actual array, not a pointer
+			ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(store_op), init_list.called_from()));
+		}
+		
+		// Step 3: Create the initializer_list struct
+		TypeIndex init_list_type_index = target_type.type_index();
+		if (init_list_type_index >= gTypeInfo.size()) {
+			FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: invalid type index");
+			return {};
+		}
+		
+		const TypeInfo& init_list_type_info = gTypeInfo[init_list_type_index];
+		const StructTypeInfo* init_list_struct_info = init_list_type_info.getStructInfo();
+		if (!init_list_struct_info) {
+			FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: target type is not a struct");
+			return {};
+		}
+		
+		int init_list_size_bits = static_cast<int>(init_list_struct_info->total_size * 8);
+		
+		// Create a unique name for the initializer_list struct using the temp var number
+		TempVar init_list_var = var_counter.next();
+		StringBuilder init_list_name_builder;
+		init_list_name_builder.append("__init_list_"sv).append(init_list_var.var_number);
+		StringHandle init_list_name = StringTable::getOrInternStringHandle(init_list_name_builder.commit());
+		
+		VariableDeclOp init_list_decl;
+		init_list_decl.var_name = init_list_name;
+		init_list_decl.type = Type::Struct;
+		init_list_decl.size_in_bits = init_list_size_bits;
+		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(init_list_decl), init_list.called_from()));
+		
+		// Store pointer to array (first member)
+		if (init_list_struct_info->members.size() >= 1) {
+			const auto& ptr_member = init_list_struct_info->members[0];
+			MemberStoreOp store_ptr;
+			store_ptr.object = init_list_name;  // Use StringHandle
+			store_ptr.member_name = ptr_member.getName();
+			store_ptr.offset = static_cast<int>(ptr_member.offset);
+			// Create TypedValue for pointer to array - need to set pointer_depth explicitly
+			TypedValue ptr_value;
+			ptr_value.type = element_type;
+			ptr_value.size_in_bits = 64;  // pointer size
+			ptr_value.value = array_name;
+			ptr_value.pointer_depth = 1;  // This is a pointer to the array
+			store_ptr.value = ptr_value;
+			store_ptr.struct_type_info = nullptr;
+			store_ptr.is_reference = false;
+			store_ptr.is_rvalue_reference = false;
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_ptr), init_list.called_from()));
+		}
+		
+		// Store size (second member)
+		if (init_list_struct_info->members.size() >= 2) {
+			const auto& size_member = init_list_struct_info->members[1];
+			MemberStoreOp store_size;
+			store_size.object = init_list_name;  // Use StringHandle
+			store_size.member_name = size_member.getName();
+			store_size.offset = static_cast<int>(size_member.offset);
+			store_size.value = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(array_size), 0};
+			store_size.struct_type_info = nullptr;
+			store_size.is_reference = false;
+			store_size.is_rvalue_reference = false;
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_size), init_list.called_from()));
+		}
+		
+		// Return operands for the constructed initializer_list
+		// Return the StringHandle for the variable name so the caller can use it
+		return { Type::Struct, init_list_size_bits, init_list_name, static_cast<unsigned long long>(init_list_type_index) };
 	}
 
 	std::vector<IrOperand> generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
