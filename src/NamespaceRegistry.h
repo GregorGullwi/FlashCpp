@@ -76,7 +76,8 @@ public:
 			return it->second;
 		}
 
-		if (entries_.size() > static_cast<size_t>(NamespaceHandle::INVALID_HANDLE) - 1) {
+		const size_t max_entries = static_cast<size_t>(NamespaceHandle::INVALID_HANDLE);
+		if (entries_.size() >= max_entries) {
 			assert(false && "Namespace registry capacity exceeded (65535 entries)");
 			return NamespaceHandle{NamespaceHandle::INVALID_HANDLE};
 		}
@@ -150,12 +151,19 @@ public:
 	}
 
 	bool isAncestorOf(NamespaceHandle potential_ancestor, NamespaceHandle child) const {
+		if (!child.isValid()) {
+			return false;
+		}
+		if (potential_ancestor.isGlobal()) {
+			return true;
+		}
+
 		NamespaceHandle current = child;
 		while (current.isValid() && !current.isGlobal()) {
 			if (current == potential_ancestor) return true;
 			current = getParent(current);
 		}
-		return potential_ancestor.isGlobal();
+		return false;
 	}
 
 	std::vector<NamespaceHandle> getAncestors(NamespaceHandle handle) const {
