@@ -78,7 +78,7 @@ struct Scope {
 	std::unordered_map<std::string_view, std::vector<ASTNode>> symbols;
 	ScopeHandle scope_handle;
 	StringType<> namespace_name;  // Only used for Namespace scopes
-	NamespaceHandle namespace_handle;  // Only used for Namespace scopes
+	NamespaceHandle namespace_handle = NamespaceHandle{NamespaceHandle::INVALID_HANDLE};  // Only used for Namespace scopes
 
 	// Using directives: namespaces to search when looking up unqualified names
 	std::vector<NamespaceHandle> using_directives;

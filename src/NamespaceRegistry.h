@@ -85,7 +85,11 @@ public:
 		NamespaceEntry entry;
 		entry.name = name;
 		entry.parent = parent_handle;
-		entry.depth = parent_handle.isValid() ? getEntry(parent_handle).depth + 1 : 1;
+		if (!parent_handle.isValid() || parent_handle.isGlobal()) {
+			entry.depth = 1;
+		} else {
+			entry.depth = getEntry(parent_handle).depth + 1;
+		}
 		entry.qualified_name = buildQualifiedNameForEntry(parent_handle, name);
 
 		NamespaceHandle new_handle{static_cast<uint16_t>(entries_.size())};
@@ -151,7 +155,7 @@ public:
 	}
 
 	bool isAncestorOf(NamespaceHandle potential_ancestor, NamespaceHandle child) const {
-		if (!child.isValid()) {
+		if (!potential_ancestor.isValid() || !child.isValid()) {
 			return false;
 		}
 		if (potential_ancestor.isGlobal()) {
