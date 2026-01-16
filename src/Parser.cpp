@@ -8732,15 +8732,15 @@ ParseResult Parser::parse_namespace() {
 	// We need to do this for each inline namespace in the chain
 	// Capture the path AFTER exiting scopes (we're back to original scope)
 	if (!is_anonymous && !nested_inline_flags.empty()) {
-		NamespacePath current_path = gSymbolTable.build_current_namespace_path();
+		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
 		for (size_t i = 0; i < nested_names.size(); ++i) {
 			bool this_is_inline = nested_inline_flags.size() > i && nested_inline_flags[i];
+			StringHandle name_handle = StringTable::getOrInternStringHandle(nested_names[i]);
+			NamespaceHandle inline_handle = gNamespaceRegistry.getOrCreateNamespace(current_handle, name_handle);
 			if (this_is_inline) {
-				NamespacePath inline_path = current_path;
-				inline_path.push_back(StringType<>(nested_names[i]));
-				gSymbolTable.merge_inline_namespace(inline_path, current_path);
+				gSymbolTable.merge_inline_namespace(inline_handle, current_handle);
 			}
-			current_path.push_back(StringType<>(nested_names[i]));
+			current_handle = inline_handle;
 		}
 	}
 

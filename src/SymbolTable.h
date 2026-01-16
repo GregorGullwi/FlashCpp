@@ -4,6 +4,7 @@
 #include <string_view>
 #include <stack>
 #include <optional>
+#include <span>
 #include <vector>
 #include <functional>
 #include "AstNodeTypes.h"
@@ -340,7 +341,7 @@ public:
 	std::optional<ASTNode> lookup(std::string_view identifier, ScopeHandle scope_limit_handle) const {
 		NamespaceHandle namespace_handle = get_current_namespace_handle();
 		std::vector<NamespaceHandle> namespace_chain = gNamespaceRegistry.getAncestors(namespace_handle);
-		size_t namespace_index = 0;
+		auto namespace_it = namespace_chain.begin();
 
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
@@ -376,20 +377,16 @@ public:
 			// from other blocks of the same namespace (e.g., reopened namespace blocks)
 			// This needs to happen BEFORE checking parent/global scopes.
 			if (scope.scope_type == ScopeType::Namespace) {
-				NamespaceHandle scope_namespace = getNamespaceAtIndex(namespace_chain, namespace_index);
+				NamespaceHandle scope_namespace = namespace_it != namespace_chain.end()
+					? *namespace_it++
+					: NamespaceRegistry::GLOBAL_NAMESPACE;
 				if (!scope_namespace.isGlobal()) {
 					auto ns_it = namespace_symbols_.find(scope_namespace);
 					if (ns_it != namespace_symbols_.end()) {
-						for (const auto& [key, value_vec] : ns_it->second) {
-#if USE_OLD_STRING_APPROACH
-							if (key == std::string(identifier)) {
-#else
-							if (key.view() == identifier) {
-#endif
-								if (!value_vec.empty()) {
-									return value_vec[0];
-								}
-							}
+						StringType<32> key(identifier);
+						auto symbol_it = ns_it->second.find(key);
+						if (symbol_it != ns_it->second.end() && !symbol_it->second.empty()) {
+							return symbol_it->second[0];
 						}
 					}
 				}
@@ -427,7 +424,7 @@ public:
 	std::vector<ASTNode> lookup_all(std::string_view identifier, ScopeHandle scope_limit_handle) const {
 		NamespaceHandle namespace_handle = get_current_namespace_handle();
 		std::vector<NamespaceHandle> namespace_chain = gNamespaceRegistry.getAncestors(namespace_handle);
-		size_t namespace_index = 0;
+		auto namespace_it = namespace_chain.begin();
 		
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
@@ -461,18 +458,16 @@ public:
 			// If we're in a namespace scope, also check namespace_symbols_ for symbols
 			// from other blocks of the same namespace (e.g., reopened namespace blocks).
 			if (scope.scope_type == ScopeType::Namespace) {
-				NamespaceHandle scope_namespace = getNamespaceAtIndex(namespace_chain, namespace_index);
+				NamespaceHandle scope_namespace = namespace_it != namespace_chain.end()
+					? *namespace_it++
+					: NamespaceRegistry::GLOBAL_NAMESPACE;
 				if (!scope_namespace.isGlobal()) {
 					auto ns_it = namespace_symbols_.find(scope_namespace);
 					if (ns_it != namespace_symbols_.end()) {
-						for (const auto& [key, value_vec] : ns_it->second) {
-#if USE_OLD_STRING_APPROACH
-							if (key == std::string(identifier)) {
-#else
-							if (key.view() == identifier) {
-#endif
-								return value_vec;
-							}
+						StringType<32> key(identifier);
+						auto symbol_it = ns_it->second.find(key);
+						if (symbol_it != ns_it->second.end()) {
+							return symbol_it->second;
 						}
 					}
 				}
@@ -493,16 +488,12 @@ public:
 			return {};
 		}
 
-		for (const auto& [key, value_vec] : ns_it->second) {
-#if USE_OLD_STRING_APPROACH
-			if (key == std::string(identifier)) {
-#else
-			if (key.view() == identifier) {
-#endif
-				return value_vec;
-			}
+		StringType<32> key(identifier);
+		auto symbol_it = ns_it->second.find(key);
+		if (symbol_it == ns_it->second.end()) {
+			return {};
 		}
-		return {};
+		return symbol_it->second;
 	}
 
 	template<typename StringContainer>
@@ -695,19 +686,12 @@ public:
 			return std::nullopt;
 		}
 
-		for (const auto& [key, value_vec] : ns_it->second) {
-#if USE_OLD_STRING_APPROACH
-			if (key == std::string(identifier)) {
-#else
-			if (key.view() == identifier) {
-#endif
-				if (!value_vec.empty()) {
-					return value_vec[0];
-				}
-			}
+		StringType<32> key(identifier);
+		auto symbol_it = ns_it->second.find(key);
+		if (symbol_it == ns_it->second.end() || symbol_it->second.empty()) {
+			return std::nullopt;
 		}
-
-		return std::nullopt;
+		return symbol_it->second[0];
 	}
 
 	template<typename StringContainer>
@@ -825,27 +809,19 @@ private:
 		return interned;
 	}
 
-	NamespaceHandle getNamespaceAtIndex(const std::vector<NamespaceHandle>& namespace_chain, size_t& namespace_index) const {
-		if (namespace_index >= namespace_chain.size()) {
-			return NamespaceRegistry::GLOBAL_NAMESPACE;
-		}
-		return namespace_chain[namespace_index++];
-	}
-
 	NamespaceHandle get_or_create_namespace_handle_from_path(const NamespacePath& namespaces) const {
-		NamespaceHandle current = NamespaceRegistry::GLOBAL_NAMESPACE;
+		std::vector<StringHandle> handles;
+		handles.reserve(namespaces.size());
 		for (const auto& ns : namespaces) {
 #if USE_OLD_STRING_APPROACH
-			StringHandle name_handle = StringTable::getOrInternStringHandle(ns);
+			handles.push_back(StringTable::getOrInternStringHandle(ns));
 #else
-			StringHandle name_handle = StringTable::getOrInternStringHandle(ns.view());
+			handles.push_back(StringTable::getOrInternStringHandle(ns.view()));
 #endif
-			current = gNamespaceRegistry.getOrCreateNamespace(current, name_handle);
-			if (!current.isValid()) {
-				return current;
-			}
 		}
-		return current;
+		return gNamespaceRegistry.getOrCreatePath(
+			NamespaceRegistry::GLOBAL_NAMESPACE,
+			std::span<const StringHandle>(handles.data(), handles.size()));
 	}
 
 	template<typename StringContainer>

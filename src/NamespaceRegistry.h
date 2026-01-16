@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <span>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -32,6 +33,8 @@ struct NamespaceHandle {
 	bool operator<(NamespaceHandle other) const { return index < other.index; }
 };
 
+// Members ordered by size (largest to smallest) for optimal struct packing.
+// Total: 11 bytes, padded to 12 bytes.
 struct NamespaceEntry {
 	StringHandle name;
 	StringHandle qualified_name;
@@ -103,7 +106,7 @@ public:
 		return new_handle;
 	}
 
-	NamespaceHandle getOrCreatePath(NamespaceHandle start, std::initializer_list<std::string_view> components) {
+	NamespaceHandle getOrCreatePath(NamespaceHandle start, std::span<const std::string_view> components) {
 		NamespaceHandle current = start;
 		for (std::string_view component : components) {
 			StringHandle name_handle = StringTable::getOrInternStringHandle(component);
@@ -115,7 +118,15 @@ public:
 		return current;
 	}
 
+	NamespaceHandle getOrCreatePath(NamespaceHandle start, std::initializer_list<std::string_view> components) {
+		return getOrCreatePath(start, std::span<const std::string_view>(components.begin(), components.size()));
+	}
+
 	NamespaceHandle getOrCreatePath(NamespaceHandle start, const std::vector<StringHandle>& components) {
+		return getOrCreatePath(start, std::span<const StringHandle>(components.data(), components.size()));
+	}
+
+	NamespaceHandle getOrCreatePath(NamespaceHandle start, std::span<const StringHandle> components) {
 		NamespaceHandle current = start;
 		for (StringHandle name_handle : components) {
 			current = getOrCreateNamespace(current, name_handle);
@@ -154,27 +165,7 @@ public:
 		return StringTable::createStringHandle(sb);
 	}
 
-	StringHandle buildQualifiedIdentifier(std::initializer_list<StringHandle> components) const {
-		if (components.size() == 0) {
-			return StringHandle{};
-		}
-		if (components.size() == 1) {
-			return *components.begin();
-		}
-
-		StringBuilder sb;
-		bool first = true;
-		for (StringHandle component : components) {
-			if (!first) {
-				sb.append("::");
-			}
-			first = false;
-			sb.append(StringTable::getStringView(component));
-		}
-		return StringTable::createStringHandle(sb);
-	}
-
-	StringHandle buildQualifiedIdentifier(const std::vector<StringHandle>& components) const {
+	StringHandle buildQualifiedIdentifier(std::span<const StringHandle> components) const {
 		if (components.empty()) {
 			return StringHandle{};
 		}
@@ -192,6 +183,14 @@ public:
 			sb.append(StringTable::getStringView(component));
 		}
 		return StringTable::createStringHandle(sb);
+	}
+
+	StringHandle buildQualifiedIdentifier(std::initializer_list<StringHandle> components) const {
+		return buildQualifiedIdentifier(std::span<const StringHandle>(components.begin(), components.size()));
+	}
+
+	StringHandle buildQualifiedIdentifier(const std::vector<StringHandle>& components) const {
+		return buildQualifiedIdentifier(std::span<const StringHandle>(components.data(), components.size()));
 	}
 
 	bool isAncestorOf(NamespaceHandle potential_ancestor, NamespaceHandle child) const {
