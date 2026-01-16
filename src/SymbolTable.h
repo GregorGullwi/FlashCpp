@@ -815,17 +815,24 @@ private:
 		return handle;
 	}
 
-	NamespaceHandle get_or_create_namespace_handle_from_path(const NamespacePath& namespaces) const {
-		std::vector<StringHandle> handles;
-		handles.reserve(namespaces.size());
+	NamespaceHandle get_or_create_namespace_handle_from_path(std::span<const StringType<>> namespaces) const {
+		NamespaceHandle current = NamespaceRegistry::GLOBAL_NAMESPACE;
 		for (const auto& ns : namespaces) {
 #if USE_OLD_STRING_APPROACH
-			handles.push_back(StringTable::getOrInternStringHandle(ns));
+			StringHandle name_handle = StringTable::getOrInternStringHandle(ns);
 #else
-			handles.push_back(StringTable::getOrInternStringHandle(ns.view()));
+			StringHandle name_handle = StringTable::getOrInternStringHandle(ns.view());
 #endif
+			current = gNamespaceRegistry.getOrCreateNamespace(current, name_handle);
+			if (!current.isValid()) {
+				return current;
+			}
 		}
-		return gNamespaceRegistry.getOrCreatePath(NamespaceRegistry::GLOBAL_NAMESPACE, handles);
+		return current;
+	}
+
+	NamespaceHandle get_or_create_namespace_handle_from_path(const NamespacePath& namespaces) const {
+		return get_or_create_namespace_handle_from_path(std::span<const StringType<>>{namespaces});
 	}
 
 	template<typename StringContainer>

@@ -123,10 +123,6 @@ public:
 		return getOrCreatePath(start, std::span<const std::string_view>{components});
 	}
 
-	NamespaceHandle getOrCreatePath(NamespaceHandle start, const std::vector<StringHandle>& components) {
-		return getOrCreatePath(start, std::span<const StringHandle>{components});
-	}
-
 	NamespaceHandle getOrCreatePath(NamespaceHandle start, std::span<const StringHandle> components) {
 		NamespaceHandle current = start;
 		for (StringHandle name_handle : components) {
@@ -136,6 +132,10 @@ public:
 			}
 		}
 		return current;
+	}
+
+	NamespaceHandle getOrCreatePath(NamespaceHandle start, const std::vector<StringHandle>& components) {
+		return getOrCreatePath(start, std::span<const StringHandle>{components});
 	}
 
 	const NamespaceEntry& getEntry(NamespaceHandle handle) const {
