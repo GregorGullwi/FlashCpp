@@ -90,7 +90,7 @@ public:
 		} else {
 			entry.depth = getEntry(parent_handle).depth + 1;
 		}
-		entry.qualified_name = buildQualifiedNameForEntry(parent_handle, name);
+		entry.qualified_name = buildQualifiedIdentifier(parent_handle, name);
 
 		NamespaceHandle new_handle{static_cast<uint16_t>(entries_.size())};
 		entries_.push_back(entry);
@@ -212,8 +212,12 @@ public:
 
 	std::vector<NamespaceHandle> getAncestors(NamespaceHandle handle) const {
 		std::vector<NamespaceHandle> result;
-		if (handle.isValid()) {
-			result.reserve(getEntry(handle).depth);
+		if (!handle.isValid()) {
+			return result;
+		}
+		const size_t reserve_depth = getEntry(handle).depth;
+		if (reserve_depth > 0) {
+			result.reserve(reserve_depth);
 		}
 		NamespaceHandle current = handle;
 		while (current.isValid() && !current.isGlobal()) {
@@ -224,10 +228,6 @@ public:
 	}
 
 private:
-	StringHandle buildQualifiedNameForEntry(NamespaceHandle parent, StringHandle name) {
-		return buildQualifiedIdentifier(parent, name);
-	}
-
 	std::vector<NamespaceEntry> entries_;
 	size_t max_size_reached_ = 0;
 	std::unordered_map<std::pair<NamespaceHandle, StringHandle>, NamespaceHandle,

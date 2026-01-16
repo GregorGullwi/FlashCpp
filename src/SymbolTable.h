@@ -349,7 +349,9 @@ public:
 			auto usingIt = scope.using_declarations.find(identifier);
 			if (usingIt != scope.using_declarations.end()) {
 				const auto& [namespace_path, original_name] = usingIt->second;
-				auto result = lookup_qualified(namespace_path, original_name);
+				auto result = namespace_path.empty()
+					? lookup_qualified(NamespaceRegistry::GLOBAL_NAMESPACE, original_name)
+					: lookup_qualified(namespace_path, original_name);
 				if (result.has_value()) {
 					return result;
 				}
@@ -374,11 +376,7 @@ public:
 			// from other blocks of the same namespace (e.g., reopened namespace blocks)
 			// This needs to happen BEFORE checking parent/global scopes.
 			if (scope.scope_type == ScopeType::Namespace) {
-				NamespaceHandle scope_namespace = NamespaceRegistry::GLOBAL_NAMESPACE;
-				if (namespace_index < namespace_chain.size()) {
-					scope_namespace = namespace_chain[namespace_index];
-					++namespace_index;
-				}
+				NamespaceHandle scope_namespace = getNamespaceAtIndex(namespace_chain, namespace_index);
 				if (!scope_namespace.isGlobal()) {
 					auto ns_it = namespace_symbols_.find(scope_namespace);
 					if (ns_it != namespace_symbols_.end()) {
@@ -438,7 +436,9 @@ public:
 			auto usingIt = scope.using_declarations.find(identifier);
 			if (usingIt != scope.using_declarations.end()) {
 				const auto& [namespace_path, original_name] = usingIt->second;
-				auto result = lookup_qualified_all(namespace_path, original_name);
+				auto result = namespace_path.empty()
+					? lookup_qualified_all(NamespaceRegistry::GLOBAL_NAMESPACE, original_name)
+					: lookup_qualified_all(namespace_path, original_name);
 				if (!result.empty()) {
 					return result;
 				}
@@ -461,11 +461,7 @@ public:
 			// If we're in a namespace scope, also check namespace_symbols_ for symbols
 			// from other blocks of the same namespace (e.g., reopened namespace blocks).
 			if (scope.scope_type == ScopeType::Namespace) {
-				NamespaceHandle scope_namespace = NamespaceRegistry::GLOBAL_NAMESPACE;
-				if (namespace_index < namespace_chain.size()) {
-					scope_namespace = namespace_chain[namespace_index];
-					++namespace_index;
-				}
+				NamespaceHandle scope_namespace = getNamespaceAtIndex(namespace_chain, namespace_index);
 				if (!scope_namespace.isGlobal()) {
 					auto ns_it = namespace_symbols_.find(scope_namespace);
 					if (ns_it != namespace_symbols_.end()) {
@@ -639,9 +635,7 @@ public:
 	}
 
 	// Merge all symbols from an inline namespace into its parent namespace map
-	void merge_inline_namespace(const NamespacePath& inline_path, const NamespacePath& parent_path) {
-		NamespaceHandle inline_handle = resolve_namespace_handle_from_path(inline_path);
-		NamespaceHandle parent_handle = resolve_namespace_handle_from_path(parent_path);
+	void merge_inline_namespace(NamespaceHandle inline_handle, NamespaceHandle parent_handle) {
 		if (!inline_handle.isValid() || !parent_handle.isValid()) {
 			return;
 		}
@@ -656,6 +650,12 @@ public:
 			auto& dest_vec = parent_symbols[key];
 			dest_vec.insert(dest_vec.end(), vec.begin(), vec.end());
 		}
+	}
+
+	void merge_inline_namespace(const NamespacePath& inline_path, const NamespacePath& parent_path) {
+		NamespaceHandle inline_handle = get_or_create_namespace_handle_from_path(inline_path);
+		NamespaceHandle parent_handle = get_or_create_namespace_handle_from_path(parent_path);
+		merge_inline_namespace(inline_handle, parent_handle);
 	}
 
 	// Resolve a namespace alias (returns the target namespace path if alias exists)
@@ -825,7 +825,14 @@ private:
 		return interned;
 	}
 
-	NamespaceHandle resolve_namespace_handle_from_path(const NamespacePath& namespaces) const {
+	NamespaceHandle getNamespaceAtIndex(const std::vector<NamespaceHandle>& namespace_chain, size_t& namespace_index) const {
+		if (namespace_index >= namespace_chain.size()) {
+			return NamespaceRegistry::GLOBAL_NAMESPACE;
+		}
+		return namespace_chain[namespace_index++];
+	}
+
+	NamespaceHandle get_or_create_namespace_handle_from_path(const NamespacePath& namespaces) const {
 		NamespaceHandle current = NamespaceRegistry::GLOBAL_NAMESPACE;
 		for (const auto& ns : namespaces) {
 #if USE_OLD_STRING_APPROACH
@@ -851,7 +858,7 @@ private:
 		std::string_view first_component(namespaces[0]);
 		auto alias_resolution = resolve_namespace_alias(first_component);
 		if (alias_resolution.has_value()) {
-			current = resolve_namespace_handle_from_path(*alias_resolution);
+			current = get_or_create_namespace_handle_from_path(*alias_resolution);
 			for (size_t i = 1; i < namespaces.size(); ++i) {
 				StringHandle name_handle = StringTable::getOrInternStringHandle(std::string_view(namespaces[i]));
 				current = gNamespaceRegistry.getOrCreateNamespace(current, name_handle);
