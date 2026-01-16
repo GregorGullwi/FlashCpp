@@ -9207,7 +9207,10 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		source_type_name = StringTable::getOrInternStringHandle(identifier_token.value());
 	} else {
 		// using ns1::ns2::identifier; - build qualified name
-		source_type_name = buildQualifiedNameHandle(namespace_path, identifier_token.value());
+		StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifier_token.value());
+		source_type_name = namespace_handle.isValid()
+			? gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, identifier_handle)
+			: identifier_handle;
 	}
 	
 	// Look up the type in gTypesByName

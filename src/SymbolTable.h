@@ -30,41 +30,6 @@ struct SymbolScopeHandle {
 	std::string_view identifier;
 };
 
-// Namespace path key - stores namespace components without concatenation
-// Uses StringType (StackString or std::string depending on USE_OLD_STRING_APPROACH)
-using NamespacePath = std::vector<StringType<>>;
-
-// Hash function for NamespacePath to use in unordered_map
-struct NamespacePathHash {
-	size_t operator()(const NamespacePath& path) const {
-		size_t hash = 0;
-		for (const auto& component : path) {
-			// Combine hashes using a simple but effective method
-#if USE_OLD_STRING_APPROACH
-			hash ^= std::hash<std::string>{}(component) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-#else
-			hash ^= std::hash<std::string_view>{}(component.view()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-#endif
-		}
-		return hash;
-	}
-};
-
-// Equality comparison for NamespacePath
-struct NamespacePathEqual {
-	bool operator()(const NamespacePath& lhs, const NamespacePath& rhs) const {
-		if (lhs.size() != rhs.size()) return false;
-		for (size_t i = 0; i < lhs.size(); ++i) {
-#if USE_OLD_STRING_APPROACH
-			if (lhs[i] != rhs[i]) return false;
-#else
-			if (lhs[i].view() != rhs[i].view()) return false;
-#endif
-		}
-		return true;
-	}
-};
-
 struct Scope {
 	Scope() = default;
 	Scope(ScopeType scopeType, size_t scope_level) : scope_type(scopeType), scope_handle{ .scope_level = scope_level } {}
@@ -85,9 +50,6 @@ struct Scope {
 	std::vector<NamespaceHandle> using_directive_paths;
 
 	// Using declarations: specific symbols imported from namespaces
-	// Maps: local_name -> (namespace_path, original_name)
-	// Use string_view with dedicated allocator for both key and original_name
-	std::unordered_map<std::string_view, std::pair<NamespacePath, std::string_view>> using_declarations;
 	// Maps: local_name -> (namespace_handle, original_name)
 	std::unordered_map<std::string_view, std::pair<NamespaceHandle, std::string_view>> using_declarations_handles;
 
@@ -354,17 +316,6 @@ public:
 					return result;
 				}
 			}
-			auto usingIt = scope.using_declarations.find(identifier);
-			if (usingIt != scope.using_declarations.end()) {
-				const auto& [namespace_path, original_name] = usingIt->second;
-				auto result = namespace_path.empty()
-					? lookup_qualified(NamespaceRegistry::GLOBAL_NAMESPACE, original_name)
-					: lookup_qualified(namespace_path, original_name);
-				if (result.has_value()) {
-					return result;
-				}
-			}
-
 			// Second, check direct symbols in this scope
 			auto symbolIt = scope.symbols.find(identifier);
 			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
@@ -440,17 +391,6 @@ public:
 					return result;
 				}
 			}
-			auto usingIt = scope.using_declarations.find(identifier);
-			if (usingIt != scope.using_declarations.end()) {
-				const auto& [namespace_path, original_name] = usingIt->second;
-				auto result = namespace_path.empty()
-					? lookup_qualified_all(NamespaceRegistry::GLOBAL_NAMESPACE, original_name)
-					: lookup_qualified_all(namespace_path, original_name);
-				if (!result.empty()) {
-					return result;
-				}
-			}
-			
 			// Second, check direct symbols in this scope
 			auto symbolIt = scope.symbols.find(identifier);
 			if (symbolIt != scope.symbols.end()) {
@@ -607,16 +547,16 @@ public:
 		Scope& current_scope = symbol_table_stack_.back();
 		std::string_view key = intern_string(local_name);
 		std::string_view orig_name = intern_string(original_name);
-		update_or_insert(current_scope.using_declarations, key, std::make_pair(namespace_path, orig_name));
 		NamespaceHandle namespace_handle = resolve_namespace_handle_impl(namespace_path);
-		if (namespace_handle.isValid()) {
-			update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
+		if (!namespace_handle.isValid()) {
+			// Failed to resolve a namespace handle for this declaration; skip insertion.
+			FLASH_LOG(Symbols, Error, "Using declaration handle creation failed for '", local_name, "' (invalid namespace path)");
+			return;
 		}
+		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
 
 		// Also materialize the referenced symbol into the current scope for faster/unambiguous lookup
-		auto resolved = namespace_handle.isValid()
-			? lookup_qualified(namespace_handle, orig_name)
-			: lookup_qualified(namespace_path, orig_name);  // Fallback if handle resolution fails
+		auto resolved = lookup_qualified(namespace_handle, orig_name);
 		if (resolved.has_value()) {
 			auto sym_it = current_scope.symbols.find(key);
 			if (sym_it == current_scope.symbols.end()) {
@@ -633,8 +573,6 @@ public:
 		std::string_view key = intern_string(local_name);
 		std::string_view orig_name = intern_string(original_name);
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
-		NamespacePath resolved_path = build_namespace_path_from_handle(namespace_handle);
-		update_or_insert(current_scope.using_declarations, key, std::make_pair(std::move(resolved_path), orig_name));
 
 		// Also materialize the referenced symbol into the current scope for faster/unambiguous lookup
 		auto resolved = lookup_qualified(namespace_handle, orig_name);
@@ -698,36 +636,6 @@ public:
 		}
 	}
 
-	void merge_inline_namespace(const NamespacePath& inline_path, const NamespacePath& parent_path) {
-		NamespaceHandle inline_handle = get_or_create_namespace_handle_from_path(inline_path);
-		NamespaceHandle parent_handle = get_or_create_namespace_handle_from_path(parent_path);
-		merge_inline_namespace(inline_handle, parent_handle);
-	}
-
-	// Resolve a namespace alias (returns the target namespace path if alias exists)
-	std::optional<NamespacePath> resolve_namespace_alias(std::string_view alias) const {
-		if (auto alias_handle = resolve_namespace_alias_handle(alias); alias_handle.has_value()) {
-			return build_namespace_path_from_handle(*alias_handle);
-		}
-		return std::nullopt;
-	}
-
-	// Build the current namespace path as a vector of components
-	// For nested namespaces A::B, returns ["A", "B"]
-	NamespacePath build_current_namespace_path() const {
-		NamespacePath path;
-		for (const auto& scope : symbol_table_stack_) {
-			if (scope.scope_type == ScopeType::Namespace) {
-				if (!scope.namespace_name.isValid()) {
-					FLASH_LOG(Symbols, Warning, "Invalid namespace name handle while building namespace path");
-					continue;
-				}
-				path.push_back(StringType<>(StringTable::getStringView(scope.namespace_name)));
-			}
-		}
-		return path;
-	}
-
 	// Lookup a qualified identifier (e.g., "std::print" or "A::B::func")
 	// Takes a span/vector of namespace components instead of building a concatenated string
 	// If namespaces is empty, looks in the global namespace (for ::identifier syntax)
@@ -780,20 +688,6 @@ public:
 		return NamespaceRegistry::GLOBAL_NAMESPACE;
 	}
 
-	// Get all using directives from the current scope and all enclosing scopes
-	std::vector<NamespacePath> get_current_using_directives() const {
-		std::vector<NamespacePath> result;
-		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
-			for (const auto& using_dir : stackIt->using_directive_paths) {
-				NamespacePath path = build_namespace_path_from_handle(using_dir);
-				if (!path.empty()) {
-					result.push_back(std::move(path));
-				}
-			}
-		}
-		return result;
-	}
-
 	// Get all using directives from the current scope and all enclosing scopes as handles.
 	std::vector<NamespaceHandle> get_current_using_directive_handles() const {
 		std::vector<NamespaceHandle> result;
@@ -807,23 +701,8 @@ public:
 		return result;
 	}
 
-	// Get all using declarations from the current scope and all enclosing scopes
-	// Returns a map of local_name -> (namespace_path, original_name)
-	std::unordered_map<std::string_view, std::pair<std::vector<StringType<>>, std::string_view>> get_current_using_declarations() const {
-		std::unordered_map<std::string_view, std::pair<std::vector<StringType<>>, std::string_view>> result;
-		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
-			for (const auto& [local_name, target_info] : stackIt->using_declarations) {
-				// Only add if not already present (inner scopes shadow outer scopes)
-				if (result.find(local_name) == result.end()) {
-					result[local_name] = target_info;
-				}
-			}
-		}
-		return result;
-	}
-
 	// Get all using declarations from the current scope and all enclosing scopes as handles.
-	// Inner scopes shadow outer scopes, matching get_current_using_declarations semantics.
+	// Inner scopes shadow outer scopes - declarations in nested scopes override parent scopes for the same local_name.
 	// Returns a map of local_name -> (namespace_handle, original_name)
 	std::unordered_map<std::string_view, std::pair<NamespaceHandle, std::string_view>> get_current_using_declaration_handles() const {
 		std::unordered_map<std::string_view, std::pair<NamespaceHandle, std::string_view>> result;
@@ -947,13 +826,19 @@ private:
 		return current;
 	}
 
-	NamespaceHandle get_or_create_namespace_handle_from_path(const NamespacePath& namespaces) const {
-		return get_or_create_namespace_handle_from_path(std::span<const StringType<>>{namespaces});
-	}
-
 public:
 	// Exposed for parser namespace-handle resolution while preserving SymbolTable alias rules.
-	NamespaceHandle resolve_namespace_handle(const NamespacePath& namespaces) const {
+	NamespaceHandle resolve_namespace_handle(std::span<const StringType<>> namespaces) const {
+		if (namespaces.empty()) {
+			return NamespaceRegistry::GLOBAL_NAMESPACE;
+		}
+		return resolve_namespace_handle_impl(namespaces);
+	}
+
+	NamespaceHandle resolve_namespace_handle(const std::vector<StringType<>>& namespaces) const {
+		if (namespaces.empty()) {
+			return NamespaceRegistry::GLOBAL_NAMESPACE;
+		}
 		return resolve_namespace_handle_impl(namespaces);
 	}
 
@@ -997,21 +882,6 @@ private:
 		return std::nullopt;
 	}
 
-	NamespacePath build_namespace_path_from_handle(NamespaceHandle handle) const {
-		NamespacePath path;
-		if (!handle.isValid() || handle.isGlobal()) {
-			return path;
-		}
-		size_t depth = gNamespaceRegistry.getEntry(handle).depth;
-		path.resize(depth);
-		NamespaceHandle current = handle;
-		for (size_t i = depth; i > 0 && current.isValid() && !current.isGlobal(); --i) {
-			const NamespaceEntry& entry = gNamespaceRegistry.getEntry(current);
-			path[i - 1] = StringType<>(StringTable::getStringView(entry.name));
-			current = entry.parent;
-		}
-		return path;
-	}
 };
 
 // ============================================================================
@@ -1028,64 +898,10 @@ private:
 // ============================================================================
 
 /**
- * @brief Build a qualified name from a NamespacePath and a final identifier.
- * Returns a string_view committed to the global chunked string allocator.
- * 
- * Example: buildQualifiedName({"std", "chrono"}, "seconds") -> "std::chrono::seconds"
- */
-inline std::string_view buildQualifiedName(const NamespacePath& namespace_path, std::string_view name) {
-	if (namespace_path.empty()) {
-		return name;
-	}
-
-	std::vector<StringHandle> components;
-	components.reserve(namespace_path.size() + 1);
-	for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-		components.push_back(StringTable::getOrInternStringHandle(ns));
-#else
-		components.push_back(StringTable::getOrInternStringHandle(ns.view()));
-#endif
-	}
-	components.push_back(StringTable::getOrInternStringHandle(name));
-	StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(components);
-	return StringTable::getStringView(qualified_handle);
-}
-
-/**
- * @brief Build a qualified name from a NamespacePath and a StringHandle identifier.
- */
-inline std::string_view buildQualifiedName(const NamespacePath& namespace_path, StringHandle name) {
-	return buildQualifiedName(namespace_path, StringTable::getStringView(name));
-}
-
-inline StringHandle buildQualifiedNameHandle(const NamespacePath& namespace_path, std::string_view name) {
-	if (namespace_path.empty()) {
-		return StringTable::getOrInternStringHandle(name);
-	}
-
-	std::vector<StringHandle> components;
-	components.reserve(namespace_path.size() + 1);
-	for (const auto& ns : namespace_path) {
-#if USE_OLD_STRING_APPROACH
-		components.push_back(StringTable::getOrInternStringHandle(ns));
-#else
-		components.push_back(StringTable::getOrInternStringHandle(ns.view()));
-#endif
-	}
-	components.push_back(StringTable::getOrInternStringHandle(name));
-	return gNamespaceRegistry.buildQualifiedIdentifier(components);
-}
-
-inline StringHandle buildQualifiedNameHandle(const NamespacePath& namespace_path, StringHandle name) {
-	return buildQualifiedNameHandle(namespace_path, StringTable::getStringView(name));
-}
-
-/**
  * @brief Build a qualified name from a container of string-like types
  * (e.g., from QualifiedIdentifierNode::namespaces()) and a final identifier.
  * 
- * Note: This template exists separately from buildQualifiedName(NamespacePath, ...) because
+ * Note: This template exists separately from buildQualifiedName(...) because
  * the element type access differs based on USE_OLD_STRING_APPROACH preprocessor setting.
  * The duplication is intentional to handle both std::string and StackString<> element types.
  * 
