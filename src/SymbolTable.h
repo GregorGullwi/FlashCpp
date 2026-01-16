@@ -825,9 +825,7 @@ private:
 			handles.push_back(StringTable::getOrInternStringHandle(ns.view()));
 #endif
 		}
-		return gNamespaceRegistry.getOrCreatePath(
-			NamespaceRegistry::GLOBAL_NAMESPACE,
-			std::span<const StringHandle>(handles.data(), handles.size()));
+		return gNamespaceRegistry.getOrCreatePath(NamespaceRegistry::GLOBAL_NAMESPACE, handles);
 	}
 
 	template<typename StringContainer>

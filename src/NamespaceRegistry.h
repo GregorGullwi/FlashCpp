@@ -120,11 +120,11 @@ public:
 	}
 
 	NamespaceHandle getOrCreatePath(NamespaceHandle start, std::initializer_list<std::string_view> components) {
-		return getOrCreatePath(start, std::span<const std::string_view>(components.begin(), components.size()));
+		return getOrCreatePath(start, std::span<const std::string_view>{components});
 	}
 
 	NamespaceHandle getOrCreatePath(NamespaceHandle start, const std::vector<StringHandle>& components) {
-		return getOrCreatePath(start, std::span<const StringHandle>(components.data(), components.size()));
+		return getOrCreatePath(start, std::span<const StringHandle>{components});
 	}
 
 	NamespaceHandle getOrCreatePath(NamespaceHandle start, std::span<const StringHandle> components) {
@@ -187,11 +187,11 @@ public:
 	}
 
 	StringHandle buildQualifiedIdentifier(std::initializer_list<StringHandle> components) const {
-		return buildQualifiedIdentifier(std::span<const StringHandle>(components.begin(), components.size()));
+		return buildQualifiedIdentifier(std::span<const StringHandle>{components});
 	}
 
 	StringHandle buildQualifiedIdentifier(const std::vector<StringHandle>& components) const {
-		return buildQualifiedIdentifier(std::span<const StringHandle>(components.data(), components.size()));
+		return buildQualifiedIdentifier(std::span<const StringHandle>{components});
 	}
 
 	bool isAncestorOf(NamespaceHandle potential_ancestor, NamespaceHandle child) const {
