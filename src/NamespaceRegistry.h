@@ -154,6 +154,46 @@ public:
 		return StringTable::createStringHandle(sb);
 	}
 
+	StringHandle buildQualifiedIdentifier(std::initializer_list<StringHandle> components) const {
+		if (components.empty()) {
+			return StringHandle{};
+		}
+		if (components.size() == 1) {
+			return *components.begin();
+		}
+
+		StringBuilder sb;
+		bool first = true;
+		for (StringHandle component : components) {
+			if (!first) {
+				sb.append("::");
+			}
+			first = false;
+			sb.append(StringTable::getStringView(component));
+		}
+		return StringTable::createStringHandle(sb);
+	}
+
+	StringHandle buildQualifiedIdentifier(const std::vector<StringHandle>& components) const {
+		if (components.empty()) {
+			return StringHandle{};
+		}
+		if (components.size() == 1) {
+			return components.front();
+		}
+
+		StringBuilder sb;
+		bool first = true;
+		for (StringHandle component : components) {
+			if (!first) {
+				sb.append("::");
+			}
+			first = false;
+			sb.append(StringTable::getStringView(component));
+		}
+		return StringTable::createStringHandle(sb);
+	}
+
 	bool isAncestorOf(NamespaceHandle potential_ancestor, NamespaceHandle child) const {
 		if (!potential_ancestor.isValid() || !child.isValid()) {
 			return false;
@@ -172,6 +212,9 @@ public:
 
 	std::vector<NamespaceHandle> getAncestors(NamespaceHandle handle) const {
 		std::vector<NamespaceHandle> result;
+		if (handle.isValid()) {
+			result.reserve(getEntry(handle).depth);
+		}
 		NamespaceHandle current = handle;
 		while (current.isValid() && !current.isGlobal()) {
 			result.push_back(current);
@@ -182,16 +225,7 @@ public:
 
 private:
 	StringHandle buildQualifiedNameForEntry(NamespaceHandle parent, StringHandle name) {
-		if (!parent.isValid() || parent.isGlobal()) {
-			return name;
-		}
-
-		const NamespaceEntry& parent_entry = getEntry(parent);
-		StringBuilder sb;
-		sb.append(StringTable::getStringView(parent_entry.qualified_name));
-		sb.append("::");
-		sb.append(StringTable::getStringView(name));
-		return StringTable::createStringHandle(sb);
+		return buildQualifiedIdentifier(parent, name);
 	}
 
 	std::vector<NamespaceEntry> entries_;

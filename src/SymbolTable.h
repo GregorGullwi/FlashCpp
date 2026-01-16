@@ -202,8 +202,8 @@ public:
 									
 									// Also update the namespace_symbols_ map if we're in a namespace or global scope
 									if (current_scope.scope_type == ScopeType::Namespace || current_scope.scope_type == ScopeType::Global) {
-										NamespacePath ns_path = build_current_namespace_path();
-										auto& ns_symbols = namespace_symbols_[ns_path];
+										NamespaceHandle ns_handle = get_current_namespace_handle();
+										auto& ns_symbols = namespace_symbols_[ns_handle];
 										StringType<32> key(identifier);
 										
 										auto ns_it = ns_symbols.find(key);
@@ -250,9 +250,8 @@ public:
 		// If we're in a namespace or global scope, also add to the persistent namespace map
 		// For global scope, use an empty namespace path (represents ::identifier)
 		if (current_scope.scope_type == ScopeType::Namespace || current_scope.scope_type == ScopeType::Global) {
-			// Build the namespace path without string concatenation
-			NamespacePath ns_path = build_current_namespace_path();
-			auto& ns_symbols = namespace_symbols_[ns_path];
+			NamespaceHandle ns_handle = get_current_namespace_handle();
+			auto& ns_symbols = namespace_symbols_[ns_handle];
 			StringType<32> key(identifier);
 
 			auto ns_it = ns_symbols.find(key);
@@ -339,16 +338,12 @@ public:
 	}
 
 	std::optional<ASTNode> lookup(std::string_view identifier, ScopeHandle scope_limit_handle) const {
-		// Build the full current namespace path first
-		NamespacePath full_ns_path;
-		for (const auto& scope : symbol_table_stack_) {
-			if (scope.scope_type == ScopeType::Namespace) {
-				full_ns_path.push_back(scope.namespace_name);
-			}
+		NamespaceHandle namespace_handle = get_current_namespace_handle();
+		std::vector<NamespaceHandle> namespace_chain = gNamespaceRegistry.getAncestors(namespace_handle);
+		if (!namespace_handle.isValid() && namespace_chain.empty()) {
+			namespace_chain.push_back(namespace_handle);
 		}
-		
-		// Track which namespace paths we've already checked in namespace_symbols_
-		std::vector<NamespacePath> checked_ns_paths;
+		size_t namespace_index = 0;
 
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
@@ -357,31 +352,7 @@ public:
 			auto usingIt = scope.using_declarations.find(identifier);
 			if (usingIt != scope.using_declarations.end()) {
 				const auto& [namespace_path, original_name] = usingIt->second;
-				// Look up the symbol in the target namespace
-				// If namespace_path is empty, it means global namespace (::name)
-				std::optional<ASTNode> result;
-				if (namespace_path.empty()) {
-					// Global namespace - look up in the global scope (root of namespace_symbols_)
-					// For global namespace, we look in the empty namespace path
-					NamespacePath empty_path;
-					auto ns_it = namespace_symbols_.find(empty_path);
-					if (ns_it != namespace_symbols_.end()) {
-						for (const auto& [key, value_vec] : ns_it->second) {
-#if USE_OLD_STRING_APPROACH
-							if (key == original_name) {
-#else
-							if (key.view() == original_name) {
-#endif
-								if (!value_vec.empty()) {
-									result = value_vec[0];
-									break;
-								}
-							}
-						}
-					}
-				} else {
-					result = lookup_qualified(namespace_path, original_name);
-				}
+				auto result = lookup_qualified(namespace_path, original_name);
 				if (result.has_value()) {
 					return result;
 				}
@@ -405,21 +376,14 @@ public:
 			// If we're in a namespace scope, also check namespace_symbols_ for symbols
 			// from other blocks of the same namespace (e.g., reopened namespace blocks)
 			// This needs to happen BEFORE checking parent/global scopes.
-			// We check the current accumulated namespace path, then pop one component
-			// to check progressively outer namespace paths in subsequent iterations.
-			if (scope.scope_type == ScopeType::Namespace && !full_ns_path.empty()) {
-				// Only check if we haven't already checked this path
-				bool already_checked = false;
-				for (const auto& checked : checked_ns_paths) {
-					if (checked == full_ns_path) {
-						already_checked = true;
-						break;
-					}
+			if (scope.scope_type == ScopeType::Namespace) {
+				NamespaceHandle scope_namespace = NamespaceRegistry::GLOBAL_NAMESPACE;
+				if (namespace_index < namespace_chain.size()) {
+					scope_namespace = namespace_chain[namespace_index];
+					++namespace_index;
 				}
-				
-				if (!already_checked) {
-					checked_ns_paths.push_back(full_ns_path);
-					auto ns_it = namespace_symbols_.find(full_ns_path);
+				if (!scope_namespace.isGlobal()) {
+					auto ns_it = namespace_symbols_.find(scope_namespace);
 					if (ns_it != namespace_symbols_.end()) {
 						for (const auto& [key, value_vec] : ns_it->second) {
 #if USE_OLD_STRING_APPROACH
@@ -434,12 +398,6 @@ public:
 						}
 					}
 				}
-				
-				// Pop the last namespace from the path to check progressively outer
-				// namespace scopes in subsequent iterations. This is intentional:
-				// when we encounter a namespace scope during reverse iteration, we want
-				// to check namespace_symbols_ for that specific namespace level.
-				full_ns_path.pop_back();
 			}
 		}
 
@@ -472,16 +430,12 @@ public:
 	}
 
 	std::vector<ASTNode> lookup_all(std::string_view identifier, ScopeHandle scope_limit_handle) const {
-		// Build the full current namespace path first
-		NamespacePath full_ns_path;
-		for (const auto& scope : symbol_table_stack_) {
-			if (scope.scope_type == ScopeType::Namespace) {
-				full_ns_path.push_back(scope.namespace_name);
-			}
+		NamespaceHandle namespace_handle = get_current_namespace_handle();
+		std::vector<NamespaceHandle> namespace_chain = gNamespaceRegistry.getAncestors(namespace_handle);
+		if (!namespace_handle.isValid() && namespace_chain.empty()) {
+			namespace_chain.push_back(namespace_handle);
 		}
-		
-		// Track which namespace paths we've already checked
-		std::vector<NamespacePath> checked_ns_paths;
+		size_t namespace_index = 0;
 		
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
@@ -512,21 +466,14 @@ public:
 			
 			// If we're in a namespace scope, also check namespace_symbols_ for symbols
 			// from other blocks of the same namespace (e.g., reopened namespace blocks).
-			// We check the current accumulated namespace path, then pop one component
-			// to check progressively outer namespace paths in subsequent iterations.
-			if (scope.scope_type == ScopeType::Namespace && !full_ns_path.empty()) {
-				// Only check if we haven't already checked this path
-				bool already_checked = false;
-				for (const auto& checked : checked_ns_paths) {
-					if (checked == full_ns_path) {
-						already_checked = true;
-						break;
-					}
+			if (scope.scope_type == ScopeType::Namespace) {
+				NamespaceHandle scope_namespace = NamespaceRegistry::GLOBAL_NAMESPACE;
+				if (namespace_index < namespace_chain.size()) {
+					scope_namespace = namespace_chain[namespace_index];
+					++namespace_index;
 				}
-				
-				if (!already_checked) {
-					checked_ns_paths.push_back(full_ns_path);
-					auto ns_it = namespace_symbols_.find(full_ns_path);
+				if (!scope_namespace.isGlobal()) {
+					auto ns_it = namespace_symbols_.find(scope_namespace);
 					if (ns_it != namespace_symbols_.end()) {
 						for (const auto& [key, value_vec] : ns_it->second) {
 #if USE_OLD_STRING_APPROACH
@@ -539,12 +486,6 @@ public:
 						}
 					}
 				}
-				
-				// Pop the last namespace from the path to check progressively outer
-				// namespace scopes in subsequent iterations. This is intentional:
-				// when we encounter a namespace scope during reverse iteration, we want
-				// to check namespace_symbols_ for that specific namespace level.
-				full_ns_path.pop_back();
 			}
 		}
 
@@ -552,40 +493,16 @@ public:
 	}
 
 	// Lookup all overloads in a specific namespace
-	template<typename StringContainer>
-	std::vector<ASTNode> lookup_qualified_all(const StringContainer& namespaces, std::string_view identifier) const {
-		if (namespaces.empty()) {
-			// Global namespace - look in the empty namespace path
-			NamespacePath empty_path;
-			auto ns_it = namespace_symbols_.find(empty_path);
-			if (ns_it != namespace_symbols_.end()) {
-				for (const auto& [key, value_vec] : ns_it->second) {
-#if USE_OLD_STRING_APPROACH
-					if (key == std::string(identifier)) {
-#else
-					if (key.view() == identifier) {
-#endif
-						return value_vec;
-					}
-				}
-			}
+	std::vector<ASTNode> lookup_qualified_all(NamespaceHandle namespace_handle, std::string_view identifier) const {
+		if (!namespace_handle.isValid()) {
 			return {};
 		}
 
-		// Build namespace path from the components
-		NamespacePath ns_path;
-		ns_path.reserve(namespaces.size());
-		for (const auto& ns : namespaces) {
-			ns_path.emplace_back(StringType<>(std::string_view(ns)));
-		}
-
-		// Look up in namespace symbols
-		auto ns_it = namespace_symbols_.find(ns_path);
+		auto ns_it = namespace_symbols_.find(namespace_handle);
 		if (ns_it == namespace_symbols_.end()) {
 			return {};
 		}
 
-		// Look for the identifier in the namespace
 		for (const auto& [key, value_vec] : ns_it->second) {
 #if USE_OLD_STRING_APPROACH
 			if (key == std::string(identifier)) {
@@ -596,6 +513,11 @@ public:
 			}
 		}
 		return {};
+	}
+
+	template<typename StringContainer>
+	std::vector<ASTNode> lookup_qualified_all(const StringContainer& namespaces, std::string_view identifier) const {
+		return lookup_qualified_all(resolve_namespace_handle(namespaces), identifier);
 	}
 
 	// Resolve function overload based on argument types
@@ -724,12 +646,18 @@ public:
 
 	// Merge all symbols from an inline namespace into its parent namespace map
 	void merge_inline_namespace(const NamespacePath& inline_path, const NamespacePath& parent_path) {
-		auto inline_it = namespace_symbols_.find(inline_path);
+		NamespaceHandle inline_handle = resolve_namespace_handle_from_path(inline_path);
+		NamespaceHandle parent_handle = resolve_namespace_handle_from_path(parent_path);
+		if (!inline_handle.isValid() || !parent_handle.isValid()) {
+			return;
+		}
+
+		auto inline_it = namespace_symbols_.find(inline_handle);
 		if (inline_it == namespace_symbols_.end()) {
 			return;
 		}
 
-		auto& parent_symbols = namespace_symbols_[parent_path];
+		auto& parent_symbols = namespace_symbols_[parent_handle];
 		for (const auto& [key, vec] : inline_it->second) {
 			auto& dest_vec = parent_symbols[key];
 			dest_vec.insert(dest_vec.end(), vec.begin(), vec.end());
@@ -763,70 +691,22 @@ public:
 	// Lookup a qualified identifier (e.g., "std::print" or "A::B::func")
 	// Takes a span/vector of namespace components instead of building a concatenated string
 	// If namespaces is empty, looks in the global namespace (for ::identifier syntax)
-	template<typename StringContainer>
-	std::optional<ASTNode> lookup_qualified(const StringContainer& namespaces, std::string_view identifier) const {
-		// If namespaces is empty, look in the global namespace
-		if (namespaces.empty()) {
-			// Look in the global namespace (empty namespace path)
-			NamespacePath empty_path;
-			auto ns_it = namespace_symbols_.find(empty_path);
-			if (ns_it != namespace_symbols_.end()) {
-				for (const auto& [key, value_vec] : ns_it->second) {
-#if USE_OLD_STRING_APPROACH
-					if (key == std::string(identifier)) {
-#else
-					if (key.view() == identifier) {
-#endif
-						if (!value_vec.empty()) {
-							return value_vec[0];
-						}
-					}
-				}
-			}
+	std::optional<ASTNode> lookup_qualified(NamespaceHandle namespace_handle, std::string_view identifier) const {
+		if (!namespace_handle.isValid()) {
 			return std::nullopt;
 		}
 
-		// Build namespace path from the components
-		// For "A::B::func", namespaces = ["A", "B"]
-		NamespacePath ns_path;
-		ns_path.reserve(namespaces.size());
-
-		// Check if the first component is a namespace alias
-		if (!namespaces.empty()) {
-			std::string_view first_component(namespaces[0]);
-			auto alias_resolution = resolve_namespace_alias(first_component);
-			if (alias_resolution.has_value()) {
-				// Replace the first component with the resolved namespace path
-				for (const auto& component : *alias_resolution) {
-					ns_path.push_back(component);
-				}
-				// Add the remaining components
-				for (size_t i = 1; i < namespaces.size(); ++i) {
-					ns_path.emplace_back(StringType<>(std::string_view(namespaces[i])));
-				}
-			} else {
-				// No alias, use the components as-is
-				for (const auto& ns : namespaces) {
-					ns_path.emplace_back(StringType<>(std::string_view(ns)));
-				}
-			}
-		}
-
-		// Look up the namespace in our persistent namespace map
-		auto ns_it = namespace_symbols_.find(ns_path);
+		auto ns_it = namespace_symbols_.find(namespace_handle);
 		if (ns_it == namespace_symbols_.end()) {
 			return std::nullopt;
 		}
 
-		// Look for the identifier in the namespace
-		// Use string_view for lookup to avoid creating StringType
 		for (const auto& [key, value_vec] : ns_it->second) {
 #if USE_OLD_STRING_APPROACH
 			if (key == std::string(identifier)) {
 #else
 			if (key.view() == identifier) {
 #endif
-				// Return the first match for backward compatibility
 				if (!value_vec.empty()) {
 					return value_vec[0];
 				}
@@ -834,6 +714,11 @@ public:
 		}
 
 		return std::nullopt;
+	}
+
+	template<typename StringContainer>
+	std::optional<ASTNode> lookup_qualified(const StringContainer& namespaces, std::string_view identifier) const {
+		return lookup_qualified(resolve_namespace_handle(namespaces), identifier);
 	}
 
 	// Get the current namespace name (empty if not in a namespace)
@@ -919,9 +804,9 @@ public:
 private:
 	std::vector<Scope> symbol_table_stack_ = { Scope(ScopeType::Global, 0 ) };
 	// Persistent map of namespace contents
-	// Uses NamespacePath (vector of components) as key to avoid string concatenation
-	// Maps: namespace_path -> (symbol_name -> vector<ASTNode>) to support overloading
-	std::unordered_map<NamespacePath, std::unordered_map<StringType<32>, std::vector<ASTNode>>, NamespacePathHash, NamespacePathEqual> namespace_symbols_;
+	// Uses NamespaceHandle as key to avoid string concatenation
+	// Maps: namespace_handle -> (symbol_name -> vector<ASTNode>) to support overloading
+	std::unordered_map<NamespaceHandle, std::unordered_map<StringType<32>, std::vector<ASTNode>>> namespace_symbols_;
 	
 	// Dedicated string allocator for symbol table keys
 	// Ensures string_view keys remain valid for the lifetime of the symbol table
@@ -944,6 +829,53 @@ private:
 		std::string_view interned = sb.append(str).commit();
 		interned_strings_.insert(interned);
 		return interned;
+	}
+
+	NamespaceHandle resolve_namespace_handle_from_path(const NamespacePath& namespaces) const {
+		NamespaceHandle current = NamespaceRegistry::GLOBAL_NAMESPACE;
+		for (const auto& ns : namespaces) {
+#if USE_OLD_STRING_APPROACH
+			StringHandle name_handle = StringTable::getOrInternStringHandle(ns);
+#else
+			StringHandle name_handle = StringTable::getOrInternStringHandle(ns.view());
+#endif
+			current = gNamespaceRegistry.getOrCreateNamespace(current, name_handle);
+			if (!current.isValid()) {
+				return current;
+			}
+		}
+		return current;
+	}
+
+	template<typename StringContainer>
+	NamespaceHandle resolve_namespace_handle(const StringContainer& namespaces) const {
+		if (namespaces.empty()) {
+			return NamespaceRegistry::GLOBAL_NAMESPACE;
+		}
+
+		NamespaceHandle current = NamespaceRegistry::GLOBAL_NAMESPACE;
+		std::string_view first_component(namespaces[0]);
+		auto alias_resolution = resolve_namespace_alias(first_component);
+		if (alias_resolution.has_value()) {
+			current = resolve_namespace_handle_from_path(*alias_resolution);
+			for (size_t i = 1; i < namespaces.size(); ++i) {
+				StringHandle name_handle = StringTable::getOrInternStringHandle(std::string_view(namespaces[i]));
+				current = gNamespaceRegistry.getOrCreateNamespace(current, name_handle);
+				if (!current.isValid()) {
+					return current;
+				}
+			}
+			return current;
+		}
+
+		for (const auto& ns : namespaces) {
+			StringHandle name_handle = StringTable::getOrInternStringHandle(std::string_view(ns));
+			current = gNamespaceRegistry.getOrCreateNamespace(current, name_handle);
+			if (!current.isValid()) {
+				return current;
+			}
+		}
+		return current;
 	}
 };
 
@@ -970,17 +902,19 @@ inline std::string_view buildQualifiedName(const NamespacePath& namespace_path, 
 	if (namespace_path.empty()) {
 		return name;
 	}
-	
-	StringBuilder sb;
+
+	std::vector<StringHandle> components;
+	components.reserve(namespace_path.size() + 1);
 	for (const auto& ns : namespace_path) {
 #if USE_OLD_STRING_APPROACH
-		sb.append(ns).append("::");
+		components.push_back(StringTable::getOrInternStringHandle(ns));
 #else
-		sb.append(ns.view()).append("::");
+		components.push_back(StringTable::getOrInternStringHandle(ns.view()));
 #endif
 	}
-	sb.append(name);
-	return sb.commit();
+	components.push_back(StringTable::getOrInternStringHandle(name));
+	StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(components);
+	return StringTable::getStringView(qualified_handle);
 }
 
 /**
@@ -991,7 +925,21 @@ inline std::string_view buildQualifiedName(const NamespacePath& namespace_path, 
 }
 
 inline StringHandle buildQualifiedNameHandle(const NamespacePath& namespace_path, std::string_view name) {
-	return StringTable::getOrInternStringHandle(buildQualifiedName(namespace_path, name));
+	if (namespace_path.empty()) {
+		return StringTable::getOrInternStringHandle(name);
+	}
+
+	std::vector<StringHandle> components;
+	components.reserve(namespace_path.size() + 1);
+	for (const auto& ns : namespace_path) {
+#if USE_OLD_STRING_APPROACH
+		components.push_back(StringTable::getOrInternStringHandle(ns));
+#else
+		components.push_back(StringTable::getOrInternStringHandle(ns.view()));
+#endif
+	}
+	components.push_back(StringTable::getOrInternStringHandle(name));
+	return gNamespaceRegistry.buildQualifiedIdentifier(components);
 }
 
 inline StringHandle buildQualifiedNameHandle(const NamespacePath& namespace_path, StringHandle name) {
@@ -1013,17 +961,19 @@ inline std::string_view buildQualifiedNameFromStrings(const StringContainer& nam
 	if (namespaces.empty()) {
 		return name;
 	}
-	
-	StringBuilder sb;
+
+	std::vector<StringHandle> components;
+	components.reserve(namespaces.size() + 1);
 	for (const auto& ns : namespaces) {
 #if USE_OLD_STRING_APPROACH
-		sb.append(ns).append("::");
+		components.push_back(StringTable::getOrInternStringHandle(ns));
 #else
-		sb.append(ns.view()).append("::");
+		components.push_back(StringTable::getOrInternStringHandle(ns.view()));
 #endif
 	}
-	sb.append(name);
-	return sb.commit();
+	components.push_back(StringTable::getOrInternStringHandle(name));
+	StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(components);
+	return StringTable::getStringView(qualified_handle);
 }
 
 /**
@@ -1038,29 +988,18 @@ inline std::string_view buildFullQualifiedName(const StringContainer& components
 	if (components.empty()) {
 		return "";
 	}
-	
-	if (components.size() == 1) {
-#if USE_OLD_STRING_APPROACH
-		return std::string_view(components[0]);
-#else
-		return components[0].view();
-#endif
-	}
-	
-	StringBuilder sb;
-	bool first = true;
+
+	std::vector<StringHandle> handles;
+	handles.reserve(components.size());
 	for (const auto& component : components) {
-		if (!first) {
-			sb.append("::");
-		}
-		first = false;
 #if USE_OLD_STRING_APPROACH
-		sb.append(component);
+		handles.push_back(StringTable::getOrInternStringHandle(component));
 #else
-		sb.append(component.view());
+		handles.push_back(StringTable::getOrInternStringHandle(component.view()));
 #endif
 	}
-	return sb.commit();
+	StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(handles);
+	return StringTable::getStringView(qualified_handle);
 }
 
 extern SymbolTable gSymbolTable;
