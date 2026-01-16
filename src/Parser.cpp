@@ -12862,10 +12862,10 @@ std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNod
 	// Check if the type name matches std::initializer_list pattern
 	// Template instantiations are named like "std::initializer_list_int" (with underscore)
 	// or "std::initializer_list<int>" (with angle brackets)
-	// We check for both "initializer_list<" and "initializer_list_" patterns
-	if (type_name.find("initializer_list<") != std::string_view::npos ||
-	    type_name.find("initializer_list_") != std::string_view::npos) {
-		// This is an initializer_list type
+	// We must check for "std::" prefix to ensure it's the standard library type
+	if ((type_name.find("std::initializer_list<") != std::string_view::npos ||
+	     type_name.find("std::initializer_list_") != std::string_view::npos)) {
+		// This is an initializer_list type from the std namespace
 		FLASH_LOG(Parser, Debug, "is_initializer_list_type: detected '", type_name, "' as initializer_list type");
 		return type_index;
 	}
@@ -13124,10 +13124,50 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		}
 		
 		// Get element type from the initializer_list type
-		// For now, we'll use int as the default element type
-		// TODO: Extract actual element type from the initializer_list template parameter
-		[[maybe_unused]] TypeIndex init_list_type_index = init_list_ctor->second;
-		auto element_type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32);  // Default to int
+		// The initializer_list struct stores the element type in its first member's type_index
+		TypeIndex init_list_type_index = init_list_ctor->second;
+		ASTNode element_type_node;
+		
+		// Extract element type from the initializer_list struct's first member
+		// The first member is typically a pointer (const T*), and type_index points to T
+		if (init_list_type_index < gTypeInfo.size()) {
+			const TypeInfo& init_list_info = gTypeInfo[init_list_type_index];
+			if (init_list_info.struct_info_ && !init_list_info.struct_info_->members.empty()) {
+				const StructMember& first_member = init_list_info.struct_info_->members[0];
+				// The first member's type_index should point to the element type
+				if (first_member.type_index > 0 && first_member.type_index < gTypeInfo.size()) {
+					const TypeInfo& elem_info = gTypeInfo[first_member.type_index];
+					Type elem_type = elem_info.type_;
+					int elem_size = elem_info.type_size_ > 0 ? elem_info.type_size_ : get_type_size_bits(elem_type);
+					
+					auto elem_type_spec = emplace_node<TypeSpecifierNode>(
+						elem_type, 
+						TypeQualifier::None,
+						static_cast<unsigned char>(elem_size),
+						brace_token
+					);
+					// If it's a struct type, preserve the type_index
+					if (elem_type == Type::Struct) {
+						elem_type_spec.as<TypeSpecifierNode>().set_type_index(first_member.type_index);
+					}
+					element_type_node = elem_type_spec;
+				} else {
+					// Fall back to using the member's type directly (for primitive types)
+					int elem_size = get_type_size_bits(first_member.type);
+					element_type_node = emplace_node<TypeSpecifierNode>(
+						first_member.type,
+						TypeQualifier::None,
+						static_cast<unsigned char>(elem_size),
+						brace_token
+					);
+				}
+			}
+		}
+		
+		// Fallback to int if we couldn't extract the element type
+		if (!element_type_node.has_value()) {
+			element_type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, brace_token);
+		}
 		
 		// Try to get the actual element type from the parameter
 		const StructMemberFunction* ctor = init_list_ctor->first;
