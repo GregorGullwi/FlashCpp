@@ -13982,22 +13982,40 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 			// Check if followed by ')'
 			if (consume_punctuator(")")) {
-				// This is a C-style cast: (Type)expression
-				Token cast_token = Token(Token::Type::Punctuator, "cast",
-										current_token_->line(), current_token_->column(),
-										current_token_->file_index());
-
-				// Parse the expression to cast
-				ParseResult expr_result = parse_unary_expression(ExpressionContext::Normal);
-				if (expr_result.is_error() || !expr_result.node().has_value()) {
-					return ParseResult::error("Expected expression after C-style cast", *current_token_);
+				// Before treating this as a C-style cast, verify that the type is actually valid.
+				// If type_spec is UserDefined with type_index 0, it means parse_type_specifier()
+				// found an unknown identifier and created a placeholder. This is likely a variable
+				// name in a parenthesized expression (e.g., "(x) < 8"), not a type cast.
+				// We should backtrack and let parse_primary_expression handle it.
+				bool is_valid_type = true;
+				if (type_spec.type() == Type::UserDefined && type_spec.type_index() == 0) {
+					// Check if the token looks like a known type or is in a template context
+					// In template bodies, UserDefined with index 0 can be a valid template parameter placeholder
+					if (!parsing_template_body_) {
+						// Not in a template body, so this is likely a variable, not a type
+						is_valid_type = false;
+					}
 				}
+				
+				if (is_valid_type) {
+					// This is a C-style cast: (Type)expression
+					Token cast_token = Token(Token::Type::Punctuator, "cast",
+											current_token_->line(), current_token_->column(),
+											current_token_->file_index());
 
-				discard_saved_token(saved_pos);
-				// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
-				auto cast_expr = emplace_node<ExpressionNode>(
-					StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
-				return ParseResult::success(cast_expr);
+					// Parse the expression to cast
+					ParseResult expr_result = parse_unary_expression(ExpressionContext::Normal);
+					if (expr_result.is_error() || !expr_result.node().has_value()) {
+						return ParseResult::error("Expected expression after C-style cast", *current_token_);
+					}
+
+					discard_saved_token(saved_pos);
+					// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
+					auto cast_expr = emplace_node<ExpressionNode>(
+						StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
+					return ParseResult::success(cast_expr);
+				}
+				// If not a valid type, fall through to restore position and try as expression
 			}
 		}
 		

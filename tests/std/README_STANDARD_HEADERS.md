@@ -62,7 +62,11 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<cinttypes>` | N/A | `imaxabs`, `imaxdiv`, etc. (~0.04s) |
 | `<cctype>` | N/A | `isalpha`, `isdigit`, etc. (~0.05s) |
 | `<cuchar>` | N/A | `char16_t`, `char32_t` conversions (~0.13s) |
-| `<cwchar>` | N/A | `wchar_t` functions (~0.10s) |
+| `<cwchar>` | N/A | `wchar_t` functions (~0.56s) |
+| `<cwctype>` | N/A | `iswupper`, `iswlower`, etc. (~0.78s) (2026-01-16: Fixed parenthesized identifier followed by `<`) |
+| `<cstdbool>` | N/A | C99 `bool` compatibility (~0.13s) |
+| `<cstdalign>` | N/A | C11 alignment specifiers (~0.13s) |
+| `<ciso646>` | N/A | Alternative operator spellings (~0.03s) |
 
 ## Running the Tests
 
@@ -338,6 +342,36 @@ The following features have been implemented to support standard headers:
 - Pointer-to-void implicit conversion in overload resolution (NEW)
 
 ## Recent Changes
+
+### 2026-01-16: Parenthesized Identifier Followed by Less-Than Operator
+
+**Fixed:** Parenthesized expressions with variable identifiers followed by `<` are now correctly parsed as comparison operations, not as C-style casts.
+
+**Patterns that now work:**
+```cpp
+// This was previously incorrectly parsed as a C-style cast:
+int x = 5;
+int y = (x) < 8 ? 10 : 20;  // Now correctly parsed as: (x < 8) ? 10 : 20
+
+// Ternary chains with parenthesized expressions:
+int z = (x) < 3 ? 100 : ((x) < 6 ? 200 : 300);
+```
+
+**Root cause:** When the parser encountered `(identifier)`, it would call `parse_type_specifier()` which would succeed for any identifier (creating a placeholder `Type::UserDefined` with `type_index == 0` for unknown identifiers). The C-style cast detection code would then treat this as a valid type cast and fail when parsing the expression after `<`.
+
+**Fix applied:** 
+- Added validation in `parse_unary_expression()` to check if a parsed "type" is actually a known type before treating the expression as a C-style cast
+- When `type_spec.type() == Type::UserDefined && type_spec.type_index() == 0` and we're not in a template body, the identifier is likely a variable, not a type, so we backtrack and parse as a parenthesized expression
+
+**Test case:** `tests/test_parens_less_than_ret0.cpp`
+
+**Impact:**
+- `<cwctype>` header now compiles successfully (~0.78s)
+- Other C library headers that use patterns like `(identifier) < value` in their macros now work correctly
+- The `_ISwbit` macro in `/usr/include/x86_64-linux-gnu/bits/wctype-wchar.h` now parses correctly
+
+**Files Modified:**
+- `src/Parser.cpp` - Added type validation before treating parenthesized expression as C-style cast
 
 ### 2026-01-15: Pointer-to-Void Implicit Conversion in Overload Resolution
 
