@@ -56,6 +56,14 @@ NamespacePath build_current_namespace_path() const {
 
 ## Proposed Solution: NamespaceRegistry
 
+### Dependencies on Existing Infrastructure
+
+This refactoring builds on several existing FlashCpp types and utilities:
+
+- **`StringHandle`** (defined in `src/StringTable.h`): A 32-bit handle to an interned string, providing O(1) string comparisons and hash lookups
+- **`StringTable`** (defined in `src/StringTable.h`): Global string interning system with `getOrInternStringHandle()` and `getStringView()` methods
+- **`StringBuilder`** (defined in `src/ChunkedString.h`): Efficient string builder that commits to the global allocator
+
 ### Core Data Structures
 
 ```cpp
@@ -236,6 +244,15 @@ private:
     std::vector<NamespaceEntry> entries_;
     
     // Map from (parent_handle, name) -> handle for quick lookup
+    // PairHash is a simple hash combiner:
+    //   template<typename T1, typename T2>
+    //   struct PairHash {
+    //       size_t operator()(const std::pair<T1, T2>& p) const {
+    //           size_t h1 = std::hash<T1>{}(p.first);
+    //           size_t h2 = std::hash<T2>{}(p.second);
+    //           return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+    //       }
+    //   };
     std::unordered_map<std::pair<NamespaceHandle, StringHandle>, NamespaceHandle,
         PairHash<NamespaceHandle, StringHandle>> namespace_map_;
 };
