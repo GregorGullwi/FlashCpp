@@ -133,15 +133,13 @@ static size_t getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
 	return 0;  // Will be resolved during member access
 }
 
+// Returns namespace components ordered from outermost to innermost for string building/mangling.
 static std::vector<std::string_view> buildNamespaceComponentViews(NamespaceHandle handle) {
 	std::vector<std::string_view> components;
 	if (!handle.isValid() || handle.isGlobal()) {
 		return components;
 	}
 	std::vector<NamespaceHandle> ancestors = gNamespaceRegistry.getAncestors(handle);
-	if (ancestors.empty()) {
-		return components;
-	}
 	components.reserve(ancestors.size());
 	for (auto it = ancestors.rbegin(); it != ancestors.rend(); ++it) {
 		const NamespaceEntry& entry = gNamespaceRegistry.getEntry(*it);
@@ -3775,8 +3773,9 @@ ParseResult Parser::parse_struct_declaration()
 	StringHandle qualified_struct_name = struct_name;
 	StringHandle type_name = struct_name;
 	
-	// Get namespace path early so we can use it for both TypeInfo and StructTypeInfo
-	auto current_namespace_path = gSymbolTable.build_current_namespace_path();
+	// Get namespace handle and components early so we can use it for both TypeInfo and StructTypeInfo
+	NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
+	auto namespace_components = buildNamespaceComponentViews(current_namespace_handle);
 	
 	// Build the full qualified name for use in mangling
 	// - For nested classes: Parent::Child
@@ -3795,9 +3794,9 @@ ParseResult Parser::parse_struct_declaration()
 			.append(struct_name));
 		type_name = qualified_struct_name;
 		full_qualified_name = qualified_struct_name;
-	} else if (!current_namespace_path.empty()) {
+	} else if (!namespace_components.empty()) {
 		// Top-level class in a namespace - use namespace-qualified name for proper mangling
-		full_qualified_name = buildQualifiedNameHandle(current_namespace_path, struct_name);
+		full_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, struct_name);
 		qualified_struct_name = full_qualified_name;  // Also update qualified_struct_name for implicit constructors
 		type_name = full_qualified_name;  // TypeInfo should also use fully qualified name
 	}
@@ -3813,17 +3812,16 @@ ParseResult Parser::parse_struct_declaration()
 	// For namespace classes, also register with the simple name for 'this' pointer lookup
 	// during member function code generation. The TypeInfo's name is fully qualified (ns::Test)
 	// but parent_struct_name is just "Test", so we need this alias for lookups.
-	if (!is_nested_class && !current_namespace_path.empty()) {
+	if (!is_nested_class && !namespace_components.empty()) {
 		if (gTypesByName.find(struct_name) == gTypesByName.end()) {
 			gTypesByName.emplace(struct_name, &struct_type_info);
 		}
 	}
 
 	// If inside an inline namespace, register the parent-qualified name (e.g., outer::Foo)
-	if (!current_namespace_path.empty() && !inline_namespace_stack_.empty() && inline_namespace_stack_.back() && !parsing_template_class_) {
-		auto parent_path = current_namespace_path;
-		parent_path.pop_back();
-		auto parent_handle = buildQualifiedNameHandle(parent_path, struct_name);
+	if (!namespace_components.empty() && !inline_namespace_stack_.empty() && inline_namespace_stack_.back() && !parsing_template_class_) {
+		NamespaceHandle parent_namespace_handle = gNamespaceRegistry.getParent(current_namespace_handle);
+		StringHandle parent_handle = gNamespaceRegistry.buildQualifiedIdentifier(parent_namespace_handle, struct_name);
 		if (gTypesByName.find(parent_handle) == gTypesByName.end()) {
 			gTypesByName.emplace(parent_handle, &struct_type_info);
 		}
@@ -3831,7 +3829,7 @@ ParseResult Parser::parse_struct_declaration()
 	
 	// Register with namespace-qualified names for all levels of the namespace path
 	// This allows lookups like "inner::Base" when we're in namespace "ns" to find "ns::inner::Base"
-	if (!current_namespace_path.empty() && !is_nested_class) {
+	if (!namespace_components.empty() && !is_nested_class) {
 		// full_qualified_name already computed above, just log if needed
 		FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name), 
 		          "' with namespace-qualified name '", StringTable::getStringView(full_qualified_name), "'");
@@ -3839,11 +3837,11 @@ ParseResult Parser::parse_struct_declaration()
 		// Also register intermediate names (e.g., "inner::Base" for "ns::inner::Base")
 		// This allows sibling namespace access patterns like:
 		// namespace ns { namespace inner { struct Base {}; } struct Derived : public inner::Base {}; }
-		for (size_t start = 1; start < current_namespace_path.size(); ++start) {
+		for (size_t start = 1; start < namespace_components.size(); ++start) {
 			StringBuilder partial_qualified;
-			for (size_t j = start; j < current_namespace_path.size(); ++j) {
+			for (size_t j = start; j < namespace_components.size(); ++j) {
 				if (j > start) partial_qualified.append("::");
-				partial_qualified.append(current_namespace_path[j]);
+				partial_qualified.append(namespace_components[j]);
 			}
 			partial_qualified.append("::").append(struct_name);
 			std::string_view partial_view = partial_qualified.commit();
