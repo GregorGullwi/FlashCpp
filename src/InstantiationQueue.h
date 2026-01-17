@@ -204,6 +204,81 @@ public:
 			failed_.size()
 		};
 	}
+	
+	// ========================================================================
+	// Helper methods for common instantiation patterns
+	// ========================================================================
+	
+	// Build an InstantiationKey from template name and TemplateTypeArg vector
+	// This consolidates the conversion logic that was duplicated in call sites
+	static InstantiationKey makeKey(std::string_view template_name, 
+	                                 const std::vector<TemplateTypeArg>& template_args) {
+		InstantiationKey key;
+		key.template_name = StringTable::getOrInternStringHandle(template_name);
+		key.arguments.reserve(template_args.size());
+		for (const auto& arg : template_args) {
+			key.arguments.push_back(toTemplateArgument(arg));
+		}
+		return key;
+	}
+	
+	// Check if an instantiation should be skipped (already complete, failed, or has cycle)
+	// Returns: true if instantiation should proceed, false if it should be skipped
+	// Sets out_result if we have a cached TypeIndex result
+	// Sets out_error if we have a cached error message
+	bool shouldInstantiate(const InstantiationKey& key,
+	                       std::optional<TypeIndex>& out_result,
+	                       std::string& out_error) {
+		// Check if already complete
+		if (auto result = getResult(key)) {
+			out_result = result;
+			return false;  // Skip - use cached result
+		}
+		
+		// Check if previously failed
+		if (isFailed(key)) {
+			out_error = getError(key);
+			return false;  // Skip - already failed
+		}
+		
+		return true;  // Proceed with instantiation
+	}
+	
+	// RAII guard for managing in-progress state
+	// Automatically removes from in_progress_ when destroyed (unless dismissed)
+	class InProgressGuard {
+	public:
+		InProgressGuard(InstantiationQueue& queue, const InstantiationKey& key)
+			: queue_(queue), key_(key), active_(queue.markInProgress(key)) {}
+		
+		~InProgressGuard() {
+			if (active_ && !dismissed_) {
+				// Remove from in_progress if we're still active and haven't been dismissed
+				queue_.in_progress_.erase(key_);
+			}
+		}
+		
+		// Check if we successfully marked as in-progress (false = cycle detected)
+		bool isActive() const { return active_; }
+		
+		// Dismiss the guard - caller takes responsibility for cleanup
+		void dismiss() { dismissed_ = true; }
+		
+		// Non-copyable
+		InProgressGuard(const InProgressGuard&) = delete;
+		InProgressGuard& operator=(const InProgressGuard&) = delete;
+		
+	private:
+		InstantiationQueue& queue_;
+		InstantiationKey key_;
+		bool active_;
+		bool dismissed_ = false;
+	};
+	
+	// Create an in-progress guard for RAII-style lifecycle management
+	InProgressGuard makeInProgressGuard(const InstantiationKey& key) {
+		return InProgressGuard(*this, key);
+	}
 };
 
 // Global instance for use throughout the codebase

@@ -10,6 +10,7 @@
 #include "ExpressionSubstitutor.h"
 #include "TypeTraitEvaluator.h"
 #include "LazyMemberResolver.h"
+#include "InstantiationQueue.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -32145,6 +32146,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 	
+	// Build InstantiationKey for cycle detection
+	// Note: Caching is handled by gTypesByName check later in the function
+	FlashCpp::InstantiationKey inst_key = FlashCpp::InstantiationQueue::makeKey(template_name, template_args);
+	
+	// Create RAII guard for in-progress tracking (handles cycle detection)
+	auto in_progress_guard = FlashCpp::gInstantiationQueue.makeInProgressGuard(inst_key);
+	if (!in_progress_guard.isActive()) {
+		FLASH_LOG_FORMAT(Templates, Warning, "InstantiationQueue: cycle detected for '{}'", template_name);
+		// Don't fail - some recursive patterns are valid (e.g., CRTP)
+		// Proceed without in_progress tracking
+	}
+	
 	// Helper lambda to substitute template parameters in static member initializers
 	// Used in multiple places within this function
 	auto substitute_template_param_in_initializer = [this](
@@ -33613,6 +33626,10 @@ if (struct_type_info.getStructInfo()) {
 				);
 			}
 		}
+		
+		// Mark instantiation complete with the type index
+		FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
+		in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
 		
 		return instantiated_struct;  // Return the struct node for code generation
 		}
@@ -36713,6 +36730,10 @@ if (struct_type_info.getStructInfo()) {
 	struct_info_ptr->needs_default_constructor = !has_constructor;
 	FLASH_LOG(Templates, Debug, "Instantiated struct ", instantiated_name, " has_constructor=", has_constructor, 
 	          ", needs_default_constructor=", struct_info_ptr->needs_default_constructor);
+	
+	// Mark instantiation complete with the type index
+	FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
+	in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
 	
 	// Return the instantiated struct node for code generation
 	return instantiated_struct;
