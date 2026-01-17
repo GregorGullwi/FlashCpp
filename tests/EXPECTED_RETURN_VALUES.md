@@ -12,7 +12,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 **Total files tested:** 934
 **Valid returns:** 931
-**Regressions (mismatches):** 6
+**Regressions (mismatches):** 6 (tracked below after targeted retest)
 **Runtime crashes:** 1
 **Compile failures:** 0
 **Link failures:** 0
