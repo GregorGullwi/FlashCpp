@@ -20,6 +20,7 @@
 #include <assert.h>
 #include <cstdint>
 #include <typeinfo>
+#include <limits>
 #include "IRConverter.h"
 #include "Log.h"
 
@@ -3146,6 +3147,9 @@ private:
 					ConstructorCallOp ctor_op;
 					ctor_op.struct_name = base_type_info.name();
 					ctor_op.object = StringTable::getOrInternStringHandle("this");
+					// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
+					assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
+					ctor_op.base_class_offset = static_cast<int>(base.offset);
 
 					// Add constructor arguments from base initializer
 					if (base_init) {
@@ -3258,7 +3262,10 @@ private:
 							// For move constructors, pass 'other' as the move source
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = base_type_info.name();
-							ctor_op.object = StringTable::getOrInternStringHandle("this");  // 'this' pointer (base subobject is at offset 0 for now)
+							ctor_op.object = StringTable::getOrInternStringHandle("this");
+							// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
+							assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
+							ctor_op.base_class_offset = static_cast<int>(base.offset);
 							// Add 'other' parameter for copy/move constructor
 							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
 							TypedValue other_arg;
@@ -16188,10 +16195,11 @@ private:
 		
 		// Mark member access as lvalue (Option 2: Value Category Tracking)
 		// obj.member is an lvalue - it designates a specific object member
+		// Use adjusted_offset from member_result to handle inheritance correctly
 		LValueInfo lvalue_info(
 			LValueInfo::Kind::Member,
 			did_unwrap ? ultimate_base : base_object,
-			did_unwrap ? accumulated_offset : static_cast<int>(member->offset)
+			did_unwrap ? accumulated_offset : static_cast<int>(member_result.adjusted_offset)
 		);
 		// Store member name for unified assignment handler
 		lvalue_info.member_name = ultimate_member_name;
@@ -16222,7 +16230,10 @@ private:
 				member_load.object = std::get<TempVar>(base_object);
 			}
 			member_load.member_name = StringTable::getOrInternStringHandle(member_name);
-			member_load.offset = static_cast<int>(member->offset);
+			// Use adjusted_offset from member_result to handle inheritance correctly
+			// member->offset is the offset within the owning struct, but for inherited members
+			// we need the adjusted offset that includes the base class offset in the derived class
+			member_load.offset = static_cast<int>(member_result.adjusted_offset);
 		}
 	
 		// Add reference metadata (required for proper handling of reference members)

@@ -6726,14 +6726,24 @@ private:
 		// Load the address of the object into the first parameter register ('this' pointer)
 		// Use platform-specific register: RDI on Linux, RCX on Windows
 		X64Register this_reg = getIntParamReg<TWriterClass>(0);
+		
+		FLASH_LOG_FORMAT(Codegen, Debug,
+			"Constructor call for {}: object_is_pointer={}, object_offset={}, base_class_offset={}",
+			struct_name, object_is_pointer, object_offset, ctor_op.base_class_offset);
+		
 		if (object_is_pointer) {
 			// For pointers (this, heap-allocated): reload the pointer value (not its address)
 			// MOV this_reg, [RBP + object_offset]
 			emitMovFromFrame(this_reg, object_offset);
+			// Add base_class_offset for multiple inheritance (adjust pointer to base subobject)
+			if (ctor_op.base_class_offset != 0) {
+				emitAddRegImm32(textSectionData, this_reg, ctor_op.base_class_offset);
+			}
 		} else {
 			// For regular stack objects: get the address
-			// LEA this_reg, [RBP + object_offset]
-			auto lea_inst = generateLeaFromFrame(this_reg, object_offset);
+			// LEA this_reg, [RBP + object_offset + base_class_offset]
+			// The base_class_offset adjusts for multiple inheritance
+			auto lea_inst = generateLeaFromFrame(this_reg, object_offset + ctor_op.base_class_offset);
 			textSectionData.insert(textSectionData.end(), lea_inst.op_codes.begin(), lea_inst.op_codes.begin() + lea_inst.size_in_bytes);
 		}
 

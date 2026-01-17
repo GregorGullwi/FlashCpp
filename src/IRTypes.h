@@ -1136,6 +1136,7 @@ struct ConstructorCallOp {
 	std::optional<int> return_slot_offset;           // Stack offset of return slot (for RVO)
 	bool is_heap_allocated = false;                  // True if object is at pointer location (new/placement new), false for stack objects (RVO/member init)
 	std::optional<size_t> array_index;               // For array element construction: index of element to construct
+	int base_class_offset = 0;                       // Offset to add to 'this' pointer when calling base class constructors in multiple inheritance
 };
 
 // Destructor call (invoke destructor on object)
