@@ -11425,6 +11425,10 @@ private:
 			return generateBuiltinLaunderIntrinsic(functionCallNode);
 		}
 		
+		// __builtin_strlen - maps to libc strlen function, not an inline intrinsic
+		// Return std::nullopt to fall through to regular function call handling,
+		// but the function name will be remapped in generateFunctionCallIr
+		
 		return std::nullopt;  // Not an intrinsic
 	}
 	
@@ -12756,6 +12760,13 @@ private:
 
 		// Get the function declaration to extract parameter types for mangling
 		std::string_view function_name = func_name_view;
+		
+		// Remap compiler builtins to their libc equivalents
+		// __builtin_strlen -> strlen (libc function)
+		if (func_name_view == "__builtin_strlen") {
+			function_name = "strlen";
+		}
+		
 		bool has_precomputed_mangled = functionCallNode.has_mangled_name();
 		const FunctionDeclarationNode* matched_func_decl = nullptr;
 		
