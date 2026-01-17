@@ -9339,14 +9339,13 @@ private:
 		
 		// Helper lambda to generate member increment/decrement IR
 		// Returns the result operands, or empty if not applicable
-		// Uses adjusted_offset if provided, otherwise uses member->offset
+		// adjusted_offset must be provided (from LazyMemberResolver result)
 		auto generateMemberIncDec = [&](StringHandle object_name, 
 		                                 const StructMember* member, bool is_reference_capture,
-		                                 const Token& token, size_t adjusted_offset = 0) -> std::vector<IrOperand> {
+		                                 const Token& token, size_t adjusted_offset) -> std::vector<IrOperand> {
 			int member_size_bits = static_cast<int>(member->size * 8);
 			TempVar result_var = var_counter.next();
 			StringHandle member_name = member->getName();
-			size_t offset = adjusted_offset > 0 ? adjusted_offset : member->offset;
 			
 			if (is_reference_capture) {
 				// By-reference: load pointer, dereference, inc/dec, store back through pointer
@@ -9357,7 +9356,7 @@ private:
 				member_load.result.size_in_bits = 64;  // pointer
 				member_load.object = object_name;
 				member_load.member_name = member_name;
-				member_load.offset = static_cast<int>(offset);
+				member_load.offset = static_cast<int>(adjusted_offset);
 				member_load.is_reference = true;
 				member_load.is_rvalue_reference = false;
 				member_load.struct_type_info = nullptr;
@@ -9403,7 +9402,7 @@ private:
 				member_load.result.size_in_bits = member_size_bits;
 				member_load.object = object_name;
 				member_load.member_name = member_name;
-				member_load.offset = static_cast<int>(offset);
+				member_load.offset = static_cast<int>(adjusted_offset);
 				member_load.is_reference = false;
 				member_load.is_rvalue_reference = false;
 				member_load.struct_type_info = nullptr;
@@ -9423,7 +9422,7 @@ private:
 				MemberStoreOp store_op;
 				store_op.object = object_name;
 				store_op.member_name = member_name;
-				store_op.offset = static_cast<int>(offset);
+				store_op.offset = static_cast<int>(adjusted_offset);
 				store_op.value = { member->type, member_size_bits, result_var };
 				store_op.is_reference = false;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), token));
