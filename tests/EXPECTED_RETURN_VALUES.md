@@ -12,7 +12,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 **Total files tested:** 934
 **Valid returns:** 931
-**Regressions (mismatches):** 8
+**Regressions (mismatches):** 6
 **Runtime crashes:** 1
 **Compile failures:** 0
 **Link failures:** 0
@@ -32,14 +32,14 @@ The following regressions have been FIXED:
 | test_container_out_of_line_ret60.cpp | 60 | 232 | (Already fixed) | Was incorrectly using 64-bit registers for 32-bit int ops |
 | test_static_constexpr_pack_value_ret42.cpp | 42 | 0 | sizeof... pack expansion | Nested binary expressions with static_cast<int>(sizeof...(Ts)) were not handled |
 | test_inherited_type_alias_ret42.cpp | 42 | 0 | Self-referential type alias | Type alias `using type = bool_constant;` inside `bool_constant` now correctly points to instantiated type |
-| test_type_alias_fix_simple_ret42.cpp | 42 | 0 | (Already fixed) | Static constexpr was properly initialized |
 | test_void_t_positive_ret0.cpp | 0 | 42 | void_t SFINAE fix | Template aliases like void_t that resolve to concrete types now correctly detected during pattern matching |
 | test_template_disambiguation_pack_ret40.cpp | 40 | 20→30→40 | Type template arg mangling | Function template specializations now include type template args in mangled names (sum<int> → `_ZN2ns3sumIiEEv`, sum<int,int> → `_ZN2ns3sumIiiEEv`) |
 | test_qualified_base_class_ret42.cpp | 42 | 0 | Global namespace fix | Fixed by global namespace symbol lookup improvements |
 | test_sizeof_template_param_default_ret4.cpp | 4 | 1 | Global namespace fix | Fixed as side effect of namespace lookup improvements |
 | test_std_header_features_ret0.cpp | 0 | 8 | Global namespace fix | Fixed as side effect of namespace lookup improvements |
 | test_global_namespace_scope_ret1.cpp | 1 (1025%256) | 145 | Using declaration fix | Fixed by tracking qualified names when resolving using declarations in CodeGen |
-| test_covariant_return_ret180.cpp | 180 | crash (79) | Auto-fixed | Test now passes correctly, returning 180 as expected |
+| test_global_scope_new_ret0.cpp | 0 | 1 | Scalar new initialization | Store scalar initializer values for `new T(args)` |
+| test_spec_nullptr_init_ret0.cpp | 0 | 214 | Template default constructor | Generate implicit default constructor for partial specializations so member initializers run |
 
 ## Regressions Found
 
@@ -50,20 +50,16 @@ The following test files have mismatches (verified against clang):
 | test_access_control_ret30.cpp | 30 | varies | OPEN | Access control in inheritance not working correctly |
 | test_brace_init_requires_ret0.cpp | 0 | 1 | OPEN | Concept evaluation for `T{}` brace init |
 | test_covariant_return_ret180.cpp | 180 | 205 | OPEN | Virtual method dispatch / covariant returns |
-| test_global_scope_new_ret0.cpp | 0 | 1 | OPEN | `::new` operator handling |
 | test_lambda_init_capture_demo_ret68.cpp | 68 | 73 | OPEN | Lambda init-capture calculation off by 5 |
 | test_nrvo_observable_ret0.cpp | 0 | 1 | OPEN | NRVO observable side effects |
-| test_spec_nullptr_init_ret0.cpp | 0 | 214 | OPEN | Template specialization with nullptr member init |
 | test_type_alias_fix_simple_ret42.cpp | 42 | 0 | INTERMITTENT | Works when run individually, fails in batch |
 
 ## Root Cause Summary
 
 The regressions fall into several categories:
 - **Concept evaluation**: Brace initialization checking in requires expressions
-- **Operator handling**: Global scope new/delete operators
 - **Lambda captures**: Init-capture reference calculations
 - **Virtual dispatch**: Covariant return type handling
-- **Template specialization**: nullptr member initialization in partial specializations
 
 ## Runtime Crashes
 

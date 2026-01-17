@@ -17671,6 +17671,15 @@ private:
 					}
 				}
 			}
+
+			if (type != Type::Struct && newExpr.constructor_args().size() > 0) {
+				const auto& ctor_args = newExpr.constructor_args();
+				auto init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
+				if (init_operands.size() >= 3) {
+					TypedValue init_value = toTypedValue(init_operands);
+					emitDereferenceStore(init_value, type, size_in_bits, result_var, Token());
+				}
+			}
 		} else if (newExpr.is_array()) {
 			// Array allocation: new Type[size]
 			// Evaluate the size expression
@@ -17737,6 +17746,15 @@ private:
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 						}
 					}
+				}
+			}
+
+			if (type != Type::Struct && newExpr.constructor_args().size() > 0) {
+				const auto& ctor_args = newExpr.constructor_args();
+				auto init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
+				if (init_operands.size() >= 3) {
+					TypedValue init_value = toTypedValue(init_operands);
+					emitDereferenceStore(init_value, type, size_in_bits, result_var, Token());
 				}
 			}
 		}

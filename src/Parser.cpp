@@ -33044,6 +33044,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 
+		struct_info->needs_default_constructor = !struct_info->hasAnyConstructor();
+
 		// Copy static members from the pattern
 		// Get the pattern's StructTypeInfo
 		auto pattern_type_it = gTypesByName.find(pattern_struct.name());
