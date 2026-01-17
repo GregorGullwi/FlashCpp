@@ -826,7 +826,7 @@ public:  // Public methods for template instantiation
             }
         }
 
-        // Overload for qualified lookups
+        // Overload for qualified lookups with vector of strings
         std::optional<ASTNode> lookup_symbol_qualified(const std::vector<StringType<>>& namespaces, std::string_view identifier) const {
             if (parsing_template_body_ && !current_template_param_names_.empty()) {
                 // For qualified lookups, we still need template params for the base lookup
@@ -835,6 +835,11 @@ public:  // Public methods for template instantiation
             } else {
                 return gSymbolTable.lookup_qualified(namespaces, identifier);
             }
+        }
+
+        // Overload for qualified lookups with NamespaceHandle
+        std::optional<ASTNode> lookup_symbol_qualified(NamespaceHandle namespace_handle, std::string_view identifier) const {
+            return gSymbolTable.lookup_qualified(namespace_handle, identifier);
         }
 
         // Helper to get DeclarationNode from a symbol that could be either DeclarationNode or VariableDeclarationNode

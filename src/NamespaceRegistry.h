@@ -209,6 +209,40 @@ public:
 		return false;
 	}
 
+	// Get the depth of a namespace (0 for global, 1 for top-level, etc.)
+	uint8_t getDepth(NamespaceHandle handle) const {
+		if (!handle.isValid() || handle.isGlobal()) return 0;
+		return getEntry(handle).depth;
+	}
+
+	// Get the local name of a namespace (e.g., "filesystem" for "std::filesystem")
+	std::string_view getName(NamespaceHandle handle) const {
+		if (!handle.isValid() || handle.isGlobal()) return "";
+		return StringTable::getStringView(getEntry(handle).name);
+	}
+
+	// Get the root (first-level) namespace component
+	// For "std::chrono::duration", returns handle to "std"
+	NamespaceHandle getRootNamespace(NamespaceHandle handle) const {
+		if (!handle.isValid() || handle.isGlobal()) return GLOBAL_NAMESPACE;
+		
+		NamespaceHandle current = handle;
+		while (current.isValid() && !current.isGlobal()) {
+			NamespaceHandle parent = getParent(current);
+			if (parent.isGlobal()) {
+				return current;
+			}
+			current = parent;
+		}
+		return GLOBAL_NAMESPACE;
+	}
+
+	// Get the name of the root namespace component
+	std::string_view getRootNamespaceName(NamespaceHandle handle) const {
+		NamespaceHandle root = getRootNamespace(handle);
+		return getName(root);
+	}
+
 private:
 	std::vector<NamespaceEntry> entries_;
 	size_t max_size_reached_ = 0;

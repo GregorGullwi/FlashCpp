@@ -8550,10 +8550,11 @@ ParseResult Parser::parse_namespace() {
 				return ParseResult::error("Expected ';' after namespace alias", *current_token_);
 			}
 
-			// Add the namespace alias to the symbol table for name lookup during parsing
-			gSymbolTable.add_namespace_alias(alias_token.value(), target_namespace);
+			// Convert namespace path to handle and add the alias to the symbol table
+			NamespaceHandle target_handle = gSymbolTable.resolve_namespace_handle(target_namespace);
+			gSymbolTable.add_namespace_alias(alias_token.value(), target_handle);
 
-			auto alias_node = emplace_node<NamespaceAliasNode>(alias_token, std::move(target_namespace));
+			auto alias_node = emplace_node<NamespaceAliasNode>(alias_token, target_handle);
 			return saved_position.success(alias_node);
 		}
 	}
@@ -9037,15 +9038,11 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				return ParseResult::error("Expected ';' after namespace alias", *current_token_);
 			}
 
-			// Add the namespace alias to the symbol table for name lookup during parsing
+			// Convert namespace path to handle and add the alias to the symbol table
 			NamespaceHandle target_handle = gSymbolTable.resolve_namespace_handle(target_namespace);
-			if (target_handle.isValid()) {
-				gSymbolTable.add_namespace_alias(alias_token->value(), target_handle);
-			} else {
-				gSymbolTable.add_namespace_alias(alias_token->value(), target_namespace);
-			}
+			gSymbolTable.add_namespace_alias(alias_token->value(), target_handle);
 
-			auto alias_node = emplace_node<NamespaceAliasNode>(*alias_token, std::move(target_namespace));
+			auto alias_node = emplace_node<NamespaceAliasNode>(*alias_token, target_handle);
 			return saved_position.success(alias_node);
 		}
 	}
@@ -9078,15 +9075,11 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			return ParseResult::error("Expected ';' after using directive", *current_token_);
 		}
 
-		// Add the using directive to the symbol table for name lookup during parsing
+		// Convert namespace path to handle and add the using directive to the symbol table
 		NamespaceHandle namespace_handle = gSymbolTable.resolve_namespace_handle(namespace_path);
-		if (namespace_handle.isValid()) {
-			gSymbolTable.add_using_directive(namespace_handle);
-		} else {
-			gSymbolTable.add_using_directive(namespace_path);
-		}
+		gSymbolTable.add_using_directive(namespace_handle);
 
-		auto directive_node = emplace_node<UsingDirectiveNode>(std::move(namespace_path), using_token);
+		auto directive_node = emplace_node<UsingDirectiveNode>(namespace_handle, using_token);
 		return saved_position.success(directive_node);
 	}
 
@@ -9142,21 +9135,13 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		return ParseResult::error("Expected ';' after using declaration", *current_token_);
 	}
 
-	// Add the using declaration to the symbol table for name lookup during parsing
+	// Convert namespace path to handle and add the using declaration to the symbol table
 	NamespaceHandle namespace_handle = gSymbolTable.resolve_namespace_handle(namespace_path);
-	if (namespace_handle.isValid()) {
-		gSymbolTable.add_using_declaration(
-			std::string_view(identifier_token.value()),
-			namespace_handle,
-			std::string_view(identifier_token.value())
-		);
-	} else {
-		gSymbolTable.add_using_declaration(
-			std::string_view(identifier_token.value()),
-			namespace_path,
-			std::string_view(identifier_token.value())
-		);
-	}
+	gSymbolTable.add_using_declaration(
+		std::string_view(identifier_token.value()),
+		namespace_handle,
+		std::string_view(identifier_token.value())
+	);
 
 	// Helper function to add standard members to C library div_t-style structs
 	auto add_div_struct_members = [](StructTypeInfo* struct_info, std::string_view type_name) {
@@ -9342,7 +9327,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		}
 	}
 
-	auto decl_node = emplace_node<UsingDeclarationNode>(std::move(namespace_path), identifier_token, using_token);
+	auto decl_node = emplace_node<UsingDeclarationNode>(namespace_handle, identifier_token, using_token);
 	return saved_position.success(decl_node);
 }
 
@@ -10474,8 +10459,8 @@ ParseResult Parser::parse_type_specifier()
 									const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
 									
 									// Handle dependent static member access like is_arithmetic_void::value
-									if (!qual_id.namespaces().empty()) {
-										std::string type_name_str = qual_id.namespaces()[0];
+									if (!qual_id.namespace_handle().isGlobal()) {
+										std::string type_name_str(gNamespaceRegistry.getName(qual_id.namespace_handle()));
 										std::string_view member_name = qual_id.name();
 										
 										// Check if type_name ends with "_void" (dependent placeholder)
@@ -10577,17 +10562,17 @@ ParseResult Parser::parse_type_specifier()
 					
 					// Build fully qualified type name using instantiated template name
 					const auto& qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
+					// Get the qualified namespace name and append the identifier
+					std::string_view ns_qualified = gNamespaceRegistry.getQualifiedName(qualified_node.namespace_handle());
 					StringBuilder qualified_type_name_builder;
 					qualified_type_name_builder.append(instantiated_name);
-					for (const auto& ns_part : qualified_node.namespaces()) {
-						// Skip the first part (template name itself) as it's already in instantiated_name
-#if USE_OLD_STRING_APPROACH
-						std::string_view ns_view = ns_part;
-#else
-						std::string_view ns_view = ns_part.view();
-#endif
-						if (ns_view != type_name) {
-							qualified_type_name_builder.append("::").append(ns_view);
+					// If there are additional namespace parts beyond the template, append them
+					// The namespace handle might include parts beyond just the template name
+					if (!ns_qualified.empty() && ns_qualified != type_name) {
+						// Check if ns_qualified starts with type_name:: - if so, append the rest
+						if (ns_qualified.starts_with(type_name) && ns_qualified.size() > type_name.size() + 2 &&
+						    ns_qualified.substr(type_name.size(), 2) == "::") {
+							qualified_type_name_builder.append(ns_qualified.substr(type_name.size()));
 						}
 					}
 					qualified_type_name_builder.append("::").append(qualified_node.identifier_token().value());
@@ -10908,8 +10893,8 @@ ParseResult Parser::parse_type_specifier()
 							if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 								const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
 								
-								if (!qual_id.namespaces().empty()) {
-									std::string type_name_str = qual_id.namespaces()[0];
+								if (!qual_id.namespace_handle().isGlobal()) {
+									std::string type_name_str(gNamespaceRegistry.getName(qual_id.namespace_handle()));
 									std::string_view member_name = qual_id.name();
 									
 									if (type_name_str.ends_with("_void") && !filled_template_args.empty()) {
@@ -16090,7 +16075,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			
 			if (qualified_symbol.has_value()) {
 				// Just a qualified identifier reference (e.g., Namespace::globalValue)
-				auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+				NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+				auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
 				result = emplace_node<ExpressionNode>(qualified_node_ast.as<QualifiedIdentifierNode>());
 				continue; // Check for more postfix operators
 			} else {
@@ -17162,10 +17148,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			consume_token(); // consume the identifier
 		}
 
-		// Create a QualifiedIdentifierNode with empty namespace path for global scope
+		// Create a QualifiedIdentifierNode with namespace handle
 		// If namespaces is empty, it means ::identifier (global namespace)
 		// If namespaces is not empty, it means ::ns::identifier
-		auto qualified_node = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+		NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+		auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
 		const QualifiedIdentifierNode& qual_id = qualified_node.as<QualifiedIdentifierNode>();
 
 		// Try to look up the qualified identifier
@@ -17173,9 +17160,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// by looking in the global namespace (namespace_symbols_[empty_path])
 		std::optional<ASTNode> identifierType;
 		// Always use lookup_symbol_qualified - it handles both cases:
-		// - Empty namespaces (::identifier) -> looks in global namespace only
-		// - Non-empty namespaces (ns::identifier) -> looks in specified namespace
-		identifierType = lookup_symbol_qualified(qual_id.namespaces(), qual_id.name());
+		// - Global namespace (handle index 0) -> looks in global namespace only
+		// - Non-global namespace -> looks in specified namespace
+		identifierType = lookup_symbol_qualified(qual_id.namespace_handle(), qual_id.name());
 
 		// Check if followed by '(' for function call
 		if (current_token_.has_value() && current_token_->value() == "(") {
@@ -17422,14 +17409,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// current_token_ is now the token after the final identifier
 
 		// Create a QualifiedIdentifierNode
-		auto qualified_node = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+		NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+		auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
 		const QualifiedIdentifierNode& qual_id = qualified_node.as<QualifiedIdentifierNode>();
 
 		// Check for std::forward intrinsic
 		// std::forward<T>(arg) is a compiler intrinsic for perfect forwarding
-		if (qual_id.namespaces().size() == 1 && 
-		    qual_id.namespaces()[0] == "std" && 
-		    qual_id.name() == "forward") {
+		// Check if namespace is "std" (single-level namespace with name "std")
+		std::string_view ns_qualified_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
+		if (ns_qualified_name == "std" && qual_id.name() == "forward") {
 			
 			// Handle std::forward<T>(arg)
 			// For now, we'll treat it as an identity function that preserves references
@@ -17478,8 +17466,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		std::optional<std::vector<TemplateTypeArg>> template_args;
 		std::vector<ASTNode> template_arg_nodes;  // Store the actual expression nodes
 		if (current_token_.has_value() && current_token_->value() == "<") {
-			// Build the qualified name from namespaces
-			std::string_view qualified_name = buildQualifiedNameFromStrings(qual_id.namespaces(), qual_id.name());
+			// Build the qualified name from namespace handle
+			std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 			std::string_view member_name = qual_id.name();
 			
 			// Check if the member is a known template before parsing < as template arguments
@@ -17494,13 +17482,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// Also check if the base is a template parameter - if so, the member is likely NOT a template
 			bool base_is_template_param = false;
-			if (!qual_id.namespaces().empty()) {
-				std::string_view base_name;
-#if USE_OLD_STRING_APPROACH
-				base_name = qual_id.namespaces()[0];
-#else
-				base_name = qual_id.namespaces()[0].view();
-#endif
+			if (!qual_id.namespace_handle().isGlobal()) {
+				std::string_view base_name = gNamespaceRegistry.getRootNamespaceName(qual_id.namespace_handle());
 				for (const auto& param_name : current_template_param_names_) {
 					if (StringTable::getStringView(param_name) == base_name) {
 						base_is_template_param = true;
@@ -17614,8 +17597,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									if (std::holds_alternative<QualifiedIdentifierNode>(expr_default)) {
 										const QualifiedIdentifierNode& qual_id_default = std::get<QualifiedIdentifierNode>(expr_default);
 										
-										if (!qual_id_default.namespaces().empty()) {
-											std::string type_name_str = qual_id_default.namespaces()[0];
+										if (!qual_id_default.namespace_handle().isGlobal()) {
+											std::string type_name_str(gNamespaceRegistry.getName(qual_id_default.namespace_handle()));
 											std::string_view default_member_name = qual_id_default.name();
 											
 											if (type_name_str.ends_with("_void") && !filled_template_args.empty()) {
@@ -17679,16 +17662,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					std::string_view instantiated_name = get_instantiated_class_name(qual_id.name(), filled_template_args);
 					
 					// Build the full namespace path including the instantiated template name
-					// For "my_ns::Wrapper<int>::value", we want namespaces=["my_ns", "Wrapper_int"] and name="value"
-					std::vector<StringType<32>> full_namespaces;
-					
-					// Add all the original namespaces (e.g., "my_ns")
-					for (const auto& ns : qual_id.namespaces()) {
-						full_namespaces.emplace_back(ns);
-					}
-					
-					// Add the instantiated template name (e.g., "Wrapper_int")
-					full_namespaces.emplace_back(StringType<32>(instantiated_name));
+					// For "my_ns::Wrapper<int>::value", we want namespace path "my_ns::Wrapper_int" and name="value"
+					// Build namespace path from the original namespace handle plus the instantiated template name
+					NamespaceHandle base_ns = qual_id.namespace_handle();
+					StringHandle instantiated_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+					NamespaceHandle full_ns_handle = gNamespaceRegistry.getOrCreateNamespace(base_ns, instantiated_name_handle);
 					
 					// Parse the :: and the member name
 					consume_token(); // consume ::
@@ -17701,7 +17679,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					
 					// Handle additional :: if present (nested member access)
 					while (current_token_.has_value() && current_token_->value() == "::") {
-						full_namespaces.emplace_back(StringType<32>(member_token.value()));
+						// Add current member to namespace path
+						StringHandle member_handle = StringTable::getOrInternStringHandle(member_token.value());
+						full_ns_handle = gNamespaceRegistry.getOrCreateNamespace(full_ns_handle, member_handle);
 						consume_token(); // consume ::
 						if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
 							return ParseResult::error("Expected identifier after '::'", current_token_.value_or(Token()));
@@ -17711,7 +17691,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 					
 					// Create QualifiedIdentifierNode with the complete path
-					auto full_qualified_node = emplace_node<QualifiedIdentifierNode>(full_namespaces, member_token);
+					auto full_qualified_node = emplace_node<QualifiedIdentifierNode>(full_ns_handle, member_token);
 					result = emplace_node<ExpressionNode>(full_qualified_node.as<QualifiedIdentifierNode>());
 					return ParseResult::success(*result);
 				}
@@ -17723,7 +17703,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 
 		// Try to look up the qualified identifier
-		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.name());
+		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespace_handle(), qual_id.name());
 		
 		// Check if followed by '(' for function call
 		if (current_token_.has_value() && current_token_->value() == "(") {
@@ -17827,7 +17807,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			if ((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) && 
 			    current_linkage_ != Linkage::C) {
 				// Build qualified template name
-				std::string_view qualified_name = buildQualifiedNameFromStrings(qual_id.namespaces(), qual_id.name());
+				std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 				
 				// Phase 1 C++20: If we have explicit template arguments, use them instead of deducing
 				if (template_args.has_value() && !template_args->empty()) {
@@ -18213,20 +18193,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 			}
 			
-			// Create a QualifiedIdentifierNode
-			auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+			// Create a QualifiedIdentifierNode with namespace handle
+			NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+			auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
 			const auto& qual_id = qualified_node_ast.as<QualifiedIdentifierNode>();
 			
 			// Look up the qualified identifier (either the template name or instantiated template)
 			if (template_args.has_value()) {
 				// Try to instantiate the template with namespace qualification
-				// Build the qualified template name for lookup using StringBuilder
-				StringBuilder qualified_template_name_builder;
-				for (const auto& ns : namespaces) {
-					qualified_template_name_builder.append(ns.c_str()).append("::");
-				}
-				qualified_template_name_builder.append(final_identifier.value());
-				std::string_view qualified_template_name = qualified_template_name_builder.preview();
+				// Build the qualified template name for lookup
+				std::string_view qualified_template_name = buildQualifiedNameFromHandle(ns_handle, final_identifier.value());
 				
 				FLASH_LOG_FORMAT(Parser, Debug, "Looking up template '{}' with {} template arguments", qualified_template_name, template_args->size());
 				
@@ -18255,7 +18231,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						Token inst_token(Token::Type::Identifier, inst_name, 
 						                final_identifier.line(), final_identifier.column(), final_identifier.file_index());
 						result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
-						qualified_template_name_builder.reset();
 						return ParseResult::success(*result);
 					}
 				}
@@ -18268,8 +18243,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					FLASH_LOG_FORMAT(Parser, Debug, "Qualified name lookup failed, trying simple name '{}'", final_identifier.value());
 					instantiated = try_instantiate_class_template(final_identifier.value(), *template_args);
 				}
-				
-				qualified_template_name_builder.reset();
 				
 				if (instantiated.has_value()) {
 					const auto& inst_struct = instantiated->as<StructDeclarationNode>();
@@ -18296,7 +18269,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 			} else {
 				// No template arguments, lookup as regular qualified identifier
-				identifierType = gSymbolTable.lookup_qualified(qual_id.namespaces(), qual_id.identifier_token().value());
+				identifierType = gSymbolTable.lookup_qualified(qual_id.namespace_handle(), qual_id.identifier_token().value());
 			}
 			
 			FLASH_LOG(Parser, Debug, "Qualified lookup result: {}", identifierType.has_value() ? "found" : "not found");
@@ -18350,7 +18323,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// If not found and we're not in extern "C", try template instantiation
 				if (!identifierType.has_value() && current_linkage_ != Linkage::C) {
 					// Build qualified template name
-					std::string_view qualified_name = buildQualifiedNameFromStrings(qual_id.namespaces(), qual_id.name());
+					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 					
 					// Extract argument types for template instantiation
 					std::vector<TypeSpecifierNode> arg_types;
@@ -19255,8 +19228,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											if (std::holds_alternative<QualifiedIdentifierNode>(expr_default)) {
 												const QualifiedIdentifierNode& qual_id_default = std::get<QualifiedIdentifierNode>(expr_default);
 												
-												if (!qual_id_default.namespaces().empty()) {
-													std::string type_name_str = qual_id_default.namespaces()[0];
+												if (!qual_id_default.namespace_handle().isGlobal()) {
+													std::string type_name_str(gNamespaceRegistry.getName(qual_id_default.namespace_handle()));
 													std::string_view member_name = qual_id_default.name();
 													
 													if (type_name_str.ends_with("_void") && !filled_template_args.empty()) {
@@ -19355,7 +19328,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							}
 							
 							// Create a QualifiedIdentifierNode with the instantiated type name
-							auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+							NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+							auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
 							const auto& qualified_node = qualified_node_ast.as<QualifiedIdentifierNode>();
 							result = emplace_node<ExpressionNode>(qualified_node);
 							// Clear pending template args since they were used for this qualified identifier
@@ -22278,7 +22252,8 @@ ParseResult Parser::parse_qualified_identifier() {
 	}
 
 	// Create a QualifiedIdentifierNode
-	auto qualified_node = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+	NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+	auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
 	return ParseResult::success(qualified_node);
 }
 
@@ -22317,7 +22292,8 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 	}
 	
 	// Create a QualifiedIdentifierNode
-	auto qualified_node = emplace_node<QualifiedIdentifierNode>(namespaces, final_identifier);
+	NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+	auto qualified_node = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
 	return ParseResult::success(qualified_node);
 }
 
@@ -23289,19 +23265,19 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// For qualified identifiers like MakeUnsigned::List<int, char>::size
 		// We need to look up the type of the static member
 		const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
-		const auto& namespaces = qual_id.namespaces();
+		NamespaceHandle ns_handle = qual_id.namespace_handle();
 		std::string_view member_name = qual_id.name();
 		
-		if (!namespaces.empty()) {
-			// Get the struct name (last namespace component is usually the template instantiation)
-			std::string_view struct_name = namespaces.back();
+		if (!ns_handle.isGlobal()) {
+			// Get the struct name (the namespace handle's name is the last component)
+			std::string_view struct_name = gNamespaceRegistry.getName(ns_handle);
 			
 			// Try to find the struct in gTypesByName
 			auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
 			
 			// If not found directly, try building full qualified name
-			if (struct_type_it == gTypesByName.end() && namespaces.size() > 1) {
-				std::string_view full_qualified_name = buildFullQualifiedName(namespaces);
+			if (struct_type_it == gTypesByName.end() && gNamespaceRegistry.getDepth(ns_handle) > 1) {
+				std::string_view full_qualified_name = gNamespaceRegistry.getQualifiedName(ns_handle);
 				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(full_qualified_name));
 			}
 			
@@ -29449,7 +29425,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// instantiated during expression parsing).
 						const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
 						// Build the qualified name and check if it exists in gTypesByName
-						std::string_view qualified_name = buildQualifiedNameFromStrings(qual_id.namespaces(), qual_id.name());
+						std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_name));
 						if (type_it != gTypesByName.end()) {
 							const TypeInfo* type_info = type_it->second;
@@ -31844,14 +31820,14 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				if (is_qual_id) {
 					const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(init_expr);
 					
-					// The struct/class name is the last namespace component
-					// For "is_pointer_impl<int*>::value", namespaces.back() is "is_pointer_impl<int*>"
-					const auto& namespaces = qual_id.namespaces();
-					FLASH_LOG(Templates, Debug, "Phase 3: Number of namespaces: ", namespaces.size());
+					// The struct/class name is the namespace handle's name
+					// For "is_pointer_impl<int*>::value", the namespace name is "is_pointer_impl<int*>"
+					NamespaceHandle ns_handle = qual_id.namespace_handle();
+					FLASH_LOG(Templates, Debug, "Phase 3: Namespace handle depth: ", gNamespaceRegistry.getDepth(ns_handle));
 					
-					if (!namespaces.empty()) {
-						// With USE_OLD_STRING_APPROACH=1, namespaces.back() returns std::string
-						std::string_view struct_name_view = namespaces.back();
+					if (!ns_handle.isGlobal()) {
+						// Get the struct name from the namespace handle
+						std::string_view struct_name_view = gNamespaceRegistry.getName(ns_handle);
 						
 						FLASH_LOG(Templates, Debug, "Phase 3: Struct name from qualified ID: '", struct_name_view, "'");
 						
@@ -31889,16 +31865,13 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 								FLASH_LOG(Templates, Debug, "Phase 3: Instantiated class name: '", instantiated_name, "'");
 								
 								// Create a new qualified identifier with the updated namespace
-								std::vector<StringType<>> new_namespaces;
-								// Copy all namespaces except the last one
-								for (size_t i = 0; i + 1 < namespaces.size(); ++i) {
-									new_namespaces.push_back(namespaces[i]);
-								}
-								// Add the instantiated name as the last namespace
-								new_namespaces.emplace_back(StringType<>(instantiated_name));
+								// Get the parent namespace and add the instantiated name as a child
+								NamespaceHandle parent_ns = gNamespaceRegistry.getParent(ns_handle);
+								StringHandle instantiated_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+								NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(parent_ns, instantiated_name_handle);
 								
 								// Create new qualified identifier node
-								QualifiedIdentifierNode new_qual_id(std::move(new_namespaces), qual_id.identifier_token());
+								QualifiedIdentifierNode new_qual_id(new_ns_handle, qual_id.identifier_token());
 								new_initializer = emplace_node<ExpressionNode>(new_qual_id);
 								
 								FLASH_LOG(Templates, Debug, "Phase 3: Successfully instantiated and updated qualifier in variable template initializer");
@@ -32489,8 +32462,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
 						
 						// Handle dependent static member access like is_arithmetic_void::value
-						if (!qual_id.namespaces().empty()) {
-							std::string type_name = qual_id.namespaces()[0];
+						if (!qual_id.namespace_handle().isGlobal()) {
+							std::string_view type_name = gNamespaceRegistry.getName(qual_id.namespace_handle());
 							std::string_view member_name = qual_id.name();
 							
 							// Check if type_name ends with "_void" (dependent placeholder)
@@ -33757,10 +33730,10 @@ if (struct_type_info.getStructInfo()) {
 					const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
 					
 					// Handle dependent static member access like is_arithmetic_void::value
-					// namespace[0] = template instantiation name (e.g., is_arithmetic_void)
+					// namespace handle name = template instantiation name (e.g., is_arithmetic_void)
 					// name() = member name (e.g., value)
-					if (!qual_id.namespaces().empty()) {
-						std::string type_name = qual_id.namespaces()[0];
+					if (!qual_id.namespace_handle().isGlobal()) {
+						std::string_view type_name = gNamespaceRegistry.getName(qual_id.namespace_handle());
 						std::string_view member_name = qual_id.name();
 						
 						// Check if type_name ends with "_void" (dependent placeholder)
