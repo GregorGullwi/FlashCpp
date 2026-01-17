@@ -851,6 +851,41 @@ void Parser::register_builtin_functions() {
 	// Using UnsignedLongLong (pointer-sized) for the parameter and return type
 	register_builtin("__builtin_launder", Type::UnsignedLongLong, Type::UnsignedLongLong);
 	
+	// Helper lambda to register a builtin function with a const char* parameter
+	// Returns size_t (UnsignedLong on 64-bit)
+	auto register_strlen_builtin = [&](std::string_view name) {
+		// Create return type node (size_t = unsigned long on 64-bit)
+		Token type_token = dummy_token;
+		auto return_type_node = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, type_token);
+		
+		// Create function name token
+		Token func_token = dummy_token;
+		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
+		
+		// Create declaration node for the function
+		auto decl_node = emplace_node<DeclarationNode>(return_type_node, func_token);
+		
+		// Create function declaration node
+		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
+		
+		// Create parameter: const char* 
+		Token param_token = dummy_token;
+		auto param_type_node_ref = emplace_node_ref<TypeSpecifierNode>(Type::Char, TypeQualifier::None, 8, param_token);
+		param_type_node_ref.second.add_pointer_level(CVQualifier::Const);  // Make it const char*
+		auto param_decl = emplace_node<DeclarationNode>(param_type_node_ref.first, param_token);
+		func_decl_ref.add_parameter_node(param_decl);
+		
+		// Set extern "C" linkage
+		func_decl_ref.set_linkage(Linkage::C);
+		
+		// Register in global symbol table
+		gSymbolTable.insert(name, func_decl_node);
+	};
+	
+	// __builtin_strlen(const char*) - returns length of string
+	// Returns size_t (unsigned long on 64-bit platforms)
+	register_strlen_builtin("__builtin_strlen");
+	
 	// Register std::terminate - no pre-computed mangled name, will be mangled with namespace context
 	// Note: Forward declarations inside functions don't capture namespace context,
 	// so we register it globally without explicit mangling

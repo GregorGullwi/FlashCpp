@@ -28,7 +28,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Template instantiation volume |
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template instantiation volume |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Type erasure, RTTI |
+| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Template instantiation (2026-01-17: Fixed `_Hash_bytes` overload resolution) |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Concepts, views |
 | `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Virtual inheritance, locales |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Ratio templates |
@@ -340,8 +340,49 @@ The following features have been implemented to support standard headers:
 - Typedef array syntax (`typedef type name[size];`)
 - Function pointer parameters with pack expansion and noexcept (NEW)
 - Pointer-to-void implicit conversion in overload resolution (NEW)
+- `__builtin_strlen` builtin function support (NEW)
+- UserDefined type alias resolution in overload resolution (NEW)
 
 ## Recent Changes
+
+### 2026-01-17: __builtin_strlen Support and UserDefined Type Alias Resolution
+
+**Fixed:** Two issues that were blocking the `<any>` header from compiling past the `_Hash_bytes` function call in `<typeinfo>`.
+
+#### 1. Added `__builtin_strlen` Builtin Function
+
+The compiler intrinsic `__builtin_strlen` was not registered as a builtin function. When the parser encountered `__builtin_strlen(name())`, it would create an implicit forward declaration with return type `int` instead of the correct `size_t` (`unsigned long` on 64-bit platforms).
+
+**Pattern that now works:**
+```cpp
+return _Hash_bytes(name(), __builtin_strlen(name()), static_cast<size_t>(0xc70f6907UL));
+```
+
+**Fix applied:**
+- Registered `__builtin_strlen` in `Parser::register_builtin_functions()` with correct signature:
+  - Return type: `Type::UnsignedLong` (size_t on 64-bit)
+  - Parameter: `const char*`
+  - Linkage: `extern "C"`
+
+#### 2. UserDefined Type Alias Resolution in Overload Resolution
+
+When a parameter type like `size_t` is stored as `Type::UserDefined` (because it's a typedef), and an argument type is `Type::UnsignedLong`, the overload resolution was failing because `can_convert_type()` didn't handle `UserDefined` types properly.
+
+**Fix applied:**
+- Extended `can_convert_type()` in `src/OverloadResolution.h` to:
+  1. Resolve `Type::UserDefined` types with valid `type_index` to their underlying types by looking up `gTypeInfo[type_index].type_`
+  2. For unresolved type aliases (`type_index == 0`), allow conversion to/from integral types (common for `size_t`, `ptrdiff_t`, etc.)
+
+**Impact:**
+- The `<any>` header now progresses past the `_Hash_bytes` function call
+- `<any>` still times out during template instantiation (not a parsing error)
+- Standard library functions using `size_t` parameters now work correctly when called with `unsigned long` arguments
+
+**Test case:** `tests/test_builtin_strlen_ret5.cpp` (new)
+
+**Files Modified:**
+- `src/Parser.cpp` - Added `__builtin_strlen` registration
+- `src/OverloadResolution.h` - Added UserDefined type resolution
 
 ### 2026-01-16: Parenthesized Identifier Followed by Less-Than Operator
 

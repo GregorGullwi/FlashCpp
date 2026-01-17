@@ -307,8 +307,46 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		return TypeConversionResult{ConversionRank::UserDefined, true};
 	}
 
-	// Non-pointer, non-reference types: use basic type conversion
-	return can_convert_type(from.type(), to.type());
+	// Handle UserDefined type aliases: 
+	// Type aliases like 'size_t' may be stored as Type::UserDefined with type_index=0
+	// when they couldn't be fully resolved during parsing. Allow conversions between
+	// UserDefined and integral types as they're likely type aliases for integral types.
+	Type from_type = from.type();
+	Type to_type = to.type();
+	
+	// If 'from' is UserDefined with a valid type_index, try to get its underlying type
+	if (from_type == Type::UserDefined && from.type_index() > 0 && from.type_index() < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[from.type_index()];
+		if (type_info.type_ != Type::UserDefined && type_info.type_ != Type::Struct && type_info.type_ != Type::Enum) {
+			from_type = type_info.type_;
+		}
+	}
+	
+	// If 'to' is UserDefined with a valid type_index, try to get its underlying type
+	if (to_type == Type::UserDefined && to.type_index() > 0 && to.type_index() < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[to.type_index()];
+		if (type_info.type_ != Type::UserDefined && type_info.type_ != Type::Struct && type_info.type_ != Type::Enum) {
+			to_type = type_info.type_;
+		}
+	}
+	
+	// If either type is still UserDefined with type_index=0, assume it's an unresolved type alias
+	// Allow conversion if the other type is an integral type (common for size_t, ptrdiff_t, etc.)
+	if (from_type == Type::UserDefined && from.type_index() == 0) {
+		// 'from' is an unresolved type alias - allow if 'to' is integral
+		if (is_integral_type(to_type)) {
+			return TypeConversionResult::conversion();
+		}
+	}
+	if (to_type == Type::UserDefined && to.type_index() == 0) {
+		// 'to' is an unresolved type alias - allow if 'from' is integral
+		if (is_integral_type(from_type)) {
+			return TypeConversionResult::conversion();
+		}
+	}
+
+	// Non-pointer, non-reference types: use basic type conversion with resolved types
+	return can_convert_type(from_type, to_type);
 }
 
 // Result of overload resolution
