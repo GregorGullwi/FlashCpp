@@ -157,8 +157,6 @@
     <ClCompile Include="src\ChunkedAnyVector.cpp" />
     <ClCompile Include="src\CodeViewDebug.cpp" />
     <ClCompile Include="src\ExpressionSubstitutor.cpp" />
-    <ClCompile Include="src\InstantiationQueue.cpp" />
-    <ClCompile Include="src\LazyMemberResolver.cpp" />
     <ClCompile Include="src\LibClangIRGenerator_benchmark.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Benchmark'">true</ExcludedFromBuild>
     </ClCompile>
