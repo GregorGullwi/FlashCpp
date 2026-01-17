@@ -2592,11 +2592,6 @@ public:
 	NamespaceHandle namespace_handle() const { return namespace_handle_; }
 	const Token& using_token() const { return using_token_; }
 
-	// Get the full namespace name as a string (e.g., "std::filesystem")
-	std::string full_namespace_name() const {
-		return std::string(gNamespaceRegistry.getQualifiedName(namespace_handle_));
-	}
-
 private:
 	NamespaceHandle namespace_handle_;  // Handle to namespace, e.g., handle for "std::filesystem"
 	Token using_token_;  // For error reporting

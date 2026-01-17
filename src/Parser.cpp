@@ -32463,7 +32463,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						
 						// Handle dependent static member access like is_arithmetic_void::value
 						if (!qual_id.namespace_handle().isGlobal()) {
-							std::string type_name(gNamespaceRegistry.getName(qual_id.namespace_handle()));
+							std::string_view type_name = gNamespaceRegistry.getName(qual_id.namespace_handle());
 							std::string_view member_name = qual_id.name();
 							
 							// Check if type_name ends with "_void" (dependent placeholder)
@@ -33733,7 +33733,7 @@ if (struct_type_info.getStructInfo()) {
 					// namespace handle name = template instantiation name (e.g., is_arithmetic_void)
 					// name() = member name (e.g., value)
 					if (!qual_id.namespace_handle().isGlobal()) {
-						std::string type_name(gNamespaceRegistry.getName(qual_id.namespace_handle()));
+						std::string_view type_name = gNamespaceRegistry.getName(qual_id.namespace_handle());
 						std::string_view member_name = qual_id.name();
 						
 						// Check if type_name ends with "_void" (dependent placeholder)
