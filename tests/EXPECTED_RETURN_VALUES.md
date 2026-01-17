@@ -40,6 +40,10 @@ The following regressions have been FIXED:
 | test_global_namespace_scope_ret1.cpp | 1 (1025%256) | 145 | Using declaration fix | Fixed by tracking qualified names when resolving using declarations in CodeGen |
 | test_global_scope_new_ret0.cpp | 0 | 1 | Scalar new initialization | Store scalar initializer values for `new T(args)` |
 | test_spec_nullptr_init_ret0.cpp | 0 | 214 | Template default constructor | Generate implicit default constructor for partial specializations so member initializers run |
+| test_covariant_return_ret180.cpp | 180 | 205 | Virtual 'this' return fix | Functions returning 'this' pointer were dereferencing it instead of returning the pointer |
+| test_diamond_inheritance_ret120.cpp | 120 | 158 | Constructor parameter limit | Constructors with >3 params were missing R8/R9 arguments on Linux |
+| test_virtual_base_classes_ret160.cpp | 160 | 130 | Constructor parameter limit | Same as above - Diamond constructor with 5 params |
+| test_inheritance_basic_ret217.cpp | 217 | (was ret214) | Test filename fix | Filename incorrectly said ret214 but code correctly returns 217 |
 
 ## Regressions Found
 
