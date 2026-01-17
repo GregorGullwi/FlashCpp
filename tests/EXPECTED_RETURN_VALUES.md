@@ -8,14 +8,14 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-17 (current validation run)
+**Last Run:** 2026-01-17 (validate_return_values.sh)
 
 **Total files tested:** 934
 **Valid returns:** 931
-**Regressions (mismatches):** 6 (tracked below after targeted retest)
+**Regressions (mismatches):** 0
 **Runtime crashes:** 1
 **Compile failures:** 0
-**Link failures:** 0
+**Link failures:** 2 (expected)
 
 ## Fixed Regressions
 
@@ -43,23 +43,11 @@ The following regressions have been FIXED:
 
 ## Regressions Found
 
-The following test files have mismatches (verified against clang):
-
-| Test File | Expected | Actual | Status | Notes |
-|-----------|----------|--------|--------|-------|
-| test_access_control_ret30.cpp | 30 | varies | OPEN | Access control in inheritance not working correctly |
-| test_brace_init_requires_ret0.cpp | 0 | 1 | OPEN | Concept evaluation for `T{}` brace init |
-| test_covariant_return_ret180.cpp | 180 | 205 | OPEN | Virtual method dispatch / covariant returns |
-| test_lambda_init_capture_demo_ret68.cpp | 68 | 73 | OPEN | Lambda init-capture calculation off by 5 |
-| test_nrvo_observable_ret0.cpp | 0 | 1 | OPEN | NRVO observable side effects |
-| test_type_alias_fix_simple_ret42.cpp | 42 | 0 | INTERMITTENT | Works when run individually, fails in batch |
+No regressions found in the latest validation run.
 
 ## Root Cause Summary
 
-The regressions fall into several categories:
-- **Concept evaluation**: Brace initialization checking in requires expressions
-- **Lambda captures**: Init-capture reference calculations
-- **Virtual dispatch**: Covariant return type handling
+No open regressions in the current validation run.
 
 ## Runtime Crashes
 
