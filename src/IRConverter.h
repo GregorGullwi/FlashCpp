@@ -13753,7 +13753,8 @@ private:
 		int32_t combined_offset = obj_offset + op.member_offset;
 		
 		// Calculate the address: LEA target_reg, [RBP + combined_offset]
-		X64Register target_reg = X64Register::RAX;
+		// Use register allocator to avoid clobbering dirty registers
+		X64Register target_reg = allocateRegisterWithSpilling();
 		emitLeaFromFrame(target_reg, combined_offset);
 		
 		// Store the address to result_var (pointer is always 64-bit)
@@ -13762,6 +13763,9 @@ private:
 			SizedRegister{target_reg, 64, false},  // source: 64-bit register
 			SizedStackSlot{result_offset, 64, false}  // dest: 64-bit for pointer
 		);
+		
+		// Release the register since the address has been stored to memory
+		regAlloc.release(target_reg);
 		
 		// DO NOT mark as reference - this is a plain pointer value for use in arithmetic
 	}
