@@ -34948,100 +34948,60 @@ if (struct_type_info.getStructInfo()) {
 						}
 					}
 				}
-				// Handle BinaryOperatorNode with sizeof... (e.g., static_cast<int>(sizeof...(Ts)) * 2 + 40)
+				// Handle complex expressions containing sizeof... using ConstExpr::Evaluator
+				// (e.g., static_cast<int>(sizeof...(Ts)) * 2 + 40, binary expressions, etc.)
 				else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
-					const BinaryOperatorNode& bin_expr = std::get<BinaryOperatorNode>(expr);
-					
-					// Helper to extract pack size from various expression forms
-					auto try_extract_pack_size = [&](const ExpressionNode& e) -> std::optional<size_t> {
-						if (std::holds_alternative<SizeofPackNode>(e)) {
-							const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(e);
-							return calculate_pack_size(sizeof_pack.pack_name());
+					// Recursive helper to substitute SizeofPackNode with numeric literals in an expression
+					std::function<ASTNode(const ASTNode&)> substitute_sizeof_pack = [&](const ASTNode& node) -> ASTNode {
+						if (!node.is<ExpressionNode>()) {
+							return node;
 						}
-						// Handle static_cast<T>(sizeof...(Ts))
-						if (std::holds_alternative<StaticCastNode>(e)) {
-							const StaticCastNode& cast_node = std::get<StaticCastNode>(e);
-							if (cast_node.expr().is<ExpressionNode>()) {
-								const ExpressionNode& cast_inner = cast_node.expr().as<ExpressionNode>();
-								if (std::holds_alternative<SizeofPackNode>(cast_inner)) {
-									const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(cast_inner);
-									return calculate_pack_size(sizeof_pack.pack_name());
-								}
-							}
-						}
-						return std::nullopt;
-					};
-					
-					// Helper to extract numeric value from expression
-					auto try_extract_numeric = [](const ExpressionNode& e) -> std::optional<unsigned long long> {
-						if (std::holds_alternative<NumericLiteralNode>(e)) {
-							const NumericLiteralNode& num = std::get<NumericLiteralNode>(e);
-							auto val = num.value();
-							return std::holds_alternative<unsigned long long>(val) 
-								? std::get<unsigned long long>(val)
-								: static_cast<unsigned long long>(std::get<double>(val));
-						}
-						return std::nullopt;
-					};
-					
-					// Helper to evaluate a binary expression
-					auto evaluate_binary = [](std::string_view op, unsigned long long lhs, unsigned long long rhs) -> unsigned long long {
-						if (op == "+") return lhs + rhs;
-						if (op == "-") return lhs - rhs;
-						if (op == "*") return lhs * rhs;
-						if (op == "/") return rhs != 0 ? lhs / rhs : 0;
-						return 0;
-					};
-					
-					// Try to evaluate the top-level binary expression
-					if (bin_expr.get_lhs().is<ExpressionNode>() && bin_expr.get_rhs().is<ExpressionNode>()) {
-						const ExpressionNode& lhs_expr = bin_expr.get_lhs().as<ExpressionNode>();
-						const ExpressionNode& rhs_expr = bin_expr.get_rhs().as<ExpressionNode>();
+						const ExpressionNode& expr_node = node.as<ExpressionNode>();
 						
-						// Case 1: LHS is pack_size_expr, RHS is numeric
-						if (auto lhs_pack = try_extract_pack_size(lhs_expr)) {
-							if (auto rhs_num = try_extract_numeric(rhs_expr)) {
-								unsigned long long result = evaluate_binary(bin_expr.op(), *lhs_pack, *rhs_num);
-								substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
-								FLASH_LOG(Templates, Debug, "Evaluated binary expression with pack size to ", result);
+						// Handle SizeofPackNode directly
+						if (std::holds_alternative<SizeofPackNode>(expr_node)) {
+							const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr_node);
+							if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
+								return make_pack_size_literal(*pack_size);
 							}
+							return node;
 						}
-						// Case 2: LHS is numeric, RHS is pack_size_expr
-						else if (auto lhs_num = try_extract_numeric(lhs_expr)) {
-							if (auto rhs_pack = try_extract_pack_size(rhs_expr)) {
-								unsigned long long result = evaluate_binary(bin_expr.op(), *lhs_num, *rhs_pack);
-								substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
-								FLASH_LOG(Templates, Debug, "Evaluated binary expression with pack size to ", result);
-							}
-						}
-						// Case 3: LHS is nested binary expression, RHS is numeric
-						// Handles patterns like (static_cast<int>(sizeof...(Ts)) * 2) + 40
-						else if (std::holds_alternative<BinaryOperatorNode>(lhs_expr)) {
-							const BinaryOperatorNode& nested_bin = std::get<BinaryOperatorNode>(lhs_expr);
-							if (nested_bin.get_lhs().is<ExpressionNode>() && nested_bin.get_rhs().is<ExpressionNode>()) {
-								const ExpressionNode& nested_lhs = nested_bin.get_lhs().as<ExpressionNode>();
-								const ExpressionNode& nested_rhs = nested_bin.get_rhs().as<ExpressionNode>();
-								
-								std::optional<unsigned long long> nested_result;
-								if (auto nlhs_pack = try_extract_pack_size(nested_lhs)) {
-									if (auto nrhs_num = try_extract_numeric(nested_rhs)) {
-										nested_result = evaluate_binary(nested_bin.op(), *nlhs_pack, *nrhs_num);
-									}
-								} else if (auto nlhs_num = try_extract_numeric(nested_lhs)) {
-									if (auto nrhs_pack = try_extract_pack_size(nested_rhs)) {
-										nested_result = evaluate_binary(nested_bin.op(), *nlhs_num, *nrhs_pack);
-									}
-								}
-								
-								if (nested_result) {
-									if (auto rhs_num = try_extract_numeric(rhs_expr)) {
-										unsigned long long result = evaluate_binary(bin_expr.op(), *nested_result, *rhs_num);
-										substituted_initializer = make_pack_size_literal(static_cast<size_t>(result));
-										FLASH_LOG(Templates, Debug, "Evaluated nested binary expression with pack size to ", result);
-									}
+						// Handle static_cast wrapping sizeof...
+						if (std::holds_alternative<StaticCastNode>(expr_node)) {
+							const StaticCastNode& cast_node = std::get<StaticCastNode>(expr_node);
+							ASTNode substituted_inner = substitute_sizeof_pack(cast_node.expr());
+							// If inner was substituted to a literal, just use the literal (static_cast has no effect)
+							if (substituted_inner.is<ExpressionNode>()) {
+								const ExpressionNode& inner_expr = substituted_inner.as<ExpressionNode>();
+								if (std::holds_alternative<NumericLiteralNode>(inner_expr)) {
+									return substituted_inner;
 								}
 							}
+							return node;
 						}
+						// Handle BinaryOperatorNode - recursively substitute both sides
+						if (std::holds_alternative<BinaryOperatorNode>(expr_node)) {
+							const BinaryOperatorNode& bin_op = std::get<BinaryOperatorNode>(expr_node);
+							ASTNode subst_lhs = substitute_sizeof_pack(bin_op.get_lhs());
+							ASTNode subst_rhs = substitute_sizeof_pack(bin_op.get_rhs());
+							// Create new binary operator with substituted operands
+							BinaryOperatorNode& new_bin = gChunkedAnyStorage.emplace_back<BinaryOperatorNode>(
+								bin_op.get_token(), subst_lhs, subst_rhs);
+							return emplace_node<ExpressionNode>(new_bin);
+						}
+						return node;
+					};
+					
+					// Substitute sizeof... in the expression
+					ASTNode substituted_expr = substitute_sizeof_pack(static_member.initializer.value());
+					
+					// Now use ConstExpr::Evaluator to evaluate the expression
+					ConstExpr::EvaluationContext eval_context(gSymbolTable);
+					ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_context);
+					
+					if (result.success) {
+						substituted_initializer = make_pack_size_literal(static_cast<size_t>(result.as_int()));
+						FLASH_LOG(Templates, Debug, "Evaluated expression with sizeof... using ConstExpr::Evaluator to ", result.as_int());
 					}
 				}
 				// Handle FoldExpressionNode (e.g., static constexpr bool value = (Bs && ...);)
