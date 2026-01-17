@@ -34953,11 +34953,26 @@ if (struct_type_info.getStructInfo()) {
 				}
 			}
 			
+			// Substitute type if it's a template parameter (e.g., "T" in "static constexpr T value = v;")
+			// Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
+			TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+			original_type_spec.set_type_index(static_member.type_index);
+			
+			// Use substitute_template_parameter for consistent template parameter matching
+			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+				original_type_spec, template_params, template_args_to_use);
+			
+			// Calculate the substituted size based on the substituted type
+			size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+			
+			FLASH_LOG(Templates, Debug, "Static member type substitution: original type=", (int)static_member.type,
+			          " -> substituted type=", (int)substituted_type, ", size=", substituted_size);
+			
 			struct_info->addStaticMember(
 				static_member.getName(),
-				static_member.type,
-				static_member.type_index,
-				static_member.size,
+				substituted_type,
+				substituted_type_index,
+				substituted_size,
 				static_member.alignment,
 				static_member.access,
 				substituted_initializer,
