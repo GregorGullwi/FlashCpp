@@ -27,4 +27,3 @@ int main() {
     int x = c.add(32);  // Should return 42
     return x;
 }
-
