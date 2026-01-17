@@ -8209,12 +8209,31 @@ private:
 			
 			// If not found directly, try with full qualified name (all namespace components joined)
 			// This handles member template specializations like MakeUnsigned::List_int_char
+			// Also handles type aliases accessed through parent struct (e.g., test<T>::type::value)
 			if (struct_type_it == gTypesByName.end() && gNamespaceRegistry.getDepth(ns_handle) > 1) {
-				std::string_view full_qualified_name = gNamespaceRegistry.getQualifiedName(ns_handle);
-				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(full_qualified_name));
+				StringHandle ns_qualified_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
+				std::string_view full_qualified_name = StringTable::getStringView(ns_qualified_handle);
+				
+				// First try with the namespace handle directly
+				struct_type_it = gTypesByName.find(ns_qualified_handle);
 				if (struct_type_it != gTypesByName.end()) {
 					struct_or_enum_name = std::string(full_qualified_name);
 					FLASH_LOG(Codegen, Debug, "Found struct with full qualified name: ", full_qualified_name);
+				} else {
+					// Fallback: search by string content
+					// This handles cases where the type was registered with a different StringHandle
+					// but has the same string content (e.g., type aliases in templates)
+					for (const auto& [key, val] : gTypesByName) {
+						std::string_view key_str = StringTable::getStringView(key);
+						if (key_str == full_qualified_name) {
+							struct_type_it = gTypesByName.find(key);
+							if (struct_type_it != gTypesByName.end()) {
+								struct_or_enum_name = std::string(key_str);
+								FLASH_LOG(Codegen, Debug, "Found struct by string content: ", full_qualified_name);
+							}
+							break;
+						}
+					}
 				}
 			}
 			

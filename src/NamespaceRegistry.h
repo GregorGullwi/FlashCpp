@@ -148,6 +148,11 @@ public:
 		return StringTable::getStringView(getEntry(handle).qualified_name);
 	}
 
+	StringHandle getQualifiedNameHandle(NamespaceHandle handle) const {
+		if (!handle.isValid() || handle.isGlobal()) return StringHandle{};
+		return getEntry(handle).qualified_name;
+	}
+
 	NamespaceHandle getParent(NamespaceHandle handle) const {
 		if (!handle.isValid() || handle.isGlobal()) return GLOBAL_NAMESPACE;
 		return getEntry(handle).parent;
