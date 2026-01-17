@@ -6884,7 +6884,9 @@ private:
 		}  // End of if (actual_ctor) else block
 
 		// Load parameters into registers
-		for (size_t i = 0; i < num_params && i < 3; ++i) { // Max 3 additional params (RCX is 'this')
+		// Max additional params: 5 on Linux (RDI is 'this', RSI-R9 for params), 3 on Windows (RCX is 'this', RDX-R9 for params)
+		const size_t max_register_params = getMaxIntParamRegs<TWriterClass>() - 1;  // Subtract 1 for 'this' pointer
+		for (size_t i = 0; i < num_params && i < max_register_params; ++i) {
 			const TypedValue& arg = ctor_op.arguments[i];
 			Type paramType = arg.type;
 			int paramSize = arg.size_in_bits;
@@ -8807,8 +8809,11 @@ private:
 			// Register 'this' as a pointer in reference_stack_info_ (AFTER the clear)
 			// This is critical for member function calls that pass 'this' as an argument
 			// Without this, the codegen would use LEA (address-of) instead of MOV (load)
+			// Set holds_address_only = true because 'this' is a pointer, not a reference -
+			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty()) {
 				setReferenceInfo(this_offset_saved, Type::Struct, 64, false);
+				reference_stack_info_[this_offset_saved].holds_address_only = true;
 			}
 			
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
@@ -8923,8 +8928,11 @@ private:
 			// Register 'this' as a pointer in reference_stack_info_ (AFTER the clear)
 			// This is critical for member function calls that pass 'this' as an argument
 			// Without this, the codegen would use LEA (address-of) instead of MOV (load)
+			// Set holds_address_only = true because 'this' is a pointer, not a reference -
+			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty()) {
 				setReferenceInfo(this_offset_saved, Type::Struct, 64, false);
+				reference_stack_info_[this_offset_saved].holds_address_only = true;
 			}
 		
 			// Reset counters for this code path (they start at param_offset_adjustment for int, 0 for float)
@@ -9519,8 +9527,9 @@ private:
 						
 						// Check if this is a reference variable - if so, dereference it
 						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
+						// ALSO skip dereferencing if this is 'this' or holds_address_only is set (pointer, not reference)
 						auto ref_it = reference_stack_info_.find(var_offset);
-						if (ref_it != reference_stack_info_.end() && !current_function_returns_reference_) {
+						if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only && !current_function_returns_reference_) {
 							// This is a reference and function does not return a reference - load pointer and dereference to get value
 							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
@@ -9529,7 +9538,7 @@ private:
 							int value_size_bytes = ref_it->second.value_size_bits / 8;
 							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 							// Value is now in RAX, ready to return
-						} else if (ref_it != reference_stack_info_.end() && current_function_returns_reference_) {
+						} else if (ref_it != reference_stack_info_.end() && !ref_it->second.holds_address_only && current_function_returns_reference_) {
 							// This is a reference and function returns a reference - return the address itself
 							FLASH_LOG(Codegen, Debug, "handleReturn: Returning named reference address '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
