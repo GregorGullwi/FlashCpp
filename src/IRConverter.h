@@ -4520,6 +4520,11 @@ private:
 					if (is_float_type) {
 						bool is_single_precision = (ctx.result_value.type == Type::Float);
 						emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
+					} else {
+						emitMovToFrameSized(
+							SizedRegister{actual_source_reg, 64, false},
+							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}
+						);
 					}
 					// Can release source register since result is now tracked in the destination register
 					should_release_source = true;
@@ -4539,8 +4544,13 @@ private:
 					if (is_float_type) {
 						bool is_single_precision = (ctx.result_value.type == Type::Float);
 						emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
+					} else {
+						emitMovToFrameSized(
+							SizedRegister{actual_source_reg, 64, false},
+							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}
+						);
 					}
-					// For integer types: Don't store to memory - keep the value in the register for subsequent operations
+					// Keep the value in the register for subsequent operations
 					// DON'T release the source register for integer temps - keeping value in register for optimization
 					should_release_source = false;
 				}
@@ -13243,26 +13253,12 @@ private:
 			return;
 		}
 
-		// FIX: Map the TempVar to the member's actual stack location (not a copy!)
-		// This ensures that subsequent reads/writes to this TempVar access the struct member directly
-		//
-		// Two updates are necessary:
-		// 1. Update variables map: For future lookups of this TempVar by name
-		// 2. Update register allocator: For register spilling and dirty register flushing
-		//
-		// For stack-based structs: Both must point to member_stack_offset (the actual member location in the struct)
-		// For pointer-based access (this, references): member_stack_offset is 0 and meaningless,
-		// so we use result_offset (the allocated temp var) instead
-		if (is_pointer_access) {
-			// For pointer-based member access, the value is loaded into a register
-			// and should be backed by the result_offset temp var location, not member_stack_offset (which is 0)
-			variable_scopes.back().variables[result_var_handle].offset = result_offset;
-			regAlloc.set_stack_variable_offset(temp_reg, result_offset, op.result.size_in_bits);
-		} else {
-			// For stack-based struct member access, alias the temp var to the member's actual location
-			variable_scopes.back().variables[result_var_handle].offset = member_stack_offset;
-			regAlloc.set_stack_variable_offset(temp_reg, member_stack_offset, op.result.size_in_bits);
-		}
+		// Store the loaded value into the temp slot so subsequent uses read the value,
+		// avoiding aliasing the TempVar to the struct member location.
+		emitMovToFrame(temp_reg, result_offset);
+		regAlloc.release(temp_reg);
+		variable_scopes.back().variables[result_var_handle].offset = result_offset;
+		return;
 	}
 
 	void handleMemberStore(const IrInstruction& instruction) {
