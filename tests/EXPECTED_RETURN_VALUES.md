@@ -8,12 +8,12 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-05 (current validation run)
+**Last Run:** 2026-01-17 (current validation run)
 
-**Total files tested:** 826
-**Valid returns (matching expected):** 815
-**Regressions (mismatches):** 0
-**Runtime crashes:** 9
+**Total files tested:** 934
+**Valid returns:** 931
+**Regressions (mismatches):** 8
+**Runtime crashes:** 1
 **Compile failures:** 0
 **Link failures:** 0
 
@@ -43,33 +43,35 @@ The following regressions have been FIXED:
 
 ## Regressions Found
 
-**All known regressions have been fixed!**
+The following test files have mismatches (verified against clang):
 
-The following test files previously had a mismatch but are now fixed:
-
-| Test File | Expected | Previous Issue | Status | Notes |
-|-----------|----------|----------------|--------|-------|
-| test_covariant_return_ret180.cpp | 180 | crash (79) | FIXED | Now returns 180 correctly |
+| Test File | Expected | Actual | Status | Notes |
+|-----------|----------|--------|--------|-------|
+| test_access_control_ret30.cpp | 30 | varies | OPEN | Access control in inheritance not working correctly |
+| test_brace_init_requires_ret0.cpp | 0 | 1 | OPEN | Concept evaluation for `T{}` brace init |
+| test_covariant_return_ret180.cpp | 180 | 205 | OPEN | Virtual method dispatch / covariant returns |
+| test_global_scope_new_ret0.cpp | 0 | 1 | OPEN | `::new` operator handling |
+| test_lambda_init_capture_demo_ret68.cpp | 68 | 73 | OPEN | Lambda init-capture calculation off by 5 |
+| test_nrvo_observable_ret0.cpp | 0 | 1 | OPEN | NRVO observable side effects |
+| test_spec_nullptr_init_ret0.cpp | 0 | 214 | OPEN | Template specialization with nullptr member init |
+| test_type_alias_fix_simple_ret42.cpp | 42 | 0 | INTERMITTENT | Works when run individually, fails in batch |
 
 ## Root Cause Summary
 
-All previously documented regressions have been resolved. No return value mismatches remain.
+The regressions fall into several categories:
+- **Concept evaluation**: Brace initialization checking in requires expressions
+- **Operator handling**: Global scope new/delete operators
+- **Lambda captures**: Init-capture reference calculations
+- **Virtual dispatch**: Covariant return type handling
+- **Template specialization**: nullptr member initialization in partial specializations
 
 ## Runtime Crashes
 
-The following test files crash at runtime (signal 11 - Segmentation Fault):
+The following test files crash at runtime:
 
-1. test_pack_expansion_simple.cpp
-2. test_no_access_control_flag.cpp
-3. test_perfect_forwarding_advanced.cpp
-4. test_std_forward.cpp
-5. test_template_complex_substitution_ret3.cpp
-6. test_exceptions_basic.cpp
-7. test_varargs.cpp
-8. test_va_implementation.cpp
-9. test_exceptions_nested.cpp
+1. test_exceptions_nested.cpp (signal 6 - Abort)
 
-Note: These crashes are pre-existing issues not related to return value regressions. They represent missing or incomplete feature implementations in the compiler.
+Note: This crash is a pre-existing issue not related to return value regressions. It represents missing or incomplete exception handling in the compiler.
 
 ## Notes
 

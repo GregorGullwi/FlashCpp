@@ -34180,6 +34180,19 @@ if (struct_type_info.getStructInfo()) {
 								continue;
 							}
 						}
+						// Also handle IdentifierNode - it may represent a pack parameter that wasn't converted to TemplateParameterReferenceNode
+						else if (std::holds_alternative<IdentifierNode>(expr)) {
+							const IdentifierNode& id = std::get<IdentifierNode>(expr);
+							StringHandle pack_name = StringTable::getOrInternStringHandle(id.name());
+							auto pack_it = pack_substitution_map.find(pack_name);
+							if (pack_it != pack_substitution_map.end()) {
+								resolved_args.insert(resolved_args.end(), pack_it->second.begin(), pack_it->second.end());
+								continue;
+							} else if (!template_args_to_use.empty()) {
+								resolved_args.insert(resolved_args.end(), template_args_to_use.begin(), template_args_to_use.end());
+								continue;
+							}
+						}
 					} else if (arg_info.node.is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& type_spec = arg_info.node.as<TypeSpecifierNode>();
 						TypeIndex idx = type_spec.type_index();
@@ -34885,8 +34898,114 @@ if (struct_type_info.getStructInfo()) {
 			if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
 				const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
 				
+				// Helper to calculate pack size for substitution
+				auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {
+					FLASH_LOG(Templates, Debug, "Looking for pack: ", pack_name);
+					for (size_t i = 0; i < template_params.size(); ++i) {
+						const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+						FLASH_LOG(Templates, Debug, "  Checking param ", tparam.name(), " is_variadic=", tparam.is_variadic() ? "true" : "false");
+						if (tparam.name() == pack_name && tparam.is_variadic()) {
+							size_t non_variadic_count = 0;
+							for (const auto& param : template_params) {
+								if (!param.as<TemplateParameterNode>().is_variadic()) {
+									non_variadic_count++;
+								}
+							}
+							return template_args_to_use.size() - non_variadic_count;
+						}
+					}
+					return std::nullopt;
+				};
+				
+				// Helper to create a numeric literal from pack size
+				auto make_pack_size_literal = [&](size_t pack_size) -> ASTNode {
+					std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
+					Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
+					return emplace_node<ExpressionNode>(
+						NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), Type::Int, TypeQualifier::None, 32)
+					);
+				};
+				
+				// Handle SizeofPackNode (e.g., static constexpr int value = sizeof...(Ts);)
+				if (std::holds_alternative<SizeofPackNode>(expr)) {
+					const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
+					if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
+						substituted_initializer = make_pack_size_literal(*pack_size);
+						FLASH_LOG(Templates, Debug, "Substituted sizeof...(", sizeof_pack.pack_name(), ") with ", *pack_size);
+					}
+				}
+				// Handle static_cast<T>(sizeof...(Ts)) patterns
+				else if (std::holds_alternative<StaticCastNode>(expr)) {
+					const StaticCastNode& cast_node = std::get<StaticCastNode>(expr);
+					if (cast_node.expr().is<ExpressionNode>()) {
+						const ExpressionNode& cast_inner = cast_node.expr().as<ExpressionNode>();
+						if (std::holds_alternative<SizeofPackNode>(cast_inner)) {
+							const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(cast_inner);
+							if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
+								substituted_initializer = make_pack_size_literal(*pack_size);
+								FLASH_LOG(Templates, Debug, "Substituted static_cast of sizeof...(", sizeof_pack.pack_name(), ") with ", *pack_size);
+							}
+						}
+					}
+				}
+				// Handle complex expressions containing sizeof... using ConstExpr::Evaluator
+				// (e.g., static_cast<int>(sizeof...(Ts)) * 2 + 40, binary expressions, etc.)
+				else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+					// Recursive helper to substitute SizeofPackNode with numeric literals in an expression
+					std::function<ASTNode(const ASTNode&)> substitute_sizeof_pack = [&](const ASTNode& node) -> ASTNode {
+						if (!node.is<ExpressionNode>()) {
+							return node;
+						}
+						const ExpressionNode& expr_node = node.as<ExpressionNode>();
+						
+						// Handle SizeofPackNode directly
+						if (std::holds_alternative<SizeofPackNode>(expr_node)) {
+							const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr_node);
+							if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
+								return make_pack_size_literal(*pack_size);
+							}
+							return node;
+						}
+						// Handle static_cast wrapping sizeof...
+						if (std::holds_alternative<StaticCastNode>(expr_node)) {
+							const StaticCastNode& cast_node = std::get<StaticCastNode>(expr_node);
+							ASTNode substituted_inner = substitute_sizeof_pack(cast_node.expr());
+							// If inner was substituted to a literal, just use the literal (static_cast has no effect)
+							if (substituted_inner.is<ExpressionNode>()) {
+								const ExpressionNode& inner_expr = substituted_inner.as<ExpressionNode>();
+								if (std::holds_alternative<NumericLiteralNode>(inner_expr)) {
+									return substituted_inner;
+								}
+							}
+							return node;
+						}
+						// Handle BinaryOperatorNode - recursively substitute both sides
+						if (std::holds_alternative<BinaryOperatorNode>(expr_node)) {
+							const BinaryOperatorNode& bin_op = std::get<BinaryOperatorNode>(expr_node);
+							ASTNode subst_lhs = substitute_sizeof_pack(bin_op.get_lhs());
+							ASTNode subst_rhs = substitute_sizeof_pack(bin_op.get_rhs());
+							// Create new binary operator with substituted operands
+							BinaryOperatorNode& new_bin = gChunkedAnyStorage.emplace_back<BinaryOperatorNode>(
+								bin_op.get_token(), subst_lhs, subst_rhs);
+							return emplace_node<ExpressionNode>(new_bin);
+						}
+						return node;
+					};
+					
+					// Substitute sizeof... in the expression
+					ASTNode substituted_expr = substitute_sizeof_pack(static_member.initializer.value());
+					
+					// Now use ConstExpr::Evaluator to evaluate the expression
+					ConstExpr::EvaluationContext eval_context(gSymbolTable);
+					ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_context);
+					
+					if (result.success) {
+						substituted_initializer = make_pack_size_literal(static_cast<size_t>(result.as_int()));
+						FLASH_LOG(Templates, Debug, "Evaluated expression with sizeof... using ConstExpr::Evaluator to ", result.as_int());
+					}
+				}
 				// Handle FoldExpressionNode (e.g., static constexpr bool value = (Bs && ...);)
-				if (std::holds_alternative<FoldExpressionNode>(expr)) {
+				else if (std::holds_alternative<FoldExpressionNode>(expr)) {
 					const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
 					std::string_view pack_name = fold.pack_name();
 					std::string_view op = fold.op();
