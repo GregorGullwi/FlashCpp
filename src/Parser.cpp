@@ -9,6 +9,7 @@
 #include "TemplateProfilingStats.h"
 #include "ExpressionSubstitutor.h"
 #include "TypeTraitEvaluator.h"
+#include "LazyMemberResolver.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -18674,26 +18675,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
 						if (base_type_it != gTypesByName.end()) {
 							const TypeInfo* base_type_info = base_type_it->second;
-							const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+							TypeIndex base_type_index = base_type_info->type_index_;
 
-							if (base_struct_info) {
-								// Check if the identifier is a member of the base class (recursively)
-								const StructMember* member = base_struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
-								if (member) {
-									// This is an inherited member variable! Transform it into this->member
-									Token this_token(Token::Type::Keyword, "this",
-									                 idenfifier_token.line(), idenfifier_token.column(),
-									                 idenfifier_token.file_index());
-									auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+							// Check if the identifier is a member of the base class (recursively)
+							auto member_result = FlashCpp::gLazyMemberResolver.resolve(base_type_index, StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
+							if (member_result) {
+								// This is an inherited member variable! Transform it into this->member
+								Token this_token(Token::Type::Keyword, "this",
+								                 idenfifier_token.line(), idenfifier_token.column(),
+								                 idenfifier_token.file_index());
+								auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
 
-									// Create member access node: this->member
-									result = emplace_node<ExpressionNode>(
-										MemberAccessNode(this_ident, idenfifier_token));
+								// Create member access node: this->member
+								result = emplace_node<ExpressionNode>(
+									MemberAccessNode(this_ident, idenfifier_token));
 
-									// Don't return - let it fall through to postfix operator parsing
-									found_in_ast = true;
-									goto found_member_variable;
-								}
+								// Don't return - let it fall through to postfix operator parsing
+								found_in_ast = true;
+								goto found_member_variable;
 							}
 						}
 					}
@@ -18751,8 +18750,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						
 						// Also check base class members
-						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
-						if (member) {
+						auto member_result = FlashCpp::gLazyMemberResolver.resolve(member_func_ctx.struct_type_index, StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
+						if (member_result) {
 							// This is an inherited member variable! Transform it into this->member
 							Token this_token(Token::Type::Keyword, "this",
 							                 idenfifier_token.line(), idenfifier_token.column(),
@@ -23182,18 +23181,14 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		if (object_type.type() == Type::Struct || object_type.type() == Type::UserDefined) {
 			size_t struct_type_index = object_type.type_index();
 			if (struct_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[struct_type_index];
-				const StructTypeInfo* struct_info = type_info.getStructInfo();
-				if (struct_info) {
-					// Look up the member
-					const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
-					if (member) {
-						// Return the member's type
-						// member->size is in bytes, TypeSpecifierNode expects bits
-						TypeSpecifierNode member_type(member->type, TypeQualifier::None, member->size * 8);
-						member_type.set_type_index(member->type_index);
-						return member_type;
-					}
+				// Look up the member
+				auto member_result = FlashCpp::gLazyMemberResolver.resolve(static_cast<TypeIndex>(struct_type_index), StringTable::getOrInternStringHandle(std::string(member_name)));
+				if (member_result) {
+					// Return the member's type
+					// member->size is in bytes, TypeSpecifierNode expects bits
+					TypeSpecifierNode member_type(member_result.member->type, TypeQualifier::None, member_result.member->size * 8);
+					member_type.set_type_index(member_result.member->type_index);
+					return member_type;
 				}
 			}
 		}
