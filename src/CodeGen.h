@@ -17610,6 +17610,25 @@ private:
 
 		// Create a temporary variable for the result (pointer to allocated memory)
 		TempVar result_var = var_counter.next();
+		auto emit_scalar_new_initializer = [&](TempVar pointer_var) {
+			constexpr size_t kInitOperandCount = 3;  // [type, size_in_bits, value]
+			if (type == Type::Struct || newExpr.constructor_args().size() == 0) {
+				return;
+			}
+
+			const auto& ctor_args = newExpr.constructor_args();
+			if (ctor_args.size() > 1) {
+				FLASH_LOG(Codegen, Warning, "Scalar new initializer has extra arguments; using first");
+			}
+
+			auto init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
+			if (init_operands.size() >= kInitOperandCount) {
+				TypedValue init_value = toTypedValue(init_operands);
+				emitDereferenceStore(init_value, type, size_in_bits, pointer_var, Token());
+			} else {
+				FLASH_LOG(Codegen, Warning, "Scalar new initializer returned insufficient operands");
+			}
+		};
 
 		// Check if this is placement new
 		if (newExpr.placement_address().has_value()) {
@@ -17671,6 +17690,8 @@ private:
 					}
 				}
 			}
+
+			emit_scalar_new_initializer(result_var);
 		} else if (newExpr.is_array()) {
 			// Array allocation: new Type[size]
 			// Evaluate the size expression
@@ -17739,6 +17760,8 @@ private:
 					}
 				}
 			}
+
+			emit_scalar_new_initializer(result_var);
 		}
 		
 		// Return pointer to allocated memory
