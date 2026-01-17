@@ -342,8 +342,87 @@ The following features have been implemented to support standard headers:
 - Pointer-to-void implicit conversion in overload resolution (NEW)
 - `__builtin_strlen` builtin function support (NEW)
 - UserDefined type alias resolution in overload resolution (NEW)
+- Friend function declarations with noexcept specifier (NEW)
+- Friend operator function declarations (NEW)
+- Friend function definitions with inline body (NEW)
+- Out-of-line constructor/destructor definitions (NEW)
+- Elaborated type specifiers with qualified names (NEW)
 
 ## Recent Changes
+
+### 2026-01-17: Friend Function Declarations and Out-of-Line Constructor/Destructor Support
+
+**Fixed:** Multiple parsing issues that were blocking the `<exception>` header from compiling:
+
+#### 1. Friend Function Declarations with Qualifiers
+
+Friend function declarations can now include `noexcept` specifier, `const`, `volatile`, `&`, `&&`, and `__attribute__` after the parameter list.
+
+**Patterns that now work:**
+```cpp
+class MyClass {
+    friend void swap(MyClass& a, MyClass& b) noexcept;
+    friend bool operator==(const MyClass& a, const MyClass& b) noexcept {
+        return a.value == b.value;
+    }
+    friend MyClass* std_func() noexcept __attribute__((pure));
+};
+```
+
+#### 2. Friend Operator Function Declarations
+
+Friend declarations for operator functions (like `operator==`, `operator!=`) are now properly parsed.
+
+#### 3. Friend Function Definitions with Inline Body
+
+Friend functions can now be defined inline within the class body.
+
+#### 4. Out-of-Line Constructor/Destructor Definitions
+
+Out-of-line constructor and destructor definitions are now supported:
+```cpp
+class MyClass {
+public:
+    MyClass();
+    ~MyClass();
+};
+
+MyClass::MyClass() : value(0) { }
+MyClass::~MyClass() { }
+```
+
+#### 5. Elaborated Type Specifiers with Qualified Names
+
+The `class` and `struct` keywords can now be used with qualified type names:
+```cpp
+const class std::type_info* get_type();
+```
+
+#### 6. Out-of-Line Member Functions with Qualifiers
+
+Out-of-line member function definitions now properly handle `const`, `noexcept`, `override`, `final`, and other qualifiers:
+```cpp
+int MyClass::getValue() const noexcept { return value; }
+```
+
+#### 7. Functional Cast / Temporary Object Construction
+
+Temporary object constructions followed by member access are now correctly distinguished from variable declarations:
+```cpp
+exception_ptr(static_cast<exception_ptr&&>(__o)).swap(*this);  // Expression, not declaration
+```
+
+**Impact:**
+- The `<exception>` header now parses successfully (times out during template instantiation, not parsing errors)
+- `<bits/exception_ptr.h>` internal header is now fully parseable
+
+**Test cases:**
+- `tests/test_friend_noexcept_ret0.cpp` - Tests friend functions with noexcept
+- `tests/test_out_of_line_ctor_ret0.cpp` - Tests out-of-line constructor/destructor
+
+**Files Modified:**
+- `src/Parser.cpp` - Multiple functions updated for friend declarations, out-of-line definitions
+- `src/Parser.h` - Added `parse_out_of_line_constructor_or_destructor()` declaration
 
 ### 2026-01-17: __builtin_strlen Support and UserDefined Type Alias Resolution
 
