@@ -32121,6 +32121,37 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	return std::nullopt;  // Return nullopt since we don't need to add anything to AST
 }
 
+// Helper function to substitute non-type template parameters in initializers
+// Extracted from try_instantiate_class_template to reduce function size
+std::optional<ASTNode> Parser::substitute_nontype_template_param(
+	std::string_view param_name,
+	const std::vector<TemplateTypeArg>& args,
+	const std::vector<ASTNode>& params) {
+	for (size_t i = 0; i < params.size(); ++i) {
+		const TemplateParameterNode& tparam = params[i].as<TemplateParameterNode>();
+		if (tparam.name() == param_name && tparam.kind() == TemplateParameterKind::NonType) {
+			if (i < args.size() && args[i].is_value) {
+				int64_t val = args[i].value;
+				Type val_type = args[i].base_type;
+				StringBuilder value_str;
+				value_str.append(val);
+				std::string_view value_view = value_str.commit();
+				Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
+				return emplace_node<ExpressionNode>(
+					NumericLiteralNode(num_token, 
+					                   static_cast<unsigned long long>(val), 
+					                   val_type, 
+					                   TypeQualifier::None, 
+					                   get_type_size_bits(val_type))
+				);
+			}
+		}
+	}
+	return std::nullopt;
+}
+
+// Helper function to fill in default template arguments before pattern matching
+// This is critical for SFINAE patterns like void_t
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 	
@@ -32158,33 +32189,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Proceed without in_progress tracking
 	}
 	
-	// Helper lambda to substitute template parameters in static member initializers
-	// Used in multiple places within this function
+	// Helper lambda delegates to extracted member function for non-type template parameter substitution
 	auto substitute_template_param_in_initializer = [this](
 		std::string_view param_name,
 		const std::vector<TemplateTypeArg>& args,
 		const std::vector<ASTNode>& params) -> std::optional<ASTNode> {
-		for (size_t i = 0; i < params.size(); ++i) {
-			const TemplateParameterNode& tparam = params[i].as<TemplateParameterNode>();
-			if (tparam.name() == param_name && tparam.kind() == TemplateParameterKind::NonType) {
-				if (i < args.size() && args[i].is_value) {
-					int64_t val = args[i].value;
-					Type val_type = args[i].base_type;
-					StringBuilder value_str;
-					value_str.append(val);
-					std::string_view value_view = value_str.commit();
-					Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
-					return emplace_node<ExpressionNode>(
-						NumericLiteralNode(num_token, 
-						                   static_cast<unsigned long long>(val), 
-						                   val_type, 
-						                   TypeQualifier::None, 
-						                   get_type_size_bits(val_type))
-					);
-				}
-			}
-		}
-		return std::nullopt;
+		return substitute_nontype_template_param(param_name, args, params);
 	};
 	
 	// Helper lambda to substitute template parameters in member default initializers

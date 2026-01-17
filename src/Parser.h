@@ -603,6 +603,13 @@ private:
         std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
         std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Get mangled name for instantiated class
         std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, const std::vector<TemplateTypeArg>& template_args);  // Helper: Instantiate base class template and add to AST
+        
+        // Template instantiation helper methods (extracted from try_instantiate_class_template)
+        std::optional<ASTNode> substitute_nontype_template_param(
+            std::string_view param_name,
+            const std::vector<TemplateTypeArg>& args,
+            const std::vector<ASTNode>& params);  // Substitute non-type template parameter in initializer
+        
         std::optional<bool> try_parse_out_of_line_template_member(const std::vector<ASTNode>& template_params, const std::vector<StringHandle>& template_param_names);  // NEW: Parse out-of-line template member function
         bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
         bool deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
