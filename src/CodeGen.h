@@ -3163,8 +3163,9 @@ private:
 					// If no explicit initializer and this is NOT an implicit copy/move constructor,
 					// call default constructor (no args)
 					// For implicit copy/move constructors, the base constructor call is generated
-					// in the implicit constructor generation code above (lines 1000-1023)
-					else if (!node.is_implicit()) {
+					// in the implicit constructor generation code below (lines 3237-3268)
+					// Note: implicit DEFAULT constructors (0 params) SHOULD call base default constructors
+					else if (!node.is_implicit() || node.parameter_nodes().size() == 0) {
 						// Only call base default constructor if the base class actually has constructors
 						// This avoids link errors when inheriting from classes without constructors
 						const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
@@ -6364,7 +6365,8 @@ private:
 							// Call default constructor if:
 							// 1. It's user-defined (not implicit), OR
 							// 2. The struct has default member initializers (implicit ctor needs to init them), OR
-							// 3. The struct has a vtable (implicit ctor needs to init the vptr)
+							// 3. The struct has a vtable (implicit ctor needs to init the vptr), OR
+							// 4. The struct has base classes with constructors (implicit ctor needs to call base ctors)
 							const StructMemberFunction* default_ctor = type_info.struct_info_->findDefaultConstructor();
 							bool is_implicit_default_ctor = false;
 							if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
@@ -6372,9 +6374,23 @@ private:
 								is_implicit_default_ctor = ctor_node.is_implicit();
 							}
 
+							// Check if any base class has constructors that need to be called
+							bool has_base_with_constructors = false;
+							for (const auto& base : type_info.struct_info_->base_classes) {
+								if (base.type_index < gTypeInfo.size()) {
+									const TypeInfo& base_type_info = gTypeInfo[base.type_index];
+									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+									if (base_struct_info && base_struct_info->hasAnyConstructor()) {
+										has_base_with_constructors = true;
+										break;
+									}
+								}
+							}
+
 							bool needs_default_ctor_call = !is_implicit_default_ctor ||
 							                               type_info.struct_info_->hasDefaultMemberInitializers() ||
-							                               type_info.struct_info_->has_vtable;
+							                               type_info.struct_info_->has_vtable ||
+							                               has_base_with_constructors;
 
 							if (needs_default_ctor_call) {
 								// Check if this is an array - need to call constructor for each element
