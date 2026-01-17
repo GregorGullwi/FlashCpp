@@ -20,6 +20,7 @@
 #include <assert.h>
 #include <cstdint>
 #include <typeinfo>
+#include <limits>
 #include "IRConverter.h"
 #include "Log.h"
 
@@ -3147,6 +3148,7 @@ private:
 					ctor_op.struct_name = base_type_info.name();
 					ctor_op.object = StringTable::getOrInternStringHandle("this");
 					// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
+					assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 					ctor_op.base_class_offset = static_cast<int>(base.offset);
 
 					// Add constructor arguments from base initializer
@@ -3262,6 +3264,7 @@ private:
 							ctor_op.struct_name = base_type_info.name();
 							ctor_op.object = StringTable::getOrInternStringHandle("this");
 							// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
+							assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 							ctor_op.base_class_offset = static_cast<int>(base.offset);
 							// Add 'other' parameter for copy/move constructor
 							// IMPORTANT: Use BASE CLASS type_index, not derived class, for proper name mangling
