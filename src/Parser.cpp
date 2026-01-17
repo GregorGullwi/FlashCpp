@@ -2421,6 +2421,61 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	attr_info.linkage = specs.linkage;
 	attr_info.calling_convention = specs.calling_convention;
 
+	// Check for out-of-line constructor/destructor pattern: ClassName::ClassName(...) or ClassName::~ClassName()
+	// These have no return type, so we need to detect them before parse_type_and_name()
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+		std::string_view first_id = peek_token()->value();
+		
+		// Build fully qualified name using current namespace
+		std::string qualified_class_name;
+		NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
+		if (!current_namespace_handle.isGlobal()) {
+			std::string_view ns_prefix = gNamespaceRegistry.getQualifiedName(current_namespace_handle);
+			if (!ns_prefix.empty()) {
+				qualified_class_name = ns_prefix;
+				qualified_class_name += "::";
+			}
+		}
+		qualified_class_name += first_id;
+		
+		// Try to find the class, first with qualified name, then unqualified
+		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_class_name));
+		if (type_it == gTypesByName.end()) {
+			// Try unqualified name
+			type_it = gTypesByName.find(StringTable::getOrInternStringHandle(first_id));
+		}
+		
+		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+			// Save position to look ahead
+			SaveHandle lookahead_pos = save_token_position();
+			consume_token();  // consume first identifier
+			
+			// Check for :: followed by same identifier (constructor) or ~identifier (destructor)
+			if (peek_token().has_value() && peek_token()->value() == "::") {
+				consume_token();  // consume ::
+				
+				bool is_destructor = false;
+				if (peek_token().has_value() && peek_token()->value() == "~") {
+					is_destructor = true;
+					consume_token();  // consume ~
+				}
+				
+				// Check if next identifier matches the class name (constructor/destructor pattern)
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+				    peek_token()->value() == first_id) {
+					// This is an out-of-line constructor or destructor definition!
+					// Restore and parse it specially
+					restore_token_position(lookahead_pos);
+					// Pass the qualified name so the function can find the struct
+					// Use propagate() to avoid restoring position when ScopedTokenPosition destructor runs
+					return saved_position.propagate(parse_out_of_line_constructor_or_destructor(qualified_class_name, is_destructor, specs));
+				}
+			}
+			// Not a constructor/destructor pattern, restore and continue normal parsing
+			restore_token_position(lookahead_pos);
+		}
+	}
+
 	// Parse the type specifier and identifier (name)
 	// This will also extract any calling convention that appears after the type
 	FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: About to parse type_and_name, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
@@ -2484,6 +2539,43 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		if (param_result.is_error()) {
 			FLASH_LOG(Parser, Error, "Error parsing parameter list");
 			return param_result;
+		}
+
+		// Skip optional qualifiers after parameter list (const, volatile, &, &&, noexcept, etc.)
+		while (peek_token().has_value()) {
+			auto next_val = peek_token()->value();
+			if (next_val == "const" || next_val == "volatile" || 
+			    next_val == "&" || next_val == "&&") {
+				consume_token();
+			} else if (next_val == "noexcept") {
+				consume_token();  // consume 'noexcept'
+				// Check for noexcept(expression)
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					consume_token();  // consume '('
+					int depth = 1;
+					while (depth > 0 && peek_token().has_value()) {
+						auto tok = consume_token();
+						if (tok->value() == "(") depth++;
+						else if (tok->value() == ")") depth--;
+					}
+				}
+			} else if (next_val == "__attribute__") {
+				// Skip __attribute__((...))
+				consume_token();
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					consume_token();
+					int depth = 1;
+					while (depth > 0 && peek_token().has_value()) {
+						auto tok = consume_token();
+						if (tok->value() == "(") depth++;
+						else if (tok->value() == ")") depth--;
+					}
+				}
+			} else if (next_val == "override" || next_val == "final") {
+				consume_token();  // skip override/final specifiers
+			} else {
+				break;
+			}
 		}
 
 		// Apply parsed parameters to the function
@@ -3058,6 +3150,123 @@ ParseResult Parser::parse_declaration_or_function_definition()
 
 	// This should not be reached
 	return ParseResult::error("Unexpected parsing state", *current_token_);
+}
+
+// Parse out-of-line constructor or destructor definition
+// Pattern: ClassName::ClassName(...) { ... } or ClassName::~ClassName() { ... }
+ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view class_name, bool is_destructor, const FlashCpp::DeclarationSpecifiers& specs)
+{
+	ScopedTokenPosition saved_position(*this);
+	
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_out_of_line_constructor_or_destructor: class={}, is_destructor={}", 
+		std::string(class_name), is_destructor);
+	
+	// Consume ClassName::~?ClassName
+	Token class_name_token = *peek_token();
+	consume_token();  // consume first class name
+	
+	if (!consume_punctuator("::")) {
+		return ParseResult::error("Expected '::' in out-of-line constructor/destructor definition", *current_token_);
+	}
+	
+	if (is_destructor) {
+		// Check for ~ (might be operator type, not punctuator)
+		if (!peek_token().has_value() || peek_token()->value() != "~") {
+			return ParseResult::error("Expected '~' for destructor definition", *current_token_);
+		}
+		consume_token();  // consume ~
+	}
+	
+	// Consume the second class name (constructor/destructor name)
+	[[maybe_unused]] Token func_name_token = *peek_token();
+	consume_token();
+	
+	// Find the struct in the type registry
+	StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
+	auto struct_iter = gTypesByName.find(class_name_handle);
+	if (struct_iter == gTypesByName.end()) {
+		FLASH_LOG(Parser, Error, "Unknown class '", class_name, "' in out-of-line constructor/destructor definition");
+		return ParseResult::error("Unknown class in out-of-line constructor/destructor", class_name_token);
+	}
+	
+	const TypeInfo* type_info = struct_iter->second;
+	StructTypeInfo* struct_info = const_cast<StructTypeInfo*>(type_info->getStructInfo());
+	if (!struct_info) {
+		FLASH_LOG(Parser, Error, "'", class_name, "' is not a struct/class type");
+		return ParseResult::error("Not a struct/class type", class_name_token);
+	}
+	
+	// Parse parameter list
+	FlashCpp::ParsedParameterList params;
+	auto param_result = parse_parameter_list(params, specs.calling_convention);
+	if (param_result.is_error()) {
+		return param_result;
+	}
+	
+	// Parse optional qualifiers (noexcept, const, etc.)
+	while (peek_token().has_value()) {
+		auto next_val = peek_token()->value();
+		if (next_val == "const" || next_val == "volatile" || 
+		    next_val == "&" || next_val == "&&") {
+			consume_token();
+		} else if (next_val == "noexcept") {
+			consume_token();
+			// Handle noexcept(expr)
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				consume_token();
+				int depth = 1;
+				while (depth > 0 && peek_token().has_value()) {
+					auto tok = consume_token();
+					if (tok->value() == "(") depth++;
+					else if (tok->value() == ")") depth--;
+				}
+			}
+		} else if (next_val == "__attribute__") {
+			// Skip __attribute__((...))
+			consume_token();
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				consume_token();
+				int depth = 1;
+				while (depth > 0 && peek_token().has_value()) {
+					auto tok = consume_token();
+					if (tok->value() == "(") depth++;
+					else if (tok->value() == ")") depth--;
+				}
+			}
+		} else {
+			break;
+		}
+	}
+	
+	// For constructors, check for initializer list
+	if (!is_destructor && peek_token().has_value() && peek_token()->value() == ":") {
+		// Skip member initializer list (simplified - just skip to opening brace)
+		consume_token();  // consume ':'
+		while (peek_token().has_value() && peek_token()->value() != "{") {
+			consume_token();
+		}
+	}
+	
+	// Parse function body
+	if (!peek_token().has_value() || peek_token()->value() != "{") {
+		return ParseResult::error("Expected '{' in constructor/destructor definition", *current_token_);
+	}
+	
+	// Skip the function body for now (simplified parsing)
+	// We just need to make sure the header compiles
+	consume_token();  // consume '{'
+	int brace_depth = 1;
+	while (brace_depth > 0 && peek_token().has_value()) {
+		auto tok = consume_token();
+		if (tok->value() == "{") brace_depth++;
+		else if (tok->value() == "}") brace_depth--;
+	}
+	
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_out_of_line_constructor_or_destructor: Successfully parsed {}::{}{}()", 
+		std::string(class_name), is_destructor ? "~" : "", std::string(class_name));
+	
+	// Return success (we've parsed the definition but don't generate code for it yet)
+	return saved_position.success();
 }
 
 // Helper function to parse and register a type alias (typedef or using) inside a struct/template
@@ -8359,24 +8568,57 @@ ParseResult Parser::parse_friend_declaration()
 		return type_result;
 	}
 
-	// Parse function name (may be qualified: ClassName::functionName)
+	// Skip pointer/reference qualifiers that may appear after the base type
+	// Patterns like: friend int* func(); or friend int& func(); or friend int const* func();
+	while (peek_token().has_value()) {
+		auto next = peek_token().value();
+		if (next.value() == "*" || next.value() == "&" || next.value() == "&&" ||
+		    next.value() == "const" || next.value() == "volatile") {
+			consume_token();
+		} else {
+			break;
+		}
+	}
+
+	// Parse function name (may be qualified: ClassName::functionName, or an operator)
 	// We only need to track the last qualifier (the class name) for friend member functions
 	std::string_view last_qualifier;
 	std::string_view function_name;
 
-	while (peek_token().has_value()) {
-		auto name_token = consume_token();
-		if (!name_token.has_value() || name_token->type() != Token::Type::Identifier) {
-			return ParseResult::error("Expected function name in friend declaration", *current_token_);
+	// Check for operator keyword (friend operator function)
+	if (peek_token().has_value() && peek_token()->value() == "operator") {
+		consume_token();  // consume 'operator'
+		// The operator can be followed by various things: ==, !=, (), [], etc.
+		// Just skip tokens until we find '('
+		while (peek_token().has_value() && peek_token()->value() != "(") {
+			consume_token();
 		}
+		function_name = "operator";
+	} else {
+		while (peek_token().has_value()) {
+			auto name_token = consume_token();
+			if (!name_token.has_value() || name_token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected function name in friend declaration", *current_token_);
+			}
 
-		// Check for :: (qualified name)
-		if (peek_token().has_value() && peek_token()->value() == "::") {
-			consume_token();  // consume '::'
-			last_qualifier = name_token->value();
-		} else {
-			function_name = name_token->value();
-			break;
+			// Check for :: (qualified name)
+			if (peek_token().has_value() && peek_token()->value() == "::") {
+				consume_token();  // consume '::'
+				last_qualifier = name_token->value();
+				// After ::, check for operator keyword (like std::operator==)
+				if (peek_token().has_value() && peek_token()->value() == "operator") {
+					consume_token();  // consume 'operator'
+					// Skip tokens until we find '('
+					while (peek_token().has_value() && peek_token()->value() != "(") {
+						consume_token();
+					}
+					function_name = "operator";
+					break;
+				}
+			} else {
+				function_name = name_token->value();
+				break;
+			}
 		}
 	}
 
@@ -8396,8 +8638,61 @@ ParseResult Parser::parse_friend_declaration()
 		}
 	}
 
-	// Expect semicolon
-	if (!consume_punctuator(";")) {
+	// Skip optional qualifiers after parameter list (const, noexcept, noexcept(...), volatile, &, &&)
+	while (peek_token().has_value()) {
+		auto next = peek_token().value();
+		if (next.value() == "const" || next.value() == "volatile" || 
+		    next.value() == "&" || next.value() == "&&") {
+			consume_token();
+		} else if (next.value() == "noexcept") {
+			consume_token();  // consume 'noexcept'
+			// Check for noexcept(expression)
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				consume_token();  // consume '('
+				int noexcept_paren_depth = 1;
+				while (noexcept_paren_depth > 0 && peek_token().has_value()) {
+					auto token = consume_token();
+					if (token->value() == "(") {
+						noexcept_paren_depth++;
+					} else if (token->value() == ")") {
+						noexcept_paren_depth--;
+					}
+				}
+			}
+		} else if (next.value() == "__attribute__") {
+			// Skip __attribute__((...))
+			consume_token();  // consume '__attribute__'
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				consume_token();  // consume '('
+				int attr_paren_depth = 1;
+				while (attr_paren_depth > 0 && peek_token().has_value()) {
+					auto token = consume_token();
+					if (token->value() == "(") {
+						attr_paren_depth++;
+					} else if (token->value() == ")") {
+						attr_paren_depth--;
+					}
+				}
+			}
+		} else {
+			break;  // Done with qualifiers
+		}
+	}
+
+	// Handle friend function body (inline definition) or semicolon (declaration only)
+	if (peek_token().has_value() && peek_token()->value() == "{") {
+		// Friend function with inline body - skip the body
+		consume_token();  // consume '{'
+		int brace_depth = 1;
+		while (brace_depth > 0 && peek_token().has_value()) {
+			auto token = consume_token();
+			if (token->value() == "{") {
+				brace_depth++;
+			} else if (token->value() == "}") {
+				brace_depth--;
+			}
+		}
+	} else if (!consume_punctuator(";")) {
 		return ParseResult::error("Expected ';' after friend function declaration", *current_token_);
 	}
 
@@ -9915,7 +10210,7 @@ ParseResult Parser::parse_type_specifier()
 	//   and should be caught by higher-level parsing (e.g., in struct member loop)
 	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Keyword &&
 	         (current_token_opt->value() == "struct" || current_token_opt->value() == "class" || current_token_opt->value() == "union")) {
-		// Handle "struct TypeName", "class TypeName", or "union TypeName"
+		// Handle "struct TypeName", "class TypeName", "union TypeName", and qualified names like "class std::type_info"
 		consume_token(); // consume 'struct', 'class', or 'union'
 
 		// Get the type name
@@ -9925,12 +10220,28 @@ ParseResult Parser::parse_type_specifier()
 			                          current_token_opt.value_or(Token()));
 		}
 
-		StringHandle type_name = StringTable::getOrInternStringHandle(current_token_opt->value());
+		std::string type_name(current_token_opt->value());
 		Token type_name_token = *current_token_opt;
 		consume_token();
 
+		// Handle qualified names (e.g., std::type_info)
+		while (peek_token().has_value() && peek_token()->value() == "::") {
+			consume_token();  // consume '::'
+			auto next_token = peek_token();
+			if (!next_token.has_value() || next_token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected identifier after '::'",
+				                          next_token.value_or(Token()));
+			}
+			type_name += "::";
+			type_name += next_token->value();
+			type_name_token = *next_token;  // Update token for error reporting
+			consume_token();  // consume identifier
+		}
+
+		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
+
 		// Look up the struct type
-		auto type_it = gTypesByName.find(type_name);
+		auto type_it = gTypesByName.find(type_name_handle);
 		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 			const TypeInfo* struct_type_info = type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
@@ -9959,7 +10270,7 @@ ParseResult Parser::parse_type_specifier()
 		// Forward declaration: struct not yet defined
 		// Create a placeholder type entry for it
 		// This allows pointers to undefined structs (e.g., struct Foo* ptr;)
-		TypeInfo& forward_decl_type = add_struct_type(type_name);
+		TypeInfo& forward_decl_type = add_struct_type(type_name_handle);
 		type_size = 0;  // Unknown size until defined
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
 			Type::Struct, forward_decl_type.type_index_, type_size, type_name_token, cv_qualifier));
@@ -12417,6 +12728,55 @@ ParseResult Parser::parse_statement_or_declaration()
 			// Check if it's a struct, enum, or typedef (but not a struct/enum that happens to have type_size_ set)
 			bool is_typedef = (type_it->second->type_size_ > 0 && !type_it->second->isStruct() && !type_it->second->isEnum());
 			if (type_it->second->isStruct() || type_it->second->isEnum() || is_typedef) {
+				// Need to check if this is a functional cast / temporary construction 
+				// followed by a member access, like: TypeName(args).member()
+				// vs a variable declaration: TypeName varname(args);
+				SaveHandle check_pos = save_token_position();
+				consume_token();  // consume type name
+				
+				// Handle qualified names and template args
+				while (peek_token().has_value() && peek_token()->value() == "::") {
+					consume_token();  // consume '::'
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+						consume_token();  // consume next identifier
+					} else {
+						break;
+					}
+				}
+				// Handle template arguments if any
+				if (peek_token().has_value() && peek_token()->value() == "<") {
+					int angle_depth = 1;
+					consume_token();  // consume '<'
+					while (angle_depth > 0 && peek_token().has_value()) {
+						auto tok = consume_token();
+						if (tok->value() == "<") angle_depth++;
+						else if (tok->value() == ">") angle_depth--;
+					}
+				}
+				
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					// TypeName(...) - could be declaration or functional cast
+					// Skip to matching )
+					consume_token();  // consume '('
+					int paren_depth = 1;
+					while (paren_depth > 0 && peek_token().has_value()) {
+						auto tok = consume_token();
+						if (tok->value() == "(") paren_depth++;
+						else if (tok->value() == ")") paren_depth--;
+					}
+					
+					// Check what follows the )
+					if (peek_token().has_value()) {
+						auto next_val = peek_token()->value();
+						// If followed by . or ->, this is an expression (temporary construction)
+						if (next_val == "." || next_val == "->") {
+							restore_token_position(check_pos);
+							return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						}
+					}
+				}
+				restore_token_position(check_pos);
+				
 				// This is a struct/enum/typedef type declaration
 				return parse_variable_declaration();
 			}
