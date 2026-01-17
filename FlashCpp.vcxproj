@@ -218,6 +218,7 @@
     <ClInclude Include="src\Log.h" />
     <ClInclude Include="src\LSDAGenerator.h" />
     <ClInclude Include="src\NameMangling.h" />
+    <ClInclude Include="src\NamespaceRegistry.h" />
     <ClInclude Include="src\ObjectFileCommon.h" />
     <ClInclude Include="src\ObjFileWriter.h" />
     <ClInclude Include="src\OverloadResolution.h" />

@@ -203,6 +203,7 @@
     <ClInclude Include="src\Lexer.h" />
     <ClInclude Include="src\AstNodeTypes.h" />
     <ClInclude Include="src\NameMangling.h" />
+    <ClInclude Include="src\NamespaceRegistry.h" />
     <ClInclude Include="src\ObjFileWriter.h" />
     <ClInclude Include="src\Parser.h" />
     <ClInclude Include="src\StackString.h" />

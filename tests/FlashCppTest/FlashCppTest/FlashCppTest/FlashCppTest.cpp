@@ -26,6 +26,11 @@ static FileTree file_tree;
 // Global debug flag
 bool g_enable_debug_output = false;
 
+// Global exception handling control
+bool g_enable_exceptions = true;
+
+NamespaceRegistry gNamespaceRegistry;
+
 // Helper function to read test files from Reference directory
 std::string read_test_file(const std::string& filename) {
     std::ifstream file("tests/" + filename);

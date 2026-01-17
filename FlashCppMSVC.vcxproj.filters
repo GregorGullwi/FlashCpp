@@ -9,6 +9,9 @@
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\benchmark.cpp" />
     <ClCompile Include="tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp" />
+    <ClCompile Include="src\ExpressionSubstitutor.cpp" />
+    <ClCompile Include="src\InstantiationQueue.cpp" />
+    <ClCompile Include="src\LazyMemberResolver.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\ChunkedAnyVector.h" />
@@ -58,6 +61,10 @@
     <ClInclude Include="src\coffi\coffi.hpp">
       <Filter>coffi</Filter>
     </ClInclude>
+    <ClInclude Include="src\ExpressionSubstitutor.h" />
+    <ClInclude Include="src\InstantiationQueue.h" />
+    <ClInclude Include="src\LazyMemberResolver.h" />
+    <ClInclude Include="src\NamespaceRegistry.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="LICENSE" />
