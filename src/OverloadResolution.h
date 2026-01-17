@@ -175,6 +175,19 @@ inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type,
 	return false;
 }
 
+// Helper function to resolve UserDefined type aliases to their underlying types
+// Returns the resolved Type, or the original Type if not a resolvable alias
+inline Type resolve_type_alias(Type type, TypeIndex type_index) {
+	if (type == Type::UserDefined && type_index > 0 && type_index < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type_index];
+		// Only resolve if underlying type is a primitive (not Struct, Enum, or another UserDefined)
+		if (type_info.type_ != Type::UserDefined && type_info.type_ != Type::Struct && type_info.type_ != Type::Enum) {
+			return type_info.type_;
+		}
+	}
+	return type;
+}
+
 // Check if one type can be implicitly converted to another (considering pointers and references)
 // 
 // IMPORTANT: For proper overload resolution with lvalue vs rvalue references, the caller must:
@@ -311,24 +324,8 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 	// Type aliases like 'size_t' may be stored as Type::UserDefined with type_index=0
 	// when they couldn't be fully resolved during parsing. Allow conversions between
 	// UserDefined and integral types as they're likely type aliases for integral types.
-	Type from_type = from.type();
-	Type to_type = to.type();
-	
-	// If 'from' is UserDefined with a valid type_index, try to get its underlying type
-	if (from_type == Type::UserDefined && from.type_index() > 0 && from.type_index() < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[from.type_index()];
-		if (type_info.type_ != Type::UserDefined && type_info.type_ != Type::Struct && type_info.type_ != Type::Enum) {
-			from_type = type_info.type_;
-		}
-	}
-	
-	// If 'to' is UserDefined with a valid type_index, try to get its underlying type
-	if (to_type == Type::UserDefined && to.type_index() > 0 && to.type_index() < gTypeInfo.size()) {
-		const TypeInfo& type_info = gTypeInfo[to.type_index()];
-		if (type_info.type_ != Type::UserDefined && type_info.type_ != Type::Struct && type_info.type_ != Type::Enum) {
-			to_type = type_info.type_;
-		}
-	}
+	Type from_type = resolve_type_alias(from.type(), from.type_index());
+	Type to_type = resolve_type_alias(to.type(), to.type_index());
 	
 	// If either type is still UserDefined with type_index=0, assume it's an unresolved type alias
 	// Allow conversion if the other type is an integral type (common for size_t, ptrdiff_t, etc.)
