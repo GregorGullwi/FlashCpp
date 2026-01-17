@@ -15,7 +15,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Regressions (mismatches):** 0
 **Runtime crashes:** 1
 **Compile failures:** 0
-**Link failures:** 0
+**Link failures:** 2 (expected)
 
 ## Fixed Regressions
 
