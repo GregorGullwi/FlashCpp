@@ -1949,14 +1949,14 @@ public:
 		}
 
 		// Try to look up the qualified name
-		auto symbol_opt = context.symbols->lookup_qualified(qualified_id.namespaces(), qualified_id.name());
+		auto symbol_opt = context.symbols->lookup_qualified(qualified_id.namespace_handle(), qualified_id.name());
 		if (!symbol_opt.has_value()) {
 			// PHASE 3 FIX: If not found in symbol table, try looking up as struct static member
 			// This handles cases like is_pointer_impl<int*>::value where value is a static member
-			const auto& namespaces = qualified_id.namespaces();
-			if (!namespaces.empty()) {
+			NamespaceHandle ns_handle = qualified_id.namespace_handle();
+			if (!ns_handle.isGlobal()) {
 				// The struct name is the last namespace component
-				std::string struct_name(namespaces.back());
+				std::string_view struct_name = gNamespaceRegistry.getName(ns_handle);
 				StringHandle struct_handle = StringTable::getOrInternStringHandle(struct_name);
 				
 				FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Looking up struct '", struct_name, "' for member '", qualified_id.name(), "'");

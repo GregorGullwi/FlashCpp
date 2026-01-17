@@ -3631,16 +3631,16 @@ private:
 		// Using directives don't generate IR - they affect name lookup in the symbol table
 		// Add the namespace to the current scope's using directives in the local symbol table
 		// (not gSymbolTable, which is the parser's symbol table and has different scope management)
-		symbol_table.add_using_directive(node.namespace_path());
+		symbol_table.add_using_directive(node.namespace_handle());
 	}
 
 	void visitUsingDeclarationNode(const UsingDeclarationNode& node) {
 		// Using declarations don't generate IR - they import a specific name into the current scope
 		// Add the using declaration to the local symbol table (not gSymbolTable)
-		FLASH_LOG(Codegen, Debug, "Adding using declaration: ", node.identifier_name(), " from namespace size=", node.namespace_path().size());
+		FLASH_LOG(Codegen, Debug, "Adding using declaration: ", node.identifier_name(), " from namespace handle=", node.namespace_handle().index);
 		symbol_table.add_using_declaration(
 			node.identifier_name(),
-			node.namespace_path(),
+			node.namespace_handle(),
 			node.identifier_name()
 		);
 	}
@@ -8195,10 +8195,10 @@ private:
 
 	std::vector<IrOperand> generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode) {
 		// Check if this is a scoped enum value (e.g., Direction::North)
-		const auto& namespaces = qualifiedIdNode.namespaces();
-		if (namespaces.size() >= 1) {
-			// The struct/enum name is the last namespace component
-			std::string struct_or_enum_name(namespaces.back());
+		NamespaceHandle ns_handle = qualifiedIdNode.namespace_handle();
+		if (!ns_handle.isGlobal()) {
+			// The struct/enum name is the last namespace component (the name of the namespace handle)
+			std::string struct_or_enum_name(gNamespaceRegistry.getName(ns_handle));
 			
 			// Could be EnumName::EnumeratorName
 			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
@@ -8217,10 +8217,10 @@ private:
 			auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
 			FLASH_LOG(Codegen, Debug, "generateQualifiedIdentifierIr: struct_or_enum_name='", struct_or_enum_name, "', found=", (struct_type_it != gTypesByName.end()));
 			
-			// If not found directly, try with full qualified name (all namespaces joined)
+			// If not found directly, try with full qualified name (all namespace components joined)
 			// This handles member template specializations like MakeUnsigned::List_int_char
-			if (struct_type_it == gTypesByName.end() && namespaces.size() > 1) {
-				std::string_view full_qualified_name = buildFullQualifiedName(namespaces);
+			if (struct_type_it == gTypesByName.end() && gNamespaceRegistry.getDepth(ns_handle) > 1) {
+				std::string_view full_qualified_name = gNamespaceRegistry.getQualifiedName(ns_handle);
 				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(full_qualified_name));
 				if (struct_type_it != gTypesByName.end()) {
 					struct_or_enum_name = std::string(full_qualified_name);
@@ -8379,12 +8379,12 @@ private:
 		}
 
 		// Look up the qualified identifier in the symbol table
-		const std::optional<ASTNode> symbol = symbol_table.lookup_qualified(qualifiedIdNode.namespaces(), qualifiedIdNode.name());
+		const std::optional<ASTNode> symbol = symbol_table.lookup_qualified(qualifiedIdNode.namespace_handle(), qualifiedIdNode.name());
 
 		// Also try global symbol table for namespace-qualified globals
 		std::optional<ASTNode> global_symbol;
 		if (!symbol.has_value() && global_symbol_table_) {
-			global_symbol = global_symbol_table_->lookup_qualified(qualifiedIdNode.namespaces(), qualifiedIdNode.name());
+			global_symbol = global_symbol_table_->lookup_qualified(qualifiedIdNode.namespace_handle(), qualifiedIdNode.name());
 		}
 
 		const std::optional<ASTNode>& found_symbol = symbol.has_value() ? symbol : global_symbol;
@@ -9566,11 +9566,11 @@ private:
 			const ExpressionNode& operand_expr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 			if (std::holds_alternative<QualifiedIdentifierNode>(operand_expr)) {
 				const QualifiedIdentifierNode& qualIdNode = std::get<QualifiedIdentifierNode>(operand_expr);
-				const auto& namespaces = qualIdNode.namespaces();
+				NamespaceHandle ns_handle = qualIdNode.namespace_handle();
 				
-				// Check if this is Class::member pattern
-				if (namespaces.size() >= 1) {
-					std::string_view class_name = namespaces.back();
+				// Check if this is Class::member pattern (non-global namespace)
+				if (!ns_handle.isGlobal()) {
+					std::string_view class_name = gNamespaceRegistry.getName(ns_handle);
 					std::string_view member_name = qualIdNode.name();
 					
 					// Look up the class type

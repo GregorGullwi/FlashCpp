@@ -928,6 +928,17 @@ inline std::string_view buildQualifiedNameFromStrings(const StringContainer& nam
 }
 
 /**
+ * @brief Build a qualified name from a NamespaceHandle and a final identifier.
+ * 
+ * Example: buildQualifiedNameFromHandle(handle_for_std, "print") -> "std::print"
+ */
+inline std::string_view buildQualifiedNameFromHandle(NamespaceHandle ns_handle, std::string_view name) {
+	StringHandle name_handle = StringTable::getOrInternStringHandle(name);
+	StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, name_handle);
+	return StringTable::getStringView(qualified_handle);
+}
+
+/**
  * @brief Build a full qualified name by joining all namespace components with "::".
  * This is used when you have multiple components and want to join them all.
  * 
