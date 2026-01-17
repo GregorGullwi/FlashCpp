@@ -8192,16 +8192,18 @@ private:
 							FLASH_LOG(Codegen, Debug, "Struct copy (direct): size_in_bits=", op.size_in_bits, ", size_bytes=", struct_size_bytes, ", src_offset=", src_offset, ", dst_offset=", dst_offset);
 							
 							// Copy struct using 8-byte chunks, then handle remaining bytes
+							// Use an allocated register to avoid clobbering dirty registers
+							X64Register copy_reg = allocateRegisterWithSpilling();
 							int offset = 0;
 							while (offset + 8 <= struct_size_bytes) {
 								// Load 8 bytes from source
 								emitMovFromFrameSized(
-									SizedRegister{X64Register::RAX, 64, false},
+									SizedRegister{copy_reg, 64, false},
 									SizedStackSlot{actual_src_offset + offset, 64, false}
 								);
 								// Store 8 bytes to destination
 								emitMovToFrameSized(
-									SizedRegister{X64Register::RAX, 64, false},
+									SizedRegister{copy_reg, 64, false},
 									SizedStackSlot{dst_offset + offset, 64, false}
 								);
 								offset += 8;
@@ -8210,36 +8212,37 @@ private:
 							// Handle remaining bytes (4, 2, 1)
 							if (offset + 4 <= struct_size_bytes) {
 								emitMovFromFrameSized(
-									SizedRegister{X64Register::RAX, 64, false},
+									SizedRegister{copy_reg, 64, false},
 									SizedStackSlot{actual_src_offset + offset, 32, false}
 								);
 								emitMovToFrameSized(
-									SizedRegister{X64Register::RAX, 64, false},
+									SizedRegister{copy_reg, 64, false},
 									SizedStackSlot{dst_offset + offset, 32, false}
 								);
 								offset += 4;
 							}
 							if (offset + 2 <= struct_size_bytes) {
 								emitMovFromFrameSized(
-									SizedRegister{X64Register::RAX, 64, false},
+									SizedRegister{copy_reg, 64, false},
 									SizedStackSlot{actual_src_offset + offset, 16, false}
 								);
 								emitMovToFrameSized(
-									SizedRegister{X64Register::RAX, 64, false},
+									SizedRegister{copy_reg, 64, false},
 									SizedStackSlot{dst_offset + offset, 16, false}
 								);
 								offset += 2;
 							}
 							if (offset + 1 <= struct_size_bytes) {
 								emitMovFromFrameSized(
-									SizedRegister{X64Register::RAX, 64, false},
+									SizedRegister{copy_reg, 64, false},
 									SizedStackSlot{actual_src_offset + offset, 8, false}
 								);
 								emitMovToFrameSized(
-									SizedRegister{X64Register::RAX, 64, false},
+									SizedRegister{copy_reg, 64, false},
 									SizedStackSlot{dst_offset + offset, 8, false}
 								);
 							}
+							regAlloc.release(copy_reg);
 						}
 					} else if (is_floating_point_type(var_type)) {
 						// For floating-point types, use XMM register and float moves
@@ -13216,25 +13219,33 @@ private:
 				return;
 			}
 		} else if (is_pointer_access) {
-			// Load 'this' pointer into RCX, then load from [RCX + offset]
-			emitMovFromFrame(X64Register::RCX, object_base_offset);
+			// Load pointer into an allocated register, then load from [ptr_reg + offset]
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"MemberAccess pointer path: object_base_offset={}, op.offset={}, member_size_bytes={}",
+				object_base_offset, op.offset, member_size_bytes);
+			X64Register ptr_reg = allocateRegisterWithSpilling();
+			emitMovFromFrame(ptr_reg, object_base_offset);
 			
-			// Load from [RCX + offset] into temp_reg
+			// Load from [ptr_reg + offset] into temp_reg
 			OpCodeWithSize load_opcodes;
 			if (member_size_bytes == 8) {
-				load_opcodes = generateMovFromMemory(temp_reg, X64Register::RCX, op.offset);
+				load_opcodes = generateMovFromMemory(temp_reg, ptr_reg, op.offset);
 			} else if (member_size_bytes == 4) {
-				load_opcodes = generateMovFromMemory32(temp_reg, X64Register::RCX, op.offset);
+				load_opcodes = generateMovFromMemory32(temp_reg, ptr_reg, op.offset);
 			} else if (member_size_bytes == 2) {
-				load_opcodes = generateMovFromMemory16(temp_reg, X64Register::RCX, op.offset);
+				load_opcodes = generateMovFromMemory16(temp_reg, ptr_reg, op.offset);
 			} else if (member_size_bytes == 1) {
-				load_opcodes = generateMovFromMemory8(temp_reg, X64Register::RCX, op.offset);
+				load_opcodes = generateMovFromMemory8(temp_reg, ptr_reg, op.offset);
 			} else {
 				assert(false && "Unsupported member size");
+				regAlloc.release(ptr_reg);
 				return;
 			}
 			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 			                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
+			
+			// Release pointer register - no longer needed
+			regAlloc.release(ptr_reg);
 			
 			// Store loaded value to result_offset for later use (e.g., indirect_call)
 			emitMovToFrame(temp_reg, result_offset);
