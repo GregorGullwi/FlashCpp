@@ -19523,6 +19523,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								}
 							}
 							
+							// Check if this is a concept application (e.g., default_constructible<HasDefault>)
+							// Concepts evaluate to boolean values at compile time
+							auto concept_opt = gConceptRegistry.lookupConcept(idenfifier_token.value());
+							if (concept_opt.has_value() && explicit_template_args.has_value()) {
+								FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with template arguments", idenfifier_token.value());
+								
+								// Evaluate the concept constraint with the provided template arguments
+								auto constraint_result = evaluateConstraint(
+									concept_opt->as<ConceptDeclarationNode>().constraint_expr(),
+									*explicit_template_args,
+									{}  // No template param names needed for concrete types
+								);
+								
+								// Create a BoolLiteralNode with the result
+								bool concept_satisfied = constraint_result.satisfied;
+								Token bool_token(Token::Type::Keyword, concept_satisfied ? "true" : "false",
+								                idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+								result = emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, concept_satisfied));
+								return ParseResult::success(*result);
+							}
+							
 							// Check for member template function (including current struct and inherited from base classes)
 							// Example: __helper<_Tp>({}) where __helper is in the same struct or base class
 							// Template args already parsed at this point
