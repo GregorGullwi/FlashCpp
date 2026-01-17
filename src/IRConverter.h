@@ -6037,12 +6037,12 @@ private:
 			
 			// Get result offset - use actual return size for proper stack allocation
 			FLASH_LOG_FORMAT(Codegen, Debug,
-				"handleFunctionCall: allocating result temp_{} with return_size_in_bits={}",
-				call_op.result.var_number, return_size_bits);
+				"handleFunctionCall: allocating result {} (var_number={}) with return_size_in_bits={}",
+				call_op.result.name(), call_op.result.var_number, return_size_bits);
 			int result_offset = allocateStackSlotForTempVar(call_op.result.var_number, return_size_bits);
 			FLASH_LOG_FORMAT(Codegen, Debug,
-				"handleFunctionCall: result_offset={} for temp_{}",
-				result_offset, call_op.result.var_number);
+				"handleFunctionCall: result_offset={} for {} (var_number={})",
+				result_offset, call_op.result.name(), call_op.result.var_number);
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle(call_op.result.name())].offset = result_offset;
 			
 			// For functions returning struct by value, prepare hidden return parameter
@@ -13587,7 +13587,8 @@ private:
 			
 			int32_t var_offset;
 			const StackVariableScope& current_scope = variable_scopes.back();
-			X64Register target_reg = X64Register::RAX;
+			// Use register allocator instead of directly using RAX to avoid clobbering dirty registers
+			X64Register target_reg = allocateRegisterWithSpilling();
 			bool is_global = false;
 			StringHandle global_name_handle;
 			
@@ -13662,6 +13663,9 @@ private:
 				.holds_address_only = true
 			};
 			
+			// Release the register since the address has been stored to memory
+			regAlloc.release(target_reg);
+			
 			return;
 		}
 		
@@ -13669,7 +13673,8 @@ private:
 		assert(instruction.getOperandCount() == 4 && "AddressOf must have 4 operands");
 
 		int32_t var_offset = 0;
-		X64Register target_reg = X64Register::RAX;
+		// Use register allocator instead of directly using RAX to avoid clobbering dirty registers
+		X64Register target_reg = allocateRegisterWithSpilling();
 		bool is_global = false;
 		StringHandle global_name_handle;
 		
@@ -13714,6 +13719,9 @@ private:
 			SizedRegister{target_reg, 64, false},  // source: 64-bit register
 			SizedStackSlot{result_offset, 64, false}  // dest: 64-bit for pointer
 		);
+		
+		// Release the register since the address has been stored to memory
+		regAlloc.release(target_reg);
 	}
 	
 	void handleAddressOfMember(const IrInstruction& instruction) {
