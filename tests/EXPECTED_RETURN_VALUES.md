@@ -8,12 +8,12 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-17 (current validation run)
+**Last Run:** 2026-01-17 (validate_return_values.sh)
 
 **Total files tested:** 934
-**Valid returns:** 934
+**Valid returns:** 931
 **Regressions (mismatches):** 0
-**Runtime crashes:** 0
+**Runtime crashes:** 1
 **Compile failures:** 0
 **Link failures:** 0
 
@@ -51,7 +51,11 @@ No open regressions in the current validation run.
 
 ## Runtime Crashes
 
-No runtime crashes observed in the latest validation run.
+The following test files crash at runtime:
+
+1. test_exceptions_nested.cpp (signal 6 - Abort)
+
+Note: This crash is a pre-existing issue not related to return value regressions. It represents missing or incomplete exception handling in the compiler.
 
 ## Notes
 
