@@ -3163,15 +3163,18 @@ private:
 					// If no explicit initializer and this is NOT an implicit copy/move constructor,
 					// call default constructor (no args)
 					// For implicit copy/move constructors, the base constructor call is generated
-					// in the implicit constructor generation code below (lines 3237-3268)
+					// in the implicit constructor generation code below
 					// Note: implicit DEFAULT constructors (0 params) SHOULD call base default constructors
-					else if (!node.is_implicit() || node.parameter_nodes().size() == 0) {
-						// Only call base default constructor if the base class actually has constructors
-						// This avoids link errors when inheriting from classes without constructors
-						const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
-						if (base_struct_info && base_struct_info->hasAnyConstructor()) {
-							// Call default constructor with no arguments
-							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+					else {
+						bool is_implicit_default_ctor = node.is_implicit() && node.parameter_nodes().size() == 0;
+						if (!node.is_implicit() || is_implicit_default_ctor) {
+							// Only call base default constructor if the base class actually has constructors
+							// This avoids link errors when inheriting from classes without constructors
+							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+							if (base_struct_info && base_struct_info->hasAnyConstructor()) {
+								// Call default constructor with no arguments
+								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+							}
 						}
 					}
 				}
