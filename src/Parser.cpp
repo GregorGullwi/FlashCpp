@@ -34951,13 +34951,97 @@ if (struct_type_info.getStructInfo()) {
 						FLASH_LOG(Templates, Debug, "Substituted identifier '", id_name, "' (template parameter)");
 					}
 				}
+				// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : 0)
+				else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+					const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr);
+					const ASTNode& cond_node = ternary.condition();
+					
+					// Check if condition is a template parameter reference or identifier
+					if (cond_node.is<ExpressionNode>()) {
+						const ExpressionNode& cond_expr = cond_node.as<ExpressionNode>();
+						std::optional<int64_t> cond_value;
+						
+						if (std::holds_alternative<TemplateParameterReferenceNode>(cond_expr)) {
+							const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(cond_expr);
+							FLASH_LOG(Templates, Debug, "Ternary condition is template parameter: ", tparam_ref.param_name());
+							
+							// Look up the parameter value
+							for (size_t p = 0; p < template_params.size(); ++p) {
+								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+								if (tparam.name() == tparam_ref.param_name() && tparam.kind() == TemplateParameterKind::NonType) {
+									if (p < template_args_to_use.size() && template_args_to_use[p].is_value) {
+										cond_value = template_args_to_use[p].value;
+										FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
+									}
+									break;
+								}
+							}
+						}
+						else if (std::holds_alternative<IdentifierNode>(cond_expr)) {
+							const IdentifierNode& id_node = std::get<IdentifierNode>(cond_expr);
+							std::string_view id_name = id_node.name();
+							FLASH_LOG(Templates, Debug, "Ternary condition is identifier: ", id_name);
+							
+							// Look up the identifier as a template parameter
+							for (size_t p = 0; p < template_params.size(); ++p) {
+								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+								if (tparam.name() == id_name && tparam.kind() == TemplateParameterKind::NonType) {
+									if (p < template_args_to_use.size() && template_args_to_use[p].is_value) {
+										cond_value = template_args_to_use[p].value;
+										FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
+									}
+									break;
+								}
+							}
+						}
+						
+						// If we found the condition value, evaluate the ternary
+						if (cond_value.has_value()) {
+							const ASTNode& result_branch = (*cond_value != 0) ? ternary.true_expr() : ternary.false_expr();
+							
+							if (result_branch.is<ExpressionNode>()) {
+								const ExpressionNode& result_expr = result_branch.as<ExpressionNode>();
+								if (std::holds_alternative<NumericLiteralNode>(result_expr)) {
+									const NumericLiteralNode& lit = std::get<NumericLiteralNode>(result_expr);
+									const auto& val = lit.value();
+									unsigned long long num_val = std::holds_alternative<unsigned long long>(val)
+										? std::get<unsigned long long>(val)
+										: static_cast<unsigned long long>(std::get<double>(val));
+									
+									// Create a new numeric literal with the evaluated result
+									std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(num_val)).commit();
+									Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+									substituted_initializer = emplace_node<ExpressionNode>(
+										NumericLiteralNode(num_token, num_val, lit.type(), lit.qualifier(), lit.sizeInBits())
+									);
+									FLASH_LOG(Templates, Debug, "Evaluated ternary to: ", num_val);
+								}
+							}
+						}
+					}
+				}
 			}
+			
+			// Substitute type if it's a template parameter (e.g., "T" in "static constexpr T value = v;")
+			// Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
+			TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+			original_type_spec.set_type_index(static_member.type_index);
+			
+			// Use substitute_template_parameter for consistent template parameter matching
+			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+				original_type_spec, template_params, template_args_to_use);
+			
+			// Calculate the substituted size based on the substituted type
+			size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+			
+			FLASH_LOG(Templates, Debug, "Static member type substitution: original type=", (int)static_member.type,
+			          " -> substituted type=", (int)substituted_type, ", size=", substituted_size);
 			
 			struct_info->addStaticMember(
 				static_member.getName(),
-				static_member.type,
-				static_member.type_index,
-				static_member.size,
+				substituted_type,
+				substituted_type_index,
+				substituted_size,
 				static_member.alignment,
 				static_member.access,
 				substituted_initializer,
