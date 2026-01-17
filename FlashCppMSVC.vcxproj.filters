@@ -10,8 +10,6 @@
     <ClCompile Include="src\benchmark.cpp" />
     <ClCompile Include="tests\FlashCppTest\FlashCppTest\FlashCppTest\FlashCppTest.cpp" />
     <ClCompile Include="src\ExpressionSubstitutor.cpp" />
-    <ClCompile Include="src\InstantiationQueue.cpp" />
-    <ClCompile Include="src\LazyMemberResolver.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\ChunkedAnyVector.h" />

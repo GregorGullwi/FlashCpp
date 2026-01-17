@@ -9,6 +9,8 @@
 #include "TemplateProfilingStats.h"
 #include "ExpressionSubstitutor.h"
 #include "TypeTraitEvaluator.h"
+#include "LazyMemberResolver.h"
+#include "InstantiationQueue.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -18674,26 +18676,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(base.name));
 						if (base_type_it != gTypesByName.end()) {
 							const TypeInfo* base_type_info = base_type_it->second;
-							const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+							TypeIndex base_type_index = base_type_info->type_index_;
 
-							if (base_struct_info) {
-								// Check if the identifier is a member of the base class (recursively)
-								const StructMember* member = base_struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
-								if (member) {
-									// This is an inherited member variable! Transform it into this->member
-									Token this_token(Token::Type::Keyword, "this",
-									                 idenfifier_token.line(), idenfifier_token.column(),
-									                 idenfifier_token.file_index());
-									auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+							// Check if the identifier is a member of the base class (recursively)
+							auto member_result = FlashCpp::gLazyMemberResolver.resolve(base_type_index, StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
+							if (member_result) {
+								// This is an inherited member variable! Transform it into this->member
+								Token this_token(Token::Type::Keyword, "this",
+								                 idenfifier_token.line(), idenfifier_token.column(),
+								                 idenfifier_token.file_index());
+								auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
 
-									// Create member access node: this->member
-									result = emplace_node<ExpressionNode>(
-										MemberAccessNode(this_ident, idenfifier_token));
+								// Create member access node: this->member
+								result = emplace_node<ExpressionNode>(
+									MemberAccessNode(this_ident, idenfifier_token));
 
-									// Don't return - let it fall through to postfix operator parsing
-									found_in_ast = true;
-									goto found_member_variable;
-								}
+								// Don't return - let it fall through to postfix operator parsing
+								found_in_ast = true;
+								goto found_member_variable;
 							}
 						}
 					}
@@ -18751,8 +18751,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						
 						// Also check base class members
-						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
-						if (member) {
+						auto member_result = FlashCpp::gLazyMemberResolver.resolve(member_func_ctx.struct_type_index, StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
+						if (member_result) {
 							// This is an inherited member variable! Transform it into this->member
 							Token this_token(Token::Type::Keyword, "this",
 							                 idenfifier_token.line(), idenfifier_token.column(),
@@ -23182,18 +23182,14 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		if (object_type.type() == Type::Struct || object_type.type() == Type::UserDefined) {
 			size_t struct_type_index = object_type.type_index();
 			if (struct_type_index < gTypeInfo.size()) {
-				const TypeInfo& type_info = gTypeInfo[struct_type_index];
-				const StructTypeInfo* struct_info = type_info.getStructInfo();
-				if (struct_info) {
-					// Look up the member
-					const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
-					if (member) {
-						// Return the member's type
-						// member->size is in bytes, TypeSpecifierNode expects bits
-						TypeSpecifierNode member_type(member->type, TypeQualifier::None, member->size * 8);
-						member_type.set_type_index(member->type_index);
-						return member_type;
-					}
+				// Look up the member
+				auto member_result = FlashCpp::gLazyMemberResolver.resolve(static_cast<TypeIndex>(struct_type_index), StringTable::getOrInternStringHandle(std::string(member_name)));
+				if (member_result) {
+					// Return the member's type
+					// member->size is in bytes, TypeSpecifierNode expects bits
+					TypeSpecifierNode member_type(member_result.member->type, TypeQualifier::None, member_result.member->size * 8);
+					member_type.set_type_index(member_result.member->type_index);
+					return member_type;
 				}
 			}
 		}
@@ -32125,6 +32121,37 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	return std::nullopt;  // Return nullopt since we don't need to add anything to AST
 }
 
+// Helper function to substitute non-type template parameters in initializers
+// Extracted from try_instantiate_class_template to reduce function size
+std::optional<ASTNode> Parser::substitute_nontype_template_param(
+	std::string_view param_name,
+	const std::vector<TemplateTypeArg>& args,
+	const std::vector<ASTNode>& params) {
+	for (size_t i = 0; i < params.size(); ++i) {
+		const TemplateParameterNode& tparam = params[i].as<TemplateParameterNode>();
+		if (tparam.name() == param_name && tparam.kind() == TemplateParameterKind::NonType) {
+			if (i < args.size() && args[i].is_value) {
+				int64_t val = args[i].value;
+				Type val_type = args[i].base_type;
+				StringBuilder value_str;
+				value_str.append(val);
+				std::string_view value_view = value_str.commit();
+				Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
+				return emplace_node<ExpressionNode>(
+					NumericLiteralNode(num_token, 
+					                   static_cast<unsigned long long>(val), 
+					                   val_type, 
+					                   TypeQualifier::None, 
+					                   get_type_size_bits(val_type))
+				);
+			}
+		}
+	}
+	return std::nullopt;
+}
+
+// Helper function to fill in default template arguments before pattern matching
+// This is critical for SFINAE patterns like void_t
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 	
@@ -32150,33 +32177,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 	
-	// Helper lambda to substitute template parameters in static member initializers
-	// Used in multiple places within this function
+	// Build InstantiationKey for cycle detection
+	// Note: Caching is handled by gTypesByName check later in the function
+	FlashCpp::InstantiationKey inst_key = FlashCpp::InstantiationQueue::makeKey(template_name, template_args);
+	
+	// Create RAII guard for in-progress tracking (handles cycle detection)
+	auto in_progress_guard = FlashCpp::gInstantiationQueue.makeInProgressGuard(inst_key);
+	if (!in_progress_guard.isActive()) {
+		FLASH_LOG_FORMAT(Templates, Warning, "InstantiationQueue: cycle detected for '{}'", template_name);
+		// Don't fail - some recursive patterns are valid (e.g., CRTP)
+		// Proceed without in_progress tracking
+	}
+	
+	// Helper lambda delegates to extracted member function for non-type template parameter substitution
 	auto substitute_template_param_in_initializer = [this](
 		std::string_view param_name,
 		const std::vector<TemplateTypeArg>& args,
 		const std::vector<ASTNode>& params) -> std::optional<ASTNode> {
-		for (size_t i = 0; i < params.size(); ++i) {
-			const TemplateParameterNode& tparam = params[i].as<TemplateParameterNode>();
-			if (tparam.name() == param_name && tparam.kind() == TemplateParameterKind::NonType) {
-				if (i < args.size() && args[i].is_value) {
-					int64_t val = args[i].value;
-					Type val_type = args[i].base_type;
-					StringBuilder value_str;
-					value_str.append(val);
-					std::string_view value_view = value_str.commit();
-					Token num_token(Token::Type::Literal, value_view, 0, 0, 0);
-					return emplace_node<ExpressionNode>(
-						NumericLiteralNode(num_token, 
-						                   static_cast<unsigned long long>(val), 
-						                   val_type, 
-						                   TypeQualifier::None, 
-						                   get_type_size_bits(val_type))
-					);
-				}
-			}
-		}
-		return std::nullopt;
+		return substitute_nontype_template_param(param_name, args, params);
 	};
 	
 	// Helper lambda to substitute template parameters in member default initializers
@@ -33618,6 +33636,10 @@ if (struct_type_info.getStructInfo()) {
 				);
 			}
 		}
+		
+		// Mark instantiation complete with the type index
+		FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
+		in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
 		
 		return instantiated_struct;  // Return the struct node for code generation
 		}
@@ -36718,6 +36740,10 @@ if (struct_type_info.getStructInfo()) {
 	struct_info_ptr->needs_default_constructor = !has_constructor;
 	FLASH_LOG(Templates, Debug, "Instantiated struct ", instantiated_name, " has_constructor=", has_constructor, 
 	          ", needs_default_constructor=", struct_info_ptr->needs_default_constructor);
+	
+	// Mark instantiation complete with the type index
+	FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
+	in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
 	
 	// Return the instantiated struct node for code generation
 	return instantiated_struct;

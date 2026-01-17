@@ -168,8 +168,6 @@
     <ClCompile Include="src\ChunkedAnyVector.cpp" />
     <ClCompile Include="src\CodeViewDebug.cpp" />
     <ClCompile Include="src\ExpressionSubstitutor.cpp" />
-    <ClCompile Include="src\InstantiationQueue.cpp" />
-    <ClCompile Include="src\LazyMemberResolver.cpp" />
     <ClCompile Include="src\Parser.cpp" />
     <!-- Main file - exclude from Test and Benchmark -->
     <ClCompile Include="src\main.cpp">

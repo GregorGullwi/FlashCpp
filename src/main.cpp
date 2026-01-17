@@ -27,6 +27,8 @@
 #include "TemplateProfilingStats.h"
 #include "AstNodeTypes.h"
 #include "NamespaceRegistry.h"
+#include "LazyMemberResolver.h"
+#include "InstantiationQueue.h"
 
 // Only include ELF writer on non-Windows platforms
 #if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
@@ -40,6 +42,11 @@ bool g_enable_debug_output = false;
 bool g_enable_exceptions = true;
 
 NamespaceRegistry gNamespaceRegistry;
+
+namespace FlashCpp {
+LazyMemberResolver gLazyMemberResolver;
+InstantiationQueue gInstantiationQueue;
+} // namespace FlashCpp
 
 // Timing helper
 struct PhaseTimer {

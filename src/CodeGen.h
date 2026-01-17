@@ -10,6 +10,7 @@
 #include "ConstExprEvaluator.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
+#include "LazyMemberResolver.h"
 #include <type_traits>
 #include <variant>
 #include <vector>
@@ -1743,13 +1744,10 @@ private:
 					if (is_struct_type(type_node.type())) {
 						TypeIndex type_index = type_node.type_index();
 						if (type_index < gTypeInfo.size()) {
-							const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
-							if (struct_info) {
-								const StructMember* member = struct_info->findMemberRecursive(lv_info.member_name.value());
-								if (member) {
-									member_is_reference = member->is_reference;
-									member_is_rvalue_reference = member->is_rvalue_reference;
-								}
+							auto result = FlashCpp::gLazyMemberResolver.resolve(type_index, lv_info.member_name.value());
+							if (result) {
+								member_is_reference = result.member->is_reference;
+								member_is_rvalue_reference = result.member->is_rvalue_reference;
 							}
 						}
 					}
@@ -7561,97 +7559,96 @@ private:
 			// Look up the closure struct type
 			auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
-				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-				if (struct_info) {
-					// Find the member
-					const StructMember* member = struct_info->findMemberRecursive(var_name_str);
-					if (member) {
-						// Check if this is a by-reference capture
-						auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
-						bool is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
-						                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+				TypeIndex closure_type_index = type_it->second->type_index_;
+				// Find the member
+				auto result = FlashCpp::gLazyMemberResolver.resolve(closure_type_index, var_name_str);
+				if (result) {
+					const StructMember* member = result.member;
+					// Check if this is a by-reference capture
+					auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
+					bool is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
+					                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 
-						if (is_reference) {
-							// By-reference capture: member is a pointer, need to dereference
-							// First, load the pointer from the closure
-							TempVar ptr_temp = var_counter.next();
-							MemberLoadOp member_load;
-							member_load.result.value = ptr_temp;
-							member_load.result.type = member->type;  // Base type (e.g., Int)
-							member_load.result.size_in_bits = 64;  // pointer size in bits
-							member_load.object = StringTable::getOrInternStringHandle("this");
-							member_load.member_name = member->getName();
-							member_load.offset = static_cast<int>(member->offset);
-							member_load.is_reference = member->is_reference;
-							member_load.is_rvalue_reference = member->is_rvalue_reference;
-							member_load.struct_type_info = nullptr;
+					if (is_reference) {
+						// By-reference capture: member is a pointer, need to dereference
+						// First, load the pointer from the closure
+						TempVar ptr_temp = var_counter.next();
+						MemberLoadOp member_load;
+						member_load.result.value = ptr_temp;
+						member_load.result.type = member->type;  // Base type (e.g., Int)
+						member_load.result.size_in_bits = 64;  // pointer size in bits
+						member_load.object = StringTable::getOrInternStringHandle("this");
+						member_load.member_name = member->getName();
+						member_load.offset = static_cast<int>(result.adjusted_offset);
+						member_load.is_reference = member->is_reference;
+						member_load.is_rvalue_reference = member->is_rvalue_reference;
+						member_load.struct_type_info = nullptr;
 
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
-							// The ptr_temp now contains the address of the captured variable
-							// We need to dereference it using PointerDereference
-							auto capture_type_it = current_lambda_context_.capture_types.find(var_name_str);
-							if (capture_type_it != current_lambda_context_.capture_types.end()) {
-								const TypeSpecifierNode& orig_type = capture_type_it->second;
+						// The ptr_temp now contains the address of the captured variable
+						// We need to dereference it using PointerDereference
+						auto capture_type_it = current_lambda_context_.capture_types.find(var_name_str);
+						if (capture_type_it != current_lambda_context_.capture_types.end()) {
+							const TypeSpecifierNode& orig_type = capture_type_it->second;
 
-								// Generate Dereference to load the value
-								TempVar result_temp = var_counter.next();
-								std::vector<IrOperand> deref_operands;
-								DereferenceOp deref_op;
-								deref_op.result = result_temp;
-								deref_op.pointer.type = orig_type.type();
-								deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
-								deref_op.pointer.value = ptr_temp;
-								ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
-								
-								// Mark as lvalue with Indirect metadata for unified assignment handler
-								// This represents dereferencing a pointer: *ptr
-								LValueInfo lvalue_info(
-									LValueInfo::Kind::Indirect,
-									ptr_temp,  // The pointer temp var
-									0  // offset is 0 for dereference
-								);
-								setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
-
-								TypeIndex type_index = (orig_type.type() == Type::Struct) ? orig_type.type_index() : 0;
-								return { orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, static_cast<unsigned long long>(type_index) };
-							}
-
-							// Fallback: return the pointer temp
-							return { member->type, 64, ptr_temp, 0ULL };
-						} else {
-							// By-value capture: direct member access
+							// Generate Dereference to load the value
 							TempVar result_temp = var_counter.next();
-							MemberLoadOp member_load;
-							member_load.result.value = result_temp;
-							member_load.result.type = member->type;
-							member_load.result.size_in_bits = static_cast<int>(member->size * 8);
-							member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
-							member_load.member_name = member->getName();
-							member_load.offset = static_cast<int>(member->offset);
-							member_load.is_reference = member->is_reference;
-							member_load.is_rvalue_reference = member->is_rvalue_reference;
-							member_load.struct_type_info = nullptr;
+							std::vector<IrOperand> deref_operands;
+							DereferenceOp deref_op;
+							deref_op.result = result_temp;
+							deref_op.pointer.type = orig_type.type();
+							deref_op.pointer.size_in_bits = 64;  // Pointer is always 64 bits
+							deref_op.pointer.value = ptr_temp;
+							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
+							
+							// Mark as lvalue with Indirect metadata for unified assignment handler
+							// This represents dereferencing a pointer: *ptr
+							LValueInfo lvalue_info(
+								LValueInfo::Kind::Indirect,
+								ptr_temp,  // The pointer temp var
+								0  // offset is 0 for dereference
+							);
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
-							
-							// For mutable lambdas, set LValue metadata so assignments write back to the member
-							if (current_lambda_context_.is_mutable) {
-								// Use 'this' as the base object (StringHandle version)
-								// The assignment handler will emit MemberStore using this info
-								LValueInfo lvalue_info(
-									LValueInfo::Kind::Member,
-									StringTable::getOrInternStringHandle("this"),  // object name (this pointer)
-									static_cast<int>(member->offset)
-								);
-								lvalue_info.member_name = member->getName();
-								lvalue_info.is_pointer_to_member = true;  // 'this' is a pointer, need to dereference
-								setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
-							}
-							
-							TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
-							return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
+							TypeIndex type_index = (orig_type.type() == Type::Struct) ? orig_type.type_index() : 0;
+							return { orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, static_cast<unsigned long long>(type_index) };
 						}
+
+						// Fallback: return the pointer temp
+						return { member->type, 64, ptr_temp, 0ULL };
+					} else {
+						// By-value capture: direct member access
+						TempVar result_temp = var_counter.next();
+						MemberLoadOp member_load;
+						member_load.result.value = result_temp;
+						member_load.result.type = member->type;
+						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
+						member_load.member_name = member->getName();
+						member_load.offset = static_cast<int>(result.adjusted_offset);
+						member_load.is_reference = member->is_reference;
+						member_load.is_rvalue_reference = member->is_rvalue_reference;
+						member_load.struct_type_info = nullptr;
+
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+						
+						// For mutable lambdas, set LValue metadata so assignments write back to the member
+						if (current_lambda_context_.is_mutable) {
+							// Use 'this' as the base object (StringHandle version)
+							// The assignment handler will emit MemberStore using this info
+							LValueInfo lvalue_info(
+								LValueInfo::Kind::Member,
+								StringTable::getOrInternStringHandle("this"),  // object name (this pointer)
+								static_cast<int>(result.adjusted_offset)
+							);
+							lvalue_info.member_name = member->getName();
+							lvalue_info.is_pointer_to_member = true;  // 'this' is a pointer, need to dereference
+							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+						}
+						
+						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
 					}
 				}
 			}
@@ -7659,42 +7656,33 @@ private:
 
 		// If we're inside a [*this] lambda, prefer resolving to members of the copied object
 		if (isInCopyThisLambda() && current_lambda_context_.enclosing_struct_type_index > 0) {
-			const TypeInfo* enclosing_type_info = nullptr;
-			for (const auto& ti : gTypeInfo) {
-				if (ti.type_index_ == current_lambda_context_.enclosing_struct_type_index) {
-					enclosing_type_info = &ti;
-					break;
-				}
-			}
-			if (enclosing_type_info && enclosing_type_info->getStructInfo()) {
-				const StructTypeInfo* enclosing_struct = enclosing_type_info->getStructInfo();
-				const StructMember* member = enclosing_struct->findMemberRecursive(var_name_str);
-				if (member) {
-					if (auto copy_this_temp = emitLoadCopyThis(Token())) {
-						TempVar result_temp = var_counter.next();
-						MemberLoadOp member_load;
-						member_load.result.value = result_temp;
-						member_load.result.type = member->type;
-						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
-						member_load.object = *copy_this_temp;
-						member_load.member_name = member->getName();
-						member_load.offset = static_cast<int>(member->offset);
-						member_load.is_reference = member->is_reference;
-						member_load.is_rvalue_reference = member->is_rvalue_reference;
-						member_load.struct_type_info = nullptr;
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
-						
-						LValueInfo lvalue_info(
-							LValueInfo::Kind::Member,
-							*copy_this_temp,
-							static_cast<int>(member->offset)
-						);
-						lvalue_info.member_name = member->getName();
-						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
-						
-						TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
-						return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
-					}
+			auto result = FlashCpp::gLazyMemberResolver.resolve(current_lambda_context_.enclosing_struct_type_index, var_name_str);
+			if (result) {
+				const StructMember* member = result.member;
+				if (auto copy_this_temp = emitLoadCopyThis(Token())) {
+					TempVar result_temp = var_counter.next();
+					MemberLoadOp member_load;
+					member_load.result.value = result_temp;
+					member_load.result.type = member->type;
+					member_load.result.size_in_bits = static_cast<int>(member->size * 8);
+					member_load.object = *copy_this_temp;
+					member_load.member_name = member->getName();
+					member_load.offset = static_cast<int>(result.adjusted_offset);
+					member_load.is_reference = member->is_reference;
+					member_load.is_rvalue_reference = member->is_rvalue_reference;
+					member_load.struct_type_info = nullptr;
+					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
+					
+					LValueInfo lvalue_info(
+						LValueInfo::Kind::Member,
+						*copy_this_temp,
+						static_cast<int>(result.adjusted_offset)
+					);
+					lvalue_info.member_name = member->getName();
+					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
+					
+					TypeIndex type_index = (member->type == Type::Struct) ? member->type_index : 0;
+					return { member->type, static_cast<int>(member->size * 8), result_temp, static_cast<unsigned long long>(type_index) };
 				}
 			}
 		}
@@ -7783,11 +7771,13 @@ private:
 			// Look up the struct type
 			auto type_it = gTypesByName.find(current_struct_name_);
 			if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+				TypeIndex struct_type_index = type_it->second->type_index_;
 				const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 				if (struct_info) {
 					// Check if this identifier is a member of the struct
-					const StructMember* member = struct_info->findMemberRecursive(var_name_str);
-					if (member) {
+					auto result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, var_name_str);
+					if (result) {
+						const StructMember* member = result.member;
 						// This is a member variable access - generate MemberAccess IR with implicit 'this'
 						TempVar result_temp = var_counter.next();
 						MemberLoadOp member_load;
@@ -7796,7 +7786,7 @@ private:
 						member_load.result.size_in_bits = static_cast<int>(member->size * 8);
 						member_load.object = StringTable::getOrInternStringHandle("this");  // implicit this pointer
 						member_load.member_name = member->getName();
-						member_load.offset = static_cast<int>(member->offset);
+						member_load.offset = static_cast<int>(result.adjusted_offset);
 						member_load.is_reference = member->is_reference;
 						member_load.is_rvalue_reference = member->is_rvalue_reference;
 						member_load.struct_type_info = nullptr;
@@ -7807,7 +7797,7 @@ private:
 						LValueInfo lvalue_info(
 							LValueInfo::Kind::Member,
 							StringTable::getOrInternStringHandle("this"),
-							static_cast<int>(member->offset)
+							static_cast<int>(result.adjusted_offset)
 						);
 						lvalue_info.member_name = member->getName();
 						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
@@ -8667,21 +8657,16 @@ private:
 				return std::nullopt;
 			}
 			
-			const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
-			if (!struct_info) {
-				return std::nullopt;
-			}
-			
 			std::string_view member_name = memberAccess.member_name();
 			StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
-			const StructMember* member = struct_info->findMemberRecursive(member_handle);
+			auto result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
 			
-			if (!member) {
+			if (!result) {
 				return std::nullopt;
 			}
 			
 			// Recurse with accumulated offset
-			int new_offset = accumulated_offset + static_cast<int>(member->offset);
+			int new_offset = accumulated_offset + static_cast<int>(result.adjusted_offset);
 			auto base_components = analyzeAddressExpression(obj_expr, new_offset);
 			
 			if (!base_components.has_value()) {
@@ -8689,8 +8674,8 @@ private:
 			}
 			
 			// Update type to member type
-			base_components->final_type = member->type;
-			base_components->final_size_bits = static_cast<int>(member->size * 8);
+			base_components->final_type = result.member->type;
+			base_components->final_size_bits = static_cast<int>(result.member->size * 8);
 			
 			return base_components;
 		}
@@ -9054,46 +9039,43 @@ private:
 							
 							// Look up member information
 							if (type_index > 0 && type_index < gTypeInfo.size() && element_type == Type::Struct) {
-								const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
-								if (struct_info) {
-									std::string_view member_name = memberAccess.member_name();
-									StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
-									const StructMember* member = struct_info->findMemberRecursive(member_handle);
+								std::string_view member_name = memberAccess.member_name();
+								StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+								auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
+								
+								if (member_result) {
+									// First, get the address of the array element
+									TempVar elem_addr_var = var_counter.next();
+									ArrayElementAddressOp elem_addr_payload;
+									elem_addr_payload.result = elem_addr_var;
+									elem_addr_payload.element_type = element_type;
+									elem_addr_payload.element_size_in_bits = element_size_bits;
 									
-									if (member) {
-										// First, get the address of the array element
-										TempVar elem_addr_var = var_counter.next();
-										ArrayElementAddressOp elem_addr_payload;
-										elem_addr_payload.result = elem_addr_var;
-										elem_addr_payload.element_type = element_type;
-										elem_addr_payload.element_size_in_bits = element_size_bits;
-										
-										// Set array (either variable name or temp)
-										if (std::holds_alternative<StringHandle>(array_operands[2])) {
-											elem_addr_payload.array = std::get<StringHandle>(array_operands[2]);
-										} else if (std::holds_alternative<TempVar>(array_operands[2])) {
-											elem_addr_payload.array = std::get<TempVar>(array_operands[2]);
-										}
-										
-										// Set index as TypedValue
-										elem_addr_payload.index = toTypedValue(std::span<const IrOperand>(&index_operands[0], 3));
-										
-										ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(elem_addr_payload), arraySubscript.bracket_token()));
-										
-										// Now compute the member address by adding the member offset
-										// We need to add the offset to the pointer value
-										// Treat the pointer as a 64-bit integer for arithmetic purposes
-										TempVar member_addr_var = var_counter.next();
-										BinaryOp add_offset;
-										add_offset.lhs = { Type::UnsignedLongLong, POINTER_SIZE_BITS, elem_addr_var };  // pointer treated as integer
-										add_offset.rhs = { Type::UnsignedLongLong, POINTER_SIZE_BITS, static_cast<unsigned long long>(member->offset) };
-										add_offset.result = member_addr_var;
-										
-										ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), memberAccess.member_token()));
-										
-										// Return pointer to member (64-bit pointer, 0 for no additional type info)
-										return { member->type, POINTER_SIZE_BITS, member_addr_var, 0ULL };
+									// Set array (either variable name or temp)
+									if (std::holds_alternative<StringHandle>(array_operands[2])) {
+										elem_addr_payload.array = std::get<StringHandle>(array_operands[2]);
+									} else if (std::holds_alternative<TempVar>(array_operands[2])) {
+										elem_addr_payload.array = std::get<TempVar>(array_operands[2]);
 									}
+									
+									// Set index as TypedValue
+									elem_addr_payload.index = toTypedValue(std::span<const IrOperand>(&index_operands[0], 3));
+									
+									ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(elem_addr_payload), arraySubscript.bracket_token()));
+									
+									// Now compute the member address by adding the member offset
+									// We need to add the offset to the pointer value
+									// Treat the pointer as a 64-bit integer for arithmetic purposes
+									TempVar member_addr_var = var_counter.next();
+									BinaryOp add_offset;
+									add_offset.lhs = { Type::UnsignedLongLong, POINTER_SIZE_BITS, elem_addr_var };  // pointer treated as integer
+									add_offset.rhs = { Type::UnsignedLongLong, POINTER_SIZE_BITS, static_cast<unsigned long long>(member_result.adjusted_offset) };
+									add_offset.result = member_addr_var;
+									
+									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), memberAccess.member_token()));
+									
+									// Return pointer to member (64-bit pointer, 0 for no additional type info)
+									return { member_result.member->type, POINTER_SIZE_BITS, member_addr_var, 0ULL };
 								}
 							}
 						}
@@ -9119,43 +9101,40 @@ private:
 						
 						// Look up member information
 						if (type_index > 0 && type_index < gTypeInfo.size() && object_type == Type::Struct) {
-							const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
-							if (struct_info) {
-								std::string_view member_name = memberAccess.member_name();
-								StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
-								const StructMember* member = struct_info->findMemberRecursive(member_handle);
+							std::string_view member_name = memberAccess.member_name();
+							StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
+							auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
+							
+							if (member_result) {
+								TempVar result_var = var_counter.next();
 								
-								if (member) {
-									TempVar result_var = var_counter.next();
+								// For simple identifiers, generate a MemberAddressOp or use AddressOf with member context
+								// For now, use a simpler approach: emit AddressOf, then Add offset in generated code
+								// But mark the intermediate as NOT a reference to avoid dereferencing
+								
+								if (std::holds_alternative<StringHandle>(object_operands[2])) {
+									StringHandle obj_name = std::get<StringHandle>(object_operands[2]);
 									
-									// For simple identifiers, generate a MemberAddressOp or use AddressOf with member context
-									// For now, use a simpler approach: emit AddressOf, then Add offset in generated code
-									// But mark the intermediate as NOT a reference to avoid dereferencing
+									// Create a custom AddressOf-like operation that computes obj_addr + member_offset directly
+									// We'll use ArrayElementAddress with index 0 and treat it as a base address calc
+									// Actually, let's just emit the calculation inline without using intermediate temps
 									
-									if (std::holds_alternative<StringHandle>(object_operands[2])) {
-										StringHandle obj_name = std::get<StringHandle>(object_operands[2]);
-										
-										// Create a custom AddressOf-like operation that computes obj_addr + member_offset directly
-										// We'll use ArrayElementAddress with index 0 and treat it as a base address calc
-										// Actually, let's just emit the calculation inline without using intermediate temps
-										
-										// Generate IR to compute the member address
-										// We need a MemberAddressOp or similar
-										// For now, let's use the existing approach but avoid marking as reference
-										
-										// Option: Generate AddressOfMemberOp
-										AddressOfMemberOp addr_member_op;
-										addr_member_op.result = result_var;
-										addr_member_op.base_object = obj_name;
-										addr_member_op.member_offset = static_cast<int>(member->offset);
-										addr_member_op.member_type = member->type;
-										addr_member_op.member_size_in_bits = static_cast<int>(member->size * 8);
-										
-										ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));
-										
-										// Return pointer to member
-										return { member->type, POINTER_SIZE_BITS, result_var, 0ULL };
-									}
+									// Generate IR to compute the member address
+									// We need a MemberAddressOp or similar
+									// For now, let's use the existing approach but avoid marking as reference
+									
+									// Option: Generate AddressOfMemberOp
+									AddressOfMemberOp addr_member_op;
+									addr_member_op.result = result_var;
+									addr_member_op.base_object = obj_name;
+									addr_member_op.member_offset = static_cast<int>(member_result.adjusted_offset);
+									addr_member_op.member_type = member_result.member->type;
+									addr_member_op.member_size_in_bits = static_cast<int>(member_result.member->size * 8);
+									
+									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));
+									
+									// Return pointer to member
+									return { member_result.member->type, POINTER_SIZE_BITS, result_var, 0ULL };
 								}
 							}
 						}
@@ -9360,9 +9339,10 @@ private:
 		
 		// Helper lambda to generate member increment/decrement IR
 		// Returns the result operands, or empty if not applicable
+		// adjusted_offset must be provided (from LazyMemberResolver result)
 		auto generateMemberIncDec = [&](StringHandle object_name, 
 		                                 const StructMember* member, bool is_reference_capture,
-		                                 const Token& token) -> std::vector<IrOperand> {
+		                                 const Token& token, size_t adjusted_offset) -> std::vector<IrOperand> {
 			int member_size_bits = static_cast<int>(member->size * 8);
 			TempVar result_var = var_counter.next();
 			StringHandle member_name = member->getName();
@@ -9376,7 +9356,7 @@ private:
 				member_load.result.size_in_bits = 64;  // pointer
 				member_load.object = object_name;
 				member_load.member_name = member_name;
-				member_load.offset = static_cast<int>(member->offset);
+				member_load.offset = static_cast<int>(adjusted_offset);
 				member_load.is_reference = true;
 				member_load.is_rvalue_reference = false;
 				member_load.struct_type_info = nullptr;
@@ -9422,7 +9402,7 @@ private:
 				member_load.result.size_in_bits = member_size_bits;
 				member_load.object = object_name;
 				member_load.member_name = member_name;
-				member_load.offset = static_cast<int>(member->offset);
+				member_load.offset = static_cast<int>(adjusted_offset);
 				member_load.is_reference = false;
 				member_load.is_rvalue_reference = false;
 				member_load.struct_type_info = nullptr;
@@ -9442,7 +9422,7 @@ private:
 				MemberStoreOp store_op;
 				store_op.object = object_name;
 				store_op.member_name = member_name;
-				store_op.offset = static_cast<int>(member->offset);
+				store_op.offset = static_cast<int>(adjusted_offset);
 				store_op.value = { member->type, member_size_bits, result_var };
 				store_op.is_reference = false;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), token));
@@ -9465,14 +9445,14 @@ private:
 					// Look up the closure struct type
 					auto type_it = gTypesByName.find(current_lambda_context_.closure_type);
 					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
-						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-						const StructMember* member = struct_info->findMemberRecursive(var_name_str);
-						if (member) {
+						TypeIndex closure_type_index = type_it->second->type_index_;
+						auto member_result = FlashCpp::gLazyMemberResolver.resolve(closure_type_index, var_name_str);
+						if (member_result) {
 							auto kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
 							bool is_reference = (kind_it != current_lambda_context_.capture_kinds.end() &&
 							                     kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
-							return generateMemberIncDec(StringTable::getOrInternStringHandle("this"sv), member, is_reference, 
-							                            unaryOperatorNode.get_token());
+							return generateMemberIncDec(StringTable::getOrInternStringHandle("this"sv), member_result.member, is_reference, 
+							                            unaryOperatorNode.get_token(), member_result.adjusted_offset);
 						}
 					}
 				}
@@ -9507,13 +9487,10 @@ private:
 								if (is_struct_type(object_type.type())) {
 									TypeIndex type_index = object_type.type_index();
 									if (type_index < gTypeInfo.size()) {
-										const StructTypeInfo* struct_info = gTypeInfo[type_index].getStructInfo();
-										if (struct_info) {
-											const StructMember* member = struct_info->findMemberRecursive(member_name);
-											if (member) {
-												return generateMemberIncDec(object_name, member, false,
-												                            member_access.member_token());
-											}
+										auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_name);
+										if (member_result) {
+											return generateMemberIncDec(object_name, member_result.member, false,
+											                            member_access.member_token(), member_result.adjusted_offset);
 										}
 									}
 								}
@@ -9576,22 +9553,21 @@ private:
 					// Look up the class type
 					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(class_name));
 					if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
-						const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-						if (struct_info) {
-							// Try to find the member (non-static)
-							const StructMember* member = struct_info->findMemberRecursive(
-								StringTable::getOrInternStringHandle(member_name));
+						TypeIndex struct_type_index = type_it->second->type_index_;
+						// Try to find the member (non-static)
+						auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+							struct_type_index,
+							StringTable::getOrInternStringHandle(member_name));
+						
+						if (member_result) {
+							// This is a pointer-to-member: return the member offset as a constant
+							FLASH_LOG(Codegen, Debug, "Address-of non-static member '", class_name, "::", member_name, 
+							          "' - returning offset ", member_result.adjusted_offset, " as pointer-to-member constant");
 							
-							if (member) {
-								// This is a pointer-to-member: return the member offset as a constant
-								FLASH_LOG(Codegen, Debug, "Address-of non-static member '", class_name, "::", member_name, 
-								          "' - returning offset ", member->offset, " as pointer-to-member constant");
-								
-								// Return the offset directly as a constant value (no IR instruction needed)
-								// This is a pointer-to-member constant - use 64-bit size and the member's type
-								return { member->type, 64, static_cast<unsigned long long>(member->offset), 
-								         static_cast<unsigned long long>(member->type_index) };
-							}
+							// Return the offset directly as a constant value (no IR instruction needed)
+							// This is a pointer-to-member constant - use 64-bit size and the member's type
+							return { member_result.member->type, 64, static_cast<unsigned long long>(member_result.adjusted_offset), 
+							         static_cast<unsigned long long>(member_result.member->type_index) };
 						}
 					}
 				}
@@ -10183,26 +10159,24 @@ private:
 				// Check if this is a member variable of the current struct
 				auto type_it = gTypesByName.find(current_struct_name_);
 				if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
-					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-					if (struct_info) {
-						const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(lhs_name)));
-						if (member) {
-							// This is an assignment to a member variable: member = value
-							// Handle via unified handler (identifiers are now marked as lvalues)
-							auto lhsIrOperands = visitExpressionNode(lhs_expr);
-							auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
-							
-							// Handle assignment using unified lvalue metadata handler
-							if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
-								// Assignment was handled successfully via metadata
-								FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for implicit member assignment (", lhs_name, ")");
-								return rhsIrOperands;
-							}
-							
-							// This shouldn't happen with proper metadata, but log for debugging
-							FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for implicit member assignment: ", lhs_name);
-							return { Type::Int, 32, TempVar{0} };
+					TypeIndex struct_type_index = type_it->second->type_index_;
+					auto member_result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, StringTable::getOrInternStringHandle(std::string(lhs_name)));
+					if (member_result) {
+						// This is an assignment to a member variable: member = value
+						// Handle via unified handler (identifiers are now marked as lvalues)
+						auto lhsIrOperands = visitExpressionNode(lhs_expr);
+						auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
+						
+						// Handle assignment using unified lvalue metadata handler
+						if (handleLValueAssignment(lhsIrOperands, rhsIrOperands, binaryOperatorNode.get_token())) {
+							// Assignment was handled successfully via metadata
+							FLASH_LOG(Codegen, Debug, "Unified handler SUCCESS for implicit member assignment (", lhs_name, ")");
+							return rhsIrOperands;
 						}
+						
+						// This shouldn't happen with proper metadata, but log for debugging
+						FLASH_LOG(Codegen, Error, "Unified handler unexpectedly failed for implicit member assignment: ", lhs_name);
+						return { Type::Int, 32, TempVar{0} };
 					}
 				}
 			}
@@ -14893,37 +14867,35 @@ private:
 							is_struct_type(type_node.type()), type_node.type_index());
 						
 						if (is_struct_type(type_node.type()) && type_node.type_index() < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
-								FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Struct has {} members", struct_info->members.size());
+							TypeIndex type_index = type_node.type_index();
+							auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+								type_index,
+								StringTable::getOrInternStringHandle(std::string(result.member_name)));
+							
+							FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: gLazyMemberResolver.resolve returned {}", static_cast<bool>(member_result));
+							
+							if (member_result) {
+								const StructMember* member = member_result.member;
+								result.member_info = member;
 								
-								const StructMember* member = struct_info->findMemberRecursive(
-									StringTable::getOrInternStringHandle(std::string(result.member_name)));
+								FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: member->is_array={}, array_dimensions.size()={}", 
+									member->is_array, member->array_dimensions.size());
 								
-								FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: findMemberRecursive returned {}", (member != nullptr));
-								
-								if (member) {
-									result.member_info = member;
-									
-									FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: member->is_array={}, array_dimensions.size()={}", 
-										member->is_array, member->array_dimensions.size());
-									
-									// Reverse the indices so they're in order from outermost to innermost
-									result.indices.reserve(indices_reversed.size());
-									for (auto it = indices_reversed.rbegin(); it != indices_reversed.rend(); ++it) {
-										result.indices.push_back(*it);
-									}
-									
-									// Valid if member is a multidimensional array with matching indices
-									result.is_valid = member->is_array && 
-									                  !member->array_dimensions.empty() &&
-									                  (member->array_dimensions.size() == result.indices.size()) &&
-									                  (result.indices.size() > 1);
-									
-									FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: is_valid={} (is_array={}, dim_size={}, indices_size={}, indices>1={})",
-										result.is_valid, member->is_array, member->array_dimensions.size(), 
-										result.indices.size(), (result.indices.size() > 1));
+								// Reverse the indices so they're in order from outermost to innermost
+								result.indices.reserve(indices_reversed.size());
+								for (auto it = indices_reversed.rbegin(); it != indices_reversed.rend(); ++it) {
+									result.indices.push_back(*it);
 								}
+								
+								// Valid if member is a multidimensional array with matching indices
+								result.is_valid = member->is_array && 
+								                  !member->array_dimensions.empty() &&
+								                  (member->array_dimensions.size() == result.indices.size()) &&
+								                  (result.indices.size() > 1);
+								
+								FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: is_valid={} (is_array={}, dim_size={}, indices_size={}, indices>1={})",
+									result.is_valid, member->is_array, member->array_dimensions.size(), 
+									result.indices.size(), (result.indices.size() > 1));
 							}
 						}
 					}
@@ -15260,80 +15232,79 @@ private:
 						if (is_struct_type(type_node.type())) {
 							TypeIndex struct_type_index = type_node.type_index();
 							if (struct_type_index < gTypeInfo.size()) {
-								const TypeInfo& struct_type_info = gTypeInfo[struct_type_index];
-								const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+								auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+									struct_type_index,
+									StringTable::getOrInternStringHandle(std::string(member_name)));
 								
-								if (struct_info) {
-									const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
-									if (member) {
-										// Get index expression
-										auto index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
+								if (member_result) {
+									const StructMember* member = member_result.member;
+									// Get index expression
+									auto index_operands = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
 
-										// Get element type and size from the member
-										Type element_type = member->type;
-										int element_size_bits = static_cast<int>(member->size * 8);
-										
-										// For array members, member->size is the total size, we need element size
-										// This is a simplified assumption - we need better array type info
-										// For now, assume arrays of primitives and compute element size
-										// TODO: Get actual array length from type info
-										// For now, use a heuristic: if size is larger than element type, it's an array
-										int base_element_size = get_type_size_bits(element_type);  // Use existing helper
-										
-										if (base_element_size > 0 && element_size_bits > base_element_size) {
-											// It's an array
-											element_size_bits = base_element_size;
-										}
+									// Get element type and size from the member
+									Type element_type = member->type;
+									int element_size_bits = static_cast<int>(member->size * 8);
+									
+									// For array members, member->size is the total size, we need element size
+									// This is a simplified assumption - we need better array type info
+									// For now, assume arrays of primitives and compute element size
+									// TODO: Get actual array length from type info
+									// For now, use a heuristic: if size is larger than element type, it's an array
+									int base_element_size = get_type_size_bits(element_type);  // Use existing helper
+									
+									if (base_element_size > 0 && element_size_bits > base_element_size) {
+										// It's an array
+										element_size_bits = base_element_size;
+									}
 
-										// Create a temporary variable for the result
-										TempVar result_var = var_counter.next();
-										
-										// Mark array element access as lvalue (Option 2: Value Category Tracking)
-										StringHandle qualified_name = StringTable::getOrInternStringHandle(
-											StringBuilder().append(object_name).append(".").append(member_name));
-										LValueInfo lvalue_info(
-											LValueInfo::Kind::ArrayElement,
-											qualified_name,
-											static_cast<int64_t>(member->offset)  // member offset in struct
-										);
-										// Store index information for unified assignment handler
-										lvalue_info.array_index = toIrValue(index_operands[2]);
-										lvalue_info.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
-										setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+									// Create a temporary variable for the result
+									TempVar result_var = var_counter.next();
+									
+									// Mark array element access as lvalue (Option 2: Value Category Tracking)
+									StringHandle qualified_name = StringTable::getOrInternStringHandle(
+										StringBuilder().append(object_name).append(".").append(member_name));
+									LValueInfo lvalue_info(
+										LValueInfo::Kind::ArrayElement,
+										qualified_name,
+										static_cast<int64_t>(member_result.adjusted_offset)  // member offset in struct
+									);
+									// Store index information for unified assignment handler
+									lvalue_info.array_index = toIrValue(index_operands[2]);
+									lvalue_info.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
+									setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
 
-										// Create typed payload for ArrayAccess with qualified member name
-										ArrayAccessOp payload;
-										payload.result = result_var;
-										payload.element_type = element_type;
-										payload.element_size_in_bits = element_size_bits;
-										payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
-										payload.member_offset = static_cast<int64_t>(member->offset);
-										payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
-										
-										// Set index as TypedValue
-										payload.index.type = std::get<Type>(index_operands[0]);
-										payload.index.size_in_bits = std::get<int>(index_operands[1]);
-										if (std::holds_alternative<unsigned long long>(index_operands[2])) {
-											payload.index.value = std::get<unsigned long long>(index_operands[2]);
-										} else if (std::holds_alternative<TempVar>(index_operands[2])) {
-											payload.index.value = std::get<TempVar>(index_operands[2]);
-										} else if (std::holds_alternative<StringHandle>(index_operands[2])) {
-											payload.index.value = std::get<StringHandle>(index_operands[2]);
-										}
+									// Create typed payload for ArrayAccess with qualified member name
+									ArrayAccessOp payload;
+									payload.result = result_var;
+									payload.element_type = element_type;
+									payload.element_size_in_bits = element_size_bits;
+									payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
+									payload.member_offset = static_cast<int64_t>(member_result.adjusted_offset);
+									payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
+									
+									// Set index as TypedValue
+									payload.index.type = std::get<Type>(index_operands[0]);
+									payload.index.size_in_bits = std::get<int>(index_operands[1]);
+									if (std::holds_alternative<unsigned long long>(index_operands[2])) {
+										payload.index.value = std::get<unsigned long long>(index_operands[2]);
+									} else if (std::holds_alternative<TempVar>(index_operands[2])) {
+										payload.index.value = std::get<TempVar>(index_operands[2]);
+									} else if (std::holds_alternative<StringHandle>(index_operands[2])) {
+										payload.index.value = std::get<StringHandle>(index_operands[2]);
+									}
 
-										// When context is LValueAddress, skip the load and return address/metadata only
-										if (context == ExpressionContext::LValueAddress) {
-											// Don't emit ArrayAccess instruction (no load)
-											// Just return the metadata with the result temp var
-											return { element_type, element_size_bits, result_var, 0ULL };
-										}
-
-										// Create instruction with typed payload (Load context - default)
-										ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
-
-										// Return the result with the element type
+									// When context is LValueAddress, skip the load and return address/metadata only
+									if (context == ExpressionContext::LValueAddress) {
+										// Don't emit ArrayAccess instruction (no load)
+										// Just return the metadata with the result temp var
 										return { element_type, element_size_bits, result_var, 0ULL };
 									}
+
+									// Create instruction with typed payload (Load context - default)
+									ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
+
+									// Return the result with the element type
+									return { element_type, element_size_bits, result_var, 0ULL };
 								}
 							}
 						}
@@ -15452,14 +15423,14 @@ private:
 						const auto& decl_node = symbol->as<DeclarationNode>();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 						if (is_struct_type(type_node.type()) && type_node.type_index() < gTypeInfo.size()) {
-							const TypeInfo& type_info = gTypeInfo[type_node.type_index()];
-							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
-								if (const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_access.member_name())))) {
-									base_variant = StringTable::getOrInternStringHandle(
-										StringBuilder().append(object_name).append(".").append(member_access.member_name()));
-									base_member_offset = static_cast<int>(member->offset);
-									// Member access via '.' is not a pointer access for locals
-								}
+							auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+								type_node.type_index(),
+								StringTable::getOrInternStringHandle(std::string(member_access.member_name())));
+							if (member_result) {
+								base_variant = StringTable::getOrInternStringHandle(
+									StringBuilder().append(object_name).append(".").append(member_access.member_name()));
+								base_member_offset = static_cast<int>(member_result.adjusted_offset);
+								// Member access via '.' is not a pointer access for locals
 							}
 						}
 					}
@@ -16115,9 +16086,9 @@ private:
 		}
 		
 		// Use recursive lookup to find instance members in base classes as well
-		const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(member_name));
+		auto member_result = FlashCpp::gLazyMemberResolver.resolve(base_type_index, StringTable::getOrInternStringHandle(member_name));
 
-		if (!member) {
+		if (!member_result) {
 			std::cerr << "error: member '" << member_name << "' not found in struct '" << type_info->name() << "'\n";
 			std::cerr << "  available members:\n";
 			for (const auto& m : struct_info->members) {
@@ -16125,6 +16096,8 @@ private:
 			}
 			return {};
 		}
+		
+		const StructMember* member = member_result.member;
 
 		// Check access control
 		const StructTypeInfo* current_context = getCurrentStructContext();
@@ -16148,7 +16121,7 @@ private:
 		// If so, we can unwrap it to get the ultimate base and combine offsets
 		// This optimization is ONLY applied in LValueAddress context (for stores)
 		// In Load context, we keep the chain of member_access instructions
-		int accumulated_offset = static_cast<int>(member->offset);
+		int accumulated_offset = static_cast<int>(member_result.adjusted_offset);
 		std::variant<StringHandle, TempVar> ultimate_base = base_object;
 		StringHandle ultimate_member_name = StringTable::getOrInternStringHandle(member_name);
 		bool did_unwrap = false;
@@ -16706,24 +16679,19 @@ private:
 			return {};
 		}
 
-		const TypeInfo& type_info = gTypeInfo[type_index];
-		const StructTypeInfo* struct_info = type_info.getStructInfo();
-		if (!struct_info) {
-			assert(false && "Struct type info not found");
-			return {};
-		}
-
 		// Find the member
 		std::string_view member_name = offsetofNode.member_name();
-		const StructMember* member = struct_info->findMemberRecursive(StringTable::getOrInternStringHandle(std::string(member_name)));
-		if (!member) {
+		auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+			static_cast<TypeIndex>(type_index),
+			StringTable::getOrInternStringHandle(std::string(member_name)));
+		if (!member_result) {
 			assert(false && "Member not found in struct");
 			return {};
 		}
 
 		// Return offset as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
-		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member->offset) };
+		return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(member_result.adjusted_offset) };
 	}
 
 	// Helper function to check if a type is a scalar type (arithmetic, enum, pointer, member pointer, nullptr_t)
