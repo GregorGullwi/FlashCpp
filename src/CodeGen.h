@@ -8188,7 +8188,7 @@ private:
 		NamespaceHandle ns_handle = qualifiedIdNode.namespace_handle();
 		if (!ns_handle.isGlobal()) {
 			// The struct/enum name is the last namespace component (the name of the namespace handle)
-			std::string struct_or_enum_name(gNamespaceRegistry.getName(ns_handle));
+			std::string_view struct_or_enum_name = gNamespaceRegistry.getName(ns_handle);
 			
 			// Could be EnumName::EnumeratorName
 			auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
@@ -8217,7 +8217,7 @@ private:
 				// First try with the namespace handle directly
 				struct_type_it = gTypesByName.find(ns_qualified_handle);
 				if (struct_type_it != gTypesByName.end()) {
-					struct_or_enum_name = std::string(full_qualified_name);
+					struct_or_enum_name = full_qualified_name;
 					FLASH_LOG(Codegen, Debug, "Found struct with full qualified name: ", full_qualified_name);
 				} else {
 					// Fallback: search by string content
@@ -8228,7 +8228,7 @@ private:
 						if (key_str == full_qualified_name) {
 							struct_type_it = gTypesByName.find(key);
 							if (struct_type_it != gTypesByName.end()) {
-								struct_or_enum_name = std::string(key_str);
+								struct_or_enum_name = key_str;
 								FLASH_LOG(Codegen, Debug, "Found struct by string content: ", full_qualified_name);
 							}
 							break;
