@@ -4,53 +4,55 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
-| Header | Test File | Status | Blocker |
-|--------|-----------|--------|---------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.24s |
-| `<type_traits>` | `test_std_type_traits.cpp` | ⏱️ Timeout | Template instantiation volume (>10s) |
-| `<compare>` | N/A | ✅ Compiled | ~0.10s |
-| `<version>` | N/A | ✅ Compiled | ~0.07s |
-| `<source_location>` | N/A | ✅ Compiled | ~0.06s |
-| `<numbers>` | N/A | ⏱️ Timeout | Template instantiation volume (>10s) |
-| `<initializer_list>` | N/A | ✅ Compiled | ~0.06s |
-| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Heavy template instantiation |
-| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Heavy template instantiation |
-| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
-| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Variadic templates |
-| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<variant>` | `test_std_variant.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Smart pointers, allocators |
-| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | std::function, type erasure |
-| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Template instantiation (2026-01-17: Fixed `_Hash_bytes` overload resolution) |
-| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Concepts, views |
-| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Virtual inheritance, locales |
-| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Ratio templates |
-| `<bit>` | N/A | ⏱️ Timeout | Includes heavy headers |
-| `<atomic>` | N/A | ⏱️ Timeout | Heavy headers |
-| `<new>` | N/A | ✅ Compiled | ~0.07s |
-| `<exception>` | N/A | ⏱️ Timeout | Template instantiation volume (includes exception_ptr, nested_exception) |
-| `<ratio>` | N/A | ⏱️ Timeout | Times out during template instantiation |
-| `<typeinfo>` | N/A | ✅ Compiled | ~0.71s |
-| `<typeindex>` | N/A | ✅ Compiled | ~0.74s |
-| `<csetjmp>` | N/A | ✅ Compiled | ~0.21s |
-| `<csignal>` | N/A | ✅ Compiled | ~2.7s (2026-01-18: Fixed unsupported member size assertions) |
-| `<stdfloat>` | N/A | ✅ Compiled | ~0.1s (C++23 - 2026-01-18) |
-| `<spanstream>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
-| `<print>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
-| `<expected>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
-| `<text_encoding>` | N/A | ✅ Compiled | ~0.4s (C++26 - 2026-01-18) |
-| `<barrier>` | N/A | ✅ Compiled | ~0.4s (C++20 - 2026-01-18) |
-| `<stacktrace>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
-| `<coroutine>` | N/A | ❌ Not Supported | Coroutines are not supported at this time. The `__cpp_impl_coroutine` feature-test macro is disabled. |
+✅ **Log Level Bug Fixed (2026-01-18):** The bug that caused release builds to hang is now fixed. All log levels work correctly.
 
-**Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s)
+| Header | Test File | Status | Notes |
+|--------|-----------|--------|-------|
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.30s |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1.1s release, ~6s debug (2026-01-18: Log level bug fixed) |
+| `<compare>` | N/A | ✅ Compiled | ~0.10s |
+| `<version>` | N/A | ✅ Compiled | ~0.09s |
+| `<source_location>` | N/A | ✅ Compiled | ~0.10s |
+| `<numbers>` | N/A | ✅ Compiled | ~1.2s release (doesn't include `<concepts>`) |
+| `<initializer_list>` | N/A | ✅ Compiled | ~0.07s |
+| `<concepts>` | `test_std_concepts.cpp` | ❌ Parse Error | Qualified template alias in template argument context |
+| `<utility>` | `test_std_utility.cpp` | ❌ Template Error | Deferred instantiation failures |
+| `<bit>` | N/A | ❌ Parse Error | Includes `<concepts>` - qualified template alias issue |
+| `<ratio>` | N/A | 💥 Crash | SIGSEGV during template instantiation |
+| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<variant>` | `test_std_variant.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Template-heavy header (2026-01-17: Fixed `_Hash_bytes`) |
+| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<atomic>` | N/A | ⏱️ Timeout | Template-heavy header |
+| `<new>` | N/A | ✅ Compiled | ~0.10s |
+| `<exception>` | N/A | ⏱️ Timeout | Template-heavy header |
+| `<typeinfo>` | N/A | ✅ Compiled | ~0.10s |
+| `<typeindex>` | N/A | ✅ Compiled | ~0.16s |
+| `<csetjmp>` | N/A | ✅ Compiled | ~0.06s |
+| `<csignal>` | N/A | ✅ Compiled | ~0.18s (2026-01-18: Fixed unsupported member size assertions) |
+| `<stdfloat>` | N/A | ✅ Compiled | ~0.03s (C++23 - 2026-01-18) |
+| `<spanstream>` | N/A | ✅ Compiled | ~0.09s (C++23 - 2026-01-18) |
+| `<print>` | N/A | ✅ Compiled | ~0.09s (C++23 - 2026-01-18) |
+| `<expected>` | N/A | ✅ Compiled | ~0.09s (C++23 - 2026-01-18) |
+| `<text_encoding>` | N/A | ✅ Compiled | ~0.08s (C++26 - 2026-01-18) |
+| `<barrier>` | N/A | ✅ Compiled | ~0.10s (C++20 - 2026-01-18) |
+| `<stacktrace>` | N/A | ✅ Compiled | ~0.08s (C++23 - 2026-01-18) |
+| `<coroutine>` | N/A | ❌ Not Supported | Coroutines require `-fcoroutines` flag (not supported) |
+
+**Legend:** ✅ Compiled | ❌ Failed/Parse Error | 💥 Crash | ⏱️ Timeout (>30s)
 
 ### C Library Wrappers (Also Working)
 
@@ -85,18 +87,72 @@ cd tests/std
 ./test_std_headers_comprehensive.sh
 ```
 
+## Disabling Logging
+
+Logging can be controlled at runtime and compile-time.
+
+### Runtime Log Level Control
+
+```bash
+# Set global log level
+./x64/Debug/FlashCpp file.cpp --log-level=warning
+
+# Set log level for specific category
+./x64/Debug/FlashCpp file.cpp --log-level=Parser:debug
+
+# Available levels: error (0), warning (1), info (2), debug (3), trace (4)
+# Available categories: General, Parser, Lexer, Templates, Symbols, Types, Codegen, Scope, Mangling, All
+```
+
+### Compile-time Log Level Control
+
+```bash
+# Build with specific log level (0=error, 1=warning, 2=info, 3=debug, 4=trace)
+clang++ -DFLASHCPP_LOG_LEVEL=1 -O3 ...
+```
+
 ## Current Blockers
 
-### 1. Template Instantiation Performance
+### 1. Log Level Bug (FIXED - 2026-01-18)
 
-Most headers timeout due to template instantiation volume, not parsing errors. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
+The `if constexpr (enabled)` blocks in logging macros previously caused hangs when compiled out. Fixed by replacing with preprocessor `#if` checks (commit 6ea920f).
+
+**Result:** `<type_traits>` now compiles successfully in ~6s.
+
+### 2. Qualified Template Aliases in Template Arguments (Primary Blocker for `<concepts>`)
+
+**Issue:** Template aliases qualified with a namespace (e.g., `__detail::__cref<_Lhs>`) are not recognized as templates when used inside template argument lists.
+
+**Error:**
+```
+/usr/include/c++/14/concepts:227:55: error: Expected ';' after concept definition
+        && common_reference_with<__detail::__cref<_Lhs>, __detail::__cref<_Rhs>>
+                                                        ^
+```
+
+**Root cause:** When parsing `common_reference_with<__detail::__cref<_Lhs>, ...>`, the parser reaches `__detail::__cref` and sees the `<` after it. In template argument context, it checks if `__cref` is a known template, but fails to find it because:
+1. It's looking for `__cref` without namespace qualification
+2. Or the template alias lookup doesn't work for qualified identifiers in this context
+
+**Impact:** `<concepts>` cannot be compiled until this is fixed.
+
+### 3. Template Instantiation Performance (Secondary Blocker)
+
+Template-heavy headers that don't include `<concepts>` may still experience slow compilation due to template instantiation volume. However, many headers previously thought to be "timing out" actually have specific parsing errors or crashes (see table above).
+
+**Key metrics (from `<type_traits>` timing):**
+- Preprocessing: ~5s (89%)
+- Parsing: ~0.5s (10%)
+- IR/Codegen: ~0.05s (1%)
+
+**Root cause:** Each template instantiation creates new AST nodes and triggers further dependent instantiations. Standard library metaprogramming uses deeply nested type traits patterns.
 
 **Optimization opportunities:**
 - Improve template cache hit rate (currently ~26%)
+- Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
 - Optimize string operations in template name generation
-- Consider lazy evaluation strategies
 
-### 2. Variable Templates in Type Context (FIXED - 2026-01-14)
+### 3. Variable Templates in Type Context (FIXED - 2026-01-14)
 
 **Issue:** ~~Variable templates used as non-type arguments in class template contexts were causing "No primary template found" errors.~~ **RESOLVED**
 
@@ -367,6 +423,21 @@ The following features have been implemented to support standard headers:
 ## Recent Changes
 
 Changes are listed in reverse chronological order. For detailed implementation notes, see the git commit history.
+
+### 2026-01-18 (Log Level Bug Fix)
+- **BUG FIXED:** Log level bug that caused hangs is now resolved (commit 6ea920f)
+- **Root cause:** `if constexpr (enabled)` blocks in logging macros caused issues when compiled out
+- **Solution:** Replaced with preprocessor `#if FLASHCPP_LOG_LEVEL >= X` checks
+- **All log levels now work:** Release builds with `-DFLASHCPP_LOG_LEVEL=1` compile successfully
+- **Performance:** `<type_traits>` compiles in ~1.1s (release) or ~6.8s (debug)
+
+### 2026-01-18 (Header Verification)
+- **Verified working headers:**
+  - `<limits>` (~0.30s), `<compare>` (~0.10s), `<version>` (~0.09s), `<source_location>` (~0.10s)
+  - `<initializer_list>` (~0.07s), `<new>` (~0.10s), `<typeinfo>` (~0.10s), `<typeindex>` (~0.16s)
+  - `<csetjmp>` (~0.06s), `<csignal>` (~0.18s), `<stdfloat>` (~0.03s)
+  - `<spanstream>` (~0.09s), `<print>` (~0.09s), `<expected>` (~0.09s)
+  - `<text_encoding>` (~0.08s), `<barrier>` (~0.10s), `<stacktrace>` (~0.08s)
 
 ### 2026-01-18 (Afternoon)
 - **`__cpp_impl_coroutine` macro:** ~~Added~~ Disabled predefined macro - coroutines are not supported at this time
