@@ -14,6 +14,11 @@
 // - On Linux/macOS, some functions used (backtrace, fprintf) are not strictly 
 //   async-signal-safe, but are commonly used in crash handlers and work reliably
 
+#include <atomic>
+#include <new>
+
+#include "DiagnosticContext.h"
+
 #ifdef _WIN32
 
 #include <windows.h>
@@ -32,14 +37,56 @@ constexpr int kMaxStackFrames = 64;
 constexpr int kMaxPathLength = 512;
 constexpr int kTimestampBufferSize = 64;
 constexpr int kMaxSymbolBuffer = 8192;  // Buffer for formatted stack frame output
+constexpr int kMaxReasonLength = 256;
 
 // Preallocated static buffers - avoid memory allocation during crash
 static char s_filenameBuffer[kMaxPathLength];
 static char s_timestampBuffer[kTimestampBufferSize];
 static char s_frameBuffer[kMaxSymbolBuffer];  // Buffer for stack frame formatting
+static char s_failureReasonBuffer[kMaxReasonLength];
 
 // Guard to prevent multiple crash reports
 static volatile long s_crashHandled = 0;
+static std::atomic_flag s_oomHandled = ATOMIC_FLAG_INIT;
+
+inline void setFailureReason(const char* reason) {
+	if (reason == nullptr || reason[0] == '\0') {
+		s_failureReasonBuffer[0] = '\0';
+		return;
+	}
+	std::snprintf(s_failureReasonBuffer, kMaxReasonLength, "%s", reason);
+}
+
+inline void writeDiagnosticContext(FILE* file, bool alsoToStderr = false) {
+	auto location = FlashCpp::getDiagnosticLocation();
+	if ((location.file && location.file[0] != '\0') || location.line != 0 || location.column != 0) {
+		const char* file_path = (location.file && location.file[0] != '\0') ? location.file : "<unknown>";
+		fprintf(file, "Source Location: %s:%zu:%zu\n", file_path, location.line, location.column);
+		if (alsoToStderr) {
+			fprintf(stderr, "Source Location: %s:%zu:%zu\n", file_path, location.line, location.column);
+		}
+	}
+	if (s_failureReasonBuffer[0] != '\0') {
+		fprintf(file, "Failure Reason: %s\n", s_failureReasonBuffer);
+		if (alsoToStderr) {
+			fprintf(stderr, "Failure Reason: %s\n", s_failureReasonBuffer);
+		}
+	}
+}
+
+inline void outOfMemoryHandler() {
+	if (s_oomHandled.test_and_set()) {
+		TerminateProcess(GetCurrentProcess(), 1);
+	}
+	setFailureReason("Out of memory (std::bad_alloc)");
+	auto location = FlashCpp::getDiagnosticLocation();
+	if (location.file && location.file[0] != '\0') {
+		fprintf(stderr, "Out of memory while compiling %s:%zu:%zu\n", location.file, location.line, location.column);
+	} else {
+		fprintf(stderr, "Out of memory while compiling (location unknown)\n");
+	}
+	std::abort();
+}
 
 // Get the exception code as a human-readable string
 inline const char* getExceptionCodeString(DWORD code) {
@@ -247,6 +294,8 @@ inline LONG WINAPI unhandledExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
                 operation, reinterpret_cast<void*>(record->ExceptionInformation[1]));
     }
 
+    writeDiagnosticContext(file, true);
+
     // Write stack trace (always output to stderr for easier debugging)
     writeStackTrace(file, exceptionInfo->ContextRecord, true);
 
@@ -339,6 +388,9 @@ inline void install() {
     
     // Install signal handler for abort
     signal(SIGABRT, abortHandler);
+
+    // Install new handler for out-of-memory diagnostics
+    std::set_new_handler(outOfMemoryHandler);
 }
 
 } // namespace CrashHandler
@@ -366,6 +418,7 @@ constexpr int kTimestampBufferSize = 64;
 constexpr int kMaxSymbolLength = 256;
 constexpr int kMaxCommandLength = 640;  // kMaxPathLength + room for addr2line command
 constexpr int kMaxSourceLocationLength = 560;  // Path + ":" + line number
+constexpr int kMaxReasonLength = 256;
 
 // Preallocated static buffers - avoid memory allocation during crash handling
 // This is important for signal safety and handling out-of-memory crashes
@@ -373,6 +426,47 @@ static char s_filenameBuffer[kMaxPathLength];
 static char s_timestampBuffer[kTimestampBufferSize];
 static char s_commandBuffer[kMaxCommandLength];
 static char s_demangledBuffer[kMaxSymbolLength];
+static char s_failureReasonBuffer[kMaxReasonLength];
+static std::atomic_flag s_oomHandled = ATOMIC_FLAG_INIT;
+
+inline void setFailureReason(const char* reason) {
+	if (reason == nullptr || reason[0] == '\0') {
+		s_failureReasonBuffer[0] = '\0';
+		return;
+	}
+	std::snprintf(s_failureReasonBuffer, kMaxReasonLength, "%s", reason);
+}
+
+inline void writeDiagnosticContext(FILE* file, bool alsoToStderr = false) {
+	auto location = FlashCpp::getDiagnosticLocation();
+	if ((location.file && location.file[0] != '\0') || location.line != 0 || location.column != 0) {
+		const char* file_path = (location.file && location.file[0] != '\0') ? location.file : "<unknown>";
+		fprintf(file, "Source Location: %s:%zu:%zu\n", file_path, location.line, location.column);
+		if (alsoToStderr) {
+			fprintf(stderr, "Source Location: %s:%zu:%zu\n", file_path, location.line, location.column);
+		}
+	}
+	if (s_failureReasonBuffer[0] != '\0') {
+		fprintf(file, "Failure Reason: %s\n", s_failureReasonBuffer);
+		if (alsoToStderr) {
+			fprintf(stderr, "Failure Reason: %s\n", s_failureReasonBuffer);
+		}
+	}
+}
+
+inline void outOfMemoryHandler() {
+	if (s_oomHandled.test_and_set()) {
+		_exit(1);
+	}
+	setFailureReason("Out of memory (std::bad_alloc)");
+	auto location = FlashCpp::getDiagnosticLocation();
+	if (location.file && location.file[0] != '\0') {
+		fprintf(stderr, "Out of memory while compiling %s:%zu:%zu\n", location.file, location.line, location.column);
+	} else {
+		fprintf(stderr, "Out of memory while compiling (location unknown)\n");
+	}
+	std::abort();
+}
 
 // Get signal name as a human-readable string
 inline const char* getSignalName(int sig) {
@@ -604,6 +698,8 @@ inline void signalHandler(int sig, siginfo_t* info, void* /*context*/) {
         }
     }
 
+    writeDiagnosticContext(file, true);
+
     // Write stack trace
     fprintf(file, "\n=== Stack Trace ===\n\n");
     
@@ -663,6 +759,9 @@ inline void install() {
     sigaction(SIGFPE, &sa, nullptr);   // Floating point exception
     sigaction(SIGILL, &sa, nullptr);   // Illegal instruction
     sigaction(SIGBUS, &sa, nullptr);   // Bus error
+
+    // Install new handler for out-of-memory diagnostics
+    std::set_new_handler(outOfMemoryHandler);
 }
 
 } // namespace CrashHandler

@@ -277,6 +277,7 @@ int main(int argc, char *argv[]) {
     std::filesystem::path inputFilePath(inputFileArgs.front());
     inputFilePath = std::filesystem::absolute(inputFilePath);
     context.setInputFile(inputFilePath.string());
+    FlashCpp::updateDiagnosticLocation(context.getInputFile().value(), 0, 0);
 
     // If no output file was specified, generate default output filename
     if (context.getOutputFile().empty()) {

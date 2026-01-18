@@ -11,6 +11,7 @@
 #include "TypeTraitEvaluator.h"
 #include "LazyMemberResolver.h"
 #include "InstantiationQueue.h"
+#include "DiagnosticContext.h"
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -35,6 +36,15 @@
 // Maximum number of elements allowed in a parameter pack for fold expressions
 // This prevents infinite loops and excessive memory usage in case of bugs
 static constexpr size_t MAX_PACK_ELEMENTS = 1000;
+
+static void updateDiagnosticLocationFromToken(const Lexer& lexer, const Token& token) {
+	const auto& file_paths = lexer.file_paths();
+	std::string_view file_path = "<unknown>";
+	if (token.file_index() < file_paths.size()) {
+		file_path = file_paths[token.file_index()];
+	}
+	FlashCpp::updateDiagnosticLocation(file_path, token.line(), token.column());
+}
 
 // Define the global symbol table (declared as extern in SymbolTable.h)
 SymbolTable gSymbolTable;
@@ -307,9 +317,12 @@ bool Parser::generate_coff([[maybe_unused]] const std::string& outputFilename) {
 }
 
 Parser::Parser(Lexer& lexer, CompileContext& context)
-    : lexer_(lexer), context_(context), current_token_(lexer_.next_token()) {
-    initialize_native_types();
-    ast_nodes_.reserve(default_ast_tree_size_);
+	: lexer_(lexer), context_(context), current_token_(lexer_.next_token()) {
+	initialize_native_types();
+	ast_nodes_.reserve(default_ast_tree_size_);
+	if (current_token_.has_value()) {
+		updateDiagnosticLocationFromToken(lexer_, *current_token_);
+	}
 }
 
 Parser::ScopedTokenPosition::ScopedTokenPosition(class Parser& parser, const std::source_location location)
@@ -343,7 +356,7 @@ ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
 }
 
 std::optional<Token> Parser::consume_token() {
-    std::optional<Token> token = peek_token();
+	std::optional<Token> token = peek_token();
     
     // Phase 5: Check if we have an injected token (from >> splitting)
     if (injected_token_.has_value()) {
@@ -353,24 +366,30 @@ std::optional<Token> Parser::consume_token() {
         FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from injected='{}'", 
             token.has_value() ? std::string(token->value()) : "N/A",
             std::string(current_token_->value()));
-    } else {
-        // Normal path: get next token from lexer
-        Token next = lexer_.next_token();
+	} else {
+		// Normal path: get next token from lexer
+		Token next = lexer_.next_token();
         FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from lexer='{}'", 
             token.has_value() ? std::string(token->value()) : "N/A",
             std::string(next.value()));
-        current_token_.emplace(next);
-    }
-    return token;
+		current_token_.emplace(next);
+	}
+	if (current_token_.has_value()) {
+		updateDiagnosticLocationFromToken(lexer_, *current_token_);
+	}
+	return token;
 }
 
 std::optional<Token> Parser::peek_token() {
-    if (!current_token_.has_value()) {
-        // If we have an injected token, that should never happen
-        // because we always set current_token_ when injecting
-        current_token_.emplace(lexer_.next_token());
-    }
-    return current_token_;
+	if (!current_token_.has_value()) {
+		// If we have an injected token, that should never happen
+		// because we always set current_token_ when injecting
+		current_token_.emplace(lexer_.next_token());
+		if (current_token_.has_value()) {
+			updateDiagnosticLocationFromToken(lexer_, *current_token_);
+		}
+	}
+	return current_token_;
 }
 
 std::optional<Token> Parser::peek_token(size_t lookahead) {
@@ -469,8 +488,11 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
             static_cast<unsigned long>(handle), saved_tok, current_tok);
     }
     
-    lexer_.restore_token_position(saved_token.lexer_position_);
-    current_token_ = saved_token.current_token_;
+	lexer_.restore_token_position(saved_token.lexer_position_);
+	current_token_ = saved_token.current_token_;
+	if (current_token_.has_value()) {
+		updateDiagnosticLocationFromToken(lexer_, *current_token_);
+	}
     
     // Phase 5: Clear any injected token when restoring position
     // This prevents issues when backtracking after >> splitting
@@ -510,9 +532,12 @@ void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
     }
     
     const SavedToken& saved_token = it->second;
-    lexer_.restore_token_position(saved_token.lexer_position_);
-    current_token_ = saved_token.current_token_;
-    // Don't erase AST nodes - they were intentionally created during re-parsing
+	lexer_.restore_token_position(saved_token.lexer_position_);
+	current_token_ = saved_token.current_token_;
+	if (current_token_.has_value()) {
+		updateDiagnosticLocationFromToken(lexer_, *current_token_);
+	}
+	// Don't erase AST nodes - they were intentionally created during re-parsing
 }
 
 void Parser::discard_saved_token(SaveHandle handle) {
