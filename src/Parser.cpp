@@ -3458,12 +3458,16 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 				member_function_context_stack_.pop_back();
 				return ParseResult::error("Destructor already has definition", func_name_token);
 			}
+			// Note: Destructors have no parameters, so no need to update parameter nodes
 		} else if (ctor_ref) {
 			if (!ctor_ref->set_definition(*body_result.node())) {
 				FLASH_LOG(Parser, Error, "Constructor '", class_name, "::", class_name, "' already has a definition");
 				member_function_context_stack_.pop_back();
 				return ParseResult::error("Constructor already has definition", func_name_token);
 			}
+			// Update parameter nodes to use definition's parameter names
+			// C++ allows declaration and definition to have different parameter names
+			ctor_ref->update_parameter_nodes_from_definition(params.parameters);
 		}
 	}
 	
