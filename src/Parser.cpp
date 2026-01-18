@@ -2683,9 +2683,10 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
 		gSymbolTable.insert("this"sv, this_decl_node);
 		
-		// Add function parameters to symbol table (use the EXISTING function's parameters)
-		// existing_func_ref is already defined earlier after validation
-		for (const ASTNode& param_node : existing_func_ref.parameter_nodes()) {
+		// Add function parameters to symbol table using the DEFINITION's parameter names
+		// (not the declaration's names - C++ allows different names between declaration and definition)
+		// The types have already been validated to match via validate_signature_match()
+		for (const ASTNode& param_node : func_ref.parameter_nodes()) {
 			if (param_node.is<VariableDeclarationNode>()) {
 				const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
 				const DeclarationNode& param_decl = var_decl.declaration();
@@ -2716,6 +2717,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				// func_scope automatically exits scope on return
 				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
 			}
+			// Update parameter nodes to use definition's parameter names
+			// C++ allows declaration and definition to have different parameter names
+			existing_func_ref.update_parameter_nodes_from_definition(func_ref.parameter_nodes());
 			// Deduce auto return types from function body
 			deduce_and_update_auto_return_type(existing_func_ref);
 		}
@@ -3454,12 +3458,16 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 				member_function_context_stack_.pop_back();
 				return ParseResult::error("Destructor already has definition", func_name_token);
 			}
+			// Note: Destructors have no parameters, so no need to update parameter nodes
 		} else if (ctor_ref) {
 			if (!ctor_ref->set_definition(*body_result.node())) {
 				FLASH_LOG(Parser, Error, "Constructor '", class_name, "::", class_name, "' already has a definition");
 				member_function_context_stack_.pop_back();
 				return ParseResult::error("Constructor already has definition", func_name_token);
 			}
+			// Update parameter nodes to use definition's parameter names
+			// C++ allows declaration and definition to have different parameter names
+			ctor_ref->update_parameter_nodes_from_definition(params.parameters);
 		}
 	}
 	

@@ -35,7 +35,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<bit>` | N/A | ⏱️ Timeout | Includes heavy headers |
 | `<atomic>` | N/A | ⏱️ Timeout | Heavy headers |
 | `<new>` | N/A | ✅ Compiled | ~0.07s |
-| `<exception>` | N/A | ❌ Failed | Parameter names not visible during code generation for out-of-line member functions (2026-01-18) |
+| `<exception>` | N/A | ⏱️ Timeout | Template instantiation volume (includes exception_ptr, nested_exception) |
 | `<ratio>` | N/A | ⏱️ Timeout | Times out during template instantiation |
 | `<typeinfo>` | N/A | ✅ Compiled | ~0.71s |
 | `<typeindex>` | N/A | ✅ Compiled | ~0.74s |
@@ -358,6 +358,7 @@ The following features have been implemented to support standard headers:
 - Elaborated type specifiers with qualified names (NEW)
 - Graceful handling of non-standard member sizes in code generation (NEW)
 - Out-of-line operator definitions (`ReturnType ClassName::operator=(...)`) (NEW)
+- Out-of-line member functions with different parameter names between declaration and definition (NEW)
 
 ## Recent Changes
 
@@ -368,8 +369,10 @@ Changes are listed in reverse chronological order. For detailed implementation n
 - **Forward declaration fix:** Fixed `add_struct_type` to return existing TypeInfo if type name is already registered, fixing out-of-line constructors in nested namespaces
 - **Out-of-line constructor parameter scope:** Fixed to use definition's parameter names in member initializer parsing instead of declaration's names
 - **Out-of-line operator definitions:** Added support for patterns like `ReturnType ClassName::operator=(...)`
+- **Out-of-line member function parameter scope:** Fixed to update parameter nodes with definition's parameter names during code generation (2026-01-18)
 - **New headers compiling:** `<stdfloat>`, `<spanstream>`, `<print>`, `<expected>`, `<text_encoding>`, `<barrier>`, `<stacktrace>`
-- **Remaining issue:** `<exception>` header now fails due to parameter scope not being visible during code generation for out-of-line member functions when parameter names differ between declaration and definition
+- **Test case:** `tests/test_out_of_line_param_names_ret42.cpp` - tests parameter name differences between declaration and definition
+- **Impact:** `<exception>` header now progresses past the parameter scope issue (times out due to template instantiation volume)
 
 ### 2026-01-18 (Morning)
 - **Unsupported size handling:** Fixed assertions that crashed on non-standard member sizes (3, 5, 6, 7, 0 bytes)
