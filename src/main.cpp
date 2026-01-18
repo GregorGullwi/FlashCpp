@@ -228,7 +228,8 @@ int main(int argc, char *argv[]) {
 
     if (context.isVerboseMode()) {
         FLASH_LOG_FORMAT(General, Info,
-            "Log config: compile-time level={}, compile-time categories=0x{:X}, default runtime level={}, runtime level={}, categories=0x{:X}",
+            "Log config: compile-time level={}, compile-time categories=0x{:X}, "
+            "default runtime level={}, runtime level={}, categories=0x{:X}",
             FLASHCPP_LOG_LEVEL,
             FLASHCPP_LOG_CATEGORIES,
             FLASHCPP_DEFAULT_RUNTIME_LEVEL,
