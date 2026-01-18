@@ -155,7 +155,7 @@ int main(int argc, char *argv[]) {
             return false;
         }
         return std::equal(lhs.begin(), lhs.end(), rhs.begin(),
-            [](unsigned char left, unsigned char right) {
+            [](char left, char right) {
                 return std::tolower(static_cast<unsigned char>(left)) ==
                     std::tolower(static_cast<unsigned char>(right));
             });
