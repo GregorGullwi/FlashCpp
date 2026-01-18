@@ -37,8 +37,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<new>` | N/A | ✅ Compiled | ~0.07s |
 | `<exception>` | N/A | ⏱️ Timeout | Times out during template instantiation |
 | `<ratio>` | N/A | ⏱️ Timeout | Times out during template instantiation |
-| `<csetjmp>` | N/A | ✅ Compiled | ~0.04s |
-| `<csignal>` | N/A | ⏱️ Timeout | Parsing fixed; times out due to heavy headers (2026-01-15: Fixed function pointer members in anonymous structs) |
+| `<typeinfo>` | N/A | ✅ Compiled | ~0.71s |
+| `<typeindex>` | N/A | ✅ Compiled | ~0.74s |
+| `<csetjmp>` | N/A | ✅ Compiled | ~0.21s |
+| `<csignal>` | N/A | ✅ Compiled | ~2.7s (2026-01-18: Fixed unsupported member size assertions) |
 
 **Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s)
 
@@ -347,10 +349,18 @@ The following features have been implemented to support standard headers:
 - Friend function definitions with inline body (NEW)
 - Out-of-line constructor/destructor definitions (NEW)
 - Elaborated type specifiers with qualified names (NEW)
+- Graceful handling of non-standard member sizes in code generation (NEW)
 
 ## Recent Changes
 
 Changes are listed in reverse chronological order. For detailed implementation notes, see the git commit history.
+
+### 2026-01-18
+- **Unsupported size handling:** Fixed assertions that crashed on non-standard member sizes (3, 5, 6, 7, 0 bytes)
+- **Affected functions:** `emitStoreToMemory`, `handleMemberAccess`, `loadValueFromStack`, `storeValueToStack`, `loadValueFromGlobal`, `storeValueToGlobal`, `handleBinaryOp`
+- **Graceful degradation:** Non-standard sizes now log a warning and skip instead of crashing
+- **Test case:** `test_c_compat_headers.cpp` - tests all 16 C compatibility headers
+- **Impact:** `<csignal>` now compiles successfully (~2.7s), previously crashed on struct members with non-standard padding
 
 ### 2026-01-17
 - **Friend function declarations:** Support for `noexcept`, `const`, `volatile`, `&`, `&&`, `__attribute__` qualifiers
