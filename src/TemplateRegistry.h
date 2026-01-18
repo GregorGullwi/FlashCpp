@@ -1986,12 +1986,11 @@ struct LazyNestedTypeInfo {
 	ASTNode nested_type_declaration;               // The nested struct/class declaration AST node
 	std::vector<ASTNode> parent_template_params;   // Template parameters from parent class
 	std::vector<TemplateTypeArg> parent_template_args; // Concrete template arguments for parent
-	bool is_instantiated = false;                  // True once instantiation has been performed
-	TypeIndex type_index = 0;                      // Type index once instantiated
 };
 
 // Registry for tracking uninstantiated nested types
 // Enables lazy instantiation: nested types are not instantiated until accessed
+// Note: Entries are removed from the registry once instantiated (consistent with other lazy registries)
 // Example:
 //   template<typename T> struct outer { struct inner { T value; }; };
 //   outer<int> o;           // inner is NOT instantiated
@@ -2011,11 +2010,11 @@ public:
 		lazy_nested_types_[key] = info;
 	}
 	
-	// Check if a nested type needs lazy instantiation (registered and not yet instantiated)
+	// Check if a nested type needs lazy instantiation (entry exists in registry)
+	// Note: Once instantiated, the entry is removed from the registry
 	bool needsInstantiation(StringHandle parent_class_name, StringHandle nested_type_name) const {
 		StringHandle key = makeKey(parent_class_name, nested_type_name);
-		auto it = lazy_nested_types_.find(key);
-		return it != lazy_nested_types_.end() && !it->second.is_instantiated;
+		return lazy_nested_types_.find(key) != lazy_nested_types_.end();
 	}
 	
 	// Get lazy nested type info
@@ -2030,36 +2029,19 @@ public:
 		return nullptr;
 	}
 	
-	// Get mutable lazy nested type info for updating instantiation state
-	LazyNestedTypeInfo* getLazyNestedTypeInfoMutable(StringHandle parent_class_name, StringHandle nested_type_name) {
+	// Mark a nested type as instantiated (remove from lazy registry)
+	// Consistent with other lazy registries - entries are removed after instantiation
+	void markInstantiated(StringHandle parent_class_name, StringHandle nested_type_name) {
 		StringHandle key = makeKey(parent_class_name, nested_type_name);
-		auto it = lazy_nested_types_.find(key);
-		if (it != lazy_nested_types_.end()) {
-			return &it->second;
-		}
-		return nullptr;
-	}
-	
-	// Mark a nested type as instantiated and record its type index
-	// Returns true if the nested type was found and marked, false if not registered
-	bool markInstantiated(StringHandle parent_class_name, StringHandle nested_type_name, TypeIndex type_index) {
-		StringHandle key = makeKey(parent_class_name, nested_type_name);
-		auto it = lazy_nested_types_.find(key);
-		if (it != lazy_nested_types_.end()) {
-			it->second.is_instantiated = true;
-			it->second.type_index = type_index;
-			FLASH_LOG(Templates, Debug, "Marked lazy nested type as instantiated: ", key, " (type_index=", type_index, ")");
-			return true;
-		}
-		FLASH_LOG(Templates, Warning, "Attempted to mark unregistered nested type as instantiated: ", key);
-		return false;
+		lazy_nested_types_.erase(key);
+		FLASH_LOG(Templates, Debug, "Marked lazy nested type as instantiated: ", key);
 	}
 	
 	// Get all nested types for a parent class that need instantiation
 	std::vector<const LazyNestedTypeInfo*> getNestedTypesForParent(StringHandle parent_class_name) const {
 		std::vector<const LazyNestedTypeInfo*> result;
 		for (const auto& [key, info] : lazy_nested_types_) {
-			if (info.parent_class_name == parent_class_name && !info.is_instantiated) {
+			if (info.parent_class_name == parent_class_name) {
 				result.push_back(&info);
 			}
 		}
@@ -2071,19 +2053,9 @@ public:
 		lazy_nested_types_.clear();
 	}
 	
-	// Get count of uninstantiated nested types (for diagnostics)
-	size_t getUninstantiatedCount() const {
-		size_t count = 0;
-		for (const auto& [key, info] : lazy_nested_types_) {
-			if (!info.is_instantiated) {
-				count++;
-			}
-		}
-		return count;
-	}
-	
-	// Get total count of registered nested types (for diagnostics)
-	size_t getTotalCount() const {
+	// Get count of pending (uninstantiated) nested types (for diagnostics)
+	// Note: Since entries are removed after instantiation, this is the same as total count
+	size_t getPendingCount() const {
 		return lazy_nested_types_.size();
 	}
 

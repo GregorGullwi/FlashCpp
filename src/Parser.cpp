@@ -38769,15 +38769,10 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	
 	auto& registry = LazyNestedTypeRegistry::getInstance();
 	
-	// Get the lazy nested type info (nullptr if not registered)
+	// Get the lazy nested type info (nullptr if not registered or already instantiated)
 	const LazyNestedTypeInfo* lazy_info = registry.getLazyNestedTypeInfo(parent_class_name, nested_type_name);
 	if (!lazy_info) {
-		return std::nullopt;  // Not registered for lazy instantiation
-	}
-	
-	// Check if already instantiated
-	if (lazy_info->is_instantiated) {
-		return lazy_info->type_index;
+		return std::nullopt;  // Not registered for lazy instantiation (or already instantiated)
 	}
 	
 	FLASH_LOG(Templates, Debug, "Instantiating lazy nested type: ", 
@@ -38799,7 +38794,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	auto existing_type_it = gTypesByName.find(lazy_info->qualified_name);
 	if (existing_type_it != gTypesByName.end()) {
 		TypeIndex existing_index = existing_type_it->second->type_index_;
-		registry.markInstantiated(parent_class_name, nested_type_name, existing_index);
+		registry.markInstantiated(parent_class_name, nested_type_name);
 		return existing_index;
 	}
 	
@@ -38872,8 +38867,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	// Set the struct info on the type
 	nested_type_info.struct_info_ = std::move(nested_struct_info);
 	
-	// Mark as instantiated
-	registry.markInstantiated(parent_class_name, nested_type_name, type_index);
+	// Mark as instantiated (removes from lazy registry)
+	registry.markInstantiated(parent_class_name, nested_type_name);
 	
 	FLASH_LOG(Templates, Debug, "Successfully instantiated lazy nested type: ", 
 	          qualified_name, " (type_index=", type_index, ")");
