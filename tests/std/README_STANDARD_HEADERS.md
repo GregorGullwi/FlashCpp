@@ -30,7 +30,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<map>` | `test_std_map.cpp` | ⚠️ Bug | Needs testing with debug build |
 | `<set>` | `test_std_set.cpp` | ⚠️ Bug | Needs testing with debug build |
 | `<span>` | `test_std_span.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<any>` | `test_std_any.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<any>` | `test_std_any.cpp` | ⚠️ Bug | Needs testing with debug build (2026-01-17: Fixed `_Hash_bytes` overload resolution) |
 | `<ranges>` | `test_std_ranges.cpp` | ⚠️ Bug | Needs testing with debug build |
 | `<iostream>` | `test_std_iostream.cpp` | ⚠️ Bug | Needs testing with debug build |
 | `<chrono>` | `test_std_chrono.cpp` | ⚠️ Bug | Needs testing with debug build |
@@ -163,17 +163,10 @@ clang++ -DFLASHCPP_LOG_LEVEL=3 -O3 ...
 The bug appears to be triggered when `LogConfig::runtimeLevel` is set to a value ≤ Info (2), causing some code path (likely in template instantiation) to enter an infinite loop or unbounded recursion. The exact location needs further investigation.
 
 ### 2. Template Instantiation Performance
-- Template instantiation creates new AST nodes for each instantiation
-- Standard library headers like `<type_traits>` trigger thousands of recursive instantiations
-- Each instantiation allocates memory that is retained for the duration of compilation
-- Memory grows without bound until the system runs out
-
-**Potential solutions (future work):**
-**Note:** Lazy template instantiation for member functions IS already implemented. The memory issue turned out to be caused by a bug triggered by low log levels (see Log Level Bug section above).
-
-### 2. Template Instantiation Performance
 
 For headers that work, performance is acceptable but could be improved. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
+
+**Note:** Lazy template instantiation for member functions IS already implemented. The memory issue turned out to be caused by a bug triggered by low log levels (see Log Level Bug section above).
 
 **Optimization opportunities:**
 - Improve template cache hit rate (currently ~26%)
@@ -462,9 +455,9 @@ Changes are listed in reverse chronological order. For detailed implementation n
 - **Impact:** Many headers previously marked as "OOM" may actually compile - needs re-testing with debug build
 
 ### 2026-01-18 (Header Timeout Investigation)
-- **OOM vs Timeout Investigation:** ~~Discovered that most template-heavy headers crash with `std::bad_alloc`~~ **SUPERSEDED** - this was caused by the log level bug
+- **OOM vs Timeout Investigation:** ~~Discovered that most template-heavy headers crash with `std::bad_alloc` - **SUPERSEDED**: this was caused by the log level bug~~
 - **Testing methodology:** Tested headers with 30s, 60s, 90s, and 120s timeouts
-- **Key finding:** ~~Increasing timeout values does not help~~ **SUPERSEDED** - issue is log level bug, not timeout
+- **Key finding:** ~~Increasing timeout values does not help - **SUPERSEDED**: issue is log level bug, not timeout~~
 - **Updated status:** Results need re-verification with debug build to separate log level bug from actual issues
 - **Verified working headers:** All headers marked as "Compiled" were re-verified with current build:
   - `<limits>` (~0.30s), `<compare>` (~0.10s), `<version>` (~0.09s), `<source_location>` (~0.10s)
