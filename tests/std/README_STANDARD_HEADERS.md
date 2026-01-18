@@ -6,51 +6,51 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Blocker |
 |--------|-----------|--------|---------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.24s |
-| `<type_traits>` | `test_std_type_traits.cpp` | ⏱️ Timeout | Template instantiation volume (>10s) |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.30s |
+| `<type_traits>` | `test_std_type_traits.cpp` | 💾 OOM | Memory exhaustion during template instantiation |
 | `<compare>` | N/A | ✅ Compiled | ~0.10s |
-| `<version>` | N/A | ✅ Compiled | ~0.07s |
-| `<source_location>` | N/A | ✅ Compiled | ~0.06s |
-| `<numbers>` | N/A | ⏱️ Timeout | Template instantiation volume (>10s) |
-| `<initializer_list>` | N/A | ✅ Compiled | ~0.06s |
-| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Heavy template instantiation |
-| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Heavy template instantiation |
-| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Allocators, exceptions |
-| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Variadic templates |
-| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<variant>` | `test_std_variant.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Smart pointers, allocators |
-| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | std::function, type erasure |
-| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template instantiation volume |
-| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Template instantiation (2026-01-17: Fixed `_Hash_bytes` overload resolution) |
-| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Concepts, views |
-| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Virtual inheritance, locales |
-| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Ratio templates |
-| `<bit>` | N/A | ⏱️ Timeout | Includes heavy headers |
-| `<atomic>` | N/A | ⏱️ Timeout | Heavy headers |
-| `<new>` | N/A | ✅ Compiled | ~0.07s |
-| `<exception>` | N/A | ⏱️ Timeout | Template instantiation volume (includes exception_ptr, nested_exception) |
-| `<ratio>` | N/A | ⏱️ Timeout | Times out during template instantiation |
-| `<typeinfo>` | N/A | ✅ Compiled | ~0.71s |
-| `<typeindex>` | N/A | ✅ Compiled | ~0.74s |
-| `<csetjmp>` | N/A | ✅ Compiled | ~0.21s |
-| `<csignal>` | N/A | ✅ Compiled | ~2.7s (2026-01-18: Fixed unsupported member size assertions) |
-| `<stdfloat>` | N/A | ✅ Compiled | ~0.1s (C++23 - 2026-01-18) |
-| `<spanstream>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
-| `<print>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
-| `<expected>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
-| `<text_encoding>` | N/A | ✅ Compiled | ~0.4s (C++26 - 2026-01-18) |
-| `<barrier>` | N/A | ✅ Compiled | ~0.4s (C++20 - 2026-01-18) |
-| `<stacktrace>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
-| `<coroutine>` | N/A | ❌ Not Supported | Coroutines are not supported at this time. The `__cpp_impl_coroutine` feature-test macro is disabled. |
+| `<version>` | N/A | ✅ Compiled | ~0.09s |
+| `<source_location>` | N/A | ✅ Compiled | ~0.10s |
+| `<numbers>` | N/A | ⏱️ Timeout | Template instantiation volume (>60s) |
+| `<initializer_list>` | N/A | ✅ Compiled | ~0.07s |
+| `<concepts>` | `test_std_concepts.cpp` | 💾 OOM | Memory exhaustion during template instantiation |
+| `<utility>` | `test_std_utility.cpp` | 💾 OOM | Memory exhaustion during template instantiation |
+| `<string_view>` | `test_std_string_view.cpp` | 💾 OOM | Memory exhaustion during template instantiation |
+| `<string>` | `test_std_string.cpp` | 💾 OOM | Allocators, exceptions, template memory |
+| `<vector>` | `test_std_vector.cpp` | 💾 OOM | Template instantiation memory |
+| `<array>` | `test_std_array.cpp` | 💾 OOM | Template instantiation memory |
+| `<tuple>` | `test_std_tuple.cpp` | 💾 OOM | Variadic templates memory |
+| `<optional>` | `test_std_optional.cpp` | 💾 OOM | Template instantiation memory |
+| `<variant>` | `test_std_variant.cpp` | 💾 OOM | Template instantiation memory |
+| `<memory>` | `test_std_memory.cpp` | 💾 OOM | Smart pointers, allocators memory |
+| `<functional>` | `test_std_functional.cpp` | 💾 OOM | std::function, type erasure memory |
+| `<algorithm>` | `test_std_algorithm.cpp` | 💾 OOM | Template instantiation memory |
+| `<map>` | `test_std_map.cpp` | 💾 OOM | Template instantiation memory |
+| `<set>` | `test_std_set.cpp` | 💾 OOM | Template instantiation memory |
+| `<span>` | `test_std_span.cpp` | 💾 OOM | Template instantiation memory |
+| `<any>` | `test_std_any.cpp` | 💾 OOM | Template instantiation (2026-01-17: Fixed `_Hash_bytes` overload resolution) |
+| `<ranges>` | `test_std_ranges.cpp` | 💾 OOM | Concepts, views memory |
+| `<iostream>` | `test_std_iostream.cpp` | 💾 OOM | Virtual inheritance, locales |
+| `<chrono>` | `test_std_chrono.cpp` | 💾 OOM | Ratio templates memory |
+| `<bit>` | N/A | 💾 OOM | Includes heavy headers |
+| `<atomic>` | N/A | ⏱️ Timeout | Heavy headers (>90s) |
+| `<new>` | N/A | ✅ Compiled | ~0.10s |
+| `<exception>` | N/A | ⏱️ Timeout | Template instantiation volume (>90s) |
+| `<ratio>` | N/A | ⏱️ Timeout | Times out during template instantiation (>90s) |
+| `<typeinfo>` | N/A | ✅ Compiled | ~0.10s |
+| `<typeindex>` | N/A | ✅ Compiled | ~0.16s |
+| `<csetjmp>` | N/A | ✅ Compiled | ~0.06s |
+| `<csignal>` | N/A | ✅ Compiled | ~0.18s (2026-01-18: Fixed unsupported member size assertions) |
+| `<stdfloat>` | N/A | ✅ Compiled | ~0.03s (C++23 - 2026-01-18) |
+| `<spanstream>` | N/A | ✅ Compiled | ~0.09s (C++23 - 2026-01-18) |
+| `<print>` | N/A | ✅ Compiled | ~0.09s (C++23 - 2026-01-18) |
+| `<expected>` | N/A | ✅ Compiled | ~0.09s (C++23 - 2026-01-18) |
+| `<text_encoding>` | N/A | ✅ Compiled | ~0.08s (C++26 - 2026-01-18) |
+| `<barrier>` | N/A | ✅ Compiled | ~0.10s (C++20 - 2026-01-18) |
+| `<stacktrace>` | N/A | ✅ Compiled | ~0.08s (C++23 - 2026-01-18) |
+| `<coroutine>` | N/A | ❌ Not Supported | Coroutines require `-fcoroutines` flag (not supported) |
 
-**Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s)
+**Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s) | 💾 OOM (std::bad_alloc)
 
 ### C Library Wrappers (Also Working)
 
@@ -85,18 +85,80 @@ cd tests/std
 ./test_std_headers_comprehensive.sh
 ```
 
+## Disabling Logging
+
+Logging can be disabled to reduce overhead during compilation (though it does not significantly affect memory usage):
+
+### Runtime Log Level Control
+
+Use `--log-level` to control log verbosity at runtime:
+
+```bash
+# Set global log level to error only (least verbose)
+./x64/Release/FlashCpp file.cpp --log-level=error
+
+# Set log level for specific category
+./x64/Release/FlashCpp file.cpp --log-level=Parser:error
+
+# Available levels: error (0), warning (1), info (2), debug (3), trace (4)
+# Available categories: General, Parser, Lexer, Templates, Symbols, Types, Codegen, Scope, Mangling, All
+```
+
+### Compile-time Log Level Control
+
+Use `-DFLASHCPP_LOG_LEVEL=N` when building FlashCpp:
+
+```bash
+# Build with only error logging (level 0)
+clang++ -DFLASHCPP_LOG_LEVEL=0 -O3 ...
+
+# Build with up to warning logging (level 1, default for release builds)
+clang++ -DFLASHCPP_LOG_LEVEL=1 -O3 ...
+```
+
+**Note:** Disabling logging does not prevent OOM (out-of-memory) errors during template-heavy header compilation, as the memory consumption is in the template instantiation data structures, not in log output.
+
 ## Current Blockers
 
-### 1. Template Instantiation Performance
+### 1. Memory Exhaustion During Template Instantiation (2026-01-18 Investigation)
 
-Most headers timeout due to template instantiation volume, not parsing errors. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
+**Primary Issue:** Most template-heavy headers (like `<type_traits>`, `<utility>`, `<concepts>`, etc.) crash with `std::bad_alloc` before timing out. This is a memory exhaustion issue, not a performance issue.
+
+**Investigation Findings:**
+- Headers that compile quickly (< 0.3s) have minimal template depth
+- Headers with heavy template metaprogramming consume unbounded memory
+- The crash occurs during template instantiation, specifically when recursive template specializations create deep chains
+- Increasing timeout values (30s, 60s, 120s) does not help - the OOM crash occurs regardless
+- Disabling logging (compile-time or runtime) does not prevent the OOM crash
+
+**Example symptom:**
+```
+terminate called after throwing an instance of 'std::bad_alloc'
+  what():  std::bad_alloc
+```
+
+**Root cause analysis:**
+- Template instantiation creates new AST nodes for each instantiation
+- Standard library headers like `<type_traits>` trigger thousands of recursive instantiations
+- Each instantiation allocates memory that is retained for the duration of compilation
+- Memory grows without bound until the system runs out
+
+**Potential solutions (future work):**
+1. Implement template instantiation memory pooling with better reuse
+2. Add memory limits with graceful degradation
+3. Optimize template cache to reduce redundant instantiations (currently ~26% hit rate)
+4. Implement lazy template instantiation to defer unused instantiations
+
+### 2. Template Instantiation Performance
+
+For headers that don't OOM, performance is still a concern. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
 
 **Optimization opportunities:**
 - Improve template cache hit rate (currently ~26%)
 - Optimize string operations in template name generation
 - Consider lazy evaluation strategies
 
-### 2. Variable Templates in Type Context (FIXED - 2026-01-14)
+### 3. Variable Templates in Type Context (FIXED - 2026-01-14)
 
 **Issue:** ~~Variable templates used as non-type arguments in class template contexts were causing "No primary template found" errors.~~ **RESOLVED**
 
@@ -367,6 +429,20 @@ The following features have been implemented to support standard headers:
 ## Recent Changes
 
 Changes are listed in reverse chronological order. For detailed implementation notes, see the git commit history.
+
+### 2026-01-18 (Header Timeout Investigation)
+- **OOM vs Timeout Investigation:** Discovered that most template-heavy headers crash with `std::bad_alloc` (memory exhaustion) rather than simply timing out
+- **Testing methodology:** Tested headers with 30s, 60s, 90s, and 120s timeouts
+- **Key finding:** Increasing timeout values does not help - OOM occurs regardless
+- **Logging impact:** Disabling logging (both runtime `--log-level=error` and compile-time `-DFLASHCPP_LOG_LEVEL=0`) does not prevent OOM
+- **Updated status:** Changed status from "Timeout" to "OOM" for headers that crash with `std::bad_alloc`
+- **Documentation:** Added section on how to disable logging via command-line and compile-time defines
+- **Verified working headers:** All headers marked as "Compiled" were re-verified with current build:
+  - `<limits>` (~0.30s), `<compare>` (~0.10s), `<version>` (~0.09s), `<source_location>` (~0.10s)
+  - `<initializer_list>` (~0.07s), `<new>` (~0.10s), `<typeinfo>` (~0.10s), `<typeindex>` (~0.16s)
+  - `<csetjmp>` (~0.06s), `<csignal>` (~0.18s), `<stdfloat>` (~0.03s)
+  - `<spanstream>` (~0.09s), `<print>` (~0.09s), `<expected>` (~0.09s)
+  - `<text_encoding>` (~0.08s), `<barrier>` (~0.10s), `<stacktrace>` (~0.08s)
 
 ### 2026-01-18 (Afternoon)
 - **`__cpp_impl_coroutine` macro:** ~~Added~~ Disabled predefined macro - coroutines are not supported at this time
