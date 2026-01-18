@@ -80,6 +80,22 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<cstdalign>` | N/A | C11 alignment specifiers (~0.13s) |
 | `<ciso646>` | N/A | Alternative operator spellings (~0.03s) |
 
+## Known Diagnostic Details
+
+### test_std_string.cpp
+- **Status:** Timeout
+- **Issue:** Gets deep into constexpr evaluation in `<type_traits>`
+- **Last Progress:** Phase 3 ConstExpr: Looking up struct '__strictest' for member '_S_size'
+- **Root Cause:** Points at `__strictest_alignment` in `<type_traits>` (alignof/sizeof recursion) as a hotspot
+- **Impact:** Template instantiation causes excessive constexpr evaluation during alignment calculations
+
+### test_std_vector.cpp
+- **Status:** Parse error (fails quickly, not a timeout)
+- **Location:** `/bits/cpp_type_traits.h:452`
+- **Issue:** `enum class byte : unsigned char;` - parser expects `{` after enum name
+- **Root Cause:** Forward declaration of enum class fails
+- **Impact:** Parser doesn't support forward-declared enum classes without seeing the complete definition
+
 ## Running the Tests
 
 ```bash
