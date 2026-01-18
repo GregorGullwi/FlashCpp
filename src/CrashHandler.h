@@ -88,6 +88,7 @@ inline void outOfMemoryHandler() {
 		fprintf(stderr, "Out of memory while compiling (location unknown)\n");
 	}
 	CONTEXT context = {};
+	context.ContextFlags = CONTEXT_FULL;
 	RtlCaptureContext(&context);
 	writeStackTrace(stderr, &context, false);
 	std::abort();
