@@ -38,14 +38,14 @@ All `test_std_*.cpp` files test their corresponding standard headers. See `STAND
 ## Known Diagnostic Details
 
 ### test_std_string.cpp
-- **Status:** Timeout (was timing out)
+- **Status:** Timeout
 - **Issue:** Gets deep into constexpr evaluation in `<type_traits>`
 - **Last Progress:** Phase 3 ConstExpr: Looking up struct '__strictest' for member '_S_size'
 - **Root Cause:** Points at `__strictest_alignment` in `<type_traits>` (alignof/sizeof recursion) as a hotspot
 - **Impact:** Template instantiation causes excessive constexpr evaluation during alignment calculations
 
 ### test_std_vector.cpp
-- **Status:** Fails quickly (not a timeout)
+- **Status:** Parse error (fails quickly, not a timeout)
 - **Location:** `/bits/cpp_type_traits.h:452`
 - **Issue:** `enum class byte : unsigned char;` - parser expects `{` after enum name
 - **Root Cause:** Forward declaration of enum class fails
