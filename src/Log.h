@@ -208,7 +208,14 @@ constexpr bool isLogEnabled() {
 }
 
 // Convenience macros - zero overhead when disabled at compile time
-#define FLASH_LOG(cat, level, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
+#define FLASH_LOG(cat, level, ...) \
+    do { \
+        if constexpr (::FlashCpp::Logger<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>::enabled) { \
+            if (::FlashCpp::isLogEnabled<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>()) { \
+                ::FlashCpp::Logger<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__); \
+            } \
+        } \
+    } while(0)
 #define FLASH_LOG_ENABLED(cat, level) ::FlashCpp::isLogEnabled<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>()
 
 // std::format version - use when you know all arguments are formattable
