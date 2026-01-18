@@ -4,41 +4,41 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
-⚠️ **Note:** Results below are affected by a log level bug. With debug build and default logging, `<type_traits>` compiles in ~7s. With release build (`-DFLASHCPP_LOG_LEVEL=1`), it hangs due to a bug. See "Disabling Logging" section below.
+✅ **Log Level Bug Fixed (2026-01-18):** The bug that caused release builds to hang is now fixed. All log levels work correctly.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.30s |
-| `<type_traits>` | `test_std_type_traits.cpp` | ⚠️ Bug | ~7s with debug build, hangs with release due to log level bug |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~6s (2026-01-18: Log level bug fixed) |
 | `<compare>` | N/A | ✅ Compiled | ~0.10s |
 | `<version>` | N/A | ✅ Compiled | ~0.09s |
 | `<source_location>` | N/A | ✅ Compiled | ~0.10s |
-| `<numbers>` | N/A | ⏱️ Timeout | Needs testing with debug build |
+| `<numbers>` | N/A | ⏱️ Timeout | Template-heavy header (>30s) |
 | `<initializer_list>` | N/A | ✅ Compiled | ~0.07s |
-| `<concepts>` | `test_std_concepts.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<utility>` | `test_std_utility.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<string_view>` | `test_std_string_view.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<string>` | `test_std_string.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<vector>` | `test_std_vector.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<array>` | `test_std_array.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<tuple>` | `test_std_tuple.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<optional>` | `test_std_optional.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<variant>` | `test_std_variant.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<memory>` | `test_std_memory.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<functional>` | `test_std_functional.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<algorithm>` | `test_std_algorithm.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<map>` | `test_std_map.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<set>` | `test_std_set.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<span>` | `test_std_span.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<any>` | `test_std_any.cpp` | ⚠️ Bug | Needs testing with debug build (2026-01-17: Fixed `_Hash_bytes` overload resolution) |
-| `<ranges>` | `test_std_ranges.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<iostream>` | `test_std_iostream.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<chrono>` | `test_std_chrono.cpp` | ⚠️ Bug | Needs testing with debug build |
-| `<bit>` | N/A | ⚠️ Bug | Needs testing with debug build |
-| `<atomic>` | N/A | ⚠️ Bug | Needs testing with debug build |
+| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Template-heavy header (>60s) |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Template-heavy header (>60s) |
+| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<variant>` | `test_std_variant.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Template-heavy header (2026-01-17: Fixed `_Hash_bytes`) |
+| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Template-heavy header |
+| `<bit>` | N/A | ⏱️ Timeout | Template-heavy header (>30s) |
+| `<atomic>` | N/A | ⏱️ Timeout | Template-heavy header |
 | `<new>` | N/A | ✅ Compiled | ~0.10s |
-| `<exception>` | N/A | ⚠️ Bug | Needs testing with debug build |
-| `<ratio>` | N/A | ⚠️ Bug | Needs testing with debug build |
+| `<exception>` | N/A | ⏱️ Timeout | Template-heavy header |
+| `<ratio>` | N/A | ⏱️ Timeout | Template-heavy header (>30s) |
 | `<typeinfo>` | N/A | ✅ Compiled | ~0.10s |
 | `<typeindex>` | N/A | ✅ Compiled | ~0.16s |
 | `<csetjmp>` | N/A | ✅ Compiled | ~0.06s |
@@ -52,7 +52,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~0.08s (C++23 - 2026-01-18) |
 | `<coroutine>` | N/A | ❌ Not Supported | Coroutines require `-fcoroutines` flag (not supported) |
 
-**Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s) | ⚠️ Bug (blocked by log level bug)
+**Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>30s)
 
 ### C Library Wrappers (Also Working)
 
@@ -117,16 +117,23 @@ clang++ -DFLASHCPP_LOG_LEVEL=1 -O3 ...
 
 The `if constexpr (enabled)` blocks in logging macros previously caused hangs when compiled out. Fixed by replacing with preprocessor `#if` checks (commit 6ea920f).
 
-### 2. Template Instantiation Performance
+**Result:** `<type_traits>` now compiles successfully in ~6s.
 
-For headers that work, performance is acceptable but could be improved. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
+### 2. Template Instantiation Performance (Primary Blocker)
 
-**Note:** Lazy template instantiation for member functions IS already implemented. The memory issue turned out to be caused by a bug triggered by low log levels (see Log Level Bug section above).
+Template-heavy headers like `<concepts>`, `<utility>`, `<numbers>`, `<ratio>`, and `<bit>` timeout (>30-60s) due to the sheer volume of template instantiations. The log level bug is fixed, but these headers trigger recursive template instantiation that exceeds practical compilation time.
+
+**Key metrics (from `<type_traits>` timing):**
+- Preprocessing: ~5s (89%)
+- Parsing: ~0.5s (10%)
+- IR/Codegen: ~0.05s (1%)
+
+**Root cause:** Each template instantiation creates new AST nodes and triggers further dependent instantiations. Standard library metaprogramming uses deeply nested type traits patterns.
 
 **Optimization opportunities:**
 - Improve template cache hit rate (currently ~26%)
+- Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
 - Optimize string operations in template name generation
-- Consider further lazy evaluation strategies
 
 ### 3. Variable Templates in Type Context (FIXED - 2026-01-14)
 
