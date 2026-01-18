@@ -1838,6 +1838,143 @@ private:
 };
 
 // ============================================================================
+// Phase 3: Lazy Type Alias Evaluation Registry
+// ============================================================================
+
+// Information needed for lazy type alias evaluation
+// Allows deferring evaluation of template type aliases until actually accessed
+struct LazyTypeAliasInfo {
+	StringHandle alias_name;                       // Full alias name (e.g., "remove_const_int::type")
+	StringHandle template_name;                    // Original template name (e.g., "remove_const")
+	StringHandle instantiated_class_name;          // Instantiated class name (e.g., "remove_const_int")
+	StringHandle member_name;                      // Member alias name (e.g., "type")
+	ASTNode unevaluated_target;                    // Unevaluated target type expression
+	std::vector<ASTNode> template_params;          // Template parameters from class template
+	std::vector<TemplateTypeArg> template_args;    // Concrete template arguments
+	bool needs_substitution = true;                // True if target contains template parameters
+	bool is_evaluated = false;                     // True once evaluation has been performed
+	// Cached evaluation result (to avoid re-computation)
+	Type evaluated_type = Type::Invalid;
+	TypeIndex evaluated_type_index = 0;
+};
+
+// Registry for tracking unevaluated template type aliases
+// Enables lazy evaluation: aliases are not evaluated until ::type is accessed
+// Particularly beneficial for type_traits where many aliases are defined but only some are used
+class LazyTypeAliasRegistry {
+public:
+	static LazyTypeAliasRegistry& getInstance() {
+		static LazyTypeAliasRegistry instance;
+		return instance;
+	}
+	
+	// Register a type alias for lazy evaluation
+	// Key format: "instantiated_class_name::member_name"
+	void registerLazyTypeAlias(const LazyTypeAliasInfo& info) {
+		StringHandle key = makeKey(info.instantiated_class_name, info.member_name);
+		FLASH_LOG(Templates, Debug, "Registering lazy type alias: ", key);
+		lazy_aliases_[key] = info;
+	}
+	
+	// Check if a type alias needs lazy evaluation
+	bool needsEvaluation(StringHandle instantiated_class_name, StringHandle member_name) const {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		auto it = lazy_aliases_.find(key);
+		return it != lazy_aliases_.end() && !it->second.is_evaluated;
+	}
+	
+	// Check if a type alias is registered (evaluated or not)
+	bool isRegistered(StringHandle instantiated_class_name, StringHandle member_name) const {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		return lazy_aliases_.find(key) != lazy_aliases_.end();
+	}
+	
+	// Get lazy type alias info
+	// Returns a pointer to avoid copying; nullptr if not found
+	const LazyTypeAliasInfo* getLazyTypeAliasInfo(StringHandle instantiated_class_name, StringHandle member_name) const {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		auto it = lazy_aliases_.find(key);
+		if (it != lazy_aliases_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	// Get mutable lazy type alias info for updating evaluation result
+	LazyTypeAliasInfo* getLazyTypeAliasInfoMutable(StringHandle instantiated_class_name, StringHandle member_name) {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		auto it = lazy_aliases_.find(key);
+		if (it != lazy_aliases_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	// Mark a type alias as evaluated and cache the result
+	void markEvaluated(StringHandle instantiated_class_name, StringHandle member_name, 
+	                   Type result_type, TypeIndex result_type_index) {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		auto it = lazy_aliases_.find(key);
+		if (it != lazy_aliases_.end()) {
+			it->second.is_evaluated = true;
+			it->second.evaluated_type = result_type;
+			it->second.evaluated_type_index = result_type_index;
+			FLASH_LOG(Templates, Debug, "Marked lazy type alias as evaluated: ", key);
+		}
+	}
+	
+	// Get cached evaluation result (only valid if is_evaluated is true)
+	std::optional<std::pair<Type, TypeIndex>> getCachedResult(StringHandle instantiated_class_name, 
+	                                                           StringHandle member_name) const {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		auto it = lazy_aliases_.find(key);
+		if (it != lazy_aliases_.end() && it->second.is_evaluated) {
+			return std::make_pair(it->second.evaluated_type, it->second.evaluated_type_index);
+		}
+		return std::nullopt;
+	}
+	
+	// Clear all lazy type aliases (for testing)
+	void clear() {
+		lazy_aliases_.clear();
+	}
+	
+	// Get count of unevaluated type aliases (for diagnostics)
+	size_t getUnevaluatedCount() const {
+		size_t count = 0;
+		for (const auto& [key, info] : lazy_aliases_) {
+			if (!info.is_evaluated) {
+				count++;
+			}
+		}
+		return count;
+	}
+	
+	// Get total count of registered type aliases (for diagnostics)
+	size_t getTotalCount() const {
+		return lazy_aliases_.size();
+	}
+
+private:
+	LazyTypeAliasRegistry() = default;
+	
+	// Helper to generate registry key from class name and member name
+	// Key format: "instantiated_class_name::member_name"
+	static StringHandle makeKey(StringHandle class_name, StringHandle member_name) {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(class_name)
+			.append("::")
+			.append(member_name)
+			.commit();
+		return StringTable::getOrInternStringHandle(key);
+	}
+	
+	// Map from "instantiated_class::type_alias" to lazy evaluation info
+	std::unordered_map<StringHandle, LazyTypeAliasInfo, TransparentStringHash, std::equal_to<>> lazy_aliases_;
+};
+
+// ============================================================================
 // C++20 Concepts Registry (inline with TemplateRegistry since they're related)
 // ============================================================================
 

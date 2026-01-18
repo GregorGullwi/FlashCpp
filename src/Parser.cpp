@@ -38693,6 +38693,60 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 	return true;
 }
 
+// Phase 3: Evaluate a lazy type alias on-demand
+// Returns the evaluated type and type index, or nullopt if not found/failed
+std::optional<std::pair<Type, TypeIndex>> Parser::evaluateLazyTypeAlias(
+	StringHandle instantiated_class_name, StringHandle member_name) {
+	
+	auto& registry = LazyTypeAliasRegistry::getInstance();
+	
+	// Check if this alias is registered for lazy evaluation
+	if (!registry.isRegistered(instantiated_class_name, member_name)) {
+		return std::nullopt;  // Not registered for lazy evaluation
+	}
+	
+	// Check for cached result
+	auto cached = registry.getCachedResult(instantiated_class_name, member_name);
+	if (cached.has_value()) {
+		FLASH_LOG(Templates, Debug, "Using cached type alias result for: ", 
+		          instantiated_class_name, "::", member_name);
+		return cached;
+	}
+	
+	// Get the lazy alias info
+	const LazyTypeAliasInfo* lazy_info = registry.getLazyTypeAliasInfo(instantiated_class_name, member_name);
+	if (!lazy_info) {
+		FLASH_LOG(Templates, Error, "Failed to get lazy type alias info for: ", 
+		          instantiated_class_name, "::", member_name);
+		return std::nullopt;
+	}
+	
+	FLASH_LOG(Templates, Debug, "Evaluating lazy type alias: ", 
+	          instantiated_class_name, "::", member_name);
+	
+	// Evaluate the type alias by substituting template parameters
+	if (!lazy_info->unevaluated_target.is<TypeSpecifierNode>()) {
+		FLASH_LOG(Templates, Error, "Lazy type alias target is not a TypeSpecifierNode: ", 
+		          instantiated_class_name, "::", member_name);
+		return std::nullopt;
+	}
+	
+	const TypeSpecifierNode& target_type = lazy_info->unevaluated_target.as<TypeSpecifierNode>();
+	
+	// Perform template parameter substitution
+	auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+		target_type, lazy_info->template_params, lazy_info->template_args);
+	
+	// Cache the result
+	registry.markEvaluated(instantiated_class_name, member_name, substituted_type, substituted_type_index);
+	
+	FLASH_LOG(Templates, Debug, "Successfully evaluated lazy type alias: ", 
+	          instantiated_class_name, "::", member_name, 
+	          " -> type=", static_cast<int>(substituted_type), ", index=", substituted_type_index);
+	
+	return std::make_pair(substituted_type, substituted_type_index);
+}
+
 // Try to parse an out-of-line template member function definition
 // Pattern: template<typename T> ReturnType ClassName<T>::functionName(...) { ... }
 // Returns true if successfully parsed, false if not an out-of-line definition
