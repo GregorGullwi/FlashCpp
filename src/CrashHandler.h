@@ -74,6 +74,8 @@ inline void writeDiagnosticContext(FILE* file, bool alsoToStderr = false) {
 	}
 }
 
+inline void writeStackTrace(FILE* file, CONTEXT* context, bool alsoToStderr = false);
+
 inline void outOfMemoryHandler() {
 	if (s_oomHandled.test_and_set()) {
 		std::abort();
@@ -85,6 +87,9 @@ inline void outOfMemoryHandler() {
 	} else {
 		fprintf(stderr, "Out of memory while compiling (location unknown)\n");
 	}
+	CONTEXT context = {};
+	RtlCaptureContext(&context);
+	writeStackTrace(stderr, &context, false);
 	std::abort();
 }
 
@@ -454,6 +459,8 @@ inline void writeDiagnosticContext(FILE* file, bool alsoToStderr = false) {
 	}
 }
 
+inline void writeStackFrame(FILE* file, int frameNum, void* addr);
+
 inline void outOfMemoryHandler() {
 	if (s_oomHandled.test_and_set()) {
 		_exit(1);
@@ -464,6 +471,16 @@ inline void outOfMemoryHandler() {
 		fprintf(stderr, "Out of memory while compiling %s:%zu:%zu\n", location.file, location.line, location.column);
 	} else {
 		fprintf(stderr, "Out of memory while compiling (location unknown)\n");
+	}
+	fprintf(stderr, "\n=== Stack Trace ===\n\n");
+	void* stackFrames[kMaxStackFrames];
+	int frameCount = backtrace(stackFrames, kMaxStackFrames);
+	if (frameCount > 0) {
+		for (int i = 0; i < frameCount; ++i) {
+			writeStackFrame(stderr, i, stackFrames[i]);
+		}
+	} else {
+		fprintf(stderr, "No stack frames captured.\n");
 	}
 	std::abort();
 }
