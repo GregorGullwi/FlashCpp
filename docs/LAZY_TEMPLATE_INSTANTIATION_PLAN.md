@@ -57,7 +57,7 @@ public:
     static LazyStaticMemberRegistry& getInstance();
     void registerLazyStaticMember(LazyStaticMemberInfo info);
     bool needsInstantiation(StringHandle class_name, StringHandle member_name) const;
-    std::optional<LazyStaticMemberInfo> getLazyMemberInfo(...);
+    std::optional<LazyStaticMemberInfo> getLazyMemberInfo(StringHandle class_name, StringHandle member_name);
     void markInstantiated(StringHandle class_name, StringHandle member_name);
 };
 ```
