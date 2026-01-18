@@ -1712,6 +1712,129 @@ private:
 };
 
 // ============================================================================
+// Phase 2: Lazy Class Instantiation Registry
+// ============================================================================
+
+// Instantiation phases for three-phase class instantiation
+// Each phase represents a level of completeness of the instantiation
+enum class ClassInstantiationPhase : uint8_t {
+	None = 0,           // Not yet instantiated
+	Minimal = 1,        // Phase A: Type entry created, name registered
+	Layout = 2,         // Phase B: Size/alignment computed (needed for sizeof, alignof, allocations)
+	Full = 3            // Phase C: All members, base classes, and static members instantiated
+};
+
+// Information needed for lazy (phased) class template instantiation
+// Allows deferring complete instantiation until members are actually used
+struct LazyClassInstantiationInfo {
+	StringHandle template_name;                    // Original template name (e.g., "vector")
+	StringHandle instantiated_name;                // Instantiated class name (e.g., "vector_int")
+	std::vector<TemplateTypeArg> template_args;    // Concrete template arguments
+	std::vector<ASTNode> template_params;          // Template parameters from class template
+	ASTNode template_declaration;                  // Reference to primary template declaration
+	ClassInstantiationPhase current_phase = ClassInstantiationPhase::None;
+	bool has_base_classes = false;                 // Does the template have base classes?
+	bool has_static_members = false;               // Does the template have static members?
+	bool has_member_functions = false;             // Does the template have member functions?
+	TypeIndex type_index = 0;                      // Type index once minimal instantiation is done
+};
+
+// Registry for tracking partially instantiated template classes
+// Enables three-phase instantiation:
+// - Phase A (Minimal): Create type entry, register name - triggered by any type name use
+// - Phase B (Layout): Compute size/alignment - triggered by sizeof, alignof, variable declarations
+// - Phase C (Full): Instantiate all members - triggered by member access, method calls
+class LazyClassInstantiationRegistry {
+public:
+	static LazyClassInstantiationRegistry& getInstance() {
+		static LazyClassInstantiationRegistry instance;
+		return instance;
+	}
+	
+	// Register a class for lazy instantiation
+	void registerLazyClass(const LazyClassInstantiationInfo& info) {
+		FLASH_LOG(Templates, Debug, "Registering lazy class: ", info.instantiated_name,
+		          " (template: ", info.template_name, ")");
+		lazy_classes_[info.instantiated_name] = info;
+	}
+	
+	// Check if a class is registered for lazy instantiation
+	bool isRegistered(StringHandle instantiated_name) const {
+		return lazy_classes_.find(instantiated_name) != lazy_classes_.end();
+	}
+	
+	// Get the current instantiation phase of a class
+	ClassInstantiationPhase getCurrentPhase(StringHandle instantiated_name) const {
+		auto it = lazy_classes_.find(instantiated_name);
+		if (it != lazy_classes_.end()) {
+			return it->second.current_phase;
+		}
+		return ClassInstantiationPhase::None;
+	}
+	
+	// Check if a class needs instantiation to the specified phase
+	bool needsInstantiationTo(StringHandle instantiated_name, ClassInstantiationPhase target_phase) const {
+		auto it = lazy_classes_.find(instantiated_name);
+		if (it == lazy_classes_.end()) {
+			return false;  // Not registered for lazy instantiation
+		}
+		return static_cast<uint8_t>(it->second.current_phase) < static_cast<uint8_t>(target_phase);
+	}
+	
+	// Get lazy class info for instantiation
+	// Returns a pointer to avoid copying; nullptr if not found
+	const LazyClassInstantiationInfo* getLazyClassInfo(StringHandle instantiated_name) const {
+		auto it = lazy_classes_.find(instantiated_name);
+		if (it != lazy_classes_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	// Get mutable lazy class info for updating phase
+	LazyClassInstantiationInfo* getLazyClassInfoMutable(StringHandle instantiated_name) {
+		auto it = lazy_classes_.find(instantiated_name);
+		if (it != lazy_classes_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	// Update the instantiation phase of a class
+	void updatePhase(StringHandle instantiated_name, ClassInstantiationPhase new_phase) {
+		auto it = lazy_classes_.find(instantiated_name);
+		if (it != lazy_classes_.end()) {
+			FLASH_LOG(Templates, Debug, "Updating lazy class phase: ", instantiated_name,
+			          " from ", static_cast<int>(it->second.current_phase),
+			          " to ", static_cast<int>(new_phase));
+			it->second.current_phase = new_phase;
+		}
+	}
+	
+	// Mark a class as fully instantiated (remove from lazy registry)
+	void markFullyInstantiated(StringHandle instantiated_name) {
+		lazy_classes_.erase(instantiated_name);
+		FLASH_LOG(Templates, Debug, "Marked lazy class as fully instantiated: ", instantiated_name);
+	}
+	
+	// Clear all lazy classes (for testing)
+	void clear() {
+		lazy_classes_.clear();
+	}
+	
+	// Get count of partially instantiated classes (for diagnostics)
+	size_t getPartiallyInstantiatedCount() const {
+		return lazy_classes_.size();
+	}
+
+private:
+	LazyClassInstantiationRegistry() = default;
+	
+	// Map from instantiated class name to lazy instantiation info
+	std::unordered_map<StringHandle, LazyClassInstantiationInfo, TransparentStringHash, std::equal_to<>> lazy_classes_;
+};
+
+// ============================================================================
 // C++20 Concepts Registry (inline with TemplateRegistry since they're related)
 // ============================================================================
 

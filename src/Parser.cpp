@@ -14900,6 +14900,15 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					return ParseResult::error("Expected ')' after sizeof type", *current_token_);
 				}
 				discard_saved_token(saved_pos);
+				
+				// Phase 2: Ensure the type is instantiated to Layout phase for sizeof
+				// This ensures size/alignment are computed for lazily instantiated classes
+				const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+				if (type_spec.type() == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
+					StringHandle type_name = gTypeInfo[type_spec.type_index()].name();
+					instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Layout);
+				}
+				
 				auto sizeof_expr = emplace_node<ExpressionNode>(SizeofExprNode(*type_result.node(), sizeof_token));
 				return ParseResult::success(sizeof_expr);
 			}
@@ -14951,6 +14960,15 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				return ParseResult::error("Expected ')' after " + std::string(alignof_name) + " type", *current_token_);
 			}
 			discard_saved_token(saved_pos);
+			
+			// Phase 2: Ensure the type is instantiated to Layout phase for alignof
+			// This ensures size/alignment are computed for lazily instantiated classes
+			const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+			if (type_spec.type() == Type::Struct && type_spec.type_index() < gTypeInfo.size()) {
+				StringHandle type_name = gTypeInfo[type_spec.type_index()].name();
+				instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Layout);
+			}
+			
 			auto alignof_expr = emplace_node<ExpressionNode>(AlignofExprNode(*type_result.node(), alignof_token));
 			return ParseResult::success(alignof_expr);
 		}
@@ -38578,6 +38596,94 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	
 	FLASH_LOG(Templates, Debug, "Successfully instantiated lazy static member: ", 
 	          instantiated_class_name, "::", member_name);
+	
+	return true;
+}
+
+// Phase 2: Instantiate a lazy class to the specified phase
+// Returns true if instantiation was performed or already at/past target phase, false on failure
+bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassInstantiationPhase target_phase) {
+	auto& registry = LazyClassInstantiationRegistry::getInstance();
+	
+	// Check if the class is registered for lazy instantiation
+	if (!registry.isRegistered(instantiated_name)) {
+		// Not a lazily instantiated class - might be already fully instantiated or not a template
+		return true;
+	}
+	
+	// Check if already at or past target phase
+	ClassInstantiationPhase current_phase = registry.getCurrentPhase(instantiated_name);
+	if (static_cast<uint8_t>(current_phase) >= static_cast<uint8_t>(target_phase)) {
+		return true;  // Already done
+	}
+	
+	const LazyClassInstantiationInfo* lazy_info = registry.getLazyClassInfo(instantiated_name);
+	if (!lazy_info) {
+		FLASH_LOG(Templates, Error, "Failed to get lazy class info for: ", instantiated_name);
+		return false;
+	}
+	
+	FLASH_LOG(Templates, Debug, "Instantiating lazy class '", instantiated_name, 
+	          "' from phase ", static_cast<int>(current_phase),
+	          " to phase ", static_cast<int>(target_phase));
+	
+	// Phase A -> B transition: Compute size and alignment
+	if (current_phase < ClassInstantiationPhase::Layout && 
+	    target_phase >= ClassInstantiationPhase::Layout) {
+		
+		// Look up the type info
+		auto type_it = gTypesByName.find(instantiated_name);
+		if (type_it == gTypesByName.end()) {
+			FLASH_LOG(Templates, Error, "Type not found in gTypesByName: ", instantiated_name);
+			return false;
+		}
+		
+		// Get the StructTypeInfo and ensure layout is computed
+		// Note: Layout computation happens during try_instantiate_class_template 
+		// when the struct_info is created, so this phase is mostly about
+		// ensuring members have been processed for size computation
+		const TypeInfo* type_info = type_it->second;
+		if (type_info->isStruct()) {
+			const StructTypeInfo* struct_info = type_info->getStructInfo();
+			if (struct_info) {
+				// Layout is already computed during minimal instantiation
+				// Just verify it's valid
+				if (struct_info->total_size == 0 && !struct_info->members.empty()) {
+					FLASH_LOG(Templates, Warning, "Struct has members but zero size: ", instantiated_name);
+				}
+			}
+		}
+		
+		registry.updatePhase(instantiated_name, ClassInstantiationPhase::Layout);
+		current_phase = ClassInstantiationPhase::Layout;
+		
+		FLASH_LOG(Templates, Debug, "Completed Layout phase for: ", instantiated_name);
+	}
+	
+	// Phase B -> C transition: Instantiate all members and base classes
+	if (current_phase < ClassInstantiationPhase::Full && 
+	    target_phase >= ClassInstantiationPhase::Full) {
+		
+		// Force instantiate all static members
+		auto type_it = gTypesByName.find(instantiated_name);
+		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+			const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+			if (struct_info) {
+				// Trigger lazy instantiation of all static members
+				for (const auto& static_member : struct_info->static_members) {
+					if (!static_member.initializer.has_value()) {
+						// May need lazy instantiation
+						instantiateLazyStaticMember(instantiated_name, static_member.name);
+					}
+				}
+			}
+		}
+		
+		// Mark as fully instantiated
+		registry.markFullyInstantiated(instantiated_name);
+		
+		FLASH_LOG(Templates, Debug, "Completed Full phase for: ", instantiated_name);
+	}
 	
 	return true;
 }
