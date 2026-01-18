@@ -150,37 +150,39 @@ int main(int argc, char *argv[]) {
     CommandLineParser argsparser(argc, argv, context);
 
     // Helper functions for parsing log levels and categories
-    auto toLower = [](std::string_view sv) {
-        std::string lower;
-        lower.reserve(sv.size());
-        for (char ch : sv) {
-            lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    auto equalsIgnoreCase = [](std::string_view lhs, std::string_view rhs) {
+        if (lhs.size() != rhs.size()) {
+            return false;
         }
-        return lower;
+        for (size_t i = 0; i < lhs.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
+                std::tolower(static_cast<unsigned char>(rhs[i]))) {
+                return false;
+            }
+        }
+        return true;
     };
 
-    auto parseLevel = [&toLower](std::string_view sv) -> FlashCpp::LogLevel {
-        auto lower = toLower(sv);
-        if (lower == "error" || lower == "0") return FlashCpp::LogLevel::Error;
-        if (lower == "warning" || lower == "1") return FlashCpp::LogLevel::Warning;
-        if (lower == "info" || lower == "2") return FlashCpp::LogLevel::Info;
-        if (lower == "debug" || lower == "3") return FlashCpp::LogLevel::Debug;
-        if (lower == "trace" || lower == "4") return FlashCpp::LogLevel::Trace;
+    auto parseLevel = [&equalsIgnoreCase](std::string_view sv) -> FlashCpp::LogLevel {
+        if (sv == "0" || equalsIgnoreCase(sv, "error")) return FlashCpp::LogLevel::Error;
+        if (sv == "1" || equalsIgnoreCase(sv, "warning")) return FlashCpp::LogLevel::Warning;
+        if (sv == "2" || equalsIgnoreCase(sv, "info")) return FlashCpp::LogLevel::Info;
+        if (sv == "3" || equalsIgnoreCase(sv, "debug")) return FlashCpp::LogLevel::Debug;
+        if (sv == "4" || equalsIgnoreCase(sv, "trace")) return FlashCpp::LogLevel::Trace;
         return FlashCpp::LogLevel::Info; // default
     };
 
-    auto parseCategory = [&toLower](std::string_view sv) -> FlashCpp::LogCategory {
-        auto lower = toLower(sv);
-        if (lower == "general") return FlashCpp::LogCategory::General;
-        if (lower == "parser") return FlashCpp::LogCategory::Parser;
-        if (lower == "lexer") return FlashCpp::LogCategory::Lexer;
-        if (lower == "templates") return FlashCpp::LogCategory::Templates;
-        if (lower == "symbols") return FlashCpp::LogCategory::Symbols;
-        if (lower == "types") return FlashCpp::LogCategory::Types;
-        if (lower == "codegen") return FlashCpp::LogCategory::Codegen;
-        if (lower == "scope") return FlashCpp::LogCategory::Scope;
-        if (lower == "mangling") return FlashCpp::LogCategory::Mangling;
-        if (lower == "all") return FlashCpp::LogCategory::All;
+    auto parseCategory = [&equalsIgnoreCase](std::string_view sv) -> FlashCpp::LogCategory {
+        if (equalsIgnoreCase(sv, "general")) return FlashCpp::LogCategory::General;
+        if (equalsIgnoreCase(sv, "parser")) return FlashCpp::LogCategory::Parser;
+        if (equalsIgnoreCase(sv, "lexer")) return FlashCpp::LogCategory::Lexer;
+        if (equalsIgnoreCase(sv, "templates")) return FlashCpp::LogCategory::Templates;
+        if (equalsIgnoreCase(sv, "symbols")) return FlashCpp::LogCategory::Symbols;
+        if (equalsIgnoreCase(sv, "types")) return FlashCpp::LogCategory::Types;
+        if (equalsIgnoreCase(sv, "codegen")) return FlashCpp::LogCategory::Codegen;
+        if (equalsIgnoreCase(sv, "scope")) return FlashCpp::LogCategory::Scope;
+        if (equalsIgnoreCase(sv, "mangling")) return FlashCpp::LogCategory::Mangling;
+        if (equalsIgnoreCase(sv, "all")) return FlashCpp::LogCategory::All;
         return FlashCpp::LogCategory::General; // default
     };
 
