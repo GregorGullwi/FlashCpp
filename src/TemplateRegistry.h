@@ -1620,6 +1620,112 @@ private:
 // (cannot use global variable due to singleton pattern)
 
 // ============================================================================
+// Lazy Static Member Instantiation Registry
+// ============================================================================
+
+// Information needed to instantiate a template static member on-demand
+struct LazyStaticMemberInfo {
+	StringHandle class_template_name;          // Original template name (e.g., "integral_constant")
+	StringHandle instantiated_class_name;      // Instantiated class name (e.g., "integral_constant_bool_true")
+	StringHandle member_name;                  // Static member name (e.g., "value")
+	Type type;                                 // Member type
+	TypeIndex type_index;                      // Type index for complex types
+	size_t size;                               // Size in bytes
+	size_t alignment;                          // Alignment requirement
+	AccessSpecifier access;                    // Access specifier
+	std::optional<ASTNode> initializer;        // Original initializer (may need substitution)
+	bool is_const;                             // Const qualifier
+	std::vector<ASTNode> template_params;      // Template parameters from class template
+	std::vector<TemplateTypeArg> template_args; // Concrete template arguments
+	bool needs_substitution;                   // True if initializer contains template parameters
+};
+
+// Registry for tracking uninstantiated template static members
+// Allows lazy (on-demand) instantiation for better compilation performance
+// Particularly beneficial for type_traits which have many static constexpr members
+class LazyStaticMemberRegistry {
+public:
+	static LazyStaticMemberRegistry& getInstance() {
+		static LazyStaticMemberRegistry instance;
+		return instance;
+	}
+	
+	// Register a static member for lazy instantiation
+	// Key format: "instantiated_class_name::member_name"
+	void registerLazyStaticMember(LazyStaticMemberInfo info) {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(info.instantiated_class_name)
+			.append("::")
+			.append(info.member_name)
+			.commit();
+		
+		FLASH_LOG(Templates, Debug, "Registering lazy static member: ", key);
+		lazy_static_members_[StringTable::getOrInternStringHandle(key)] = std::move(info);
+	}
+	
+	// Check if a static member needs lazy instantiation
+	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_name) const {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(instantiated_class_name)
+			.append("::")
+			.append(member_name)
+			.commit();
+		
+		auto handle = StringTable::getOrInternStringHandle(key);
+		return lazy_static_members_.find(handle) != lazy_static_members_.end();
+	}
+	
+	// Get lazy static member info for instantiation
+	std::optional<LazyStaticMemberInfo> getLazyStaticMemberInfo(StringHandle instantiated_class_name, StringHandle member_name) {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(instantiated_class_name)
+			.append("::")
+			.append(member_name)
+			.commit();
+		
+		auto handle = StringTable::getOrInternStringHandle(key);
+		auto it = lazy_static_members_.find(handle);
+		if (it != lazy_static_members_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
+	}
+	
+	// Mark a static member as instantiated (remove from lazy registry)
+	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_name) {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(instantiated_class_name)
+			.append("::")
+			.append(member_name)
+			.commit();
+		
+		auto handle = StringTable::getOrInternStringHandle(key);
+		lazy_static_members_.erase(handle);
+		FLASH_LOG(Templates, Debug, "Marked lazy static member as instantiated: ", key);
+	}
+	
+	// Clear all lazy static members (for testing)
+	void clear() {
+		lazy_static_members_.clear();
+	}
+	
+	// Get count of uninstantiated static members (for diagnostics)
+	size_t getUninstantiatedCount() const {
+		return lazy_static_members_.size();
+	}
+
+private:
+	LazyStaticMemberRegistry() = default;
+	
+	// Map from "instantiated_class::static_member" to lazy instantiation info
+	std::unordered_map<StringHandle, LazyStaticMemberInfo, TransparentStringHash, std::equal_to<>> lazy_static_members_;
+};
+
+// ============================================================================
 // C++20 Concepts Registry (inline with TemplateRegistry since they're related)
 // ============================================================================
 

@@ -19353,7 +19353,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (struct_info) {
 						// FIRST check static members (these don't use this->)
 						// Use findStaticMemberRecursive to also search base classes
-						auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(idenfifier_token.value()));
+						
+						// Trigger lazy static member instantiation if needed
+						StringHandle member_name_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
+						instantiateLazyStaticMember(struct_info->name, member_name_handle);
+						
+						auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 						if (static_member) {
 							// Found static member! Create a simple identifier node
 							// Static members are accessed directly, not via this->
@@ -23940,9 +23945,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				if (struct_info) {
+					// Trigger lazy static member instantiation if needed
+					StringHandle member_name_handle = StringTable::getOrInternStringHandle(std::string(member_name));
+					const_cast<Parser*>(this)->instantiateLazyStaticMember(struct_info->name, member_name_handle);
+					
 					// Look for static member
-					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(
-						StringTable::getOrInternStringHandle(std::string(member_name)));
+					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 					if (static_member && owner_struct) {
 						// Found the static member - return its type
 						TypeSpecifierNode member_type(static_member->type, TypeQualifier::None, static_member->size * 8);
@@ -29491,8 +29499,13 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			return std::nullopt;
 		}
 		
-		// Look for the static member with the given name
-		const StructStaticMember* static_member = struct_info->findStaticMember(StringTable::getOrInternStringHandle(member_name));
+		// Trigger lazy static member instantiation if needed
+		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		const_cast<Parser*>(this)->instantiateLazyStaticMember(type_name_handle, member_name_handle);
+		
+		// Look for the static member with the given name (may have just been lazily instantiated)
+		const StructStaticMember* static_member = struct_info->findStaticMember(member_name_handle);
 		if (!static_member) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
 			return std::nullopt;
@@ -29554,8 +29567,13 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			return std::nullopt;
 		}
 		
-		// Look for the static member with the given name
-		const StructStaticMember* static_member = struct_info->findStaticMember(StringTable::getOrInternStringHandle(member_name));
+		// Trigger lazy static member instantiation if needed
+		StringHandle type_name_handle2 = StringTable::getOrInternStringHandle(type_name);
+		StringHandle member_name_handle2 = StringTable::getOrInternStringHandle(member_name);
+		const_cast<Parser*>(this)->instantiateLazyStaticMember(type_name_handle2, member_name_handle2);
+		
+		// Look for the static member with the given name (may have just been lazily instantiated)
+		const StructStaticMember* static_member = struct_info->findStaticMember(member_name_handle2);
 		if (!static_member) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
 			return std::nullopt;
@@ -32862,6 +32880,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Proceed without in_progress tracking
 	}
 	
+	// Determine if we should use lazy instantiation early in the function
+	// This flag controls whether static members and member functions are instantiated eagerly or on-demand
+	// Can be overridden by force_eager parameter (used for explicit instantiation)
+	bool use_lazy_instantiation = context_.isLazyTemplateInstantiationEnabled() && !force_eager;
+	
 	// Helper lambda delegates to extracted member function for non-type template parameter substitution
 	auto substitute_template_param_in_initializer = [this](
 		std::string_view param_name,
@@ -35560,9 +35583,96 @@ if (struct_type_info.getStructInfo()) {
 	// Process static members from StructTypeInfo (preferred source)
 	if (template_struct_info && !template_struct_info->static_members.empty()) {
 		FLASH_LOG(Templates, Debug, "Processing ", template_struct_info->static_members.size(), " static members from primary template StructTypeInfo");
+		
+		// Helper to check if an initializer needs complex substitution
+		// Returns true for fold expressions, sizeof...(pack), template parameter references, etc.
+		auto needs_complex_substitution = [](const std::optional<ASTNode>& initializer) -> bool {
+			if (!initializer.has_value() || !initializer->is<ExpressionNode>()) {
+				return false;
+			}
+			const ExpressionNode& expr = initializer->as<ExpressionNode>();
+			
+			// Check for expression types that require template parameter substitution
+			if (std::holds_alternative<FoldExpressionNode>(expr)) return true;
+			if (std::holds_alternative<SizeofPackNode>(expr)) return true;
+			if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) return true;
+			
+			// Check for static_cast wrapping sizeof...
+			if (std::holds_alternative<StaticCastNode>(expr)) {
+				const StaticCastNode& cast_node = std::get<StaticCastNode>(expr);
+				if (cast_node.expr().is<ExpressionNode>()) {
+					const ExpressionNode& inner = cast_node.expr().as<ExpressionNode>();
+					if (std::holds_alternative<SizeofPackNode>(inner)) return true;
+				}
+			}
+			
+			// Check for BinaryOperatorNode that might contain sizeof...
+			if (std::holds_alternative<BinaryOperatorNode>(expr)) return true;
+			
+			// Check for TernaryOperatorNode (condition might be template param)
+			if (std::holds_alternative<TernaryOperatorNode>(expr)) return true;
+			
+			// Check for IdentifierNode (might be a template parameter)
+			// Note: We'd need context to determine this, so be conservative
+			if (std::holds_alternative<IdentifierNode>(expr)) return true;
+			
+			return false;
+		};
+		
 		for (const auto& static_member : template_struct_info->static_members) {
 			FLASH_LOG(Templates, Debug, "Copying static member: ", StringTable::getStringView(static_member.getName()));
 			
+			// Check if this static member should be lazily instantiated
+			bool member_needs_complex_substitution = needs_complex_substitution(static_member.initializer);
+			
+			if (use_lazy_instantiation && member_needs_complex_substitution) {
+				// Register for lazy instantiation instead of processing now
+				FLASH_LOG(Templates, Debug, "Registering static member '", static_member.getName(), 
+				          "' for lazy instantiation");
+				
+				LazyStaticMemberInfo lazy_info;
+				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
+				lazy_info.instantiated_class_name = instantiated_name;
+				lazy_info.member_name = static_member.getName();
+				lazy_info.type = static_member.type;
+				lazy_info.type_index = static_member.type_index;
+				lazy_info.size = static_member.size;
+				lazy_info.alignment = static_member.alignment;
+				lazy_info.access = static_member.access;
+				lazy_info.initializer = static_member.initializer;
+				lazy_info.is_const = static_member.is_const;
+				lazy_info.template_params = template_params;
+				lazy_info.template_args = template_args_to_use;
+				lazy_info.needs_substitution = true;
+				
+				LazyStaticMemberRegistry::getInstance().registerLazyStaticMember(std::move(lazy_info));
+				
+				// Still add the member to struct_info for name lookup, but without initializer
+				// Type substitution is still done eagerly (for sizeof, alignof, etc.)
+				TypeSpecifierNode original_type_spec(static_member.type, TypeQualifier::None, static_member.size * 8);
+				original_type_spec.set_type_index(static_member.type_index);
+				
+				auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+					original_type_spec, template_params, template_args_to_use);
+				
+				size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+				
+				// Add with nullopt initializer - will be filled in during lazy instantiation
+				struct_info->addStaticMember(
+					static_member.getName(),
+					substituted_type,
+					substituted_type_index,
+					substituted_size,
+					static_member.alignment,
+					static_member.access,
+					std::nullopt,  // Initializer will be computed lazily
+					static_member.is_const
+				);
+				
+				continue;  // Skip the eager processing below
+			}
+			
+			// Eager processing path (when lazy is disabled or not needed)
 			// Check if initializer needs substitution (e.g., fold expressions, template parameters)
 			std::optional<ASTNode> substituted_initializer = static_member.initializer;
 			if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
@@ -36191,10 +36301,7 @@ if (struct_type_info.getStructInfo()) {
 	);
 	StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
 	
-	// Determine if we should use lazy instantiation
-	// Can be overridden by force_eager parameter (used for explicit instantiation)
-	bool use_lazy_instantiation = context_.isLazyTemplateInstantiationEnabled() && !force_eager;
-	
+	// Log lazy instantiation status (already determined earlier in the function)
 	if (use_lazy_instantiation) {
 		FLASH_LOG(Templates, Debug, "Using LAZY instantiation for ", instantiated_name, " - registering ", 
 		          class_decl.member_functions().size(), " member functions for on-demand instantiation");
@@ -38282,6 +38389,195 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	          lazy_info.instantiated_class_name, "::", lazy_info.member_function_name);
 	
 	return new_func_node;
+}
+
+// Instantiate a lazy static member on-demand
+// This is called when a static member is accessed for the first time
+// Returns true if instantiation was performed, false if not needed or failed
+bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name) {
+	// Check if this member needs lazy instantiation
+	if (!LazyStaticMemberRegistry::getInstance().needsInstantiation(instantiated_class_name, member_name)) {
+		return false;  // Not registered for lazy instantiation
+	}
+	
+	FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for static member: ", 
+	          instantiated_class_name, "::", member_name);
+	
+	// Get the lazy member info
+	auto lazy_info_opt = LazyStaticMemberRegistry::getInstance().getLazyStaticMemberInfo(
+		instantiated_class_name, member_name);
+	if (!lazy_info_opt.has_value()) {
+		FLASH_LOG(Templates, Error, "Failed to get lazy static member info for: ", 
+		          instantiated_class_name, "::", member_name);
+		return false;
+	}
+	
+	const LazyStaticMemberInfo& lazy_info = *lazy_info_opt;
+	
+	// Find the struct_info to add the member to
+	auto type_it = gTypesByName.find(instantiated_class_name);
+	if (type_it == gTypesByName.end()) {
+		FLASH_LOG(Templates, Error, "Failed to find struct info for: ", instantiated_class_name);
+		return false;
+	}
+	
+	// Need const_cast because gTypesByName stores const TypeInfo*, but we need to modify StructTypeInfo
+	StructTypeInfo* struct_info = const_cast<StructTypeInfo*>(type_it->second->getStructInfo());
+	if (!struct_info) {
+		FLASH_LOG(Templates, Error, "Type is not a struct: ", instantiated_class_name);
+		return false;
+	}
+	
+	// Perform initializer substitution if needed
+	std::optional<ASTNode> substituted_initializer = lazy_info.initializer;
+	
+	if (lazy_info.needs_substitution && lazy_info.initializer.has_value() && 
+	    lazy_info.initializer->is<ExpressionNode>()) {
+		const ExpressionNode& expr = lazy_info.initializer->as<ExpressionNode>();
+		const std::vector<ASTNode>& template_params = lazy_info.template_params;
+		const std::vector<TemplateTypeArg>& template_args = lazy_info.template_args;
+		
+		// Helper to calculate pack size for substitution
+		auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				if (!template_params[i].is<TemplateParameterNode>()) continue;
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.name() == pack_name && tparam.is_variadic()) {
+					size_t non_variadic_count = 0;
+					for (const auto& param : template_params) {
+						if (param.is<TemplateParameterNode>() && !param.as<TemplateParameterNode>().is_variadic()) {
+							non_variadic_count++;
+						}
+					}
+					return template_args.size() - non_variadic_count;
+				}
+			}
+			return std::nullopt;
+		};
+		
+		// Helper to create a numeric literal from pack size
+		auto make_pack_size_literal = [&](size_t pack_size) -> ASTNode {
+			std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
+			Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
+			return emplace_node<ExpressionNode>(
+				NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), Type::Int, TypeQualifier::None, 32)
+			);
+		};
+		
+		// Handle SizeofPackNode
+		if (std::holds_alternative<SizeofPackNode>(expr)) {
+			const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
+			if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
+				substituted_initializer = make_pack_size_literal(*pack_size);
+			}
+		}
+		// Handle FoldExpressionNode
+		else if (std::holds_alternative<FoldExpressionNode>(expr)) {
+			const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
+			std::string_view pack_name = fold.pack_name();
+			std::string_view op = fold.op();
+			
+			// Find the parameter pack
+			std::optional<size_t> pack_param_idx;
+			for (size_t p = 0; p < template_params.size(); ++p) {
+				if (!template_params[p].is<TemplateParameterNode>()) continue;
+				const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
+				if (tparam.name() == pack_name && tparam.is_variadic()) {
+					pack_param_idx = p;
+					break;
+				}
+			}
+			
+			if (pack_param_idx.has_value()) {
+				// Collect pack values
+				std::vector<int64_t> pack_values;
+				bool all_values_found = true;
+				
+				size_t non_variadic_count = 0;
+				for (const auto& param : template_params) {
+					if (param.is<TemplateParameterNode>() && !param.as<TemplateParameterNode>().is_variadic()) {
+						non_variadic_count++;
+					}
+				}
+				
+				for (size_t i = non_variadic_count; i < template_args.size() && all_values_found; ++i) {
+					if (template_args[i].is_value) {
+						pack_values.push_back(template_args[i].value);
+					} else {
+						all_values_found = false;
+					}
+				}
+				
+				if (all_values_found && !pack_values.empty()) {
+					auto fold_result = ConstExpr::evaluate_fold_expression(op, pack_values);
+					if (fold_result.has_value()) {
+						// Create a bool literal for && and ||, numeric for others
+						if (op == "&&" || op == "||") {
+							Token bool_token(Token::Type::Keyword, *fold_result ? "true" : "false", 0, 0, 0);
+							substituted_initializer = emplace_node<ExpressionNode>(
+								BoolLiteralNode(bool_token, *fold_result != 0)
+							);
+						} else {
+							std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(*fold_result)).commit();
+							Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+							substituted_initializer = emplace_node<ExpressionNode>(
+								NumericLiteralNode(num_token, static_cast<unsigned long long>(*fold_result), Type::Int, TypeQualifier::None, 64)
+							);
+						}
+					}
+				}
+			}
+		}
+		// Handle TemplateParameterReferenceNode
+		else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+			if (auto subst = substitute_nontype_template_param(
+			        tparam_ref.param_name().view(), template_args, template_params)) {
+				substituted_initializer = subst;
+			}
+		}
+		// Handle IdentifierNode that might be a template parameter
+		else if (std::holds_alternative<IdentifierNode>(expr)) {
+			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+			if (auto subst = substitute_nontype_template_param(
+			        id_node.name(), template_args, template_params)) {
+				substituted_initializer = subst;
+			}
+		}
+	}
+	
+	// Perform type substitution
+	TypeSpecifierNode original_type_spec(lazy_info.type, TypeQualifier::None, lazy_info.size * 8);
+	original_type_spec.set_type_index(lazy_info.type_index);
+	
+	auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+		original_type_spec, lazy_info.template_params, lazy_info.template_args);
+	
+	size_t substituted_size = get_type_size_bits(substituted_type) / 8;
+	
+	// Update the existing static member with the computed initializer
+	// (The member was already added during template instantiation with std::nullopt initializer)
+	if (!struct_info->updateStaticMemberInitializer(lazy_info.member_name, substituted_initializer)) {
+		// Member doesn't exist yet - add it (shouldn't normally happen with lazy instantiation)
+		struct_info->addStaticMember(
+			lazy_info.member_name,
+			substituted_type,
+			substituted_type_index,
+			substituted_size,
+			lazy_info.alignment,
+			lazy_info.access,
+			substituted_initializer,
+			lazy_info.is_const
+		);
+	}
+	
+	// Mark as instantiated (remove from lazy registry)
+	LazyStaticMemberRegistry::getInstance().markInstantiated(instantiated_class_name, member_name);
+	
+	FLASH_LOG(Templates, Debug, "Successfully instantiated lazy static member: ", 
+	          instantiated_class_name, "::", member_name);
+	
+	return true;
 }
 
 // Try to parse an out-of-line template member function definition

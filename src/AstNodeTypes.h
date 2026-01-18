@@ -735,6 +735,18 @@ struct StructTypeInfo {
 		static_members.push_back(StructStaticMember(member_name, type, type_index, size, member_alignment, access, initializer, is_const));
 	}
 
+	// Update an existing static member's initializer (used for lazy instantiation)
+	// Returns true if the member was found and updated, false otherwise
+	bool updateStaticMemberInitializer(StringHandle member_name, std::optional<ASTNode> initializer) {
+		for (auto& static_member : static_members) {
+			if (static_member.name == member_name) {
+				static_member.initializer = initializer;
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// Find member recursively through base classes
 	const StructMember* findMemberRecursive(StringHandle member_name) const;
 	
