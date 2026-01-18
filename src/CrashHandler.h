@@ -76,7 +76,7 @@ inline void writeDiagnosticContext(FILE* file, bool alsoToStderr = false) {
 
 inline void outOfMemoryHandler() {
 	if (s_oomHandled.test_and_set()) {
-		TerminateProcess(GetCurrentProcess(), 1);
+		std::abort();
 	}
 	setFailureReason("Out of memory (std::bad_alloc)");
 	auto location = FlashCpp::getDiagnosticLocation();
