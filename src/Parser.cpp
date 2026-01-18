@@ -2500,7 +2500,6 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// Parse the actual function name - this can be an identifier or 'operator' keyword
 		Token function_name_token;
 		[[maybe_unused]] bool is_operator = false;
-		std::string operator_symbol;
 		
 		if (peek_token().has_value() && peek_token()->value() == "operator") {
 			// Out-of-line operator definition: ClassName::operator=(...) etc.
@@ -2514,10 +2513,11 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
 			}
 			
-			// Build the full operator name
-			operator_symbol = "operator";
+			// Build the full operator name using StringBuilder
+			StringBuilder operator_builder;
+			operator_builder.append("operator");
 			std::string_view op = peek_token()->value();
-			operator_symbol += op;
+			operator_builder.append(op);
 			consume_token();
 			
 			// Handle multi-character operators like >>=, <<=, etc.
@@ -2526,15 +2526,15 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				if (next == "=" || next == ">" || next == "<") {
 					// Could be part of >>=, <<=, etc.
 					if (op == ">" && (next == ">" || next == "=")) {
-						operator_symbol += next;
+						operator_builder.append(next);
 						consume_token();
 						op = next;
 					} else if (op == "<" && (next == "<" || next == "=")) {
-						operator_symbol += next;
+						operator_builder.append(next);
 						consume_token();
 						op = next;
 					} else if ((op == ">" || op == "<" || op == "!" || op == "=") && next == "=") {
-						operator_symbol += next;
+						operator_builder.append(next);
 						consume_token();
 						break;
 					} else {
@@ -2546,6 +2546,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			}
 			
 			// Create a token with the full operator name
+			std::string_view operator_symbol = operator_builder.commit();
 			function_name_token = Token(Token::Type::Identifier, operator_symbol, 
 				function_name_token.line(), function_name_token.column(), function_name_token.file_index());
 		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
