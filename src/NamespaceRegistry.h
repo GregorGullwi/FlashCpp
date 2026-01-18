@@ -168,7 +168,7 @@ public:
 		sb.append(StringTable::getStringView(entry.qualified_name));
 		sb.append("::");
 		sb.append(StringTable::getStringView(identifier));
-		return StringTable::createStringHandle(sb);
+		return StringTable::getOrInternStringHandle(sb);
 	}
 
 	StringHandle buildQualifiedIdentifier(std::span<const StringHandle> components) const {
@@ -187,7 +187,7 @@ public:
 			sb.append("::");
 			sb.append(StringTable::getStringView(*it));
 		}
-		return StringTable::createStringHandle(sb);
+		return StringTable::getOrInternStringHandle(sb);
 	}
 
 	StringHandle buildQualifiedIdentifier(std::initializer_list<StringHandle> components) const {

@@ -2497,14 +2497,65 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		// The class name is in decl_node.identifier_token()
 		StringHandle class_name = StringTable::getOrInternStringHandle(decl_node.identifier_token().value());
 		
-		// Parse the actual function name
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
-			FLASH_LOG(Parser, Error, "Expected function name after '::'");
+		// Parse the actual function name - this can be an identifier or 'operator' keyword
+		Token function_name_token;
+		[[maybe_unused]] bool is_operator = false;
+		
+		if (peek_token().has_value() && peek_token()->value() == "operator") {
+			// Out-of-line operator definition: ClassName::operator=(...) etc.
+			is_operator = true;
+			function_name_token = *peek_token();
+			consume_token();  // consume 'operator'
+			
+			// Consume the operator symbol (=, ==, !=, <<, >>, etc.)
+			if (!peek_token().has_value()) {
+				FLASH_LOG(Parser, Error, "Expected operator symbol after 'operator'");
+				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			}
+			
+			// Build the full operator name using StringBuilder
+			StringBuilder operator_builder;
+			operator_builder.append("operator");
+			std::string_view op = peek_token()->value();
+			operator_builder.append(op);
+			consume_token();
+			
+			// Handle multi-character operators like >>=, <<=, etc.
+			while (peek_token().has_value()) {
+				std::string_view next = peek_token()->value();
+				if (next == "=" || next == ">" || next == "<") {
+					// Could be part of >>=, <<=, etc.
+					if (op == ">" && (next == ">" || next == "=")) {
+						operator_builder.append(next);
+						consume_token();
+						op = next;
+					} else if (op == "<" && (next == "<" || next == "=")) {
+						operator_builder.append(next);
+						consume_token();
+						op = next;
+					} else if ((op == ">" || op == "<" || op == "!" || op == "=") && next == "=") {
+						operator_builder.append(next);
+						consume_token();
+						break;
+					} else {
+						break;
+					}
+				} else {
+					break;
+				}
+			}
+			
+			// Create a token with the full operator name
+			std::string_view operator_symbol = operator_builder.commit();
+			function_name_token = Token(Token::Type::Identifier, operator_symbol, 
+				function_name_token.line(), function_name_token.column(), function_name_token.file_index());
+		} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+			function_name_token = *peek_token();
+			consume_token();
+		} else {
+			FLASH_LOG(Parser, Error, "Expected function name or 'operator' after '::'");
 			return ParseResult::error(ParserError::UnexpectedToken, *peek_token());
 		}
-		
-		Token function_name_token = *peek_token();
-		consume_token();
 		
 		// Find the struct in the type registry
 		auto struct_iter = gTypesByName.find(class_name);
@@ -3305,15 +3356,18 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
 	gSymbolTable.insert("this"sv, this_decl_node);
 	
-	// Add function parameters to symbol table 
-	if (ctor_ref) {
-		for (const ASTNode& param_node : ctor_ref->parameter_nodes()) {
-			if (param_node.is<VariableDeclarationNode>()) {
-				const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
-				const DeclarationNode& param_decl = var_decl.declaration();
+	// Add function parameters to symbol table - use the DEFINITION's parameters (params.parameters)
+	// not the declaration's parameters, since they may have different names
+	for (const ASTNode& param_node : params.parameters) {
+		if (param_node.is<VariableDeclarationNode>()) {
+			const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
+			const DeclarationNode& param_decl = var_decl.declaration();
+			if (!param_decl.identifier_token().value().empty()) {
 				gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
-			} else if (param_node.is<DeclarationNode>()) {
-				const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+			}
+		} else if (param_node.is<DeclarationNode>()) {
+			const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+			if (!param_decl.identifier_token().value().empty()) {
 				gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
 			}
 		}
