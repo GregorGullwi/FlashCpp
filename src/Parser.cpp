@@ -28136,7 +28136,20 @@ ParseResult Parser::parse_template_function_declaration_body(
 	if (return_type.type() == Type::Auto && peek_token().has_value() && peek_token()->value() == "->") {
 		consume_token();  // consume '->'
 		
+		// Enter a temporary scope for trailing return type parsing
+		// This allows parameter names to be visible in decltype expressions
+		gSymbolTable.enter_scope(ScopeType::Function);
+		
+		// Register function parameters so they're visible in trailing return type expressions
+		// Example: auto func(T __t, U __u) -> decltype(__t + __u)
+		const auto& params = func_decl.parameter_nodes();
+		register_parameters_in_scope(params);
+		
 		ParseResult trailing_type_specifier = parse_type_specifier();
+		
+		// Exit the temporary scope
+		gSymbolTable.exit_scope();
+		
 		if (trailing_type_specifier.is_error()) {
 			return trailing_type_specifier;
 		}
