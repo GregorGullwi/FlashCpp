@@ -6089,12 +6089,12 @@ private:
 				const auto& arg = call_op.args[i];
 				// Reference arguments (including rvalue references) are passed as pointers,
 				// so they should use integer registers, not floating-point registers
-				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference;
+				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
 				
 				// Check if this is a two-register struct (System V AMD64 ABI: 9-16 byte structs)
 				bool is_two_reg_struct = false;
 				if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-					if (arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference) {
+					if (arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference()) {
 						is_two_reg_struct = true;
 					}
 				}
@@ -6210,12 +6210,12 @@ private:
 				// Determine if this is a floating-point argument
 				// Reference arguments (including rvalue references) are passed as pointers (addresses),
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference;
+				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
 				
 				// Check if this is a two-register struct (System V AMD64 ABI: 9-16 byte structs)
 				bool is_potential_two_reg_struct = false;
 				if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-					if (arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference) {
+					if (arg.type == Type::Struct && arg.size_in_bits > 64 && arg.size_in_bits <= 128 && !arg.is_reference()) {
 						is_potential_two_reg_struct = true;
 					}
 				}
@@ -6260,7 +6260,7 @@ private:
 				if (call_op.is_member_function && i == 0) {
 					// First argument of member function is always "this" pointer
 					should_pass_address = true;
-				} else if (arg.is_reference) {
+				} else if (arg.is_reference()) {
 					// Parameter is explicitly a reference - always pass by address
 					should_pass_address = true;
 				} else if (arg.type == Type::Struct && std::holds_alternative<StringHandle>(arg.value)) {
@@ -6799,7 +6799,7 @@ private:
 				Type paramType = arg.type;
 				int paramSize = arg.size_in_bits;
 				TypeIndex arg_type_index = arg.type_index;
-				bool arg_is_reference = arg.is_reference;  // Check if marked as reference
+				bool arg_is_reference = arg.is_reference();  // Check if marked as reference
 				int arg_pointer_depth = arg.pointer_depth;
 				CVQualifier arg_cv_qualifier = arg.cv_qualifier;
 				
@@ -6825,7 +6825,7 @@ private:
 				
 				// If the argument is marked as a reference, set it as such
 				if (arg_is_reference) {
-					param_type.set_reference(false);  // set_reference(false) creates an lvalue reference
+					param_type.set_reference(arg.is_rvalue_reference());  // set_reference(true) for rvalue, set_reference(false) for lvalue
 				}
 				
 				// For copy/move constructors: if parameter is the same struct type, it should be a reference
@@ -6875,7 +6875,7 @@ private:
 					}
 					// Also preserve the reference flag if it was set
 					if (arg_is_reference) {
-						param_type.set_reference(false);  // set_reference(false) creates an lvalue reference
+						param_type.set_reference(arg.is_rvalue_reference());  // set_reference(true) for rvalue, set_reference(false) for lvalue
 					}
 				}
 				
@@ -6892,7 +6892,7 @@ private:
 			int paramSize = arg.size_in_bits;
 			TypeIndex arg_type_index = arg.type_index;
 			const IrValue& paramValue = arg.value;
-			bool arg_is_reference = arg.is_reference;  // Check if marked as reference
+			bool arg_is_reference = arg.is_reference();  // Check if marked as reference
 
 			// Skip first register (this pointer): RCX on Windows, RDI on Linux
 			X64Register target_reg = getIntParamReg<TWriterClass>(i + 1);
@@ -11942,10 +11942,10 @@ private:
 			}
 		}
 		
-		FLASH_LOG(Codegen, Debug, "Assignment: lhs_offset=", lhs_offset, ", is_reference=", (lhs_ref_it != reference_stack_info_.end()), ", lhs.is_reference=", op.lhs.is_reference);
+		FLASH_LOG(Codegen, Debug, "Assignment: lhs_offset=", lhs_offset, ", is_reference=", (lhs_ref_it != reference_stack_info_.end()), ", lhs.is_reference=", op.lhs.is_reference());
 		
 		// Check if LHS is a reference - either from reference_stack_info_ or from the TypedValue metadata
-		bool lhs_is_reference = (lhs_ref_it != reference_stack_info_.end()) || op.lhs.is_reference;
+		bool lhs_is_reference = (lhs_ref_it != reference_stack_info_.end()) || op.lhs.is_reference();
 		
 		if (lhs_is_reference) {
 			// LHS is a reference variable

@@ -3273,6 +3273,12 @@ private:
 							other_arg.size_in_bits = static_cast<int>(base_type_info.struct_info_ ? base_type_info.struct_info_->total_size * 8 : struct_info->total_size * 8);
 							other_arg.value = StringTable::getOrInternStringHandle("other");  // Parameter value ('other' object)
 							other_arg.type_index = base.type_index;  // Use BASE class type index for proper mangling
+							if (is_copy_constructor) {
+								other_arg.ref_qualifier = ReferenceQualifier::LValueReference;  // Copy ctor takes lvalue reference
+								other_arg.cv_qualifier = CVQualifier::Const;  // Copy ctor takes const reference
+							} else if (is_move_constructor) {
+								other_arg.ref_qualifier = ReferenceQualifier::RValueReference;  // Move ctor takes rvalue reference
+							}
 							ctor_op.arguments.push_back(std::move(other_arg));
 
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
@@ -5092,7 +5098,11 @@ private:
 					init_value.type = type_node.type();
 					init_value.size_in_bits = static_cast<int>(type_node.size_in_bits());
 					init_value.value = exception_temp;
-					init_value.is_reference = type_node.is_reference();
+					if (type_node.is_rvalue_reference()) {
+						init_value.ref_qualifier = ReferenceQualifier::RValueReference;
+					} else if (type_node.is_reference()) {
+						init_value.ref_qualifier = ReferenceQualifier::LValueReference;
+					}
 					decl_op.initializer = init_value;
 					
 					decl_op.is_reference = type_node.is_reference();
@@ -5790,7 +5800,7 @@ private:
 														tv.type = arg_type.type();
 														tv.size_in_bits = 64;  // Pointer size
 														tv.value = addr_var;
-														tv.is_reference = true;  // Mark as reference parameter
+														tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
 														tv.type_index = arg_type.type_index();  // Preserve type_index for struct references
 													}
 												} else {
@@ -6315,7 +6325,7 @@ private:
 												tv.type = arg_type.type();
 												tv.size_in_bits = 64;  // Pointer size
 												tv.value = addr_var;
-												tv.is_reference = true;  // Mark as reference parameter
+												tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
 												tv.type_index = arg_type.type_index();  // Preserve type_index for struct references
 											}
 										} else {
@@ -6334,7 +6344,7 @@ private:
 										if (param_type->is_pointer() && !param_type->pointer_levels().empty()) {
 											// Use CV qualifier from the first pointer level (T* const -> const)
 											// For now, we'll use the main CV qualifier
-											if (!tv.is_reference) {
+											if (!tv.is_reference()) {
 												tv.cv_qualifier = param_type->cv_qualifier();
 											}
 										}
@@ -7038,7 +7048,7 @@ private:
 						arg.size_in_bits = init_size;
 						arg.value = hidden_var_handle;
 						arg.type_index = init_type_index;
-						arg.is_reference = true;  // Pass by const reference
+						arg.ref_qualifier = ReferenceQualifier::LValueReference;  // Pass by const reference
 						call_op.args.push_back(arg);
 						
 						Token binding_token(Token::Type::Identifier, binding_name, 0, 0, 0);
@@ -7049,7 +7059,12 @@ private:
 						binding_var_decl.var_name = binding_id;
 						binding_var_decl.type = element_type;
 						binding_var_decl.size_in_bits = element_size;
-						binding_var_decl.initializer = TypedValue{element_type, element_size, result_temp, false, false, element_type_index};
+						TypedValue init_val3;
+						init_val3.type = element_type;
+						init_val3.size_in_bits = element_size;
+						init_val3.value = result_temp;
+						init_val3.type_index = element_type_index;
+						binding_var_decl.initializer = init_val3;
 						
 						ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 						
@@ -7171,7 +7186,12 @@ private:
 				binding_var_decl.size_in_bits = 64;  // References are pointers (64-bit addresses)
 				binding_var_decl.is_reference = true;  // Mark as reference
 				binding_var_decl.is_rvalue_reference = node.is_rvalue_reference();
-				binding_var_decl.initializer = TypedValue{member.type, 64, member_addr, false, false, member.type_index};
+				TypedValue init_val;
+				init_val.type = member.type;
+				init_val.size_in_bits = 64;
+				init_val.value = member_addr;
+				init_val.type_index = member.type_index;
+				binding_var_decl.initializer = init_val;
 				
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 			} else {
@@ -7198,7 +7218,12 @@ private:
 				binding_var_decl.var_name = binding_id;
 				binding_var_decl.type = member.type;
 				binding_var_decl.size_in_bits = member_size_bits;
-				binding_var_decl.initializer = TypedValue{member.type, static_cast<int>(member_size_bits), member_val, false, false, member.type_index};
+				TypedValue init_val2;
+				init_val2.type = member.type;
+				init_val2.size_in_bits = static_cast<int>(member_size_bits);
+				init_val2.value = member_val;
+				init_val2.type_index = member.type_index;
+				binding_var_decl.initializer = init_val2;
 				
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 			}
@@ -10740,8 +10765,10 @@ private:
 							if (param_types.size() > 0) {
 								// Check if first parameter is a reference
 								const TypeSpecifierNode& param_type = param_types[0];
-								if (param_type.is_reference() || param_type.is_rvalue_reference()) {
-									rhs_arg.is_reference = true;
+								if (param_type.is_rvalue_reference()) {
+									rhs_arg.ref_qualifier = ReferenceQualifier::RValueReference;
+								} else if (param_type.is_reference()) {
+									rhs_arg.ref_qualifier = ReferenceQualifier::LValueReference;
 								}
 							}
 							call_op.args.push_back(rhs_arg);
@@ -10953,7 +10980,9 @@ private:
 				// Check if LHS is a reference variable
 				StringHandle lhs_handle = std::get<StringHandle>(lhsIrOperands[2]);
 				std::string_view lhs_name = StringTable::getStringView(lhs_handle);
-				assign_op.lhs.is_reference = isVariableReference(lhs_name);
+				if (isVariableReference(lhs_name)) {
+					assign_op.lhs.ref_qualifier = ReferenceQualifier::LValueReference;
+				}
 				
 				assign_op.rhs = { lhsType, lhsSize, result_var };
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
@@ -10969,7 +10998,9 @@ private:
 				if (!temp_name.empty() && temp_name[0] == '%') {
 					temp_name = temp_name.substr(1);
 				}
-				assign_op.lhs.is_reference = isVariableReference(temp_name);
+				if (isVariableReference(temp_name)) {
+					assign_op.lhs.ref_qualifier = ReferenceQualifier::LValueReference;
+				}
 				
 				assign_op.rhs = { lhsType, lhsSize, result_var };
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
@@ -10996,7 +11027,9 @@ private:
 				// Check if LHS is a reference variable
 				StringHandle lhs_handle = std::get<StringHandle>(lhsIrOperands[2]);
 				std::string_view lhs_name = StringTable::getStringView(lhs_handle);
-				assign_op.lhs.is_reference = isVariableReference(lhs_name);
+				if (isVariableReference(lhs_name)) {
+					assign_op.lhs.ref_qualifier = ReferenceQualifier::LValueReference;
+				}
 				
 				assign_op.rhs = toTypedValue(rhsIrOperands);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
@@ -11015,7 +11048,9 @@ private:
 				if (!temp_name.empty() && temp_name[0] == '%') {
 					temp_name = temp_name.substr(1);
 				}
-				assign_op.lhs.is_reference = isVariableReference(temp_name);
+				if (isVariableReference(temp_name)) {
+					assign_op.lhs.ref_qualifier = ReferenceQualifier::LValueReference;
+				}
 				
 				assign_op.rhs = toTypedValue(rhsIrOperands);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
@@ -13443,21 +13478,33 @@ private:
 			TypedValue arg = toTypedValue(std::span<const IrOperand>(&irOperands[i], group_size));
 			
 			// Check if this parameter is a reference type
-			bool arg_param_is_ref = false;
+			ReferenceQualifier arg_ref_qual = ReferenceQualifier::None;
 			if (matched_func_decl && arg_idx < param_nodes.size() && param_nodes[arg_idx].is<DeclarationNode>()) {
 				const TypeSpecifierNode& param_type = param_nodes[arg_idx].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-				arg_param_is_ref = param_type.is_reference() || param_type.is_rvalue_reference();
+				if (param_type.is_rvalue_reference()) {
+					arg_ref_qual = ReferenceQualifier::RValueReference;
+				} else if (param_type.is_reference()) {
+					arg_ref_qual = ReferenceQualifier::LValueReference;
+				}
 			} else if (cached_param_list && !cached_param_list->empty()) {
 				if (arg_idx < cached_param_list->size()) {
 					const auto& cached = (*cached_param_list)[arg_idx];
-					arg_param_is_ref = cached.is_reference || cached.is_rvalue_reference;
+					if (cached.is_rvalue_reference) {
+						arg_ref_qual = ReferenceQualifier::RValueReference;
+					} else if (cached.is_reference) {
+						arg_ref_qual = ReferenceQualifier::LValueReference;
+					}
 				} else if (cached_param_list->back().is_parameter_pack) {
 					const auto& cached = cached_param_list->back();
-					arg_param_is_ref = cached.is_reference || cached.is_rvalue_reference;
+					if (cached.is_rvalue_reference) {
+						arg_ref_qual = ReferenceQualifier::RValueReference;
+					} else if (cached.is_reference) {
+						arg_ref_qual = ReferenceQualifier::LValueReference;
+					}
 				}
 			}
-			if (arg_param_is_ref) {
-				arg.is_reference = true;
+			if (arg_ref_qual != ReferenceQualifier::None) {
+				arg.ref_qualifier = arg_ref_qual;
 			}
 			
 			call_op.args.push_back(arg);
@@ -14653,7 +14700,7 @@ private:
 									.type = type_node.type(),
 									.size_in_bits = 64,  // Reference is passed as pointer (64 bits on x64)
 									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
-									.is_reference = true
+									.ref_qualifier = ReferenceQualifier::LValueReference
 								});
 							} else {
 								// Argument is a value - take its address
@@ -14672,7 +14719,7 @@ private:
 									.type = type_node.type(),
 									.size_in_bits = 64,  // Pointer size
 									.value = IrValue(addr_var),
-									.is_reference = true
+									.ref_qualifier = ReferenceQualifier::LValueReference
 								});
 							}
 						} else {
@@ -14699,7 +14746,7 @@ private:
 									.type = type_node.type(),
 									.size_in_bits = 64,  // Reference is passed as pointer (64 bits on x64)
 									.value = IrValue(StringTable::getOrInternStringHandle(identifier.name())),
-									.is_reference = true
+									.ref_qualifier = ReferenceQualifier::LValueReference
 								});
 							} else {
 								// Argument is a value - take its address
@@ -14718,7 +14765,7 @@ private:
 									.type = type_node.type(),
 									.size_in_bits = 64,  // Pointer size
 									.value = IrValue(addr_var),
-									.is_reference = true
+									.ref_qualifier = ReferenceQualifier::LValueReference
 								});
 							}
 						} else {
@@ -14790,7 +14837,7 @@ private:
 								.type = literal_type,
 								.size_in_bits = 64,  // Pointer size
 								.value = IrValue(addr_var),
-								.is_reference = true
+								.ref_qualifier = ReferenceQualifier::LValueReference
 							});
 						} else {
 							// Not a literal (expression result in a TempVar) - take its address
@@ -14812,7 +14859,7 @@ private:
 									.type = expr_type,
 									.size_in_bits = 64,  // Pointer size
 									.value = IrValue(addr_var),
-									.is_reference = true
+									.ref_qualifier = ReferenceQualifier::LValueReference
 								});
 							} else {
 								// Fallback - just pass through
@@ -19678,7 +19725,7 @@ private:
 			store_op.element_type = element_type;
 			store_op.element_size_in_bits = element_size_bits;
 			store_op.array = array_name;
-			store_op.index = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(i), 0};
+			store_op.index = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(i)};
 			store_op.value = toTypedValue(element_operands[i]);
 			store_op.member_offset = 0;  // Not a member array - direct local array
 			store_op.is_pointer_to_array = false;  // This is an actual array, not a pointer
@@ -19740,7 +19787,7 @@ private:
 			store_size.object = init_list_name;  // Use StringHandle
 			store_size.member_name = size_member.getName();
 			store_size.offset = static_cast<int>(size_member.offset);
-			store_size.value = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(array_size), 0};
+			store_size.value = TypedValue{Type::UnsignedLongLong, 64, static_cast<unsigned long long>(array_size)};
 			store_size.struct_type_info = nullptr;
 			store_size.is_reference = false;
 			store_size.is_rvalue_reference = false;
@@ -19882,7 +19929,7 @@ private:
 							tv.type = arg_type.type();
 							tv.size_in_bits = 64;  // Pointer size
 							tv.value = addr_var;
-							tv.is_reference = true;  // Mark as reference parameter
+							tv.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
 							tv.cv_qualifier = param_type->cv_qualifier();  // Set CV qualifier from parameter
 						}
 					} else {
@@ -19901,7 +19948,7 @@ private:
 					if (param_type->is_pointer() && !param_type->pointer_levels().empty()) {
 						// Use CV qualifier from the first pointer level (T* const -> const)
 						// For now, we'll use the main CV qualifier
-						if (!tv.is_reference) {
+						if (!tv.is_reference()) {
 							tv.cv_qualifier = param_type->cv_qualifier();
 						}
 					}
