@@ -35,6 +35,22 @@ This script:
 ### C++ Standard Library Headers (Complex)
 All `test_std_*.cpp` files test their corresponding standard headers. See `STANDARD_HEADERS_MISSING_FEATURES.md` for details on why each fails.
 
+## Known Diagnostic Details
+
+### test_std_string.cpp
+- **Status:** Timeout (was timing out)
+- **Issue:** Gets deep into constexpr evaluation in `<type_traits>`
+- **Last Progress:** Phase 3 ConstExpr: Looking up struct '__strictest' for member '_S_size'
+- **Root Cause:** Points at `__strictest_alignment` in `<type_traits>` (alignof/sizeof recursion) as a hotspot
+- **Impact:** Template instantiation causes excessive constexpr evaluation during alignment calculations
+
+### test_std_vector.cpp
+- **Status:** Fails quickly (not a timeout)
+- **Location:** `/bits/cpp_type_traits.h:452`
+- **Issue:** `enum class byte : unsigned char;` - parser expects `{` after enum name
+- **Root Cause:** Forward declaration of enum class fails
+- **Impact:** Parser doesn't support forward-declared enum classes without seeing the complete definition
+
 ## Documentation
 
 - **`README_STANDARD_HEADERS.md`** - Overview of standard header tests and results
