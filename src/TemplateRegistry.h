@@ -1634,7 +1634,7 @@ struct LazyStaticMemberInfo {
 	size_t alignment;                          // Alignment requirement
 	AccessSpecifier access;                    // Access specifier
 	std::optional<ASTNode> initializer;        // Original initializer (may need substitution)
-	bool is_const;                             // Const qualifier
+	CVQualifier cv_qualifier = CVQualifier::None; // CV qualifiers (const/volatile)
 	std::vector<ASTNode> template_params;      // Template parameters from class template
 	std::vector<TemplateTypeArg> template_args; // Concrete template arguments
 	bool needs_substitution;                   // True if initializer contains template parameters
@@ -1652,10 +1652,10 @@ public:
 	
 	// Register a static member for lazy instantiation
 	// Key format: "instantiated_class_name::member_name"
-	void registerLazyStaticMember(LazyStaticMemberInfo info) {
+	void registerLazyStaticMember(const LazyStaticMemberInfo& info) {
 		StringHandle key = makeKey(info.instantiated_class_name, info.member_name);
 		FLASH_LOG(Templates, Debug, "Registering lazy static member: ", key);
-		lazy_static_members_[key] = std::move(info);
+		lazy_static_members_[key] = info;
 	}
 	
 	// Check if a static member needs lazy instantiation

@@ -35640,12 +35640,12 @@ if (struct_type_info.getStructInfo()) {
 				lazy_info.alignment = static_member.alignment;
 				lazy_info.access = static_member.access;
 				lazy_info.initializer = static_member.initializer;
-				lazy_info.is_const = static_member.is_const;
+				lazy_info.cv_qualifier = static_member.is_const ? CVQualifier::Const : CVQualifier::None;
 				lazy_info.template_params = template_params;
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.needs_substitution = true;
 				
-				LazyStaticMemberRegistry::getInstance().registerLazyStaticMember(std::move(lazy_info));
+				LazyStaticMemberRegistry::getInstance().registerLazyStaticMember(lazy_info);
 				
 				// Still add the member to struct_info for name lookup, but without initializer
 				// Type substitution is still done eagerly (for sizeof, alignof, etc.)
@@ -38559,6 +38559,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	// (The member was already added during template instantiation with std::nullopt initializer)
 	if (!struct_info->updateStaticMemberInitializer(lazy_info.member_name, substituted_initializer)) {
 		// Member doesn't exist yet - add it (shouldn't normally happen with lazy instantiation)
+		// Convert CVQualifier back to bool for addStaticMember (which expects bool is_const)
+		bool is_const = (lazy_info.cv_qualifier == CVQualifier::Const || lazy_info.cv_qualifier == CVQualifier::ConstVolatile);
 		struct_info->addStaticMember(
 			lazy_info.member_name,
 			substituted_type,
@@ -38567,7 +38569,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			lazy_info.alignment,
 			lazy_info.access,
 			substituted_initializer,
-			lazy_info.is_const
+			is_const
 		);
 	}
 	
