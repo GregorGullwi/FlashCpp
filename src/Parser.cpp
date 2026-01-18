@@ -11163,12 +11163,23 @@ ParseResult Parser::parse_type_specifier()
 					bool has_template_args = (peek_token().has_value() && peek_token()->value() == "<");
 					
 					if (has_dependent_args) {
+						// Phase 4: Check for lazy nested type instantiation before lookup
+						// If this is a nested type (e.g., outer_int::inner), try lazy instantiation
+						StringHandle parent_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+						StringHandle nested_name_handle = StringTable::getOrInternStringHandle(member_name);
+						if (LazyNestedTypeRegistry::getInstance().needsInstantiation(parent_name_handle, nested_name_handle)) {
+							auto inst_result = instantiateLazyNestedType(parent_name_handle, nested_name_handle);
+							if (inst_result.has_value()) {
+								FLASH_LOG(Templates, Debug, "Used lazy nested type instantiation for: ", qualified_type_name);
+							}
+						}
+						
 						// Phase 3: Check for lazy type alias evaluation before lookup
 						// If this is a member type alias (e.g., remove_const_int::type), try lazy evaluation
 						StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
-						StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-						if (LazyTypeAliasRegistry::getInstance().needsEvaluation(class_name_handle, member_name_handle)) {
-							auto eval_result = evaluateLazyTypeAlias(class_name_handle, member_name_handle);
+						StringHandle member_name_handle_alias = StringTable::getOrInternStringHandle(member_name);
+						if (LazyTypeAliasRegistry::getInstance().needsEvaluation(class_name_handle, member_name_handle_alias)) {
+							auto eval_result = evaluateLazyTypeAlias(class_name_handle, member_name_handle_alias);
 							if (eval_result.has_value()) {
 								FLASH_LOG(Templates, Debug, "Used lazy type alias evaluation for: ", qualified_type_name);
 							}
@@ -38749,6 +38760,125 @@ std::optional<std::pair<Type, TypeIndex>> Parser::evaluateLazyTypeAlias(
 	          " -> type=", static_cast<int>(substituted_type), ", index=", substituted_type_index);
 	
 	return std::make_pair(substituted_type, substituted_type_index);
+}
+
+// Phase 4: Instantiate a lazy nested type on-demand
+// Returns the type index of the instantiated nested type, or nullopt if not found/failed
+std::optional<TypeIndex> Parser::instantiateLazyNestedType(
+	StringHandle parent_class_name, StringHandle nested_type_name) {
+	
+	auto& registry = LazyNestedTypeRegistry::getInstance();
+	
+	// Get the lazy nested type info (nullptr if not registered)
+	const LazyNestedTypeInfo* lazy_info = registry.getLazyNestedTypeInfo(parent_class_name, nested_type_name);
+	if (!lazy_info) {
+		return std::nullopt;  // Not registered for lazy instantiation
+	}
+	
+	// Check if already instantiated
+	if (lazy_info->is_instantiated) {
+		return lazy_info->type_index;
+	}
+	
+	FLASH_LOG(Templates, Debug, "Instantiating lazy nested type: ", 
+	          parent_class_name, "::", nested_type_name);
+	
+	// Get the nested type declaration
+	if (!lazy_info->nested_type_declaration.is<StructDeclarationNode>()) {
+		FLASH_LOG(Templates, Error, "Lazy nested type declaration is not a StructDeclarationNode: ", 
+		          parent_class_name, "::", nested_type_name);
+		return std::nullopt;
+	}
+	
+	const StructDeclarationNode& nested_struct = lazy_info->nested_type_declaration.as<StructDeclarationNode>();
+	
+	// Create the qualified name for the nested type
+	std::string_view qualified_name = StringTable::getStringView(lazy_info->qualified_name);
+	
+	// Check if type already exists (may have been instantiated through another path)
+	auto existing_type_it = gTypesByName.find(lazy_info->qualified_name);
+	if (existing_type_it != gTypesByName.end()) {
+		TypeIndex existing_index = existing_type_it->second->type_index_;
+		registry.markInstantiated(parent_class_name, nested_type_name, existing_index);
+		return existing_index;
+	}
+	
+	// Create a new struct type for the nested class
+	TypeInfo& nested_type_info = add_struct_type(lazy_info->qualified_name);
+	TypeIndex type_index = nested_type_info.type_index_;
+	
+	// Create StructTypeInfo for the nested type
+	auto nested_struct_info = std::make_unique<StructTypeInfo>(lazy_info->qualified_name, nested_struct.default_access());
+	
+	// Process members with template parameter substitution
+	for (const auto& member_decl : nested_struct.members()) {
+		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
+		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+		
+		// Substitute template parameters using parent's template args
+		auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+			type_spec, lazy_info->parent_template_params, lazy_info->parent_template_args);
+		
+		// Get size for the member
+		size_t member_size = 0;
+		if (substituted_type_index < gTypeInfo.size()) {
+			const TypeInfo& member_type_info = gTypeInfo[substituted_type_index];
+			if (member_type_info.getStructInfo()) {
+				member_size = member_type_info.getStructInfo()->total_size;
+			} else {
+				member_size = get_type_size_bits(substituted_type) / 8;
+			}
+		} else {
+			member_size = get_type_size_bits(substituted_type) / 8;
+		}
+		
+		// Get alignment for the member
+		size_t member_alignment = member_size > 0 ? member_size : 1;
+		if (substituted_type_index < gTypeInfo.size()) {
+			const TypeInfo& member_type_info = gTypeInfo[substituted_type_index];
+			if (member_type_info.getStructInfo()) {
+				member_alignment = member_type_info.getStructInfo()->alignment;
+			}
+		}
+		
+		// Get the name from the identifier token
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
+		
+		// Check if the type is a reference type
+		bool is_reference = type_spec.is_reference() || type_spec.is_lvalue_reference();
+		bool is_rvalue_reference = type_spec.is_reference() && !type_spec.is_lvalue_reference();
+		size_t referenced_size_bits = member_size * 8;
+		
+		// Add member to nested struct info
+		nested_struct_info->addMember(
+			member_name_handle,
+			substituted_type,
+			substituted_type_index,
+			member_size,
+			member_alignment,
+			member_decl.access,
+			std::nullopt,  // No default initializer for now
+			is_reference,
+			is_rvalue_reference,
+			referenced_size_bits,
+			false,  // is_array
+			{}      // array_dimensions
+		);
+	}
+	
+	// Finalize layout
+	nested_struct_info->finalize();
+	
+	// Set the struct info on the type
+	nested_type_info.struct_info_ = std::move(nested_struct_info);
+	
+	// Mark as instantiated
+	registry.markInstantiated(parent_class_name, nested_type_name, type_index);
+	
+	FLASH_LOG(Templates, Debug, "Successfully instantiated lazy nested type: ", 
+	          qualified_name, " (type_index=", type_index, ")");
+	
+	return type_index;
 }
 
 // Try to parse an out-of-line template member function definition

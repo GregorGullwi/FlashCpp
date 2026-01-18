@@ -1974,6 +1974,139 @@ private:
 };
 
 // ============================================================================
+// Phase 4: Lazy Nested Type Instantiation Registry
+// ============================================================================
+
+// Information needed for lazy nested type instantiation
+// Allows deferring instantiation of nested types (inner classes/structs) until actually accessed
+struct LazyNestedTypeInfo {
+	StringHandle parent_class_name;                // Parent instantiated class name (e.g., "outer_int")
+	StringHandle nested_type_name;                 // Nested type name (e.g., "inner")
+	StringHandle qualified_name;                   // Fully qualified name (e.g., "outer_int::inner")
+	ASTNode nested_type_declaration;               // The nested struct/class declaration AST node
+	std::vector<ASTNode> parent_template_params;   // Template parameters from parent class
+	std::vector<TemplateTypeArg> parent_template_args; // Concrete template arguments for parent
+	bool is_instantiated = false;                  // True once instantiation has been performed
+	TypeIndex type_index = 0;                      // Type index once instantiated
+};
+
+// Registry for tracking uninstantiated nested types
+// Enables lazy instantiation: nested types are not instantiated until accessed
+// Example:
+//   template<typename T> struct outer { struct inner { T value; }; };
+//   outer<int> o;           // inner is NOT instantiated
+//   outer<int>::inner i;    // NOW inner is instantiated
+class LazyNestedTypeRegistry {
+public:
+	static LazyNestedTypeRegistry& getInstance() {
+		static LazyNestedTypeRegistry instance;
+		return instance;
+	}
+	
+	// Register a nested type for lazy instantiation
+	// Key format: "parent_class_name::nested_type_name"
+	void registerLazyNestedType(const LazyNestedTypeInfo& info) {
+		StringHandle key = makeKey(info.parent_class_name, info.nested_type_name);
+		FLASH_LOG(Templates, Debug, "Registering lazy nested type: ", key);
+		lazy_nested_types_[key] = info;
+	}
+	
+	// Check if a nested type needs lazy instantiation (registered and not yet instantiated)
+	bool needsInstantiation(StringHandle parent_class_name, StringHandle nested_type_name) const {
+		StringHandle key = makeKey(parent_class_name, nested_type_name);
+		auto it = lazy_nested_types_.find(key);
+		return it != lazy_nested_types_.end() && !it->second.is_instantiated;
+	}
+	
+	// Get lazy nested type info
+	// Returns a pointer to avoid copying; nullptr if not found
+	// Use this instead of a separate isRegistered() method
+	const LazyNestedTypeInfo* getLazyNestedTypeInfo(StringHandle parent_class_name, StringHandle nested_type_name) const {
+		StringHandle key = makeKey(parent_class_name, nested_type_name);
+		auto it = lazy_nested_types_.find(key);
+		if (it != lazy_nested_types_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	// Get mutable lazy nested type info for updating instantiation state
+	LazyNestedTypeInfo* getLazyNestedTypeInfoMutable(StringHandle parent_class_name, StringHandle nested_type_name) {
+		StringHandle key = makeKey(parent_class_name, nested_type_name);
+		auto it = lazy_nested_types_.find(key);
+		if (it != lazy_nested_types_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	// Mark a nested type as instantiated and record its type index
+	// Returns true if the nested type was found and marked, false if not registered
+	bool markInstantiated(StringHandle parent_class_name, StringHandle nested_type_name, TypeIndex type_index) {
+		StringHandle key = makeKey(parent_class_name, nested_type_name);
+		auto it = lazy_nested_types_.find(key);
+		if (it != lazy_nested_types_.end()) {
+			it->second.is_instantiated = true;
+			it->second.type_index = type_index;
+			FLASH_LOG(Templates, Debug, "Marked lazy nested type as instantiated: ", key, " (type_index=", type_index, ")");
+			return true;
+		}
+		FLASH_LOG(Templates, Warning, "Attempted to mark unregistered nested type as instantiated: ", key);
+		return false;
+	}
+	
+	// Get all nested types for a parent class that need instantiation
+	std::vector<const LazyNestedTypeInfo*> getNestedTypesForParent(StringHandle parent_class_name) const {
+		std::vector<const LazyNestedTypeInfo*> result;
+		for (const auto& [key, info] : lazy_nested_types_) {
+			if (info.parent_class_name == parent_class_name && !info.is_instantiated) {
+				result.push_back(&info);
+			}
+		}
+		return result;
+	}
+	
+	// Clear all lazy nested types (for testing)
+	void clear() {
+		lazy_nested_types_.clear();
+	}
+	
+	// Get count of uninstantiated nested types (for diagnostics)
+	size_t getUninstantiatedCount() const {
+		size_t count = 0;
+		for (const auto& [key, info] : lazy_nested_types_) {
+			if (!info.is_instantiated) {
+				count++;
+			}
+		}
+		return count;
+	}
+	
+	// Get total count of registered nested types (for diagnostics)
+	size_t getTotalCount() const {
+		return lazy_nested_types_.size();
+	}
+
+private:
+	LazyNestedTypeRegistry() = default;
+	
+	// Helper to generate registry key from parent class name and nested type name
+	// Key format: "parent_class_name::nested_type_name"
+	static StringHandle makeKey(StringHandle parent_name, StringHandle nested_name) {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(parent_name)
+			.append("::")
+			.append(nested_name)
+			.commit();
+		return StringTable::getOrInternStringHandle(key);
+	}
+	
+	// Map from "parent_class::nested_type" to lazy instantiation info
+	std::unordered_map<StringHandle, LazyNestedTypeInfo, TransparentStringHash, std::equal_to<>> lazy_nested_types_;
+};
+
+// ============================================================================
 // C++20 Concepts Registry (inline with TemplateRegistry since they're related)
 // ============================================================================
 
