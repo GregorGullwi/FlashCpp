@@ -154,13 +154,10 @@ int main(int argc, char *argv[]) {
         if (lhs.size() != rhs.size()) {
             return false;
         }
-        for (size_t i = 0; i < lhs.size(); ++i) {
-            if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
-                std::tolower(static_cast<unsigned char>(rhs[i]))) {
-                return false;
-            }
-        }
-        return true;
+        return std::equal(lhs.begin(), lhs.end(), rhs.begin(),
+            [](unsigned char left, unsigned char right) {
+                return std::tolower(left) == std::tolower(right);
+            });
     };
 
     auto parseLevel = [&equalsIgnoreCase](std::string_view sv) -> FlashCpp::LogLevel {
