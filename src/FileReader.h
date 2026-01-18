@@ -2131,6 +2131,7 @@ private:
 		defines_["__cpp_noexcept_function_type"] = DefineDirective{ "201510L", {} };  // C++17 noexcept in type
 		defines_["__cpp_concepts"] = DefineDirective{ "202002L", {} };  // C++20 concepts
 		defines_["__cpp_aggregate_bases"] = DefineDirective{ "201603L", {} };  // C++17 aggregate base classes
+		defines_["__cpp_impl_coroutine"] = DefineDirective{ "201902L", {} };  // C++20 coroutine support
 
 		// Note: __has_builtin is NOT defined as a macro here
 		// It is handled specially in expandMacrosForConditional and evaluate_expression

@@ -4141,6 +4141,35 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		type_spec.set_reference(true);  // true = rvalue reference
 	}
 	
+	// Check for pointer-to-member type syntax: typedef Type Class::* alias;
+	// This is used in <type_traits> for result_of patterns
+	// Pattern: typedef _Res _Class::* _MemPtr;
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+		// Look ahead to see if this is Class::* pattern
+		SaveHandle saved_pos = save_token_position();
+		Token class_token = *peek_token();
+		consume_token(); // consume potential class name
+		
+		if (peek_token().has_value() && peek_token()->value() == "::") {
+			consume_token(); // consume '::'
+			if (peek_token().has_value() && peek_token()->value() == "*") {
+				consume_token(); // consume '*'
+				// This is a pointer-to-member type: Type Class::*
+				// Mark the type as a pointer-to-member
+				type_spec.add_pointer_level(CVQualifier::None);  // Add pointer level
+				type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_token.value()));
+				FLASH_LOG(Parser, Debug, "Parsed pointer-to-member typedef in member_type_alias: ", type_spec.token().value(), " ", class_token.value(), "::*");
+				discard_saved_token(saved_pos);
+			} else {
+				// Not a pointer-to-member, restore position
+				restore_token_position(saved_pos);
+			}
+		} else {
+			// Not a pointer-to-member, restore position
+			restore_token_position(saved_pos);
+		}
+	}
+	
 	// Parse the alias name
 	auto alias_token = peek_token();
 	if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
@@ -8543,6 +8572,35 @@ ParseResult Parser::parse_typedef_declaration()
 			// Handle && as a single token (rvalue reference)
 			consume_token(); // consume '&&'
 			type_spec.set_reference(true);  // true = rvalue reference
+		}
+		
+		// Check for pointer-to-member type syntax: typedef Type Class::* alias;
+		// This is used in <type_traits> for result_of patterns
+		// Pattern: typedef _Res _Class::* _MemPtr;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+			// Look ahead to see if this is Class::* pattern
+			SaveHandle saved_pos = save_token_position();
+			Token class_token = *peek_token();
+			consume_token(); // consume potential class name
+			
+			if (peek_token().has_value() && peek_token()->value() == "::") {
+				consume_token(); // consume '::'
+				if (peek_token().has_value() && peek_token()->value() == "*") {
+					consume_token(); // consume '*'
+					// This is a pointer-to-member type: Type Class::*
+					// Mark the type as a pointer-to-member
+					type_spec.add_pointer_level(CVQualifier::None);  // Add pointer level
+					type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_token.value()));
+					FLASH_LOG(Parser, Debug, "Parsed pointer-to-member typedef: ", type_spec.token().value(), " ", class_token.value(), "::*");
+					discard_saved_token(saved_pos);
+				} else {
+					// Not a pointer-to-member, restore position
+					restore_token_position(saved_pos);
+				}
+			} else {
+				// Not a pointer-to-member, restore position
+				restore_token_position(saved_pos);
+			}
 		}
 	}
 
