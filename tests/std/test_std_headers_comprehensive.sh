@@ -1,10 +1,20 @@
 #!/bin/bash
 # Comprehensive Standard Header Test Script
 # Tests each standard header individually with timeout protection
+#
+# Usage: ./test_std_headers_comprehensive.sh [timeout_seconds]
+#   timeout_seconds: Optional timeout in seconds (default: 10)
+#   Example: ./test_std_headers_comprehensive.sh 60
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
+
+# Configurable timeout (default 10 seconds, can be overridden via argument)
+TIMEOUT_SECS=${1:-10}
+
+echo "Using timeout of ${TIMEOUT_SECS} seconds"
+echo ""
 
 # Build if needed
 if [ ! -f "x64/Release/FlashCpp" ]; then
@@ -47,6 +57,7 @@ echo ""
 
 declare -a COMPILED=()
 declare -a TIMEOUT=()
+declare -a OOM=()
 declare -a FAILED=()
 
 for test_file in "${TEST_FILES[@]}"; do
@@ -58,17 +69,20 @@ for test_file in "${TEST_FILES[@]}"; do
     # Clean up previous object file
     rm -f "$obj_file"
     
-    # Run with 10 second timeout
-    timeout 10 ./x64/Release/FlashCpp "$test_path" $INCLUDE_PATHS > /tmp/flashcpp_test.log 2>&1
+    # Run with configurable timeout
+    timeout $TIMEOUT_SECS ./x64/Release/FlashCpp "$test_path" $INCLUDE_PATHS > /tmp/flashcpp_test.log 2>&1
     exit_code=$?
     
     if [ $exit_code -eq 124 ]; then
-        echo "TIMEOUT"
+        echo "TIMEOUT (>${TIMEOUT_SECS}s)"
         TIMEOUT+=("$test_file")
     elif [ -f "$obj_file" ]; then
         echo "COMPILED"
         COMPILED+=("$test_file")
         rm -f "$obj_file"
+    elif grep -q "bad_alloc" /tmp/flashcpp_test.log 2>/dev/null; then
+        echo "OOM (std::bad_alloc)"
+        OOM+=("$test_file")
     else
         echo "FAILED"
         FAILED+=("$test_file")
@@ -85,7 +99,8 @@ echo "=========================================="
 echo ""
 echo "Total: ${#TEST_FILES[@]} test files"
 echo "Compiled: ${#COMPILED[@]}"
-echo "Timeout: ${#TIMEOUT[@]}"
+echo "Timeout: ${#TIMEOUT[@]} (>${TIMEOUT_SECS}s)"
+echo "OOM: ${#OOM[@]} (std::bad_alloc)"
 echo "Failed: ${#FAILED[@]}"
 echo ""
 
@@ -96,8 +111,14 @@ if [ ${#COMPILED[@]} -gt 0 ]; then
 fi
 
 if [ ${#TIMEOUT[@]} -gt 0 ]; then
-    echo "=== Timed Out (>10s) ==="
+    echo "=== Timed Out (>${TIMEOUT_SECS}s) ==="
     printf '  %s\n' "${TIMEOUT[@]}"
+    echo ""
+fi
+
+if [ ${#OOM[@]} -gt 0 ]; then
+    echo "=== Out of Memory (std::bad_alloc) ==="
+    printf '  %s\n' "${OOM[@]}"
     echo ""
 fi
 
@@ -108,3 +129,6 @@ if [ ${#FAILED[@]} -gt 0 ]; then
 fi
 
 echo "=========================================="
+echo ""
+echo "Note: Use './test_std_headers_comprehensive.sh 60' for 60 second timeout"
+echo "Note: OOM errors indicate memory exhaustion during template instantiation"
