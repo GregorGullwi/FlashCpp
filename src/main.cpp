@@ -9,6 +9,7 @@
 #include <chrono>
 #include <algorithm>
 #include <iomanip>
+#include <cctype>
 
 #include "FileTree.h"
 #include "FileReader.h"
@@ -149,26 +150,37 @@ int main(int argc, char *argv[]) {
     CommandLineParser argsparser(argc, argv, context);
 
     // Helper functions for parsing log levels and categories
-    auto parseLevel = [](std::string_view sv) -> FlashCpp::LogLevel {
-        if (sv == "error" || sv == "0") return FlashCpp::LogLevel::Error;
-        if (sv == "warning" || sv == "1") return FlashCpp::LogLevel::Warning;
-        if (sv == "info" || sv == "2") return FlashCpp::LogLevel::Info;
-        if (sv == "debug" || sv == "3") return FlashCpp::LogLevel::Debug;
-        if (sv == "trace" || sv == "4") return FlashCpp::LogLevel::Trace;
+    auto toLower = [](std::string_view sv) {
+        std::string lower;
+        lower.reserve(sv.size());
+        for (char ch : sv) {
+            lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+        }
+        return lower;
+    };
+
+    auto parseLevel = [&toLower](std::string_view sv) -> FlashCpp::LogLevel {
+        auto lower = toLower(sv);
+        if (lower == "error" || lower == "0") return FlashCpp::LogLevel::Error;
+        if (lower == "warning" || lower == "1") return FlashCpp::LogLevel::Warning;
+        if (lower == "info" || lower == "2") return FlashCpp::LogLevel::Info;
+        if (lower == "debug" || lower == "3") return FlashCpp::LogLevel::Debug;
+        if (lower == "trace" || lower == "4") return FlashCpp::LogLevel::Trace;
         return FlashCpp::LogLevel::Info; // default
     };
 
-    auto parseCategory = [](std::string_view sv) -> FlashCpp::LogCategory {
-        if (sv == "General") return FlashCpp::LogCategory::General;
-        if (sv == "Parser") return FlashCpp::LogCategory::Parser;
-        if (sv == "Lexer") return FlashCpp::LogCategory::Lexer;
-        if (sv == "Templates") return FlashCpp::LogCategory::Templates;
-        if (sv == "Symbols") return FlashCpp::LogCategory::Symbols;
-        if (sv == "Types") return FlashCpp::LogCategory::Types;
-        if (sv == "Codegen") return FlashCpp::LogCategory::Codegen;
-        if (sv == "Scope") return FlashCpp::LogCategory::Scope;
-        if (sv == "Mangling") return FlashCpp::LogCategory::Mangling;
-        if (sv == "All") return FlashCpp::LogCategory::All;
+    auto parseCategory = [&toLower](std::string_view sv) -> FlashCpp::LogCategory {
+        auto lower = toLower(sv);
+        if (lower == "general") return FlashCpp::LogCategory::General;
+        if (lower == "parser") return FlashCpp::LogCategory::Parser;
+        if (lower == "lexer") return FlashCpp::LogCategory::Lexer;
+        if (lower == "templates") return FlashCpp::LogCategory::Templates;
+        if (lower == "symbols") return FlashCpp::LogCategory::Symbols;
+        if (lower == "types") return FlashCpp::LogCategory::Types;
+        if (lower == "codegen") return FlashCpp::LogCategory::Codegen;
+        if (lower == "scope") return FlashCpp::LogCategory::Scope;
+        if (lower == "mangling") return FlashCpp::LogCategory::Mangling;
+        if (lower == "all") return FlashCpp::LogCategory::All;
         return FlashCpp::LogCategory::General; // default
     };
 
@@ -217,8 +229,9 @@ int main(int argc, char *argv[]) {
 
     if (context.isVerboseMode()) {
         FLASH_LOG_FORMAT(General, Info,
-            "Log config: compile-time level={}, default runtime level={}, runtime level={}, categories=0x{:X}",
+            "Log config: compile-time level={}, compile-time categories=0x{:X}, default runtime level={}, runtime level={}, categories=0x{:X}",
             FLASHCPP_LOG_LEVEL,
+            FLASHCPP_LOG_CATEGORIES,
             FLASHCPP_DEFAULT_RUNTIME_LEVEL,
             static_cast<int>(FlashCpp::LogConfig::runtimeLevel),
             static_cast<uint32_t>(FlashCpp::LogConfig::runtimeCategories));
