@@ -4,7 +4,7 @@
 #include <iostream>
 #include <string_view>
 #include <cstdint>
-#include <unordered_map>
+#include <array>
 #include <format>
 
 namespace FlashCpp {
@@ -68,19 +68,42 @@ namespace detail {
     constexpr const char* BLUE    = "\033[34m";
 }
 
+// Helper to convert category bit flag to array index at compile time
+constexpr size_t categoryToIndex(LogCategory cat) {
+    uint32_t val = static_cast<uint32_t>(cat);
+    if (val == 0) return 0;
+    size_t idx = 0;
+    while ((val & 1) == 0) { val >>= 1; idx++; }
+    return idx;
+}
+
+// Number of log categories (General through Mangling = 9)
+constexpr size_t NUM_LOG_CATEGORIES = 9;
+
 // Runtime filter (can be changed at runtime for enabled levels)
 struct LogConfig {
     static inline LogLevel runtimeLevel = static_cast<LogLevel>(FLASHCPP_DEFAULT_RUNTIME_LEVEL);
     static inline LogCategory runtimeCategories = static_cast<LogCategory>(FLASHCPP_LOG_CATEGORIES);
-    static inline std::unordered_map<uint32_t, LogLevel> categoryLevels;  // Per-category log levels
+    // Fixed-size array for per-category log levels (much faster than unordered_map)
+    // Index 0 = General, 1 = Parser, 2 = Lexer, etc.
+    // Value of 255 means "use runtimeLevel" (unset)
+    static inline std::array<uint8_t, NUM_LOG_CATEGORIES> categoryLevels = {255, 255, 255, 255, 255, 255, 255, 255, 255};
     static inline std::ostream* output_stream = &std::cout;  // Default output stream (errors always go to std::cerr)
     static inline bool use_colors = true;  // Enable/disable ANSI colors
 
     static void setLevel(LogLevel level) { runtimeLevel = level; }
-    static void setLevel(LogCategory cat, LogLevel level) { categoryLevels[static_cast<uint32_t>(cat)] = level; }
+    static void setLevel(LogCategory cat, LogLevel level) { 
+        size_t idx = categoryToIndex(cat);
+        if (idx < NUM_LOG_CATEGORIES) {
+            categoryLevels[idx] = static_cast<uint8_t>(level);
+        }
+    }
     static LogLevel getLevelForCategory(LogCategory cat) {
-        auto it = categoryLevels.find(static_cast<uint32_t>(cat));
-        return it != categoryLevels.end() ? it->second : runtimeLevel;
+        size_t idx = categoryToIndex(cat);
+        if (idx < NUM_LOG_CATEGORIES && categoryLevels[idx] != 255) {
+            return static_cast<LogLevel>(categoryLevels[idx]);
+        }
+        return runtimeLevel;
     }
     static void setCategories(LogCategory cats) { runtimeCategories = cats; }
     static void enableCategory(LogCategory cat) {
@@ -208,34 +231,174 @@ constexpr bool isLogEnabled() {
 }
 
 // Convenience macros - zero overhead when disabled at compile time
-#define FLASH_LOG(cat, level, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
-#define FLASH_LOG_ENABLED(cat, level) ::FlashCpp::isLogEnabled<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>()
+// Use preprocessor #if to completely eliminate code
+
+// Helper macros for level values (must match LogLevel enum)
+#define FLASH_LEVEL_Error 0
+#define FLASH_LEVEL_Warning 1
+#define FLASH_LEVEL_Info 2
+#define FLASH_LEVEL_Debug 3
+#define FLASH_LEVEL_Trace 4
+
+// Helper function to suppress unused variable warnings when logging is disabled
+// Takes any arguments and does nothing - compiler will optimize this away
+template<typename... Args>
+inline void flash_log_unused(Args&&...) {}
+
+// FLASH_LOG macro - completely eliminated at preprocessing when level is disabled
+#if FLASHCPP_LOG_LEVEL >= 4  // Trace
+#define FLASH_LOG_Trace_IMPL(cat, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::Trace, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
+#else
+#define FLASH_LOG_Trace_IMPL(cat, ...) ::FlashCpp::flash_log_unused(__VA_ARGS__)
+#endif
+
+#if FLASHCPP_LOG_LEVEL >= 3  // Debug
+#define FLASH_LOG_Debug_IMPL(cat, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::Debug, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
+#else
+#define FLASH_LOG_Debug_IMPL(cat, ...) ::FlashCpp::flash_log_unused(__VA_ARGS__)
+#endif
+
+#if FLASHCPP_LOG_LEVEL >= 2  // Info
+#define FLASH_LOG_Info_IMPL(cat, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::Info, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
+#else
+#define FLASH_LOG_Info_IMPL(cat, ...) ::FlashCpp::flash_log_unused(__VA_ARGS__)
+#endif
+
+#if FLASHCPP_LOG_LEVEL >= 1  // Warning
+#define FLASH_LOG_Warning_IMPL(cat, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::Warning, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
+#else
+#define FLASH_LOG_Warning_IMPL(cat, ...) ::FlashCpp::flash_log_unused(__VA_ARGS__)
+#endif
+
+// Error is always enabled
+#define FLASH_LOG_Error_IMPL(cat, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::Error, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
+
+// Main FLASH_LOG macro that dispatches based on level
+#define FLASH_LOG(cat, level, ...) FLASH_LOG_##level##_IMPL(cat, __VA_ARGS__)
+
+#define FLASH_LOG_ENABLED(cat, level) \
+    ((FLASH_LEVEL_##level <= FLASHCPP_LOG_LEVEL) && \
+     ::FlashCpp::isLogEnabled<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>())
 
 // std::format version - use when you know all arguments are formattable
-#define FLASH_LOG_FORMAT(cat, level, fmt, ...) \
+#if FLASHCPP_LOG_LEVEL >= 4  // Trace
+#define FLASH_LOG_FORMAT_Trace_IMPL(cat, fmt, ...) \
     do { \
-        if constexpr (::FlashCpp::Logger<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>::enabled) { \
-            bool runtime_enabled = (::FlashCpp::LogCategory::cat == ::FlashCpp::LogCategory::General) || \
-                (static_cast<uint8_t>(::FlashCpp::LogLevel::level) <= static_cast<uint8_t>(::FlashCpp::LogConfig::getLevelForCategory(::FlashCpp::LogCategory::cat)) && \
-                 (static_cast<uint32_t>(::FlashCpp::LogCategory::cat) & static_cast<uint32_t>(::FlashCpp::LogConfig::runtimeCategories)) != 0); \
-            if (runtime_enabled) { \
-                std::ostream& flash_log_out = (::FlashCpp::LogLevel::level == ::FlashCpp::LogLevel::Error) ? std::cerr : *::FlashCpp::LogConfig::output_stream; \
-                if constexpr (::FlashCpp::LogCategory::cat == ::FlashCpp::LogCategory::General) { \
-                    flash_log_out << std::format(fmt, __VA_ARGS__) << "\n"; \
-                } else { \
-                    if (::FlashCpp::LogConfig::use_colors) { \
-                        flash_log_out << ::FlashCpp::Logger<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>::colorCode(); \
-                    } \
-                    flash_log_out << "[" << ::FlashCpp::Logger<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>::levelName() \
-                                  << "][" << ::FlashCpp::Logger<::FlashCpp::LogLevel::level, ::FlashCpp::LogCategory::cat>::categoryName() << "] " \
-                                  << std::format(fmt, __VA_ARGS__); \
-                    if (::FlashCpp::LogConfig::use_colors) { \
-                        flash_log_out << ::FlashCpp::detail::RESET; \
-                    } \
-                    flash_log_out << "\n"; \
-                } \
+        bool runtime_enabled = (::FlashCpp::LogCategory::cat == ::FlashCpp::LogCategory::General) || \
+            (static_cast<uint8_t>(::FlashCpp::LogLevel::Trace) <= static_cast<uint8_t>(::FlashCpp::LogConfig::getLevelForCategory(::FlashCpp::LogCategory::cat)) && \
+             (static_cast<uint32_t>(::FlashCpp::LogCategory::cat) & static_cast<uint32_t>(::FlashCpp::LogConfig::runtimeCategories)) != 0); \
+        if (runtime_enabled) { \
+            std::ostream& flash_log_out = *::FlashCpp::LogConfig::output_stream; \
+            if (::FlashCpp::LogConfig::use_colors) { \
+                flash_log_out << ::FlashCpp::Logger<::FlashCpp::LogLevel::Trace, ::FlashCpp::LogCategory::cat>::colorCode(); \
             } \
+            flash_log_out << "[" << ::FlashCpp::Logger<::FlashCpp::LogLevel::Trace, ::FlashCpp::LogCategory::cat>::levelName() \
+                          << "][" << ::FlashCpp::Logger<::FlashCpp::LogLevel::Trace, ::FlashCpp::LogCategory::cat>::categoryName() << "] " \
+                          << std::format(fmt, __VA_ARGS__); \
+            if (::FlashCpp::LogConfig::use_colors) { \
+                flash_log_out << ::FlashCpp::detail::RESET; \
+            } \
+            flash_log_out << "\n"; \
         } \
     } while(0)
+#else
+#define FLASH_LOG_FORMAT_Trace_IMPL(cat, fmt, ...) ::FlashCpp::flash_log_unused(fmt, __VA_ARGS__)
+#endif
+
+#if FLASHCPP_LOG_LEVEL >= 3  // Debug
+#define FLASH_LOG_FORMAT_Debug_IMPL(cat, fmt, ...) \
+    do { \
+        bool runtime_enabled = (::FlashCpp::LogCategory::cat == ::FlashCpp::LogCategory::General) || \
+            (static_cast<uint8_t>(::FlashCpp::LogLevel::Debug) <= static_cast<uint8_t>(::FlashCpp::LogConfig::getLevelForCategory(::FlashCpp::LogCategory::cat)) && \
+             (static_cast<uint32_t>(::FlashCpp::LogCategory::cat) & static_cast<uint32_t>(::FlashCpp::LogConfig::runtimeCategories)) != 0); \
+        if (runtime_enabled) { \
+            std::ostream& flash_log_out = *::FlashCpp::LogConfig::output_stream; \
+            if (::FlashCpp::LogConfig::use_colors) { \
+                flash_log_out << ::FlashCpp::Logger<::FlashCpp::LogLevel::Debug, ::FlashCpp::LogCategory::cat>::colorCode(); \
+            } \
+            flash_log_out << "[" << ::FlashCpp::Logger<::FlashCpp::LogLevel::Debug, ::FlashCpp::LogCategory::cat>::levelName() \
+                          << "][" << ::FlashCpp::Logger<::FlashCpp::LogLevel::Debug, ::FlashCpp::LogCategory::cat>::categoryName() << "] " \
+                          << std::format(fmt, __VA_ARGS__); \
+            if (::FlashCpp::LogConfig::use_colors) { \
+                flash_log_out << ::FlashCpp::detail::RESET; \
+            } \
+            flash_log_out << "\n"; \
+        } \
+    } while(0)
+#else
+#define FLASH_LOG_FORMAT_Debug_IMPL(cat, fmt, ...) ::FlashCpp::flash_log_unused(fmt, __VA_ARGS__)
+#endif
+
+#if FLASHCPP_LOG_LEVEL >= 2  // Info
+#define FLASH_LOG_FORMAT_Info_IMPL(cat, fmt, ...) \
+    do { \
+        bool runtime_enabled = (::FlashCpp::LogCategory::cat == ::FlashCpp::LogCategory::General) || \
+            (static_cast<uint8_t>(::FlashCpp::LogLevel::Info) <= static_cast<uint8_t>(::FlashCpp::LogConfig::getLevelForCategory(::FlashCpp::LogCategory::cat)) && \
+             (static_cast<uint32_t>(::FlashCpp::LogCategory::cat) & static_cast<uint32_t>(::FlashCpp::LogConfig::runtimeCategories)) != 0); \
+        if (runtime_enabled) { \
+            std::ostream& flash_log_out = *::FlashCpp::LogConfig::output_stream; \
+            if (::FlashCpp::LogConfig::use_colors) { \
+                flash_log_out << ::FlashCpp::Logger<::FlashCpp::LogLevel::Info, ::FlashCpp::LogCategory::cat>::colorCode(); \
+            } \
+            flash_log_out << "[" << ::FlashCpp::Logger<::FlashCpp::LogLevel::Info, ::FlashCpp::LogCategory::cat>::levelName() \
+                          << "][" << ::FlashCpp::Logger<::FlashCpp::LogLevel::Info, ::FlashCpp::LogCategory::cat>::categoryName() << "] " \
+                          << std::format(fmt, __VA_ARGS__); \
+            if (::FlashCpp::LogConfig::use_colors) { \
+                flash_log_out << ::FlashCpp::detail::RESET; \
+            } \
+            flash_log_out << "\n"; \
+        } \
+    } while(0)
+#else
+#define FLASH_LOG_FORMAT_Info_IMPL(cat, fmt, ...) ::FlashCpp::flash_log_unused(fmt, __VA_ARGS__)
+#endif
+
+#if FLASHCPP_LOG_LEVEL >= 1  // Warning
+#define FLASH_LOG_FORMAT_Warning_IMPL(cat, fmt, ...) \
+    do { \
+        bool runtime_enabled = (::FlashCpp::LogCategory::cat == ::FlashCpp::LogCategory::General) || \
+            (static_cast<uint8_t>(::FlashCpp::LogLevel::Warning) <= static_cast<uint8_t>(::FlashCpp::LogConfig::getLevelForCategory(::FlashCpp::LogCategory::cat)) && \
+             (static_cast<uint32_t>(::FlashCpp::LogCategory::cat) & static_cast<uint32_t>(::FlashCpp::LogConfig::runtimeCategories)) != 0); \
+        if (runtime_enabled) { \
+            std::ostream& flash_log_out = *::FlashCpp::LogConfig::output_stream; \
+            if (::FlashCpp::LogConfig::use_colors) { \
+                flash_log_out << ::FlashCpp::Logger<::FlashCpp::LogLevel::Warning, ::FlashCpp::LogCategory::cat>::colorCode(); \
+            } \
+            flash_log_out << "[" << ::FlashCpp::Logger<::FlashCpp::LogLevel::Warning, ::FlashCpp::LogCategory::cat>::levelName() \
+                          << "][" << ::FlashCpp::Logger<::FlashCpp::LogLevel::Warning, ::FlashCpp::LogCategory::cat>::categoryName() << "] " \
+                          << std::format(fmt, __VA_ARGS__); \
+            if (::FlashCpp::LogConfig::use_colors) { \
+                flash_log_out << ::FlashCpp::detail::RESET; \
+            } \
+            flash_log_out << "\n"; \
+        } \
+    } while(0)
+#else
+#define FLASH_LOG_FORMAT_Warning_IMPL(cat, fmt, ...) ::FlashCpp::flash_log_unused(fmt, __VA_ARGS__)
+#endif
+
+// Error is always enabled
+#define FLASH_LOG_FORMAT_Error_IMPL(cat, fmt, ...) \
+    do { \
+        bool runtime_enabled = (::FlashCpp::LogCategory::cat == ::FlashCpp::LogCategory::General) || \
+            (static_cast<uint8_t>(::FlashCpp::LogLevel::Error) <= static_cast<uint8_t>(::FlashCpp::LogConfig::getLevelForCategory(::FlashCpp::LogCategory::cat)) && \
+             (static_cast<uint32_t>(::FlashCpp::LogCategory::cat) & static_cast<uint32_t>(::FlashCpp::LogConfig::runtimeCategories)) != 0); \
+        if (runtime_enabled) { \
+            std::ostream& flash_log_out = std::cerr; \
+            if (::FlashCpp::LogConfig::use_colors) { \
+                flash_log_out << ::FlashCpp::Logger<::FlashCpp::LogLevel::Error, ::FlashCpp::LogCategory::cat>::colorCode(); \
+            } \
+            flash_log_out << "[" << ::FlashCpp::Logger<::FlashCpp::LogLevel::Error, ::FlashCpp::LogCategory::cat>::levelName() \
+                          << "][" << ::FlashCpp::Logger<::FlashCpp::LogLevel::Error, ::FlashCpp::LogCategory::cat>::categoryName() << "] " \
+                          << std::format(fmt, __VA_ARGS__); \
+            if (::FlashCpp::LogConfig::use_colors) { \
+                flash_log_out << ::FlashCpp::detail::RESET; \
+            } \
+            flash_log_out << "\n"; \
+        } \
+    } while(0)
+
+// Main FLASH_LOG_FORMAT macro that dispatches based on level
+#define FLASH_LOG_FORMAT(cat, level, fmt, ...) FLASH_LOG_FORMAT_##level##_IMPL(cat, fmt, __VA_ARGS__)
 
 } // namespace FlashCpp
