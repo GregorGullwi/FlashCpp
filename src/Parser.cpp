@@ -12643,9 +12643,22 @@ ParseResult Parser::parse_statement_or_declaration()
 					int angle_depth = 1;
 					consume_token();  // consume '<'
 					while (angle_depth > 0 && peek_token().has_value()) {
-						auto tok = consume_token();
-						if (tok->value() == "<") angle_depth++;
-						else if (tok->value() == ">") angle_depth--;
+						auto tok = peek_token();
+						if (tok->value() == "<") {
+							consume_token();
+							angle_depth++;
+						} else if (tok->value() == ">") {
+							consume_token();
+							angle_depth--;
+						} else if (tok->value() == ">>") {
+							// Split >> into two > tokens for nested templates
+							split_right_shift_token();
+							consume_token();  // consume first >
+							angle_depth--;
+						} else {
+							// Some other token inside template args, just consume it
+							consume_token();
+						}
 					}
 				}
 				
