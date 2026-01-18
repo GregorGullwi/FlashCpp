@@ -1653,58 +1653,32 @@ public:
 	// Register a static member for lazy instantiation
 	// Key format: "instantiated_class_name::member_name"
 	void registerLazyStaticMember(LazyStaticMemberInfo info) {
-		StringBuilder key_builder;
-		std::string_view key = key_builder
-			.append(info.instantiated_class_name)
-			.append("::")
-			.append(info.member_name)
-			.commit();
-		
+		StringHandle key = makeKey(info.instantiated_class_name, info.member_name);
 		FLASH_LOG(Templates, Debug, "Registering lazy static member: ", key);
-		lazy_static_members_[StringTable::getOrInternStringHandle(key)] = std::move(info);
+		lazy_static_members_[key] = std::move(info);
 	}
 	
 	// Check if a static member needs lazy instantiation
 	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_name) const {
-		StringBuilder key_builder;
-		std::string_view key = key_builder
-			.append(instantiated_class_name)
-			.append("::")
-			.append(member_name)
-			.commit();
-		
-		auto handle = StringTable::getOrInternStringHandle(key);
-		return lazy_static_members_.find(handle) != lazy_static_members_.end();
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		return lazy_static_members_.find(key) != lazy_static_members_.end();
 	}
 	
 	// Get lazy static member info for instantiation
-	std::optional<LazyStaticMemberInfo> getLazyStaticMemberInfo(StringHandle instantiated_class_name, StringHandle member_name) {
-		StringBuilder key_builder;
-		std::string_view key = key_builder
-			.append(instantiated_class_name)
-			.append("::")
-			.append(member_name)
-			.commit();
-		
-		auto handle = StringTable::getOrInternStringHandle(key);
-		auto it = lazy_static_members_.find(handle);
+	// Returns a pointer to avoid copying; nullptr if not found
+	const LazyStaticMemberInfo* getLazyStaticMemberInfo(StringHandle instantiated_class_name, StringHandle member_name) const {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		auto it = lazy_static_members_.find(key);
 		if (it != lazy_static_members_.end()) {
-			return it->second;
+			return &it->second;
 		}
-		return std::nullopt;
+		return nullptr;
 	}
 	
 	// Mark a static member as instantiated (remove from lazy registry)
 	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_name) {
-		StringBuilder key_builder;
-		std::string_view key = key_builder
-			.append(instantiated_class_name)
-			.append("::")
-			.append(member_name)
-			.commit();
-		
-		auto handle = StringTable::getOrInternStringHandle(key);
-		lazy_static_members_.erase(handle);
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		lazy_static_members_.erase(key);
 		FLASH_LOG(Templates, Debug, "Marked lazy static member as instantiated: ", key);
 	}
 	
@@ -1720,6 +1694,18 @@ public:
 
 private:
 	LazyStaticMemberRegistry() = default;
+	
+	// Helper to generate registry key from class name and member name
+	// Key format: "instantiated_class_name::member_name"
+	static StringHandle makeKey(StringHandle class_name, StringHandle member_name) {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(class_name)
+			.append("::")
+			.append(member_name)
+			.commit();
+		return StringTable::getOrInternStringHandle(key);
+	}
 	
 	// Map from "instantiated_class::static_member" to lazy instantiation info
 	std::unordered_map<StringHandle, LazyStaticMemberInfo, TransparentStringHash, std::equal_to<>> lazy_static_members_;

@@ -38403,16 +38403,16 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for static member: ", 
 	          instantiated_class_name, "::", member_name);
 	
-	// Get the lazy member info
-	auto lazy_info_opt = LazyStaticMemberRegistry::getInstance().getLazyStaticMemberInfo(
+	// Get the lazy member info (returns a pointer to avoid copying)
+	const LazyStaticMemberInfo* lazy_info_ptr = LazyStaticMemberRegistry::getInstance().getLazyStaticMemberInfo(
 		instantiated_class_name, member_name);
-	if (!lazy_info_opt.has_value()) {
+	if (!lazy_info_ptr) {
 		FLASH_LOG(Templates, Error, "Failed to get lazy static member info for: ", 
 		          instantiated_class_name, "::", member_name);
 		return false;
 	}
 	
-	const LazyStaticMemberInfo& lazy_info = *lazy_info_opt;
+	const LazyStaticMemberInfo& lazy_info = *lazy_info_ptr;
 	
 	// Find the struct_info to add the member to
 	auto type_it = gTypesByName.find(instantiated_class_name);
