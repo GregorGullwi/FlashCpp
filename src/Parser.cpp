@@ -2426,17 +2426,11 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 		std::string_view first_id = peek_token()->value();
 		
-		// Build fully qualified name using current namespace
-		std::string qualified_class_name;
+		// Build fully qualified name using current namespace and buildQualifiedNameFromHandle
 		NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
-		if (!current_namespace_handle.isGlobal()) {
-			std::string_view ns_prefix = gNamespaceRegistry.getQualifiedName(current_namespace_handle);
-			if (!ns_prefix.empty()) {
-				qualified_class_name = ns_prefix;
-				qualified_class_name += "::";
-			}
-		}
-		qualified_class_name += first_id;
+		std::string_view qualified_class_name = current_namespace_handle.isGlobal() 
+			? first_id 
+			: buildQualifiedNameFromHandle(current_namespace_handle, first_id);
 		
 		// Try to find the class, first with qualified name, then unqualified
 		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_class_name));
@@ -2541,38 +2535,16 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			return param_result;
 		}
 
-		// Skip optional qualifiers after parameter list (const, volatile, &, &&, noexcept, etc.)
+		// Skip optional qualifiers after parameter list using existing helper
+		// Note: skip_function_trailing_specifiers() doesn't skip override/final as they have semantic meaning
+		// For out-of-line definitions, we also skip override/final as they're already recorded in the declaration
+		skip_function_trailing_specifiers();
+		
+		// Also skip override/final for out-of-line definitions
 		while (peek_token().has_value()) {
 			auto next_val = peek_token()->value();
-			if (next_val == "const" || next_val == "volatile" || 
-			    next_val == "&" || next_val == "&&") {
+			if (next_val == "override" || next_val == "final") {
 				consume_token();
-			} else if (next_val == "noexcept") {
-				consume_token();  // consume 'noexcept'
-				// Check for noexcept(expression)
-				if (peek_token().has_value() && peek_token()->value() == "(") {
-					consume_token();  // consume '('
-					int depth = 1;
-					while (depth > 0 && peek_token().has_value()) {
-						auto tok = consume_token();
-						if (tok->value() == "(") depth++;
-						else if (tok->value() == ")") depth--;
-					}
-				}
-			} else if (next_val == "__attribute__") {
-				// Skip __attribute__((...))
-				consume_token();
-				if (peek_token().has_value() && peek_token()->value() == "(") {
-					consume_token();
-					int depth = 1;
-					while (depth > 0 && peek_token().has_value()) {
-						auto tok = consume_token();
-						if (tok->value() == "(") depth++;
-						else if (tok->value() == ")") depth--;
-					}
-				}
-			} else if (next_val == "override" || next_val == "final") {
-				consume_token();  // skip override/final specifiers
 			} else {
 				break;
 			}
@@ -3203,40 +3175,8 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 		return param_result;
 	}
 	
-	// Parse optional qualifiers (noexcept, const, etc.)
-	while (peek_token().has_value()) {
-		auto next_val = peek_token()->value();
-		if (next_val == "const" || next_val == "volatile" || 
-		    next_val == "&" || next_val == "&&") {
-			consume_token();
-		} else if (next_val == "noexcept") {
-			consume_token();
-			// Handle noexcept(expr)
-			if (peek_token().has_value() && peek_token()->value() == "(") {
-				consume_token();
-				int depth = 1;
-				while (depth > 0 && peek_token().has_value()) {
-					auto tok = consume_token();
-					if (tok->value() == "(") depth++;
-					else if (tok->value() == ")") depth--;
-				}
-			}
-		} else if (next_val == "__attribute__") {
-			// Skip __attribute__((...))
-			consume_token();
-			if (peek_token().has_value() && peek_token()->value() == "(") {
-				consume_token();
-				int depth = 1;
-				while (depth > 0 && peek_token().has_value()) {
-					auto tok = consume_token();
-					if (tok->value() == "(") depth++;
-					else if (tok->value() == ")") depth--;
-				}
-			}
-		} else {
-			break;
-		}
-	}
+	// Skip optional qualifiers (noexcept, const, etc.) using existing helper
+	skip_function_trailing_specifiers();
 	
 	// For constructors, check for initializer list
 	if (!is_destructor && peek_token().has_value() && peek_token()->value() == ":") {
@@ -8638,46 +8578,8 @@ ParseResult Parser::parse_friend_declaration()
 		}
 	}
 
-	// Skip optional qualifiers after parameter list (const, noexcept, noexcept(...), volatile, &, &&)
-	while (peek_token().has_value()) {
-		auto next = peek_token().value();
-		if (next.value() == "const" || next.value() == "volatile" || 
-		    next.value() == "&" || next.value() == "&&") {
-			consume_token();
-		} else if (next.value() == "noexcept") {
-			consume_token();  // consume 'noexcept'
-			// Check for noexcept(expression)
-			if (peek_token().has_value() && peek_token()->value() == "(") {
-				consume_token();  // consume '('
-				int noexcept_paren_depth = 1;
-				while (noexcept_paren_depth > 0 && peek_token().has_value()) {
-					auto token = consume_token();
-					if (token->value() == "(") {
-						noexcept_paren_depth++;
-					} else if (token->value() == ")") {
-						noexcept_paren_depth--;
-					}
-				}
-			}
-		} else if (next.value() == "__attribute__") {
-			// Skip __attribute__((...))
-			consume_token();  // consume '__attribute__'
-			if (peek_token().has_value() && peek_token()->value() == "(") {
-				consume_token();  // consume '('
-				int attr_paren_depth = 1;
-				while (attr_paren_depth > 0 && peek_token().has_value()) {
-					auto token = consume_token();
-					if (token->value() == "(") {
-						attr_paren_depth++;
-					} else if (token->value() == ")") {
-						attr_paren_depth--;
-					}
-				}
-			}
-		} else {
-			break;  // Done with qualifiers
-		}
-	}
+	// Skip optional qualifiers after parameter list using existing helper
+	skip_function_trailing_specifiers();
 
 	// Handle friend function body (inline definition) or semicolon (declaration only)
 	if (peek_token().has_value() && peek_token()->value() == "{") {
@@ -10220,7 +10122,9 @@ ParseResult Parser::parse_type_specifier()
 			                          current_token_opt.value_or(Token()));
 		}
 
-		std::string type_name(current_token_opt->value());
+		// Build qualified name using StringBuilder for efficiency
+		StringBuilder type_name_builder;
+		type_name_builder.append(current_token_opt->value());
 		Token type_name_token = *current_token_opt;
 		consume_token();
 
@@ -10229,16 +10133,17 @@ ParseResult Parser::parse_type_specifier()
 			consume_token();  // consume '::'
 			auto next_token = peek_token();
 			if (!next_token.has_value() || next_token->type() != Token::Type::Identifier) {
+				type_name_builder.reset();  // Discard the builder
 				return ParseResult::error("Expected identifier after '::'",
 				                          next_token.value_or(Token()));
 			}
-			type_name += "::";
-			type_name += next_token->value();
+			type_name_builder.append("::"sv);
+			type_name_builder.append(next_token->value());
 			type_name_token = *next_token;  // Update token for error reporting
 			consume_token();  // consume identifier
 		}
 
-		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
+		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name_builder.commit());
 
 		// Look up the struct type
 		auto type_it = gTypesByName.find(type_name_handle);
@@ -10277,7 +10182,9 @@ ParseResult Parser::parse_type_specifier()
 	}
 	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Identifier) {
 		// Handle user-defined type (struct, class, or other user-defined types)
-		std::string type_name(current_token_opt->value());
+		// Build qualified name using StringBuilder for efficiency
+		StringBuilder type_name_builder;
+		type_name_builder.append(current_token_opt->value());
 		Token type_name_token = *current_token_opt;  // Save the token before consuming it
 		consume_token();
 
@@ -10287,12 +10194,16 @@ ParseResult Parser::parse_type_specifier()
 
 			auto next_token = peek_token();
 			if (!next_token.has_value() || next_token->type() != Token::Type::Identifier) {
+				type_name_builder.reset();  // Discard the builder
 				return ParseResult::error("Expected identifier after '::'", next_token.value_or(Token()));
 			}
 
-			type_name += "::" + std::string(next_token->value());
+			type_name_builder.append("::"sv).append(next_token->value());
 			consume_token();
 		}
+
+		// Commit the StringBuilder to get a persistent string_view
+		std::string_view type_name = type_name_builder.commit();
 
 		// Check for template arguments: Container<int>
 		std::optional<std::vector<TemplateTypeArg>> template_args;
@@ -10304,9 +10215,9 @@ ParseResult Parser::parse_type_specifier()
 			
 			// Check if this is a qualified name (contains ::)
 			size_t last_colon_pos = type_name.rfind("::");
-			if (last_colon_pos != std::string::npos) {
+			if (last_colon_pos != std::string_view::npos) {
 				// Extract the member name (part after the last ::)
-				std::string_view member_name(type_name.c_str() + last_colon_pos + 2);
+				std::string_view member_name = type_name.substr(last_colon_pos + 2);
 				
 				// Check if the member is a known template
 				auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
@@ -10325,7 +10236,7 @@ ParseResult Parser::parse_type_specifier()
 					// Member is NOT a known template
 					// Check if the base (before ::) is a template parameter - if so, this is dependent
 					// and we should NOT parse < as template arguments
-					std::string_view base_name(type_name.c_str(), last_colon_pos);
+					std::string_view base_name = type_name.substr(0, last_colon_pos);
 					
 					// Check if base is a template parameter
 					bool base_is_template_param = false;
