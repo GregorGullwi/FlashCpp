@@ -217,10 +217,17 @@ During investigation, a critical bug was discovered:
 - Workaround: Use category-specific log levels (e.g., `--log-level=Parser:info`)
 - This bug should be fixed before implementing new lazy instantiation features
 
-**Root cause under investigation:**
+**Root cause narrowed down (2026-01-18):**
 - Issue is specific to global `LogConfig::runtimeLevel` setting
 - Category-specific levels via `categoryLevels` map work correctly
-- Likely related to some code path that behaves differently based on log enabled check
+- **The hang occurs during parsing of `__swappable_with_details` namespace in `<type_traits>`**
+- Specifically related to parsing struct templates with complex SFINAE patterns:
+  ```cpp
+  template<typename _Tp, typename _Up, typename
+           = decltype(swap(std::declval<_Tp>(), std::declval<_Up>()))>
+  ```
+- The issue is likely in `parse_struct_declaration()` or `parse_template_declaration()`
+- When Debug-level logging is enabled, some code path behaves differently (possibly due to timing or side effects of log string construction)
 
 ## References
 

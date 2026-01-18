@@ -146,7 +146,7 @@ clang++ -DFLASHCPP_LOG_LEVEL=3 -O3 ...
 
 **Primary Issue:** Setting global log level to Info (2) or below causes unbounded memory growth and hangs.
 
-**Investigation Findings:**
+**Investigation Findings (Deep Dive 2026-01-18):**
 - `<type_traits>` compiles successfully in ~7 seconds with default logging
 - Setting `--log-level=2` (info) or lower causes exponential memory growth
 - Memory allocations double every ~0.1s: 256KB → 512KB → 1MB → ... → 512MB+
@@ -154,13 +154,36 @@ clang++ -DFLASHCPP_LOG_LEVEL=3 -O3 ...
 - The bug IS triggered by global log level changes via `LogConfig::setLevel(LogLevel)`
 - Lazy template instantiation is NOT the cause (already implemented and working)
 
+**Detailed Trace Analysis:**
+Through extensive instrumentation, the hang was traced to:
+1. Preprocessing completes successfully (~3000 lines of type_traits)
+2. Lexer and Parser creation completes
+3. Main parse loop starts and processes namespace declarations
+4. The 6th namespace (`std`) contains 300+ template declarations
+5. Nested namespaces `__swappable_details` and `__swappable_with_details` are entered
+6. The parsing of `using std::swap;` and subsequent struct declarations completes
+7. **The hang occurs somewhere in struct template parsing** after namespace `__swappable_with_details`
+
+**Narrowed Location:**
+- The hang is NOT in preprocessing (completes fine)
+- The hang is NOT in using declaration parsing (returns successfully)  
+- The hang is likely in `parse_struct_declaration()` or `parse_template_declaration()` 
+- The specific trigger appears to be parsing complex SFINAE patterns like:
+  ```cpp
+  template<typename _Tp, typename _Up, typename
+           = decltype(swap(std::declval<_Tp>(), std::declval<_Up>()))>
+  ```
+
 **Symptoms:**
 - Compilation hangs indefinitely
 - `strace` shows exponential `mmap()` allocations
 - Eventually crashes with `std::bad_alloc` if memory limit is hit
 
 **Technical details:**
-The bug appears to be triggered when `LogConfig::runtimeLevel` is set to a value ≤ Info (2), causing some code path (likely in template instantiation) to enter an infinite loop or unbounded recursion. The exact location needs further investigation.
+The bug appears to be triggered when `LogConfig::runtimeLevel` is set to a value ≤ Info (2), causing some code path in template instantiation/SFINAE handling to enter an infinite loop. The issue may be related to:
+- `std::declval<T>()` handling in decltype expressions
+- SFINAE template parameter default value parsing
+- Interaction between logging disabled and some control flow path
 
 ### 2. Template Instantiation Performance
 
