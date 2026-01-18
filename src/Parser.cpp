@@ -11163,6 +11163,17 @@ ParseResult Parser::parse_type_specifier()
 					bool has_template_args = (peek_token().has_value() && peek_token()->value() == "<");
 					
 					if (has_dependent_args) {
+						// Phase 3: Check for lazy type alias evaluation before lookup
+						// If this is a member type alias (e.g., remove_const_int::type), try lazy evaluation
+						StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+						StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+						if (LazyTypeAliasRegistry::getInstance().needsEvaluation(class_name_handle, member_name_handle)) {
+							auto eval_result = evaluateLazyTypeAlias(class_name_handle, member_name_handle);
+							if (eval_result.has_value()) {
+								FLASH_LOG(Templates, Debug, "Used lazy type alias evaluation for: ", qualified_type_name);
+							}
+						}
+						
 						auto qual_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
 						if (qual_type_it == gTypesByName.end()) {
 							// Type not found
