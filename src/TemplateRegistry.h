@@ -1876,21 +1876,16 @@ public:
 		lazy_aliases_[key] = info;
 	}
 	
-	// Check if a type alias needs lazy evaluation
+	// Check if a type alias needs lazy evaluation (registered and not yet evaluated)
 	bool needsEvaluation(StringHandle instantiated_class_name, StringHandle member_name) const {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
 		return it != lazy_aliases_.end() && !it->second.is_evaluated;
 	}
 	
-	// Check if a type alias is registered (evaluated or not)
-	bool isRegistered(StringHandle instantiated_class_name, StringHandle member_name) const {
-		StringHandle key = makeKey(instantiated_class_name, member_name);
-		return lazy_aliases_.find(key) != lazy_aliases_.end();
-	}
-	
 	// Get lazy type alias info
 	// Returns a pointer to avoid copying; nullptr if not found
+	// Use this instead of isRegistered() when you need the actual data
 	const LazyTypeAliasInfo* getLazyTypeAliasInfo(StringHandle instantiated_class_name, StringHandle member_name) const {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
@@ -1911,7 +1906,8 @@ public:
 	}
 	
 	// Mark a type alias as evaluated and cache the result
-	void markEvaluated(StringHandle instantiated_class_name, StringHandle member_name, 
+	// Returns true if the alias was found and marked, false if not registered
+	bool markEvaluated(StringHandle instantiated_class_name, StringHandle member_name, 
 	                   Type result_type, TypeIndex result_type_index) {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
@@ -1920,7 +1916,10 @@ public:
 			it->second.evaluated_type = result_type;
 			it->second.evaluated_type_index = result_type_index;
 			FLASH_LOG(Templates, Debug, "Marked lazy type alias as evaluated: ", key);
+			return true;
 		}
+		FLASH_LOG(Templates, Warning, "Attempted to mark unregistered type alias as evaluated: ", key);
+		return false;
 	}
 	
 	// Get cached evaluation result (only valid if is_evaluated is true)
@@ -1929,7 +1928,7 @@ public:
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
 		if (it != lazy_aliases_.end() && it->second.is_evaluated) {
-			return std::make_pair(it->second.evaluated_type, it->second.evaluated_type_index);
+			return std::pair<Type, TypeIndex>{it->second.evaluated_type, it->second.evaluated_type_index};
 		}
 		return std::nullopt;
 	}

@@ -38711,12 +38711,7 @@ std::optional<std::pair<Type, TypeIndex>> Parser::evaluateLazyTypeAlias(
 	
 	auto& registry = LazyTypeAliasRegistry::getInstance();
 	
-	// Check if this alias is registered for lazy evaluation
-	if (!registry.isRegistered(instantiated_class_name, member_name)) {
-		return std::nullopt;  // Not registered for lazy evaluation
-	}
-	
-	// Check for cached result
+	// Check for cached result first
 	auto cached = registry.getCachedResult(instantiated_class_name, member_name);
 	if (cached.has_value()) {
 		FLASH_LOG(Templates, Debug, "Using cached type alias result for: ", 
@@ -38724,12 +38719,10 @@ std::optional<std::pair<Type, TypeIndex>> Parser::evaluateLazyTypeAlias(
 		return cached;
 	}
 	
-	// Get the lazy alias info
+	// Get the lazy alias info (nullptr if not registered)
 	const LazyTypeAliasInfo* lazy_info = registry.getLazyTypeAliasInfo(instantiated_class_name, member_name);
 	if (!lazy_info) {
-		FLASH_LOG(Templates, Error, "Failed to get lazy type alias info for: ", 
-		          instantiated_class_name, "::", member_name);
-		return std::nullopt;
+		return std::nullopt;  // Not registered for lazy evaluation
 	}
 	
 	FLASH_LOG(Templates, Debug, "Evaluating lazy type alias: ", 
