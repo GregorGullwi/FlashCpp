@@ -9,14 +9,16 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.30s |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~6s (2026-01-18: Log level bug fixed) |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1.1s release, ~6s debug (2026-01-18: Log level bug fixed) |
 | `<compare>` | N/A | ✅ Compiled | ~0.10s |
 | `<version>` | N/A | ✅ Compiled | ~0.09s |
 | `<source_location>` | N/A | ✅ Compiled | ~0.10s |
-| `<numbers>` | N/A | ⏱️ Timeout | Template-heavy header (>30s) |
+| `<numbers>` | N/A | ✅ Compiled | ~1.2s release (doesn't include `<concepts>`) |
 | `<initializer_list>` | N/A | ✅ Compiled | ~0.07s |
-| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Template-heavy header (>60s) |
-| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Template-heavy header (>60s) |
+| `<concepts>` | `test_std_concepts.cpp` | ❌ Parse Error | Qualified template alias in template argument context |
+| `<utility>` | `test_std_utility.cpp` | ❌ Template Error | Deferred instantiation failures |
+| `<bit>` | N/A | ❌ Parse Error | Includes `<concepts>` - qualified template alias issue |
+| `<ratio>` | N/A | 💥 Crash | SIGSEGV during template instantiation |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template-heavy header |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Template-heavy header |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template-heavy header |
@@ -34,11 +36,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Template-heavy header |
 | `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Template-heavy header |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<bit>` | N/A | ⏱️ Timeout | Template-heavy header (>30s) |
 | `<atomic>` | N/A | ⏱️ Timeout | Template-heavy header |
 | `<new>` | N/A | ✅ Compiled | ~0.10s |
 | `<exception>` | N/A | ⏱️ Timeout | Template-heavy header |
-| `<ratio>` | N/A | ⏱️ Timeout | Template-heavy header (>30s) |
 | `<typeinfo>` | N/A | ✅ Compiled | ~0.10s |
 | `<typeindex>` | N/A | ✅ Compiled | ~0.16s |
 | `<csetjmp>` | N/A | ✅ Compiled | ~0.06s |
@@ -52,7 +52,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~0.08s (C++23 - 2026-01-18) |
 | `<coroutine>` | N/A | ❌ Not Supported | Coroutines require `-fcoroutines` flag (not supported) |
 
-**Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>30s)
+**Legend:** ✅ Compiled | ❌ Failed/Parse Error | 💥 Crash | ⏱️ Timeout (>30s)
 
 ### C Library Wrappers (Also Working)
 
@@ -119,7 +119,24 @@ The `if constexpr (enabled)` blocks in logging macros previously caused hangs wh
 
 **Result:** `<type_traits>` now compiles successfully in ~6s.
 
-### 2. Template Instantiation Performance (Primary Blocker)
+### 2. Qualified Template Aliases in Template Arguments (Primary Blocker for `<concepts>`)
+
+**Issue:** Template aliases qualified with a namespace (e.g., `__detail::__cref<_Lhs>`) are not recognized as templates when used inside template argument lists.
+
+**Error:**
+```
+/usr/include/c++/14/concepts:227:55: error: Expected ';' after concept definition
+        && common_reference_with<__detail::__cref<_Lhs>, __detail::__cref<_Rhs>>
+                                                        ^
+```
+
+**Root cause:** When parsing `common_reference_with<__detail::__cref<_Lhs>, ...>`, the parser reaches `__detail::__cref` and sees the `<` after it. In template argument context, it checks if `__cref` is a known template, but fails to find it because:
+1. It's looking for `__cref` without namespace qualification
+2. Or the template alias lookup doesn't work for qualified identifiers in this context
+
+**Impact:** `<concepts>` cannot be compiled until this is fixed.
+
+### 3. Template Instantiation Performance (Secondary Blocker)
 
 Template-heavy headers like `<concepts>`, `<utility>`, `<numbers>`, `<ratio>`, and `<bit>` timeout (>30-60s) due to the sheer volume of template instantiations. The log level bug is fixed, but these headers trigger recursive template instantiation that exceeds practical compilation time.
 
