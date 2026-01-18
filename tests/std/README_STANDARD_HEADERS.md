@@ -142,38 +142,24 @@ clang++ -DFLASHCPP_LOG_LEVEL=3 -O3 ...
 
 ## Current Blockers
 
-### 1. Log Level Bug Causing Hangs (2026-01-18 Investigation - CRITICAL)
+### 1. Log Level Bug Causing Hangs (FIXED - 2026-01-18)
 
-**Primary Issue:** When compiled with `FLASHCPP_LOG_LEVEL=1` (Warning), parsing of `<type_traits>` hangs indefinitely.
+**Issue:** ~~When compiled with `FLASHCPP_LOG_LEVEL=1` (Warning), parsing of `<type_traits>` hangs indefinitely.~~ **RESOLVED**
 
-**Key Discovery (2026-01-18 Deep Investigation):**
-The issue is **compile-time dependent**, not runtime! The hang occurs when the compiler binary itself is built with `-DFLASHCPP_LOG_LEVEL=1`.
+**Root Cause:**
+The `if constexpr (enabled)` blocks in the logging macros caused issues when compiled out at lower log levels. The compiler's handling of these blocks during template instantiation created an infinite loop.
 
-**Test Results:**
+**Solution (commit 6ea920f):**
+1. Replaced `if constexpr` with preprocessor `#if FLASHCPP_LOG_LEVEL >= X` checks to completely eliminate code at preprocessing time
+2. Added `flash_log_unused()` template function to suppress unused variable warnings
+3. Optimized `LogConfig::getLevelForCategory()` to use fixed-size array instead of `unordered_map`
+
+**Results after fix:**
 | Build Type | Result |
 |------------|--------|
-| `-DFLASHCPP_LOG_LEVEL=3` (Debug) | ✅ Works (~1-5s) |
-| `-DFLASHCPP_LOG_LEVEL=1` (Warning) | ❌ Hangs |
-| Pre-preprocessed source file | ✅ Works with either |
-
-**Location Narrowed Down:**
-1. ✅ Preprocessing completes successfully (confirmed with debug output)
-2. ✅ Lexer and Parser creation completes
-3. ❌ **The hang is in `parser->parse()`** - the parse loop never completes
-
-**Why Pre-preprocessed Files Work:**
-When feeding a pre-preprocessed type_traits file (4660 lines) directly to the compiler built with `LOG_LEVEL=1`, it compiles successfully. This suggests the issue may be related to how include file tracking or some preprocessing-related state interacts with the parser when certain log levels are compiled out.
-
-**Root Cause Hypothesis:**
-The `if constexpr (enabled)` blocks in the logging macros cause some code paths to be completely compiled out when `LOG_LEVEL <= 1`. One of these removed code paths likely has a side effect that's necessary for correct parser behavior, OR the optimizer makes different inlining/code generation decisions that expose a latent bug.
-
-**Technical details:**
-- The issue is in the `Parser::parse()` method or methods it calls
-- The parsing enters an infinite loop causing exponential memory growth
-- The specific trigger appears to be complex template patterns in `<type_traits>`
-
-**Workaround:**
-Build with `-DFLASHCPP_LOG_LEVEL=3` or higher for release builds until the bug is fixed.
+| `-DFLASHCPP_LOG_LEVEL=1` (Warning) | ✅ Works (~1.1s) |
+| `-DFLASHCPP_LOG_LEVEL=3` (Debug) | ✅ Works (~1.1s) |
+| Debug build (default) | ✅ Works (~6.8s) |
 
 ### 2. Template Instantiation Performance
 

@@ -209,25 +209,19 @@ struct outer {
 
 ## Related Issues
 
-### Log Level Bug (Blocking Investigation)
+### Log Level Bug (FIXED - 2026-01-18)
 
-During investigation, a critical bug was discovered:
-- **The issue is compile-time dependent**: Building with `-DFLASHCPP_LOG_LEVEL=1` causes the parser to hang
-- Building with `-DFLASHCPP_LOG_LEVEL=3` works correctly
-- This is NOT a runtime log level issue - it's related to code paths being compiled out
+During investigation, a critical bug was discovered and **fixed**:
 
-**Key Discovery (2026-01-18):**
-- Pre-preprocessed source files compile successfully even with `LOG_LEVEL=1`
-- The hang occurs in `parser->parse()` when processing full includes
-- Preprocessing completes successfully; the issue is purely in the parsing phase
+**Root Cause:**
+The `if constexpr (enabled)` blocks in logging macros caused issues when compiled out at lower log levels. The compiler's handling of these blocks during template instantiation created an infinite loop.
 
-**Root cause hypothesis:**
-The `if constexpr (enabled)` blocks in logging macros cause some code paths to be completely removed when `LOG_LEVEL <= 1`. Either:
-1. A removed code path has a necessary side effect
-2. The optimizer makes different decisions that expose a latent bug
-3. Some state tracking differs when certain log calls are compiled out
+**Solution (commit 6ea920f):**
+1. Replaced `if constexpr` with preprocessor `#if FLASHCPP_LOG_LEVEL >= X` checks
+2. Added `flash_log_unused()` template function to suppress unused variable warnings
+3. Optimized `LogConfig::getLevelForCategory()` to use fixed-size array instead of `unordered_map`
 
-**Workaround:** Build with `-DFLASHCPP_LOG_LEVEL=3` for release builds until fixed.
+All log levels now work correctly.
 
 ## References
 
