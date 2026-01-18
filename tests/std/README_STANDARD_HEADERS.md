@@ -35,12 +35,19 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<bit>` | N/A | ⏱️ Timeout | Includes heavy headers |
 | `<atomic>` | N/A | ⏱️ Timeout | Heavy headers |
 | `<new>` | N/A | ✅ Compiled | ~0.07s |
-| `<exception>` | N/A | ⏱️ Timeout | Times out during template instantiation |
+| `<exception>` | N/A | ❌ Failed | Parameter names not visible during code generation for out-of-line member functions (2026-01-18) |
 | `<ratio>` | N/A | ⏱️ Timeout | Times out during template instantiation |
 | `<typeinfo>` | N/A | ✅ Compiled | ~0.71s |
 | `<typeindex>` | N/A | ✅ Compiled | ~0.74s |
 | `<csetjmp>` | N/A | ✅ Compiled | ~0.21s |
 | `<csignal>` | N/A | ✅ Compiled | ~2.7s (2026-01-18: Fixed unsupported member size assertions) |
+| `<stdfloat>` | N/A | ✅ Compiled | ~0.1s (C++23 - 2026-01-18) |
+| `<spanstream>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
+| `<print>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
+| `<expected>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
+| `<text_encoding>` | N/A | ✅ Compiled | ~0.4s (C++26 - 2026-01-18) |
+| `<barrier>` | N/A | ✅ Compiled | ~0.4s (C++20 - 2026-01-18) |
+| `<stacktrace>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
 
 **Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s)
 
@@ -350,12 +357,21 @@ The following features have been implemented to support standard headers:
 - Out-of-line constructor/destructor definitions (NEW)
 - Elaborated type specifiers with qualified names (NEW)
 - Graceful handling of non-standard member sizes in code generation (NEW)
+- Out-of-line operator definitions (`ReturnType ClassName::operator=(...)`) (NEW)
 
 ## Recent Changes
 
 Changes are listed in reverse chronological order. For detailed implementation notes, see the git commit history.
 
-### 2026-01-18
+### 2026-01-18 (Afternoon)
+- **StringHandle interning fix:** Fixed `NamespaceRegistry::buildQualifiedIdentifier` to use `getOrInternStringHandle` instead of `createStringHandle`, preventing duplicate handles for the same string
+- **Forward declaration fix:** Fixed `add_struct_type` to return existing TypeInfo if type name is already registered, fixing out-of-line constructors in nested namespaces
+- **Out-of-line constructor parameter scope:** Fixed to use definition's parameter names in member initializer parsing instead of declaration's names
+- **Out-of-line operator definitions:** Added support for patterns like `ReturnType ClassName::operator=(...)`
+- **New headers compiling:** `<stdfloat>`, `<spanstream>`, `<print>`, `<expected>`, `<text_encoding>`, `<barrier>`, `<stacktrace>`
+- **Remaining issue:** `<exception>` header now fails due to parameter scope not being visible during code generation for out-of-line member functions when parameter names differ between declaration and definition
+
+### 2026-01-18 (Morning)
 - **Unsupported size handling:** Fixed assertions that crashed on non-standard member sizes (3, 5, 6, 7, 0 bytes)
 - **Affected functions:** `emitStoreToMemory`, `handleMemberAccess`, `loadValueFromStack`, `storeValueToStack`, `loadValueFromGlobal`, `storeValueToGlobal`, `handleBinaryOp`
 - **Graceful degradation:** Non-standard sizes now log a warning and skip instead of crashing
