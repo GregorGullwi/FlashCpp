@@ -3150,7 +3150,7 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	}
 	
 	// Consume the second class name (constructor/destructor name)
-	[[maybe_unused]] Token func_name_token = *peek_token();
+	Token func_name_token = *peek_token();
 	consume_token();
 	
 	// Find the struct in the type registry
@@ -3178,27 +3178,243 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	// Skip optional qualifiers (noexcept, const, etc.) using existing helper
 	skip_function_trailing_specifiers();
 	
-	// For constructors, check for initializer list
+	// Find the matching constructor/destructor declaration in the struct
+	StructMemberFunction* existing_member = nullptr;
+	size_t param_count = params.parameters.size();
+	
+	for (auto& member : struct_info->member_functions) {
+		if (is_destructor && member.is_destructor) {
+			// Destructors have no parameters to match
+			if (member.function_decl.is<DestructorDeclarationNode>()) {
+				const DestructorDeclarationNode& dtor = member.function_decl.as<DestructorDeclarationNode>();
+				// Skip if already has definition
+				if (dtor.get_definition().has_value()) {
+					continue;
+				}
+			}
+			existing_member = &member;
+			break;
+		} else if (!is_destructor && member.is_constructor) {
+			// For constructors, match by parameter count and types
+			if (member.function_decl.is<ConstructorDeclarationNode>()) {
+				const ConstructorDeclarationNode& ctor = member.function_decl.as<ConstructorDeclarationNode>();
+				
+				// Skip if already has definition
+				if (ctor.get_definition().has_value()) {
+					continue;
+				}
+				
+				// Check parameter count first
+				if (ctor.parameter_nodes().size() != param_count) {
+					continue;
+				}
+				
+				// Match parameter types
+				bool params_match = true;
+				for (size_t i = 0; i < param_count && params_match; ++i) {
+					const ASTNode& decl_param = ctor.parameter_nodes()[i];
+					const ASTNode& def_param = params.parameters[i];
+					
+					// Get type info from both parameters
+					const TypeSpecifierNode* decl_type = nullptr;
+					const TypeSpecifierNode* def_type = nullptr;
+					
+					if (decl_param.is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var = decl_param.as<VariableDeclarationNode>();
+						if (var.declaration().type_node().is<TypeSpecifierNode>()) {
+							decl_type = &var.declaration().type_node().as<TypeSpecifierNode>();
+						}
+					} else if (decl_param.is<DeclarationNode>()) {
+						const DeclarationNode& decl = decl_param.as<DeclarationNode>();
+						if (decl.type_node().is<TypeSpecifierNode>()) {
+							decl_type = &decl.type_node().as<TypeSpecifierNode>();
+						}
+					}
+					
+					if (def_param.is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var = def_param.as<VariableDeclarationNode>();
+						if (var.declaration().type_node().is<TypeSpecifierNode>()) {
+							def_type = &var.declaration().type_node().as<TypeSpecifierNode>();
+						}
+					} else if (def_param.is<DeclarationNode>()) {
+						const DeclarationNode& decl = def_param.as<DeclarationNode>();
+						if (decl.type_node().is<TypeSpecifierNode>()) {
+							def_type = &decl.type_node().as<TypeSpecifierNode>();
+						}
+					}
+					
+					if (!decl_type || !def_type) {
+						params_match = false;
+						continue;
+					}
+					
+					// Compare types
+					if (decl_type->type() != def_type->type()) {
+						params_match = false;
+					} else if (decl_type->pointer_depth() != def_type->pointer_depth()) {
+						params_match = false;
+					} else if (decl_type->is_reference() != def_type->is_reference()) {
+						params_match = false;
+					} else if (decl_type->type_index() != def_type->type_index()) {
+						// For user-defined types, check type_index
+						params_match = false;
+					}
+				}
+				
+				if (params_match) {
+					existing_member = &member;
+					break;
+				}
+			}
+		}
+	}
+	
+	if (!existing_member) {
+		FLASH_LOG(Parser, Error, "Out-of-line definition of '", class_name, is_destructor ? "::~" : "::", class_name, 
+		          "' does not match any declaration in the class");
+		return ParseResult::error("No matching declaration found", func_name_token);
+	}
+	
+	// Get mutable reference to constructor for adding member initializers
+	ConstructorDeclarationNode* ctor_ref = nullptr;
+	if (!is_destructor && existing_member->function_decl.is<ConstructorDeclarationNode>()) {
+		ctor_ref = &const_cast<ConstructorDeclarationNode&>(
+			existing_member->function_decl.as<ConstructorDeclarationNode>());
+	}
+	
+	// Enter function scope with RAII guard - need to do this before parsing initializer list
+	// so that expressions in the initializer can reference parameters
+	FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
+	
+	// Push member function context so that member variables are resolved correctly
+	member_function_context_stack_.push_back({
+		class_name_handle,
+		type_info->type_index_,
+		nullptr,  // struct_node - we don't have access to it here
+		nullptr   // local_struct_info - not needed here
+	});
+	
+	// Add 'this' pointer to symbol table
+	auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
+		Type::Struct, type_info->type_index_, 
+		static_cast<int>(struct_info->total_size * 8), Token()
+	);
+	this_type_ref.add_pointer_level();  // Make it a pointer
+	
+	Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+	auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
+	gSymbolTable.insert("this"sv, this_decl_node);
+	
+	// Add function parameters to symbol table 
+	if (ctor_ref) {
+		for (const ASTNode& param_node : ctor_ref->parameter_nodes()) {
+			if (param_node.is<VariableDeclarationNode>()) {
+				const VariableDeclarationNode& var_decl = param_node.as<VariableDeclarationNode>();
+				const DeclarationNode& param_decl = var_decl.declaration();
+				gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
+			} else if (param_node.is<DeclarationNode>()) {
+				const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+				gSymbolTable.insert(param_decl.identifier_token().value(), param_node);
+			}
+		}
+	}
+	
+	// For constructors, parse member initializer list
 	if (!is_destructor && peek_token().has_value() && peek_token()->value() == ":") {
-		// Skip member initializer list (simplified - just skip to opening brace)
 		consume_token();  // consume ':'
-		while (peek_token().has_value() && peek_token()->value() != "{") {
-			consume_token();
+		
+		while (peek_token().has_value() &&
+		       peek_token()->value() != "{" &&
+		       peek_token()->value() != ";") {
+			auto init_name_token = consume_token();
+			if (!init_name_token.has_value() || init_name_token->type() != Token::Type::Identifier) {
+				member_function_context_stack_.pop_back();
+				return ParseResult::error("Expected member name in initializer list", init_name_token.value_or(Token()));
+			}
+			
+			std::string_view init_name = init_name_token->value();
+			
+			bool is_paren = peek_token().has_value() && peek_token()->value() == "(";
+			bool is_brace = peek_token().has_value() && peek_token()->value() == "{";
+			
+			if (!is_paren && !is_brace) {
+				member_function_context_stack_.pop_back();
+				return ParseResult::error("Expected '(' or '{' after initializer name", *peek_token());
+			}
+			
+			consume_token();  // consume '(' or '{'
+			std::string_view close_delim = is_paren ? ")" : "}";
+			
+			std::vector<ASTNode> init_args;
+			if (!peek_token().has_value() || peek_token()->value() != close_delim) {
+				do {
+					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (arg_result.is_error()) {
+						member_function_context_stack_.pop_back();
+						return arg_result;
+					}
+					if (auto arg_node = arg_result.node()) {
+						init_args.push_back(*arg_node);
+					}
+				} while (peek_token().has_value() && peek_token()->value() == "," && consume_token());
+			}
+			
+			if (!consume_punctuator(close_delim)) {
+				member_function_context_stack_.pop_back();
+				return ParseResult::error(std::string("Expected '") + std::string(close_delim) +
+				                         "' after initializer arguments", *peek_token());
+			}
+			
+			// Add member initializer to constructor
+			if (ctor_ref && !init_args.empty()) {
+				ctor_ref->add_member_initializer(init_name, init_args[0]);
+			}
+			
+			if (!consume_punctuator(",")) {
+				break;
+			}
 		}
 	}
 	
 	// Parse function body
 	if (!peek_token().has_value() || peek_token()->value() != "{") {
+		member_function_context_stack_.pop_back();
 		return ParseResult::error("Expected '{' in constructor/destructor definition", *current_token_);
 	}
 	
-	// Skip the function body using existing helper
-	skip_balanced_braces();
+	// Parse function body
+	ParseResult body_result = parse_block();
+	
+	if (body_result.is_error()) {
+		member_function_context_stack_.pop_back();
+		return body_result;
+	}
+	
+	// Set the definition on the existing declaration
+	if (body_result.node().has_value()) {
+		if (is_destructor && existing_member->function_decl.is<DestructorDeclarationNode>()) {
+			DestructorDeclarationNode& dtor = const_cast<DestructorDeclarationNode&>(
+				existing_member->function_decl.as<DestructorDeclarationNode>());
+			if (!dtor.set_definition(*body_result.node())) {
+				FLASH_LOG(Parser, Error, "Destructor '", class_name, "::~", class_name, "' already has a definition");
+				member_function_context_stack_.pop_back();
+				return ParseResult::error("Destructor already has definition", func_name_token);
+			}
+		} else if (ctor_ref) {
+			if (!ctor_ref->set_definition(*body_result.node())) {
+				FLASH_LOG(Parser, Error, "Constructor '", class_name, "::", class_name, "' already has a definition");
+				member_function_context_stack_.pop_back();
+				return ParseResult::error("Constructor already has definition", func_name_token);
+			}
+		}
+	}
+	
+	member_function_context_stack_.pop_back();
 	
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_out_of_line_constructor_or_destructor: Successfully parsed {}::{}{}()", 
 		std::string(class_name), is_destructor ? "~" : "", std::string(class_name));
 	
-	// Return success (we've parsed the definition but don't generate code for it yet)
+	// Return success - the existing declaration already has the definition attached
 	return saved_position.success();
 }
 
