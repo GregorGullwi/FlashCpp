@@ -214,6 +214,15 @@ int main(int argc, char *argv[]) {
     context.setVerboseMode(argsparser.hasFlag("v") || argsparser.hasFlag("verbose"));
     context.setPreprocessorOnlyMode(argsparser.hasFlag("E"));
     context.setDisableAccessControl(argsparser.hasFlag("fno-access-control") || argsparser.hasFlag("no-access-control"));
+
+    if (context.isVerboseMode()) {
+        FLASH_LOG_FORMAT(General, Info,
+            "Log config: compile-time level={}, default runtime level={}, runtime level={}, categories=0x{:X}",
+            FLASHCPP_LOG_LEVEL,
+            FLASHCPP_DEFAULT_RUNTIME_LEVEL,
+            static_cast<int>(FlashCpp::LogConfig::runtimeLevel),
+            static_cast<uint32_t>(FlashCpp::LogConfig::runtimeCategories));
+    }
     
     // Check for -fno-exceptions flag
     if (argsparser.hasFlag("fno-exceptions")) {
