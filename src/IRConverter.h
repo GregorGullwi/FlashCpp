@@ -6825,7 +6825,7 @@ private:
 				
 				// If the argument is marked as a reference, set it as such
 				if (arg_is_reference) {
-					param_type.set_reference(false);  // set_reference(false) creates an lvalue reference
+					param_type.set_reference(arg.is_rvalue_reference);  // set_reference(true) for rvalue, set_reference(false) for lvalue
 				}
 				
 				// For copy/move constructors: if parameter is the same struct type, it should be a reference
@@ -6875,7 +6875,7 @@ private:
 					}
 					// Also preserve the reference flag if it was set
 					if (arg_is_reference) {
-						param_type.set_reference(false);  // set_reference(false) creates an lvalue reference
+						param_type.set_reference(arg.is_rvalue_reference);  // set_reference(true) for rvalue, set_reference(false) for lvalue
 					}
 				}
 				

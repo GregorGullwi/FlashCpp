@@ -3273,6 +3273,12 @@ private:
 							other_arg.size_in_bits = static_cast<int>(base_type_info.struct_info_ ? base_type_info.struct_info_->total_size * 8 : struct_info->total_size * 8);
 							other_arg.value = StringTable::getOrInternStringHandle("other");  // Parameter value ('other' object)
 							other_arg.type_index = base.type_index;  // Use BASE class type index for proper mangling
+							other_arg.is_reference = true;  // Mark as reference for proper mangling
+							if (is_copy_constructor) {
+								other_arg.cv_qualifier = CVQualifier::Const;  // Copy ctor takes const reference
+							} else if (is_move_constructor) {
+								other_arg.is_rvalue_reference = true;  // Move ctor takes rvalue reference
+							}
 							ctor_op.arguments.push_back(std::move(other_arg));
 
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
@@ -7049,7 +7055,7 @@ private:
 						binding_var_decl.var_name = binding_id;
 						binding_var_decl.type = element_type;
 						binding_var_decl.size_in_bits = element_size;
-						binding_var_decl.initializer = TypedValue{element_type, element_size, result_temp, false, false, element_type_index};
+						binding_var_decl.initializer = TypedValue{element_type, element_size, result_temp, false, false, false, element_type_index};
 						
 						ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 						
@@ -7171,7 +7177,7 @@ private:
 				binding_var_decl.size_in_bits = 64;  // References are pointers (64-bit addresses)
 				binding_var_decl.is_reference = true;  // Mark as reference
 				binding_var_decl.is_rvalue_reference = node.is_rvalue_reference();
-				binding_var_decl.initializer = TypedValue{member.type, 64, member_addr, false, false, member.type_index};
+				binding_var_decl.initializer = TypedValue{member.type, 64, member_addr, false, false, false, member.type_index};
 				
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 			} else {
@@ -7198,7 +7204,7 @@ private:
 				binding_var_decl.var_name = binding_id;
 				binding_var_decl.type = member.type;
 				binding_var_decl.size_in_bits = member_size_bits;
-				binding_var_decl.initializer = TypedValue{member.type, static_cast<int>(member_size_bits), member_val, false, false, member.type_index};
+				binding_var_decl.initializer = TypedValue{member.type, static_cast<int>(member_size_bits), member_val, false, false, false, member.type_index};
 				
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 			}
