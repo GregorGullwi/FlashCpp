@@ -212,22 +212,22 @@ struct outer {
 ### Log Level Bug (Blocking Investigation)
 
 During investigation, a critical bug was discovered:
-- Setting global log level to Info (2) or below causes compilation to hang
-- Memory grows exponentially (doubling every ~0.1s)
-- Workaround: Use category-specific log levels (e.g., `--log-level=Parser:info`)
-- This bug should be fixed before implementing new lazy instantiation features
+- **The issue is compile-time dependent**: Building with `-DFLASHCPP_LOG_LEVEL=1` causes the parser to hang
+- Building with `-DFLASHCPP_LOG_LEVEL=3` works correctly
+- This is NOT a runtime log level issue - it's related to code paths being compiled out
 
-**Root cause narrowed down (2026-01-18):**
-- Issue is specific to global `LogConfig::runtimeLevel` setting
-- Category-specific levels via `categoryLevels` map work correctly
-- **The hang occurs during parsing of `__swappable_with_details` namespace in `<type_traits>`**
-- Specifically related to parsing struct templates with complex SFINAE patterns:
-  ```cpp
-  template<typename _Tp, typename _Up, typename
-           = decltype(swap(std::declval<_Tp>(), std::declval<_Up>()))>
-  ```
-- The issue is likely in `parse_struct_declaration()` or `parse_template_declaration()`
-- When Debug-level logging is enabled, some code path behaves differently (possibly due to timing or side effects of log string construction)
+**Key Discovery (2026-01-18):**
+- Pre-preprocessed source files compile successfully even with `LOG_LEVEL=1`
+- The hang occurs in `parser->parse()` when processing full includes
+- Preprocessing completes successfully; the issue is purely in the parsing phase
+
+**Root cause hypothesis:**
+The `if constexpr (enabled)` blocks in logging macros cause some code paths to be completely removed when `LOG_LEVEL <= 1`. Either:
+1. A removed code path has a necessary side effect
+2. The optimizer makes different decisions that expose a latent bug
+3. Some state tracking differs when certain log calls are compiled out
+
+**Workaround:** Build with `-DFLASHCPP_LOG_LEVEL=3` for release builds until fixed.
 
 ## References
 

@@ -144,46 +144,36 @@ clang++ -DFLASHCPP_LOG_LEVEL=3 -O3 ...
 
 ### 1. Log Level Bug Causing Hangs (2026-01-18 Investigation - CRITICAL)
 
-**Primary Issue:** Setting global log level to Info (2) or below causes unbounded memory growth and hangs.
+**Primary Issue:** When compiled with `FLASHCPP_LOG_LEVEL=1` (Warning), parsing of `<type_traits>` hangs indefinitely.
 
-**Investigation Findings (Deep Dive 2026-01-18):**
-- `<type_traits>` compiles successfully in ~7 seconds with default logging
-- Setting `--log-level=2` (info) or lower causes exponential memory growth
-- Memory allocations double every ~0.1s: 256KB → 512KB → 1MB → ... → 512MB+
-- The bug does NOT occur with category-specific log levels (e.g., `--log-level=Parser:info`)
-- The bug IS triggered by global log level changes via `LogConfig::setLevel(LogLevel)`
-- Lazy template instantiation is NOT the cause (already implemented and working)
+**Key Discovery (2026-01-18 Deep Investigation):**
+The issue is **compile-time dependent**, not runtime! The hang occurs when the compiler binary itself is built with `-DFLASHCPP_LOG_LEVEL=1`.
 
-**Detailed Trace Analysis:**
-Through extensive instrumentation, the hang was traced to:
-1. Preprocessing completes successfully (~3000 lines of type_traits)
-2. Lexer and Parser creation completes
-3. Main parse loop starts and processes namespace declarations
-4. The 6th namespace (`std`) contains 300+ template declarations
-5. Nested namespaces `__swappable_details` and `__swappable_with_details` are entered
-6. The parsing of `using std::swap;` and subsequent struct declarations completes
-7. **The hang occurs somewhere in struct template parsing** after namespace `__swappable_with_details`
+**Test Results:**
+| Build Type | Result |
+|------------|--------|
+| `-DFLASHCPP_LOG_LEVEL=3` (Debug) | ✅ Works (~1-5s) |
+| `-DFLASHCPP_LOG_LEVEL=1` (Warning) | ❌ Hangs |
+| Pre-preprocessed source file | ✅ Works with either |
 
-**Narrowed Location:**
-- The hang is NOT in preprocessing (completes fine)
-- The hang is NOT in using declaration parsing (returns successfully)  
-- The hang is likely in `parse_struct_declaration()` or `parse_template_declaration()` 
-- The specific trigger appears to be parsing complex SFINAE patterns like:
-  ```cpp
-  template<typename _Tp, typename _Up, typename
-           = decltype(swap(std::declval<_Tp>(), std::declval<_Up>()))>
-  ```
+**Location Narrowed Down:**
+1. ✅ Preprocessing completes successfully (confirmed with debug output)
+2. ✅ Lexer and Parser creation completes
+3. ❌ **The hang is in `parser->parse()`** - the parse loop never completes
 
-**Symptoms:**
-- Compilation hangs indefinitely
-- `strace` shows exponential `mmap()` allocations
-- Eventually crashes with `std::bad_alloc` if memory limit is hit
+**Why Pre-preprocessed Files Work:**
+When feeding a pre-preprocessed type_traits file (4660 lines) directly to the compiler built with `LOG_LEVEL=1`, it compiles successfully. This suggests the issue may be related to how include file tracking or some preprocessing-related state interacts with the parser when certain log levels are compiled out.
+
+**Root Cause Hypothesis:**
+The `if constexpr (enabled)` blocks in the logging macros cause some code paths to be completely compiled out when `LOG_LEVEL <= 1`. One of these removed code paths likely has a side effect that's necessary for correct parser behavior, OR the optimizer makes different inlining/code generation decisions that expose a latent bug.
 
 **Technical details:**
-The bug appears to be triggered when `LogConfig::runtimeLevel` is set to a value ≤ Info (2), causing some code path in template instantiation/SFINAE handling to enter an infinite loop. The issue may be related to:
-- `std::declval<T>()` handling in decltype expressions
-- SFINAE template parameter default value parsing
-- Interaction between logging disabled and some control flow path
+- The issue is in the `Parser::parse()` method or methods it calls
+- The parsing enters an infinite loop causing exponential memory growth
+- The specific trigger appears to be complex template patterns in `<type_traits>`
+
+**Workaround:**
+Build with `-DFLASHCPP_LOG_LEVEL=3` or higher for release builds until the bug is fixed.
 
 ### 2. Template Instantiation Performance
 
