@@ -138,7 +138,7 @@ The `if constexpr (enabled)` blocks in logging macros previously caused hangs wh
 
 ### 3. Template Instantiation Performance (Secondary Blocker)
 
-Template-heavy headers like `<concepts>`, `<utility>`, `<numbers>`, `<ratio>`, and `<bit>` timeout (>30-60s) due to the sheer volume of template instantiations. The log level bug is fixed, but these headers trigger recursive template instantiation that exceeds practical compilation time.
+Template-heavy headers that don't include `<concepts>` may still experience slow compilation due to template instantiation volume. However, many headers previously thought to be "timing out" actually have specific parsing errors or crashes (see table above).
 
 **Key metrics (from `<type_traits>` timing):**
 - Preprocessing: ~5s (89%)
