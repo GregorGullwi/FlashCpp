@@ -84,6 +84,14 @@ TypeInfo& add_function_type(StringHandle name, [[maybe_unused]] Type return_type
 }
 
 TypeInfo& add_struct_type(StringHandle name) {
+    // Check if type already exists (forward declaration case)
+    auto existing_it = gTypesByName.find(name);
+    if (existing_it != gTypesByName.end()) {
+        // Type already exists - return the existing one
+        // This handles the case where we have a forward declaration followed by a full definition
+        return const_cast<TypeInfo&>(*existing_it->second);
+    }
+    
     auto& type_info = gTypeInfo.emplace_back(name, Type::Struct, gTypeInfo.size());
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
