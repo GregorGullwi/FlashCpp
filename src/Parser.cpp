@@ -3192,15 +3192,8 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 		return ParseResult::error("Expected '{' in constructor/destructor definition", *current_token_);
 	}
 	
-	// Skip the function body for now (simplified parsing)
-	// We just need to make sure the header compiles
-	consume_token();  // consume '{'
-	int brace_depth = 1;
-	while (brace_depth > 0 && peek_token().has_value()) {
-		auto tok = consume_token();
-		if (tok->value() == "{") brace_depth++;
-		else if (tok->value() == "}") brace_depth--;
-	}
+	// Skip the function body using existing helper
+	skip_balanced_braces();
 	
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_out_of_line_constructor_or_destructor: Successfully parsed {}::{}{}()", 
 		std::string(class_name), is_destructor ? "~" : "", std::string(class_name));
@@ -8583,17 +8576,8 @@ ParseResult Parser::parse_friend_declaration()
 
 	// Handle friend function body (inline definition) or semicolon (declaration only)
 	if (peek_token().has_value() && peek_token()->value() == "{") {
-		// Friend function with inline body - skip the body
-		consume_token();  // consume '{'
-		int brace_depth = 1;
-		while (brace_depth > 0 && peek_token().has_value()) {
-			auto token = consume_token();
-			if (token->value() == "{") {
-				brace_depth++;
-			} else if (token->value() == "}") {
-				brace_depth--;
-			}
-		}
+		// Friend function with inline body - skip the body using existing helper
+		skip_balanced_braces();
 	} else if (!consume_punctuator(";")) {
 		return ParseResult::error("Expected ';' after friend function declaration", *current_token_);
 	}
