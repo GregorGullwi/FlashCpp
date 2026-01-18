@@ -1644,6 +1644,14 @@ public:
 	void add_parameter_node(ASTNode parameter_node) {
 		parameter_nodes_.push_back(parameter_node);
 	}
+	// Update parameter nodes from the definition (to use definition's parameter names)
+	// C++ allows declaration and definition to have different parameter names
+	void update_parameter_nodes_from_definition(const std::vector<ASTNode>& definition_params) {
+		if (definition_params.size() != parameter_nodes_.size()) {
+			return; // Signature mismatch - shouldn't happen after validation
+		}
+		parameter_nodes_ = definition_params;
+	}
 	const std::optional<ASTNode>& get_definition() const {
 		return definition_block_;
 	}
