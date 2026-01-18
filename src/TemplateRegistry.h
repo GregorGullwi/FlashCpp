@@ -1719,9 +1719,9 @@ private:
 // Each phase represents a level of completeness of the instantiation
 enum class ClassInstantiationPhase : uint8_t {
 	None = 0,           // Not yet instantiated
-	Minimal = 1,        // Phase A: Type entry created, name registered
-	Layout = 2,         // Phase B: Size/alignment computed (needed for sizeof, alignof, allocations)
-	Full = 3            // Phase C: All members, base classes, and static members instantiated
+	Minimal = 1,        // Type entry created, name registered (triggered by any type name use)
+	Layout = 2,         // Size/alignment computed (triggered by sizeof, alignof, variable declarations)
+	Full = 3            // All members, base classes, and static members instantiated (triggered by member access)
 };
 
 // Information needed for lazy (phased) class template instantiation
@@ -1733,6 +1733,8 @@ struct LazyClassInstantiationInfo {
 	std::vector<ASTNode> template_params;          // Template parameters from class template
 	ASTNode template_declaration;                  // Reference to primary template declaration
 	ClassInstantiationPhase current_phase = ClassInstantiationPhase::None;
+	// Flags for tracking what needs to be instantiated in Full phase
+	// These are set during Minimal phase to avoid re-parsing template declaration
 	bool has_base_classes = false;                 // Does the template have base classes?
 	bool has_static_members = false;               // Does the template have static members?
 	bool has_member_functions = false;             // Does the template have member functions?
@@ -1741,9 +1743,9 @@ struct LazyClassInstantiationInfo {
 
 // Registry for tracking partially instantiated template classes
 // Enables three-phase instantiation:
-// - Phase A (Minimal): Create type entry, register name - triggered by any type name use
-// - Phase B (Layout): Compute size/alignment - triggered by sizeof, alignof, variable declarations
-// - Phase C (Full): Instantiate all members - triggered by member access, method calls
+// - Minimal: Create type entry, register name - triggered by any type name use
+// - Layout: Compute size/alignment - triggered by sizeof, alignof, variable declarations
+// - Full: Instantiate all members - triggered by member access, method calls
 class LazyClassInstantiationRegistry {
 public:
 	static LazyClassInstantiationRegistry& getInstance() {
@@ -1773,6 +1775,7 @@ public:
 	}
 	
 	// Check if a class needs instantiation to the specified phase
+	// Uses enum underlying values for comparison (None=0 < Minimal=1 < Layout=2 < Full=3)
 	bool needsInstantiationTo(StringHandle instantiated_name, ClassInstantiationPhase target_phase) const {
 		auto it = lazy_classes_.find(instantiated_name);
 		if (it == lazy_classes_.end()) {
