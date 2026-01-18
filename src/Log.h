@@ -68,13 +68,20 @@ namespace detail {
     constexpr const char* BLUE    = "\033[34m";
 }
 
-// Helper to convert category bit flag to array index at compile time
+// Helper to convert single-bit category flag to array index at compile time
+// NOTE: Only works with single-bit categories (General, Parser, etc.), not multi-bit (All)
 constexpr size_t categoryToIndex(LogCategory cat) {
     uint32_t val = static_cast<uint32_t>(cat);
     if (val == 0) return 0;
     size_t idx = 0;
     while ((val & 1) == 0) { val >>= 1; idx++; }
     return idx;
+}
+
+// Check if a category is a single-bit flag (valid for array indexing)
+constexpr bool isSingleBitCategory(LogCategory cat) {
+    uint32_t val = static_cast<uint32_t>(cat);
+    return val != 0 && (val & (val - 1)) == 0;  // Power of 2 check
 }
 
 // Number of log categories (General through Mangling = 9)
@@ -87,18 +94,25 @@ struct LogConfig {
     // Fixed-size array for per-category log levels (much faster than unordered_map)
     // Index 0 = General, 1 = Parser, 2 = Lexer, etc.
     // Value of 255 means "use runtimeLevel" (unset)
-    static inline std::array<uint8_t, NUM_LOG_CATEGORIES> categoryLevels = {255, 255, 255, 255, 255, 255, 255, 255, 255};
+    // Default-initialized to 255 via aggregate initialization
+    static inline std::array<uint8_t, NUM_LOG_CATEGORIES> categoryLevels = []() {
+        std::array<uint8_t, NUM_LOG_CATEGORIES> arr;
+        arr.fill(255);
+        return arr;
+    }();
     static inline std::ostream* output_stream = &std::cout;  // Default output stream (errors always go to std::cerr)
     static inline bool use_colors = true;  // Enable/disable ANSI colors
 
     static void setLevel(LogLevel level) { runtimeLevel = level; }
     static void setLevel(LogCategory cat, LogLevel level) { 
+        if (!isSingleBitCategory(cat)) return;  // Ignore multi-bit categories like All
         size_t idx = categoryToIndex(cat);
         if (idx < NUM_LOG_CATEGORIES) {
             categoryLevels[idx] = static_cast<uint8_t>(level);
         }
     }
     static LogLevel getLevelForCategory(LogCategory cat) {
+        if (!isSingleBitCategory(cat)) return runtimeLevel;  // Multi-bit categories use runtime level
         size_t idx = categoryToIndex(cat);
         if (idx < NUM_LOG_CATEGORIES && categoryLevels[idx] != 255) {
             return static_cast<LogLevel>(categoryLevels[idx]);
