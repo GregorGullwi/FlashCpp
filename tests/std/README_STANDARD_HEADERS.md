@@ -48,6 +48,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<text_encoding>` | N/A | ✅ Compiled | ~0.4s (C++26 - 2026-01-18) |
 | `<barrier>` | N/A | ✅ Compiled | ~0.4s (C++20 - 2026-01-18) |
 | `<stacktrace>` | N/A | ✅ Compiled | ~0.4s (C++23 - 2026-01-18) |
+| `<coroutine>` | N/A | ❌ Not Supported | Coroutines are not supported at this time. The `__cpp_impl_coroutine` feature-test macro is disabled. |
 
 **Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s)
 
@@ -341,6 +342,7 @@ The following features have been implemented to support standard headers:
 - Globally qualified `::new`/`::delete`
 - Template alias declarations with requires clauses (`template<typename T> requires Constraint<T> using Alias = T;`)
 - Template argument reference preservation in function template instantiation
+- ~~Coroutine support macro (`__cpp_impl_coroutine`) for `<coroutine>` header~~ (REMOVED - coroutines not supported)
 
 **Other:**
 - Named anonymous unions in typedef structs
@@ -359,12 +361,17 @@ The following features have been implemented to support standard headers:
 - Graceful handling of non-standard member sizes in code generation (NEW)
 - Out-of-line operator definitions (`ReturnType ClassName::operator=(...)`) (NEW)
 - Out-of-line member functions with different parameter names between declaration and definition (NEW)
+- Pointer-to-member typedef syntax (`typedef T Class::* alias;`) (NEW)
+- Trailing return type parameter visibility in decltype expressions (NEW)
 
 ## Recent Changes
 
 Changes are listed in reverse chronological order. For detailed implementation notes, see the git commit history.
 
 ### 2026-01-18 (Afternoon)
+- **`__cpp_impl_coroutine` macro:** ~~Added~~ Disabled predefined macro - coroutines are not supported at this time
+- **Pointer-to-member typedef:** Support for `typedef T Class::* alias;` syntax used in `<type_traits>` result_of patterns
+- **Trailing return type parameter visibility:** Function parameters now visible in trailing return type expressions like `auto func(T __t, U __u) -> decltype(__t + __u)`
 - **StringHandle interning fix:** Fixed `NamespaceRegistry::buildQualifiedIdentifier` to use `getOrInternStringHandle` instead of `createStringHandle`, preventing duplicate handles for the same string
 - **Forward declaration fix:** Fixed `add_struct_type` to return existing TypeInfo if type name is already registered, fixing out-of-line constructors in nested namespaces
 - **Out-of-line constructor parameter scope:** Fixed to use definition's parameter names in member initializer parsing instead of declaration's names
