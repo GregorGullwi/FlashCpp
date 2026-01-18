@@ -207,25 +207,9 @@ struct outer {
 3. **Compilation time** for standard headers
 4. **Number of lazily deferred vs actually instantiated** components
 
-## Related Issues
-
-### Log Level Bug (FIXED - 2026-01-18)
-
-During investigation, a critical bug was discovered and **fixed**:
-
-**Root Cause:**
-The `if constexpr (enabled)` blocks in logging macros caused issues when compiled out at lower log levels. The compiler's handling of these blocks during template instantiation created an infinite loop.
-
-**Solution (commit 6ea920f):**
-1. Replaced `if constexpr` with preprocessor `#if FLASHCPP_LOG_LEVEL >= X` checks
-2. Added `flash_log_unused()` template function to suppress unused variable warnings
-3. Optimized `LogConfig::getLevelForCategory()` to use fixed-size array instead of `unordered_map`
-
-All log levels now work correctly.
-
 ## References
 
-- `src/TemplateRegistry.h` - Template registry and lazy member infrastructure
+- `src/TemplateRegistry.h` - Template registry and lazy member infrastructure (`LazyMemberInstantiationRegistry` class)
 - `src/InstantiationQueue.h` - Instantiation tracking
-- `src/Parser.cpp:36196` - Current lazy member function implementation
-- `src/CompileContext.h:266` - Lazy instantiation control flag
+- `src/Parser.cpp` - `instantiate_class_template()` function for lazy member function implementation
+- `src/CompileContext.h` - `eager_template_instantiation` flag (lazy is default)

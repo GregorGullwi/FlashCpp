@@ -91,40 +91,14 @@ cd tests/std
 
 Logging can be controlled at runtime and compile-time.
 
-### ⚠️ CRITICAL BUG: Log Level Setting Causes Hang (2026-01-18)
-
-**Setting global log level to Info (2) or below causes the compiler to hang with unbounded memory growth.**
-
-This is a BUG, not a performance issue. Investigation findings:
-
-| Log Level Setting | Result |
-|-------------------|--------|
-| Default (no flag) | ✅ Works (~7s for `<type_traits>`) |
-| `--log-level=trace` or `--log-level=4` | ✅ Works |
-| `--log-level=debug` or `--log-level=3` | ✅ Works |
-| `--log-level=info` or `--log-level=2` | ❌ **HANGS** |
-| `--log-level=warning` or `--log-level=1` | ❌ **HANGS** |
-| `--log-level=error` or `--log-level=0` | ❌ **HANGS** |
-
-**Workaround:** Use category-specific log levels instead of global:
-```bash
-# This WORKS - category-specific setting
-./x64/Debug/FlashCpp file.cpp --log-level=Codegen:info
-
-# This HANGS - global setting
-./x64/Debug/FlashCpp file.cpp --log-level=info
-```
-
-**Root cause:** Unknown. The bug manifests when the global `runtimeLevel` is set to Info or lower, causing an infinite loop or unbounded recursion that consumes memory exponentially (doubling every ~0.1s from 256KB to 512MB+ before crashing or timing out).
-
 ### Runtime Log Level Control
 
-Use `--log-level` to control log verbosity at runtime:
-
 ```bash
-# Set log level for specific category (RECOMMENDED - avoids the bug above)
+# Set global log level
+./x64/Debug/FlashCpp file.cpp --log-level=warning
+
+# Set log level for specific category
 ./x64/Debug/FlashCpp file.cpp --log-level=Parser:debug
-./x64/Debug/FlashCpp file.cpp --log-level=Codegen:info
 
 # Available levels: error (0), warning (1), info (2), debug (3), trace (4)
 # Available categories: General, Parser, Lexer, Templates, Symbols, Types, Codegen, Scope, Mangling, All
@@ -132,34 +106,16 @@ Use `--log-level` to control log verbosity at runtime:
 
 ### Compile-time Log Level Control
 
-The release build uses `-DFLASHCPP_LOG_LEVEL=1` (Warning level) by default, which triggers the bug described above.
-
-**To build a working release version, use debug log level:**
 ```bash
-# Build release with debug log level (works around the bug)
-clang++ -DFLASHCPP_LOG_LEVEL=3 -O3 ...
+# Build with specific log level (0=error, 1=warning, 2=info, 3=debug, 4=trace)
+clang++ -DFLASHCPP_LOG_LEVEL=1 -O3 ...
 ```
 
 ## Current Blockers
 
-### 1. Log Level Bug Causing Hangs (FIXED - 2026-01-18)
+### 1. Log Level Bug (FIXED - 2026-01-18)
 
-**Issue:** ~~When compiled with `FLASHCPP_LOG_LEVEL=1` (Warning), parsing of `<type_traits>` hangs indefinitely.~~ **RESOLVED**
-
-**Root Cause:**
-The `if constexpr (enabled)` blocks in the logging macros caused issues when compiled out at lower log levels. The compiler's handling of these blocks during template instantiation created an infinite loop.
-
-**Solution (commit 6ea920f):**
-1. Replaced `if constexpr` with preprocessor `#if FLASHCPP_LOG_LEVEL >= X` checks to completely eliminate code at preprocessing time
-2. Added `flash_log_unused()` template function to suppress unused variable warnings
-3. Optimized `LogConfig::getLevelForCategory()` to use fixed-size array instead of `unordered_map`
-
-**Results after fix:**
-| Build Type | Result |
-|------------|--------|
-| `-DFLASHCPP_LOG_LEVEL=1` (Warning) | ✅ Works (~1.1s) |
-| `-DFLASHCPP_LOG_LEVEL=3` (Debug) | ✅ Works (~1.1s) |
-| Debug build (default) | ✅ Works (~6.8s) |
+The `if constexpr (enabled)` blocks in logging macros previously caused hangs when compiled out. Fixed by replacing with preprocessor `#if` checks (commit 6ea920f).
 
 ### 2. Template Instantiation Performance
 
@@ -444,21 +400,15 @@ The following features have been implemented to support standard headers:
 
 Changes are listed in reverse chronological order. For detailed implementation notes, see the git commit history.
 
-### 2026-01-18 (Evening - Log Level Bug Investigation)
-- **CRITICAL BUG FOUND:** Setting global log level to Info (2) or below causes compiler to hang
-- **Root cause:** Bug in log level handling - setting `LogConfig::runtimeLevel` to ≤ Info causes infinite loop/recursion
-- **Key finding:** `<type_traits>` compiles successfully in ~7 seconds with default (debug) logging
-- **Workaround:** Use category-specific log levels instead of global (e.g., `--log-level=Codegen:info` works)
-- **Release build affected:** Release builds use `-DFLASHCPP_LOG_LEVEL=1` which triggers this bug
-- **Lazy template instantiation:** Confirmed already implemented for member functions - NOT the cause of hangs
-- **Impact:** Many headers previously marked as "OOM" may actually compile - needs re-testing with debug build
+### 2026-01-18 (Log Level Bug Fix)
+- **BUG FIXED:** Log level bug that caused hangs is now resolved (commit 6ea920f)
+- **Root cause:** `if constexpr (enabled)` blocks in logging macros caused issues when compiled out
+- **Solution:** Replaced with preprocessor `#if FLASHCPP_LOG_LEVEL >= X` checks
+- **All log levels now work:** Release builds with `-DFLASHCPP_LOG_LEVEL=1` compile successfully
+- **Performance:** `<type_traits>` compiles in ~1.1s (release) or ~6.8s (debug)
 
-### 2026-01-18 (Header Timeout Investigation)
-- **OOM vs Timeout Investigation:** ~~Discovered that most template-heavy headers crash with `std::bad_alloc` - **SUPERSEDED**: this was caused by the log level bug~~
-- **Testing methodology:** Tested headers with 30s, 60s, 90s, and 120s timeouts
-- **Key finding:** ~~Increasing timeout values does not help - **SUPERSEDED**: issue is log level bug, not timeout~~
-- **Updated status:** Results need re-verification with debug build to separate log level bug from actual issues
-- **Verified working headers:** All headers marked as "Compiled" were re-verified with current build:
+### 2026-01-18 (Header Verification)
+- **Verified working headers:**
   - `<limits>` (~0.30s), `<compare>` (~0.10s), `<version>` (~0.09s), `<source_location>` (~0.10s)
   - `<initializer_list>` (~0.07s), `<new>` (~0.10s), `<typeinfo>` (~0.10s), `<typeindex>` (~0.16s)
   - `<csetjmp>` (~0.06s), `<csignal>` (~0.18s), `<stdfloat>` (~0.03s)
