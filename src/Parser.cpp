@@ -16957,6 +16957,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 								TypeIndex type_idx = type_spec.type_index();
 								if (type_idx < gTypeInfo.size()) {
 									object_struct_name = StringTable::getStringView(gTypeInfo[type_idx].name());
+									
+									// Phase 2: Ensure the struct is instantiated to Full phase for member access
+									// This ensures all members are instantiated before accessing them
+									StringHandle type_name = gTypeInfo[type_idx].name();
+									instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Full);
 								}
 							}
 						}
