@@ -13242,8 +13242,8 @@ private:
 					load_opcodes = generateMovFromMemory8(temp_reg, temp_reg, op.offset);
 				} else {
 					// Unsupported member size (0, 3, 5, 6, 7, etc.) - skip quietly
-					regAlloc.release(temp_reg);
 					FLASH_LOG_FORMAT(Codegen, Warning, "MemberAccess: Unsupported member size {} bytes, skipping", member_size_bytes);
+					regAlloc.release(temp_reg);
 					return;
 				}
 				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
