@@ -4,39 +4,41 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
-| Header | Test File | Status | Blocker |
-|--------|-----------|--------|---------|
+⚠️ **Note:** Results below are affected by a log level bug. With debug build and default logging, `<type_traits>` compiles in ~7s. With release build (`-DFLASHCPP_LOG_LEVEL=1`), it hangs due to a bug. See "Disabling Logging" section below.
+
+| Header | Test File | Status | Notes |
+|--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.30s |
-| `<type_traits>` | `test_std_type_traits.cpp` | 💾 OOM | Memory exhaustion during template instantiation |
+| `<type_traits>` | `test_std_type_traits.cpp` | ⚠️ Bug | ~7s with debug build, hangs with release due to log level bug |
 | `<compare>` | N/A | ✅ Compiled | ~0.10s |
 | `<version>` | N/A | ✅ Compiled | ~0.09s |
 | `<source_location>` | N/A | ✅ Compiled | ~0.10s |
-| `<numbers>` | N/A | ⏱️ Timeout | Template instantiation volume (>60s) |
+| `<numbers>` | N/A | ⏱️ Timeout | Needs testing with debug build |
 | `<initializer_list>` | N/A | ✅ Compiled | ~0.07s |
-| `<concepts>` | `test_std_concepts.cpp` | 💾 OOM | Memory exhaustion during template instantiation |
-| `<utility>` | `test_std_utility.cpp` | 💾 OOM | Memory exhaustion during template instantiation |
-| `<string_view>` | `test_std_string_view.cpp` | 💾 OOM | Memory exhaustion during template instantiation |
-| `<string>` | `test_std_string.cpp` | 💾 OOM | Allocators, exceptions, template memory |
-| `<vector>` | `test_std_vector.cpp` | 💾 OOM | Template instantiation memory |
-| `<array>` | `test_std_array.cpp` | 💾 OOM | Template instantiation memory |
-| `<tuple>` | `test_std_tuple.cpp` | 💾 OOM | Variadic templates memory |
-| `<optional>` | `test_std_optional.cpp` | 💾 OOM | Template instantiation memory |
-| `<variant>` | `test_std_variant.cpp` | 💾 OOM | Template instantiation memory |
-| `<memory>` | `test_std_memory.cpp` | 💾 OOM | Smart pointers, allocators memory |
-| `<functional>` | `test_std_functional.cpp` | 💾 OOM | std::function, type erasure memory |
-| `<algorithm>` | `test_std_algorithm.cpp` | 💾 OOM | Template instantiation memory |
-| `<map>` | `test_std_map.cpp` | 💾 OOM | Template instantiation memory |
-| `<set>` | `test_std_set.cpp` | 💾 OOM | Template instantiation memory |
-| `<span>` | `test_std_span.cpp` | 💾 OOM | Template instantiation memory |
-| `<any>` | `test_std_any.cpp` | 💾 OOM | Template instantiation (2026-01-17: Fixed `_Hash_bytes` overload resolution) |
-| `<ranges>` | `test_std_ranges.cpp` | 💾 OOM | Concepts, views memory |
-| `<iostream>` | `test_std_iostream.cpp` | 💾 OOM | Virtual inheritance, locales |
-| `<chrono>` | `test_std_chrono.cpp` | 💾 OOM | Ratio templates memory |
-| `<bit>` | N/A | 💾 OOM | Includes heavy headers |
-| `<atomic>` | N/A | ⏱️ Timeout | Heavy headers (>90s) |
+| `<concepts>` | `test_std_concepts.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<utility>` | `test_std_utility.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<string_view>` | `test_std_string_view.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<string>` | `test_std_string.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<vector>` | `test_std_vector.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<array>` | `test_std_array.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<tuple>` | `test_std_tuple.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<optional>` | `test_std_optional.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<variant>` | `test_std_variant.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<memory>` | `test_std_memory.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<functional>` | `test_std_functional.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<algorithm>` | `test_std_algorithm.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<map>` | `test_std_map.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<set>` | `test_std_set.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<span>` | `test_std_span.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<any>` | `test_std_any.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<ranges>` | `test_std_ranges.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<iostream>` | `test_std_iostream.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<chrono>` | `test_std_chrono.cpp` | ⚠️ Bug | Needs testing with debug build |
+| `<bit>` | N/A | ⚠️ Bug | Needs testing with debug build |
+| `<atomic>` | N/A | ⚠️ Bug | Needs testing with debug build |
 | `<new>` | N/A | ✅ Compiled | ~0.10s |
-| `<exception>` | N/A | ⏱️ Timeout | Template instantiation volume (>90s) |
-| `<ratio>` | N/A | ⏱️ Timeout | Times out during template instantiation (>90s) |
+| `<exception>` | N/A | ⚠️ Bug | Needs testing with debug build |
+| `<ratio>` | N/A | ⚠️ Bug | Needs testing with debug build |
 | `<typeinfo>` | N/A | ✅ Compiled | ~0.10s |
 | `<typeindex>` | N/A | ✅ Compiled | ~0.16s |
 | `<csetjmp>` | N/A | ✅ Compiled | ~0.06s |
@@ -50,7 +52,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~0.08s (C++23 - 2026-01-18) |
 | `<coroutine>` | N/A | ❌ Not Supported | Coroutines require `-fcoroutines` flag (not supported) |
 
-**Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s) | 💾 OOM (std::bad_alloc)
+**Legend:** ✅ Compiled | ❌ Failed | ⏱️ Timeout (>10s) | ⚠️ Bug (blocked by log level bug)
 
 ### C Library Wrappers (Also Working)
 
@@ -87,18 +89,42 @@ cd tests/std
 
 ## Disabling Logging
 
-Logging can be disabled to reduce overhead during compilation (though it does not significantly affect memory usage):
+Logging can be controlled at runtime and compile-time.
+
+### ⚠️ CRITICAL BUG: Log Level Setting Causes Hang (2026-01-18)
+
+**Setting global log level to Info (2) or below causes the compiler to hang with unbounded memory growth.**
+
+This is a BUG, not a performance issue. Investigation findings:
+
+| Log Level Setting | Result |
+|-------------------|--------|
+| Default (no flag) | ✅ Works (~7s for `<type_traits>`) |
+| `--log-level=trace` or `--log-level=4` | ✅ Works |
+| `--log-level=debug` or `--log-level=3` | ✅ Works |
+| `--log-level=info` or `--log-level=2` | ❌ **HANGS** |
+| `--log-level=warning` or `--log-level=1` | ❌ **HANGS** |
+| `--log-level=error` or `--log-level=0` | ❌ **HANGS** |
+
+**Workaround:** Use category-specific log levels instead of global:
+```bash
+# This WORKS - category-specific setting
+./x64/Debug/FlashCpp file.cpp --log-level=Codegen:info
+
+# This HANGS - global setting
+./x64/Debug/FlashCpp file.cpp --log-level=info
+```
+
+**Root cause:** Unknown. The bug manifests when the global `runtimeLevel` is set to Info or lower, causing an infinite loop or unbounded recursion that consumes memory exponentially (doubling every ~0.1s from 256KB to 512MB+ before crashing or timing out).
 
 ### Runtime Log Level Control
 
 Use `--log-level` to control log verbosity at runtime:
 
 ```bash
-# Set global log level to error only (least verbose)
-./x64/Release/FlashCpp file.cpp --log-level=error
-
-# Set log level for specific category
-./x64/Release/FlashCpp file.cpp --log-level=Parser:error
+# Set log level for specific category (RECOMMENDED - avoids the bug above)
+./x64/Debug/FlashCpp file.cpp --log-level=Parser:debug
+./x64/Debug/FlashCpp file.cpp --log-level=Codegen:info
 
 # Available levels: error (0), warning (1), info (2), debug (3), trace (4)
 # Available categories: General, Parser, Lexer, Templates, Symbols, Types, Codegen, Scope, Mangling, All
@@ -106,57 +132,53 @@ Use `--log-level` to control log verbosity at runtime:
 
 ### Compile-time Log Level Control
 
-Use `-DFLASHCPP_LOG_LEVEL=N` when building FlashCpp:
+The release build uses `-DFLASHCPP_LOG_LEVEL=1` (Warning level) by default, which triggers the bug described above.
 
+**To build a working release version, use debug log level:**
 ```bash
-# Build with only error logging (level 0)
-clang++ -DFLASHCPP_LOG_LEVEL=0 -O3 ...
-
-# Build with up to warning logging (level 1, default for release builds)
-clang++ -DFLASHCPP_LOG_LEVEL=1 -O3 ...
+# Build release with debug log level (works around the bug)
+clang++ -DFLASHCPP_LOG_LEVEL=3 -O3 ...
 ```
-
-**Note:** Disabling logging does not prevent OOM (out-of-memory) errors during template-heavy header compilation, as the memory consumption is in the template instantiation data structures, not in log output.
 
 ## Current Blockers
 
-### 1. Memory Exhaustion During Template Instantiation (2026-01-18 Investigation)
+### 1. Log Level Bug Causing Hangs (2026-01-18 Investigation - CRITICAL)
 
-**Primary Issue:** Most template-heavy headers (like `<type_traits>`, `<utility>`, `<concepts>`, etc.) crash with `std::bad_alloc` before timing out. This is a memory exhaustion issue, not a performance issue.
+**Primary Issue:** Setting global log level to Info (2) or below causes unbounded memory growth and hangs.
 
 **Investigation Findings:**
-- Headers that compile quickly (< 0.3s) have minimal template depth
-- Headers with heavy template metaprogramming consume unbounded memory
-- The crash occurs during template instantiation, specifically when recursive template specializations create deep chains
-- Increasing timeout values (30s, 60s, 120s) does not help - the OOM crash occurs regardless
-- Disabling logging (compile-time or runtime) does not prevent the OOM crash
+- `<type_traits>` compiles successfully in ~7 seconds with default logging
+- Setting `--log-level=2` (info) or lower causes exponential memory growth
+- Memory allocations double every ~0.1s: 256KB → 512KB → 1MB → ... → 512MB+
+- The bug does NOT occur with category-specific log levels (e.g., `--log-level=Parser:info`)
+- The bug IS triggered by global log level changes via `LogConfig::setLevel(LogLevel)`
+- Lazy template instantiation is NOT the cause (already implemented and working)
 
-**Example symptom:**
-```
-terminate called after throwing an instance of 'std::bad_alloc'
-  what():  std::bad_alloc
-```
+**Symptoms:**
+- Compilation hangs indefinitely
+- `strace` shows exponential `mmap()` allocations
+- Eventually crashes with `std::bad_alloc` if memory limit is hit
 
-**Root cause analysis:**
+**Technical details:**
+The bug appears to be triggered when `LogConfig::runtimeLevel` is set to a value ≤ Info (2), causing some code path (likely in template instantiation) to enter an infinite loop or unbounded recursion. The exact location needs further investigation.
+
+### 2. Template Instantiation Performance
 - Template instantiation creates new AST nodes for each instantiation
 - Standard library headers like `<type_traits>` trigger thousands of recursive instantiations
 - Each instantiation allocates memory that is retained for the duration of compilation
 - Memory grows without bound until the system runs out
 
 **Potential solutions (future work):**
-1. Implement template instantiation memory pooling with better reuse
-2. Add memory limits with graceful degradation
-3. Optimize template cache to reduce redundant instantiations (currently ~26% hit rate)
-4. Implement lazy template instantiation to defer unused instantiations
+**Note:** Lazy template instantiation for member functions IS already implemented. The memory issue turned out to be caused by a bug triggered by low log levels (see Log Level Bug section above).
 
 ### 2. Template Instantiation Performance
 
-For headers that don't OOM, performance is still a concern. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
+For headers that work, performance is acceptable but could be improved. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
 
 **Optimization opportunities:**
 - Improve template cache hit rate (currently ~26%)
 - Optimize string operations in template name generation
-- Consider lazy evaluation strategies
+- Consider further lazy evaluation strategies
 
 ### 3. Variable Templates in Type Context (FIXED - 2026-01-14)
 
@@ -430,13 +452,20 @@ The following features have been implemented to support standard headers:
 
 Changes are listed in reverse chronological order. For detailed implementation notes, see the git commit history.
 
+### 2026-01-18 (Evening - Log Level Bug Investigation)
+- **CRITICAL BUG FOUND:** Setting global log level to Info (2) or below causes compiler to hang
+- **Root cause:** Bug in log level handling - setting `LogConfig::runtimeLevel` to ≤ Info causes infinite loop/recursion
+- **Key finding:** `<type_traits>` compiles successfully in ~7 seconds with default (debug) logging
+- **Workaround:** Use category-specific log levels instead of global (e.g., `--log-level=Codegen:info` works)
+- **Release build affected:** Release builds use `-DFLASHCPP_LOG_LEVEL=1` which triggers this bug
+- **Lazy template instantiation:** Confirmed already implemented for member functions - NOT the cause of hangs
+- **Impact:** Many headers previously marked as "OOM" may actually compile - needs re-testing with debug build
+
 ### 2026-01-18 (Header Timeout Investigation)
-- **OOM vs Timeout Investigation:** Discovered that most template-heavy headers crash with `std::bad_alloc` (memory exhaustion) rather than simply timing out
+- **OOM vs Timeout Investigation:** ~~Discovered that most template-heavy headers crash with `std::bad_alloc`~~ **SUPERSEDED** - this was caused by the log level bug
 - **Testing methodology:** Tested headers with 30s, 60s, 90s, and 120s timeouts
-- **Key finding:** Increasing timeout values does not help - OOM occurs regardless
-- **Logging impact:** Disabling logging (both runtime `--log-level=error` and compile-time `-DFLASHCPP_LOG_LEVEL=0`) does not prevent OOM
-- **Updated status:** Changed status from "Timeout" to "OOM" for headers that crash with `std::bad_alloc`
-- **Documentation:** Added section on how to disable logging via command-line and compile-time defines
+- **Key finding:** ~~Increasing timeout values does not help~~ **SUPERSEDED** - issue is log level bug, not timeout
+- **Updated status:** Results need re-verification with debug build to separate log level bug from actual issues
 - **Verified working headers:** All headers marked as "Compiled" were re-verified with current build:
   - `<limits>` (~0.30s), `<compare>` (~0.10s), `<version>` (~0.09s), `<source_location>` (~0.10s)
   - `<initializer_list>` (~0.07s), `<new>` (~0.10s), `<typeinfo>` (~0.10s), `<typeindex>` (~0.16s)
