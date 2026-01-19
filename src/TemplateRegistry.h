@@ -1620,6 +1620,465 @@ private:
 // (cannot use global variable due to singleton pattern)
 
 // ============================================================================
+// Lazy Static Member Instantiation Registry
+// ============================================================================
+
+// Information needed to instantiate a template static member on-demand
+struct LazyStaticMemberInfo {
+	StringHandle class_template_name;          // Original template name (e.g., "integral_constant")
+	StringHandle instantiated_class_name;      // Instantiated class name (e.g., "integral_constant_bool_true")
+	StringHandle member_name;                  // Static member name (e.g., "value")
+	Type type;                                 // Member type
+	TypeIndex type_index;                      // Type index for complex types
+	size_t size;                               // Size in bytes
+	size_t alignment;                          // Alignment requirement
+	AccessSpecifier access;                    // Access specifier
+	std::optional<ASTNode> initializer;        // Original initializer (may need substitution)
+	CVQualifier cv_qualifier = CVQualifier::None; // CV qualifiers (const/volatile)
+	std::vector<ASTNode> template_params;      // Template parameters from class template
+	std::vector<TemplateTypeArg> template_args; // Concrete template arguments
+	bool needs_substitution;                   // True if initializer contains template parameters
+};
+
+// Registry for tracking uninstantiated template static members
+// Allows lazy (on-demand) instantiation for better compilation performance
+// Particularly beneficial for type_traits which have many static constexpr members
+class LazyStaticMemberRegistry {
+public:
+	static LazyStaticMemberRegistry& getInstance() {
+		static LazyStaticMemberRegistry instance;
+		return instance;
+	}
+	
+	// Register a static member for lazy instantiation
+	// Key format: "instantiated_class_name::member_name"
+	void registerLazyStaticMember(const LazyStaticMemberInfo& info) {
+		StringHandle key = makeKey(info.instantiated_class_name, info.member_name);
+		FLASH_LOG(Templates, Debug, "Registering lazy static member: ", key);
+		lazy_static_members_[key] = info;
+	}
+	
+	// Check if a static member needs lazy instantiation
+	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_name) const {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		return lazy_static_members_.find(key) != lazy_static_members_.end();
+	}
+	
+	// Get lazy static member info for instantiation
+	// Returns a pointer to avoid copying; nullptr if not found
+	const LazyStaticMemberInfo* getLazyStaticMemberInfo(StringHandle instantiated_class_name, StringHandle member_name) const {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		auto it = lazy_static_members_.find(key);
+		if (it != lazy_static_members_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	// Mark a static member as instantiated (remove from lazy registry)
+	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_name) {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		lazy_static_members_.erase(key);
+		FLASH_LOG(Templates, Debug, "Marked lazy static member as instantiated: ", key);
+	}
+	
+	// Clear all lazy static members (for testing)
+	void clear() {
+		lazy_static_members_.clear();
+	}
+	
+	// Get count of uninstantiated static members (for diagnostics)
+	size_t getUninstantiatedCount() const {
+		return lazy_static_members_.size();
+	}
+
+private:
+	LazyStaticMemberRegistry() = default;
+	
+	// Helper to generate registry key from class name and member name
+	// Key format: "instantiated_class_name::member_name"
+	static StringHandle makeKey(StringHandle class_name, StringHandle member_name) {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(class_name)
+			.append("::")
+			.append(member_name)
+			.commit();
+		return StringTable::getOrInternStringHandle(key);
+	}
+	
+	// Map from "instantiated_class::static_member" to lazy instantiation info
+	std::unordered_map<StringHandle, LazyStaticMemberInfo, TransparentStringHash, std::equal_to<>> lazy_static_members_;
+};
+
+// ============================================================================
+// Phase 2: Lazy Class Instantiation Registry
+// ============================================================================
+
+// Instantiation phases for three-phase class instantiation
+// Each phase represents a level of completeness of the instantiation
+enum class ClassInstantiationPhase : uint8_t {
+	None = 0,           // Not yet instantiated
+	Minimal = 1,        // Type entry created, name registered (triggered by any type name use)
+	Layout = 2,         // Size/alignment computed (triggered by sizeof, alignof, variable declarations)
+	Full = 3            // All members, base classes, and static members instantiated (triggered by member access)
+};
+
+// Information needed for lazy (phased) class template instantiation
+// Allows deferring complete instantiation until members are actually used
+struct LazyClassInstantiationInfo {
+	StringHandle template_name;                    // Original template name (e.g., "vector")
+	StringHandle instantiated_name;                // Instantiated class name (e.g., "vector_int")
+	std::vector<TemplateTypeArg> template_args;    // Concrete template arguments
+	std::vector<ASTNode> template_params;          // Template parameters from class template
+	ASTNode template_declaration;                  // Reference to primary template declaration
+	ClassInstantiationPhase current_phase = ClassInstantiationPhase::None;
+	// Flags for tracking what needs to be instantiated in Full phase
+	// These are set during Minimal phase to avoid re-parsing template declaration
+	bool has_base_classes = false;                 // Does the template have base classes?
+	bool has_static_members = false;               // Does the template have static members?
+	bool has_member_functions = false;             // Does the template have member functions?
+	TypeIndex type_index = 0;                      // Type index once minimal instantiation is done
+};
+
+// Registry for tracking partially instantiated template classes
+// Enables three-phase instantiation:
+// - Minimal: Create type entry, register name - triggered by any type name use
+// - Layout: Compute size/alignment - triggered by sizeof, alignof, variable declarations
+// - Full: Instantiate all members - triggered by member access, method calls
+class LazyClassInstantiationRegistry {
+public:
+	static LazyClassInstantiationRegistry& getInstance() {
+		static LazyClassInstantiationRegistry instance;
+		return instance;
+	}
+	
+	// Register a class for lazy instantiation
+	void registerLazyClass(const LazyClassInstantiationInfo& info) {
+		FLASH_LOG(Templates, Debug, "Registering lazy class: ", info.instantiated_name,
+		          " (template: ", info.template_name, ")");
+		lazy_classes_[info.instantiated_name] = info;
+	}
+	
+	// Check if a class is registered for lazy instantiation
+	bool isRegistered(StringHandle instantiated_name) const {
+		return lazy_classes_.find(instantiated_name) != lazy_classes_.end();
+	}
+	
+	// Get the current instantiation phase of a class
+	ClassInstantiationPhase getCurrentPhase(StringHandle instantiated_name) const {
+		auto it = lazy_classes_.find(instantiated_name);
+		if (it != lazy_classes_.end()) {
+			return it->second.current_phase;
+		}
+		return ClassInstantiationPhase::None;
+	}
+	
+	// Check if a class needs instantiation to the specified phase
+	// Uses enum underlying values for comparison (None=0 < Minimal=1 < Layout=2 < Full=3)
+	bool needsInstantiationTo(StringHandle instantiated_name, ClassInstantiationPhase target_phase) const {
+		auto it = lazy_classes_.find(instantiated_name);
+		if (it == lazy_classes_.end()) {
+			return false;  // Not registered for lazy instantiation
+		}
+		return static_cast<uint8_t>(it->second.current_phase) < static_cast<uint8_t>(target_phase);
+	}
+	
+	// Get lazy class info for instantiation
+	// Returns a pointer to avoid copying; nullptr if not found
+	const LazyClassInstantiationInfo* getLazyClassInfo(StringHandle instantiated_name) const {
+		auto it = lazy_classes_.find(instantiated_name);
+		if (it != lazy_classes_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	// Get mutable lazy class info for updating phase
+	LazyClassInstantiationInfo* getLazyClassInfoMutable(StringHandle instantiated_name) {
+		auto it = lazy_classes_.find(instantiated_name);
+		if (it != lazy_classes_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	// Update the instantiation phase of a class
+	void updatePhase(StringHandle instantiated_name, ClassInstantiationPhase new_phase) {
+		auto it = lazy_classes_.find(instantiated_name);
+		if (it != lazy_classes_.end()) {
+			FLASH_LOG(Templates, Debug, "Updating lazy class phase: ", instantiated_name,
+			          " from ", static_cast<int>(it->second.current_phase),
+			          " to ", static_cast<int>(new_phase));
+			it->second.current_phase = new_phase;
+		}
+	}
+	
+	// Mark a class as fully instantiated (remove from lazy registry)
+	void markFullyInstantiated(StringHandle instantiated_name) {
+		lazy_classes_.erase(instantiated_name);
+		FLASH_LOG(Templates, Debug, "Marked lazy class as fully instantiated: ", instantiated_name);
+	}
+	
+	// Clear all lazy classes (for testing)
+	void clear() {
+		lazy_classes_.clear();
+	}
+	
+	// Get count of partially instantiated classes (for diagnostics)
+	size_t getPartiallyInstantiatedCount() const {
+		return lazy_classes_.size();
+	}
+
+private:
+	LazyClassInstantiationRegistry() = default;
+	
+	// Map from instantiated class name to lazy instantiation info
+	std::unordered_map<StringHandle, LazyClassInstantiationInfo, TransparentStringHash, std::equal_to<>> lazy_classes_;
+};
+
+// ============================================================================
+// Phase 3: Lazy Type Alias Evaluation Registry
+// ============================================================================
+
+// Information needed for lazy type alias evaluation
+// Allows deferring evaluation of template type aliases until actually accessed
+struct LazyTypeAliasInfo {
+	StringHandle alias_name;                       // Full alias name (e.g., "remove_const_int::type")
+	StringHandle template_name;                    // Original template name (e.g., "remove_const")
+	StringHandle instantiated_class_name;          // Instantiated class name (e.g., "remove_const_int")
+	StringHandle member_name;                      // Member alias name (e.g., "type")
+	ASTNode unevaluated_target;                    // Unevaluated target type expression
+	std::vector<ASTNode> template_params;          // Template parameters from class template
+	std::vector<TemplateTypeArg> template_args;    // Concrete template arguments
+	bool needs_substitution = true;                // True if target contains template parameters
+	bool is_evaluated = false;                     // True once evaluation has been performed
+	// Cached evaluation result (to avoid re-computation)
+	Type evaluated_type = Type::Invalid;
+	TypeIndex evaluated_type_index = 0;
+};
+
+// Registry for tracking unevaluated template type aliases
+// Enables lazy evaluation: aliases are not evaluated until ::type is accessed
+// Particularly beneficial for type_traits where many aliases are defined but only some are used
+class LazyTypeAliasRegistry {
+public:
+	static LazyTypeAliasRegistry& getInstance() {
+		static LazyTypeAliasRegistry instance;
+		return instance;
+	}
+	
+	// Register a type alias for lazy evaluation
+	// Key format: "instantiated_class_name::member_name"
+	void registerLazyTypeAlias(const LazyTypeAliasInfo& info) {
+		StringHandle key = makeKey(info.instantiated_class_name, info.member_name);
+		FLASH_LOG(Templates, Debug, "Registering lazy type alias: ", key);
+		lazy_aliases_[key] = info;
+	}
+	
+	// Check if a type alias needs lazy evaluation (registered and not yet evaluated)
+	bool needsEvaluation(StringHandle instantiated_class_name, StringHandle member_name) const {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		auto it = lazy_aliases_.find(key);
+		return it != lazy_aliases_.end() && !it->second.is_evaluated;
+	}
+	
+	// Get lazy type alias info
+	// Returns a pointer to avoid copying; nullptr if not found
+	// Use this instead of isRegistered() when you need the actual data
+	const LazyTypeAliasInfo* getLazyTypeAliasInfo(StringHandle instantiated_class_name, StringHandle member_name) const {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		auto it = lazy_aliases_.find(key);
+		if (it != lazy_aliases_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	// Get mutable lazy type alias info for updating evaluation result
+	LazyTypeAliasInfo* getLazyTypeAliasInfoMutable(StringHandle instantiated_class_name, StringHandle member_name) {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		auto it = lazy_aliases_.find(key);
+		if (it != lazy_aliases_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	// Mark a type alias as evaluated and cache the result
+	// Returns true if the alias was found and marked, false if not registered
+	bool markEvaluated(StringHandle instantiated_class_name, StringHandle member_name, 
+	                   Type result_type, TypeIndex result_type_index) {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		auto it = lazy_aliases_.find(key);
+		if (it != lazy_aliases_.end()) {
+			it->second.is_evaluated = true;
+			it->second.evaluated_type = result_type;
+			it->second.evaluated_type_index = result_type_index;
+			FLASH_LOG(Templates, Debug, "Marked lazy type alias as evaluated: ", key);
+			return true;
+		}
+		FLASH_LOG(Templates, Warning, "Attempted to mark unregistered type alias as evaluated: ", key);
+		return false;
+	}
+	
+	// Get cached evaluation result (only valid if is_evaluated is true)
+	std::optional<std::pair<Type, TypeIndex>> getCachedResult(StringHandle instantiated_class_name, 
+	                                                           StringHandle member_name) const {
+		StringHandle key = makeKey(instantiated_class_name, member_name);
+		auto it = lazy_aliases_.find(key);
+		if (it != lazy_aliases_.end() && it->second.is_evaluated) {
+			return std::pair<Type, TypeIndex>{it->second.evaluated_type, it->second.evaluated_type_index};
+		}
+		return std::nullopt;
+	}
+	
+	// Clear all lazy type aliases (for testing)
+	void clear() {
+		lazy_aliases_.clear();
+	}
+	
+	// Get count of unevaluated type aliases (for diagnostics)
+	size_t getUnevaluatedCount() const {
+		size_t count = 0;
+		for (const auto& [key, info] : lazy_aliases_) {
+			if (!info.is_evaluated) {
+				count++;
+			}
+		}
+		return count;
+	}
+	
+	// Get total count of registered type aliases (for diagnostics)
+	size_t getTotalCount() const {
+		return lazy_aliases_.size();
+	}
+
+private:
+	LazyTypeAliasRegistry() = default;
+	
+	// Helper to generate registry key from class name and member name
+	// Key format: "instantiated_class_name::member_name"
+	static StringHandle makeKey(StringHandle class_name, StringHandle member_name) {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(class_name)
+			.append("::")
+			.append(member_name)
+			.commit();
+		return StringTable::getOrInternStringHandle(key);
+	}
+	
+	// Map from "instantiated_class::type_alias" to lazy evaluation info
+	std::unordered_map<StringHandle, LazyTypeAliasInfo, TransparentStringHash, std::equal_to<>> lazy_aliases_;
+};
+
+// ============================================================================
+// Phase 4: Lazy Nested Type Instantiation Registry
+// ============================================================================
+
+// Information needed for lazy nested type instantiation
+// Allows deferring instantiation of nested types (inner classes/structs) until actually accessed
+struct LazyNestedTypeInfo {
+	StringHandle parent_class_name;                // Parent instantiated class name (e.g., "outer_int")
+	StringHandle nested_type_name;                 // Nested type name (e.g., "inner")
+	StringHandle qualified_name;                   // Fully qualified name (e.g., "outer_int::inner")
+	ASTNode nested_type_declaration;               // The nested struct/class declaration AST node
+	std::vector<ASTNode> parent_template_params;   // Template parameters from parent class
+	std::vector<TemplateTypeArg> parent_template_args; // Concrete template arguments for parent
+};
+
+// Registry for tracking uninstantiated nested types
+// Enables lazy instantiation: nested types are not instantiated until accessed
+// Note: Entries are removed from the registry once instantiated (consistent with other lazy registries)
+// Example:
+//   template<typename T> struct outer { struct inner { T value; }; };
+//   outer<int> o;           // inner is NOT instantiated
+//   outer<int>::inner i;    // NOW inner is instantiated
+class LazyNestedTypeRegistry {
+public:
+	static LazyNestedTypeRegistry& getInstance() {
+		static LazyNestedTypeRegistry instance;
+		return instance;
+	}
+	
+	// Register a nested type for lazy instantiation
+	// Key format: "parent_class_name::nested_type_name"
+	void registerLazyNestedType(const LazyNestedTypeInfo& info) {
+		StringHandle key = makeKey(info.parent_class_name, info.nested_type_name);
+		FLASH_LOG(Templates, Debug, "Registering lazy nested type: ", key);
+		lazy_nested_types_[key] = info;
+	}
+	
+	// Check if a nested type needs lazy instantiation (entry exists in registry)
+	// Note: Once instantiated, the entry is removed from the registry
+	bool needsInstantiation(StringHandle parent_class_name, StringHandle nested_type_name) const {
+		StringHandle key = makeKey(parent_class_name, nested_type_name);
+		return lazy_nested_types_.find(key) != lazy_nested_types_.end();
+	}
+	
+	// Get lazy nested type info
+	// Returns a pointer to avoid copying; nullptr if not found
+	// Use this instead of a separate isRegistered() method
+	const LazyNestedTypeInfo* getLazyNestedTypeInfo(StringHandle parent_class_name, StringHandle nested_type_name) const {
+		StringHandle key = makeKey(parent_class_name, nested_type_name);
+		auto it = lazy_nested_types_.find(key);
+		if (it != lazy_nested_types_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	// Mark a nested type as instantiated (remove from lazy registry)
+	// Consistent with other lazy registries - entries are removed after instantiation
+	void markInstantiated(StringHandle parent_class_name, StringHandle nested_type_name) {
+		StringHandle key = makeKey(parent_class_name, nested_type_name);
+		lazy_nested_types_.erase(key);
+		FLASH_LOG(Templates, Debug, "Marked lazy nested type as instantiated: ", key);
+	}
+	
+	// Get all nested types for a parent class that need instantiation
+	std::vector<const LazyNestedTypeInfo*> getNestedTypesForParent(StringHandle parent_class_name) const {
+		std::vector<const LazyNestedTypeInfo*> result;
+		for (const auto& [key, info] : lazy_nested_types_) {
+			if (info.parent_class_name == parent_class_name) {
+				result.push_back(&info);
+			}
+		}
+		return result;
+	}
+	
+	// Clear all lazy nested types (for testing)
+	void clear() {
+		lazy_nested_types_.clear();
+	}
+	
+	// Get count of pending (uninstantiated) nested types (for diagnostics)
+	// Note: Since entries are removed after instantiation, this is the same as total count
+	size_t getPendingCount() const {
+		return lazy_nested_types_.size();
+	}
+
+private:
+	LazyNestedTypeRegistry() = default;
+	
+	// Helper to generate registry key from parent class name and nested type name
+	// Key format: "parent_class_name::nested_type_name"
+	static StringHandle makeKey(StringHandle parent_name, StringHandle nested_name) {
+		StringBuilder key_builder;
+		std::string_view key = key_builder
+			.append(parent_name)
+			.append("::")
+			.append(nested_name)
+			.commit();
+		return StringTable::getOrInternStringHandle(key);
+	}
+	
+	// Map from "parent_class::nested_type" to lazy instantiation info
+	std::unordered_map<StringHandle, LazyNestedTypeInfo, TransparentStringHash, std::equal_to<>> lazy_nested_types_;
+};
+
+// ============================================================================
 // C++20 Concepts Registry (inline with TemplateRegistry since they're related)
 // ============================================================================
 
