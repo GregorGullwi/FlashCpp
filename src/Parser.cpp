@@ -32274,11 +32274,47 @@ std::string_view Parser::instantiate_and_register_base_template(
 		auto instantiated_base = try_instantiate_class_template(base_class_name, template_args);
 		
 		// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
+		// and get the actual instantiated name from the struct (which includes default arguments)
 		if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
 			ast_nodes_.push_back(*instantiated_base);
+			// Get the actual instantiated name from the struct node (includes default args)
+			StringHandle name_handle = instantiated_base->as<StructDeclarationNode>().name();
+			std::string_view instantiated_name = StringTable::getStringView(name_handle);
+			base_class_name = instantiated_name;
+			return instantiated_name;
 		}
 		
-		// Get the instantiated name and update base_class_name
+		// If instantiation returned nullopt (already instantiated), look up the existing type
+		// We need to fill in default arguments to find the correct name
+		auto primary_template_opt = gTemplateRegistry.lookupTemplate(base_class_name);
+		if (primary_template_opt.has_value() && primary_template_opt->is<TemplateClassDeclarationNode>()) {
+			const TemplateClassDeclarationNode& primary_template = primary_template_opt->as<TemplateClassDeclarationNode>();
+			const std::vector<ASTNode>& primary_params = primary_template.template_parameters();
+			
+			// Fill in defaults for missing arguments
+			std::vector<TemplateTypeArg> filled_args = template_args;
+			for (size_t i = filled_args.size(); i < primary_params.size(); ++i) {
+				if (!primary_params[i].is<TemplateParameterNode>()) continue;
+				
+				const TemplateParameterNode& param = primary_params[i].as<TemplateParameterNode>();
+				if (param.is_variadic()) continue;
+				if (!param.has_default()) break;
+				
+				const ASTNode& default_node = param.default_value();
+				if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+					filled_args.emplace_back(default_type);
+					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
+				}
+			}
+			
+			// Generate name with filled-in defaults
+			std::string_view instantiated_name = get_instantiated_class_name(base_class_name, filled_args);
+			base_class_name = instantiated_name;
+			return instantiated_name;
+		}
+		
+		// Fallback: use basic name without defaults
 		std::string_view instantiated_name = get_instantiated_class_name(base_class_name, template_args);
 		base_class_name = instantiated_name;
 		return instantiated_name;
@@ -32405,6 +32441,15 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	
 	FLASH_LOG(Templates, Debug, "try_instantiate_variable_template: template_name='", template_name, 
 		"' simple_name='", simple_template_name, "' args.size()=", template_args.size());
+	
+	// Check if any template argument is dependent (e.g., _Tp placeholder)
+	// If so, we cannot instantiate - this happens when we're inside a template body
+	for (const auto& arg : template_args) {
+		if (arg.is_dependent) {
+			FLASH_LOG(Templates, Debug, "Skipping variable template instantiation - dependent argument: ", arg.toString());
+			return std::nullopt;
+		}
+	}
 	
 	for (const auto& arg : template_args) {
 		FLASH_LOG(Templates, Debug, "  arg: is_reference=", arg.is_reference, 
