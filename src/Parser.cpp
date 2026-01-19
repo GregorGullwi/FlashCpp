@@ -10810,10 +10810,15 @@ ParseResult Parser::parse_type_specifier()
 								
 								return ParseResult::success(new_type_spec);
 							} else {
-								FLASH_LOG(Parser, Warning, "Deferred instantiation: type '", instantiated_name, "' not found after instantiation at line ", type_name_token.line());
-							}
-						} else {
-							FLASH_LOG(Parser, Warning, "Deferred instantiation failed for '", alias_node.target_template_name(), "' at line ", type_name_token.line());
+							// Deferred instantiation didn't find the type, but this is often expected
+							// for complex template metaprogramming patterns (SFINAE, etc.)
+							// Fall through to simple alias handling
+							FLASH_LOG(Parser, Debug, "Deferred instantiation: type '", instantiated_name, "' not found after instantiation at line ", type_name_token.line());
+						}
+					} else {
+						// try_instantiate_class_template returned nullopt, which is expected for
+						// dependent types and SFINAE patterns - fall through to simple alias handling
+						FLASH_LOG(Parser, Debug, "Deferred instantiation failed for '", alias_node.target_template_name(), "' at line ", type_name_token.line());
 						}
 						
 						// Fall through to simple alias handling if deferred instantiation failed or not applicable
@@ -35277,7 +35282,9 @@ if (struct_type_info.getStructInfo()) {
 					}
 				}
 				
-				FLASH_LOG(Templates, Warning, "Could not resolve deferred template base argument for '",
+				// This is expected for dependent types in template metaprogramming
+				// The template may still work correctly with the fallback path
+				FLASH_LOG(Templates, Debug, "Could not resolve deferred template base argument for '",
 				          StringTable::getStringView(deferred_base.base_template_name), "'; skipping base instantiation");
 				unresolved_arg = true;
 				break;
