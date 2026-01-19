@@ -931,8 +931,9 @@ public:
 						break;
 					}
 					
-					// Join with the previous line (preserving whitespace)
-					line += "\n" + next_line;
+					// Join with the previous line with a space (not newline) to avoid line_map mismatch
+					// The newline preservation isn't critical for macro expansion
+					line += " " + next_line;
 				}
 				
 				// Expand macros in non-directive lines (regular source code).
