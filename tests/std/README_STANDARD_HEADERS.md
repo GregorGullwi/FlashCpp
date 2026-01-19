@@ -4,6 +4,11 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
+✅ **Silent Failure Investigation (2026-01-19):** Added error tracing infrastructure to catch previously silent failures. Several headers that were silently failing with exit code 1 now properly display error messages:
+- Enhanced `main.cpp` to output parse errors to `stderr` even when logging is disabled
+- Added catch-all exception handlers to capture any uncaught exceptions
+- **Key Finding**: Headers like `<utility>`, `<tuple>`, `<variant>`, and `<span>` were failing silently because parse errors weren't being displayed in release builds
+
 ✅ **Log Level Bug Fixed (2026-01-18):** The bug that caused release builds to hang is now fixed. All log levels work correctly.
 
 ✅ **Comprehensive Header Audit (2026-01-19):** Re-tested all headers with extended timeouts (up to 5 minutes). Many headers previously marked as "timeout" actually fail with specific parse errors that can be addressed.
@@ -19,22 +24,22 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<initializer_list>` | N/A | ✅ Compiled | ~0.04s |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~1.4s |
 | `<vector>` | `test_std_vector.cpp` | ✅ Compiled | 2026-01-19: Now compiles after QualifiedIdentifierNode fix |
-| `<tuple>` | `test_std_tuple.cpp` | ✅ Compiled | 2026-01-19: Now compiles after QualifiedIdentifierNode fix |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Context-dependent parse error in `bits/utility.h:139` |
 | `<optional>` | `test_std_optional.cpp` | ✅ Compiled | Warning: Template `_Hash_bytes` not found |
-| `<variant>` | `test_std_variant.cpp` | ✅ Compiled | 2026-01-19: Now compiles after QualifiedIdentifierNode fix |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Parse error in `bits/enable_special_members.h:189` |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | Warning: Template `_Hash_bytes` not found |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
-| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Progresses further after fix but still times out |
+| `<utility>` | `test_std_utility.cpp` | ❌ Parse Error | Context-dependent parse error in `bits/utility.h:140` |
 | `<bit>` | N/A | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Enum class forward declaration not supported |
+| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Context-dependent parse error (depends on `<bits/utility.h>`) |
 | `<memory>` | `test_std_memory.cpp` | ❌ Missing File | Failed to include `execution_defs.h` |
 | `<functional>` | `test_std_functional.cpp` | 💥 Crash | `std::bad_any_cast` internal error |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | Internal compiler error |
 | `<map>` | `test_std_map.cpp` | ❌ Parse Error | Depends on failing headers |
 | `<set>` | `test_std_set.cpp` | ❌ Parse Error | Depends on failing headers |
-| `<span>` | `test_std_span.cpp` | ❌ Parse Error | Enum class forward declaration not supported |
+| `<span>` | `test_std_span.cpp` | ❌ Parse Error | Context-dependent parse error in `bits/utility.h:140` |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Template `rethrow_exception` not found |
 | `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Internal compiler error |
@@ -196,9 +201,67 @@ Added forward declaration support: `enum class byte : unsigned char;` now parses
 
 ### 6. Remaining Parse Blockers
 
+#### 6.1 Context-Dependent Parse Error in `bits/utility.h` (2026-01-19)
+
+**Issue:** Several headers (`<utility>`, `<tuple>`, `<span>`, `<array>`) fail with a parse error when including `bits/utility.h` after certain other standard library headers have been included.
+
+**Error Message:**
+```
+/usr/include/c++/14/bits/utility.h:139:49: error: Expected type after '=' in template parameter default
+     typename _Up = typename remove_cv<_Tp>::type,
+                                                  ^
+```
+
+**Problematic Code Pattern:**
+```cpp
+template<typename _Tp,
+         typename _Up = typename remove_cv<_Tp>::type,  // Error reported here
+         typename = typename enable_if<is_same<_Tp, _Up>::value>::type,
+         size_t = tuple_size<_Tp>::value>
+    using __enable_if_has_tuple_size = _Tp;
+```
+
+**Investigation Findings:**
+- Simplified test cases with this exact pattern parse successfully in isolation
+- The error only occurs after including `<type_traits>` and `<bits/move.h>`
+- This suggests parser state pollution or context corruption from previous headers
+- The parser fails to parse `typename remove_cv<_Tp>::type` correctly in this context
+- `parse_type_specifier()` should stop at commas in template parameter lists, but appears to consume too much
+
+**Test Cases:**
+- `tests/test_template_alias_typename_default_ret0.cpp` - Works in isolation
+- `tests/test_utility_with_bits_move_ret0.cpp` - Fails when including `<bits/move.h>`
+
+**Affected Headers:** `<utility>`, `<tuple>`, `<span>`, `<array>`, and any header that depends on these
+
+#### 6.2 Constructor with `noexcept = delete` in Context (2026-01-19)
+
+**Issue:** The `<variant>` header fails with a parse error for constructors marked `noexcept = delete`.
+
+**Error Message:**
+```
+/usr/include/c++/14/bits/enable_special_members.h:189:43: error: Expected identifier token
+      constexpr _Enable_default_constructor() noexcept = delete;
+                                            ^
+```
+
+**Problematic Code Pattern:**
+```cpp
+constexpr _Enable_default_constructor() noexcept = delete;
+```
+
+**Investigation Findings:**
+- Simplified test case `tests/test_ctor_noexcept_delete_ret0.cpp` parses successfully in isolation
+- The error only occurs in the full standard library context
+- Similar to issue 6.1, this suggests parser state corruption from previous headers
+
+**Affected Headers:** `<variant>`, potentially other headers using `bits/enable_special_members.h`
+
+#### 6.3 Other Known Parse Issues
+
 | Issue | Example | Impact |
 |-------|---------|--------|
-| Variadic non-type template params | `template<size_t... _Indexes>` | `<vector>`, `<utility>` |
+| Variadic non-type template params | `template<size_t... _Indexes>` | Would enable more headers if fixed |
 | Complex decltype in partial spec | `__void_t<decltype(hash<T>()(...))>` | `<atomic>` |
 
 ### 7. Template Instantiation Performance
@@ -480,18 +543,27 @@ The following features have been implemented to support standard headers:
 
 Changes are listed in reverse chronological order.
 
-### 2026-01-19 (QualifiedIdentifierNode Fix - Major Headers Now Compile!)
+### 2026-01-19 (Silent Failure Investigation & Error Tracing)
+- **Added error tracing infrastructure:** Parse errors are now always visible, even in release builds
+  - Enhanced `main.cpp` to output parse errors to stderr in addition to logging system
+  - Added catch-all exception handlers around main logic to catch uncaught exceptions
+  - Previously silent failures (exit code 1 with no output) now show proper error messages
+- **Discovered context-dependent parse errors:** Several headers fail with parse errors only when other headers are included first
+  - `<utility>`, `<tuple>`, `<span>`, `<array>`: Fail with "Expected type after '=' in template parameter default" in `bits/utility.h:139`
+  - `<variant>`: Fails with "Expected identifier token" for constructor with `noexcept = delete`
+  - All simplified test cases pass in isolation, suggesting parser state corruption
+- **Regression identified:** Headers previously marked as compiling (`<tuple>`, `<variant>`) now fail due to context-dependent issues
+  - This may be related to recent parser changes or standard library version differences
+  - Investigation ongoing to identify root cause
+
+### 2026-01-19 (QualifiedIdentifierNode Fix - Some Headers Compile!)
 - **Fixed nested template expressions in template parameter defaults:**
   - Added `QualifiedIdentifierNode` to the list of accepted dependent compile-time expressions
   - This fixes patterns like `template<typename T, typename X = enable_if<is_same<T, int>::value>>`
   - The `is_same<T, int>::value` expression was previously failing to be accepted as a dependent template argument
-- **Newly compiling headers:**
-  - `<vector>`: Now compiles successfully
-  - `<tuple>`: Now compiles successfully
-  - `<optional>`: Now compiles (with non-fatal warning about `_Hash_bytes` template)
-  - `<variant>`: Now compiles successfully
-  - `<any>`: Now compiles (with non-fatal warning about `_Hash_bytes` template)
-- **Progress on `<utility>`:** Now progresses further (past the original error) but still times out
+- **Status Update:** Some headers now have context-dependent failures (see above)
+  - `<optional>`: Still compiles (with non-fatal warning about `_Hash_bytes` template)
+  - `<any>`: Still compiles (with non-fatal warning about `_Hash_bytes` template)
 
 ### 2026-01-19 (Template Profiling & Progress Logging Improvements)
 - **Enhanced template instantiation progress logging:** Added periodic progress reports during template instantiation

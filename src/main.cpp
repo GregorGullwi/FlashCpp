@@ -335,13 +335,11 @@ int main_impl(int argc, char *argv[]) {
     FileReader file_reader(context, file_tree);
     {
         PhaseTimer timer("Preprocessing", false, &preprocessing_time);
-        std::cerr << "[DEBUG] Starting file reading..." << std::endl;
         if (!file_reader.readFile(context.getInputFile().value())) {
             FLASH_LOG(General, Error, "Failed to read input file: ", context.getInputFile().value());
             std::cerr << "Error: Failed to read input file: " << context.getInputFile().value() << std::endl;
             return 1;
         }
-        std::cerr << "[DEBUG] File reading complete" << std::endl;
     }
 
     // Copy dependencies from FileTree to CompileContext for later use
@@ -394,20 +392,16 @@ int main_impl(int argc, char *argv[]) {
     std::unique_ptr<Parser> parser;
     {
         PhaseTimer timer("Lexer Setup", false, &lexer_setup_time);
-        std::cerr << "[DEBUG] Creating lexer and parser..." << std::endl;
         lexer_ptr = std::make_unique<Lexer>(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
         // Allocate Parser on the heap to reduce stack usage - Parser has many large member variables
         parser = std::make_unique<Parser>(*lexer_ptr, context);
-        std::cerr << "[DEBUG] Lexer and parser created successfully" << std::endl;
     }
     Lexer& lexer = *lexer_ptr;
     {
         PhaseTimer timer("Parsing", false, &parsing_time);
-        std::cerr << "[DEBUG] Starting parsing..." << std::endl;
         // Note: Lexing happens lazily during parsing in this implementation
         // Template instantiation also happens during parsing
         auto parse_result = parser->parse();
-        std::cerr << "[DEBUG] Parsing complete, checking for errors..." << std::endl;
 
         if (parse_result.is_error()) {
             // Print formatted error with file:line:column information and include stack
@@ -417,7 +411,6 @@ int main_impl(int argc, char *argv[]) {
             std::cerr << error_msg << std::endl;
             return 1;
         }
-        std::cerr << "[DEBUG] No parse errors detected" << std::endl;
     }
 
     const auto& ast = parser->get_nodes();
