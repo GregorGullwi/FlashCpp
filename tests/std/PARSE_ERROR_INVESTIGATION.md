@@ -4,13 +4,23 @@ This document details the investigation of parse errors identified in standard h
 
 ## Investigation Date: 2026-01-19
 
+## Current Status (as of commit 8b5a5ce)
+
+**Fixes Implemented:**
+- ✅ Forward enum class declarations (`<array>`) - Parser now handles `enum class Name : Type;`
+
+**Remaining Issues:**
+- ❌ Silent failures in `<utility>`, `<tuple>`, `<variant>`, `<span>`, `<any>`, `<array>` (other issues)
+- ❌ `_Hash_bytes` function lookup in `<optional>` 
+- ❌ Internal compiler error in `<algorithm>` lexer
+
 ## Summary
 
 Out of 19 headers marked as "timeout", 8 (42%) were found to be parse errors that fail quickly (1-7s). This document investigates the root causes of these parse errors.
 
 ## Parse Errors Investigated
 
-### 1. `<array>` Header - Forward Enum Class Declaration
+### 1. `<array>` Header - Forward Enum Class Declaration ✅ FIXED
 
 **Test File:** `tests/std/test_std_array.cpp`  
 **Compilation Time:** ~6s before failure  
@@ -39,7 +49,18 @@ enum class E : int;  // Forward declaration (C++11)
 enum class E : int { A, B };  // Definition
 ```
 
-**Fix Required:** Extend the enum parser to recognize and handle forward declarations of scoped enums.
+**Fix Implemented (Commit 8b5a5ce):** Extended `parse_enum_declaration()` in Parser.cpp to recognize and handle forward declarations when:
+1. The enum is scoped (`enum class`)
+2. An underlying type is specified (`: Type`)
+3. Followed by a semicolon (`;`)
+
+The parser now returns early for forward declarations without parsing an enum body.
+
+**Test Case:** `tests/test_forward_enum_parse_only_ret0.cpp` - compiles successfully
+
+**Status:** ✅ Fixed - Forward enum declarations now parse correctly
+
+**Note:** `<array>` header still fails due to other issues beyond the forward enum declaration.
 
 ---
 
