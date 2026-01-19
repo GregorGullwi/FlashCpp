@@ -32959,6 +32959,10 @@ std::optional<ASTNode> Parser::substitute_nontype_template_param(
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 	
+	// Log entry to help debug which call sites are causing issues
+	FLASH_LOG(Templates, Debug, "try_instantiate_class_template: template='", template_name, 
+	          "', args=", template_args.size(), ", force_eager=", force_eager);
+	
 	// Early check: verify this is actually a class template before proceeding
 	// This prevents errors when function templates like 'declval' are passed to this function
 	{
@@ -34520,7 +34524,8 @@ if (struct_type_info.getStructInfo()) {
 		}
 		
 		if (!param.has_default()) {
-			FLASH_LOG(Templates, Error, "Param ", i, " has no default, returning nullopt");
+			FLASH_LOG(Templates, Error, "Template '", template_name, "': Param ", i, " has no default (got ", 
+			          template_args.size(), " args, need ", template_params.size(), "), returning nullopt");
 			return std::nullopt;  // Missing required template argument
 		}
 		
@@ -35042,6 +35047,8 @@ if (struct_type_info.getStructInfo()) {
 								// This is a template class - try to instantiate it with our template args
 								// The template args for the nested template should be our current template args
 								// (e.g., is_integral<T> with T=int should become is_integral_int)
+								FLASH_LOG(Templates, Debug, "Nested template lookup found '", type_name, 
+								          "', attempting instantiation with ", template_args_to_use.size(), " args");
 								auto instantiated = try_instantiate_class_template(type_name, template_args_to_use);
 								if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 									ast_nodes_.push_back(*instantiated);
@@ -35276,61 +35283,11 @@ if (struct_type_info.getStructInfo()) {
 			}
 			
 			if (unresolved_arg) {
-				// Fallback: if we have concrete template arguments available, try instantiating directly
-				if (!template_args_to_use.empty()) {
-					std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
-					
-					// Check if the base_template_name contains a member type suffix (e.g., "detail::select_base::type")
-					// This happens when the full qualified name is stored in base_template_name
-					std::string_view member_type_suffix;
-					std::string_view actual_template_name = base_template_name;
-					
-					// Find the last "::" that's not part of the template name
-					// For "detail::select_base::type", we want to split at the last "::" before "type"
-					size_t last_scope = base_template_name.rfind("::");
-					if (last_scope != std::string_view::npos && last_scope > 0) {
-						member_type_suffix = base_template_name.substr(last_scope + 2);
-						// Check if this looks like a member type (common names like "type", "value_type", etc.)
-						// Or check if the part before :: is a valid template name
-						std::string_view potential_template = base_template_name.substr(0, last_scope);
-						
-						// Only treat as member type if the potential template is a valid namespace::template pattern
-						if (potential_template.find("::") != std::string_view::npos) {
-							actual_template_name = potential_template;
-						} else {
-							// Single-level template, keep as-is
-							member_type_suffix = std::string_view{};
-						}
-					}
-					
-					std::string_view inner_instantiated_name = instantiate_and_register_base_template(actual_template_name, template_args_to_use);
-					if (!inner_instantiated_name.empty()) {
-						actual_template_name = inner_instantiated_name;
-					}
-					
-					// If we have a member type suffix, look it up from the instantiated template
-					if (!member_type_suffix.empty()) {
-						StringBuilder member_lookup_builder;
-						member_lookup_builder.append(actual_template_name);
-						member_lookup_builder.append("::");
-						member_lookup_builder.append(member_type_suffix);
-						std::string_view member_lookup_name = member_lookup_builder.commit();
-						
-						auto member_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(member_lookup_name));
-						if (member_type_it != gTypesByName.end()) {
-							struct_info->addBaseClass(member_lookup_name, member_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
-							FLASH_LOG(Templates, Debug, "Resolved deferred base with member type: ", member_lookup_name);
-							continue;
-						} else {
-							FLASH_LOG(Templates, Warning, "Could not find member type '", member_type_suffix, "' in instantiated template '", actual_template_name, "'");
-						}
-					}
-					
-					auto base_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(actual_template_name));
-					if (base_type_it != gTypesByName.end()) {
-						struct_info->addBaseClass(actual_template_name, base_type_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
-					}
-				}
+				// Cannot resolve all template arguments for the base class - skip it
+				// Don't try to instantiate with wrong arguments as it will cause errors/crashes
+				FLASH_LOG(Templates, Debug, "Skipping deferred base '", 
+				          StringTable::getStringView(deferred_base.base_template_name), 
+				          "' due to unresolved template arguments");
 				continue;
 			}
 			

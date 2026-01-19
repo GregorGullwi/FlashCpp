@@ -15,10 +15,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<source_location>` | N/A | ✅ Compiled | ~0.10s |
 | `<numbers>` | N/A | ✅ Compiled | ~1.2s release (doesn't include `<concepts>`) |
 | `<initializer_list>` | N/A | ✅ Compiled | ~0.07s |
-| `<concepts>` | `test_std_concepts.cpp` | ❌ Parse Error | Qualified template alias in template argument context |
-| `<utility>` | `test_std_utility.cpp` | ❌ Template Error | Deferred instantiation failures |
-| `<bit>` | N/A | ❌ Parse Error | Includes `<concepts>` - qualified template alias issue |
-| `<ratio>` | N/A | 💥 Crash | SIGSEGV during template instantiation |
+| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Parsing fixed (2026-01-19), times out during template instantiation |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Parsing fixed, times out during template instantiation |
+| `<bit>` | N/A | ⏱️ Timeout | Parsing fixed (2026-01-19), times out during template instantiation |
+| `<ratio>` | N/A | 💥 Crash | `integral_constant` instantiated with wrong args (1 arg instead of 2) |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template-heavy header |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Template-heavy header |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template-heavy header |
@@ -143,7 +143,37 @@ The `if constexpr (enabled)` blocks in logging macros previously caused hangs wh
 
 **Impact:** Patterns like `SomeTemplate<namespace::alias<ConcreteType>>` now work correctly. The `<concepts>` header still times out due to template instantiation volume, but the parsing phase now completes successfully.
 
-### 3. Template Instantiation Performance (Secondary Blocker)
+### 3. `<ratio>` Header Crash (ACTIVE - 2026-01-19)
+
+**Issue:** The `<ratio>` header causes a SIGSEGV crash when compiling in release mode.
+
+**Error message:**
+```
+[ERROR][Templates] Template 'integral_constant': Param 1 has no default (got 1 args, need 2), returning nullopt
+Signal: SIGSEGV (Segmentation fault)
+```
+
+**Root cause:** During deferred template base class resolution, `integral_constant` is being instantiated with only 1 template argument instead of the required 2. The `std::integral_constant` template requires both a type (`T`) and a value (`v`):
+```cpp
+template<class T, T v>
+struct integral_constant;
+```
+
+When the instantiation fails (returns `nullopt`), subsequent code attempts to use the non-existent instantiated type, leading to a null pointer dereference.
+
+**Call flow:**
+1. Parser processes deferred template base arguments
+2. Attempts to resolve dependent template type (e.g., `is_arithmetic<_Tp>::value`)  
+3. Tries to instantiate `integral_constant` with only 1 argument
+4. Instantiation fails, returns `nullopt`
+5. Later code dereferences null struct_info pointer → crash
+
+**Potential fixes:**
+1. Better null pointer checks after `try_instantiate_class_template()` fails
+2. Fix the template argument resolution to pass all required arguments
+3. Add early validation for template argument counts before instantiation
+
+### 4. Template Instantiation Performance (Secondary Blocker)
 
 Template-heavy headers that don't include `<concepts>` may still experience slow compilation due to template instantiation volume. However, many headers previously thought to be "timing out" actually have specific parsing errors or crashes (see table above).
 
@@ -159,7 +189,7 @@ Template-heavy headers that don't include `<concepts>` may still experience slow
 - Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
 - Optimize string operations in template name generation
 
-### 3. Variable Templates in Type Context (FIXED - 2026-01-14)
+### 5. Variable Templates in Type Context (FIXED - 2026-01-14)
 
 **Issue:** ~~Variable templates used as non-type arguments in class template contexts were causing "No primary template found" errors.~~ **RESOLVED**
 
