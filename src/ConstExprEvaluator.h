@@ -954,7 +954,10 @@ private:
 			}
 			
 			if (value == 0) {
-				// __builtin_clzll(0) is undefined behavior, but we return sizeof(long long) * 8 for safety
+				// __builtin_clzll(0) is undefined behavior in GCC/Clang. We return the
+				// bit width (64 on typical systems) which matches what some implementations
+				// do, and is a reasonable choice for constexpr evaluation. This allows
+				// code that guards against zero to work correctly at compile time.
 				return EvalResult::from_int(static_cast<long long>(sizeof(long long) * 8));
 			}
 			
@@ -1191,10 +1194,14 @@ private:
 				return arg_result;
 			}
 			long long value = arg_result.as_int();
+			// abs(LLONG_MIN) is undefined behavior (overflow when negating)
+			if (value == LLONG_MIN) {
+				return EvalResult::error(std::string(func_name) + "(LLONG_MIN) is undefined behavior");
+			}
 			return EvalResult::from_int(value < 0 ? -value : value);
 		}
 		
-		// Not a known builtin function
+		// Not a known builtin function - return a special error that callers can check
 		return EvalResult::error("Unknown builtin function: " + std::string(func_name));
 	}
 
@@ -1260,13 +1267,14 @@ private:
 				}
 			}
 			
-			// Check if this is a compiler builtin function
-			auto builtin_result = evaluate_builtin_function(func_name, func_call.arguments(), context);
-			if (builtin_result.success) {
-				return builtin_result;
-			}
-			// If builtin evaluation returned an error that's not "unknown builtin", propagate it
-			if (builtin_result.error_message.find("Unknown builtin function") == std::string::npos) {
+			// Check if this is a compiler builtin function (starts with __builtin)
+			if (func_name.starts_with("__builtin")) {
+				auto builtin_result = evaluate_builtin_function(func_name, func_call.arguments(), context);
+				if (builtin_result.success) {
+					return builtin_result;
+				}
+				// Builtin evaluation failed - propagate the specific error
+				// (e.g., "argument must be an integer", "LLONG_MIN is undefined")
 				return builtin_result;
 			}
 			
