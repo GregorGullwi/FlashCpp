@@ -30732,13 +30732,22 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		FLASH_LOG_FORMAT(Templates, Debug, "Checking dependency for template argument: type={}, type_index={}, in_sfinae_context={}", 
 		                 static_cast<int>(type_node.type()), type_node.type_index(), in_sfinae_context_);
 		if (type_node.type() == Type::UserDefined) {
-			// Check if the type name contains "_unknown" or is a template parameter
-			TypeIndex idx = type_node.type_index();
-			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, idx={}, gTypeInfo.size()={}", idx, gTypeInfo.size());
-			if (idx < gTypeInfo.size()) {
-				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());
-				FLASH_LOG_FORMAT(Templates, Debug, "Type name: {}", type_name);
-				
+			// BUGFIX: Use the original token value instead of looking up via type_index
+			// When template parameters are parsed, they may have type_index=0 (void),
+			// which causes incorrect dependency checks. The token value is always correct.
+			std::string_view type_name = type_node.token().value();
+			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, type_name from token: {}", type_name);
+			
+			// Fallback to gTypeInfo lookup only if token is empty or for composite types
+			if (type_name.empty()) {
+				TypeIndex idx = type_node.type_index();
+				if (idx < gTypeInfo.size()) {
+					type_name = StringTable::getStringView(gTypeInfo[idx].name());
+					FLASH_LOG_FORMAT(Templates, Debug, "Fallback: type name from gTypeInfo: {}", type_name);
+				}
+			}
+			
+			if (!type_name.empty()) {
 				auto matches_identifier = [](std::string_view haystack, std::string_view needle) {
 					size_t pos = haystack.find(needle);
 					auto is_ident_char = [](char ch) {
@@ -30790,7 +30799,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", type_name);
 					}
 				}
-			} else if (idx == 0) {
+			}
+			
+			// Also check for type_index=0 as a fallback indicator of dependent types
+			if (!arg.is_dependent && type_node.type_index() == 0) {
 				arg.is_dependent = true;
 				FLASH_LOG(Templates, Debug, "Template argument is dependent (placeholder with type_index=0)");
 			}
