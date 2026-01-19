@@ -32457,7 +32457,10 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				// Use the specialization instead of the primary template
 				if (spec_opt->is<TemplateVariableDeclarationNode>()) {
 					const TemplateVariableDeclarationNode& spec_template = spec_opt->as<TemplateVariableDeclarationNode>();
-					[[maybe_unused]] const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
+					const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
+					
+					// Get original token info from the specialization for better error reporting
+					const Token& orig_token = spec_var_decl.declaration().identifier_token();
 					
 					// Generate unique name for this instantiation (use simple name without namespace for symbol table)
 					StringBuilder name_builder;
@@ -32474,15 +32477,16 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					}
 					
 					// Create instantiated variable using the specialization's initializer
-					Token inst_token(Token::Type::Identifier, persistent_name, 0, 0, 0);
-					TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 8, Token());  // 8 bits = 1 byte
+					// Use original token's line/column/file info for better diagnostics
+					Token inst_token(Token::Type::Identifier, persistent_name, orig_token.line(), orig_token.column(), orig_token.file_index());
+					TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 8, orig_token);  // 8 bits = 1 byte
 					auto decl_node = emplace_node<DeclarationNode>(
 						emplace_node<TypeSpecifierNode>(bool_type),
 						inst_token
 					);
 					
 					// Create the initializer expression - use 'true' for specializations that match reference types
-					Token true_token(Token::Type::Keyword, "true", 0, 0, 0);
+					Token true_token(Token::Type::Keyword, "true", orig_token.line(), orig_token.column(), orig_token.file_index());
 					auto true_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
 					
 					auto var_decl_node = emplace_node<VariableDeclarationNode>(
@@ -32573,11 +32577,13 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			// Add to substitution map
 			type_substitution_map[orig_type.type_index()] = arg;
 			
+			// Use original token info for better diagnostics
+			const Token& orig_token = orig_decl.identifier_token();
 			substituted_type = TypeSpecifierNode(
 				arg.base_type,
 				TypeQualifier::None,
 				get_type_size_bits(arg.base_type),
-				Token()
+				orig_token
 			);
 			// Apply cv-qualifiers, references, and pointers from template argument
 			if (arg.is_rvalue_reference) {
@@ -32593,7 +32599,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	}
 	
 	// Create new declaration with substituted type and instantiated name
-	Token instantiated_name_token(Token::Type::Identifier, persistent_name, 0, 0, 0);
+	// Use original token's line/column/file info for better diagnostics
+	const Token& orig_token = orig_decl.identifier_token();
+	Token instantiated_name_token(Token::Type::Identifier, persistent_name, orig_token.line(), orig_token.column(), orig_token.file_index());
 	auto new_type_node = emplace_node<TypeSpecifierNode>(substituted_type);
 	auto new_decl_node = emplace_node<DeclarationNode>(new_type_node, instantiated_name_token);
 	
