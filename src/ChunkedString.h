@@ -165,13 +165,18 @@ public:
           temp_write_ptr_(nullptr),
           temp_capacity_(0),
           previous_builder_(gCurrentStringBuilder),  // Save the currently active builder (for nested support)
-          is_committed_(false),
-          builder_id_(next_builder_id_++) {
+          is_committed_(false)
+#if STRINGBUILDER_DEBUG
+          , builder_id_(next_builder_id_++)
+#endif
+    {
         // Use temporary chunk allocator for building - this makes nesting work naturally
         // since each StringBuilder has independent storage in the temporary allocator
         // Start with 512 bytes, will grow by 16x if needed
+#if STRINGBUILDER_DEBUG
         SB_DEBUG_LOG("CTOR id=" << builder_id_ << " prev=" << (previous_builder_ ? previous_builder_->builder_id_ : -1) 
                      << " gCurrent=" << (gCurrentStringBuilder ? gCurrentStringBuilder->builder_id_ : -1));
+#endif
     }
     
     // Prevent copying and assignment since StringBuilder manages temporary state
@@ -381,6 +386,8 @@ private:
     size_t temp_capacity_;       // Total capacity of temporary buffer
     StringBuilder* previous_builder_;  // Stack of nested StringBuilders
     bool is_committed_;          // Whether commit() or reset() was called
+#if STRINGBUILDER_DEBUG
     int builder_id_;             // Unique ID for debugging
     static inline int next_builder_id_ = 0;  // Counter for builder IDs
+#endif
 };

@@ -145,28 +145,11 @@ The `if constexpr (enabled)` blocks in logging macros previously caused hangs wh
 
 ### 3. `<ratio>` Header Crash (FIXED - 2026-01-19)
 
-**Previous Issue #1 (FIXED):** During deferred template base class resolution, `integral_constant` was being instantiated with only 1 template argument instead of 2.
+Two crashes were fixed:
+1. Skip deferred base class instantiation when template arguments can't be fully resolved
+2. Guard `handleGlobalLoad` against being called outside function context
 
-**Example of the problematic pattern (from `<ratio>`):**
-```cpp
-// __static_sign inherits from integral_constant with a ternary expression:
-template<intmax_t _Pn>
-struct __static_sign : integral_constant<intmax_t, (_Pn < 0) ? -1 : ((_Pn > 0) ? 1 : 0)> {};
-
-// When __static_sign<void> was instantiated (with unresolved template arg),
-// the ternary expression couldn't be evaluated, and the code attempted
-// to instantiate integral_constant<> with just the outer template's single arg.
-```
-
-**Fix Applied:** When template base class arguments cannot be fully resolved (e.g., the ternary expression `(_Pn < 0) ? -1 : ...` cannot be evaluated because `_Pn` is dependent), the deferred base class is now skipped instead of attempting instantiation with wrong arguments.
-
-**Previous Issue #2 (FIXED):** After fixing the template crash, a codegen crash occurred when processing `GlobalLoad` instructions outside of a function context.
-
-**Root cause:** The IR generator was emitting `GlobalLoad` instructions (for built-in function references like `__builtin_clzll` used in global variable initializers) before any `FunctionDecl` instruction. The `handleGlobalLoad` function in IRConverter tried to allocate a stack slot for the result, but there was no function context (`variable_scopes` was empty), causing a null pointer dereference.
-
-**Fix Applied:** Added a guard in `handleGlobalLoad` to check if `variable_scopes` is empty and skip the instruction if so. This prevents the crash when `GlobalLoad` is encountered outside a function context.
-
-**Current Status:** The `<ratio>` header no longer crashes. It now compiles (taking a long time due to template instantiation volume) but produces a working object file.
+**Current Status:** The `<ratio>` header no longer crashes. It now times out due to template instantiation volume like other complex headers.
 
 ### 4. Template Instantiation Performance (Secondary Blocker)
 
