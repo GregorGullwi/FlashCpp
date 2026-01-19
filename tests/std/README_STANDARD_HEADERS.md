@@ -134,7 +134,7 @@ The `if constexpr (enabled)` blocks in logging macros previously caused hangs wh
 1. The parser only checked for class templates and variable templates, not alias templates
 2. Alias templates in namespaces were only registered with simple names, not namespace-qualified names
 
-**Fix applied (commit TBD):**
+**Fix applied (commit e45648b):**
 1. Added alias template lookup (`lookup_alias_template`) in three parser code paths that determine if `<` should be parsed as template arguments
 2. Fixed namespace-level alias template registration to also register with namespace-qualified names (like class templates do)
 3. Added alias template resolution in expression parsing: when a qualified alias template like `detail::cref<int>` is parsed, it now resolves to the underlying type (`int`)
