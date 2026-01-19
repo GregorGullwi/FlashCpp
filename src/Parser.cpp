@@ -35376,7 +35376,11 @@ if (struct_type_info.getStructInfo()) {
 					// Try looking up through inheritance (e.g., __or_<...>::type where type is inherited)
 					const TypeInfo* inherited_alias = lookup_inherited_type_alias(base_template_name, member_name);
 					if (inherited_alias == nullptr) {
-						FLASH_LOG(Templates, Error, "Deferred template base alias not found: ", alias_name);
+						// This can happen when templates are instantiated with void/dependent arguments
+						// during template metaprogramming (e.g., SFINAE). The code may still compile
+						// and run correctly, so log at Debug level rather than Error.
+						FLASH_LOG(Templates, Debug, "Deferred template base alias not found: ", alias_name,
+						          " (this may be expected for SFINAE/dependent template arguments)");
 						continue;
 					}
 					// Use the inherited type alias

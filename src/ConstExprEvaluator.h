@@ -933,6 +933,271 @@ private:
 		return result;
 	}
 
+	// Evaluate compiler builtin functions at compile time
+	static EvalResult evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context) {
+		// Handle __builtin_clzll - count leading zeros for long long
+		if (func_name == "__builtin_clzll") {
+			if (arguments.size() != 1) {
+				return EvalResult::error("__builtin_clzll requires exactly 1 argument");
+			}
+			auto arg_result = evaluate(arguments[0], context);
+			if (!arg_result.success) {
+				return arg_result;
+			}
+			unsigned long long value;
+			if (std::holds_alternative<unsigned long long>(arg_result.value)) {
+				value = std::get<unsigned long long>(arg_result.value);
+			} else if (std::holds_alternative<long long>(arg_result.value)) {
+				value = static_cast<unsigned long long>(std::get<long long>(arg_result.value));
+			} else {
+				return EvalResult::error("__builtin_clzll argument must be an integer");
+			}
+			
+			if (value == 0) {
+				// __builtin_clzll(0) is undefined behavior, but we return sizeof(long long) * 8 for safety
+				return EvalResult::from_int(static_cast<long long>(sizeof(long long) * 8));
+			}
+			
+			// Count leading zeros
+			int count = 0;
+			unsigned long long mask = 1ULL << (sizeof(long long) * 8 - 1);
+			while ((value & mask) == 0 && mask != 0) {
+				count++;
+				mask >>= 1;
+			}
+			return EvalResult::from_int(static_cast<long long>(count));
+		}
+		
+		// Handle __builtin_clz - count leading zeros for int
+		if (func_name == "__builtin_clz") {
+			if (arguments.size() != 1) {
+				return EvalResult::error("__builtin_clz requires exactly 1 argument");
+			}
+			auto arg_result = evaluate(arguments[0], context);
+			if (!arg_result.success) {
+				return arg_result;
+			}
+			unsigned int value;
+			if (std::holds_alternative<unsigned long long>(arg_result.value)) {
+				value = static_cast<unsigned int>(std::get<unsigned long long>(arg_result.value));
+			} else if (std::holds_alternative<long long>(arg_result.value)) {
+				value = static_cast<unsigned int>(std::get<long long>(arg_result.value));
+			} else {
+				return EvalResult::error("__builtin_clz argument must be an integer");
+			}
+			
+			if (value == 0) {
+				return EvalResult::from_int(static_cast<long long>(sizeof(int) * 8));
+			}
+			
+			int count = 0;
+			unsigned int mask = 1U << (sizeof(int) * 8 - 1);
+			while ((value & mask) == 0 && mask != 0) {
+				count++;
+				mask >>= 1;
+			}
+			return EvalResult::from_int(static_cast<long long>(count));
+		}
+		
+		// Handle __builtin_ctzll - count trailing zeros for long long
+		if (func_name == "__builtin_ctzll") {
+			if (arguments.size() != 1) {
+				return EvalResult::error("__builtin_ctzll requires exactly 1 argument");
+			}
+			auto arg_result = evaluate(arguments[0], context);
+			if (!arg_result.success) {
+				return arg_result;
+			}
+			unsigned long long value;
+			if (std::holds_alternative<unsigned long long>(arg_result.value)) {
+				value = std::get<unsigned long long>(arg_result.value);
+			} else if (std::holds_alternative<long long>(arg_result.value)) {
+				value = static_cast<unsigned long long>(std::get<long long>(arg_result.value));
+			} else {
+				return EvalResult::error("__builtin_ctzll argument must be an integer");
+			}
+			
+			if (value == 0) {
+				return EvalResult::from_int(static_cast<long long>(sizeof(long long) * 8));
+			}
+			
+			int count = 0;
+			while ((value & 1) == 0) {
+				count++;
+				value >>= 1;
+			}
+			return EvalResult::from_int(static_cast<long long>(count));
+		}
+		
+		// Handle __builtin_ctz - count trailing zeros for int
+		if (func_name == "__builtin_ctz") {
+			if (arguments.size() != 1) {
+				return EvalResult::error("__builtin_ctz requires exactly 1 argument");
+			}
+			auto arg_result = evaluate(arguments[0], context);
+			if (!arg_result.success) {
+				return arg_result;
+			}
+			unsigned int value;
+			if (std::holds_alternative<unsigned long long>(arg_result.value)) {
+				value = static_cast<unsigned int>(std::get<unsigned long long>(arg_result.value));
+			} else if (std::holds_alternative<long long>(arg_result.value)) {
+				value = static_cast<unsigned int>(std::get<long long>(arg_result.value));
+			} else {
+				return EvalResult::error("__builtin_ctz argument must be an integer");
+			}
+			
+			if (value == 0) {
+				return EvalResult::from_int(static_cast<long long>(sizeof(int) * 8));
+			}
+			
+			int count = 0;
+			while ((value & 1) == 0) {
+				count++;
+				value >>= 1;
+			}
+			return EvalResult::from_int(static_cast<long long>(count));
+		}
+		
+		// Handle __builtin_popcountll - count set bits in long long
+		if (func_name == "__builtin_popcountll") {
+			if (arguments.size() != 1) {
+				return EvalResult::error("__builtin_popcountll requires exactly 1 argument");
+			}
+			auto arg_result = evaluate(arguments[0], context);
+			if (!arg_result.success) {
+				return arg_result;
+			}
+			unsigned long long value;
+			if (std::holds_alternative<unsigned long long>(arg_result.value)) {
+				value = std::get<unsigned long long>(arg_result.value);
+			} else if (std::holds_alternative<long long>(arg_result.value)) {
+				value = static_cast<unsigned long long>(std::get<long long>(arg_result.value));
+			} else {
+				return EvalResult::error("__builtin_popcountll argument must be an integer");
+			}
+			
+			int count = 0;
+			while (value != 0) {
+				count += (value & 1);
+				value >>= 1;
+			}
+			return EvalResult::from_int(static_cast<long long>(count));
+		}
+		
+		// Handle __builtin_popcount - count set bits in int
+		if (func_name == "__builtin_popcount") {
+			if (arguments.size() != 1) {
+				return EvalResult::error("__builtin_popcount requires exactly 1 argument");
+			}
+			auto arg_result = evaluate(arguments[0], context);
+			if (!arg_result.success) {
+				return arg_result;
+			}
+			unsigned int value;
+			if (std::holds_alternative<unsigned long long>(arg_result.value)) {
+				value = static_cast<unsigned int>(std::get<unsigned long long>(arg_result.value));
+			} else if (std::holds_alternative<long long>(arg_result.value)) {
+				value = static_cast<unsigned int>(std::get<long long>(arg_result.value));
+			} else {
+				return EvalResult::error("__builtin_popcount argument must be an integer");
+			}
+			
+			int count = 0;
+			while (value != 0) {
+				count += (value & 1);
+				value >>= 1;
+			}
+			return EvalResult::from_int(static_cast<long long>(count));
+		}
+		
+		// Handle __builtin_ffsll - find first set bit (1-indexed) in long long
+		if (func_name == "__builtin_ffsll") {
+			if (arguments.size() != 1) {
+				return EvalResult::error("__builtin_ffsll requires exactly 1 argument");
+			}
+			auto arg_result = evaluate(arguments[0], context);
+			if (!arg_result.success) {
+				return arg_result;
+			}
+			unsigned long long value;
+			if (std::holds_alternative<unsigned long long>(arg_result.value)) {
+				value = std::get<unsigned long long>(arg_result.value);
+			} else if (std::holds_alternative<long long>(arg_result.value)) {
+				value = static_cast<unsigned long long>(std::get<long long>(arg_result.value));
+			} else {
+				return EvalResult::error("__builtin_ffsll argument must be an integer");
+			}
+			
+			if (value == 0) {
+				return EvalResult::from_int(0LL);
+			}
+			
+			int pos = 1;
+			while ((value & 1) == 0) {
+				pos++;
+				value >>= 1;
+			}
+			return EvalResult::from_int(static_cast<long long>(pos));
+		}
+		
+		// Handle __builtin_ffs - find first set bit (1-indexed) in int
+		if (func_name == "__builtin_ffs") {
+			if (arguments.size() != 1) {
+				return EvalResult::error("__builtin_ffs requires exactly 1 argument");
+			}
+			auto arg_result = evaluate(arguments[0], context);
+			if (!arg_result.success) {
+				return arg_result;
+			}
+			unsigned int value;
+			if (std::holds_alternative<unsigned long long>(arg_result.value)) {
+				value = static_cast<unsigned int>(std::get<unsigned long long>(arg_result.value));
+			} else if (std::holds_alternative<long long>(arg_result.value)) {
+				value = static_cast<unsigned int>(std::get<long long>(arg_result.value));
+			} else {
+				return EvalResult::error("__builtin_ffs argument must be an integer");
+			}
+			
+			if (value == 0) {
+				return EvalResult::from_int(0LL);
+			}
+			
+			int pos = 1;
+			while ((value & 1) == 0) {
+				pos++;
+				value >>= 1;
+			}
+			return EvalResult::from_int(static_cast<long long>(pos));
+		}
+		
+		// Handle __builtin_constant_p - check if argument is a compile-time constant
+		if (func_name == "__builtin_constant_p") {
+			if (arguments.size() != 1) {
+				return EvalResult::error("__builtin_constant_p requires exactly 1 argument");
+			}
+			// In a constexpr context, if we can evaluate the argument, it's a constant
+			auto arg_result = evaluate(arguments[0], context);
+			return EvalResult::from_int(arg_result.success ? 1LL : 0LL);
+		}
+		
+		// Handle __builtin_abs, __builtin_labs, __builtin_llabs
+		if (func_name == "__builtin_abs" || func_name == "__builtin_labs" || func_name == "__builtin_llabs") {
+			if (arguments.size() != 1) {
+				return EvalResult::error(std::string(func_name) + " requires exactly 1 argument");
+			}
+			auto arg_result = evaluate(arguments[0], context);
+			if (!arg_result.success) {
+				return arg_result;
+			}
+			long long value = arg_result.as_int();
+			return EvalResult::from_int(value < 0 ? -value : value);
+		}
+		
+		// Not a known builtin function
+		return EvalResult::error("Unknown builtin function: " + std::string(func_name));
+	}
+
 	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context) {
 		// Check recursion depth
 		if (context.current_depth >= context.max_recursion_depth) {
@@ -993,6 +1258,16 @@ private:
 						}
 					}
 				}
+			}
+			
+			// Check if this is a compiler builtin function
+			auto builtin_result = evaluate_builtin_function(func_name, func_call.arguments(), context);
+			if (builtin_result.success) {
+				return builtin_result;
+			}
+			// If builtin evaluation returned an error that's not "unknown builtin", propagate it
+			if (builtin_result.error_message.find("Unknown builtin function") == std::string::npos) {
+				return builtin_result;
 			}
 			
 			return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
