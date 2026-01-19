@@ -155,69 +155,23 @@ Two crashes were fixed:
 
 ### 4. Enum Class Forward Declaration (FIXED - 2026-01-19)
 
-**Issue:** ~~C++17 allows forward declaration of scoped enums with fixed underlying type, but FlashCpp doesn't support this yet.~~ **RESOLVED**
+Added forward declaration support: `enum class byte : unsigned char;` now parses correctly.
 
-**Example that now works:**
-```cpp
-enum class byte : unsigned char;  // Forward declaration without body
-```
+### 5. GCC Extensions Support (FIXED - 2026-01-19)
 
-**Fix applied:** Added forward declaration detection in `parse_enum_declaration()` - when a semicolon is found after the underlying type specification, the parser now correctly creates a forward declaration node and consumes the semicolon.
+- **`__typeof__`**: Now works like `decltype` for GCC compatibility
+- **Using-declarations in structs**: `using Base::member;` now correctly imports member names
 
-**Test case:** `tests/test_enum_fwd_decl_ret0.cpp`
+### 6. Remaining Parse Blockers
 
-**Impact:** Headers that use `enum class byte : unsigned char;` forward declarations now parse correctly. However, `<vector>`, `<array>`, `<span>` still fail due to other issues (unnamed template parameters).
+| Issue | Example | Impact |
+|-------|---------|--------|
+| Variadic non-type template params | `template<size_t... _Indexes>` | `<vector>`, `<utility>` |
+| Complex decltype in partial spec | `__void_t<decltype(hash<T>()(...))>` | `<atomic>` |
 
-### 5. Unnamed Template Type Parameters with Defaults (NEW - 2026-01-19)
+### 7. Template Instantiation Performance
 
-**Issue:** Template parameters without a name but with a default value fail to parse.
-
-**Example that fails:**
-```cpp
-template<typename _Tp,
-         typename _Up = typename remove_cv<_Tp>::type,
-         typename = typename enable_if<is_same<_Tp, _Up>::value>::type,  // Unnamed!
-         size_t = tuple_size<_Tp>::value>                                // Unnamed!
-using __enable_if_has_tuple_size = _Tp;
-```
-
-**Error:** `Expected type after '=' in template parameter default`
-
-**Location:** `/usr/lib/gcc/x86_64-linux-gnu/14/include/c++/14/bits/utility.h:139`
-
-**Impact:** Blocks `<utility>`, `<tuple>`, `<variant>`, and all headers that depend on them.
-
-**Fix needed:** Support unnamed template parameters with defaults in Parser.cpp.
-
-### 6. Complex Decltype in Partial Specialization (NEW - 2026-01-19)
-
-**Issue:** Nested decltype expressions with function calls fail to parse in partial specializations.
-
-**Example that fails:**
-```cpp
-template<typename _Tp, __void_t<decltype(hash<_Tp>()(declval<_Tp>()))>>
-struct __poison_hash;
-```
-
-**Error:** `Expected template argument pattern in partial specialization`
-
-**Location:** `/usr/lib/gcc/x86_64-linux-gnu/14/include/c++/14/bits/functional_hash.h:160`
-
-**Impact:** Blocks `<atomic>` and headers using `__poison_hash` SFINAE patterns.
-
-### 7. Template Instantiation Performance (Secondary Blocker)
-
-Template-heavy headers that don't include `<concepts>` may still experience slow compilation due to template instantiation volume. However, many headers previously thought to be "timing out" actually have specific parsing errors or crashes (see table above).
-
-**Key metrics (from `<type_traits>` timing):**
-- Preprocessing: ~5s (89%)
-- Parsing: ~0.5s (10%)
-- IR/Codegen: ~0.05s (1%)
-
-**Root cause:** Each template instantiation creates new AST nodes and triggers further dependent instantiations. Standard library metaprogramming uses deeply nested type traits patterns.
-
-**Optimization opportunities:**
-- Improve template cache hit rate (currently ~26%)
+Template-heavy headers (`<concepts>`, `<bit>`, `<string>`, `<ranges>`) time out due to instantiation volume. Key optimization: improve template cache hit rate (currently ~26%).
 - Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
 - Optimize string operations in template name generation
 
@@ -492,78 +446,25 @@ The following features have been implemented to support standard headers:
 
 ## Recent Changes
 
-Changes are listed in reverse chronological order. For detailed implementation notes, see the git commit history.
+Changes are listed in reverse chronological order.
 
-### 2026-01-19 (Comprehensive Header Audit)
-- **AUDIT:** Re-tested all standard headers with extended timeouts (up to 5 minutes)
-- **KEY FINDING:** Many headers marked as "timeout" actually fail with specific parse errors
-- **`<ratio>` NOW COMPILES:** Successfully compiles in ~1.4 seconds (previously marked as timeout)
-- **New blockers identified:**
-  - Enum class forward declaration (`enum class byte : unsigned char;`) - blocks `<vector>`, `<array>`, `<span>`
-  - Unnamed template type parameters with defaults - blocks `<utility>`, `<tuple>`, `<variant>`
-  - Complex decltype in partial specialization - blocks `<atomic>`
-- **True timeouts:** Only `<concepts>`, `<bit>`, `<string_view>`, `<string>`, `<ranges>` actually time out
-- **Crashes:** `<functional>`, `<algorithm>`, `<chrono>` crash with internal errors
+### 2026-01-19 (Parse Error Fixes)
+- **`__typeof__` GCC extension:** Works like `decltype` for GCC compatibility
+- **Using-declarations:** `using Base::member;` now imports member names into derived class scope
+- **Enum forward declarations:** `enum class byte : unsigned char;` now parses correctly
+- **`<ratio>` now compiles:** ~1.4 seconds (was marked as timeout)
 
-### 2026-01-19 (Qualified Template Alias Fix)
-- **FEATURE:** Namespace-qualified template aliases now work in template argument contexts
-- **Root cause:** Parser only checked for class/variable templates when deciding if `<` is template arguments
-- **Fix:** Added `lookup_alias_template` in 3 parser code paths; alias templates now register with qualified names
-- **Test case:** `tests/test_qualified_template_alias_ret0.cpp`
-- **Impact:** Patterns like `Wrapper<namespace::alias<int>>` now compile correctly
+### 2026-01-19 (Comprehensive Audit)
+- Re-tested all headers with extended timeouts; many "timeouts" are actually parse errors
+- Identified specific blockers: variadic non-type params, complex decltype patterns
+- True timeouts: `<concepts>`, `<bit>`, `<string_view>`, `<string>`, `<ranges>`
 
-### 2026-01-18 (Log Level Bug Fix)
-- **BUG FIXED:** Log level bug that caused hangs is now resolved (commit 6ea920f)
-- **Root cause:** `if constexpr (enabled)` blocks in logging macros caused issues when compiled out
-- **Solution:** Replaced with preprocessor `#if FLASHCPP_LOG_LEVEL >= X` checks
-- **All log levels now work:** Release builds with `-DFLASHCPP_LOG_LEVEL=1` compile successfully
-- **Performance:** `<type_traits>` compiles in ~1.1s (release) or ~6.8s (debug)
-
-### 2026-01-18 (Header Verification)
-- **Verified working headers:**
-  - `<limits>` (~0.30s), `<compare>` (~0.10s), `<version>` (~0.09s), `<source_location>` (~0.10s)
-  - `<initializer_list>` (~0.07s), `<new>` (~0.10s), `<typeinfo>` (~0.10s), `<typeindex>` (~0.16s)
-  - `<csetjmp>` (~0.06s), `<csignal>` (~0.18s), `<stdfloat>` (~0.03s)
-  - `<spanstream>` (~0.09s), `<print>` (~0.09s), `<expected>` (~0.09s)
-  - `<text_encoding>` (~0.08s), `<barrier>` (~0.10s), `<stacktrace>` (~0.08s)
-
-### 2026-01-18 (Afternoon)
-- **`__cpp_impl_coroutine` macro:** ~~Added~~ Disabled predefined macro - coroutines are not supported at this time
-- **Pointer-to-member typedef:** Support for `typedef T Class::* alias;` syntax used in `<type_traits>` result_of patterns
-- **Trailing return type parameter visibility:** Function parameters now visible in trailing return type expressions like `auto func(T __t, U __u) -> decltype(__t + __u)`
-- **StringHandle interning fix:** Fixed `NamespaceRegistry::buildQualifiedIdentifier` to use `getOrInternStringHandle` instead of `createStringHandle`, preventing duplicate handles for the same string
-- **Forward declaration fix:** Fixed `add_struct_type` to return existing TypeInfo if type name is already registered, fixing out-of-line constructors in nested namespaces
-- **Out-of-line constructor parameter scope:** Fixed to use definition's parameter names in member initializer parsing instead of declaration's names
-- **Out-of-line operator definitions:** Added support for patterns like `ReturnType ClassName::operator=(...)`
-- **Out-of-line member function parameter scope:** Fixed to update parameter nodes with definition's parameter names during code generation (2026-01-18)
-- **New headers compiling:** `<stdfloat>`, `<spanstream>`, `<print>`, `<expected>`, `<text_encoding>`, `<barrier>`, `<stacktrace>`
-- **Test case:** `tests/test_out_of_line_param_names_ret42.cpp` - tests parameter name differences between declaration and definition
-- **Impact:** `<exception>` header now progresses past the parameter scope issue (times out due to template instantiation volume)
-
-### 2026-01-18 (Morning)
-- **Unsupported size handling:** Fixed assertions that crashed on non-standard member sizes (3, 5, 6, 7, 0 bytes)
-- **Affected functions:** `emitStoreToMemory`, `handleMemberAccess`, `loadValueFromStack`, `storeValueToStack`, `loadValueFromGlobal`, `storeValueToGlobal`, `handleBinaryOp`
-- **Graceful degradation:** Non-standard sizes now log a warning and skip instead of crashing
-- **Test case:** `test_c_compat_headers.cpp` - tests all 16 C compatibility headers
-- **Impact:** `<csignal>` now compiles successfully (~2.7s), previously crashed on struct members with non-standard padding
+### 2026-01-18
+- Log level bug fix, pointer-to-member typedef, trailing return type params
+- New headers: `<stdfloat>`, `<spanstream>`, `<print>`, `<expected>`, `<barrier>`, `<stacktrace>`
 
 ### 2026-01-17
-- **Friend function declarations:** Support for `noexcept`, `const`, `volatile`, `&`, `&&`, `__attribute__` qualifiers
-- **Friend operator functions:** `friend bool operator==(...)` now parsed correctly  
-- **Friend inline definitions:** Friend functions can be defined inline in class body
-- **Out-of-line constructors/destructors:** `MyClass::MyClass()` and `MyClass::~MyClass()` patterns supported
-- **Elaborated type specifiers:** `const class std::type_info*` syntax supported
-- **Test cases:** `test_friend_noexcept_ret0.cpp`, `test_out_of_line_ctor_ret0.cpp`
-- **Impact:** `<exception>` header now parses (times out during template instantiation)
-
-### 2026-01-17
-- **`__builtin_strlen`:** Added builtin function registration with correct `size_t` return type
-- **UserDefined type alias resolution:** Fixed overload resolution for `size_t` parameters
-- **Test case:** `test_builtin_strlen_ret5.cpp`
-- **Impact:** `<any>` header progresses past `_Hash_bytes` function call
-
-### 2026-01-16
-- **Parenthesized identifier disambiguation:** `(x) < 8` correctly parsed as comparison, not C-style cast
+- Friend functions, out-of-line ctors/dtors, elaborated type specifiers, `__builtin_strlen`
 - **Test case:** `test_parens_less_than_ret0.cpp`
 - **Impact:** `<cwctype>` now compiles (~0.78s)
 
