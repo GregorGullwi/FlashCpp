@@ -686,6 +686,35 @@ public:
 					// If we're skipping and haven't found a true condition yet, evaluate #elif
 					if (!condition_was_true_stack.top()) {
 						std::string condition = line.substr(5);  // Skip "#elif"
+						// Strip comments from the condition before evaluating
+						// Handle // line comments
+						size_t line_comment_pos = condition.find("//");
+						if (line_comment_pos != std::string::npos) {
+							condition = condition.substr(0, line_comment_pos);
+						}
+						// Handle /* */ block comments
+						size_t block_start = condition.find("/*");
+						while (block_start != std::string::npos) {
+							size_t block_end = condition.find("*/", block_start + 2);
+							if (block_end != std::string::npos) {
+								condition.erase(block_start, block_end - block_start + 2);
+							} else {
+								// Unterminated block comment - remove to end and log warning
+								FLASH_LOG(Lexer, Warning, "Unterminated block comment in #elif condition at ",
+								          filestack_.top().file_name, ":", filestack_.top().line_number);
+								condition = condition.substr(0, block_start);
+								break;
+							}
+							block_start = condition.find("/*");
+						}
+						// Trim trailing whitespace
+						size_t end_pos = condition.find_last_not_of(" \t\r\n");
+						if (end_pos != std::string::npos) {
+							condition = condition.substr(0, end_pos + 1);
+						} else {
+							// Condition is empty or all whitespace - treat as 0
+							condition.clear();
+						}
 						condition = expandMacrosForConditional(condition);
 						std::istringstream iss(condition);
 						long expression_result = evaluate_expression(iss);
@@ -1507,7 +1536,12 @@ private:
 				if (right != 0) {
 					values.push(left / right);
 				} else {
-					FLASH_LOG(Lexer, Warning, "Division by zero in preprocessor expression");
+					if (!filestack_.empty()) {
+						FLASH_LOG(Lexer, Warning, "Division by zero in preprocessor expression (", left, " / 0) at ",
+						          filestack_.top().file_name, ":", filestack_.top().line_number);
+					} else {
+						FLASH_LOG(Lexer, Warning, "Division by zero in preprocessor expression (", left, " / 0)");
+					}
 					values.push(0);
 				}
 				break;
@@ -1515,7 +1549,12 @@ private:
 				if (right != 0) {
 					values.push(left % right);
 				} else {
-					FLASH_LOG(Lexer, Warning, "Modulo by zero in preprocessor expression");
+					if (!filestack_.empty()) {
+						FLASH_LOG(Lexer, Warning, "Modulo by zero in preprocessor expression (", left, " % 0) at ",
+						          filestack_.top().file_name, ":", filestack_.top().line_number);
+					} else {
+						FLASH_LOG(Lexer, Warning, "Modulo by zero in preprocessor expression (", left, " % 0)");
+					}
 					values.push(0);
 				}
 				break;

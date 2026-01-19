@@ -7782,7 +7782,18 @@ private:
 		// This can happen when the IR generator emits GlobalLoad for built-in function references
 		// that appear in global variable initializers.
 		if (variable_scopes.empty()) {
-			FLASH_LOG(Codegen, Warning, "GlobalLoad instruction found outside function context - skipping");
+			// Extract the global name to provide a better diagnostic
+			const GlobalLoadOp& op = std::any_cast<const GlobalLoadOp&>(instruction.getTypedPayload());
+			std::string_view global_name = StringTable::getStringView(op.getGlobalName());
+			
+			// Silently skip builtin functions - they are expected to be evaluated at compile time
+			// but can end up here when templates are instantiated with dependent arguments
+			if (global_name.starts_with("__builtin")) {
+				FLASH_LOG(Codegen, Debug, "Skipping GlobalLoad for builtin '", global_name, "' outside function context");
+				return;
+			}
+			
+			FLASH_LOG(Codegen, Warning, "GlobalLoad instruction for '", global_name, "' found outside function context - skipping");
 			return;
 		}
 		

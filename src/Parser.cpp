@@ -10810,10 +10810,15 @@ ParseResult Parser::parse_type_specifier()
 								
 								return ParseResult::success(new_type_spec);
 							} else {
-								FLASH_LOG(Parser, Warning, "Deferred instantiation: type '", instantiated_name, "' not found after instantiation");
-							}
-						} else {
-							FLASH_LOG(Parser, Warning, "Deferred instantiation failed for '", alias_node.target_template_name(), "'");
+							// Deferred instantiation didn't find the type, but this is often expected
+							// for complex template metaprogramming patterns (SFINAE, etc.)
+							// Fall through to simple alias handling
+							FLASH_LOG(Parser, Debug, "Deferred instantiation: type '", instantiated_name, "' not found after instantiation at line ", type_name_token.line());
+						}
+					} else {
+						// try_instantiate_class_template returned nullopt, which is expected for
+						// dependent types and SFINAE patterns - fall through to simple alias handling
+						FLASH_LOG(Parser, Debug, "Deferred instantiation failed for '", alias_node.target_template_name(), "' at line ", type_name_token.line());
 						}
 						
 						// Fall through to simple alias handling if deferred instantiation failed or not applicable
@@ -32269,11 +32274,47 @@ std::string_view Parser::instantiate_and_register_base_template(
 		auto instantiated_base = try_instantiate_class_template(base_class_name, template_args);
 		
 		// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
+		// and get the actual instantiated name from the struct (which includes default arguments)
 		if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
 			ast_nodes_.push_back(*instantiated_base);
+			// Get the actual instantiated name from the struct node (includes default args)
+			StringHandle name_handle = instantiated_base->as<StructDeclarationNode>().name();
+			std::string_view instantiated_name = StringTable::getStringView(name_handle);
+			base_class_name = instantiated_name;
+			return instantiated_name;
 		}
 		
-		// Get the instantiated name and update base_class_name
+		// If instantiation returned nullopt (already instantiated), look up the existing type
+		// We need to fill in default arguments to find the correct name
+		auto primary_template_opt = gTemplateRegistry.lookupTemplate(base_class_name);
+		if (primary_template_opt.has_value() && primary_template_opt->is<TemplateClassDeclarationNode>()) {
+			const TemplateClassDeclarationNode& primary_template = primary_template_opt->as<TemplateClassDeclarationNode>();
+			const std::vector<ASTNode>& primary_params = primary_template.template_parameters();
+			
+			// Fill in defaults for missing arguments
+			std::vector<TemplateTypeArg> filled_args = template_args;
+			for (size_t i = filled_args.size(); i < primary_params.size(); ++i) {
+				if (!primary_params[i].is<TemplateParameterNode>()) continue;
+				
+				const TemplateParameterNode& param = primary_params[i].as<TemplateParameterNode>();
+				if (param.is_variadic()) continue;
+				if (!param.has_default()) break;
+				
+				const ASTNode& default_node = param.default_value();
+				if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+					filled_args.emplace_back(default_type);
+					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
+				}
+			}
+			
+			// Generate name with filled-in defaults
+			std::string_view instantiated_name = get_instantiated_class_name(base_class_name, filled_args);
+			base_class_name = instantiated_name;
+			return instantiated_name;
+		}
+		
+		// Fallback: use basic name without defaults
 		std::string_view instantiated_name = get_instantiated_class_name(base_class_name, template_args);
 		base_class_name = instantiated_name;
 		return instantiated_name;
@@ -32401,6 +32442,17 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	FLASH_LOG(Templates, Debug, "try_instantiate_variable_template: template_name='", template_name, 
 		"' simple_name='", simple_template_name, "' args.size()=", template_args.size());
 	
+	// Check if any template argument is dependent (e.g., _Tp placeholder)
+	// If so, we cannot instantiate - this happens when we're inside a template body
+	for (size_t i = 0; i < template_args.size(); ++i) {
+		const auto& arg = template_args[i];
+		if (arg.is_dependent) {
+			FLASH_LOG(Templates, Debug, "Skipping variable template '", template_name, 
+			          "' instantiation - arg[", i, "] is dependent: ", arg.toString());
+			return std::nullopt;
+		}
+	}
+	
 	for (const auto& arg : template_args) {
 		FLASH_LOG(Templates, Debug, "  arg: is_reference=", arg.is_reference, 
 			" is_rvalue_reference=", arg.is_rvalue_reference, 
@@ -32452,7 +32504,10 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				// Use the specialization instead of the primary template
 				if (spec_opt->is<TemplateVariableDeclarationNode>()) {
 					const TemplateVariableDeclarationNode& spec_template = spec_opt->as<TemplateVariableDeclarationNode>();
-					[[maybe_unused]] const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
+					const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
+					
+					// Get original token info from the specialization for better error reporting
+					const Token& orig_token = spec_var_decl.declaration().identifier_token();
 					
 					// Generate unique name for this instantiation (use simple name without namespace for symbol table)
 					StringBuilder name_builder;
@@ -32469,15 +32524,16 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					}
 					
 					// Create instantiated variable using the specialization's initializer
-					Token inst_token(Token::Type::Identifier, persistent_name, 0, 0, 0);
-					TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 8, Token());  // 8 bits = 1 byte
+					// Use original token's line/column/file info for better diagnostics
+					Token inst_token(Token::Type::Identifier, persistent_name, orig_token.line(), orig_token.column(), orig_token.file_index());
+					TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 8, orig_token);  // 8 bits = 1 byte
 					auto decl_node = emplace_node<DeclarationNode>(
 						emplace_node<TypeSpecifierNode>(bool_type),
 						inst_token
 					);
 					
 					// Create the initializer expression - use 'true' for specializations that match reference types
-					Token true_token(Token::Type::Keyword, "true", 0, 0, 0);
+					Token true_token(Token::Type::Keyword, "true", orig_token.line(), orig_token.column(), orig_token.file_index());
 					auto true_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
 					
 					auto var_decl_node = emplace_node<VariableDeclarationNode>(
@@ -32568,11 +32624,13 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			// Add to substitution map
 			type_substitution_map[orig_type.type_index()] = arg;
 			
+			// Use original token info for better diagnostics
+			const Token& orig_token = orig_decl.identifier_token();
 			substituted_type = TypeSpecifierNode(
 				arg.base_type,
 				TypeQualifier::None,
 				get_type_size_bits(arg.base_type),
-				Token()
+				orig_token
 			);
 			// Apply cv-qualifiers, references, and pointers from template argument
 			if (arg.is_rvalue_reference) {
@@ -32588,7 +32646,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	}
 	
 	// Create new declaration with substituted type and instantiated name
-	Token instantiated_name_token(Token::Type::Identifier, persistent_name, 0, 0, 0);
+	// Use original token's line/column/file info for better diagnostics
+	const Token& orig_token = orig_decl.identifier_token();
+	Token instantiated_name_token(Token::Type::Identifier, persistent_name, orig_token.line(), orig_token.column(), orig_token.file_index());
 	auto new_type_node = emplace_node<TypeSpecifierNode>(substituted_type);
 	auto new_decl_node = emplace_node<DeclarationNode>(new_type_node, instantiated_name_token);
 	
@@ -35277,7 +35337,10 @@ if (struct_type_info.getStructInfo()) {
 					}
 				}
 				
-				FLASH_LOG(Templates, Warning, "Could not resolve deferred template base argument; skipping base instantiation");
+				// This is expected for dependent types in template metaprogramming
+				// The template may still work correctly with the fallback path
+				FLASH_LOG(Templates, Debug, "Could not resolve deferred template base argument for '",
+				          StringTable::getStringView(deferred_base.base_template_name), "'; skipping base instantiation");
 				unresolved_arg = true;
 				break;
 			}
@@ -35313,7 +35376,11 @@ if (struct_type_info.getStructInfo()) {
 					// Try looking up through inheritance (e.g., __or_<...>::type where type is inherited)
 					const TypeInfo* inherited_alias = lookup_inherited_type_alias(base_template_name, member_name);
 					if (inherited_alias == nullptr) {
-						FLASH_LOG(Templates, Error, "Deferred template base alias not found: ", alias_name);
+						// This can happen when templates are instantiated with void/dependent arguments
+						// during template metaprogramming (e.g., SFINAE). The code may still compile
+						// and run correctly, so log at Debug level rather than Error.
+						FLASH_LOG(Templates, Debug, "Deferred template base alias not found: ", alias_name,
+						          " (this may be expected for SFINAE/dependent template arguments)");
 						continue;
 					}
 					// Use the inherited type alias
