@@ -10,6 +10,15 @@
 #include <charconv>
 #include <type_traits>
 
+// Debug flag for StringBuilder - set to 1 to enable verbose logging
+#define STRINGBUILDER_DEBUG 0
+
+#if STRINGBUILDER_DEBUG
+#define SB_DEBUG_LOG(...) do { std::cerr << "[StringBuilder] " << __VA_ARGS__ << std::endl; } while(0)
+#else
+#define SB_DEBUG_LOG(...) ((void)0)
+#endif
+
 class Chunk {
 public:
     explicit Chunk(size_t capacity)
@@ -156,10 +165,13 @@ public:
           temp_write_ptr_(nullptr),
           temp_capacity_(0),
           previous_builder_(gCurrentStringBuilder),  // Save the currently active builder (for nested support)
-          is_committed_(false) {
+          is_committed_(false),
+          builder_id_(next_builder_id_++) {
         // Use temporary chunk allocator for building - this makes nesting work naturally
         // since each StringBuilder has independent storage in the temporary allocator
         // Start with 512 bytes, will grow by 16x if needed
+        SB_DEBUG_LOG("CTOR id=" << builder_id_ << " prev=" << (previous_builder_ ? previous_builder_->builder_id_ : -1) 
+                     << " gCurrent=" << (gCurrentStringBuilder ? gCurrentStringBuilder->builder_id_ : -1));
     }
     
     // Prevent copying and assignment since StringBuilder manages temporary state
@@ -168,6 +180,8 @@ public:
     StringBuilder& operator=(const StringBuilder&) = delete;
     
     ~StringBuilder() {
+        SB_DEBUG_LOG("DTOR id=" << builder_id_ << " committed=" << is_committed_ 
+                     << " gCurrent=" << (gCurrentStringBuilder ? gCurrentStringBuilder->builder_id_ : -1));
         // Verify that commit() or reset() was called
         assert(is_committed_ && "did you forget to call commit() or reset() on the StringBuilder?");
         // Restore previous builder if this was the active one
@@ -177,6 +191,9 @@ public:
     }
 
     StringBuilder& append(std::string_view sv) {
+        SB_DEBUG_LOG("append(sv) id=" << builder_id_ << " len=" << sv.size() 
+                     << " current_size=" << (temp_start_ ? (temp_write_ptr_ - temp_start_) : 0)
+                     << " cap=" << temp_capacity_);
         handle_activation();
         ensure_temp_capacity(sv.size());
         std::memcpy(temp_write_ptr_, sv.data(), sv.size());
@@ -229,6 +246,8 @@ public:
     }
 
     std::string_view commit() {
+        SB_DEBUG_LOG("commit() id=" << builder_id_ << " start=" << (void*)temp_start_ 
+                     << " len=" << (temp_start_ ? (temp_write_ptr_ - temp_start_) : 0));
         // Handle case where nothing was appended
         if (temp_start_ == nullptr) {
             is_committed_ = true;
@@ -246,6 +265,8 @@ public:
         ptr[len] = '\0';
         std::string_view result(ptr, len);
         
+        SB_DEBUG_LOG("commit() id=" << builder_id_ << " result='" << result.substr(0, std::min(result.size(), size_t(50))) << "'");
+        
         // Reset temporary state and mark as committed
         reset();
         
@@ -262,6 +283,7 @@ public:
     }
 
     void reset() {
+        SB_DEBUG_LOG("reset() id=" << builder_id_ << " start=" << (void*)temp_start_ << " cap=" << temp_capacity_);
         gTemporaryChunkedStringAllocator.tryFree(temp_start_, temp_capacity_);
 
         temp_start_ = nullptr;
@@ -283,6 +305,9 @@ private:
             gCurrentStringBuilder != this && 
             gCurrentStringBuilder != previous_builder_) {
             // Parallel usage detected - this is an error
+            SB_DEBUG_LOG("PARALLEL USAGE DETECTED! id=" << builder_id_ 
+                         << " gCurrent=" << gCurrentStringBuilder->builder_id_
+                         << " prev=" << (previous_builder_ ? previous_builder_->builder_id_ : -1));
             assert(false && "Parallel StringBuilder usage detected in the same scope! "
                            "You have two StringBuilders being used at the same time. "
                            "Call .commit() or .reset() on the first builder before using the second one.");
@@ -309,6 +334,9 @@ private:
         size_t new_size = current_size + needed;
         
         if (temp_capacity_ < new_size) {
+            SB_DEBUG_LOG("GROW id=" << builder_id_ << " needed=" << needed 
+                         << " current_size=" << current_size << " old_cap=" << temp_capacity_ 
+                         << " old_start=" << (void*)temp_start_);
             // Need to grow or allocate initial buffer
             size_t new_capacity = temp_capacity_;
             
@@ -329,8 +357,10 @@ private:
             }
             
             // Allocate new buffer from temporary allocator
-            gTemporaryChunkedStringAllocator.tryFree(temp_start_, temp_capacity_);
+            bool freed = gTemporaryChunkedStringAllocator.tryFree(temp_start_, temp_capacity_);
+            SB_DEBUG_LOG("GROW id=" << builder_id_ << " tryFree=" << freed);
             char* new_start = gTemporaryChunkedStringAllocator.allocate(new_capacity);
+            SB_DEBUG_LOG("GROW id=" << builder_id_ << " new_cap=" << new_capacity << " new_start=" << (void*)new_start);
             assert(new_start != nullptr && "StringBuilder: allocation failed");
             
             // Copy existing data if any
@@ -351,4 +381,6 @@ private:
     size_t temp_capacity_;       // Total capacity of temporary buffer
     StringBuilder* previous_builder_;  // Stack of nested StringBuilders
     bool is_committed_;          // Whether commit() or reset() was called
+    int builder_id_;             // Unique ID for debugging
+    static inline int next_builder_id_ = 0;  // Counter for builder IDs
 };
