@@ -406,7 +406,7 @@ int main_impl(int argc, char *argv[]) {
         if (parse_result.is_error()) {
             // Print formatted error with file:line:column information and include stack
             std::string error_msg = parse_result.format_error(lexer.file_paths(), file_reader.get_line_map(), &lexer);
-            FLASH_LOG(Parser, Info, error_msg);
+            FLASH_LOG(Parser, Error, error_msg);
             // Also print to stderr to ensure error is visible even with minimal logging
             std::cerr << error_msg << std::endl;
             return 1;
