@@ -3483,17 +3483,66 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 // Helper function to parse and register a type alias (typedef or using) inside a struct/template
 // Handles both "typedef Type Alias;" and "using Alias = Type;" syntax
 // Also handles inline definitions: "typedef struct { ... } Alias;"
+// Also handles using-declarations: "using namespace::name;" (member access import)
 // Returns ParseResult with no node on success, error on failure
 ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access)
 {
 	consume_token(); // consume 'typedef' or 'using'
 	
-	// For 'using', always simple syntax: using Alias = Type;
+	// For 'using', check if it's an alias or a using-declaration
 	if (keyword == "using") {
 		auto alias_token = peek_token();
 		if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
 			return ParseResult::error("Expected alias name after 'using'", peek_token().value_or(Token()));
 		}
+		
+		// Look ahead to see if this is:
+		// 1. Type alias: using Alias = Type;  (identifier followed by '=')
+		// 2. Using-declaration: using namespace::member;  (identifier followed by '::')
+		SaveHandle lookahead_pos = save_token_position();
+		consume_token(); // consume first identifier
+		auto next_token = peek_token();
+		
+		if (next_token.has_value() && next_token->value() == "::") {
+			// This is a using-declaration like: using std::__is_integer<_Tp>::__value;
+			// Parse and skip the qualified name
+			while (peek_token().has_value() && peek_token()->value() == "::") {
+				consume_token(); // consume '::'
+				
+				// Consume the next identifier or template
+				if (peek_token().has_value()) {
+					if (peek_token()->type() == Token::Type::Identifier) {
+						consume_token(); // consume identifier
+						
+						// Check for template arguments
+						if (peek_token().has_value() && peek_token()->value() == "<") {
+							// Skip template arguments
+							int depth = 1;
+							consume_token(); // consume '<'
+							while (depth > 0 && peek_token().has_value()) {
+								if (peek_token()->value() == "<") depth++;
+								else if (peek_token()->value() == ">") depth--;
+								consume_token();
+							}
+						}
+					} else {
+						break;
+					}
+				}
+			}
+			
+			// Consume trailing semicolon
+			if (peek_token().has_value() && peek_token()->value() == ";") {
+				consume_token(); // consume ';'
+			}
+			
+			// Discard the saved position - we successfully parsed the using-declaration
+			discard_saved_token(lookahead_pos);
+			return ParseResult::success();
+		}
+		
+		// Restore position - this is a type alias
+		restore_token_position(lookahead_pos);
 		
 		StringHandle alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 		consume_token(); // consume alias name
@@ -10090,8 +10139,10 @@ ParseResult Parser::parse_type_specifier()
 	
 	auto current_token_opt = peek_token();
 
-	// Check for decltype FIRST, before any other checks
-	if (current_token_opt.has_value() && current_token_opt->value() == "decltype") {
+	// Check for decltype or __typeof__ FIRST, before any other checks
+	// __typeof__ is a GCC extension that works like decltype
+	if (current_token_opt.has_value() && 
+	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__")) {
 		return parse_decltype_specifier();
 	}
 
@@ -10120,10 +10171,12 @@ ParseResult Parser::parse_type_specifier()
 		}
 	}
 
-	// Check for decltype after function specifiers (e.g., static decltype(...))
+	// Check for decltype or __typeof__ after function specifiers (e.g., static decltype(...))
 	// This check MUST come after skipping function specifiers to handle patterns like:
 	// "static decltype(_S_test_2<_Tp, _Up>(0))" which appear in standard library headers
-	if (current_token_opt.has_value() && current_token_opt->value() == "decltype") {
+	// __typeof__ is a GCC extension that works like decltype
+	if (current_token_opt.has_value() && 
+	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__")) {
 		return parse_decltype_specifier();
 	}
 
@@ -11748,21 +11801,23 @@ ParseResult Parser::parse_type_specifier()
 
 ParseResult Parser::parse_decltype_specifier()
 {
-	// Parse decltype(expr) type specifier
+	// Parse decltype(expr) or __typeof__(expr) type specifier
 	// Example: decltype(x + y) result = x + y;
+	// __typeof__ is a GCC extension that works like decltype
 
 	ScopedTokenPosition saved_position(*this);
 
-	// Consume 'decltype' keyword
+	// Consume 'decltype' or '__typeof__' keyword
 	auto decltype_token_opt = consume_token();
 	if (!decltype_token_opt.has_value()) {
-		return ParseResult::error("Expected 'decltype' keyword", *current_token_);
+		return ParseResult::error("Expected 'decltype' or '__typeof__' keyword", *current_token_);
 	}
 	Token decltype_token = *decltype_token_opt;
+	std::string_view keyword = decltype_token.value();
 
 	// Expect '('
 	if (!consume_punctuator("(")) {
-		return ParseResult::error("Expected '(' after 'decltype'", *current_token_);
+		return ParseResult::error(std::string("Expected '(' after '") + std::string(keyword) + "'", *current_token_);
 	}
 
 	// Phase 3: Parse the expression with Decltype context for proper template disambiguation
