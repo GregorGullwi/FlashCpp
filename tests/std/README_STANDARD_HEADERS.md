@@ -148,6 +148,46 @@ Tested all "timeout" headers with extended timeout (300s) and categorized them i
 
 5. **Silent failures are a problem**: Many parse errors exit with non-zero code but produce no error output to stdout/stderr, making debugging difficult. Using debug build with `--log-level=debug` is needed to see actual errors.
 
+6. **Compiler IS making progress**: Using `-v` (verbose) flag shows the compiler processes files and makes steady progress through preprocessing and parsing. It's not hanging - there's just too much template instantiation work.
+
+### Debugging Slow Compilation
+
+To analyze where time is spent during compilation:
+
+```bash
+# Show preprocessing progress (files being read, lines processed)
+./x64/Release/FlashCpp file.cpp -I... -v
+
+# Show template instantiation activity
+./x64/Debug/FlashCpp file.cpp -I... --log-level=Templates:debug
+
+# Show all parser activity (very verbose)
+./x64/Debug/FlashCpp file.cpp -I... --log-level=Parser:debug
+
+# Show parsing errors that fail silently
+./x64/Debug/FlashCpp file.cpp -I... --log-level=error
+```
+
+Note: Templates log category will show template lookups, instantiations, and specializations. This is the most relevant for diagnosing template-heavy header timeouts.
+
+### Recommendations
+
+Based on this investigation:
+
+1. **Fix parse errors first**: 8 headers marked as "timeout" are actually quick parse errors. Fixing these will improve the success rate without performance work.
+
+2. **Focus on template instantiation optimization**: The real timeouts are all due to template instantiation volume. Consider:
+   - Lazy template instantiation (defer instantiation until actually needed)
+   - Better template caching/memoization
+   - Profile template instantiation to find hotspots
+   - Consider limiting depth of instantiation for standard library testing
+
+3. **Improve error reporting**: Silent failures make debugging difficult. Ensure all errors are reported to stderr.
+
+4. **Update test expectations**: The `test_std_headers_comprehensive.sh` script should distinguish between timeouts and parse errors, possibly by checking exit codes and looking for specific error patterns.
+
+5. **Document known issues**: Headers like `<array>` fail due to specific unsupported features (forward enum class declarations). These should be documented as "not yet supported" rather than "timeout".
+
 ### Performance Test Script
 
 Added `tests/std/test_header_performance.sh` to systematically test headers with different configurations and timeout values.
