@@ -32444,9 +32444,11 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	
 	// Check if any template argument is dependent (e.g., _Tp placeholder)
 	// If so, we cannot instantiate - this happens when we're inside a template body
-	for (const auto& arg : template_args) {
+	for (size_t i = 0; i < template_args.size(); ++i) {
+		const auto& arg = template_args[i];
 		if (arg.is_dependent) {
-			FLASH_LOG(Templates, Debug, "Skipping variable template instantiation - dependent argument: ", arg.toString());
+			FLASH_LOG(Templates, Debug, "Skipping variable template '", template_name, 
+			          "' instantiation - arg[", i, "] is dependent: ", arg.toString());
 			return std::nullopt;
 		}
 	}
