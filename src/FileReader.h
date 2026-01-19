@@ -583,6 +583,8 @@ public:
 	bool preprocessFileContent(const std::string& file_content) {
 		std::istringstream stream(file_content);
 		std::string line;
+		std::string pending_line;  // Line that was read but needs to be processed on next iteration
+		bool has_pending_line = false;
 		bool in_comment = false;
 		std::stack<bool> skipping_stack;
 		skipping_stack.push(false); // Initial state: not skipping
@@ -596,7 +598,18 @@ public:
 		long prev_line_number = -1;
 		const bool isPreprocessorOnlyMode = settings_.isPreprocessorOnlyMode();
 		size_t line_counter = 0;  // Add counter for debugging
-		while (std::getline(stream, line)) {
+		
+		// Modified loop to handle pending lines
+		auto getNextLine = [&]() -> bool {
+			if (has_pending_line) {
+				line = std::move(pending_line);
+				has_pending_line = false;
+				return true;
+			}
+			return static_cast<bool>(std::getline(stream, line));
+		};
+		
+		while (getNextLine()) {
 			line_counter++;
 			if (settings_.isVerboseMode() && line_counter % 100 == 0) {
 				std::cout << "Processing line " << line_counter << " in " << filestack_.top().file_name << std::endl;
@@ -899,10 +912,25 @@ public:
 				// Handle multiline macro invocations.
 				// If a line has an incomplete macro invocation (unmatched parens),
 				// keep reading lines until we have matching parens.
+				// BUT: Stop if the next line is a preprocessor directive (starts with #)
+				// because preprocessor directives cannot be inside macro invocations.
 				while (hasIncompleteMacroInvocation(line)) {
 					std::string next_line;
 					if (!std::getline(stream, next_line)) break;
 					++line_number;
+					
+					// Check if next_line is a preprocessor directive
+					// First, find the first non-whitespace character
+					size_t first_non_ws = next_line.find_first_not_of(" \t");
+					if (first_non_ws != std::string::npos && next_line[first_non_ws] == '#') {
+						// The next line is a preprocessor directive - don't merge it!
+						// Store it as a pending line to be processed on the next iteration
+						pending_line = std::move(next_line);
+						has_pending_line = true;
+						--line_number;  // Undo the increment; it will be incremented when pending_line is processed
+						break;
+					}
+					
 					// Join with the previous line (preserving whitespace)
 					line += "\n" + next_line;
 				}
