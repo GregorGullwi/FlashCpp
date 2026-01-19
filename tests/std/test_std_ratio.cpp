@@ -18,7 +18,7 @@ int main() {
     using quot = std::ratio_divide<half, third>;
     
     // Test ratio comparison
-    static_assert(std::ratio_equal<std::ratio<1,2>, std::ratio<2,4>>::value);
+    static_assert(std::ratio_equal<std::ratio<1, 2>, std::ratio<2, 4>>::value);
     static_assert(std::ratio_less<third, half>::value);
     
     return 0;

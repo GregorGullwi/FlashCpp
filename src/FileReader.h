@@ -699,7 +699,9 @@ public:
 							if (block_end != std::string::npos) {
 								condition.erase(block_start, block_end - block_start + 2);
 							} else {
-								// Unterminated block comment - remove to end
+								// Unterminated block comment - remove to end and log warning
+								FLASH_LOG(Lexer, Warning, "Unterminated block comment in #elif condition at ",
+								          filestack_.top().file_name, ":", filestack_.top().line_number);
 								condition = condition.substr(0, block_start);
 								break;
 							}
@@ -709,6 +711,9 @@ public:
 						size_t end_pos = condition.find_last_not_of(" \t\r\n");
 						if (end_pos != std::string::npos) {
 							condition = condition.substr(0, end_pos + 1);
+						} else {
+							// Condition is empty or all whitespace - treat as 0
+							condition.clear();
 						}
 						condition = expandMacrosForConditional(condition);
 						std::istringstream iss(condition);
