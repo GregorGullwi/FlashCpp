@@ -7254,6 +7254,20 @@ ParseResult Parser::parse_enum_declaration()
 		}
 	}
 
+	// Check for forward declaration (enum class Name : Type;)
+	// Forward declarations are only valid for scoped enums with underlying type
+	if (peek_token().has_value() && peek_token()->value() == ";") {
+		if (is_scoped && enum_ref.has_underlying_type()) {
+			// This is a forward declaration
+			consume_token(); // consume ';'
+			// Return the enum node without a body
+			return saved_position.success(enum_node);
+		} else {
+			// Forward declarations require both 'enum class' and underlying type
+			return ParseResult::error("Forward enum declarations require 'enum class' with underlying type", *peek_token());
+		}
+	}
+
 	// Expect opening brace
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' after enum name", *peek_token());
