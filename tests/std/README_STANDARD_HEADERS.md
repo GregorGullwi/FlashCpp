@@ -17,24 +17,24 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<source_location>` | N/A | ✅ Compiled | ~0.07s |
 | `<numbers>` | N/A | ✅ Compiled | ~1.2s release |
 | `<initializer_list>` | N/A | ✅ Compiled | ~0.04s |
-| `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~1.4s (2026-01-19: Now compiles!) |
+| `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~1.4s |
+| `<vector>` | `test_std_vector.cpp` | ✅ Compiled | 2026-01-19: Now compiles after QualifiedIdentifierNode fix |
+| `<tuple>` | `test_std_tuple.cpp` | ✅ Compiled | 2026-01-19: Now compiles after QualifiedIdentifierNode fix |
+| `<optional>` | `test_std_optional.cpp` | ✅ Compiled | Warning: Template `_Hash_bytes` not found |
+| `<variant>` | `test_std_variant.cpp` | ✅ Compiled | 2026-01-19: Now compiles after QualifiedIdentifierNode fix |
+| `<any>` | `test_std_any.cpp` | ✅ Compiled | Warning: Template `_Hash_bytes` not found |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
-| `<utility>` | `test_std_utility.cpp` | ❌ Parse Error | Unnamed template type param with default (see blockers) |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Progresses further after fix but still times out |
 | `<bit>` | N/A | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | Enum class forward declaration not supported (see blockers) |
 | `<array>` | `test_std_array.cpp` | ❌ Parse Error | Enum class forward declaration not supported |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Same as `<utility>` |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Template `_Hash_bytes` not found |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Same as `<utility>` |
 | `<memory>` | `test_std_memory.cpp` | ❌ Missing File | Failed to include `execution_defs.h` |
 | `<functional>` | `test_std_functional.cpp` | 💥 Crash | `std::bad_any_cast` internal error |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | Internal compiler error |
 | `<map>` | `test_std_map.cpp` | ❌ Parse Error | Depends on failing headers |
 | `<set>` | `test_std_set.cpp` | ❌ Parse Error | Depends on failing headers |
 | `<span>` | `test_std_span.cpp` | ❌ Parse Error | Enum class forward declaration not supported |
-| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Template `_Hash_bytes` not found |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Template `rethrow_exception` not found |
 | `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Internal compiler error |
@@ -479,6 +479,19 @@ The following features have been implemented to support standard headers:
 ## Recent Changes
 
 Changes are listed in reverse chronological order.
+
+### 2026-01-19 (QualifiedIdentifierNode Fix - Major Headers Now Compile!)
+- **Fixed nested template expressions in template parameter defaults:**
+  - Added `QualifiedIdentifierNode` to the list of accepted dependent compile-time expressions
+  - This fixes patterns like `template<typename T, typename X = enable_if<is_same<T, int>::value>>`
+  - The `is_same<T, int>::value` expression was previously failing to be accepted as a dependent template argument
+- **Newly compiling headers:**
+  - `<vector>`: Now compiles successfully
+  - `<tuple>`: Now compiles successfully
+  - `<optional>`: Now compiles (with non-fatal warning about `_Hash_bytes` template)
+  - `<variant>`: Now compiles successfully
+  - `<any>`: Now compiles (with non-fatal warning about `_Hash_bytes` template)
+- **Progress on `<utility>`:** Now progresses further (past the original error) but still times out
 
 ### 2026-01-19 (Template Profiling & Progress Logging Improvements)
 - **Enhanced template instantiation progress logging:** Added periodic progress reports during template instantiation
