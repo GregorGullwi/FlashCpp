@@ -7777,6 +7777,15 @@ private:
 	}
 
 	void handleGlobalLoad(const IrInstruction& instruction) {
+		// BUGFIX: GlobalLoad requires a function context for stack allocation.
+		// If we're outside a function (e.g., in global initializer context), skip this instruction.
+		// This can happen when the IR generator emits GlobalLoad for built-in function references
+		// that appear in global variable initializers.
+		if (variable_scopes.empty()) {
+			FLASH_LOG(Codegen, Warning, "GlobalLoad instruction found outside function context - skipping");
+			return;
+		}
+		
 		// Extract typed payload - all GlobalLoad instructions use typed payloads
 		const GlobalLoadOp& op = std::any_cast<const GlobalLoadOp&>(instruction.getTypedPayload());
 		

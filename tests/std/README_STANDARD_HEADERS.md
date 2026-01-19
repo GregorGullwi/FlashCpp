@@ -18,7 +18,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Parsing fixed (2026-01-19), times out during template instantiation |
 | `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Parsing fixed, times out during template instantiation |
 | `<bit>` | N/A | ⏱️ Timeout | Parsing fixed (2026-01-19), times out during template instantiation |
-| `<ratio>` | N/A | 💥 Crash | Template fix applied, now crashes in codegen (see blocker #3) |
+| `<ratio>` | N/A | ⏱️ Timeout | Fixed crashes (2026-01-19), now times out during template instantiation |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template-heavy header |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Template-heavy header |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template-heavy header |
@@ -143,9 +143,9 @@ The `if constexpr (enabled)` blocks in logging macros previously caused hangs wh
 
 **Impact:** Patterns like `SomeTemplate<namespace::alias<ConcreteType>>` now work correctly. The `<concepts>` header still times out due to template instantiation volume, but the parsing phase now completes successfully.
 
-### 3. `<ratio>` Header Crash (PARTIALLY FIXED - 2026-01-19)
+### 3. `<ratio>` Header Crash (FIXED - 2026-01-19)
 
-**Previous Issue (FIXED):** During deferred template base class resolution, `integral_constant` was being instantiated with only 1 template argument instead of 2.
+**Previous Issue #1 (FIXED):** During deferred template base class resolution, `integral_constant` was being instantiated with only 1 template argument instead of 2.
 
 **Example of the problematic pattern (from `<ratio>`):**
 ```cpp
@@ -158,23 +158,15 @@ struct __static_sign : integral_constant<intmax_t, (_Pn < 0) ? -1 : ((_Pn > 0) ?
 // to instantiate integral_constant<> with just the outer template's single arg.
 ```
 
-**Fix Applied:** When template base class arguments cannot be fully resolved (e.g., the ternary expression `(_Pn < 0) ? -1 : ...` cannot be evaluated because `_Pn` is dependent), the deferred base class is now skipped instead of attempting instantiation with wrong arguments. This prevents the template instantiation crash.
+**Fix Applied:** When template base class arguments cannot be fully resolved (e.g., the ternary expression `(_Pn < 0) ? -1 : ...` cannot be evaluated because `_Pn` is dependent), the deferred base class is now skipped instead of attempting instantiation with wrong arguments.
 
-**Remaining Issue:** After fixing the template instantiation crash, a codegen crash is now exposed:
-```
-[DEBUG][Codegen] define void0 @_ZNSt24__swappable_with_details27__do_is_swappable_with_implC1EOSt...
-SIGSEGV (Segmentation fault)
-Fault Address: 0xffffffffffffffc0 (-64)
-```
+**Previous Issue #2 (FIXED):** After fixing the template crash, a codegen crash occurred when processing `GlobalLoad` instructions outside of a function context.
 
-The crash occurs during code generation for the move constructor of `std::__swappable_with_details::__do_is_swappable_with_impl`. The fault address (-64) suggests a null pointer + offset dereference, likely accessing a struct member that doesn't exist.
+**Root cause:** The IR generator was emitting `GlobalLoad` instructions (for built-in function references like `__builtin_clzll` used in global variable initializers) before any `FunctionDecl` instruction. The `handleGlobalLoad` function in IRConverter tried to allocate a stack slot for the result, but there was no function context (`variable_scopes` was empty), causing a null pointer dereference.
 
-**Investigation Notes:**
-- Debug build times out (no crash) - the crash only occurs in release build with `-O3`
-- The crash happens during IR generation for implicitly-declared special member functions
-- The problematic struct has 7 member functions being generated
-- Crash occurs specifically when generating the move constructor parameter (rvalue reference to self)
-- This is likely an unrelated bug in codegen exposed after fixing the template issue
+**Fix Applied:** Added a guard in `handleGlobalLoad` to check if `variable_scopes` is empty and skip the instruction if so. This prevents the crash when `GlobalLoad` is encountered outside a function context.
+
+**Current Status:** The `<ratio>` header no longer crashes. It now compiles (taking a long time due to template instantiation volume) but produces a working object file.
 
 ### 4. Template Instantiation Performance (Secondary Blocker)
 

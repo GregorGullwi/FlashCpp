@@ -357,7 +357,7 @@ private:
             }
             
             // Allocate new buffer from temporary allocator
-            bool freed = gTemporaryChunkedStringAllocator.tryFree(temp_start_, temp_capacity_);
+            [[maybe_unused]] bool freed = gTemporaryChunkedStringAllocator.tryFree(temp_start_, temp_capacity_);
             SB_DEBUG_LOG("GROW id=" << builder_id_ << " tryFree=" << freed);
             char* new_start = gTemporaryChunkedStringAllocator.allocate(new_capacity);
             SB_DEBUG_LOG("GROW id=" << builder_id_ << " new_cap=" << new_capacity << " new_start=" << (void*)new_start);
