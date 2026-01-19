@@ -30145,11 +30145,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// that should be accepted as a dependent template argument.
 				// NoexceptExprNode, SizeofExprNode, AlignofExprNode, and TypeTraitExprNode are
 				// compile-time expressions that may contain dependent expressions.
+				// QualifiedIdentifierNode represents patterns like is_same<T, int>::value where
+				// the expression is a static member access that depends on template parameters.
 				// If the next token is a valid delimiter, accept the expression as dependent.
 				bool is_compile_time_expr = std::holds_alternative<NoexceptExprNode>(expr) ||
 				                            std::holds_alternative<SizeofExprNode>(expr) ||
 				                            std::holds_alternative<AlignofExprNode>(expr) ||
-				                            std::holds_alternative<TypeTraitExprNode>(expr);
+				                            std::holds_alternative<TypeTraitExprNode>(expr) ||
+				                            std::holds_alternative<QualifiedIdentifierNode>(expr);
 				
 				if (is_compile_time_expr && peek_token().has_value()) {
 					// Handle >> token splitting for nested templates
@@ -31285,7 +31288,9 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	}
 	
 	if (!all_templates || all_templates->empty()) {
-		FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
+		// This is expected for regular (non-template) functions - the caller will fall back
+		// to creating a forward declaration. Only log at Debug level to avoid noise.
+		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
 		recursion_depth--;
 		return std::nullopt;
 	}
