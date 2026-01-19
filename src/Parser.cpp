@@ -31288,7 +31288,9 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	}
 	
 	if (!all_templates || all_templates->empty()) {
-		FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
+		// This is expected for regular (non-template) functions - the caller will fall back
+		// to creating a forward declaration. Only log at Debug level to avoid noise.
+		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
 		recursion_depth--;
 		return std::nullopt;
 	}

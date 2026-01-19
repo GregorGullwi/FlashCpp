@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <climits>
 #include <cstdint>
+#include "StringTable.h"
 
 // Define FLASHCPP_LOG_LEVEL if not already defined (e.g., by Log.h or build flags)
 // This allows this header to be included independently
@@ -23,6 +24,16 @@
 // Set to 1 to enable profiling, 0 to disable for production builds
 #ifndef ENABLE_TEMPLATE_PROFILING
 #define ENABLE_TEMPLATE_PROFILING 1
+#endif
+
+// Enable detailed instantiation tracking only at info level or higher
+// This controls the tracking of current instantiation depth and name
+#ifndef ENABLE_TEMPLATE_INSTANTIATION_TRACKING
+    #if FLASHCPP_LOG_LEVEL >= 2
+        #define ENABLE_TEMPLATE_INSTANTIATION_TRACKING 1
+    #else
+        #define ENABLE_TEMPLATE_INSTANTIATION_TRACKING 0
+    #endif
 #endif
 
 #if ENABLE_TEMPLATE_PROFILING
@@ -73,30 +84,31 @@ public:
         incrementInstantiationCount();
         // Log progress every 100 instantiations when Info level is enabled
         // This helps track where the compiler gets stuck during template-heavy compilations
-        #if FLASHCPP_LOG_LEVEL >= 2
+        #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
         maybeLogProgress(100);
         #endif
     }
 
+#if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
     // Track template instantiation start (for detecting stuck instantiations)
-    void recordInstantiationStart(const std::string& template_name) {
+    void recordInstantiationStart(StringHandle template_name) {
         current_instantiation_ = template_name;
         current_instantiation_start_ = std::chrono::high_resolution_clock::now();
         ++instantiation_depth_;
     }
 
     // Track template instantiation end
-    void recordInstantiationEnd(const std::string& /*template_name*/) {
+    void recordInstantiationEnd(StringHandle /*template_name*/) {
         if (instantiation_depth_ > 0) {
             --instantiation_depth_;
         }
         if (instantiation_depth_ == 0) {
-            current_instantiation_.clear();
+            current_instantiation_ = StringHandle();
         }
     }
 
     // Get the current template being instantiated (for debugging)
-    const std::string& getCurrentInstantiation() const {
+    StringHandle getCurrentInstantiation() const {
         return current_instantiation_;
     }
 
@@ -104,6 +116,7 @@ public:
     size_t getInstantiationDepth() const {
         return instantiation_depth_;
     }
+#endif
 
     // Record a cache hit
     void recordCacheHit(const std::string& template_name) {
@@ -219,7 +232,9 @@ public:
         substitution_time_ = TemplateProfilingAccumulator();
         specialization_match_time_ = TemplateProfilingAccumulator();
         total_instantiation_count_ = 0;
+#if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
         last_progress_count_ = 0;
+#endif
         start_time_ = std::chrono::high_resolution_clock::now();
     }
 
@@ -228,6 +243,7 @@ public:
         return total_instantiation_count_;
     }
 
+#if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
     // Check if progress should be logged (every N instantiations)
     // Returns true if progress was logged
     bool maybeLogProgress(size_t interval = 1000) {
@@ -245,10 +261,11 @@ public:
             size_t total_requests = total_hits + total_misses;
             double hit_rate = total_requests > 0 ? (100.0 * total_hits / total_requests) : 0.0;
             
-            if (!current_instantiation_.empty() && instantiation_depth_ > 0) {
-                printf("[Progress] %zu template instantiations in %lld ms (cache hit rate: %.1f%%, depth: %zu, current: %s)\n",
+            if (current_instantiation_.isValid() && instantiation_depth_ > 0) {
+                std::string_view current_name = StringTable::getStringView(current_instantiation_);
+                printf("[Progress] %zu template instantiations in %lld ms (cache hit rate: %.1f%%, depth: %zu, current: %.*s)\n",
                        total_instantiation_count_, (long long)elapsed_ms, hit_rate, 
-                       instantiation_depth_, current_instantiation_.c_str());
+                       instantiation_depth_, (int)current_name.size(), current_name.data());
             } else {
                 printf("[Progress] %zu template instantiations in %lld ms (cache hit rate: %.1f%%)\n",
                        total_instantiation_count_, (long long)elapsed_ms, hit_rate);
@@ -260,6 +277,7 @@ public:
         }
         return false;
     }
+#endif
 
     // Increment total instantiation count (called by recordInstantiation)
     void incrementInstantiationCount() {
@@ -267,20 +285,27 @@ public:
     }
 
 private:
+#if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
     TemplateProfilingStats() : total_instantiation_count_(0), last_progress_count_(0),
                                instantiation_depth_(0),
-                               start_time_(std::chrono::high_resolution_clock::now()),
-                               current_instantiation_start_(std::chrono::high_resolution_clock::now()) {}
+                               current_instantiation_start_(std::chrono::high_resolution_clock::now()),
+                               start_time_(std::chrono::high_resolution_clock::now()) {}
+#else
+    TemplateProfilingStats() : total_instantiation_count_(0),
+                               start_time_(std::chrono::high_resolution_clock::now()) {}
+#endif
 
     std::unordered_map<std::string, TemplateProfilingAccumulator> instantiations_;
     std::unordered_map<std::string, size_t> cache_hits_;
     std::unordered_map<std::string, size_t> cache_misses_;
     size_t total_instantiation_count_;
+#if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
     size_t last_progress_count_;
     size_t instantiation_depth_;
-    std::string current_instantiation_;
-    std::chrono::high_resolution_clock::time_point start_time_;
+    StringHandle current_instantiation_;
     std::chrono::high_resolution_clock::time_point current_instantiation_start_;
+#endif
+    std::chrono::high_resolution_clock::time_point start_time_;
     TemplateProfilingAccumulator lookup_time_;
     TemplateProfilingAccumulator parsing_time_;
     TemplateProfilingAccumulator substitution_time_;
@@ -301,9 +326,10 @@ public:
     TemplateProfilingTimer(Operation op, const std::string& name = "")
         : operation_(op), name_(name), start_(std::chrono::high_resolution_clock::now()) {
         // Log start of instantiation for long-running template instantiation debugging
-        #if FLASHCPP_LOG_LEVEL >= 2
+        #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
         if (operation_ == Operation::Instantiation && !name_.empty()) {
-            TemplateProfilingStats::getInstance().recordInstantiationStart(name_);
+            name_handle_ = StringTable::getOrInternStringHandle(name_);
+            TemplateProfilingStats::getInstance().recordInstantiationStart(name_handle_);
         }
         #endif
     }
@@ -315,8 +341,8 @@ public:
         auto& stats = TemplateProfilingStats::getInstance();
         switch (operation_) {
             case Operation::Instantiation:
-                #if FLASHCPP_LOG_LEVEL >= 2
-                stats.recordInstantiationEnd(name_);
+                #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
+                stats.recordInstantiationEnd(name_handle_);
                 #endif
                 stats.recordInstantiation(name_, duration);
                 break;
@@ -338,6 +364,9 @@ public:
 private:
     Operation operation_;
     std::string name_;
+#if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
+    StringHandle name_handle_;
+#endif
     std::chrono::high_resolution_clock::time_point start_;
 };
 
