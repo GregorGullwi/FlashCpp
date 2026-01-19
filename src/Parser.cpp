@@ -10810,10 +10810,10 @@ ParseResult Parser::parse_type_specifier()
 								
 								return ParseResult::success(new_type_spec);
 							} else {
-								FLASH_LOG(Parser, Warning, "Deferred instantiation: type '", instantiated_name, "' not found after instantiation");
+								FLASH_LOG(Parser, Warning, "Deferred instantiation: type '", instantiated_name, "' not found after instantiation at line ", type_name_token.line());
 							}
 						} else {
-							FLASH_LOG(Parser, Warning, "Deferred instantiation failed for '", alias_node.target_template_name(), "'");
+							FLASH_LOG(Parser, Warning, "Deferred instantiation failed for '", alias_node.target_template_name(), "' at line ", type_name_token.line());
 						}
 						
 						// Fall through to simple alias handling if deferred instantiation failed or not applicable
@@ -35277,7 +35277,8 @@ if (struct_type_info.getStructInfo()) {
 					}
 				}
 				
-				FLASH_LOG(Templates, Warning, "Could not resolve deferred template base argument; skipping base instantiation");
+				FLASH_LOG(Templates, Warning, "Could not resolve deferred template base argument for '",
+				          StringTable::getStringView(deferred_base.base_template_name), "'; skipping base instantiation");
 				unresolved_arg = true;
 				break;
 			}

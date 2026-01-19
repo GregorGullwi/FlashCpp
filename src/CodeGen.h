@@ -5294,7 +5294,8 @@ private:
 				auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
 				
 				if (!eval_result.success) {
-					FLASH_LOG(Codegen, Warning, "Non-constant initializer in global variable");
+					FLASH_LOG(Codegen, Warning, "Non-constant initializer in global variable '", 
+					          decl.identifier_token().value(), "' at line ", decl.identifier_token().line());
 					return 0;
 				}
 				

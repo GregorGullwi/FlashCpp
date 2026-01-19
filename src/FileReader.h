@@ -686,6 +686,11 @@ public:
 					// If we're skipping and haven't found a true condition yet, evaluate #elif
 					if (!condition_was_true_stack.top()) {
 						std::string condition = line.substr(5);  // Skip "#elif"
+						// Strip // comments from the condition before evaluating
+						size_t comment_pos = condition.find("//");
+						if (comment_pos != std::string::npos) {
+							condition = condition.substr(0, comment_pos);
+						}
 						condition = expandMacrosForConditional(condition);
 						std::istringstream iss(condition);
 						long expression_result = evaluate_expression(iss);
@@ -1507,7 +1512,12 @@ private:
 				if (right != 0) {
 					values.push(left / right);
 				} else {
-					FLASH_LOG(Lexer, Warning, "Division by zero in preprocessor expression");
+					if (!filestack_.empty()) {
+						FLASH_LOG(Lexer, Warning, "Division by zero in preprocessor expression (", left, " / 0) at ",
+						          filestack_.top().file_name, ":", filestack_.top().line_number);
+					} else {
+						FLASH_LOG(Lexer, Warning, "Division by zero in preprocessor expression (", left, " / 0)");
+					}
 					values.push(0);
 				}
 				break;
@@ -1515,7 +1525,12 @@ private:
 				if (right != 0) {
 					values.push(left % right);
 				} else {
-					FLASH_LOG(Lexer, Warning, "Modulo by zero in preprocessor expression");
+					if (!filestack_.empty()) {
+						FLASH_LOG(Lexer, Warning, "Modulo by zero in preprocessor expression (", left, " % 0) at ",
+						          filestack_.top().file_name, ":", filestack_.top().line_number);
+					} else {
+						FLASH_LOG(Lexer, Warning, "Modulo by zero in preprocessor expression (", left, " % 0)");
+					}
 					values.push(0);
 				}
 				break;
