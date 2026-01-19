@@ -30145,11 +30145,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// that should be accepted as a dependent template argument.
 				// NoexceptExprNode, SizeofExprNode, AlignofExprNode, and TypeTraitExprNode are
 				// compile-time expressions that may contain dependent expressions.
+				// QualifiedIdentifierNode represents patterns like is_same<T, int>::value where
+				// the expression is a static member access that depends on template parameters.
 				// If the next token is a valid delimiter, accept the expression as dependent.
 				bool is_compile_time_expr = std::holds_alternative<NoexceptExprNode>(expr) ||
 				                            std::holds_alternative<SizeofExprNode>(expr) ||
 				                            std::holds_alternative<AlignofExprNode>(expr) ||
-				                            std::holds_alternative<TypeTraitExprNode>(expr);
+				                            std::holds_alternative<TypeTraitExprNode>(expr) ||
+				                            std::holds_alternative<QualifiedIdentifierNode>(expr);
 				
 				if (is_compile_time_expr && peek_token().has_value()) {
 					// Handle >> token splitting for nested templates
