@@ -18,7 +18,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Parsing fixed (2026-01-19), times out during template instantiation |
 | `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Parsing fixed, times out during template instantiation |
 | `<bit>` | N/A | ⏱️ Timeout | Parsing fixed (2026-01-19), times out during template instantiation |
-| `<ratio>` | N/A | 💥 Crash | `integral_constant` instantiated with wrong args (1 arg instead of 2) |
+| `<ratio>` | N/A | 💥 Crash | Template fix applied, now crashes in codegen (see blocker #3) |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template-heavy header |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Template-heavy header |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template-heavy header |
@@ -143,35 +143,38 @@ The `if constexpr (enabled)` blocks in logging macros previously caused hangs wh
 
 **Impact:** Patterns like `SomeTemplate<namespace::alias<ConcreteType>>` now work correctly. The `<concepts>` header still times out due to template instantiation volume, but the parsing phase now completes successfully.
 
-### 3. `<ratio>` Header Crash (ACTIVE - 2026-01-19)
+### 3. `<ratio>` Header Crash (PARTIALLY FIXED - 2026-01-19)
 
-**Issue:** The `<ratio>` header causes a SIGSEGV crash when compiling in release mode.
+**Previous Issue (FIXED):** During deferred template base class resolution, `integral_constant` was being instantiated with only 1 template argument instead of 2.
 
-**Error message:**
-```
-[ERROR][Templates] Template 'integral_constant': Param 1 has no default (got 1 args, need 2), returning nullopt
-Signal: SIGSEGV (Segmentation fault)
-```
-
-**Root cause:** During deferred template base class resolution, `integral_constant` is being instantiated with only 1 template argument instead of the required 2. The `std::integral_constant` template requires both a type (`T`) and a value (`v`):
+**Example of the problematic pattern (from `<ratio>`):**
 ```cpp
-template<class T, T v>
-struct integral_constant;
+// __static_sign inherits from integral_constant with a ternary expression:
+template<intmax_t _Pn>
+struct __static_sign : integral_constant<intmax_t, (_Pn < 0) ? -1 : ((_Pn > 0) ? 1 : 0)> {};
+
+// When __static_sign<void> was instantiated (with unresolved template arg),
+// the ternary expression couldn't be evaluated, and the code attempted
+// to instantiate integral_constant<> with just the outer template's single arg.
 ```
 
-When the instantiation fails (returns `nullopt`), subsequent code attempts to use the non-existent instantiated type, leading to a null pointer dereference.
+**Fix Applied:** When template base class arguments cannot be fully resolved (e.g., the ternary expression `(_Pn < 0) ? -1 : ...` cannot be evaluated because `_Pn` is dependent), the deferred base class is now skipped instead of attempting instantiation with wrong arguments. This prevents the template instantiation crash.
 
-**Call flow:**
-1. Parser processes deferred template base arguments
-2. Attempts to resolve dependent template type (e.g., `is_arithmetic<_Tp>::value`)  
-3. Tries to instantiate `integral_constant` with only 1 argument
-4. Instantiation fails, returns `nullopt`
-5. Later code dereferences null struct_info pointer → crash
+**Remaining Issue:** After fixing the template instantiation crash, a codegen crash is now exposed:
+```
+[DEBUG][Codegen] define void0 @_ZNSt24__swappable_with_details27__do_is_swappable_with_implC1EOSt...
+SIGSEGV (Segmentation fault)
+Fault Address: 0xffffffffffffffc0 (-64)
+```
 
-**Potential fixes:**
-1. Better null pointer checks after `try_instantiate_class_template()` fails
-2. Fix the template argument resolution to pass all required arguments
-3. Add early validation for template argument counts before instantiation
+The crash occurs during code generation for the move constructor of `std::__swappable_with_details::__do_is_swappable_with_impl`. The fault address (-64) suggests a null pointer + offset dereference, likely accessing a struct member that doesn't exist.
+
+**Investigation Notes:**
+- Debug build times out (no crash) - the crash only occurs in release build with `-O3`
+- The crash happens during IR generation for implicitly-declared special member functions
+- The problematic struct has 7 member functions being generated
+- Crash occurs specifically when generating the move constructor parameter (rvalue reference to self)
+- This is likely an unrelated bug in codegen exposed after fixing the template issue
 
 ### 4. Template Instantiation Performance (Secondary Blocker)
 
