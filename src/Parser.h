@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <chrono>
 #include <limits>
 #include <optional>
 #include <sstream>
@@ -260,10 +261,26 @@ public:
                 gSymbolTable = SymbolTable();
                 register_builtin_functions();
                 ParseResult parseResult;
+                size_t top_level_count = 0;
+                auto start_time = std::chrono::high_resolution_clock::now();
                 while (peek_token().has_value() && !parseResult.is_error() &&
                         peek_token()->type() != Token::Type::EndOfFile) {
                         parseResult = parse_top_level_node();
+                        ++top_level_count;
+                        // Log progress every 500 top-level nodes
+                        // Note: Requires -DFLASHCPP_LOG_LEVEL=2 (Info level) to see these messages
+                        if (top_level_count % 500 == 0) {
+                            auto now = std::chrono::high_resolution_clock::now();
+                            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
+                            FLASH_LOG(General, Info, "[Progress] Parsed ", top_level_count, " top-level nodes in ", elapsed_ms, " ms");
+                        }
                 }
+
+                // Always log final summary (even on error) for debugging
+                auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::high_resolution_clock::now() - start_time).count();
+                FLASH_LOG(General, Info, "[Progress] Parsing ", (parseResult.is_error() ? "stopped" : "complete"), ": ", 
+                          top_level_count, " top-level nodes, ", ast_nodes_.size(), " AST nodes in ", total_time, " ms");
 
                 if (parseResult.is_error()) {
                     last_error_ = parseResult.error_message();
