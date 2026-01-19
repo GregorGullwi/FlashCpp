@@ -153,22 +153,20 @@ Two crashes were fixed:
 
 **Current Status:** The `<ratio>` header now **compiles successfully** in ~1.4 seconds!
 
-### 4. Enum Class Forward Declaration (NEW - 2026-01-19)
+### 4. Enum Class Forward Declaration (FIXED - 2026-01-19)
 
-**Issue:** C++17 allows forward declaration of scoped enums with fixed underlying type, but FlashCpp doesn't support this yet.
+**Issue:** ~~C++17 allows forward declaration of scoped enums with fixed underlying type, but FlashCpp doesn't support this yet.~~ **RESOLVED**
 
-**Example that fails:**
+**Example that now works:**
 ```cpp
 enum class byte : unsigned char;  // Forward declaration without body
 ```
 
-**Error:** `Expected '{' after enum name`
+**Fix applied:** Added forward declaration detection in `parse_enum_declaration()` - when a semicolon is found after the underlying type specification, the parser now correctly creates a forward declaration node and consumes the semicolon.
 
-**Location:** `/usr/lib/gcc/x86_64-linux-gnu/14/include/c++/14/bits/cpp_type_traits.h:452`
+**Test case:** `tests/test_enum_fwd_decl_ret0.cpp`
 
-**Impact:** Blocks `<vector>`, `<array>`, `<span>`, and any header including `cpp_type_traits.h` after line 450.
-
-**Fix needed:** Support enum forward declarations with underlying type in Parser.cpp.
+**Impact:** Headers that use `enum class byte : unsigned char;` forward declarations now parse correctly. However, `<vector>`, `<array>`, `<span>` still fail due to other issues (unnamed template parameters).
 
 ### 5. Unnamed Template Type Parameters with Defaults (NEW - 2026-01-19)
 

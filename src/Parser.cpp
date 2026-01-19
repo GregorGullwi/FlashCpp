@@ -7254,7 +7254,33 @@ ParseResult Parser::parse_enum_declaration()
 		}
 	}
 
-	// Expect opening brace
+	// Check for forward declaration (semicolon without body)
+	// C++11: enum class Name : underlying_type;
+	// This is a forward declaration, not a definition
+	FLASH_LOG(Parser, Debug, "Checking for enum forward declaration, peek_token has_value=", peek_token().has_value(),
+	          peek_token().has_value() ? (std::string(" value='") + std::string(peek_token()->value()) + "'") : "");
+	if (peek_token().has_value() && peek_token()->value() == ";") {
+		// This is a forward declaration
+		consume_token(); // Consume the semicolon
+		
+		// For scoped enums with underlying type, forward declarations are valid C++11
+		// We mark this as a forward declaration
+		enum_ref.set_is_forward_declaration(true);
+		
+		// Set size on TypeInfo for forward-declared enum (use type_size_)
+		if (enum_ref.has_underlying_type()) {
+			const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
+			enum_type_info.type_size_ = type_spec.size_in_bits();
+		} else if (is_scoped) {
+			// Scoped enums without underlying type default to int (32 bits)
+			enum_type_info.type_size_ = 32;
+		}
+		
+		FLASH_LOG(Parser, Debug, "Parsed enum forward declaration: ", std::string(StringTable::getStringView(enum_name)));
+		return saved_position.success(enum_node);
+	}
+
+	// Expect opening brace for full definition
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' after enum name", *peek_token());
 	}
