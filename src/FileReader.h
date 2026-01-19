@@ -2227,13 +2227,13 @@ private:
 		defines_["__cpp_initializer_lists"] = DefineDirective{ "200806L", {} };  // Initializer lists
 		defines_["__cpp_inline_variables"] = DefineDirective{ "201606L", {} };  // C++17 inline variables
 		defines_["__cpp_lambdas"] = DefineDirective{ "200907L", {} };  // Lambda expressions
-		defines_["__cpp_modules"] = DefineDirective{ "201907L", {} };  // Modules
+		//defines_["__cpp_modules"] = DefineDirective{ "201907L", {} };  // Modules
 		defines_["__cpp_namespace_attributes"] = DefineDirective{ "201411L", {} };  // Namespace attributes
 		defines_["__cpp_noexcept_function_type"] = DefineDirective{ "201510L", {} };  // C++17 noexcept in type
 		defines_["__cpp_nontype_template_args"] = DefineDirective{ "201911L", {} };  // Class/float NTTP
 		defines_["__cpp_nontype_template_parameter_auto"] = DefineDirective{ "201606L", {} };  // auto NTTP
 		defines_["__cpp_nullptr"] = DefineDirective{ "200704L", {} };  // nullptr keyword
-		defines_["__cpp_nsdmi"] = DefineDirective{ "200809L", {} };  // NSDMI
+		defines_["__cpp_nsdmi"] = DefineDirective{ "200809L", {} };  // Non-static data member initializers
 		defines_["__cpp_range_based_for"] = DefineDirective{ "201603L", {} };  // Range-based for (C++17 update)
 		defines_["__cpp_raw_strings"] = DefineDirective{ "200710L", {} };  // Raw string literals
 		defines_["__cpp_ref_qualifiers"] = DefineDirective{ "200710L", {} };  // Ref-qualified member funcs
@@ -2247,7 +2247,7 @@ private:
 		defines_["__cpp_threadsafe_static_init"] = DefineDirective{ "200806L", {} };  // Thread-safe static init
 		defines_["__cpp_unicode_characters"] = DefineDirective{ "200704L", {} };  // char16_t/char32_t
 		defines_["__cpp_unicode_literals"] = DefineDirective{ "200710L", {} };  // Unicode string literals
-		defines_["__cpp_user_defined_literals"] = DefineDirective{ "200809L", {} };  // UDLs
+		defines_["__cpp_user_defined_literals"] = DefineDirective{ "200809L", {} };  // User Defined Literals
 		defines_["__cpp_using_enum"] = DefineDirective{ "201907L", {} };  // using enum
 		defines_["__cpp_variable_templates"] = DefineDirective{ "201304L", {} };  // Variable templates
 		defines_["__cpp_variadic_templates"] = DefineDirective{ "200704L", {} };  // Variadic templates
