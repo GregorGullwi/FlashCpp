@@ -686,10 +686,29 @@ public:
 					// If we're skipping and haven't found a true condition yet, evaluate #elif
 					if (!condition_was_true_stack.top()) {
 						std::string condition = line.substr(5);  // Skip "#elif"
-						// Strip // comments from the condition before evaluating
-						size_t comment_pos = condition.find("//");
-						if (comment_pos != std::string::npos) {
-							condition = condition.substr(0, comment_pos);
+						// Strip comments from the condition before evaluating
+						// Handle // line comments
+						size_t line_comment_pos = condition.find("//");
+						if (line_comment_pos != std::string::npos) {
+							condition = condition.substr(0, line_comment_pos);
+						}
+						// Handle /* */ block comments
+						size_t block_start = condition.find("/*");
+						while (block_start != std::string::npos) {
+							size_t block_end = condition.find("*/", block_start + 2);
+							if (block_end != std::string::npos) {
+								condition.erase(block_start, block_end - block_start + 2);
+							} else {
+								// Unterminated block comment - remove to end
+								condition = condition.substr(0, block_start);
+								break;
+							}
+							block_start = condition.find("/*");
+						}
+						// Trim trailing whitespace
+						size_t end_pos = condition.find_last_not_of(" \t\r\n");
+						if (end_pos != std::string::npos) {
+							condition = condition.substr(0, end_pos + 1);
 						}
 						condition = expandMacrosForConditional(condition);
 						std::istringstream iss(condition);
