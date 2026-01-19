@@ -10619,10 +10619,6 @@ ParseResult Parser::parse_type_specifier()
 
 		// Commit the StringBuilder to get a persistent string_view
 		std::string_view type_name = type_name_builder.commit();
-		
-		// DEBUG: Log the type name we've built
-		std::cerr << "[DEBUG] parse_type_specifier: Built type_name='" << type_name 
-		          << "', next token=" << (peek_token().has_value() ? std::string(peek_token()->value()) : "N/A") << std::endl;
 
 		// Check for template arguments: Container<int>
 		std::optional<std::vector<TemplateTypeArg>> template_args;
@@ -10679,11 +10675,7 @@ ParseResult Parser::parse_type_specifier()
 			}
 			
 			if (should_parse_as_template) {
-				std::cerr << "[DEBUG] Calling parse_explicit_template_arguments for '" << type_name << "'" << std::endl;
 				template_args = parse_explicit_template_arguments();
-				std::cerr << "[DEBUG] parse_explicit_template_arguments returned " 
-				          << (template_args.has_value() ? "SUCCESS" : "FAILURE") 
-				          << ", next token=" << (peek_token().has_value() ? std::string(peek_token()->value()) : "N/A") << std::endl;
 			}
 			// If parsing succeeded, check if this is an alias template first
 			if (template_args.has_value()) {
@@ -11221,10 +11213,7 @@ ParseResult Parser::parse_type_specifier()
 				// If so, we cannot instantiate the template, but we can still parse ::member syntax
 				// Check both filled_template_args (for is_dependent) and original template_args (for is_pack)
 				bool has_dependent_args = false;
-				std::cerr << "[DEBUG] Checking dependency for " << filled_template_args.size() << " filled args" << std::endl;
-				for (size_t i = 0; i < filled_template_args.size(); ++i) {
-					const auto& arg = filled_template_args[i];
-					std::cerr << "[DEBUG]   Arg " << i << ": is_dependent=" << arg.is_dependent << std::endl;
+				for (const auto& arg : filled_template_args) {
 					if (arg.is_dependent) {
 						has_dependent_args = true;
 						break;
@@ -11239,20 +11228,16 @@ ParseResult Parser::parse_type_specifier()
 						}
 					}
 				}
-				std::cerr << "[DEBUG] has_dependent_args=" << has_dependent_args << std::endl;
 				
 				// Check for qualified name after template arguments: Template<T>::nested or Template<T>::type
 				if (peek_token().has_value() && peek_token()->value() == "::") {
-					std::cerr << "[DEBUG] Found '::' after template args, calling parse_qualified_identifier_after_template" << std::endl;
 					// Parse the qualified identifier path (e.g., Template<int>::Inner)
 					bool had_template_keyword = false;
 					auto qualified_result = parse_qualified_identifier_after_template(type_name_token, &had_template_keyword);
 					if (qualified_result.is_error()) {
-						std::cerr << "[DEBUG] parse_qualified_identifier_after_template returned ERROR" << std::endl;
 						FLASH_LOG(Parser, Error, "parse_qualified_identifier_after_template failed");
 						return qualified_result;
 					}
-					std::cerr << "[DEBUG] parse_qualified_identifier_after_template returned SUCCESS" << std::endl;
 					
 					// Build fully qualified type name using instantiated template name
 					const auto& qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
@@ -11368,10 +11353,8 @@ ParseResult Parser::parse_type_specifier()
 					}
 					
 					// Look up the fully qualified type (e.g., "Traits_int::nested")
-					std::cerr << "[DEBUG] Looking up qualified_type_name='" << qualified_type_name << "'" << std::endl;
 					auto qual_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(qualified_type_name));
 					if (qual_type_it != gTypesByName.end()) {
-						std::cerr << "[DEBUG] Found qualified type in gTypesByName, returning SUCCESS" << std::endl;
 						const TypeInfo* type_info = qual_type_it->second;
 						
 						// Handle both struct types and type aliases
@@ -11392,9 +11375,6 @@ ParseResult Parser::parse_type_specifier()
 								type_info->type_, type_info->type_index_, type_size, type_name_token, cv_qualifier));
 						}
 					}
-					
-					std::cerr << "[DEBUG] Qualified type NOT found in gTypesByName, has_template_args=" << has_template_args 
-					          << ", has_dependent_args=" << has_dependent_args << std::endl;
 					
 					// Check if this might be a member template alias (e.g., Template<int>::type<Args>)
 					// member_name and has_template_args already declared above
@@ -28163,15 +28143,9 @@ ParseResult Parser::parse_template_parameter() {
 			    peek_token()->value() == "=") {
 				consume_token(); // consume '='
 				
-				// DEBUG: Log the token before parse_type_specifier
-				std::cerr << "[DEBUG] About to parse type specifier for template param default. Current token: " 
-				          << (peek_token().has_value() ? std::string(peek_token()->value()) : "N/A") << std::endl;
-				
 				// Parse the default type
 				auto default_type_result = parse_type_specifier();
 				if (default_type_result.is_error()) {
-					std::cerr << "[DEBUG] parse_type_specifier returned error. Current token: "
-					          << (current_token_ ? std::string(current_token_->value()) : "N/A") << std::endl;
 					return ParseResult::error("Expected type after '=' in template parameter default", *current_token_);
 				}
 				
@@ -30757,18 +30731,23 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// 3. It's a UserDefined type with type_index=0 (placeholder)
 		FLASH_LOG_FORMAT(Templates, Debug, "Checking dependency for template argument: type={}, type_index={}, in_sfinae_context={}", 
 		                 static_cast<int>(type_node.type()), type_node.type_index(), in_sfinae_context_);
-		std::cerr << "[DEBUG] Template arg dependency check: type=" << static_cast<int>(type_node.type()) 
-		          << ", type_index=" << type_node.type_index() 
-		          << ", in_sfinae=" << in_sfinae_context_
-		          << ", current_template_param_names_.size()=" << current_template_param_names_.size() << std::endl;
 		if (type_node.type() == Type::UserDefined) {
-			// Check if the type name contains "_unknown" or is a template parameter
-			TypeIndex idx = type_node.type_index();
-			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, idx={}, gTypeInfo.size()={}", idx, gTypeInfo.size());
-			if (idx < gTypeInfo.size()) {
-				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());
-				FLASH_LOG_FORMAT(Templates, Debug, "Type name: {}", type_name);
-				
+			// BUGFIX: Use the original token value instead of looking up via type_index
+			// When template parameters are parsed, they may have type_index=0 (void),
+			// which causes incorrect dependency checks. The token value is always correct.
+			std::string_view type_name = type_node.token().value();
+			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, type_name from token: {}", type_name);
+			
+			// Fallback to gTypeInfo lookup only if token is empty or for composite types
+			if (type_name.empty()) {
+				TypeIndex idx = type_node.type_index();
+				if (idx < gTypeInfo.size()) {
+					type_name = StringTable::getStringView(gTypeInfo[idx].name());
+					FLASH_LOG_FORMAT(Templates, Debug, "Fallback: type name from gTypeInfo: {}", type_name);
+				}
+			}
+			
+			if (!type_name.empty()) {
 				auto matches_identifier = [](std::string_view haystack, std::string_view needle) {
 					size_t pos = haystack.find(needle);
 					auto is_ident_char = [](char ch) {
@@ -30790,13 +30769,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// so we should NOT mark them as dependent
 				bool is_template_param = false;
 				if (!in_sfinae_context_) {
-					std::cerr << "[DEBUG] Checking if '" << type_name << "' is a template param. List has " 
-					          << current_template_param_names_.size() << " params:" << std::endl;
 					for (const auto& param_name : current_template_param_names_) {
 						std::string_view param_sv = StringTable::getStringView(param_name);
-						std::cerr << "[DEBUG]   - '" << param_sv << "'" << std::endl;
 						if (type_name == param_sv || matches_identifier(type_name, param_sv)) {
-							std::cerr << "[DEBUG] MATCH! Marking as dependent" << std::endl;
 							is_template_param = true;
 							break;
 						}
@@ -30824,7 +30799,10 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", type_name);
 					}
 				}
-			} else if (idx == 0) {
+			}
+			
+			// Also check for type_index=0 as a fallback indicator of dependent types
+			if (!arg.is_dependent && type_node.type_index() == 0) {
 				arg.is_dependent = true;
 				FLASH_LOG(Templates, Debug, "Template argument is dependent (placeholder with type_index=0)");
 			}
