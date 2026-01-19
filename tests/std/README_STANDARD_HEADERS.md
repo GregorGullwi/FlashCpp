@@ -95,14 +95,28 @@ To see progress logging during compilation, build with Info level logging enable
 
 ```bash
 # Build release with progress logging
-clang++ -std=c++20 -DFLASHCPP_LOG_LEVEL=2 -O3 -I src -o x64/Release/FlashCpp \
+clang++ -std=c++20 -DFLASHCPP_LOG_LEVEL=2 -O3 -I src -o x64/InfoRelease/FlashCpp \
     src/AstNodeTypes.cpp src/ChunkedAnyVector.cpp src/Parser.cpp \
     src/CodeViewDebug.cpp src/ExpressionSubstitutor.cpp src/main.cpp
 
 # Run with progress output
-./x64/Release/FlashCpp tests/std/test_std_type_traits.cpp
-# Output: [Progress] Parsed 500 top-level nodes in 150 ms
-#         [Progress] Parsing complete: 1200 top-level nodes, 5000 AST nodes in 2500 ms
+./x64/InfoRelease/FlashCpp tests/std/test_std_type_traits.cpp
+# Output: [Progress] 100 template instantiations in 1 ms (cache hit rate: 44.4%)
+#         [Progress] 200 template instantiations in 4 ms (cache hit rate: 55.3%)
+#         [Progress] Parsing complete: 7 top-level nodes, 58 AST nodes in 9 ms
+```
+
+### Template Profiling Statistics
+
+For detailed template instantiation statistics, use the `--perf-stats` flag:
+
+```bash
+./x64/Release/FlashCpp test.cpp --perf-stats
+# Shows:
+#   - Template instantiation counts and timing
+#   - Cache hit/miss rates
+#   - Top 10 most instantiated templates
+#   - Top 10 slowest templates
 ```
 
 ## Disabling Logging
@@ -465,6 +479,22 @@ The following features have been implemented to support standard headers:
 ## Recent Changes
 
 Changes are listed in reverse chronological order.
+
+### 2026-01-19 (Template Profiling & Progress Logging Improvements)
+- **Enhanced template instantiation progress logging:** Added periodic progress reports during template instantiation
+  - Logs every 100 template instantiations with elapsed time, cache hit rate, and instantiation depth
+  - Example: `[Progress] 400 template instantiations in 8 ms (cache hit rate: 59.7%)`
+  - Helps identify where compilation gets stuck during template-heavy headers
+- **Template instantiation tracking:** Added start/end tracking for individual template instantiations
+  - Tracks current instantiation depth to identify recursive template issues
+  - Useful for debugging infinite loops or extremely slow recursive instantiation
+- **Build with info logging:** Use `-DFLASHCPP_LOG_LEVEL=2` to enable progress logging in release builds
+  - Create dedicated InfoRelease build: `clang++ -DFLASHCPP_LOG_LEVEL=2 -O3 ...`
+- **Findings from extended timeout testing:**
+  - `<concepts>` completes 400 instantiations in 8ms then gets stuck (likely infinite recursion or loop)
+  - `<type_traits>` compiles successfully with ~400 template instantiations, 59.7% cache hit rate
+  - `<string_view>` and `<string>` timeout at 60+ seconds (true performance issue, not parse error)
+  - Many headers marked as "timeout" actually fail silently with exit code 1
 
 ### 2026-01-19 (Progress Logging & Analysis)
 - **Progress logging added:** Parser now logs progress every 500 top-level nodes with elapsed time

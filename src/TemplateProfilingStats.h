@@ -9,6 +9,16 @@
 #include <climits>
 #include <cstdint>
 
+// Define FLASHCPP_LOG_LEVEL if not already defined (e.g., by Log.h or build flags)
+// This allows this header to be included independently
+#ifndef FLASHCPP_LOG_LEVEL
+    #ifdef NDEBUG
+        #define FLASHCPP_LOG_LEVEL 2
+    #else
+        #define FLASHCPP_LOG_LEVEL 4
+    #endif
+#endif
+
 // Compile-time flag to enable/disable template profiling
 // Set to 1 to enable profiling, 0 to disable for production builds
 #ifndef ENABLE_TEMPLATE_PROFILING
@@ -60,6 +70,39 @@ public:
     // Record a template instantiation timing
     void recordInstantiation(const std::string& template_name, std::chrono::microseconds duration) {
         instantiations_[template_name].add(duration);
+        incrementInstantiationCount();
+        // Log progress every 100 instantiations when Info level is enabled
+        // This helps track where the compiler gets stuck during template-heavy compilations
+        #if FLASHCPP_LOG_LEVEL >= 2
+        maybeLogProgress(100);
+        #endif
+    }
+
+    // Track template instantiation start (for detecting stuck instantiations)
+    void recordInstantiationStart(const std::string& template_name) {
+        current_instantiation_ = template_name;
+        current_instantiation_start_ = std::chrono::high_resolution_clock::now();
+        ++instantiation_depth_;
+    }
+
+    // Track template instantiation end
+    void recordInstantiationEnd(const std::string& /*template_name*/) {
+        if (instantiation_depth_ > 0) {
+            --instantiation_depth_;
+        }
+        if (instantiation_depth_ == 0) {
+            current_instantiation_.clear();
+        }
+    }
+
+    // Get the current template being instantiated (for debugging)
+    const std::string& getCurrentInstantiation() const {
+        return current_instantiation_;
+    }
+
+    // Get current instantiation depth
+    size_t getInstantiationDepth() const {
+        return instantiation_depth_;
     }
 
     // Record a cache hit
@@ -175,14 +218,69 @@ public:
         parsing_time_ = TemplateProfilingAccumulator();
         substitution_time_ = TemplateProfilingAccumulator();
         specialization_match_time_ = TemplateProfilingAccumulator();
+        total_instantiation_count_ = 0;
+        last_progress_count_ = 0;
+        start_time_ = std::chrono::high_resolution_clock::now();
+    }
+
+    // Get total instantiation count across all templates
+    size_t getTotalInstantiationCount() const {
+        return total_instantiation_count_;
+    }
+
+    // Check if progress should be logged (every N instantiations)
+    // Returns true if progress was logged
+    bool maybeLogProgress(size_t interval = 1000) {
+        if (total_instantiation_count_ - last_progress_count_ >= interval) {
+            auto now = std::chrono::high_resolution_clock::now();
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time_).count();
+            
+            size_t total_hits = 0, total_misses = 0;
+            for (const auto& [name, hits] : cache_hits_) {
+                total_hits += hits;
+            }
+            for (const auto& [name, misses] : cache_misses_) {
+                total_misses += misses;
+            }
+            size_t total_requests = total_hits + total_misses;
+            double hit_rate = total_requests > 0 ? (100.0 * total_hits / total_requests) : 0.0;
+            
+            if (!current_instantiation_.empty() && instantiation_depth_ > 0) {
+                printf("[Progress] %zu template instantiations in %lld ms (cache hit rate: %.1f%%, depth: %zu, current: %s)\n",
+                       total_instantiation_count_, (long long)elapsed_ms, hit_rate, 
+                       instantiation_depth_, current_instantiation_.c_str());
+            } else {
+                printf("[Progress] %zu template instantiations in %lld ms (cache hit rate: %.1f%%)\n",
+                       total_instantiation_count_, (long long)elapsed_ms, hit_rate);
+            }
+            fflush(stdout);
+            
+            last_progress_count_ = total_instantiation_count_;
+            return true;
+        }
+        return false;
+    }
+
+    // Increment total instantiation count (called by recordInstantiation)
+    void incrementInstantiationCount() {
+        ++total_instantiation_count_;
     }
 
 private:
-    TemplateProfilingStats() = default;
+    TemplateProfilingStats() : total_instantiation_count_(0), last_progress_count_(0),
+                               instantiation_depth_(0),
+                               start_time_(std::chrono::high_resolution_clock::now()),
+                               current_instantiation_start_(std::chrono::high_resolution_clock::now()) {}
 
     std::unordered_map<std::string, TemplateProfilingAccumulator> instantiations_;
     std::unordered_map<std::string, size_t> cache_hits_;
     std::unordered_map<std::string, size_t> cache_misses_;
+    size_t total_instantiation_count_;
+    size_t last_progress_count_;
+    size_t instantiation_depth_;
+    std::string current_instantiation_;
+    std::chrono::high_resolution_clock::time_point start_time_;
+    std::chrono::high_resolution_clock::time_point current_instantiation_start_;
     TemplateProfilingAccumulator lookup_time_;
     TemplateProfilingAccumulator parsing_time_;
     TemplateProfilingAccumulator substitution_time_;
@@ -201,7 +299,14 @@ public:
     };
 
     TemplateProfilingTimer(Operation op, const std::string& name = "")
-        : operation_(op), name_(name), start_(std::chrono::high_resolution_clock::now()) {}
+        : operation_(op), name_(name), start_(std::chrono::high_resolution_clock::now()) {
+        // Log start of instantiation for long-running template instantiation debugging
+        #if FLASHCPP_LOG_LEVEL >= 2
+        if (operation_ == Operation::Instantiation && !name_.empty()) {
+            TemplateProfilingStats::getInstance().recordInstantiationStart(name_);
+        }
+        #endif
+    }
 
     ~TemplateProfilingTimer() {
         auto end = std::chrono::high_resolution_clock::now();
@@ -210,6 +315,9 @@ public:
         auto& stats = TemplateProfilingStats::getInstance();
         switch (operation_) {
             case Operation::Instantiation:
+                #if FLASHCPP_LOG_LEVEL >= 2
+                stats.recordInstantiationEnd(name_);
+                #endif
                 stats.recordInstantiation(name_, duration);
                 break;
             case Operation::Lookup:
