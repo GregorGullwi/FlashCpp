@@ -639,7 +639,8 @@ public:
 			}
 
 			if (skipping_stack.size() == 0) {
-				FLASH_LOG(Lexer, Error, "Internal compiler error in file ", filestack_.top().file_name, ":", line_number);
+				FLASH_LOG(Lexer, Error, "Internal compiler error in file ", filestack_.top().file_name, ":", line_number,
+				          " - preprocessor directive stack underflow (too many #endif directives or preprocessor state corruption). Line content: '", line, "'");
 				return false;
 			}
 			const bool skipping = skipping_stack.top();
@@ -671,14 +672,17 @@ public:
 
 			if (skipping) {
 				if (line.find("#endif", 0) == 0) {
+					FLASH_LOG(Lexer, Debug, "Preprocessor: #endif while skipping, stack size before pop: ", skipping_stack.size(), " at ", filestack_.top().file_name, ":", line_number);
 					skipping_stack.pop();
 					condition_was_true_stack.pop();
+					FLASH_LOG(Lexer, Debug, "Preprocessor: stack size after pop: ", skipping_stack.size());
 				}
 				else if (line.find("#if", 0) == 0) {
 					// Nesting: #if, #ifdef, #ifndef all start with "#if"
 					// Push a new skipping state for any nested conditional
 					// Mark condition_was_true as true to prevent #else/#elif from activating
 					// (since we're skipping due to an outer condition, not this one)
+					FLASH_LOG(Lexer, Debug, "Preprocessor: #if while skipping, pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
 					skipping_stack.push(true);
 					condition_was_true_stack.push(true);  // Changed from false
 				}
@@ -769,6 +773,7 @@ public:
 				// to check if the feature is available, then uses __has_builtin(x) with arguments.
 				// We return true for "#ifdef __has_builtin" so the library defines _GLIBCXX_HAS_BUILTIN.
 				bool is_defined = (symbol == "__has_builtin") || (defines_.count(symbol) > 0);
+				FLASH_LOG(Lexer, Debug, "Preprocessor: #ifdef ", symbol, " (defined=", is_defined, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.push(!is_defined);
 				condition_was_true_stack.push(is_defined);
 				append_line_with_tracking("");  // Preserve line numbering
@@ -779,6 +784,7 @@ public:
 				std::string symbol;
 				iss >> symbol;
 				bool is_defined = defines_.count(symbol) > 0;
+				FLASH_LOG(Lexer, Debug, "Preprocessor: #ifndef ", symbol, " (defined=", is_defined, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.push(is_defined);
 				condition_was_true_stack.push(!is_defined);
 				append_line_with_tracking("");  // Preserve line numbering
@@ -790,6 +796,7 @@ public:
 				std::istringstream iss(condition);
 				long expression_result = evaluate_expression(iss);
 				bool condition_true = (expression_result != 0);
+				FLASH_LOG(Lexer, Debug, "Preprocessor: #if (result=", condition_true, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.push(!condition_true);
 				condition_was_true_stack.push(condition_true);
 				append_line_with_tracking("");  // Preserve line numbering
@@ -833,8 +840,10 @@ public:
 			}
 			else if (line.find("#endif", 0) == 0) {
 				if (!skipping_stack.empty()) {
+					FLASH_LOG(Lexer, Debug, "Preprocessor: #endif (not skipping), stack size before pop: ", skipping_stack.size(), " at ", filestack_.top().file_name, ":", line_number);
 					skipping_stack.pop();
 					condition_was_true_stack.pop();
+					FLASH_LOG(Lexer, Debug, "Preprocessor: stack size after pop: ", skipping_stack.size());
 				}
 				else {
 					FLASH_LOG(Lexer, Error, "Unmatched #endif directive");
