@@ -15,10 +15,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<source_location>` | N/A | ✅ Compiled | ~0.10s |
 | `<numbers>` | N/A | ✅ Compiled | ~1.2s release (doesn't include `<concepts>`) |
 | `<initializer_list>` | N/A | ✅ Compiled | ~0.07s |
-| `<concepts>` | `test_std_concepts.cpp` | ❌ Parse Error | Qualified template alias in template argument context |
-| `<utility>` | `test_std_utility.cpp` | ❌ Template Error | Deferred instantiation failures |
-| `<bit>` | N/A | ❌ Parse Error | Includes `<concepts>` - qualified template alias issue |
-| `<ratio>` | N/A | 💥 Crash | SIGSEGV during template instantiation |
+| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Parsing fixed (2026-01-19), times out during template instantiation |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Parsing fixed, times out during template instantiation |
+| `<bit>` | N/A | ⏱️ Timeout | Parsing fixed (2026-01-19), times out during template instantiation |
+| `<ratio>` | N/A | ⏱️ Timeout | Fixed crashes (2026-01-19), now times out during template instantiation |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template-heavy header |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Template-heavy header |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template-heavy header |
@@ -143,7 +143,15 @@ The `if constexpr (enabled)` blocks in logging macros previously caused hangs wh
 
 **Impact:** Patterns like `SomeTemplate<namespace::alias<ConcreteType>>` now work correctly. The `<concepts>` header still times out due to template instantiation volume, but the parsing phase now completes successfully.
 
-### 3. Template Instantiation Performance (Secondary Blocker)
+### 3. `<ratio>` Header Crash (FIXED - 2026-01-19)
+
+Two crashes were fixed:
+1. Skip deferred base class instantiation when template arguments can't be fully resolved
+2. Guard `handleGlobalLoad` against being called outside function context
+
+**Current Status:** The `<ratio>` header no longer crashes. It now times out due to template instantiation volume like other complex headers.
+
+### 4. Template Instantiation Performance (Secondary Blocker)
 
 Template-heavy headers that don't include `<concepts>` may still experience slow compilation due to template instantiation volume. However, many headers previously thought to be "timing out" actually have specific parsing errors or crashes (see table above).
 
@@ -159,7 +167,7 @@ Template-heavy headers that don't include `<concepts>` may still experience slow
 - Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
 - Optimize string operations in template name generation
 
-### 3. Variable Templates in Type Context (FIXED - 2026-01-14)
+### 5. Variable Templates in Type Context (FIXED - 2026-01-14)
 
 **Issue:** ~~Variable templates used as non-type arguments in class template contexts were causing "No primary template found" errors.~~ **RESOLVED**
 
