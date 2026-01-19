@@ -15453,8 +15453,9 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					// Check if the member is a known template
 					auto template_opt = gTemplateRegistry.lookupTemplate(member_name);
 					auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
+					auto alias_template_opt = gTemplateRegistry.lookup_alias_template(member_name);
 					
-					if (template_opt.has_value() || var_template_opt.has_value()) {
+					if (template_opt.has_value() || var_template_opt.has_value() || alias_template_opt.has_value()) {
 						// Member is a known template, allow template argument parsing
 						could_be_template_name = true;
 					} else if (context == ExpressionContext::TemplateArgument) {
@@ -18160,11 +18161,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// This prevents misinterpreting patterns like _R1::num < _R2::num> where < is comparison
 			auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
 			auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
+			auto member_alias_template_opt = gTemplateRegistry.lookup_alias_template(member_name);
 			auto full_template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
 			auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
+			auto full_alias_template_opt = gTemplateRegistry.lookup_alias_template(qualified_name);
 			
 			bool is_known_template = member_template_opt.has_value() || member_var_template_opt.has_value() ||
-			                         full_template_opt.has_value() || full_var_template_opt.has_value();
+			                         member_alias_template_opt.has_value() ||
+			                         full_template_opt.has_value() || full_var_template_opt.has_value() ||
+			                         full_alias_template_opt.has_value();
 			
 			// Also check if the base is a template parameter - if so, the member is likely NOT a template
 			bool base_is_template_param = false;
@@ -18232,6 +18237,54 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
 						return ParseResult::success(*result);
 					}
+				}
+				
+				// Check if this is an alias template (like detail::cref<int> -> int)
+				// Alias templates should resolve to their underlying type
+				auto alias_opt = gTemplateRegistry.lookup_alias_template(qualified_name);
+				if (!alias_opt.has_value()) {
+					// Try with simple name
+					alias_opt = gTemplateRegistry.lookup_alias_template(qual_id.name());
+				}
+				
+				if (alias_opt.has_value()) {
+					FLASH_LOG(Templates, Debug, "Found alias template, resolving: ", qualified_name);
+					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
+					
+					// Get the target type of the alias
+					// For a simple alias like `template<typename T> using cref = T;`, the target type is T
+					// We need to substitute the template parameter with the actual argument
+					const TypeSpecifierNode& target_type = alias_node.target_type_node();
+					const auto& param_names = alias_node.template_param_names();
+					
+					// Check if the target type is one of the template parameters
+					Token target_token = target_type.token();
+					if (target_token.type() == Token::Type::Identifier) {
+						std::string_view target_name = target_token.value();
+						for (size_t i = 0; i < param_names.size() && i < template_args->size(); ++i) {
+							if (target_name == param_names[i].view()) {
+								// The target type is the i-th template parameter
+								// Substitute it with the actual argument
+								const TemplateTypeArg& arg = (*template_args)[i];
+								if (!arg.is_value && arg.type_index < gTypeInfo.size()) {
+									// It's a type argument - get the type name and create an identifier
+									StringHandle type_name_handle = gTypeInfo[arg.type_index].name();
+									std::string_view type_name = StringTable::getStringView(type_name_handle);
+									FLASH_LOG_FORMAT(Templates, Debug, "Alias template parameter '{}' resolved to type '{}'", target_name, type_name);
+									
+									// Return an IdentifierNode for the resolved type
+									Token resolved_token(Token::Type::Identifier, type_name, 
+									                     final_identifier.line(), final_identifier.column(), final_identifier.file_index());
+									result = emplace_node<ExpressionNode>(IdentifierNode(resolved_token));
+									return ParseResult::success(*result);
+								}
+								break;
+							}
+						}
+					}
+					
+					// If the target type is not a direct parameter reference, fall through to other handling
+					FLASH_LOG(Templates, Debug, "Alias template target is not a direct parameter, continuing with class template instantiation");
 				}
 				
 				// Try to instantiate the template with these arguments
@@ -18849,13 +18902,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Check if this is a known template (class or variable template)
 				auto template_opt = gTemplateRegistry.lookupTemplate(qualified_lookup_name);
 				auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_lookup_name);
+				auto alias_template_opt = gTemplateRegistry.lookup_alias_template(qualified_lookup_name);
 				
 				// Also check with just the simple name
 				auto simple_template_opt = gTemplateRegistry.lookupTemplate(final_identifier.value());
 				auto simple_var_template_opt = gTemplateRegistry.lookupVariableTemplate(final_identifier.value());
+				auto simple_alias_template_opt = gTemplateRegistry.lookup_alias_template(final_identifier.value());
 				
 				bool is_known_template = template_opt.has_value() || var_template_opt.has_value() ||
-				                         simple_template_opt.has_value() || simple_var_template_opt.has_value();
+				                         alias_template_opt.has_value() ||
+				                         simple_template_opt.has_value() || simple_var_template_opt.has_value() ||
+				                         simple_alias_template_opt.has_value();
 				
 				lookup_name_builder.reset();
 				
@@ -24908,7 +24965,18 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Register the alias template in the template registry
 		// We'll handle instantiation later when the alias is used
+		// Register with simple name for unqualified lookups
 		gTemplateRegistry.register_alias_template(std::string(alias_name), alias_node);
+		
+		// If in a namespace, also register with qualified name for namespace-qualified lookups
+		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+		if (!current_handle.isGlobal()) {
+			StringHandle name_handle = StringTable::getOrInternStringHandle(alias_name);
+			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, name_handle);
+			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
+			FLASH_LOG_FORMAT(Templates, Debug, "Registering alias template with qualified name: {}", qualified_name);
+			gTemplateRegistry.register_alias_template(std::string(qualified_name), alias_node);
+		}
 		
 		return saved_position.success(alias_node);
 	}

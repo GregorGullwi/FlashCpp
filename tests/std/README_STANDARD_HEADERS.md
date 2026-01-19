@@ -119,22 +119,29 @@ The `if constexpr (enabled)` blocks in logging macros previously caused hangs wh
 
 **Result:** `<type_traits>` now compiles successfully in ~6s.
 
-### 2. Qualified Template Aliases in Template Arguments (Primary Blocker for `<concepts>`)
+### 2. Qualified Template Aliases in Template Arguments (FIXED - 2026-01-19)
 
-**Issue:** Template aliases qualified with a namespace (e.g., `__detail::__cref<_Lhs>`) are not recognized as templates when used inside template argument lists.
+**Issue:** ~~Template aliases qualified with a namespace (e.g., `__detail::__cref<_Lhs>`) are not recognized as templates when used inside template argument lists.~~ **RESOLVED**
 
-**Error:**
+**Previous error:**
 ```
 /usr/include/c++/14/concepts:227:55: error: Expected ';' after concept definition
         && common_reference_with<__detail::__cref<_Lhs>, __detail::__cref<_Rhs>>
                                                         ^
 ```
 
-**Root cause:** When parsing `common_reference_with<__detail::__cref<_Lhs>, ...>`, the parser reaches `__detail::__cref` and sees the `<` after it. In template argument context, it checks if `__cref` is a known template, but fails to find it because:
-1. It's looking for `__cref` without namespace qualification
-2. Or the template alias lookup doesn't work for qualified identifiers in this context
+**Root cause (now fixed):** When parsing `common_reference_with<__detail::__cref<_Lhs>, ...>`, the parser reached `__detail::__cref` and saw the `<` after it. In template argument context, it checked if `__cref` was a known template, but failed to find it because:
+1. The parser only checked for class templates and variable templates, not alias templates
+2. Alias templates in namespaces were only registered with simple names, not namespace-qualified names
 
-**Impact:** `<concepts>` cannot be compiled until this is fixed.
+**Fix applied (commit e45648b):**
+1. Added alias template lookup (`lookup_alias_template`) in three parser code paths that determine if `<` should be parsed as template arguments
+2. Fixed namespace-level alias template registration to also register with namespace-qualified names (like class templates do)
+3. Added alias template resolution in expression parsing: when a qualified alias template like `detail::cref<int>` is parsed, it now resolves to the underlying type (`int`)
+
+**Test case:** `tests/test_qualified_template_alias_ret0.cpp`
+
+**Impact:** Patterns like `SomeTemplate<namespace::alias<ConcreteType>>` now work correctly. The `<concepts>` header still times out due to template instantiation volume, but the parsing phase now completes successfully.
 
 ### 3. Template Instantiation Performance (Secondary Blocker)
 
@@ -419,10 +426,18 @@ The following features have been implemented to support standard headers:
 - Out-of-line member functions with different parameter names between declaration and definition (NEW)
 - Pointer-to-member typedef syntax (`typedef T Class::* alias;`) (NEW)
 - Trailing return type parameter visibility in decltype expressions (NEW)
+- Namespace-qualified template alias resolution (`namespace::alias<T>` as template argument) (NEW)
 
 ## Recent Changes
 
 Changes are listed in reverse chronological order. For detailed implementation notes, see the git commit history.
+
+### 2026-01-19 (Qualified Template Alias Fix)
+- **FEATURE:** Namespace-qualified template aliases now work in template argument contexts
+- **Root cause:** Parser only checked for class/variable templates when deciding if `<` is template arguments
+- **Fix:** Added `lookup_alias_template` in 3 parser code paths; alias templates now register with qualified names
+- **Test case:** `tests/test_qualified_template_alias_ret0.cpp`
+- **Impact:** Patterns like `Wrapper<namespace::alias<int>>` now compile correctly
 
 ### 2026-01-18 (Log Level Bug Fix)
 - **BUG FIXED:** Log level bug that caused hangs is now resolved (commit 6ea920f)
