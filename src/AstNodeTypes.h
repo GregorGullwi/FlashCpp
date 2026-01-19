@@ -2681,16 +2681,21 @@ private:
 class EnumDeclarationNode {
 public:
 	explicit EnumDeclarationNode(StringHandle name_handle, bool is_scoped = false)
-		: name_(StringTable::getStringView(name_handle)), is_scoped_(is_scoped), underlying_type_() {}
+		: name_(StringTable::getStringView(name_handle)), is_scoped_(is_scoped), is_forward_declaration_(false), underlying_type_() {}
 
 	std::string_view name() const { return name_; }
 	bool is_scoped() const { return is_scoped_; }  // true for enum class, false for enum
+	bool is_forward_declaration() const { return is_forward_declaration_; }
 	bool has_underlying_type() const { return underlying_type_.has_value(); }
 	const std::optional<ASTNode>& underlying_type() const { return underlying_type_; }
 	const std::vector<ASTNode>& enumerators() const { return enumerators_; }
 
 	void set_underlying_type(ASTNode type) {
 		underlying_type_ = type;
+	}
+
+	void set_is_forward_declaration(bool value) {
+		is_forward_declaration_ = value;
 	}
 
 	void add_enumerator(ASTNode enumerator) {
@@ -2700,6 +2705,7 @@ public:
 private:
 	std::string_view name_;                 // Points directly into source text from lexer token
 	bool is_scoped_;                        // true for enum class, false for enum
+	bool is_forward_declaration_;           // true for forward declarations without body
 	std::optional<ASTNode> underlying_type_; // Optional underlying type (TypeSpecifierNode)
 	std::vector<ASTNode> enumerators_;      // List of EnumeratorNode
 };

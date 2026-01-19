@@ -3483,17 +3483,82 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 // Helper function to parse and register a type alias (typedef or using) inside a struct/template
 // Handles both "typedef Type Alias;" and "using Alias = Type;" syntax
 // Also handles inline definitions: "typedef struct { ... } Alias;"
+// Also handles using-declarations: "using namespace::name;" (member access import)
 // Returns ParseResult with no node on success, error on failure
 ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access)
 {
 	consume_token(); // consume 'typedef' or 'using'
 	
-	// For 'using', always simple syntax: using Alias = Type;
+	// For 'using', check if it's an alias or a using-declaration
 	if (keyword == "using") {
 		auto alias_token = peek_token();
 		if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
 			return ParseResult::error("Expected alias name after 'using'", peek_token().value_or(Token()));
 		}
+		
+		// Look ahead to see if this is:
+		// 1. Type alias: using Alias = Type;  (identifier followed by '=')
+		// 2. Using-declaration: using namespace::member;  (identifier followed by '::')
+		SaveHandle lookahead_pos = save_token_position();
+		consume_token(); // consume first identifier
+		auto next_token = peek_token();
+		
+		if (next_token.has_value() && next_token->value() == "::") {
+			// This is a using-declaration like: using std::__is_integer<_Tp>::__value;
+			// Parse and extract the member name to register it in the current scope
+			std::string_view member_name;
+			
+			while (peek_token().has_value() && peek_token()->value() == "::") {
+				consume_token(); // consume '::'
+				
+				// Consume the next identifier or template
+				if (peek_token().has_value()) {
+					if (peek_token()->type() == Token::Type::Identifier) {
+						member_name = peek_token()->value();  // Track last identifier as potential member name
+						consume_token(); // consume identifier
+						
+						// Check for template arguments
+						if (peek_token().has_value() && peek_token()->value() == "<") {
+							// Skip template arguments
+							int depth = 1;
+							consume_token(); // consume '<'
+							while (depth > 0 && peek_token().has_value()) {
+								if (peek_token()->value() == "<") depth++;
+								else if (peek_token()->value() == ">") depth--;
+								consume_token();
+							}
+							// After template args, the member name is whatever comes next
+							member_name = "";  // Reset - next identifier after :: will be the member
+						}
+					} else {
+						break;
+					}
+				}
+			}
+			
+			// Register the imported member name in the struct parsing context
+			// This makes the member accessible by its simple name even when the
+			// base class is a dependent type (template) that can't be resolved yet
+			if (!member_name.empty()) {
+				if (!struct_parsing_context_stack_.empty()) {
+					StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+					struct_parsing_context_stack_.back().imported_members.push_back(member_handle);
+					FLASH_LOG(Parser, Debug, "Using-declaration imports member '", member_name, "' into struct parsing context");
+				}
+			}
+			
+			// Consume trailing semicolon
+			if (peek_token().has_value() && peek_token()->value() == ";") {
+				consume_token(); // consume ';'
+			}
+			
+			// Discard the saved position - we successfully parsed the using-declaration
+			discard_saved_token(lookahead_pos);
+			return ParseResult::success();
+		}
+		
+		// Restore position - this is a type alias
+		restore_token_position(lookahead_pos);
 		
 		StringHandle alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 		consume_token(); // consume alias name
@@ -4350,7 +4415,7 @@ ParseResult Parser::parse_struct_declaration()
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 
 	// Push struct parsing context for nested class support
-	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name), &struct_ref, nullptr});
+	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name), &struct_ref, nullptr, {}});
 	
 	// RAII guard to ensure stack is always popped, even on early returns
 	auto pop_stack_guard = [this](void*) { 
@@ -7254,7 +7319,33 @@ ParseResult Parser::parse_enum_declaration()
 		}
 	}
 
-	// Expect opening brace
+	// Check for forward declaration (semicolon without body)
+	// C++11: enum class Name : underlying_type;
+	// This is a forward declaration, not a definition
+	FLASH_LOG(Parser, Debug, "Checking for enum forward declaration, peek_token has_value=", peek_token().has_value(),
+	          peek_token().has_value() ? (std::string(" value='") + std::string(peek_token()->value()) + "'") : "");
+	if (peek_token().has_value() && peek_token()->value() == ";") {
+		// This is a forward declaration
+		consume_token(); // Consume the semicolon
+		
+		// For scoped enums with underlying type, forward declarations are valid C++11
+		// We mark this as a forward declaration
+		enum_ref.set_is_forward_declaration(true);
+		
+		// Set size on TypeInfo for forward-declared enum (use type_size_)
+		if (enum_ref.has_underlying_type()) {
+			const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
+			enum_type_info.type_size_ = type_spec.size_in_bits();
+		} else if (is_scoped) {
+			// Scoped enums without underlying type default to int (32 bits)
+			enum_type_info.type_size_ = 32;
+		}
+		
+		FLASH_LOG(Parser, Debug, "Parsed enum forward declaration: ", std::string(StringTable::getStringView(enum_name)));
+		return saved_position.success(enum_node);
+	}
+
+	// Expect opening brace for full definition
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' after enum name", *peek_token());
 	}
@@ -8006,7 +8097,7 @@ ParseResult Parser::parse_typedef_declaration()
 		auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name_for_typedef, false);
 
 		// Push struct parsing context
-		struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name_for_typedef), &struct_ref, nullptr});
+		struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name_for_typedef), &struct_ref, nullptr, {}});
 
 		// Create StructTypeInfo
 		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public);
@@ -10064,8 +10155,10 @@ ParseResult Parser::parse_type_specifier()
 	
 	auto current_token_opt = peek_token();
 
-	// Check for decltype FIRST, before any other checks
-	if (current_token_opt.has_value() && current_token_opt->value() == "decltype") {
+	// Check for decltype or __typeof__ FIRST, before any other checks
+	// __typeof__ is a GCC extension that works like decltype
+	if (current_token_opt.has_value() && 
+	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__")) {
 		return parse_decltype_specifier();
 	}
 
@@ -10094,10 +10187,12 @@ ParseResult Parser::parse_type_specifier()
 		}
 	}
 
-	// Check for decltype after function specifiers (e.g., static decltype(...))
+	// Check for decltype or __typeof__ after function specifiers (e.g., static decltype(...))
 	// This check MUST come after skipping function specifiers to handle patterns like:
 	// "static decltype(_S_test_2<_Tp, _Up>(0))" which appear in standard library headers
-	if (current_token_opt.has_value() && current_token_opt->value() == "decltype") {
+	// __typeof__ is a GCC extension that works like decltype
+	if (current_token_opt.has_value() && 
+	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__")) {
 		return parse_decltype_specifier();
 	}
 
@@ -11722,21 +11817,23 @@ ParseResult Parser::parse_type_specifier()
 
 ParseResult Parser::parse_decltype_specifier()
 {
-	// Parse decltype(expr) type specifier
+	// Parse decltype(expr) or __typeof__(expr) type specifier
 	// Example: decltype(x + y) result = x + y;
+	// __typeof__ is a GCC extension that works like decltype
 
 	ScopedTokenPosition saved_position(*this);
 
-	// Consume 'decltype' keyword
+	// Consume 'decltype' or '__typeof__' keyword
 	auto decltype_token_opt = consume_token();
 	if (!decltype_token_opt.has_value()) {
-		return ParseResult::error("Expected 'decltype' keyword", *current_token_);
+		return ParseResult::error("Expected 'decltype' or '__typeof__' keyword", *current_token_);
 	}
 	Token decltype_token = *decltype_token_opt;
+	std::string_view keyword = decltype_token.value();
 
 	// Expect '('
 	if (!consume_punctuator("(")) {
-		return ParseResult::error("Expected '(' after 'decltype'", *current_token_);
+		return ParseResult::error(std::string("Expected '(' after '") + std::string(keyword) + "'", *current_token_);
 	}
 
 	// Phase 3: Parse the expression with Decltype context for proper template disambiguation
@@ -18691,6 +18788,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		if (!identifierType && !struct_parsing_context_stack_.empty()) {
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
 			const auto& ctx = struct_parsing_context_stack_.back();
+			FLASH_LOG_FORMAT(Parser, Debug, "Checking struct context for '{}': struct_node={}, local_struct_info={}", 
+				idenfifier_token.value(), ctx.struct_node != nullptr, ctx.local_struct_info != nullptr);
 			
 			// Check the struct_node's static_members (for non-template structs)
 			if (ctx.struct_node != nullptr) {
@@ -18713,6 +18812,34 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						found_as_type_alias = true;
 						break;
 					}
+				}
+			}
+			
+			// BUGFIX: Check for members imported via using-declarations
+			// This handles cases like: using BaseClass::__value;
+			// where the base class is a dependent template type that can't be resolved yet
+			if (!found_as_type_alias) {
+				for (const auto& imported_member : ctx.imported_members) {
+					if (imported_member == identifier_handle) {
+						FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as imported member via using-declaration", 
+							idenfifier_token.value());
+						found_as_type_alias = true;
+						break;
+					}
+				}
+			}
+			
+			// Also search base classes for static members (if base classes are resolved)
+			// This handles using-declarations like: using BaseClass::__value;
+			// which make base class static members accessible by their simple name
+			if (!found_as_type_alias && ctx.local_struct_info != nullptr && !ctx.local_struct_info->base_classes.empty()) {
+				FLASH_LOG_FORMAT(Parser, Debug, "Searching base classes for '{}', num_bases={}", 
+					idenfifier_token.value(), ctx.local_struct_info->base_classes.size());
+				auto [base_static_member, owner_struct] = ctx.local_struct_info->findStaticMemberRecursive(identifier_handle);
+				if (base_static_member) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as static member in base class '{}'", 
+						idenfifier_token.value(), StringTable::getStringView(owner_struct->getName()));
+					found_as_type_alias = true;  // Found it, suppress "Missing identifier" error
 				}
 			}
 		}
@@ -26383,7 +26510,7 @@ ParseResult Parser::parse_template_declaration() {
 			// BUGFIX: Pass local_struct_info for static member visibility in template partial specializations
 			// This fixes the issue where static constexpr members (e.g., __g, __d2) are not visible
 			// when used as template arguments in typedef declarations within the same struct body
-			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref, struct_info.get()});
+			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref, struct_info.get(), {}});
 			
 			// Parse class body (same as full specialization)
 			while (peek_token().has_value() && peek_token()->value() != "}") {
