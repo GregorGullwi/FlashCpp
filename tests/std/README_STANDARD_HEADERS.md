@@ -89,6 +89,22 @@ cd tests/std
 ./test_std_headers_comprehensive.sh
 ```
 
+## Viewing Parser Progress
+
+To see progress logging during compilation, build with Info level logging enabled:
+
+```bash
+# Build release with progress logging
+clang++ -std=c++20 -DFLASHCPP_LOG_LEVEL=2 -O3 -I src -o x64/Release/FlashCpp \
+    src/AstNodeTypes.cpp src/ChunkedAnyVector.cpp src/Parser.cpp \
+    src/CodeViewDebug.cpp src/ExpressionSubstitutor.cpp src/main.cpp
+
+# Run with progress output
+./x64/Release/FlashCpp tests/std/test_std_type_traits.cpp
+# Output: [Progress] Parsed 500 top-level nodes in 150 ms
+#         [Progress] Parsing complete: 1200 top-level nodes, 5000 AST nodes in 2500 ms
+```
+
 ## Disabling Logging
 
 Logging can be controlled at runtime and compile-time.
@@ -110,7 +126,9 @@ Logging can be controlled at runtime and compile-time.
 
 ```bash
 # Build with specific log level (0=error, 1=warning, 2=info, 3=debug, 4=trace)
-clang++ -DFLASHCPP_LOG_LEVEL=1 -O3 ...
+# Note: Default release build uses level 1 (warning only)
+# Use level 2 to include Info messages (including progress logging)
+clang++ -DFLASHCPP_LOG_LEVEL=2 -O3 ...
 ```
 
 ## Current Blockers
@@ -447,6 +465,17 @@ The following features have been implemented to support standard headers:
 ## Recent Changes
 
 Changes are listed in reverse chronological order.
+
+### 2026-01-19 (Progress Logging & Analysis)
+- **Progress logging added:** Parser now logs progress every 500 top-level nodes with elapsed time
+  - Build with `-DFLASHCPP_LOG_LEVEL=2` to see Info-level progress messages
+  - Example: `[Progress] Parsed 500 top-level nodes in 150 ms`
+  - Final summary: `[Progress] Parsing complete: 1200 top-level nodes, 5000 AST nodes in 2500 ms`
+- **`<vector>` root cause identified:** Fails during `<type_traits>` processing, not `<vector>` itself
+  - Error occurs at `bits/utility.h:56` pattern: `typename _Up = typename remove_cv<_Tp>::type`
+  - The parse succeeds for standalone test cases but fails when embedded in full `<type_traits>` context
+  - Issue is likely related to template instantiation state during complex nested template contexts
+- **Performance insight:** `<type_traits>` alone takes ~10ms for 8 top-level nodes due to heavy template instantiation
 
 ### 2026-01-19 (Parse Error Fixes)
 - **`__typeof__` GCC extension:** Works like `decltype` for GCC compatibility

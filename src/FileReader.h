@@ -583,6 +583,8 @@ public:
 	bool preprocessFileContent(const std::string& file_content) {
 		std::istringstream stream(file_content);
 		std::string line;
+		std::string pending_line;  // Line that was read but needs to be processed on next iteration
+		bool has_pending_line = false;
 		bool in_comment = false;
 		std::stack<bool> skipping_stack;
 		skipping_stack.push(false); // Initial state: not skipping
@@ -596,7 +598,18 @@ public:
 		long prev_line_number = -1;
 		const bool isPreprocessorOnlyMode = settings_.isPreprocessorOnlyMode();
 		size_t line_counter = 0;  // Add counter for debugging
-		while (std::getline(stream, line)) {
+		
+		// Modified loop to handle pending lines
+		auto getNextLine = [&]() -> bool {
+			if (has_pending_line) {
+				line = std::move(pending_line);
+				has_pending_line = false;
+				return true;
+			}
+			return static_cast<bool>(std::getline(stream, line));
+		};
+		
+		while (getNextLine()) {
 			line_counter++;
 			if (settings_.isVerboseMode() && line_counter % 100 == 0) {
 				std::cout << "Processing line " << line_counter << " in " << filestack_.top().file_name << std::endl;
@@ -639,7 +652,8 @@ public:
 			}
 
 			if (skipping_stack.size() == 0) {
-				FLASH_LOG(Lexer, Error, "Internal compiler error in file ", filestack_.top().file_name, ":", line_number);
+				FLASH_LOG(Lexer, Error, "Internal compiler error in file ", filestack_.top().file_name, ":", line_number,
+				          " - preprocessor directive stack underflow (too many #endif directives or preprocessor state corruption). Line content: '", line, "'");
 				return false;
 			}
 			const bool skipping = skipping_stack.top();
@@ -671,14 +685,17 @@ public:
 
 			if (skipping) {
 				if (line.find("#endif", 0) == 0) {
+					FLASH_LOG(Lexer, Debug, "Preprocessor: #endif while skipping, stack size before pop: ", skipping_stack.size(), " at ", filestack_.top().file_name, ":", line_number);
 					skipping_stack.pop();
 					condition_was_true_stack.pop();
+					FLASH_LOG(Lexer, Debug, "Preprocessor: stack size after pop: ", skipping_stack.size());
 				}
 				else if (line.find("#if", 0) == 0) {
 					// Nesting: #if, #ifdef, #ifndef all start with "#if"
 					// Push a new skipping state for any nested conditional
 					// Mark condition_was_true as true to prevent #else/#elif from activating
 					// (since we're skipping due to an outer condition, not this one)
+					FLASH_LOG(Lexer, Debug, "Preprocessor: #if while skipping, pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
 					skipping_stack.push(true);
 					condition_was_true_stack.push(true);  // Changed from false
 				}
@@ -769,6 +786,7 @@ public:
 				// to check if the feature is available, then uses __has_builtin(x) with arguments.
 				// We return true for "#ifdef __has_builtin" so the library defines _GLIBCXX_HAS_BUILTIN.
 				bool is_defined = (symbol == "__has_builtin") || (defines_.count(symbol) > 0);
+				FLASH_LOG(Lexer, Debug, "Preprocessor: #ifdef ", symbol, " (defined=", is_defined, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.push(!is_defined);
 				condition_was_true_stack.push(is_defined);
 				append_line_with_tracking("");  // Preserve line numbering
@@ -779,6 +797,7 @@ public:
 				std::string symbol;
 				iss >> symbol;
 				bool is_defined = defines_.count(symbol) > 0;
+				FLASH_LOG(Lexer, Debug, "Preprocessor: #ifndef ", symbol, " (defined=", is_defined, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.push(is_defined);
 				condition_was_true_stack.push(!is_defined);
 				append_line_with_tracking("");  // Preserve line numbering
@@ -790,6 +809,7 @@ public:
 				std::istringstream iss(condition);
 				long expression_result = evaluate_expression(iss);
 				bool condition_true = (expression_result != 0);
+				FLASH_LOG(Lexer, Debug, "Preprocessor: #if (result=", condition_true, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.push(!condition_true);
 				condition_was_true_stack.push(condition_true);
 				append_line_with_tracking("");  // Preserve line numbering
@@ -833,8 +853,10 @@ public:
 			}
 			else if (line.find("#endif", 0) == 0) {
 				if (!skipping_stack.empty()) {
+					FLASH_LOG(Lexer, Debug, "Preprocessor: #endif (not skipping), stack size before pop: ", skipping_stack.size(), " at ", filestack_.top().file_name, ":", line_number);
 					skipping_stack.pop();
 					condition_was_true_stack.pop();
+					FLASH_LOG(Lexer, Debug, "Preprocessor: stack size after pop: ", skipping_stack.size());
 				}
 				else {
 					FLASH_LOG(Lexer, Error, "Unmatched #endif directive");
@@ -890,10 +912,25 @@ public:
 				// Handle multiline macro invocations.
 				// If a line has an incomplete macro invocation (unmatched parens),
 				// keep reading lines until we have matching parens.
+				// BUT: Stop if the next line is a preprocessor directive (starts with #)
+				// because preprocessor directives cannot be inside macro invocations.
 				while (hasIncompleteMacroInvocation(line)) {
 					std::string next_line;
 					if (!std::getline(stream, next_line)) break;
 					++line_number;
+					
+					// Check if next_line is a preprocessor directive
+					// First, find the first non-whitespace character
+					size_t first_non_ws = next_line.find_first_not_of(" \t");
+					if (first_non_ws != std::string::npos && next_line[first_non_ws] == '#') {
+						// The next line is a preprocessor directive - don't merge it!
+						// Store it as a pending line to be processed on the next iteration
+						pending_line = std::move(next_line);
+						has_pending_line = true;
+						--line_number;  // Undo the increment; it will be incremented when pending_line is processed
+						break;
+					}
+					
 					// Join with the previous line (preserving whitespace)
 					line += "\n" + next_line;
 				}
