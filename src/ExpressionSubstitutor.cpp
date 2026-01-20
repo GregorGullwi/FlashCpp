@@ -1,5 +1,6 @@
 #include "ExpressionSubstitutor.h"
 #include "Parser.h"
+#include "TemplateInstantiationHelper.h"
 #include "Log.h"
 
 ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
@@ -419,34 +420,15 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			substituted_args.push_back(substitute(call.arguments()[i]));
 		}
 		
-		// For now, we'll try a simple approach: check if any argument types have been substituted
-		// and use those types to instantiate the template
-		// This handles the common pattern: func(__type_identity<T>{}) where T is substituted
-		std::vector<TemplateTypeArg> deduced_template_args;
-		
-		for (size_t i = 0; i < substituted_args.size(); ++i) {
-			const ASTNode& func_arg = substituted_args[i];
-			// Check if this is a ConstructorCallNode (like __type_identity<int>{})
-			if (func_arg.is<ExpressionNode>()) {
-				const ExpressionNode& expr = func_arg.as<ExpressionNode>();
-				if (std::holds_alternative<ConstructorCallNode>(expr)) {
-					const ConstructorCallNode& ctor_call = std::get<ConstructorCallNode>(expr);
-					const ASTNode& ctor_type_node = ctor_call.type_node();
-					if (ctor_type_node.is<TypeSpecifierNode>()) {
-						const TypeSpecifierNode& type_spec = ctor_type_node.as<TypeSpecifierNode>();
-						// Use this type as a template argument
-						TemplateTypeArg template_arg(type_spec);
-						deduced_template_args.push_back(template_arg);
-						FLASH_LOG(Templates, Debug, "  Deduced template argument from constructor call");
-					}
-				}
-			}
-		}
+		// Use shared helper to deduce template arguments from constructor call patterns
+		std::vector<TemplateTypeArg> deduced_template_args = TemplateInstantiationHelper::deduceTemplateArgsFromCall(substituted_args);
 		
 		// If we deduced template arguments, try to instantiate the template function
 		if (!deduced_template_args.empty()) {
-			FLASH_LOG(Templates, Debug, "  Attempting to instantiate template function: ", template_func_name, " with ", deduced_template_args.size(), " deduced arguments");
-			auto instantiated_opt = parser_.try_instantiate_template_explicit(template_func_name, deduced_template_args);
+			// Use shared helper to try instantiation with various name variations
+			auto instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
+				parser_, template_func_name, template_func_name, deduced_template_args);
+			
 			if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
 				FLASH_LOG(Templates, Debug, "  Successfully instantiated template function");

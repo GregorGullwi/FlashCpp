@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "TemplateRegistry.h"  // For gTemplateRegistry
+#include "TemplateInstantiationHelper.h"  // For shared template instantiation utilities
 #include "Log.h"  // For FLASH_LOG
 #include <optional>
 #include <string>
@@ -12,6 +13,37 @@
 class SymbolTable;
 struct TypeInfo;
 class Parser;  // For template instantiation
+
+/// @file ConstExprEvaluator.h
+/// @brief Constant expression evaluation for static_assert, constexpr variables, etc.
+///
+/// ## Purpose
+///
+/// ConstExpr::Evaluator performs **value computation** at compile time.
+/// It evaluates expressions to produce primitive values (int, bool, double).
+///
+/// ## Key Differences from ExpressionSubstitutor
+///
+/// | Aspect      | ExpressionSubstitutor        | ConstExpr::Evaluator         |
+/// |-------------|------------------------------|------------------------------|
+/// | Operation   | AST transformation           | Value computation            |
+/// | Input       | AST with template params     | AST with concrete types      |
+/// | Output      | Modified AST                 | Primitive value (int/bool)   |
+/// | When used   | Template instantiation       | static_assert, constexpr     |
+///
+/// ## Typical Flow
+///
+/// ```
+/// Parser.parse_static_assert()
+///   → ConstExpr::Evaluator.evaluate()
+///     → evaluate_function_call() → TemplateInstantiationHelper (if template)
+///     → evaluate_binary_operator()
+///     → evaluate_unary_operator()
+///   → EvalResult (bool/int/double value)
+/// ```
+///
+/// @see ExpressionSubstitutor for template parameter substitution
+/// @see TemplateInstantiationHelper for shared template instantiation utilities
 
 namespace ConstExpr {
 
@@ -1455,52 +1487,15 @@ private:
 			
 			// No pre-instantiated version found - try to instantiate on-demand if parser is available
 			if (context.parser) {
-				// Try to deduce template arguments from function call arguments
-				// For template functions, we deduce template arguments from the types of function arguments
-				std::vector<TemplateTypeArg> deduced_args;
-				
-				for (size_t i = 0; i < arguments.size(); ++i) {
-					const ASTNode& arg = arguments[i];
-					
-					// Check if argument is a ConstructorCallNode (like __type_identity<int>{})
-					if (arg.is<ExpressionNode>()) {
-						const ExpressionNode& expr = arg.as<ExpressionNode>();
-						if (std::holds_alternative<ConstructorCallNode>(expr)) {
-							const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
-							const ASTNode& type_node = ctor.type_node();
-							if (type_node.is<TypeSpecifierNode>()) {
-								const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-								// Use this type as a template argument
-								deduced_args.emplace_back(type_spec);
-							}
-						}
-					}
-				}
+				// Use shared helper to deduce template arguments from function call arguments
+				std::vector<TemplateTypeArg> deduced_args = TemplateInstantiationHelper::deduceTemplateArgsFromCall(arguments);
 				
 				// Try to instantiate even if we have fewer deduced args than template params
 				// The template might have default parameters that can fill in the rest
 				if (!deduced_args.empty()) {
-					FLASH_LOG(Templates, Debug, "Attempting to instantiate template function with ", deduced_args.size(), " deduced arguments");
-					auto instantiated_opt = context.parser->try_instantiate_template_explicit(qualified_name, deduced_args);
-					if (!instantiated_opt.has_value() && qualified_name != func_name) {
-						instantiated_opt = context.parser->try_instantiate_template_explicit(func_name, deduced_args);
-					}
-					
-					// If still not found, try to find the template in the global registry by searching
-					// with different namespace prefixes
-					if (!instantiated_opt.has_value()) {
-						// Try common namespace prefixes
-						std::vector<std::string> name_candidates;
-						name_candidates.push_back(std::string("std::") + std::string(func_name));
-						name_candidates.push_back(std::string("__gnu_cxx::") + std::string(func_name));
-						
-						for (const auto& candidate_name : name_candidates) {
-							instantiated_opt = context.parser->try_instantiate_template_explicit(candidate_name, deduced_args);
-							if (instantiated_opt.has_value()) {
-								break;
-							}
-						}
-					}
+					// Use shared helper to try instantiation with various name variations
+					auto instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
+						*context.parser, qualified_name, func_name, deduced_args);
 					
 					if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
 						const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
@@ -1511,8 +1506,6 @@ private:
 						}
 					} else if (instantiated_opt.has_value()) {
 						FLASH_LOG(Templates, Debug, "Instantiation succeeded but result is not a FunctionDeclarationNode");
-					} else {
-						FLASH_LOG(Templates, Debug, "Template function instantiation failed for ", qualified_name);
 					}
 				} else {
 					FLASH_LOG(Templates, Debug, "No template arguments could be deduced from function call arguments");
