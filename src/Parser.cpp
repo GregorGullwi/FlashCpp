@@ -17601,10 +17601,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 			// Normalize __builtin_ prefix to __ prefix for easier matching
 			// e.g., __builtin_is_constant_evaluated -> __is_constant_evaluated
-			// Use string_view to avoid allocation - substr is essentially free with string_view
 			std::string_view normalized_view = trait_name;
-			StringBuilder builtin_normalized; // Only used if we need to normalize __builtin_ prefix
 			if (trait_name.starts_with("__builtin_")) {
+				StringBuilder builtin_normalized;
 				builtin_normalized.append("__").append(trait_name.substr(10)); // Remove "__builtin_" and add back "__"
 				normalized_view = builtin_normalized.commit();
 			}
