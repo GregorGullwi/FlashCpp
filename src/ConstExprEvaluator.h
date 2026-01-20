@@ -1337,6 +1337,14 @@ private:
 			FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
 		}
 		
+		// Special handling for std::__is_complete_or_unbounded
+		// This is a helper function in the standard library that checks if a type is complete
+		// For constant expression evaluation purposes, we always return true
+		if (qualified_name == "std::__is_complete_or_unbounded" || func_name == "__is_complete_or_unbounded") {
+			FLASH_LOG(Templates, Debug, "Special handling for __is_complete_or_unbounded: returning true");
+			return EvalResult::from_bool(true);
+		}
+		
 		// First try simple name lookup in symbol table
 		auto symbol_opt = context.symbols->lookup(func_name);
 		

@@ -17728,6 +17728,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Special traits
 				{"__underlying_type", {TypeTraitKind::UnderlyingType, false, false, false}},
 				{"__is_constant_evaluated", {TypeTraitKind::IsConstantEvaluated, false, false, true}},
+				{"__is_complete_or_unbounded", {TypeTraitKind::IsCompleteOrUnbounded, false, false, false}},
 			};
 
 			auto it = trait_map.find(normalized_view);

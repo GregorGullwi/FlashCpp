@@ -2998,7 +2998,8 @@ enum class TypeTraitKind {
 	HasVirtualDestructor,    // __has_virtual_destructor(T) - check if type has virtual destructor
 	// Special traits
 	UnderlyingType,      // __underlying_type(T) - returns the underlying type of an enum
-	IsConstantEvaluated  // __is_constant_evaluated() - no arguments, returns bool
+	IsConstantEvaluated, // __is_constant_evaluated() - no arguments, returns bool
+	IsCompleteOrUnbounded // __is_complete_or_unbounded - helper for standard library, always returns true
 };
 
 class TypeTraitExprNode {
@@ -3109,6 +3110,9 @@ public:
 			case TypeTraitKind::IsConstantEvaluated: return "__is_constant_evaluated";
 			case TypeTraitKind::IsLayoutCompatible: return "__is_layout_compatible";
 			case TypeTraitKind::IsPointerInterconvertibleBaseOf: return "__is_pointer_interconvertible_base_of";
+			case TypeTraitKind::HasTrivialDestructor: return "__has_trivial_destructor";
+			case TypeTraitKind::HasVirtualDestructor: return "__has_virtual_destructor";
+			case TypeTraitKind::IsCompleteOrUnbounded: return "__is_complete_or_unbounded";
 			default: return "__unknown_trait";
 		}
 	}

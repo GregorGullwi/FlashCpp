@@ -97,6 +97,12 @@ inline TypeTraitResult evaluateTypeTrait(
 			// This is context-dependent, so caller should handle this case specially
 			return TypeTraitResult::failure();
 			
+		case TypeTraitKind::IsCompleteOrUnbounded:
+			// __is_complete_or_unbounded: For standard library compatibility, always return true
+			// The real function checks if a type is complete or an unbounded array,
+			// but for our purposes, we'll assume all types are complete
+			return TypeTraitResult::success_true();
+			
 		case TypeTraitKind::IsVoid:
 			result = (base_type == Type::Void && !is_reference && pointer_depth == 0);
 			break;
