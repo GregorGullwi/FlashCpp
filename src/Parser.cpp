@@ -17588,9 +17588,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		if (!is_declared_template) {
 			NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
 			if (!current_namespace_handle.isGlobal()) {
-				std::string_view namespace_qualified = gNamespaceRegistry.getQualifiedName(current_namespace_handle);
-				std::string qualified_name = std::string(namespace_qualified) + "::" + std::string(trait_name);
-				is_declared_template = gTemplateRegistry.lookupTemplate(qualified_name).has_value();
+				StringHandle trait_name_handle = StringTable::getOrInternStringHandle(trait_name);
+				StringHandle qualified_name_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, trait_name_handle);
+				is_declared_template = gTemplateRegistry.lookupTemplate(StringTable::getStringView(qualified_name_handle)).has_value();
 			}
 		}
 		
@@ -17603,10 +17603,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// e.g., __builtin_is_constant_evaluated -> __is_constant_evaluated
 			// Use string_view to avoid allocation - substr is essentially free with string_view
 			std::string_view normalized_view = trait_name;
-			std::string builtin_normalized; // Only used if we need to normalize __builtin_ prefix
+			StringBuilder builtin_normalized; // Only used if we need to normalize __builtin_ prefix
 			if (trait_name.starts_with("__builtin_")) {
-				builtin_normalized = "__" + std::string(trait_name.substr(10)); // Remove "__builtin_" and add back "__"
-				normalized_view = builtin_normalized;
+				builtin_normalized.append("__").append(trait_name.substr(10)); // Remove "__builtin_" and add back "__"
+				normalized_view = builtin_normalized.commit();
 			}
 
 			// Lookup trait info using a static table
@@ -17787,15 +17787,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							consume_token();
 							arg_type_spec.add_pointer_level();
 						}
-						if (peek_token().has_value()) {
-							std::string_view next_token = peek_token()->value();
-							if (next_token == "&&") {
-								consume_token();
-								arg_type_spec.set_reference(true);  // rvalue reference
-							} else if (next_token == "&") {
-								consume_token();
-								arg_type_spec.set_reference(false);  // lvalue reference
-							}
+						
+						// Parse reference qualifiers (&, &&)
+						ReferenceQualifier arg_ref_qual = parse_reference_qualifier();
+						if (arg_ref_qual == ReferenceQualifier::RValueReference) {
+							arg_type_spec.set_reference(true);  // rvalue reference
+						} else if (arg_ref_qual == ReferenceQualifier::LValueReference) {
+							arg_type_spec.set_reference(false);  // lvalue reference
 						}
 						
 						// Parse array specifications ([N] or []) for variadic trait additional args
