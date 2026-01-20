@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "TemplateRegistry.h"  // For gTemplateRegistry
 #include <optional>
 #include <string>
 #include <variant>
@@ -556,14 +557,11 @@ private:
 	}
 
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context) {
-		// Constructor calls like float(3.14), int(100), double(2.718)
+		// Constructor calls like float(3.14), int(100), double(2.718), or type_identity<int>{}
 		// These are essentially type conversions/casts in constant expressions
-		// Get the argument(s) - for basic type conversions, should have exactly 1 argument
+		// Get the argument(s)
 		const auto& args = ctor_call.arguments();
-		if (args.size() != 1) {
-			return EvalResult::error("Constructor call must have exactly 1 argument for constant evaluation");
-		}
-
+		
 		// Get the target type
 		const ASTNode& type_node = ctor_call.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
@@ -571,6 +569,46 @@ private:
 		}
 		
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		
+		// Handle empty constructor calls (default/value initialization): Type{}
+		if (args.size() == 0) {
+			// For struct types, this is valid - it's default initialization
+			// Return a success result with default value (0 for integers, false for bool, etc.)
+			// This allows the constructor call to be used for template argument deduction
+			switch (type_spec.type()) {
+				case Type::Bool:
+					return EvalResult::from_bool(false);
+				case Type::Char:
+				case Type::Short:
+				case Type::Int:
+				case Type::Long:
+				case Type::LongLong:
+					return EvalResult::from_int(0);
+				case Type::UnsignedChar:
+				case Type::UnsignedShort:
+				case Type::UnsignedInt:
+				case Type::UnsignedLong:
+				case Type::UnsignedLongLong:
+					return EvalResult::from_int(0);
+				case Type::Float:
+				case Type::Double:
+				case Type::LongDouble:
+					return EvalResult::from_double(0.0);
+				case Type::Struct:
+				case Type::UserDefined:
+					// For struct types, return a success result with value 0
+					// This indicates successful default construction
+					return EvalResult::from_int(0);
+				default:
+					return EvalResult::error("Unsupported type for default construction in constant expression");
+			}
+		}
+		
+		// For basic type conversions with 1 argument: Type(value)
+		if (args.size() != 1) {
+			return EvalResult::error("Constructor call must have 0 or 1 arguments for constant evaluation");
+		}
+		
 		return evaluate_expr_node(type_spec.type(), args[0], context, "Unsupported type in constructor call for constant evaluation");
 	}
 
@@ -1224,7 +1262,42 @@ private:
 		}
 
 		std::string_view func_name = func_decl_node.identifier_token().value();
+		
+		// First try simple name lookup in symbol table
 		auto symbol_opt = context.symbols->lookup(func_name);
+		
+		// If not found in symbol table, try the global template registry
+		// This handles cases where a template function is defined but not yet instantiated
+		if (!symbol_opt.has_value() && context.parser) {
+			// Try to find the template in the global registry with simple name
+			auto template_opt = gTemplateRegistry.lookupTemplate(func_name);
+			
+			// If not found with simple name, try with common namespace prefixes
+			if (!template_opt.has_value()) {
+				std::vector<std::string> name_candidates;
+				name_candidates.push_back(std::string("std::") + std::string(func_name));
+				name_candidates.push_back(std::string("__gnu_cxx::") + std::string(func_name));
+				
+				for (const auto& candidate_name : name_candidates) {
+					template_opt = gTemplateRegistry.lookupTemplate(candidate_name);
+					if (template_opt.has_value()) {
+						break;
+					}
+				}
+			}
+			
+			// If we found the template, use it
+			if (template_opt.has_value()) {
+				symbol_opt = template_opt;
+			}
+		}
+		
+		// For qualified_name used in error messages, try to get a more informative name
+		std::string_view qualified_name = func_name;
+		if (func_call.has_mangled_name()) {
+			// Use mangled name for error messages if available
+			qualified_name = func_call.mangled_name();
+		}
 		
 		// If simple lookup fails, try to find the function as a static member in struct types
 		if (!symbol_opt.has_value()) {
@@ -1324,7 +1397,11 @@ private:
 			
 			// Try to find or instantiate the function with the given arguments
 			// First, try to find an already-instantiated version in the symbol table
-			std::vector<ASTNode> all_overloads = context.symbols->lookup_all(func_name);
+			// Try both qualified and unqualified names
+			std::vector<ASTNode> all_overloads = context.symbols->lookup_all(qualified_name);
+			if (all_overloads.empty() && qualified_name != func_name) {
+				all_overloads = context.symbols->lookup_all(func_name);
+			}
 			
 			// Look for a constexpr FunctionDeclarationNode that matches the argument count
 			for (const auto& overload : all_overloads) {
@@ -1364,8 +1441,29 @@ private:
 				}
 				
 				// If we deduced template arguments, try to instantiate
+				// Try with qualified name first, then unqualified, then try searching all templates
 				if (!deduced_args.empty()) {
-					auto instantiated_opt = context.parser->try_instantiate_template_explicit(func_name, deduced_args);
+					auto instantiated_opt = context.parser->try_instantiate_template_explicit(qualified_name, deduced_args);
+					if (!instantiated_opt.has_value() && qualified_name != func_name) {
+						instantiated_opt = context.parser->try_instantiate_template_explicit(func_name, deduced_args);
+					}
+					
+					// If still not found, try to find the template in the global registry by searching
+					// with different namespace prefixes
+					if (!instantiated_opt.has_value()) {
+						// Try common namespace prefixes
+						std::vector<std::string> name_candidates;
+						name_candidates.push_back(std::string("std::") + std::string(func_name));
+						name_candidates.push_back(std::string("__gnu_cxx::") + std::string(func_name));
+						
+						for (const auto& candidate_name : name_candidates) {
+							instantiated_opt = context.parser->try_instantiate_template_explicit(candidate_name, deduced_args);
+							if (instantiated_opt.has_value()) {
+								break;
+							}
+						}
+					}
+					
 					if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
 						const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
 						if (instantiated_func.is_constexpr()) {
@@ -1379,7 +1477,7 @@ private:
 			
 			// No pre-instantiated version found and couldn't instantiate on-demand
 			// Return a specific error indicating this is a template function issue
-			return EvalResult::error("Template function in constant expression - instantiation required: " + std::string(func_name));
+			return EvalResult::error("Template function in constant expression - instantiation required: " + std::string(qualified_name));
 		}
 		
 		// Check if it's a VariableDeclarationNode (could be a lambda/functor callable object)
