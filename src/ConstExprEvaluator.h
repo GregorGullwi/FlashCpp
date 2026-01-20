@@ -9,6 +9,7 @@
 // Forward declarations
 class SymbolTable;
 struct TypeInfo;
+class Parser;  // For template instantiation
 
 namespace ConstExpr {
 
@@ -131,6 +132,9 @@ struct EvaluationContext {
 	// Struct being parsed (for looking up static members in static_assert within struct)
 	const StructDeclarationNode* struct_node = nullptr;
 	const StructTypeInfo* struct_info = nullptr;
+	
+	// Parser pointer for template instantiation (optional)
+	Parser* parser = nullptr;
 
 	// Constructor requires symbol table to prevent missing it
 	explicit EvaluationContext(const SymbolTable& symbol_table)
@@ -1309,6 +1313,35 @@ private:
 			// Pass empty bindings for top-level function calls
 			std::unordered_map<std::string_view, EvalResult> empty_bindings;
 			return evaluate_function_call_with_bindings(func_decl, arguments, empty_bindings, context);
+		}
+		
+		// Check if it's a TemplateFunctionDeclarationNode (template function)
+		if (symbol_node.is<TemplateFunctionDeclarationNode>()) {
+			// Try to find or instantiate the function with the given arguments
+			// For now, we'll look for a pre-instantiated version in the symbol table
+			// This is a simplified approach - full template argument deduction would be more complex
+			
+			// Try to find instantiated versions by looking for mangled names
+			// This is a workaround until we implement full instantiation in the evaluator
+			std::vector<ASTNode> all_overloads = context.symbols->lookup_all(func_name);
+			
+			// Look for a constexpr FunctionDeclarationNode that matches the argument count
+			const auto& arguments = func_call.arguments();
+			for (const auto& overload : all_overloads) {
+				if (overload.is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& candidate = overload.as<FunctionDeclarationNode>();
+					if (candidate.is_constexpr() && 
+					    candidate.parameter_nodes().size() == arguments.size()) {
+						// Found a potential match - try to evaluate it
+						std::unordered_map<std::string_view, EvalResult> empty_bindings;
+						return evaluate_function_call_with_bindings(candidate, arguments, empty_bindings, context);
+					}
+				}
+			}
+			
+			// No pre-instantiated version found
+			// Return a specific error indicating this is a template function issue
+			return EvalResult::error("Template function in constant expression - instantiation required: " + std::string(func_name));
 		}
 		
 		// Check if it's a VariableDeclarationNode (could be a lambda/functor callable object)
