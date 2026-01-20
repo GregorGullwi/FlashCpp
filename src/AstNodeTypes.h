@@ -1792,6 +1792,14 @@ public:
 	StringHandle mangled_name_handle() const { return mangled_name_; }
 	bool has_mangled_name() const { return mangled_name_.isValid(); }
 	
+	// Qualified source name support (for template lookup in constexpr evaluation)
+	// This stores the source-level qualified name (e.g., "std::__is_complete_or_unbounded")
+	// which is needed for template function lookup in the template registry
+	void set_qualified_name(std::string_view name) { qualified_name_ = StringTable::getOrInternStringHandle(name); }
+	std::string_view qualified_name() const { return qualified_name_.view(); }
+	StringHandle qualified_name_handle() const { return qualified_name_; }
+	bool has_qualified_name() const { return qualified_name_.isValid(); }
+	
 	// Explicit template arguments support (for calls like foo<int>())
 	// These are stored as expression nodes which may contain TemplateParameterReferenceNode for dependent args
 	void set_template_arguments(std::vector<ASTNode>&& template_args) { 
@@ -1810,6 +1818,7 @@ private:
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
 	StringHandle mangled_name_;  // Pre-computed mangled name
+	StringHandle qualified_name_;  // Source-level qualified name (e.g., "std::func")
 	std::vector<ASTNode> template_arguments_;  // Explicit template arguments (e.g., <T> in foo<T>())
 	bool is_indirect_call_ = false;  // True for function pointer/reference calls
 };

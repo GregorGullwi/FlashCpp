@@ -18796,11 +18796,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					FLASH_LOG(Templates, Debug, "Stored ", template_arg_nodes.size(), " template argument nodes in FunctionCallNode (path 1)");
 				}
 				
+				// Store the qualified source name for template lookup during constexpr evaluation
+				std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
+				FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
+				func_call.set_qualified_name(qualified_name);
+				FLASH_LOG(Parser, Debug, "Set qualified name on FunctionCallNode: ", qualified_name);
+				
 				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 				if (identifierType->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 					if (func_decl.has_mangled_name()) {
-						std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+						func_call.set_mangled_name(func_decl.mangled_name());
 					}
 				}
 			} else {

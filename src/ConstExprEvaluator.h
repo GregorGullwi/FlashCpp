@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "TemplateRegistry.h"  // For gTemplateRegistry
+#include "Log.h"  // For FLASH_LOG
 #include <optional>
 #include <string>
 #include <variant>
@@ -1263,16 +1264,29 @@ private:
 
 		std::string_view func_name = func_decl_node.identifier_token().value();
 		
+		// First try to get the qualified source name (e.g., "std::__is_complete_or_unbounded")
+		// This is set by the parser for qualified function calls
+		std::string_view qualified_name = func_name;
+		if (func_call.has_qualified_name()) {
+			qualified_name = func_call.qualified_name();
+			FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
+		}
+		
 		// First try simple name lookup in symbol table
 		auto symbol_opt = context.symbols->lookup(func_name);
 		
 		// If not found in symbol table, try the global template registry
 		// This handles cases where a template function is defined but not yet instantiated
 		if (!symbol_opt.has_value() && context.parser) {
-			// Try to find the template in the global registry with simple name
-			auto template_opt = gTemplateRegistry.lookupTemplate(func_name);
+			// Try to find the template in the global registry with qualified name first
+			auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
 			
-			// If not found with simple name, try with common namespace prefixes
+			// If not found with qualified name, try with simple name
+			if (!template_opt.has_value() && qualified_name != func_name) {
+				template_opt = gTemplateRegistry.lookupTemplate(func_name);
+			}
+			
+			// If still not found with simple name, try with common namespace prefixes
 			if (!template_opt.has_value()) {
 				std::vector<std::string> name_candidates;
 				name_candidates.push_back(std::string("std::") + std::string(func_name));
@@ -1290,13 +1304,6 @@ private:
 			if (template_opt.has_value()) {
 				symbol_opt = template_opt;
 			}
-		}
-		
-		// For qualified_name used in error messages, try to get a more informative name
-		std::string_view qualified_name = func_name;
-		if (func_call.has_mangled_name()) {
-			// Use mangled name for error messages if available
-			qualified_name = func_call.mangled_name();
 		}
 		
 		// If simple lookup fails, try to find the function as a static member in struct types
