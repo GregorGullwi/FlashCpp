@@ -7503,14 +7503,13 @@ ParseResult Parser::parse_static_assert()
 		return ParseResult::error("Expected ';' after static_assert", *current_token_);
 	}
 
-	// If we're inside a template body, defer static_assert evaluation until instantiation
+	// If we're inside a template body during template DEFINITION (not instantiation),
+	// defer static_assert evaluation until instantiation.
+	// However, if we can evaluate it now (non-dependent expression), we should do so to catch errors early.
 	// The expression may depend on template parameters that are not yet known
-	if (parsing_template_body_ && !current_template_param_names_.empty()) {
-		// Skip evaluation - the static_assert will be checked during template instantiation
-		return saved_position.success();
-	}
-
-	// Evaluate the constant expression using ConstExprEvaluator
+	bool is_in_template_definition = parsing_template_body_ && !current_template_param_names_.empty();
+	
+	// Try to evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable);
 	ctx.parser = this;  // Enable template function instantiation
 	
@@ -7522,6 +7521,22 @@ ParseResult Parser::parse_static_assert()
 	}
 	
 	auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
+	
+	// If we're in a template definition and evaluation failed due to dependent types,
+	// that's okay - skip it and it will be checked during instantiation
+	if (is_in_template_definition && !eval_result.success) {
+		// Check if the error is due to template-dependent expressions
+		// Common patterns: "Template function", "Template parameter", "not a constant expression"
+		FLASH_LOG(Templates, Debug, "static_assert evaluation failed in template body: ", eval_result.error_message);
+		if (eval_result.error_message.find("Template") != std::string::npos ||
+		    eval_result.error_message.find("template") != std::string::npos ||
+		    eval_result.error_message.find("dependent") != std::string::npos) {
+			// This is a template-dependent expression - defer evaluation
+			FLASH_LOG(Templates, Debug, "Deferring static_assert evaluation in template body: ", eval_result.error_message);
+			return saved_position.success();
+		}
+		// Otherwise, it's a real error - report it
+	}
 	
 	if (!eval_result.success) {
 		return ParseResult::error(
