@@ -98,9 +98,31 @@ inline TypeTraitResult evaluateTypeTrait(
 			return TypeTraitResult::failure();
 			
 		case TypeTraitKind::IsCompleteOrUnbounded:
-			// __is_complete_or_unbounded: For standard library compatibility, always return true
-			// The real function checks if a type is complete or an unbounded array,
-			// but for our purposes, we'll assume all types are complete
+			// __is_complete_or_unbounded evaluates to true if either:
+			// 1. T is a complete type, or
+			// 2. T is an unbounded array type (e.g. int[])
+			// It evaluates to false for:
+			// - Incomplete class types
+			// - void
+			// - Bounded array types with incomplete element types
+			
+			// Check for void - always incomplete
+			if (base_type == Type::Void && pointer_depth == 0 && !is_reference) {
+				return TypeTraitResult::success_false();
+			}
+			
+			// Check for unbounded array - always returns true
+			if (is_array && (!array_size.has_value() || *array_size == 0)) {
+				return TypeTraitResult::success_true();
+			}
+			
+			// Check for incomplete class/struct types (struct_info is null for incomplete types)
+			if ((base_type == Type::Struct || base_type == Type::UserDefined) && 
+			    !struct_info && pointer_depth == 0 && !is_reference) {
+				return TypeTraitResult::success_false();
+			}
+			
+			// All other types are considered complete
 			return TypeTraitResult::success_true();
 			
 		case TypeTraitKind::IsVoid:

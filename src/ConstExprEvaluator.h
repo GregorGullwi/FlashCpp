@@ -1359,9 +1359,68 @@ private:
 		
 		// Special handling for std::__is_complete_or_unbounded
 		// This is a helper function in the standard library that checks if a type is complete
-		// For constant expression evaluation purposes, we always return true
+		// __is_complete_or_unbounded evaluates to true if either:
+		// 1. T is a complete type, or
+		// 2. T is an unbounded array type (e.g. int[])
 		if (qualified_name == "std::__is_complete_or_unbounded" || func_name == "__is_complete_or_unbounded") {
-			FLASH_LOG(Templates, Debug, "Special handling for __is_complete_or_unbounded: returning true");
+			FLASH_LOG(Templates, Debug, "Special handling for __is_complete_or_unbounded");
+			
+			// The function takes a __type_identity<T> argument
+			// We need to extract the type T and check if it's complete or unbounded
+			if (func_call.arguments().size() == 0) {
+				return EvalResult::error("__is_complete_or_unbounded requires a type argument");
+			}
+			
+			// Get the first argument (should be a ConstructorCallNode for __type_identity<T>{})
+			const ASTNode& arg = func_call.arguments()[0];
+			
+			// Try to extract the type from the argument
+			// The argument is typically __type_identity<T>{} which is a constructor call
+			if (arg.is<ExpressionNode>()) {
+				const ExpressionNode& expr = arg.as<ExpressionNode>();
+				if (std::holds_alternative<ConstructorCallNode>(expr)) {
+					const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
+					const ASTNode& type_node = ctor.type_node();
+					
+					if (type_node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+						Type base_type = type_spec.type();
+						bool is_reference = type_spec.is_reference();
+						size_t pointer_depth = type_spec.pointer_depth();
+						bool is_array = type_spec.is_array();
+						std::optional<size_t> array_size = type_spec.array_size();
+						
+						// Check for void - always incomplete
+						if (base_type == Type::Void && pointer_depth == 0 && !is_reference) {
+							return EvalResult::from_bool(false);
+						}
+						
+						// Check for unbounded array - always returns true
+						if (is_array && (!array_size.has_value() || *array_size == 0)) {
+							return EvalResult::from_bool(true);
+						}
+						
+						// Check for incomplete class/struct types
+						// A type is incomplete if it's a struct/class with no StructTypeInfo
+						TypeIndex type_idx = type_spec.type_index();
+						if (type_idx != TypeIndex{0} && (base_type == Type::Struct || base_type == Type::UserDefined)) {
+							const TypeInfo& type_info = gTypeInfo[type_idx];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							
+							// If it's a struct/class type with no struct_info, it's incomplete
+							if (!struct_info && pointer_depth == 0 && !is_reference) {
+								return EvalResult::from_bool(false);
+							}
+						}
+						
+						// All other types are considered complete
+						return EvalResult::from_bool(true);
+					}
+				}
+			}
+			
+			// If we can't extract the type, return true as a fallback
+			FLASH_LOG(Templates, Debug, "__is_complete_or_unbounded: couldn't extract type, returning true as fallback");
 			return EvalResult::from_bool(true);
 		}
 		
@@ -3767,6 +3826,40 @@ public:
 				result = type_spec.is_array() & !is_reference & (pointer_depth == 0);
 				// For struct types, we need runtime type info, so fall through to default
 				break;
+
+			case TypeTraitKind::IsCompleteOrUnbounded:
+				// __is_complete_or_unbounded evaluates to true if either:
+				// 1. T is a complete type, or
+				// 2. T is an unbounded array type (e.g. int[])
+				// Returns false for: void, incomplete class types, bounded arrays with incomplete elements
+				
+				// Check for void - always incomplete
+				if (type == Type::Void && pointer_depth == 0 && !is_reference) {
+					return EvalResult::from_bool(false);
+				}
+				
+				// Check for unbounded array - always returns true
+				if (type_spec.is_array() && type_spec.array_size() == 0) {
+					return EvalResult::from_bool(true);
+				}
+				
+				// Check for incomplete class/struct types
+				// A type is incomplete if it's a struct/class with no StructTypeInfo
+				if ((type == Type::Struct || type == Type::UserDefined) && 
+				    pointer_depth == 0 && !is_reference) {
+					TypeIndex type_idx = type_spec.type_index();
+					if (type_idx != TypeIndex{0}) {
+						const TypeInfo& type_info = gTypeInfo[type_idx];
+						const StructTypeInfo* struct_info = type_info.getStructInfo();
+						// If no struct_info, the type is incomplete
+						if (!struct_info) {
+							return EvalResult::from_bool(false);
+						}
+					}
+				}
+				
+				// All other types are considered complete
+				return EvalResult::from_bool(true);
 
 			// Add more type traits as needed
 			// For now, other type traits return false during constexpr evaluation
