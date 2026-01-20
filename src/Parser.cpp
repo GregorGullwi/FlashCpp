@@ -38082,8 +38082,8 @@ if (struct_type_info.getStructInfo()) {
 	          ", needs_default_constructor=", struct_info_ptr->needs_default_constructor);
 	
 	// Re-evaluate deferred static_asserts with substituted template parameters
-	FLASH_LOG(Templates, Debug, "Checking ", class_decl.deferred_static_asserts().size(), 
-	          " deferred static_asserts for instantiation");
+	FLASH_LOG(Templates, Debug, "Checking deferred static_asserts for struct '", class_decl.name(), 
+	          "': found ", class_decl.deferred_static_asserts().size(), " deferred asserts");
 	
 	for (const auto& deferred_assert : class_decl.deferred_static_asserts()) {
 		FLASH_LOG(Templates, Debug, "Re-evaluating deferred static_assert during template instantiation");
