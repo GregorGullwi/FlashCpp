@@ -14,6 +14,37 @@ class SymbolTable;
 struct TypeInfo;
 class Parser;  // For template instantiation
 
+/// @file ConstExprEvaluator.h
+/// @brief Constant expression evaluation for static_assert, constexpr variables, etc.
+///
+/// ## Purpose
+///
+/// ConstExpr::Evaluator performs **value computation** at compile time.
+/// It evaluates expressions to produce primitive values (int, bool, double).
+///
+/// ## Key Differences from ExpressionSubstitutor
+///
+/// | Aspect      | ExpressionSubstitutor        | ConstExpr::Evaluator         |
+/// |-------------|------------------------------|------------------------------|
+/// | Operation   | AST transformation           | Value computation            |
+/// | Input       | AST with template params     | AST with concrete types      |
+/// | Output      | Modified AST                 | Primitive value (int/bool)   |
+/// | When used   | Template instantiation       | static_assert, constexpr     |
+///
+/// ## Typical Flow
+///
+/// ```
+/// Parser.parse_static_assert()
+///   → ConstExpr::Evaluator.evaluate()
+///     → evaluate_function_call() → TemplateInstantiationHelper (if template)
+///     → evaluate_binary_operator()
+///     → evaluate_unary_operator()
+///   → EvalResult (bool/int/double value)
+/// ```
+///
+/// @see ExpressionSubstitutor for template parameter substitution
+/// @see TemplateInstantiationHelper for shared template instantiation utilities
+
 namespace ConstExpr {
 
 // Error type classification for constexpr evaluation failures
