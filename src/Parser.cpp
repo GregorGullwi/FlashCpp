@@ -16622,6 +16622,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 
 		// Check for scope resolution operator :: (namespace/class member access)
 		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "::"sv) {
+			// TEST: See if this postfix path is reached
+			if (result->is<ExpressionNode>()) {
+				const ExpressionNode& expr = result->as<ExpressionNode>();
+				if (std::holds_alternative<IdentifierNode>(expr)) {
+					std::string_view name = std::get<IdentifierNode>(expr).name();
+					if (name == "std") {
+						return ParseResult::error("TEST: Reached postfix :: path for std", *current_token_);
+					}
+				}
+			}
+			
 			FLASH_LOG(Parser, Warning, "@@@ POSTFIX :: OPERATOR DETECTED");
 			// Handle namespace::member or class::static_member syntax
 			// We have an identifier (in result), now parse :: and the member name
@@ -16670,8 +16681,80 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			// Check if this is followed by template arguments: ns::func<Args>
 			std::optional<std::vector<TemplateTypeArg>> template_args;
 			if (peek_token().has_value() && peek_token()->value() == "<") {
+				FLASH_LOG_FORMAT(Parser, Debug, "@@@ Parsing template arguments after qualified name: {}", final_identifier.value());
 				template_args = parse_explicit_template_arguments();
+				if (template_args.has_value()) {
+					FLASH_LOG_FORMAT(Parser, Debug, "@@@ Successfully parsed {} template arguments", template_args->size());
+				} else {
+					FLASH_LOG(Parser, Debug, "@@@ Failed to parse template arguments");
+				}
 				// If parsing failed, it might be a less-than operator, continue normally
+			}
+			
+			FLASH_LOG_FORMAT(Parser, Debug, "@@@ After template arg parsing: template_args.has_value()={}, peek='{}'", 
+				template_args.has_value(), peek_token().has_value() ? peek_token()->value() : "EOF");
+			
+			// Check if this is a brace initialization: ns::Class<Args>{}
+			if (template_args.has_value() && peek_token().has_value() && peek_token()->value() == "{") {
+				// Build the qualified name for lookup
+				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
+				
+				FLASH_LOG_FORMAT(Parser, Debug, "Detected brace initialization for qualified template: {}", qualified_name);
+				
+				// Try to instantiate the class template
+				try_instantiate_class_template(qualified_name, *template_args);
+				
+				// Build the instantiated type name
+				std::string_view instantiated_name = get_instantiated_class_name(qualified_name, *template_args);
+				
+				FLASH_LOG_FORMAT(Parser, Debug, "Looking up instantiated type: {}", instantiated_name);
+				
+				// Look up the instantiated type
+				auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
+				auto type_it = gTypesByName.find(type_handle);
+				if (type_it != gTypesByName.end()) {
+					FLASH_LOG(Parser, Debug, "Found instantiated type, parsing brace initializer");
+					// Found the instantiated type - now parse the brace initializer
+					consume_token(); // consume '{'
+					
+					ChunkedVector<ASTNode> args;
+					while (peek_token().has_value() && peek_token()->value() != "}") {
+						auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (argResult.is_error()) {
+							return argResult;
+						}
+						if (auto node = argResult.node()) {
+							args.push_back(*node);
+						}
+						
+						if (peek_token().has_value() && peek_token()->value() == ",") {
+							consume_token(); // consume ','
+						} else if (!peek_token().has_value() || peek_token()->value() != "}") {
+							return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+						}
+					}
+					
+					if (!consume_punctuator("}")) {
+						return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+					}
+					
+					// Create TypeSpecifierNode for the instantiated class
+					const TypeInfo& type_info = *type_it->second;
+					TypeIndex type_index = type_info.type_index_;
+					int type_size = 0;
+					if (type_info.struct_info_) {
+						type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
+					}
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, final_identifier);
+					
+					// Create ConstructorCallNode
+					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
+					FLASH_LOG(Parser, Debug, "Successfully created ConstructorCallNode for qualified template brace initialization");
+					continue; // Check for more postfix operators
+				} else {
+					FLASH_LOG_FORMAT(Parser, Warning, "Type not found for {}, instantiation may have failed", instantiated_name);
+				}
+				// If instantiation failed, fall through to error handling below
 			}
 			
 			// Check if this is a function call
@@ -19010,7 +19093,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// 1. Identifier not found (might be namespace name)
 		// 2. Identifier found but followed by :: (namespace or class scope resolution)
 		if (peek_token().has_value() && peek_token()->value() == "::") {
-			FLASH_LOG_FORMAT(Parser, Warning, "@@@ QUALIFIED ID DETECTED: Identifier '{}' followed by '::', identifierType found: {}", idenfifier_token.value(), identifierType.has_value());
 			// Parse as qualified identifier: Namespace::identifier
 			// Even if we don't know if it's a namespace, try parsing it as a qualified identifier
 			std::vector<StringType<32>> namespaces;
@@ -19136,10 +19218,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 				if (instantiated.has_value()) {
 					const auto& inst_struct = instantiated->as<StructDeclarationNode>();
-					FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated class template: {}", StringTable::getStringView(inst_struct.name()));
+					FLASH_LOG_FORMAT(Parser, Warning, "@@@ Successfully instantiated class template: {}", StringTable::getStringView(inst_struct.name()));
 					
 					// Look up the instantiated template
 					identifierType = gSymbolTable.lookup(StringTable::getStringView(inst_struct.name()));
+					
+					FLASH_LOG_FORMAT(Parser, Warning, "@@@ Next token after template inst: '{}'", peek_token().has_value() ? peek_token()->value() : "EOF");
 					
 					// Check for :: after template arguments (Template<T>::member)
 					if (peek_token().has_value() && peek_token()->value() == "::") {
@@ -19148,6 +19232,54 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							auto qualified_node2 = qualified_result.node()->as<QualifiedIdentifierNode>();
 							result = emplace_node<ExpressionNode>(qualified_node2);
 							return ParseResult::success(*result);
+						}
+					}
+					
+					// Check if this is a brace initialization: ns::Template<Args>{}
+					if (peek_token().has_value() && peek_token()->value() == "{") {
+						FLASH_LOG_FORMAT(Parser, Debug, "Brace initialization detected for qualified template: {}", StringTable::getStringView(inst_struct.name()));
+						consume_token(); // consume '{'
+						
+						ChunkedVector<ASTNode> args;
+						while (peek_token().has_value() && peek_token()->value() != "}") {
+							auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							if (argResult.is_error()) {
+								return argResult;
+							}
+							if (auto node = argResult.node()) {
+								args.push_back(*node);
+							}
+							
+							if (peek_token().has_value() && peek_token()->value() == ",") {
+								consume_token(); // consume ','
+							} else if (!peek_token().has_value() || peek_token()->value() != "}") {
+								return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+							}
+						}
+						
+						if (!consume_punctuator("}")) {
+							return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+						}
+						
+						// Look up the instantiated type
+						auto type_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(inst_struct.name()));
+						auto type_it = gTypesByName.find(type_handle);
+						if (type_it != gTypesByName.end()) {
+							// Create TypeSpecifierNode for the instantiated class
+							const TypeInfo& type_info = *type_it->second;
+							TypeIndex type_index = type_info.type_index_;
+							int type_size = 0;
+							if (type_info.struct_info_) {
+								type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
+							}
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, final_identifier);
+							
+							// Create ConstructorCallNode
+							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
+							FLASH_LOG(Parser, Debug, "Successfully created ConstructorCallNode for qualified template brace initialization");
+							return ParseResult::success(*result);
+						} else {
+							return ParseResult::error("Failed to look up instantiated template type", final_identifier);
 						}
 					}
 					
