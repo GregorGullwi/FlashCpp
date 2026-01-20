@@ -27871,6 +27871,69 @@ ParseResult Parser::parse_requires_expression() {
 			// Parse pointer/reference modifiers after the type
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 			
+			// Check for parenthesized declarator: type(&name)(params) or type(*name)(params)
+			// This is used for function pointer/reference parameters
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				consume_token(); // consume '('
+				
+				// Expect & or * for function reference/pointer
+				if (peek_token().has_value() && peek_token()->value() == "&") {
+					consume_token(); // consume '&'
+					type_spec.set_reference(false);  // lvalue reference
+				} else if (peek_token().has_value() && peek_token()->value() == "*") {
+					consume_token(); // consume '*'
+					type_spec.add_pointer_level(CVQualifier::None);
+				} else {
+					return ParseResult::error("Expected '&' or '*' in function declarator", *current_token_);
+				}
+				
+				// Parse parameter name
+				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected identifier in function declarator", *current_token_);
+				}
+				Token param_name = *peek_token();
+				consume_token();
+				
+				// Expect closing ')'
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after function declarator name", *current_token_);
+				}
+				
+				// Parse function parameter list: (params)
+				if (!consume_punctuator("(")) {
+					return ParseResult::error("Expected '(' for function parameter list", *current_token_);
+				}
+				
+				// Skip function parameters (we don't need them for requires expressions)
+				int paren_depth = 1;
+				while (paren_depth > 0 && peek_token().has_value()) {
+					if (peek_token()->value() == "(") {
+						paren_depth++;
+					} else if (peek_token()->value() == ")") {
+						paren_depth--;
+					}
+					if (paren_depth > 0) consume_token();
+				}
+				
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after function parameter list", *current_token_);
+				}
+				
+				// Create a declaration node for the parameter
+				auto decl_node = emplace_node<DeclarationNode>(*type_result.node(), param_name);
+				parameters.push_back(decl_node);
+				
+				// Add parameter to the scope so it can be used in the requires body
+				gSymbolTable.insert(param_name.value(), decl_node);
+				
+				// Check for comma (more parameters) or end
+				if (peek_token().has_value() && peek_token()->value() == ",") {
+					consume_token(); // consume ','
+				}
+				
+				continue; // Skip the rest of the loop for this parameter
+			}
+			
 			// Parse cv-qualifiers (const, volatile)
 			CVQualifier cv = parse_cv_qualifiers();
 			type_spec.add_cv_qualifier(cv);
@@ -27897,6 +27960,29 @@ ParseResult Parser::parse_requires_expression() {
 			}
 			Token param_name = *peek_token();
 			consume_token();
+			
+			// Check if this is a function reference/pointer: type(&name)(params) or type(*name)(params)
+			// After the parameter name, if we see '(', it's a function declarator
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				// Pattern: void(&f)(T) means f is a reference to function taking T
+				consume_token(); // consume '('
+				
+				// Parse the function parameter list (simplified - just skip to ')')
+				// We don't need the full parameter info for requires expressions
+				int paren_depth = 1;
+				while (paren_depth > 0 && peek_token().has_value()) {
+					if (peek_token()->value() == "(") {
+						paren_depth++;
+					} else if (peek_token()->value() == ")") {
+						paren_depth--;
+					}
+					if (paren_depth > 0) consume_token();
+				}
+				
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after function declarator parameter list", *current_token_);
+				}
+			}
 			
 			// Create a declaration node for the parameter
 			auto decl_node = emplace_node<DeclarationNode>(*type_result.node(), param_name);
