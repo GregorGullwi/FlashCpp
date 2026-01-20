@@ -17569,6 +17569,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	// But exclude regular builtin functions like __builtin_labs, __builtin_abs, etc.
 	// IMPORTANT: Only treat as type trait intrinsic if followed by '(' - if followed by '<', it's a
 	// template class name (e.g., __is_swappable<T> from the standard library)
+	// ALSO: Skip if this identifier is already registered as a function template in the template registry
+	// (e.g., __is_complete_or_unbounded is a library function template, not a compiler intrinsic)
 	else if (current_token_->type() == Token::Type::Identifier && 
 	         (current_token_->value().starts_with("__is_") || 
 	          current_token_->value().starts_with("__has_") ||
@@ -17577,211 +17579,292 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	            current_token_->value().starts_with("__builtin_has_")))) &&
 	         // Only parse as intrinsic if NEXT token is '(' - otherwise it's a template class name
 	         peek_token(1).has_value() && peek_token(1)->value() == "(") {
-		// Parse type trait intrinsics
+		// Check if this is actually a declared function template (library function, not intrinsic)
+		// If so, skip this branch and let it fall through to normal function call parsing
 		std::string_view trait_name = current_token_->value();
-		Token trait_token = *current_token_;
-		consume_token(); // consume the trait name
-
-		// Normalize __builtin_ prefix to __ prefix for easier matching
-		// e.g., __builtin_is_constant_evaluated -> __is_constant_evaluated
-		// Use string_view to avoid allocation - substr is essentially free with string_view
-		std::string_view normalized_view = trait_name;
-		std::string builtin_normalized; // Only used if we need to normalize __builtin_ prefix
-		if (trait_name.starts_with("__builtin_")) {
-			builtin_normalized = "__" + std::string(trait_name.substr(10)); // Remove "__builtin_" and add back "__"
-			normalized_view = builtin_normalized;
-		}
-
-		// Lookup trait info using a static table
-		struct TraitInfo {
-			TypeTraitKind kind;
-			bool is_binary;
-			bool is_variadic;
-			bool is_no_arg;
-		};
+		bool is_declared_template = gTemplateRegistry.lookupTemplate(trait_name).has_value();
 		
-		static const std::unordered_map<std::string_view, TraitInfo> trait_map = {
-			// Primary type categories
-			{"__is_void", {TypeTraitKind::IsVoid, false, false, false}},
-			{"__is_nullptr", {TypeTraitKind::IsNullptr, false, false, false}},
-			{"__is_integral", {TypeTraitKind::IsIntegral, false, false, false}},
-			{"__is_floating_point", {TypeTraitKind::IsFloatingPoint, false, false, false}},
-			{"__is_array", {TypeTraitKind::IsArray, false, false, false}},
-			{"__is_pointer", {TypeTraitKind::IsPointer, false, false, false}},
-			{"__is_lvalue_reference", {TypeTraitKind::IsLvalueReference, false, false, false}},
-			{"__is_rvalue_reference", {TypeTraitKind::IsRvalueReference, false, false, false}},
-			{"__is_member_object_pointer", {TypeTraitKind::IsMemberObjectPointer, false, false, false}},
-			{"__is_member_function_pointer", {TypeTraitKind::IsMemberFunctionPointer, false, false, false}},
-			{"__is_enum", {TypeTraitKind::IsEnum, false, false, false}},
-			{"__is_union", {TypeTraitKind::IsUnion, false, false, false}},
-			{"__is_class", {TypeTraitKind::IsClass, false, false, false}},
-			{"__is_function", {TypeTraitKind::IsFunction, false, false, false}},
-			// Composite type categories
-			{"__is_reference", {TypeTraitKind::IsReference, false, false, false}},
-			{"__is_arithmetic", {TypeTraitKind::IsArithmetic, false, false, false}},
-			{"__is_fundamental", {TypeTraitKind::IsFundamental, false, false, false}},
-			{"__is_object", {TypeTraitKind::IsObject, false, false, false}},
-			{"__is_scalar", {TypeTraitKind::IsScalar, false, false, false}},
-			{"__is_compound", {TypeTraitKind::IsCompound, false, false, false}},
-			// Type relationships (binary traits)
-			{"__is_base_of", {TypeTraitKind::IsBaseOf, true, false, false}},
-			{"__is_same", {TypeTraitKind::IsSame, true, false, false}},
-			{"__is_convertible", {TypeTraitKind::IsConvertible, true, false, false}},
-			{"__is_nothrow_convertible", {TypeTraitKind::IsNothrowConvertible, true, false, false}},
-			// Type properties
-			{"__is_polymorphic", {TypeTraitKind::IsPolymorphic, false, false, false}},
-			{"__is_final", {TypeTraitKind::IsFinal, false, false, false}},
-			{"__is_abstract", {TypeTraitKind::IsAbstract, false, false, false}},
-			{"__is_empty", {TypeTraitKind::IsEmpty, false, false, false}},
-			{"__is_aggregate", {TypeTraitKind::IsAggregate, false, false, false}},
-			{"__is_standard_layout", {TypeTraitKind::IsStandardLayout, false, false, false}},
-			{"__has_unique_object_representations", {TypeTraitKind::HasUniqueObjectRepresentations, false, false, false}},
-			{"__is_trivially_copyable", {TypeTraitKind::IsTriviallyCopyable, false, false, false}},
-			{"__is_trivial", {TypeTraitKind::IsTrivial, false, false, false}},
-			{"__is_pod", {TypeTraitKind::IsPod, false, false, false}},
-			{"__is_literal_type", {TypeTraitKind::IsLiteralType, false, false, false}},
-			{"__is_const", {TypeTraitKind::IsConst, false, false, false}},
-			{"__is_volatile", {TypeTraitKind::IsVolatile, false, false, false}},
-			{"__is_signed", {TypeTraitKind::IsSigned, false, false, false}},
-			{"__is_unsigned", {TypeTraitKind::IsUnsigned, false, false, false}},
-			{"__is_bounded_array", {TypeTraitKind::IsBoundedArray, false, false, false}},
-			{"__is_unbounded_array", {TypeTraitKind::IsUnboundedArray, false, false, false}},
-			// Constructibility traits (variadic)
-			{"__is_constructible", {TypeTraitKind::IsConstructible, false, true, false}},
-			{"__is_trivially_constructible", {TypeTraitKind::IsTriviallyConstructible, false, true, false}},
-			{"__is_nothrow_constructible", {TypeTraitKind::IsNothrowConstructible, false, true, false}},
-			// Assignability traits (binary)
-			{"__is_assignable", {TypeTraitKind::IsAssignable, true, false, false}},
-			{"__is_trivially_assignable", {TypeTraitKind::IsTriviallyAssignable, true, false, false}},
-			{"__is_nothrow_assignable", {TypeTraitKind::IsNothrowAssignable, true, false, false}},
-			// Destructibility traits
-			{"__is_destructible", {TypeTraitKind::IsDestructible, false, false, false}},
-			{"__is_trivially_destructible", {TypeTraitKind::IsTriviallyDestructible, false, false, false}},
-			{"__is_nothrow_destructible", {TypeTraitKind::IsNothrowDestructible, false, false, false}},
-			{"__has_trivial_destructor", {TypeTraitKind::HasTrivialDestructor, false, false, false}},
-			{"__has_virtual_destructor", {TypeTraitKind::HasVirtualDestructor, false, false, false}},
-			// C++20 layout compatibility traits (binary)
-			{"__is_layout_compatible", {TypeTraitKind::IsLayoutCompatible, true, false, false}},
-			{"__is_pointer_interconvertible_base_of", {TypeTraitKind::IsPointerInterconvertibleBaseOf, true, false, false}},
-			// Special traits
-			{"__underlying_type", {TypeTraitKind::UnderlyingType, false, false, false}},
-			{"__is_constant_evaluated", {TypeTraitKind::IsConstantEvaluated, false, false, true}},
-		};
-
-		auto it = trait_map.find(normalized_view);
-		if (it == trait_map.end()) {
-			// Unknown type trait intrinsic - this shouldn't happen since we only reach here
-			// if followed by '(' which means it was intended as a type trait call
-			return ParseResult::error("Unknown type trait intrinsic", trait_token);
+		// Also check namespace-qualified name if in namespace
+		if (!is_declared_template) {
+			NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
+			if (!current_namespace_handle.isGlobal()) {
+				StringHandle trait_name_handle = StringTable::getOrInternStringHandle(trait_name);
+				StringHandle qualified_name_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, trait_name_handle);
+				is_declared_template = gTemplateRegistry.lookupTemplate(StringTable::getStringView(qualified_name_handle)).has_value();
+			}
 		}
+		
+		if (!is_declared_template) {
+			// Parse type trait intrinsics
+			Token trait_token = *current_token_;
+			consume_token(); // consume the trait name
 
-		TypeTraitKind kind = it->second.kind;
-		bool is_binary_trait = it->second.is_binary;
-		bool is_variadic_trait = it->second.is_variadic;
-		bool is_no_arg_trait = it->second.is_no_arg;
-
-		if (!consume_punctuator("(")) {
-			return ParseResult::error("Expected '(' after type trait intrinsic", *current_token_);
-		}
-
-		if (is_no_arg_trait) {
-			// No-argument trait like __is_constant_evaluated()
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' for no-argument type trait", *current_token_);
+			// Normalize __builtin_ prefix to __ prefix for easier matching
+			// e.g., __builtin_is_constant_evaluated -> __is_constant_evaluated
+			std::string_view normalized_view = trait_name;
+			if (trait_name.starts_with("__builtin_")) {
+				StringBuilder builtin_normalized;
+				builtin_normalized.append("__").append(trait_name.substr(10)); // Remove "__builtin_" and add back "__"
+				normalized_view = builtin_normalized.commit();
 			}
 
-			result = emplace_node<ExpressionNode>(
-				TypeTraitExprNode(kind, trait_token));
-		} else {
-			// Parse the first type argument
-			ParseResult type_result = parse_type_specifier();
-			if (type_result.is_error() || !type_result.node().has_value()) {
-				return ParseResult::error("Expected type in type trait intrinsic", *current_token_);
-			}
-
-			// Parse pointer/reference modifiers after the base type
-			// e.g., int* or int&& in type trait arguments
-			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+			// Lookup trait info using a static table
+			struct TraitInfo {
+				TypeTraitKind kind;
+				bool is_binary;
+				bool is_variadic;
+				bool is_no_arg;
+			};
 			
-			// Parse pointer depth (*)
-			while (peek_token().has_value() && peek_token()->value() == "*") {
-				consume_token();
-				type_spec.add_pointer_level();
-			}
-			
-			// Parse reference (&) or rvalue reference (&&)
-			// Note: The lexer tokenizes && as a single token, not two separate & tokens
-			ReferenceQualifier ref_qual = parse_reference_qualifier();
-			if (ref_qual == ReferenceQualifier::RValueReference) {
-				type_spec.set_reference(true);  // true for rvalue reference
-			} else if (ref_qual == ReferenceQualifier::LValueReference) {
-				type_spec.set_reference(false);  // false for lvalue reference
+			static const std::unordered_map<std::string_view, TraitInfo> trait_map = {
+				// Primary type categories
+				{"__is_void", {TypeTraitKind::IsVoid, false, false, false}},
+				{"__is_nullptr", {TypeTraitKind::IsNullptr, false, false, false}},
+				{"__is_integral", {TypeTraitKind::IsIntegral, false, false, false}},
+				{"__is_floating_point", {TypeTraitKind::IsFloatingPoint, false, false, false}},
+				{"__is_array", {TypeTraitKind::IsArray, false, false, false}},
+				{"__is_pointer", {TypeTraitKind::IsPointer, false, false, false}},
+				{"__is_lvalue_reference", {TypeTraitKind::IsLvalueReference, false, false, false}},
+				{"__is_rvalue_reference", {TypeTraitKind::IsRvalueReference, false, false, false}},
+				{"__is_member_object_pointer", {TypeTraitKind::IsMemberObjectPointer, false, false, false}},
+				{"__is_member_function_pointer", {TypeTraitKind::IsMemberFunctionPointer, false, false, false}},
+				{"__is_enum", {TypeTraitKind::IsEnum, false, false, false}},
+				{"__is_union", {TypeTraitKind::IsUnion, false, false, false}},
+				{"__is_class", {TypeTraitKind::IsClass, false, false, false}},
+				{"__is_function", {TypeTraitKind::IsFunction, false, false, false}},
+				// Composite type categories
+				{"__is_reference", {TypeTraitKind::IsReference, false, false, false}},
+				{"__is_arithmetic", {TypeTraitKind::IsArithmetic, false, false, false}},
+				{"__is_fundamental", {TypeTraitKind::IsFundamental, false, false, false}},
+				{"__is_object", {TypeTraitKind::IsObject, false, false, false}},
+				{"__is_scalar", {TypeTraitKind::IsScalar, false, false, false}},
+				{"__is_compound", {TypeTraitKind::IsCompound, false, false, false}},
+				// Type relationships (binary traits)
+				{"__is_base_of", {TypeTraitKind::IsBaseOf, true, false, false}},
+				{"__is_same", {TypeTraitKind::IsSame, true, false, false}},
+				{"__is_convertible", {TypeTraitKind::IsConvertible, true, false, false}},
+				{"__is_nothrow_convertible", {TypeTraitKind::IsNothrowConvertible, true, false, false}},
+				// Type properties
+				{"__is_polymorphic", {TypeTraitKind::IsPolymorphic, false, false, false}},
+				{"__is_final", {TypeTraitKind::IsFinal, false, false, false}},
+				{"__is_abstract", {TypeTraitKind::IsAbstract, false, false, false}},
+				{"__is_empty", {TypeTraitKind::IsEmpty, false, false, false}},
+				{"__is_aggregate", {TypeTraitKind::IsAggregate, false, false, false}},
+				{"__is_standard_layout", {TypeTraitKind::IsStandardLayout, false, false, false}},
+				{"__has_unique_object_representations", {TypeTraitKind::HasUniqueObjectRepresentations, false, false, false}},
+				{"__is_trivially_copyable", {TypeTraitKind::IsTriviallyCopyable, false, false, false}},
+				{"__is_trivial", {TypeTraitKind::IsTrivial, false, false, false}},
+				{"__is_pod", {TypeTraitKind::IsPod, false, false, false}},
+				{"__is_literal_type", {TypeTraitKind::IsLiteralType, false, false, false}},
+				{"__is_const", {TypeTraitKind::IsConst, false, false, false}},
+				{"__is_volatile", {TypeTraitKind::IsVolatile, false, false, false}},
+				{"__is_signed", {TypeTraitKind::IsSigned, false, false, false}},
+				{"__is_unsigned", {TypeTraitKind::IsUnsigned, false, false, false}},
+				{"__is_bounded_array", {TypeTraitKind::IsBoundedArray, false, false, false}},
+				{"__is_unbounded_array", {TypeTraitKind::IsUnboundedArray, false, false, false}},
+				// Constructibility traits (variadic)
+				{"__is_constructible", {TypeTraitKind::IsConstructible, false, true, false}},
+				{"__is_trivially_constructible", {TypeTraitKind::IsTriviallyConstructible, false, true, false}},
+				{"__is_nothrow_constructible", {TypeTraitKind::IsNothrowConstructible, false, true, false}},
+				// Assignability traits (binary)
+				{"__is_assignable", {TypeTraitKind::IsAssignable, true, false, false}},
+				{"__is_trivially_assignable", {TypeTraitKind::IsTriviallyAssignable, true, false, false}},
+				{"__is_nothrow_assignable", {TypeTraitKind::IsNothrowAssignable, true, false, false}},
+				// Destructibility traits
+				{"__is_destructible", {TypeTraitKind::IsDestructible, false, false, false}},
+				{"__is_trivially_destructible", {TypeTraitKind::IsTriviallyDestructible, false, false, false}},
+				{"__is_nothrow_destructible", {TypeTraitKind::IsNothrowDestructible, false, false, false}},
+				{"__has_trivial_destructor", {TypeTraitKind::HasTrivialDestructor, false, false, false}},
+				{"__has_virtual_destructor", {TypeTraitKind::HasVirtualDestructor, false, false, false}},
+				// C++20 layout compatibility traits (binary)
+				{"__is_layout_compatible", {TypeTraitKind::IsLayoutCompatible, true, false, false}},
+				{"__is_pointer_interconvertible_base_of", {TypeTraitKind::IsPointerInterconvertibleBaseOf, true, false, false}},
+				// Special traits
+				{"__underlying_type", {TypeTraitKind::UnderlyingType, false, false, false}},
+				{"__is_constant_evaluated", {TypeTraitKind::IsConstantEvaluated, false, false, true}},
+			};
+
+			auto it = trait_map.find(normalized_view);
+			if (it == trait_map.end()) {
+				// Unknown type trait intrinsic - this shouldn't happen since we only reach here
+				// if followed by '(' which means it was intended as a type trait call
+				return ParseResult::error("Unknown type trait intrinsic", trait_token);
 			}
 
-			// Parse array specifications ([N] or [])
-			if (peek_token().has_value() && peek_token()->value() == "[") {
-				consume_token();  // consume '['
+			TypeTraitKind kind = it->second.kind;
+			bool is_binary_trait = it->second.is_binary;
+			bool is_variadic_trait = it->second.is_variadic;
+			bool is_no_arg_trait = it->second.is_no_arg;
+
+			if (!consume_punctuator("(")) {
+				return ParseResult::error("Expected '(' after type trait intrinsic", *current_token_);
+			}
+
+			if (is_no_arg_trait) {
+				// No-argument trait like __is_constant_evaluated()
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' for no-argument type trait", *current_token_);
+				}
+
+				result = emplace_node<ExpressionNode>(
+					TypeTraitExprNode(kind, trait_token));
+			} else {
+				// Parse the first type argument
+				ParseResult type_result = parse_type_specifier();
+				if (type_result.is_error() || !type_result.node().has_value()) {
+					return ParseResult::error("Expected type in type trait intrinsic", *current_token_);
+				}
+
+				// Parse pointer/reference modifiers after the base type
+				// e.g., int* or int&& in type trait arguments
+				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 				
-				// Check for array size expression or empty brackets
-				std::optional<size_t> array_size_val;
-				if (peek_token().has_value() && peek_token()->value() != "]") {
-					// Parse array size expression
-					ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (size_result.is_error()) {
-						return ParseResult::error("Expected array size expression", *current_token_);
-					}
+				// Parse pointer depth (*)
+				while (peek_token().has_value() && peek_token()->value() == "*") {
+					consume_token();
+					type_spec.add_pointer_level();
+				}
+				
+				// Parse reference (&) or rvalue reference (&&)
+				// Note: The lexer tokenizes && as a single token, not two separate & tokens
+				ReferenceQualifier ref_qual = parse_reference_qualifier();
+				if (ref_qual == ReferenceQualifier::RValueReference) {
+					type_spec.set_reference(true);  // true for rvalue reference
+				} else if (ref_qual == ReferenceQualifier::LValueReference) {
+					type_spec.set_reference(false);  // false for lvalue reference
+				}
+
+				// Parse array specifications ([N] or [])
+				if (peek_token().has_value() && peek_token()->value() == "[") {
+					consume_token();  // consume '['
 					
-					// Try to evaluate the array size as a constant expression
-					if (size_result.node().has_value()) {
-						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-						auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-						if (eval_result.success) {
-							array_size_val = static_cast<size_t>(eval_result.as_int());
+					// Check for array size expression or empty brackets
+					std::optional<size_t> array_size_val;
+					if (peek_token().has_value() && peek_token()->value() != "]") {
+						// Parse array size expression
+						ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (size_result.is_error()) {
+							return ParseResult::error("Expected array size expression", *current_token_);
+						}
+						
+						// Try to evaluate the array size as a constant expression
+						if (size_result.node().has_value()) {
+							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
+							if (eval_result.success) {
+								array_size_val = static_cast<size_t>(eval_result.as_int());
+							}
 						}
 					}
-				}
-				
-				if (!consume_punctuator("]")) {
-					return ParseResult::error("Expected ']' after array size", *current_token_);
-				}
-				
-				type_spec.set_array(true, array_size_val);
-			}
-
-			// Check for pack expansion (...) after the first type argument
-			if (peek_token().has_value() && peek_token()->value() == "...") {
-				consume_token();  // consume '...'
-				type_spec.set_pack_expansion(true);
-			}
-
-			if (is_variadic_trait) {
-				// Variadic trait: parse comma-separated additional types
-				std::vector<ASTNode> additional_types;
-				while (peek_token().has_value() && peek_token()->value() == ",") {
-					consume_punctuator(",");
-					ParseResult arg_type_result = parse_type_specifier();
-					if (arg_type_result.is_error() || !arg_type_result.node().has_value()) {
-						return ParseResult::error("Expected type argument in variadic type trait", *current_token_);
+					
+					if (!consume_punctuator("]")) {
+						return ParseResult::error("Expected ']' after array size", *current_token_);
 					}
 					
-					// Parse pointer/reference modifiers for additional type arguments
-					TypeSpecifierNode& arg_type_spec = arg_type_result.node()->as<TypeSpecifierNode>();
+					type_spec.set_array(true, array_size_val);
+				}
+
+				// Check for pack expansion (...) after the first type argument
+				if (peek_token().has_value() && peek_token()->value() == "...") {
+					consume_token();  // consume '...'
+					type_spec.set_pack_expansion(true);
+				}
+
+				if (is_variadic_trait) {
+					// Variadic trait: parse comma-separated additional types
+					std::vector<ASTNode> additional_types;
+					while (peek_token().has_value() && peek_token()->value() == ",") {
+						consume_punctuator(",");
+						ParseResult arg_type_result = parse_type_specifier();
+						if (arg_type_result.is_error() || !arg_type_result.node().has_value()) {
+							return ParseResult::error("Expected type argument in variadic type trait", *current_token_);
+						}
+						
+						// Parse pointer/reference modifiers for additional type arguments
+						TypeSpecifierNode& arg_type_spec = arg_type_result.node()->as<TypeSpecifierNode>();
+						while (peek_token().has_value() && peek_token()->value() == "*") {
+							consume_token();
+							arg_type_spec.add_pointer_level();
+						}
+						
+						// Parse reference qualifiers (&, &&)
+						ReferenceQualifier arg_ref_qual = parse_reference_qualifier();
+						if (arg_ref_qual == ReferenceQualifier::RValueReference) {
+							arg_type_spec.set_reference(true);  // rvalue reference
+						} else if (arg_ref_qual == ReferenceQualifier::LValueReference) {
+							arg_type_spec.set_reference(false);  // lvalue reference
+						}
+						
+						// Parse array specifications ([N] or []) for variadic trait additional args
+						std::optional<size_t> array_size_val;
+						if (peek_token().has_value() && peek_token()->value() == "[") {
+							consume_token();  // consume '['
+							
+							if (peek_token().has_value() && peek_token()->value() != "]") {
+								ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+								if (size_result.is_error()) {
+									return ParseResult::error("Expected array size expression", *current_token_);
+								}
+								if (size_result.node().has_value()) {
+									ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+									auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
+									if (eval_result.success) {
+										array_size_val = static_cast<size_t>(eval_result.as_int());
+									}
+								}
+							}
+							
+							if (!consume_punctuator("]")) {
+								return ParseResult::error("Expected ']' after array size", *current_token_);
+							}
+							
+							arg_type_spec.set_array(true, array_size_val);
+						}
+
+						// Check for pack expansion (...) after the type argument
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							consume_token();  // consume '...'
+							arg_type_spec.set_pack_expansion(true);
+						}
+						
+						additional_types.push_back(*arg_type_result.node());
+					}
+
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
+					}
+
+					result = emplace_node<ExpressionNode>(
+						TypeTraitExprNode(kind, *type_result.node(), std::move(additional_types), trait_token));
+				} else if (is_binary_trait) {
+					// Binary trait: parse comma and second type
+					if (!consume_punctuator(",")) {
+						return ParseResult::error("Expected ',' after first type in binary type trait", *current_token_);
+					}
+
+					ParseResult second_type_result = parse_type_specifier();
+					if (second_type_result.is_error() || !second_type_result.node().has_value()) {
+						return ParseResult::error("Expected second type in binary type trait", *current_token_);
+					}
+
+					// Parse pointer/reference modifiers for second type
+					TypeSpecifierNode& second_type_spec = second_type_result.node()->as<TypeSpecifierNode>();
 					while (peek_token().has_value() && peek_token()->value() == "*") {
 						consume_token();
-						arg_type_spec.add_pointer_level();
+						second_type_spec.add_pointer_level();
 					}
 					if (peek_token().has_value()) {
 						std::string_view next_token = peek_token()->value();
 						if (next_token == "&&") {
 							consume_token();
-							arg_type_spec.set_reference(true);  // rvalue reference
+							second_type_spec.set_reference(true);  // rvalue reference
 						} else if (next_token == "&") {
 							consume_token();
-							arg_type_spec.set_reference(false);  // lvalue reference
+							second_type_spec.set_reference(false);  // lvalue reference
 						}
 					}
-					
-					// Parse array specifications ([N] or []) for variadic trait additional args
+
+					// Parse array specifications ([N] or []) for binary trait second type
 					std::optional<size_t> array_size_val;
 					if (peek_token().has_value() && peek_token()->value() == "[") {
 						consume_token();  // consume '['
@@ -17804,94 +17887,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							return ParseResult::error("Expected ']' after array size", *current_token_);
 						}
 						
-						arg_type_spec.set_array(true, array_size_val);
+						second_type_spec.set_array(true, array_size_val);
 					}
 
-					// Check for pack expansion (...) after the type argument
-					if (peek_token().has_value() && peek_token()->value() == "...") {
-						consume_token();  // consume '...'
-						arg_type_spec.set_pack_expansion(true);
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
 					}
-					
-					additional_types.push_back(*arg_type_result.node());
-				}
 
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
-				}
-
-				result = emplace_node<ExpressionNode>(
-					TypeTraitExprNode(kind, *type_result.node(), std::move(additional_types), trait_token));
-			} else if (is_binary_trait) {
-				// Binary trait: parse comma and second type
-				if (!consume_punctuator(",")) {
-					return ParseResult::error("Expected ',' after first type in binary type trait", *current_token_);
-				}
-
-				ParseResult second_type_result = parse_type_specifier();
-				if (second_type_result.is_error() || !second_type_result.node().has_value()) {
-					return ParseResult::error("Expected second type in binary type trait", *current_token_);
-				}
-
-				// Parse pointer/reference modifiers for second type
-				TypeSpecifierNode& second_type_spec = second_type_result.node()->as<TypeSpecifierNode>();
-				while (peek_token().has_value() && peek_token()->value() == "*") {
-					consume_token();
-					second_type_spec.add_pointer_level();
-				}
-				if (peek_token().has_value()) {
-					std::string_view next_token = peek_token()->value();
-					if (next_token == "&&") {
-						consume_token();
-						second_type_spec.set_reference(true);  // rvalue reference
-					} else if (next_token == "&") {
-						consume_token();
-						second_type_spec.set_reference(false);  // lvalue reference
+					result = emplace_node<ExpressionNode>(
+						TypeTraitExprNode(kind, *type_result.node(), *second_type_result.node(), trait_token));
+				} else {
+					// Unary trait: just close paren
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Expected ')' after type trait argument", *current_token_);
 					}
-				}
 
-				// Parse array specifications ([N] or []) for binary trait second type
-				std::optional<size_t> array_size_val;
-				if (peek_token().has_value() && peek_token()->value() == "[") {
-					consume_token();  // consume '['
-					
-					if (peek_token().has_value() && peek_token()->value() != "]") {
-						ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (size_result.is_error()) {
-							return ParseResult::error("Expected array size expression", *current_token_);
-						}
-						if (size_result.node().has_value()) {
-							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-							auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-							if (eval_result.success) {
-								array_size_val = static_cast<size_t>(eval_result.as_int());
-							}
-						}
-					}
-					
-					if (!consume_punctuator("]")) {
-						return ParseResult::error("Expected ']' after array size", *current_token_);
-					}
-					
-					second_type_spec.set_array(true, array_size_val);
+					result = emplace_node<ExpressionNode>(
+						TypeTraitExprNode(kind, *type_result.node(), trait_token));
 				}
-
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
-				}
-
-				result = emplace_node<ExpressionNode>(
-					TypeTraitExprNode(kind, *type_result.node(), *second_type_result.node(), trait_token));
-			} else {
-				// Unary trait: just close paren
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after type trait argument", *current_token_);
-				}
-
-				result = emplace_node<ExpressionNode>(
-					TypeTraitExprNode(kind, *type_result.node(), trait_token));
 			}
-		}
+		} // end if (!is_declared_template)
 	}
 	// Check for global namespace scope operator :: at the beginning
 	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "::") {
