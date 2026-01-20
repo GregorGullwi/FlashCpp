@@ -31100,7 +31100,12 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					
 					for (const auto& param_name : current_template_param_names_) {
 						std::string_view param_sv = StringTable::getStringView(param_name);
-						if (matches_identifier(check_name, param_sv) && check_name.find("::type") != std::string_view::npos) {
+						// Check both as standalone identifier AND as substring
+						// The substring check is needed for mangled names like "remove_reference__Tp::type"
+						// where the parameter "_Tp" appears in the mangled name but not as standalone
+						bool contains_param = matches_identifier(check_name, param_sv) || 
+						                      (check_name.find(param_sv) != std::string_view::npos);
+						if (contains_param && check_name.find("::type") != std::string_view::npos) {
 							arg.is_dependent = true;
 							arg.dependent_name = StringTable::getOrInternStringHandle(check_name);
 							FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", check_name);
@@ -31112,7 +31117,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// Check if the base type (before ::type) contains a template parameter
 						for (const auto& param_name : current_template_param_names_) {
 							std::string_view param_sv = StringTable::getStringView(param_name);
-							if (matches_identifier(check_name, param_sv)) {
+							if (matches_identifier(check_name, param_sv) || 
+							    (check_name.find(param_sv) != std::string_view::npos)) {
 								arg.is_dependent = true;
 								arg.dependent_name = StringTable::getOrInternStringHandle(check_name);
 								FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias containing template param: {}", check_name);
