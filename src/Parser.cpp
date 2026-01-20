@@ -7525,12 +7525,9 @@ ParseResult Parser::parse_static_assert()
 	// If we're in a template definition and evaluation failed due to dependent types,
 	// that's okay - skip it and it will be checked during instantiation
 	if (is_in_template_definition && !eval_result.success) {
-		// Check if the error is due to template-dependent expressions
-		// Common patterns: "Template function", "Template parameter", "not a constant expression"
+		// Check if the error is due to template-dependent expressions using the error_type enum
 		FLASH_LOG(Templates, Debug, "static_assert evaluation failed in template body: ", eval_result.error_message);
-		if (eval_result.error_message.find("Template") != std::string::npos ||
-		    eval_result.error_message.find("template") != std::string::npos ||
-		    eval_result.error_message.find("dependent") != std::string::npos) {
+		if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
 			// This is a template-dependent expression - defer evaluation
 			FLASH_LOG(Templates, Debug, "Deferring static_assert evaluation in template body: ", eval_result.error_message);
 			

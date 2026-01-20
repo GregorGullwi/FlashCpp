@@ -15,6 +15,14 @@ class Parser;  // For template instantiation
 
 namespace ConstExpr {
 
+// Error type classification for constexpr evaluation failures
+enum class EvalErrorType {
+	None,                        // No error (success)
+	TemplateDependentExpression, // Error due to template-dependent expression
+	NotConstantExpression,       // Expression is not a constant expression
+	Other                        // Other types of errors
+};
+
 // Result of constant expression evaluation
 struct EvalResult {
 	bool success;
@@ -25,6 +33,7 @@ struct EvalResult {
 		double                   // Floating-point constant
 	> value;
 	std::string error_message;
+	EvalErrorType error_type = EvalErrorType::None;
 	
 	// Array support for local arrays in constexpr functions
 	bool is_array = false;
@@ -32,23 +41,23 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{true, val, "", false, {}};
+		return EvalResult{true, val, "", EvalErrorType::None, false, {}};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{true, val, "", false, {}};
+		return EvalResult{true, val, "", EvalErrorType::None, false, {}};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{true, val, "", false, {}};
+		return EvalResult{true, val, "", EvalErrorType::None, false, {}};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{true, val, "", false, {}};
+		return EvalResult{true, val, "", EvalErrorType::None, false, {}};
 	}
 
-	static EvalResult error(const std::string& msg) {
-		return EvalResult{false, false, msg, false, {}};
+	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
+		return EvalResult{false, false, msg, type, false, {}};
 	}
 
 	// Convenience helpers for common operations
@@ -1488,7 +1497,8 @@ private:
 			
 			// No pre-instantiated version found and couldn't instantiate on-demand
 			// Return a specific error indicating this is a template function issue
-			return EvalResult::error("Template function in constant expression - instantiation required: " + std::string(qualified_name));
+			return EvalResult::error("Template function in constant expression - instantiation required: " + std::string(qualified_name), 
+			                         EvalErrorType::TemplateDependentExpression);
 		}
 		
 		// Check if it's a VariableDeclarationNode (could be a lambda/functor callable object)
