@@ -2767,6 +2767,50 @@ public:
 		return EvalResult::error("Array subscript followed by member access not yet supported");
 	}
 
+	// Helper function to look up and evaluate static member from struct info
+	static EvalResult evaluate_static_member_from_struct(
+		const StructTypeInfo* struct_info,
+		const TypeInfo& type_info,
+		StringHandle member_name_handle,
+		std::string_view member_name,
+		EvaluationContext& context) {
+		
+		// Look up the static member in the struct
+		// Search for a static member variable with the given name
+		for (const auto& static_member : struct_info->static_members) {
+			if (static_member.getName() == member_name_handle) {
+				// Found the static member - check if it has an initializer
+				if (static_member.initializer.has_value()) {
+					// Evaluate the initializer directly
+					return evaluate(*static_member.initializer, context);
+				}
+				
+				// If no inline initializer, try to find the definition in the symbol table
+				// Build qualified member name using StringBuilder
+				StringBuilder qualified_name_builder;
+				qualified_name_builder.append(StringTable::getStringView(type_info.name_));
+				qualified_name_builder.append("::");
+				qualified_name_builder.append(member_name);
+				std::string_view qualified_member_name = qualified_name_builder.commit();
+				
+				auto member_symbol = context.symbols->lookup(qualified_member_name);
+				if (member_symbol.has_value()) {
+					const ASTNode& member_node = member_symbol.value();
+					if (member_node.is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var_decl = member_node.as<VariableDeclarationNode>();
+						if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
+							return evaluate(*var_decl.initializer(), context);
+						}
+					}
+				}
+				
+				return EvalResult::error("Static member '" + std::string(member_name) + "' found but has no constexpr initializer");
+			}
+		}
+		
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in return type");
+	}
+
 	// Evaluate function call followed by member access (e.g., get_struct().member)
 	// This is used for accessing static members of the return type
 	static EvalResult evaluate_function_call_member_access(
@@ -2791,132 +2835,53 @@ public:
 		
 		const ASTNode& symbol_node = symbol_opt.value();
 		
-		// Handle regular FunctionDeclarationNode
-		if (symbol_node.is<FunctionDeclarationNode>()) {
-			const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
-			
-			// Get the return type from the declaration node
-			const ASTNode& type_node = func_decl.decl_node().type_node();
-			if (!type_node.is<TypeSpecifierNode>()) {
-				return EvalResult::error("Function return type is not a TypeSpecifierNode");
-			}
-			
-			const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
-			
-			// Get the type name - this should be a struct/class type
-			if (return_type.type() != Type::UserDefined && return_type.type() != Type::Struct) {
-				return EvalResult::error("Function return type is not a struct - cannot access member");
-			}
-			
-			// Get the struct type name
-			TypeIndex type_index = return_type.type_index();
-			if (type_index >= gTypeInfo.size()) {
-				return EvalResult::error("Invalid type index for function return type");
-			}
-			
-			const TypeInfo& type_info = gTypeInfo[type_index];
-			const StructTypeInfo* struct_info = type_info.getStructInfo();
-			if (!struct_info) {
-				return EvalResult::error("Return type is not a struct");
-			}
-			
-			// Look up the static member in the struct
-			// Search for a static member variable with the given name
-			for (const auto& static_member : struct_info->static_members) {
-				if (StringTable::getStringView(static_member.getName()) == member_name) {
-					// Found the static member - check if it has an initializer
-					if (static_member.initializer.has_value()) {
-						// Evaluate the initializer directly
-						return evaluate(*static_member.initializer, context);
-					}
-					
-					// If no inline initializer, try to find the definition in the symbol table
-					std::string_view struct_name = StringTable::getStringView(type_info.name_);
-					std::string qualified_member_name = std::string(struct_name) + "::" + std::string(member_name);
-					
-					auto member_symbol = context.symbols->lookup(qualified_member_name);
-					if (member_symbol.has_value()) {
-						const ASTNode& member_node = member_symbol.value();
-						if (member_node.is<VariableDeclarationNode>()) {
-							const VariableDeclarationNode& var_decl = member_node.as<VariableDeclarationNode>();
-							if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
-								return evaluate(*var_decl.initializer(), context);
-							}
-						}
-					}
-					
-					return EvalResult::error("Static member '" + std::string(member_name) + "' found but has no constexpr initializer");
-				}
-			}
-			
-			return EvalResult::error("Member '" + std::string(member_name) + "' not found in return type");
-		}
+		// Convert member_name to StringHandle once for efficient comparison
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 		
-		// Handle TemplateFunctionDeclarationNode
-		if (symbol_node.is<TemplateFunctionDeclarationNode>()) {
+		// Extract FunctionDeclarationNode from either regular or template function
+		const FunctionDeclarationNode* func_decl = nullptr;
+		
+		if (symbol_node.is<FunctionDeclarationNode>()) {
+			func_decl = &symbol_node.as<FunctionDeclarationNode>();
+		} else if (symbol_node.is<TemplateFunctionDeclarationNode>()) {
 			const TemplateFunctionDeclarationNode& template_func = symbol_node.as<TemplateFunctionDeclarationNode>();
 			const ASTNode& func_node = template_func.function_declaration();
-			
 			if (func_node.is<FunctionDeclarationNode>()) {
-				const FunctionDeclarationNode& func_decl = func_node.as<FunctionDeclarationNode>();
-				
-				// Get the return type from the declaration node
-				const ASTNode& type_node = func_decl.decl_node().type_node();
-				if (!type_node.is<TypeSpecifierNode>()) {
-					return EvalResult::error("Template function return type is not a TypeSpecifierNode");
-				}
-				
-				const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
-				
-				// Get the type name
-				if (return_type.type() != Type::UserDefined && return_type.type() != Type::Struct) {
-					return EvalResult::error("Template function return type is not a struct - cannot access member");
-				}
-				
-				TypeIndex type_index = return_type.type_index();
-				if (type_index >= gTypeInfo.size()) {
-					return EvalResult::error("Invalid type index for template function return type");
-				}
-				
-				const TypeInfo& type_info = gTypeInfo[type_index];
-				const StructTypeInfo* struct_info = type_info.getStructInfo();
-				if (!struct_info) {
-					return EvalResult::error("Template function return type is not a struct");
-				}
-				
-				// Look up the static member
-				for (const auto& static_member : struct_info->static_members) {
-					if (StringTable::getStringView(static_member.getName()) == member_name) {
-						// Found the static member - check if it has an initializer
-						if (static_member.initializer.has_value()) {
-							// Evaluate the initializer directly
-							return evaluate(*static_member.initializer, context);
-						}
-						
-						// If no inline initializer, try to find the definition in the symbol table
-						std::string_view struct_name = StringTable::getStringView(type_info.name_);
-						std::string qualified_member_name = std::string(struct_name) + "::" + std::string(member_name);
-						
-						auto member_symbol = context.symbols->lookup(qualified_member_name);
-						if (member_symbol.has_value()) {
-							const ASTNode& member_node = member_symbol.value();
-							if (member_node.is<VariableDeclarationNode>()) {
-								const VariableDeclarationNode& var_decl = member_node.as<VariableDeclarationNode>();
-								if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
-									return evaluate(*var_decl.initializer(), context);
-								}
-							}
-						}
-						
-						return EvalResult::error("Static member '" + std::string(member_name) + "' found but has no constexpr initializer in template function return type");
-					}
-				}
-				
-				return EvalResult::error("Member '" + std::string(member_name) + "' not found in template function return type");
+				func_decl = &func_node.as<FunctionDeclarationNode>();
 			}
 		}
 		
-		return EvalResult::error("Unsupported function type for member access");
+		if (!func_decl) {
+			return EvalResult::error("Unsupported function type for member access");
+		}
+		
+		// Get the return type from the declaration node
+		const ASTNode& type_node = func_decl->decl_node().type_node();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Function return type is not a TypeSpecifierNode");
+		}
+		
+		const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
+		
+		// Get the type name - this should be a struct/class type
+		if (return_type.type() != Type::UserDefined && return_type.type() != Type::Struct) {
+			return EvalResult::error("Function return type is not a struct - cannot access member");
+		}
+		
+		// Get the struct type name
+		TypeIndex type_index = return_type.type_index();
+		if (type_index >= gTypeInfo.size()) {
+			return EvalResult::error("Invalid type index for function return type");
+		}
+		
+		const TypeInfo& type_info = gTypeInfo[type_index];
+		const StructTypeInfo* struct_info = type_info.getStructInfo();
+		if (!struct_info) {
+			return EvalResult::error("Return type is not a struct");
+		}
+		
+		// Use the helper function to look up and evaluate the static member
+		return evaluate_static_member_from_struct(struct_info, type_info, member_name_handle, member_name, context);
 	}
 
 	// Evaluate constexpr member function call (e.g., p.sum() in constexpr context)
