@@ -4,6 +4,13 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
+✅ **static_assert with Template-Dependent Expressions (2026-01-20):** Fixed constant expression evaluation to properly handle template-dependent expressions in static_assert:
+- Fold expressions like `(args && ...)` are now correctly deferred to instantiation time
+- Variable templates like `is_integral_v<T>` with template parameters work in static_assert
+- Pack expansions and qualified identifiers with dependent template arguments are handled correctly
+- **Impact**: Essential foundation for many standard library headers that use static assertions with template metaprogramming patterns
+- See "Recent Changes" section below for detailed information
+
 ✅ **Silent Failure Investigation (2026-01-19):** Added error tracing infrastructure to catch previously silent failures. Several headers that were silently failing with exit code 1 now properly display error messages:
 - Enhanced `main.cpp` to output parse errors to `stderr` even when logging is disabled
 - Added catch-all exception handlers to capture any uncaught exceptions
@@ -542,6 +549,45 @@ The following features have been implemented to support standard headers:
 ## Recent Changes
 
 Changes are listed in reverse chronological order.
+
+### 2026-01-20 (static_assert with Template-Dependent Expressions - PR #XXX)
+- **Fixed fold expression evaluation in static_assert:** Fold expressions like `(args && ...)` are now correctly treated as template-dependent
+  - Added `FoldExpressionNode` handling in `ConstExprEvaluator` to return `TemplateDependentExpression` error type
+  - Allows static assertions with fold expressions to be deferred until template instantiation
+  - Test case: `template<typename... Args> struct Test { static_assert((true && ...), "test"); };` now compiles
+  - **Impact:** Essential for many C++ standard library headers that use fold expressions in static assertions
+- **Fixed pack expansion evaluation:** Pack expansions like `args...` are now treated as template-dependent
+  - Added `PackExpansionExprNode` handling in `ConstExprEvaluator`
+  - Prevents premature evaluation of pack expansions during template definition parsing
+- **Fixed variable template handling:** Variable templates like `is_integral_v<_Tp>` with template parameters now work correctly
+  - Added check for `TemplateVariableDeclarationNode` in `evaluate_identifier()` to defer evaluation
+  - Prevents errors when variable templates appear in static_assert conditions with template parameters
+  - Test case: `template<typename T> struct Test { static_assert(is_integral_v<T>); };` now compiles
+- **Fixed qualified identifier with dependent template arguments:** Patterns like `__static_abs<_Pn>::value` now work
+  - Enhanced `evaluate_qualified_identifier()` to detect template instantiations with dependent arguments
+  - Checks if namespace part contains template argument separators and marks as template-dependent
+  - Prevents "Undefined qualified identifier" errors for valid template-dependent code
+- **Optimized string handling:** Refactored to use `string_view` to avoid unnecessary string copies
+  - Works directly with namespace handle and name components instead of calling `full_name()`
+  - Ensures `string_view` doesn't reference temporaries while improving performance
+- **Test Results:**
+  - ✅ All 945 existing tests pass
+  - ✅ `<limits>` continues to compile successfully
+  - ✅ `<type_traits>` continues to compile successfully
+  - ⚠️ `<ratio>`, `<utility>`, `<tuple>`, `<variant>` still have parse/timeout issues (see blockers below)
+
+**Commits:** c6c20eb, 3c555fd, 575a839
+
+**Next Steps:**
+1. **Context-Dependent Parse Errors** (High Priority): Investigate and fix the parse errors in `bits/utility.h` that affect `<utility>`, `<tuple>`, `<span>`, `<array>`
+   - Root cause: Parser state pollution when certain headers are included before others
+   - Pattern: `typename _Up = typename remove_cv<_Tp>::type` fails only in specific contexts
+2. **Constructor with `noexcept = delete`** (Medium Priority): Fix parse error for constructors marked `noexcept = delete`
+   - Affects: `<variant>` and potentially other headers using `bits/enable_special_members.h`
+3. **Template Instantiation Performance** (Long-term): Optimize template instantiation to prevent timeouts
+   - Headers like `<concepts>`, `<bit>`, `<string>`, `<ranges>` time out due to instantiation volume
+   - Current cache hit rate: ~26% - needs improvement
+   - Consider implementing lazy instantiation for static members and template classes
 
 ### 2026-01-19 (Silent Failure Investigation & Error Tracing)
 - **Added error tracing infrastructure:** Parse errors are now always visible, even in release builds

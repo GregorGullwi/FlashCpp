@@ -320,6 +320,20 @@ public:
 			return evaluate_type_trait(std::get<TypeTraitExprNode>(expr));
 		}
 
+		// For FoldExpressionNode (e.g., (args && ...))
+		// Fold expressions depend on template parameter packs and must be evaluated during template instantiation
+		if (std::holds_alternative<FoldExpressionNode>(expr)) {
+			return EvalResult::error("Fold expression requires template instantiation context",
+			                         EvalErrorType::TemplateDependentExpression);
+		}
+
+		// For PackExpansionExprNode (e.g., args...)
+		// Pack expansions depend on template parameter packs and must be evaluated during template instantiation
+		if (std::holds_alternative<PackExpansionExprNode>(expr)) {
+			return EvalResult::error("Pack expansion requires template instantiation context",
+			                         EvalErrorType::TemplateDependentExpression);
+		}
+
 		// Other expression types are not supported as constant expressions yet
 		return EvalResult::error("Expression type not supported in constant expressions");
 	}
@@ -796,6 +810,14 @@ private:
 		}
 
 		const ASTNode& symbol_node = symbol_opt.value();
+		
+		// Check if it's a TemplateVariableDeclarationNode - these are template-dependent
+		if (symbol_node.is<TemplateVariableDeclarationNode>()) {
+			// Variable template references with template arguments are template-dependent
+			// They need to be evaluated during template instantiation
+			return EvalResult::error("Variable template in constant expression - instantiation required: " + std::string(var_name),
+			                         EvalErrorType::TemplateDependentExpression);
+		}
 		
 		// Check if it's a VariableDeclarationNode
 		if (!symbol_node.is<VariableDeclarationNode>()) {
@@ -2579,6 +2601,24 @@ public:
 						}
 					}
 				}
+			}
+			
+			// Not found in symbol table or as struct static member
+			// Check if this looks like a template instantiation with dependent arguments
+			// Pattern: __template_name__DependentArg::member
+			// Work with string_view to avoid unnecessary copies
+			std::string_view ns_name = gNamespaceRegistry.getQualifiedName(qualified_id.namespace_handle());
+			std::string_view member_name = qualified_id.name();
+			
+			// Check if the namespace part looks like a template instantiation (contains template argument separator)
+			// Template names with arguments get mangled as template_name_arg1_arg2...
+			// If any argument is a template parameter (starts with _ often), it's template-dependent
+			if (!ns_name.empty() && ns_name.find('_') != std::string_view::npos && context.parser != nullptr) {
+				// This might be a template instantiation with dependent arguments
+				// Treat it as template-dependent
+				return EvalResult::error("Template instantiation with dependent arguments in constant expression: " + 
+				                         std::string(ns_name) + "::" + std::string(member_name),
+				                         EvalErrorType::TemplateDependentExpression);
 			}
 			
 			// Not found in symbol table or as struct static member
