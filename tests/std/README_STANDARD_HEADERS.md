@@ -4,6 +4,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
+✅ **Investigation Update (2026-01-20):** Comprehensive investigation of header compilation blockers reveals:
+- **Parser features are mostly complete**: Variadic non-type template params, complex template aliases work correctly
+- **Real blocker is performance**: Template instantiation is slow (~300 instantiations timeout in debug builds)  
+- **Template cache needs optimization**: Only 26% hit rate, needs improvement
+- **Three headers crash**: `<functional>`, `<algorithm>`, `<chrono>` need debugging
+- **Test coverage added**: 5 new test cases validate parser features and isolate performance issues
+- See section 6.3 and 6.4 below for detailed findings
+
 ✅ **static_assert with Template-Dependent Expressions (2026-01-20):** Fixed constant expression evaluation to properly handle template-dependent expressions in static_assert:
 - Fold expressions like `(args && ...)` are now correctly deferred to instantiation time
 - Variable templates like `is_integral_v<T>` with template parameters work in static_assert
@@ -264,12 +272,39 @@ constexpr _Enable_default_constructor() noexcept = delete;
 
 **Affected Headers:** `<variant>`, potentially other headers using `bits/enable_special_members.h`
 
-#### 6.3 Other Known Parse Issues
+#### 6.3 Investigation Update (2026-01-20)
 
-| Issue | Example | Impact |
-|-------|---------|--------|
-| Variadic non-type template params | `template<size_t... _Indexes>` | Would enable more headers if fixed |
-| Complex decltype in partial spec | `__void_t<decltype(hash<T>()(...))>` | `<atomic>` |
+**Key Finding:** Many patterns previously thought to be blockers actually **work correctly**:
+
+✅ **Verified Working Patterns:**
+- **Variadic non-type template params**: `template<size_t... _Indexes>` - Compiles successfully
+  - Test case: `tests/test_variadic_nontype.cpp` 
+- **Template alias with complex defaults**: Patterns like `typename _Up = typename remove_cv<_Tp>::type` work in isolation
+  - Test case: `tests/test_utility_parse_error.cpp`
+
+❌ **Actual Blockers:**
+- **Performance/Template Instantiation**: Headers timeout not due to parse errors but slow template processing
+  - `<type_traits>` times out after ~300 instantiations in debug builds
+  - Template cache hit rate only ~26% (needs optimization)
+  - Test cases: `tests/test_just_type_traits.cpp`, `tests/test_just_vector.cpp` (both timeout)
+- **Context-dependent issues**: Parse errors occur only after including certain headers, suggesting parser state issues
+  - Test case: `tests/test_utility_with_context.cpp` (timeouts when including full headers)
+- **Complex decltype in partial spec**: `__void_t<decltype(hash<T>()(...))>` still needs investigation
+
+#### 6.4 Crash Issues (Needs Investigation)
+
+The following headers cause internal compiler crashes and need debugging:
+
+| Header | Error | Priority |
+|--------|-------|----------|
+| `<functional>` | `std::bad_any_cast` internal error | High - indicates exception handling issue |
+| `<algorithm>` | Internal compiler error | High - commonly used header |
+| `<chrono>` | Internal compiler error | Medium |
+
+**Recommendation:** These crashes should be investigated with a debugger to identify root causes. May be related to:
+- Exception handling in template instantiation
+- Edge cases in parser or IR generation
+- Specific template patterns that trigger assertion failures
 
 ### 7. Template Instantiation Performance
 
