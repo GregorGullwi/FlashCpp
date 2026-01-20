@@ -31043,13 +31043,20 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			std::string_view type_name = type_node.token().value();
 			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, type_name from token: {}", type_name);
 			
-			// Fallback to gTypeInfo lookup only if token is empty or for composite types
+			// Also get the full type name from gTypeInfo for composite/qualified types
+			// The token may only have the base name (e.g., "remove_reference")
+			// but gTypeInfo has the full name (e.g., "remove_reference__Tp::type")
+			std::string_view full_type_name;
+			TypeIndex idx = type_node.type_index();
+			if (idx < gTypeInfo.size()) {
+				full_type_name = StringTable::getStringView(gTypeInfo[idx].name());
+				FLASH_LOG_FORMAT(Templates, Debug, "Full type name from gTypeInfo: {}", full_type_name);
+			}
+			
+			// Fallback to gTypeInfo lookup only if token is empty
 			if (type_name.empty()) {
-				TypeIndex idx = type_node.type_index();
-				if (idx < gTypeInfo.size()) {
-					type_name = StringTable::getStringView(gTypeInfo[idx].name());
-					FLASH_LOG_FORMAT(Templates, Debug, "Fallback: type name from gTypeInfo: {}", type_name);
-				}
+				type_name = full_type_name;
+				FLASH_LOG(Templates, Debug, "Fallback: using full type name");
 			}
 			
 			if (!type_name.empty()) {
@@ -31088,20 +31095,30 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
 				} else if (!in_sfinae_context_) {
+					// Also check the full type name from gTypeInfo if available
+					std::string_view check_name = !full_type_name.empty() ? full_type_name : type_name;
+					
 					for (const auto& param_name : current_template_param_names_) {
 						std::string_view param_sv = StringTable::getStringView(param_name);
-						if (matches_identifier(type_name, param_sv) && type_name.find("::type") != std::string_view::npos) {
+						if (matches_identifier(check_name, param_sv) && check_name.find("::type") != std::string_view::npos) {
 							arg.is_dependent = true;
-							arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
-							FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", type_name);
+							arg.dependent_name = StringTable::getOrInternStringHandle(check_name);
+							FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", check_name);
 							break;
 						}
 					}
 					
-					if (!arg.is_dependent && type_name.find("::type") != std::string_view::npos) {
-						arg.is_dependent = true;
-						arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
-						FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", type_name);
+					if (!arg.is_dependent && check_name.find("::type") != std::string_view::npos) {
+						// Check if the base type (before ::type) contains a template parameter
+						for (const auto& param_name : current_template_param_names_) {
+							std::string_view param_sv = StringTable::getStringView(param_name);
+							if (matches_identifier(check_name, param_sv)) {
+								arg.is_dependent = true;
+								arg.dependent_name = StringTable::getOrInternStringHandle(check_name);
+								FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias containing template param: {}", check_name);
+								break;
+							}
+						}
 					}
 				}
 			}
