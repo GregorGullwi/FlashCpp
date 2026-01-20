@@ -18618,6 +18618,58 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Try to look up the qualified identifier
 		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespace_handle(), qual_id.name());
 		
+		// Check if this is a brace initialization: ns::Template<Args>{}
+		if (template_args.has_value() && current_token_.has_value() && current_token_->value() == "{") {
+			// Build the instantiated type name
+			std::string_view instantiated_name = get_instantiated_class_name(qual_id.name(), *template_args);
+			
+			// Look up the instantiated type
+			auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
+			auto type_it = gTypesByName.find(type_handle);
+			if (type_it != gTypesByName.end()) {
+				// Found the instantiated type - parse the brace initializer
+				consume_token(); // consume '{'
+				
+				ChunkedVector<ASTNode> args;
+				while (current_token_.has_value() && current_token_->value() != "}") {
+					auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (argResult.is_error()) {
+						return argResult;
+					}
+					if (auto node = argResult.node()) {
+						args.push_back(*node);
+					}
+					
+					if (current_token_.has_value() && current_token_->value() == ",") {
+						consume_token(); // consume ','
+					} else if (!current_token_.has_value() || current_token_->value() != "}") {
+						return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+					}
+				}
+				
+				if (!current_token_.has_value() || current_token_->value() != "}") {
+					return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+				}
+				consume_token(); // consume '}'
+				
+				// Create TypeSpecifierNode for the instantiated class
+				const TypeInfo& type_info = *type_it->second;
+				TypeIndex type_index = type_info.type_index_;
+				int type_size = 0;
+				if (type_info.struct_info_) {
+					type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
+				}
+				Token type_token(Token::Type::Identifier, instantiated_name, 
+				                final_identifier.line(), final_identifier.column(), final_identifier.file_index());
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, type_token);
+				
+				// Create ConstructorCallNode
+				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), type_token));
+				return ParseResult::success(*result);
+			}
+			// If type not found, fall through to function call check
+		}
+		
 		// Check if followed by '(' for function call
 		if (current_token_.has_value() && current_token_->value() == "(") {
 			consume_token(); // consume '('
