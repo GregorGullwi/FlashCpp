@@ -31043,13 +31043,20 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			std::string_view type_name = type_node.token().value();
 			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, type_name from token: {}", type_name);
 			
-			// Fallback to gTypeInfo lookup only if token is empty or for composite types
+			// Also get the full type name from gTypeInfo for composite/qualified types
+			// The token may only have the base name (e.g., "remove_reference")
+			// but gTypeInfo has the full name (e.g., "remove_reference__Tp::type")
+			std::string_view full_type_name;
+			TypeIndex idx = type_node.type_index();
+			if (idx < gTypeInfo.size()) {
+				full_type_name = StringTable::getStringView(gTypeInfo[idx].name());
+				FLASH_LOG_FORMAT(Templates, Debug, "Full type name from gTypeInfo: {}", full_type_name);
+			}
+			
+			// Fallback to gTypeInfo lookup only if token is empty
 			if (type_name.empty()) {
-				TypeIndex idx = type_node.type_index();
-				if (idx < gTypeInfo.size()) {
-					type_name = StringTable::getStringView(gTypeInfo[idx].name());
-					FLASH_LOG_FORMAT(Templates, Debug, "Fallback: type name from gTypeInfo: {}", type_name);
-				}
+				type_name = full_type_name;
+				FLASH_LOG(Templates, Debug, "Fallback: using full type name");
 			}
 			
 			if (!type_name.empty()) {
@@ -31088,20 +31095,33 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
 				} else if (!in_sfinae_context_) {
-					for (const auto& param_name : current_template_param_names_) {
-						std::string_view param_sv = StringTable::getStringView(param_name);
-						if (matches_identifier(type_name, param_sv) && type_name.find("::type") != std::string_view::npos) {
-							arg.is_dependent = true;
-							arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
-							FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", type_name);
-							break;
-						}
-					}
+					// Also check the full type name from gTypeInfo for composite/qualified types
+					std::string_view check_name = !full_type_name.empty() ? full_type_name : type_name;
 					
-					if (!arg.is_dependent && type_name.find("::type") != std::string_view::npos) {
-						arg.is_dependent = true;
-						arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
-						FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", type_name);
+					// Check if this is a qualified identifier (contains ::) which might be a member access
+					// If so, check if the base part contains any template parameter
+					size_t scope_pos = check_name.find("::");
+					if (scope_pos != std::string_view::npos) {
+						// This is a qualified identifier - extract the base part (before ::)
+						std::string_view base_part = check_name.substr(0, scope_pos);
+						
+						for (const auto& param_name : current_template_param_names_) {
+							std::string_view param_sv = StringTable::getStringView(param_name);
+							// Check both as standalone identifier AND as substring
+							// BUT only check substring if the base_part contains underscores (mangled names)
+							// This prevents false positives where common substrings match accidentally
+							bool contains_param = matches_identifier(base_part, param_sv);
+							if (!contains_param && base_part.find('_') != std::string_view::npos) {
+								// For mangled names like "remove_reference__Tp", check substring
+								contains_param = base_part.find(param_sv) != std::string_view::npos;
+							}
+							if (contains_param) {
+								arg.is_dependent = true;
+								arg.dependent_name = StringTable::getOrInternStringHandle(check_name);
+								FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to qualified identifier with template param: {}", check_name);
+								break;
+							}
+						}
 					}
 				}
 			}
