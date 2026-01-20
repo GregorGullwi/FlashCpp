@@ -382,7 +382,7 @@ public:
 			ctx.storage_duration = ConstExpr::StorageDuration::Static;
 			
 			auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
-			if (!eval_result.success) {
+			if (!eval_result.success()) {
 				return false;
 			}
 			
@@ -936,7 +936,7 @@ private:
 		auto expr_node = ASTNode::emplace_node<ExpressionNode>(node);
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		
-		if (eval_result.success) {
+		if (eval_result.success()) {
 			// Return the constant value
 			unsigned long long value = 0;
 			if (std::holds_alternative<long long>(eval_result.value)) {
@@ -4078,7 +4078,7 @@ private:
 			ConstExpr::EvaluationContext ctx(gSymbolTable);
 			auto result = ConstExpr::Evaluator::evaluate(node.get_condition(), ctx);
 			
-			if (!result.success) {
+			if (!result.success()) {
 				FLASH_LOG(Codegen, Error, "if constexpr condition is not a constant expression: ", 
 				          result.error_message);
 				return;
@@ -5293,7 +5293,7 @@ private:
 				ConstExpr::EvaluationContext ctx(gSymbolTable);
 				auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
 				
-				if (!eval_result.success) {
+				if (!eval_result.success()) {
 					FLASH_LOG(Codegen, Warning, "Non-constant initializer in global variable '", 
 					          decl.identifier_token().value(), "' at line ", decl.identifier_token().line());
 					return 0;
@@ -5330,7 +5330,7 @@ private:
 					for (const auto& dim_expr : dims) {
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
 						auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-						if (eval_result.success && eval_result.as_int() > 0) {
+						if (eval_result.success() && eval_result.as_int() > 0) {
 							op.element_count *= static_cast<size_t>(eval_result.as_int());
 						}
 					}
@@ -5444,7 +5444,7 @@ private:
 				ConstExpr::EvaluationContext ctx(symbol_table);
 				auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
 				
-				if (eval_result.success) {
+				if (eval_result.success()) {
 					// Insert into symbol table first
 					if (!symbol_table.insert(decl.identifier_token().value(), ast_node)) {
 						assert(false && "Expected identifier to be unique");
@@ -5514,7 +5514,7 @@ private:
 					ConstExpr::EvaluationContext ctx(symbol_table);
 					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 					
-					if (eval_result.success) {
+					if (eval_result.success()) {
 						long long dim_size = eval_result.as_int();
 						if (dim_size > 0) {
 							array_count *= static_cast<size_t>(dim_size);
@@ -6424,7 +6424,7 @@ private:
 										// Evaluate the array size expression using ConstExprEvaluator
 										ConstExpr::EvaluationContext array_ctx(symbol_table);
 										auto eval_result = ConstExpr::Evaluator::evaluate(*size_expr, array_ctx);
-										if (eval_result.success) {
+										if (eval_result.success()) {
 											ctor_array_count = static_cast<size_t>(eval_result.as_int());
 										}
 									}
@@ -6568,7 +6568,7 @@ private:
 							// Evaluate array size
 							ConstExpr::EvaluationContext ctx(gSymbolTable);
 							auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
-							if (eval_result.success) {
+							if (eval_result.success()) {
 								is_array = true;
 								array_size = static_cast<size_t>(eval_result.as_int());
 								// Get element type and size from the type specifier
@@ -6588,7 +6588,7 @@ private:
 							// Evaluate array size
 							ConstExpr::EvaluationContext ctx(gSymbolTable);
 							auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
-							if (eval_result.success) {
+							if (eval_result.success()) {
 								is_array = true;
 								array_size = static_cast<size_t>(eval_result.as_int());
 								// Get element type and size from the type specifier
@@ -6869,7 +6869,7 @@ private:
 						if (static_member.initializer.has_value()) {
 							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 							auto eval_result = ConstExpr::Evaluator::evaluate(*static_member.initializer, eval_ctx);
-							if (eval_result.success) {
+							if (eval_result.success()) {
 								tuple_size_value = static_cast<size_t>(eval_result.as_int());
 								found_value = true;
 								FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size::value = ", tuple_size_value);
@@ -9236,7 +9236,7 @@ private:
 							for (size_t j = i + 1; j < dims.size(); ++j) {
 								ConstExpr::EvaluationContext ctx(symbol_table);
 								auto eval_result = ConstExpr::Evaluator::evaluate(dims[j], ctx);
-								if (eval_result.success && eval_result.as_int() > 0) {
+								if (eval_result.success() && eval_result.as_int() > 0) {
 									stride *= static_cast<size_t>(eval_result.as_int());
 								} else {
 									// Invalid dimension - fall through to single-dimension handling
@@ -15202,7 +15202,7 @@ private:
 				for (const auto& dim_expr : dims) {
 					ConstExpr::EvaluationContext ctx(symbol_table);
 					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-					if (eval_result.success && eval_result.as_int() > 0) {
+					if (eval_result.success() && eval_result.as_int() > 0) {
 						dim_sizes.push_back(static_cast<size_t>(eval_result.as_int()));
 					} else {
 						// Can't evaluate dimension at compile time, fall back to regular handling
@@ -16370,7 +16370,7 @@ private:
 		
 		for (const auto& dim_expr : dims) {
 			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-			if (!eval_result.success) {
+			if (!eval_result.success()) {
 				return std::nullopt;
 			}
 			

@@ -3084,7 +3084,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				//   the variable is treated as a regular const variable.
 				// - constinit: variable MUST be initialized with a constant expression (C++20).
 				//   Failure to evaluate at compile time is always an error.
-				if (!eval_result.success && is_constinit) {
+				if (!eval_result.success() && is_constinit) {
 					return ParseResult::error(
 						std::string(keyword_name) + " variable initializer must be a constant expression: " + eval_result.error_message,
 						identifier_token
@@ -5475,7 +5475,7 @@ ParseResult Parser::parse_struct_declaration()
 							for (const auto& dim_expr : anon_array_dimensions) {
 								ConstExpr::EvaluationContext ctx(gSymbolTable);
 								auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-								if (eval_result.success && eval_result.as_int() > 0) {
+								if (eval_result.success() && eval_result.as_int() > 0) {
 									size_t dim_size = static_cast<size_t>(eval_result.as_int());
 									array_dimensions.push_back(dim_size);
 									member_size *= dim_size;
@@ -6587,7 +6587,7 @@ ParseResult Parser::parse_struct_declaration()
 			for (const auto& dim_expr : dims) {
 				ConstExpr::EvaluationContext ctx(gSymbolTable);
 				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-				if (eval_result.success && eval_result.as_int() > 0) {
+				if (eval_result.success() && eval_result.as_int() > 0) {
 					size_t dim_size = static_cast<size_t>(eval_result.as_int());
 					array_dimensions.push_back(dim_size);
 					member_size *= dim_size;
@@ -7524,7 +7524,7 @@ ParseResult Parser::parse_static_assert()
 	
 	// If we're in a template definition and evaluation failed due to dependent types,
 	// that's okay - skip it and it will be checked during instantiation
-	if (is_in_template_definition && !eval_result.success) {
+	if (is_in_template_definition && !eval_result.success()) {
 		// Check if the error is due to template-dependent expressions using the error_type enum
 		FLASH_LOG(Templates, Debug, "static_assert evaluation failed in template body: ", eval_result.error_message);
 		if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
@@ -7549,7 +7549,7 @@ ParseResult Parser::parse_static_assert()
 		// Otherwise, it's a real error - report it
 	}
 	
-	if (!eval_result.success) {
+	if (!eval_result.success()) {
 		return ParseResult::error(
 			"static_assert condition is not a constant expression: " + eval_result.error_message,
 			*static_assert_keyword
@@ -8865,7 +8865,7 @@ ParseResult Parser::parse_typedef_declaration()
 			if (size_result.node().has_value()) {
 				ConstExpr::EvaluationContext ctx(gSymbolTable);
 				auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), ctx);
-				if (eval_result.success && eval_result.as_int() > 0) {
+				if (eval_result.success() && eval_result.as_int() > 0) {
 					array_size = static_cast<size_t>(eval_result.as_int());
 				}
 			}
@@ -13611,7 +13611,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 				// Try to evaluate the array size as a constant expression
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 				auto eval_result = ConstExpr::Evaluator::evaluate(*decl_node.array_size(), eval_ctx);
-				if (eval_result.success) {
+				if (eval_result.success()) {
 					array_size_val = static_cast<size_t>(eval_result.as_int());
 				}
 			}
@@ -15242,7 +15242,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		if (arg_result.node().has_value()) {
 			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 			auto eval_result = ConstExpr::Evaluator::evaluate(*arg_result.node(), eval_ctx);
-			if (eval_result.success) {
+			if (eval_result.success()) {
 				result = 1;
 			}
 		}
@@ -17797,7 +17797,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						if (size_result.node().has_value()) {
 							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 							auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-							if (eval_result.success) {
+							if (eval_result.success()) {
 								array_size_val = static_cast<size_t>(eval_result.as_int());
 							}
 						}
@@ -17854,7 +17854,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								if (size_result.node().has_value()) {
 									ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 									auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-									if (eval_result.success) {
+									if (eval_result.success()) {
 										array_size_val = static_cast<size_t>(eval_result.as_int());
 									}
 								}
@@ -17923,7 +17923,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (size_result.node().has_value()) {
 								ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 								auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-								if (eval_result.success) {
+								if (eval_result.success()) {
 									array_size_val = static_cast<size_t>(eval_result.as_int());
 								}
 							}
@@ -30102,7 +30102,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		FLASH_LOG(Templates, Debug, "Evaluating ternary operator expression");
 		ConstExpr::EvaluationContext ctx(gSymbolTable);
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
-		if (eval_result.success) {
+		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Ternary evaluated to: {}", eval_result.as_int());
 			return ConstantValue{eval_result.as_int(), Type::Int};
 		}
@@ -30121,7 +30121,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			ctx.struct_info = struct_ctx.local_struct_info;
 		}
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
-		if (eval_result.success) {
+		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Binary op evaluated to: {}", eval_result.as_int());
 			return ConstantValue{eval_result.as_int(), Type::Int};
 		}
@@ -34902,7 +34902,7 @@ if (struct_type_info.getStructInfo()) {
 			
 			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
 			
-			if (!eval_result.success) {
+			if (!eval_result.success()) {
 				std::string error_msg = "static_assert failed during template instantiation: " + 
 				                       eval_result.error_message;
 				std::string_view message_view = StringTable::getStringView(deferred_assert.message);
@@ -36334,7 +36334,7 @@ if (struct_type_info.getStructInfo()) {
 					ConstExpr::EvaluationContext eval_context(gSymbolTable);
 					ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_context);
 					
-					if (result.success) {
+					if (result.success()) {
 						substituted_initializer = make_pack_size_literal(static_cast<size_t>(result.as_int()));
 						FLASH_LOG(Templates, Debug, "Evaluated expression with sizeof... using ConstExpr::Evaluator to ", result.as_int());
 					}
@@ -38105,7 +38105,7 @@ if (struct_type_info.getStructInfo()) {
 		
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
 		
-		if (!eval_result.success) {
+		if (!eval_result.success()) {
 			std::string error_msg = "static_assert failed during template instantiation: " + 
 			                       eval_result.error_message;
 			std::string_view message_view = StringTable::getStringView(deferred_assert.message);

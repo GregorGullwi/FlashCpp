@@ -25,7 +25,6 @@ enum class EvalErrorType {
 
 // Result of constant expression evaluation
 struct EvalResult {
-	bool success;
 	std::variant<
 		bool,                    // Boolean constant
 		long long,               // Signed integer constant
@@ -39,30 +38,35 @@ struct EvalResult {
 	bool is_array = false;
 	std::vector<int64_t> array_values;
 
+	// Check if evaluation was successful
+	bool success() const {
+		return error_type == EvalErrorType::None;
+	}
+
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{true, val, "", EvalErrorType::None, false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{true, val, "", EvalErrorType::None, false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{true, val, "", EvalErrorType::None, false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{true, val, "", EvalErrorType::None, false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}};
 	}
 
 	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-		return EvalResult{false, false, msg, type, false, {}};
+		return EvalResult{false, msg, type, false, {}};
 	}
 
 	// Convenience helpers for common operations
 	bool as_bool() const {
-		if (!success) return false;
+		if (!success()) return false;
 		
 		// Any non-zero value is true
 		if (std::holds_alternative<bool>(value)) {
@@ -78,7 +82,7 @@ struct EvalResult {
 	}
 
 	long long as_int() const {
-		if (!success) return 0;
+		if (!success()) return 0;
 		
 		if (std::holds_alternative<bool>(value)) {
 			return std::get<bool>(value) ? 1 : 0;
@@ -93,7 +97,7 @@ struct EvalResult {
 	}
 
 	double as_double() const {
-		if (!success) return 0.0;
+		if (!success()) return 0.0;
 		
 		if (std::holds_alternative<bool>(value)) {
 			return std::get<bool>(value) ? 1.0 : 0.0;
@@ -280,10 +284,10 @@ private:
 		auto lhs_result = evaluate(lhs_node, context);
 		auto rhs_result = evaluate(rhs_node, context);
 
-		if (!lhs_result.success) {
+		if (!lhs_result.success()) {
 			return lhs_result;
 		}
-		if (!rhs_result.success) {
+		if (!rhs_result.success()) {
 			return rhs_result;
 		}
 
@@ -295,7 +299,7 @@ private:
 		// Recursively evaluate operand
 		auto operand_result = evaluate(operand_node, context);
 
-		if (!operand_result.success) {
+		if (!operand_result.success()) {
 			return operand_result;
 		}
 
@@ -371,7 +375,7 @@ private:
 									bool all_evaluated = true;
 									for (const auto& dim_expr : dims) {
 										auto eval_result = evaluate(dim_expr, context);
-										if (eval_result.success && eval_result.as_int() > 0) {
+										if (eval_result.success() && eval_result.as_int() > 0) {
 											total_count *= eval_result.as_int();
 										} else {
 											all_evaluated = false;
@@ -429,7 +433,7 @@ private:
 										bool all_evaluated = true;
 										for (const auto& dim_expr : dims) {
 											auto eval_result = evaluate(dim_expr, context);
-											if (eval_result.success && eval_result.as_int() > 0) {
+											if (eval_result.success() && eval_result.as_int() > 0) {
 												total_count *= eval_result.as_int();
 											} else {
 												all_evaluated = false;
@@ -639,7 +643,7 @@ private:
 
 	static EvalResult evaluate_expr_node(Type target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr) {
 		auto expr_result = evaluate(expr, context);
-		if (!expr_result.success) {
+		if (!expr_result.success()) {
 			return expr_result;
 		}
 		
@@ -748,7 +752,7 @@ private:
 			std::vector<int64_t> array_values;
 			for (const auto& elem : initializers) {
 				auto elem_result = evaluate(elem, context);
-				if (!elem_result.success) {
+				if (!elem_result.success()) {
 					return elem_result;
 				}
 				array_values.push_back(elem_result.as_int());
@@ -756,7 +760,7 @@ private:
 			
 			// Return as an array result
 			EvalResult array_result;
-			array_result.success = true;
+			array_result.error_type = EvalErrorType::None;
 			array_result.is_array = true;
 			array_result.array_values = std::move(array_values);
 			return array_result;
@@ -769,7 +773,7 @@ private:
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context) {
 		// Evaluate the condition
 		auto cond_result = evaluate(ternary.condition(), context);
-		if (!cond_result.success) {
+		if (!cond_result.success()) {
 			return cond_result;
 		}
 
@@ -822,7 +826,7 @@ private:
 					// Check for init-capture: [x = expr]
 					if (capture.has_initializer()) {
 						auto init_result = evaluate(capture.initializer().value(), context);
-						if (!init_result.success) {
+						if (!init_result.success()) {
 							return EvalResult::error("Failed to evaluate init-capture '" + 
 								std::string(var_name) + "': " + init_result.error_message);
 						}
@@ -858,7 +862,7 @@ private:
 						}
 						
 						auto var_result = evaluate(var_decl.initializer().value(), context);
-						if (!var_result.success) {
+						if (!var_result.success()) {
 							return EvalResult::error("Failed to evaluate captured variable '" + 
 								std::string(var_name) + "': " + var_result.error_message);
 						}
@@ -884,7 +888,7 @@ private:
 		
 		// Success - all captures evaluated
 		EvalResult success;
-		success.success = true;
+		success.error_type = EvalErrorType::None;
 		success.value = 0LL;  // Dummy value, not used
 		return success;
 	}
@@ -942,7 +946,7 @@ private:
 			
 			// Evaluate argument
 			auto arg_result = evaluate(arguments[i], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			bindings[param_name] = arg_result;
@@ -951,7 +955,7 @@ private:
 		// Handle captures - evaluate each captured variable and add to bindings
 		const auto& captures = lambda.captures();
 		auto capture_result = evaluate_lambda_captures(captures, bindings, context);
-		if (!capture_result.success) {
+		if (!capture_result.success()) {
 			return capture_result;
 		}
 		
@@ -993,7 +997,7 @@ private:
 				return EvalResult::error("__builtin_clzll requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned long long value;
@@ -1029,7 +1033,7 @@ private:
 				return EvalResult::error("__builtin_clz requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned int value;
@@ -1060,7 +1064,7 @@ private:
 				return EvalResult::error("__builtin_ctzll requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned long long value;
@@ -1090,7 +1094,7 @@ private:
 				return EvalResult::error("__builtin_ctz requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned int value;
@@ -1120,7 +1124,7 @@ private:
 				return EvalResult::error("__builtin_popcountll requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned long long value;
@@ -1146,7 +1150,7 @@ private:
 				return EvalResult::error("__builtin_popcount requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned int value;
@@ -1172,7 +1176,7 @@ private:
 				return EvalResult::error("__builtin_ffsll requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned long long value;
@@ -1202,7 +1206,7 @@ private:
 				return EvalResult::error("__builtin_ffs requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned int value;
@@ -1233,7 +1237,7 @@ private:
 			}
 			// In a constexpr context, if we can evaluate the argument, it's a constant
 			auto arg_result = evaluate(arguments[0], context);
-			return EvalResult::from_int(arg_result.success ? 1LL : 0LL);
+			return EvalResult::from_int(arg_result.success() ? 1LL : 0LL);
 		}
 		
 		// Handle __builtin_abs, __builtin_labs, __builtin_llabs
@@ -1242,7 +1246,7 @@ private:
 				return EvalResult::error(std::string(func_name) + " requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			long long value = arg_result.as_int();
@@ -1363,7 +1367,7 @@ private:
 			// Check if this is a compiler builtin function (starts with __builtin)
 			if (func_name.starts_with("__builtin")) {
 				auto builtin_result = evaluate_builtin_function(func_name, func_call.arguments(), context);
-				if (builtin_result.success) {
+				if (builtin_result.success()) {
 					return builtin_result;
 				}
 				// Builtin evaluation failed - propagate the specific error
@@ -1541,7 +1545,7 @@ private:
 		for (size_t i = 0; i < arguments.size(); ++i) {
 			// Evaluate the argument with outer bindings (for nested calls)
 			auto arg_result = evaluate_expression_with_bindings_const(arguments[i], outer_bindings, context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			
@@ -1581,14 +1585,14 @@ private:
 			// If the result is successful, it means a return value was computed
 			// This can happen either directly from a return statement, or indirectly
 			// from an if/while/for statement that contains a return
-			if (result.success) {
+			if (result.success()) {
 				context.current_depth--;
 				return result;
 			}
 			
 			// For other statements (like variable declarations), result contains the binding info
 			// The binding has already been added to local_bindings by evaluate_statement_with_bindings
-			if (!result.success && result.error_message != "Statement executed (not a return)") {
+			if (!result.success() && result.error_message != "Statement executed (not a return)") {
 				// An actual error occurred
 				context.current_depth--;
 				return result;
@@ -1635,7 +1639,7 @@ private:
 					std::vector<int64_t> array_values;
 					for (size_t i = 0; i < initializers.size(); i++) {
 						auto elem_result = evaluate_expression_with_bindings(initializers[i], bindings, context);
-						if (!elem_result.success) {
+						if (!elem_result.success()) {
 							return elem_result;
 						}
 						array_values.push_back(elem_result.as_int());
@@ -1643,7 +1647,7 @@ private:
 					
 					// Store as an array binding
 					EvalResult array_result;
-					array_result.success = true;
+					array_result.error_type = EvalErrorType::None;
 					array_result.is_array = true;
 					array_result.array_values = std::move(array_values);
 					bindings[var_name] = array_result;
@@ -1654,7 +1658,7 @@ private:
 				
 				// Regular expression initializer
 				auto init_result = evaluate_expression_with_bindings(init_expr, bindings, context);
-				if (!init_result.success) {
+				if (!init_result.success()) {
 					return init_result;
 				}
 				
@@ -1688,7 +1692,7 @@ private:
 				// Evaluate condition if present
 				if (for_stmt.has_condition()) {
 					auto cond_result = evaluate_expression_with_bindings(for_stmt.get_condition().value(), bindings, context);
-					if (!cond_result.success) {
+					if (!cond_result.success()) {
 						return cond_result;
 					}
 					if (!cond_result.as_bool()) {
@@ -1738,7 +1742,7 @@ private:
 				
 				// Evaluate condition
 				auto cond_result = evaluate_expression_with_bindings(while_stmt.get_condition(), bindings, context);
-				if (!cond_result.success) {
+				if (!cond_result.success()) {
 					return cond_result;
 				}
 				if (!cond_result.as_bool()) {
@@ -1781,7 +1785,7 @@ private:
 			
 			// Evaluate condition
 			auto cond_result = evaluate_expression_with_bindings(if_stmt.get_condition(), bindings, context);
-			if (!cond_result.success) {
+			if (!cond_result.success()) {
 				return cond_result;
 			}
 			
@@ -1902,7 +1906,7 @@ private:
 						
 						// Evaluate the right-hand side
 						auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
-						if (!rhs_result.success) return rhs_result;
+						if (!rhs_result.success()) return rhs_result;
 						
 						// Perform the assignment
 						if (op == "=") {
@@ -1930,7 +1934,7 @@ private:
 								new_value = apply_binary_op(current, rhs_result, "%");
 							}
 							
-							if (!new_value.success) return new_value;
+							if (!new_value.success()) return new_value;
 							bindings[var_name] = new_value;
 							return new_value;
 						}
@@ -1943,8 +1947,8 @@ private:
 			auto lhs_result = evaluate_expression_with_bindings(bin_op.get_lhs(), bindings, context);
 			auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
 			
-			if (!lhs_result.success) return lhs_result;
-			if (!rhs_result.success) return rhs_result;
+			if (!lhs_result.success()) return lhs_result;
+			if (!rhs_result.success()) return rhs_result;
 			
 			return apply_binary_op(lhs_result, rhs_result, bin_op.op());
 		}
@@ -1979,7 +1983,7 @@ private:
 							new_value = apply_binary_op(current, one, "-");
 						}
 						
-						if (!new_value.success) return new_value;
+						if (!new_value.success()) return new_value;
 						bindings[var_name] = new_value;
 						
 						// Return old value for postfix, new value for prefix
@@ -1995,7 +1999,7 @@ private:
 			
 			// Regular unary operators
 			auto operand_result = evaluate_expression_with_bindings(unary_op.get_operand(), bindings, context);
-			if (!operand_result.success) return operand_result;
+			if (!operand_result.success()) return operand_result;
 			return apply_unary_op(operand_result, op);
 		}
 		
@@ -2004,7 +2008,7 @@ private:
 			const auto& ternary = std::get<TernaryOperatorNode>(expr);
 			auto cond_result = evaluate_expression_with_bindings(ternary.condition(), bindings, context);
 			
-			if (!cond_result.success) return cond_result;
+			if (!cond_result.success()) return cond_result;
 			
 			if (cond_result.as_bool()) {
 				return evaluate_expression_with_bindings(ternary.true_expr(), bindings, context);
@@ -2092,8 +2096,8 @@ private:
 			auto lhs_result = evaluate_expression_with_bindings_const(bin_op.get_lhs(), bindings, context);
 			auto rhs_result = evaluate_expression_with_bindings_const(bin_op.get_rhs(), bindings, context);
 			
-			if (!lhs_result.success) return lhs_result;
-			if (!rhs_result.success) return rhs_result;
+			if (!lhs_result.success()) return lhs_result;
+			if (!rhs_result.success()) return rhs_result;
 			
 			return apply_binary_op(lhs_result, rhs_result, bin_op.op());
 		}
@@ -2103,7 +2107,7 @@ private:
 			const auto& ternary = std::get<TernaryOperatorNode>(expr);
 			auto cond_result = evaluate_expression_with_bindings_const(ternary.condition(), bindings, context);
 			
-			if (!cond_result.success) return cond_result;
+			if (!cond_result.success()) return cond_result;
 			
 			if (cond_result.as_bool()) {
 				return evaluate_expression_with_bindings_const(ternary.true_expr(), bindings, context);
@@ -2176,7 +2180,7 @@ private:
 			
 			// Evaluate the index
 			auto index_result = evaluate_expression_with_bindings_const(subscript.index_expr(), bindings, context);
-			if (!index_result.success) {
+			if (!index_result.success()) {
 				return index_result;
 			}
 			
@@ -2648,7 +2652,7 @@ public:
 				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
 				std::string_view param_name = param_decl.identifier_token().value();
 				auto arg_result = evaluate(ctor_args[i], context);
-				if (!arg_result.success) {
+				if (!arg_result.success()) {
 					return arg_result;
 				}
 				param_bindings[param_name] = arg_result;
@@ -2853,7 +2857,7 @@ public:
 					const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
 					std::string_view param_name = param_decl.identifier_token().value();
 					auto arg_result = evaluate(base_ctor_args[i], context);
-					if (!arg_result.success) {
+					if (!arg_result.success()) {
 						return arg_result;
 					}
 					param_bindings[param_name] = arg_result;
@@ -2899,7 +2903,7 @@ public:
 		// Evaluate the intermediate initializer with parameter bindings
 		// This gives us the argument value to pass to the inner struct's constructor
 		auto init_arg_result = evaluate_expression_with_bindings(intermediate_init, param_bindings, context);
-		if (!init_arg_result.success) {
+		if (!init_arg_result.success()) {
 			return init_arg_result;
 		}
 		
@@ -3204,7 +3208,7 @@ public:
 		std::unordered_map<std::string_view, EvalResult> member_bindings;
 		
 		auto member_extraction_result = extract_object_members(object_expr, member_bindings, context);
-		if (!member_extraction_result.success) {
+		if (!member_extraction_result.success()) {
 			return member_extraction_result;
 		}
 		
@@ -3227,7 +3231,7 @@ public:
 			
 			// Evaluate argument
 			auto arg_result = evaluate(arguments[i], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			member_bindings[param_name] = arg_result;
@@ -3362,7 +3366,7 @@ public:
 				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
 				std::string_view param_name = param_decl.identifier_token().value();
 				auto arg_result = evaluate(ctor_args[i], context);
-				if (!arg_result.success) {
+				if (!arg_result.success()) {
 					return arg_result;
 				}
 				ctor_param_bindings[param_name] = arg_result;
@@ -3372,7 +3376,7 @@ public:
 		// Extract member values from the initializer list
 		for (const auto& mem_init : matching_ctor->member_initializers()) {
 			auto member_result = evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
-			if (!member_result.success) {
+			if (!member_result.success()) {
 				return member_result;
 			}
 			member_bindings[mem_init.member_name] = member_result;
@@ -3383,7 +3387,7 @@ public:
 			std::string_view name_view = StringTable::getStringView(member.getName());
 			if (member_bindings.find(name_view) == member_bindings.end() && member.default_initializer.has_value()) {
 				auto default_result = evaluate(member.default_initializer.value(), context);
-				if (default_result.success) {
+				if (default_result.success()) {
 					member_bindings[name_view] = default_result;
 				}
 			}
@@ -3396,7 +3400,7 @@ public:
 	static EvalResult evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context) {
 		// First, evaluate the index expression to get the constant index
 		auto index_result = evaluate(subscript.index_expr(), context);
-		if (!index_result.success) {
+		if (!index_result.success()) {
 			return index_result;
 		}
 		
@@ -3527,7 +3531,7 @@ public:
 						const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
 						std::string_view param_name = param_decl.identifier_token().value();
 						auto arg_result = evaluate(ctor_args[i], context);
-						if (!arg_result.success) {
+						if (!arg_result.success()) {
 							return arg_result;
 						}
 						param_bindings[param_name] = arg_result;
