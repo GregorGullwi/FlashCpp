@@ -16622,18 +16622,6 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 
 		// Check for scope resolution operator :: (namespace/class member access)
 		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "::"sv) {
-			// TEST: See if this postfix path is reached
-			if (result->is<ExpressionNode>()) {
-				const ExpressionNode& expr = result->as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(expr)) {
-					std::string_view name = std::get<IdentifierNode>(expr).name();
-					if (name == "std") {
-						return ParseResult::error("TEST: Reached postfix :: path for std", *current_token_);
-					}
-				}
-			}
-			
-			FLASH_LOG(Parser, Warning, "@@@ POSTFIX :: OPERATOR DETECTED");
 			// Handle namespace::member or class::static_member syntax
 			// We have an identifier (in result), now parse :: and the member name
 			consume_token(); // consume '::'
@@ -16940,6 +16928,63 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				// Fall through to handle as regular qualified identifier if not a variable template
 			}
 			
+			// Check for brace initialization: ns::Template<Args>{}
+			// This must be checked BEFORE the undefined identifier error
+			if (template_args.has_value() && peek_token().has_value() && peek_token()->value() == "{") {
+				// Build the qualified name and try to instantiate as class template
+				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
+				
+				// Try to instantiate the class template
+				try_instantiate_class_template(qualified_name, *template_args);
+				
+				// Build the instantiated type name
+				std::string_view instantiated_name = get_instantiated_class_name(qualified_name, *template_args);
+				
+				// Look up the instantiated type
+				auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
+				auto type_it = gTypesByName.find(type_handle);
+				if (type_it != gTypesByName.end()) {
+					// Found the instantiated type - parse the brace initializer
+					Token brace_token = *peek_token();
+					consume_token(); // consume '{'
+					
+					ChunkedVector<ASTNode> args;
+					while (peek_token().has_value() && peek_token()->value() != "}") {
+						auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (argResult.is_error()) {
+							return argResult;
+						}
+						if (auto node = argResult.node()) {
+							args.push_back(*node);
+						}
+						
+						if (peek_token().has_value() && peek_token()->value() == ",") {
+							consume_token(); // consume ','
+						} else if (!peek_token().has_value() || peek_token()->value() != "}") {
+							return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+						}
+					}
+					
+					if (!consume_punctuator("}")) {
+						return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+					}
+					
+					// Create TypeSpecifierNode for the instantiated class
+					const TypeInfo& type_info = *type_it->second;
+					TypeIndex type_index = type_info.type_index_;
+					int type_size = 0;
+					if (type_info.struct_info_) {
+						type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
+					}
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, final_identifier);
+					
+					// Create ConstructorCallNode
+					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), brace_token));
+					continue; // Check for more postfix operators
+				}
+				// If type not found, fall through to error handling
+			}
+			
 			if (qualified_symbol.has_value()) {
 				// Just a qualified identifier reference (e.g., Namespace::globalValue)
 				NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
@@ -16950,6 +16995,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				return ParseResult::error("Undefined qualified identifier", final_identifier);
 			}
 		}
+		
 		// Check for member access operator . or -> (or pointer-to-member .* or ->*)
 		bool is_arrow_access = false;
 		Token operator_start_token;  // Track the operator token for error reporting
