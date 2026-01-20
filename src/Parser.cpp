@@ -3084,7 +3084,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				//   the variable is treated as a regular const variable.
 				// - constinit: variable MUST be initialized with a constant expression (C++20).
 				//   Failure to evaluate at compile time is always an error.
-				if (!eval_result.success && is_constinit) {
+				if (!eval_result.success() && is_constinit) {
 					return ParseResult::error(
 						std::string(keyword_name) + " variable initializer must be a constant expression: " + eval_result.error_message,
 						identifier_token
@@ -5475,7 +5475,7 @@ ParseResult Parser::parse_struct_declaration()
 							for (const auto& dim_expr : anon_array_dimensions) {
 								ConstExpr::EvaluationContext ctx(gSymbolTable);
 								auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-								if (eval_result.success && eval_result.as_int() > 0) {
+								if (eval_result.success() && eval_result.as_int() > 0) {
 									size_t dim_size = static_cast<size_t>(eval_result.as_int());
 									array_dimensions.push_back(dim_size);
 									member_size *= dim_size;
@@ -6587,7 +6587,7 @@ ParseResult Parser::parse_struct_declaration()
 			for (const auto& dim_expr : dims) {
 				ConstExpr::EvaluationContext ctx(gSymbolTable);
 				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-				if (eval_result.success && eval_result.as_int() > 0) {
+				if (eval_result.success() && eval_result.as_int() > 0) {
 					size_t dim_size = static_cast<size_t>(eval_result.as_int());
 					array_dimensions.push_back(dim_size);
 					member_size *= dim_size;
@@ -7503,15 +7503,15 @@ ParseResult Parser::parse_static_assert()
 		return ParseResult::error("Expected ';' after static_assert", *current_token_);
 	}
 
-	// If we're inside a template body, defer static_assert evaluation until instantiation
+	// If we're inside a template body during template DEFINITION (not instantiation),
+	// defer static_assert evaluation until instantiation.
+	// However, if we can evaluate it now (non-dependent expression), we should do so to catch errors early.
 	// The expression may depend on template parameters that are not yet known
-	if (parsing_template_body_ && !current_template_param_names_.empty()) {
-		// Skip evaluation - the static_assert will be checked during template instantiation
-		return saved_position.success();
-	}
-
-	// Evaluate the constant expression using ConstExprEvaluator
+	bool is_in_template_definition = parsing_template_body_ && !current_template_param_names_.empty();
+	
+	// Try to evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable);
+	ctx.parser = this;  // Enable template function instantiation
 	
 	// Pass struct context for static member lookup in static_assert within struct body
 	if (!struct_parsing_context_stack_.empty()) {
@@ -7522,7 +7522,34 @@ ParseResult Parser::parse_static_assert()
 	
 	auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
 	
-	if (!eval_result.success) {
+	// If we're in a template definition and evaluation failed due to dependent types,
+	// that's okay - skip it and it will be checked during instantiation
+	if (is_in_template_definition && !eval_result.success()) {
+		// Check if the error is due to template-dependent expressions using the error_type enum
+		FLASH_LOG(Templates, Debug, "static_assert evaluation failed in template body: ", eval_result.error_message);
+		if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
+			// This is a template-dependent expression - defer evaluation
+			FLASH_LOG(Templates, Debug, "Deferring static_assert evaluation in template body: ", eval_result.error_message);
+			
+			// Store the deferred static_assert in the current struct/class for later evaluation
+			if (!struct_parsing_context_stack_.empty()) {
+				const auto& struct_ctx = struct_parsing_context_stack_.back();
+				if (struct_ctx.struct_node) {
+					// Intern the message in StringTable for persistent storage
+					StringHandle message_handle = StringTable::getOrInternStringHandle(message);
+					// Store the condition expression and message for re-evaluation during template instantiation
+					struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+					FLASH_LOG(Templates, Debug, "Stored deferred static_assert in struct '", 
+					          struct_ctx.struct_node->name(), "' for later evaluation");
+				}
+			}
+			
+			return saved_position.success();
+		}
+		// Otherwise, it's a real error - report it
+	}
+	
+	if (!eval_result.success()) {
 		return ParseResult::error(
 			"static_assert condition is not a constant expression: " + eval_result.error_message,
 			*static_assert_keyword
@@ -8838,7 +8865,7 @@ ParseResult Parser::parse_typedef_declaration()
 			if (size_result.node().has_value()) {
 				ConstExpr::EvaluationContext ctx(gSymbolTable);
 				auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), ctx);
-				if (eval_result.success && eval_result.as_int() > 0) {
+				if (eval_result.success() && eval_result.as_int() > 0) {
 					array_size = static_cast<size_t>(eval_result.as_int());
 				}
 			}
@@ -13584,7 +13611,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 				// Try to evaluate the array size as a constant expression
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 				auto eval_result = ConstExpr::Evaluator::evaluate(*decl_node.array_size(), eval_ctx);
-				if (eval_result.success) {
+				if (eval_result.success()) {
 					array_size_val = static_cast<size_t>(eval_result.as_int());
 				}
 			}
@@ -15215,7 +15242,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		if (arg_result.node().has_value()) {
 			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 			auto eval_result = ConstExpr::Evaluator::evaluate(*arg_result.node(), eval_ctx);
-			if (eval_result.success) {
+			if (eval_result.success()) {
 				result = 1;
 			}
 		}
@@ -17770,7 +17797,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						if (size_result.node().has_value()) {
 							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 							auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-							if (eval_result.success) {
+							if (eval_result.success()) {
 								array_size_val = static_cast<size_t>(eval_result.as_int());
 							}
 						}
@@ -17827,7 +17854,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								if (size_result.node().has_value()) {
 									ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 									auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-									if (eval_result.success) {
+									if (eval_result.success()) {
 										array_size_val = static_cast<size_t>(eval_result.as_int());
 									}
 								}
@@ -17896,7 +17923,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (size_result.node().has_value()) {
 								ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 								auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-								if (eval_result.success) {
+								if (eval_result.success()) {
 									array_size_val = static_cast<size_t>(eval_result.as_int());
 								}
 							}
@@ -18795,11 +18822,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					FLASH_LOG(Templates, Debug, "Stored ", template_arg_nodes.size(), " template argument nodes in FunctionCallNode (path 1)");
 				}
 				
+				// Store the qualified source name for template lookup during constexpr evaluation
+				std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
+				FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
+				func_call.set_qualified_name(qualified_name);
+				FLASH_LOG(Parser, Debug, "Set qualified name on FunctionCallNode: ", qualified_name);
+				
 				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 				if (identifierType->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 					if (func_decl.has_mangled_name()) {
-						std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+						func_call.set_mangled_name(func_decl.mangled_name());
 					}
 				}
 			} else {
@@ -30069,7 +30102,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		FLASH_LOG(Templates, Debug, "Evaluating ternary operator expression");
 		ConstExpr::EvaluationContext ctx(gSymbolTable);
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
-		if (eval_result.success) {
+		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Ternary evaluated to: {}", eval_result.as_int());
 			return ConstantValue{eval_result.as_int(), Type::Int};
 		}
@@ -30088,7 +30121,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			ctx.struct_info = struct_ctx.local_struct_info;
 		}
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
-		if (eval_result.success) {
+		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Binary op evaluated to: {}", eval_result.as_int());
 			return ConstantValue{eval_result.as_int(), Type::Int};
 		}
@@ -33078,12 +33111,14 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		new_initializer,
 		orig_var_decl.storage_class()
 	);
+	// Mark as constexpr to match the template pattern
+	instantiated_var_decl.as<VariableDeclarationNode>().set_is_constexpr(true);
 	
-	// Register the DeclarationNode in symbol table (not the VariableDeclarationNode)
-	// This is how normal variables are registered
+	// Register the VariableDeclarationNode in symbol table (not just DeclarationNode)
+	// This allows constexpr evaluation to find and evaluate the variable
 	// IMPORTANT: Use insertGlobal because we might be called during function parsing
 	// but we need to insert into global scope
-	[[maybe_unused]] bool insert_result = gSymbolTable.insertGlobal(persistent_name, new_decl_node);
+	[[maybe_unused]] bool insert_result = gSymbolTable.insertGlobal(persistent_name, instantiated_var_decl);
 	
 	// Verify it's there
 	auto verify = gSymbolTable.lookup(persistent_name);
@@ -34841,6 +34876,62 @@ if (struct_type_info.getStructInfo()) {
 			}
 		}
 		
+		// Re-evaluate deferred static_asserts with substituted template parameters
+		FLASH_LOG(Templates, Debug, "Checking ", pattern_struct.deferred_static_asserts().size(), 
+		          " deferred static_asserts for instantiation");
+		
+		for (const auto& deferred_assert : pattern_struct.deferred_static_asserts()) {
+			FLASH_LOG(Templates, Debug, "Re-evaluating deferred static_assert during template instantiation");
+			
+			// Build template parameter name to type mapping for substitution
+			std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+				// param.name() already returns string_view
+				param_map[param.name()] = template_args[i];
+			}
+			
+			// Create substitution context with template parameter mappings
+			ExpressionSubstitutor substitutor(param_map, *this);
+			
+			// Substitute template parameters in the condition expression
+			ASTNode substituted_expr = substitutor.substitute(deferred_assert.condition_expr);
+			
+			// Evaluate the substituted expression
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			eval_ctx.parser = this;
+			eval_ctx.struct_node = &instantiated_struct_ref;
+			
+			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
+			
+			if (!eval_result.success()) {
+				std::string error_msg = "static_assert failed during template instantiation: " + 
+				                       eval_result.error_message;
+				std::string_view message_view = StringTable::getStringView(deferred_assert.message);
+				if (!message_view.empty()) {
+					error_msg += " - " + std::string(message_view);
+				}
+				FLASH_LOG(Templates, Error, error_msg);
+				// Don't return error - continue with other static_asserts
+				// This matches the behavior of most compilers which report all failures
+				continue;
+			}
+			
+			// Check if the assertion failed
+			if (!eval_result.as_bool()) {
+				std::string error_msg = "static_assert failed during template instantiation";
+				std::string_view message_view = StringTable::getStringView(deferred_assert.message);
+				if (!message_view.empty()) {
+					error_msg += ": " + std::string(message_view);
+				}
+				FLASH_LOG(Templates, Error, error_msg);
+				// Don't return error - continue with other static_asserts
+				continue;
+			}
+			
+			FLASH_LOG(Templates, Debug, "Deferred static_assert passed during template instantiation");
+		}
+		
 		// Mark instantiation complete with the type index
 		FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
 		in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
@@ -36245,7 +36336,7 @@ if (struct_type_info.getStructInfo()) {
 					ConstExpr::EvaluationContext eval_context(gSymbolTable);
 					ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_context);
 					
-					if (result.success) {
+					if (result.success()) {
 						substituted_initializer = make_pack_size_literal(static_cast<size_t>(result.as_int()));
 						FLASH_LOG(Templates, Debug, "Evaluated expression with sizeof... using ConstExpr::Evaluator to ", result.as_int());
 					}
@@ -37988,6 +38079,61 @@ if (struct_type_info.getStructInfo()) {
 	struct_info_ptr->needs_default_constructor = !has_constructor;
 	FLASH_LOG(Templates, Debug, "Instantiated struct ", instantiated_name, " has_constructor=", has_constructor, 
 	          ", needs_default_constructor=", struct_info_ptr->needs_default_constructor);
+	
+	// Re-evaluate deferred static_asserts with substituted template parameters
+	FLASH_LOG(Templates, Debug, "Checking deferred static_asserts for struct '", class_decl.name(), 
+	          "': found ", class_decl.deferred_static_asserts().size(), " deferred asserts");
+	
+	for (const auto& deferred_assert : class_decl.deferred_static_asserts()) {
+		FLASH_LOG(Templates, Debug, "Re-evaluating deferred static_assert during template instantiation");
+		
+		// Build template parameter name to type mapping for substitution
+		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+		for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
+			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			param_map[param.name()] = template_args_to_use[i];
+		}
+		
+		// Create substitution context with template parameter mappings
+		ExpressionSubstitutor substitutor(param_map, *this);
+		
+		// Substitute template parameters in the condition expression
+		ASTNode substituted_expr = substitutor.substitute(deferred_assert.condition_expr);
+		
+		// Evaluate the substituted expression
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		eval_ctx.parser = this;
+		eval_ctx.struct_node = &instantiated_struct.as<StructDeclarationNode>();
+		
+		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
+		
+		if (!eval_result.success()) {
+			std::string error_msg = "static_assert failed during template instantiation: " + 
+			                       eval_result.error_message;
+			std::string_view message_view = StringTable::getStringView(deferred_assert.message);
+			if (!message_view.empty()) {
+				error_msg += " - " + std::string(message_view);
+			}
+			FLASH_LOG(Templates, Error, error_msg);
+			// Don't return error - continue with other static_asserts
+			// This matches the behavior of most compilers which report all failures
+			continue;
+		}
+		
+		// Check if the assertion failed
+		if (!eval_result.as_bool()) {
+			std::string error_msg = "static_assert failed during template instantiation";
+			std::string_view message_view = StringTable::getStringView(deferred_assert.message);
+			if (!message_view.empty()) {
+				error_msg += ": " + std::string(message_view);
+			}
+			FLASH_LOG(Templates, Error, error_msg);
+			// Don't return error - continue with other static_asserts
+			continue;
+		}
+		
+		FLASH_LOG(Templates, Debug, "Deferred static_assert passed during template instantiation");
+	}
 	
 	// Mark instantiation complete with the type index
 	FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);

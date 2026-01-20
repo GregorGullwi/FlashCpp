@@ -290,6 +290,15 @@ struct FunctionSignature {
 	bool is_volatile = false;                  // For volatile member functions
 };
 
+// Deferred static_assert information - stored during template definition, evaluated during instantiation
+struct DeferredStaticAssert {
+	ASTNode condition_expr;  // The condition expression to evaluate
+	StringHandle message;    // The assertion message (interned in StringTable for concatenated literals)
+	
+	DeferredStaticAssert(ASTNode expr, StringHandle msg)
+		: condition_expr(expr), message(msg) {}
+};
+
 // Struct member information
 struct StructMember {
 	StringHandle name;
@@ -1792,6 +1801,14 @@ public:
 	StringHandle mangled_name_handle() const { return mangled_name_; }
 	bool has_mangled_name() const { return mangled_name_.isValid(); }
 	
+	// Qualified source name support (for template lookup in constexpr evaluation)
+	// This stores the source-level qualified name (e.g., "std::__is_complete_or_unbounded")
+	// which is needed for template function lookup in the template registry
+	void set_qualified_name(std::string_view name) { qualified_name_ = StringTable::getOrInternStringHandle(name); }
+	std::string_view qualified_name() const { return qualified_name_.view(); }
+	StringHandle qualified_name_handle() const { return qualified_name_; }
+	bool has_qualified_name() const { return qualified_name_.isValid(); }
+	
 	// Explicit template arguments support (for calls like foo<int>())
 	// These are stored as expression nodes which may contain TemplateParameterReferenceNode for dependent args
 	void set_template_arguments(std::vector<ASTNode>&& template_args) { 
@@ -1810,6 +1827,7 @@ private:
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
 	StringHandle mangled_name_;  // Pre-computed mangled name
+	StringHandle qualified_name_;  // Source-level qualified name (e.g., "std::func")
 	std::vector<ASTNode> template_arguments_;  // Explicit template arguments (e.g., <T> in foo<T>())
 	bool is_indirect_call_ = false;  // True for function pointer/reference calls
 };
@@ -2538,6 +2556,15 @@ public:
 		return name_;
 	}
 
+	// Deferred static_assert support (for templates)
+	void add_deferred_static_assert(ASTNode condition_expr, StringHandle message) {
+		deferred_static_asserts_.emplace_back(condition_expr, message);
+	}
+	
+	const std::vector<DeferredStaticAssert>& deferred_static_asserts() const {
+		return deferred_static_asserts_;
+	}
+
 private:
 	StringHandle name_;  // Points directly into source text from lexer token
 	std::vector<StructMemberDecl> members_;
@@ -2553,6 +2580,7 @@ private:
 	StructDeclarationNode* enclosing_class_ = nullptr;  // Enclosing class (if nested)
 	bool is_class_;  // true for class, false for struct
 	bool is_final_ = false;  // true if declared with 'final' keyword
+	std::vector<DeferredStaticAssert> deferred_static_asserts_;  // Static_asserts deferred during template definition
 };
 
 // Template class declaration node - represents a class template

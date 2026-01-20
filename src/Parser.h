@@ -31,6 +31,11 @@
 
 using namespace std::literals::string_view_literals;
 
+// Forward declarations
+namespace ConstExpr {
+	class Evaluator;
+}
+
 // RAII helper to execute a cleanup function on scope exit
 // Usage: ScopeGuard guard([&]() { cleanup(); });
 template<typename Func>
@@ -251,6 +256,7 @@ struct QualifiedIdParseResult {
 class Parser {
 	// Friend classes that need access to private members
 	friend class ExpressionSubstitutor;
+	friend class ConstExpr::Evaluator;  // Allow constexpr evaluator to instantiate templates
 	
 public:
         static constexpr size_t default_ast_tree_size_ = 256 * 1024;
