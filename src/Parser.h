@@ -738,6 +738,13 @@ public:  // Public methods for template instantiation
         ParseResult parse_qualified_identifier();  // Parse namespace::identifier
         ParseResult parse_qualified_identifier_after_template(const Token& template_base_token, bool* had_template_keyword = nullptr);  // Parse Template<T>::member
         
+        // Helper to parse template brace initialization: Template<Args>{}
+        // Returns ParseResult with ConstructorCallNode on success
+        ParseResult parse_template_brace_initialization(
+                const std::vector<TemplateTypeArg>& template_args,
+                std::string_view template_name,
+                const Token& identifier_token);
+        
         // Helper to parse member template function calls: Template<T>::member<U>()
         // Returns:
         // - std::nullopt if not a function call (no '(' found after member name)
