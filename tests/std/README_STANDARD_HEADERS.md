@@ -8,9 +8,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 - **Parser features are mostly complete**: Variadic non-type template params, complex template aliases work correctly
 - **Real blocker is performance**: Template instantiation is slow (~300 instantiations timeout in debug builds)  
 - **Template cache needs optimization**: Only 26% hit rate, needs improvement
-- **Three headers crash**: `<functional>`, `<algorithm>`, `<chrono>` need debugging
+- **"Crashes" are actually timeouts**: Enhanced logging confirms no crashes - `<functional>`, `<algorithm>`, `<chrono>` timeout
 - **Test coverage added**: 5 new test cases validate parser features and isolate performance issues
-- See section 6.3 and 6.4 below for detailed findings
+- See sections 6.3 and 6.4 below for detailed findings
 
 ✅ **static_assert with Template-Dependent Expressions (2026-01-20):** Fixed constant expression evaluation to properly handle template-dependent expressions in static_assert:
 - Fold expressions like `(args && ...)` are now correctly deferred to instantiation time
@@ -50,14 +50,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<array>` | `test_std_array.cpp` | ❌ Parse Error | Context-dependent parse error (depends on `<bits/utility.h>`) |
 | `<memory>` | `test_std_memory.cpp` | ❌ Missing File | Failed to include `execution_defs.h` |
-| `<functional>` | `test_std_functional.cpp` | 💥 Crash | `std::bad_any_cast` internal error |
-| `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | Internal compiler error |
+| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Times out at 60+ seconds (2026-01-20: confirmed timeout, not crash) |
+| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Times out at 60+ seconds (2026-01-20: confirmed timeout, not crash) |
 | `<map>` | `test_std_map.cpp` | ❌ Parse Error | Depends on failing headers |
 | `<set>` | `test_std_set.cpp` | ❌ Parse Error | Depends on failing headers |
 | `<span>` | `test_std_span.cpp` | ❌ Parse Error | Context-dependent parse error in `bits/utility.h:140` |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Template `rethrow_exception` not found |
-| `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Internal compiler error |
+| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out at 60+ seconds (2026-01-20: confirmed timeout, not crash) |
 | `<atomic>` | N/A | ❌ Parse Error | Complex decltype in partial specialization (see blockers) |
 | `<new>` | N/A | ✅ Compiled | ~0.08s |
 | `<exception>` | N/A | ❌ Parse Error | Template `rethrow_exception` not found |
@@ -74,7 +74,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~0.07s (C++23) |
 | `<coroutine>` | N/A | ❌ Not Supported | Coroutines require `-fcoroutines` flag |
 
-**Legend:** ✅ Compiled | ❌ Failed/Parse Error | 💥 Crash | ⏱️ Timeout (>30s)
+**Legend:** ✅ Compiled | ❌ Failed/Parse Error | ⏱️ Timeout (>30s)
+
+**Note (2026-01-20):** Previous reports of "💥 Crash" for `<functional>`, `<algorithm>`, and `<chrono>` were actually timeouts. Investigation with enhanced exception logging confirmed no crashes occur - these headers timeout due to excessive template instantiation. See section 6.4 for details.
 
 ### C Library Wrappers (Also Working)
 
@@ -291,20 +293,42 @@ constexpr _Enable_default_constructor() noexcept = delete;
   - Test case: `tests/test_utility_with_context.cpp` (timeouts when including full headers)
 - **Complex decltype in partial spec**: `__void_t<decltype(hash<T>()(...))>` still needs investigation
 
-#### 6.4 Crash Issues (Needs Investigation)
+#### 6.4 Crash/Timeout Investigation (2026-01-20)
 
-The following headers cause internal compiler crashes and need debugging:
+**Investigation with Enhanced Logging:**
 
-| Header | Error | Priority |
-|--------|-------|----------|
-| `<functional>` | `std::bad_any_cast` internal error | High - indicates exception handling issue |
-| `<algorithm>` | Internal compiler error | High - commonly used header |
-| `<chrono>` | Internal compiler error | Medium |
+Added specific exception handling for `std::bad_any_cast` and other exceptions to debug reported crashes. Testing reveals:
 
-**Recommendation:** These crashes should be investigated with a debugger to identify root causes. May be related to:
-- Exception handling in template instantiation
-- Edge cases in parser or IR generation
-- Specific template patterns that trigger assertion failures
+| Header | Original Status | Actual Behavior | Root Cause |
+|--------|----------------|-----------------|------------|
+| `<functional>` | 💥 Crash (`std::bad_any_cast`) | ⏱️ Timeout (>60s) | Template instantiation volume |
+| `<algorithm>` | 💥 Internal compiler error | ⏱️ Timeout (>60s) | Template instantiation volume |
+| `<chrono>` | 💥 Internal compiler error | ⏱️ Timeout (>60s) | Template instantiation volume |
+
+**Key Findings:**
+- ✅ No `std::bad_any_cast` exceptions thrown during testing
+- ✅ No other exceptions or crashes detected
+- ❌ All three headers **timeout** rather than crash
+- ❌ Appear to enter infinite loop or very slow template processing
+
+**Updated Assessment:**
+These are **not crashes** but **performance/timeout issues**:
+- Excessive template instantiation (likely >1000 instantiations)
+- Poor template cache performance (26% hit rate)
+- Possible infinite template instantiation loops
+- Debug builds particularly affected
+
+**Recommendations:**
+1. Profile template instantiation to find infinite loops
+2. Add periodic progress logging during template processing
+3. Implement lazy instantiation optimizations
+4. Test in release mode with optimizations
+5. Reclassify these as timeout issues, not crashes
+
+**Code Changes:**
+- Added specific `std::bad_any_cast` exception handler in `main.cpp`
+- Added detailed error messages for exception debugging
+- Test file: `tests/test_functional_minimal.cpp` (also times out)
 
 ### 7. Template Instantiation Performance
 
