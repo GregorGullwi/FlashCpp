@@ -218,6 +218,16 @@ public:
 			return evaluate_identifier(std::get<IdentifierNode>(expr), context);
 		}
 
+		// For TemplateParameterReferenceNode (references to template parameters like 'T' or 'N')
+		if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+			const auto& template_param = std::get<TemplateParameterReferenceNode>(expr);
+			// Template parameters cannot be evaluated at template definition time
+			// This is a template-dependent expression that needs to be deferred
+			return EvalResult::error("Template parameter in constant expression: " + 
+			                         std::string(StringTable::getStringView(template_param.param_name())),
+			                         EvalErrorType::TemplateDependentExpression);
+		}
+
 		// For TernaryOperatorNode (condition ? true_expr : false_expr)
 		if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 			return evaluate_ternary_operator(std::get<TernaryOperatorNode>(expr), context);
@@ -718,6 +728,16 @@ private:
 						}
 					}
 				}
+			}
+			
+			// Variable not found - might be a template parameter that hasn't been substituted yet
+			// Check if we have a parser context (indicates we're in template definition)
+			// Template parameters have short names (typically single letters like T, N, etc.)
+			// If the identifier looks like a template parameter, mark it as template-dependent
+			if (context.parser != nullptr || var_name.length() <= 2) {
+				// Likely a template parameter - return template-dependent error
+				return EvalResult::error("Template parameter or undefined variable in constant expression: " + std::string(var_name),
+				                         EvalErrorType::TemplateDependentExpression);
 			}
 			
 			return EvalResult::error("Undefined variable in constant expression: " + std::string(var_name));

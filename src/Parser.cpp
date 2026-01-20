@@ -33111,12 +33111,14 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		new_initializer,
 		orig_var_decl.storage_class()
 	);
+	// Mark as constexpr to match the template pattern
+	instantiated_var_decl.as<VariableDeclarationNode>().set_is_constexpr(true);
 	
-	// Register the DeclarationNode in symbol table (not the VariableDeclarationNode)
-	// This is how normal variables are registered
+	// Register the VariableDeclarationNode in symbol table (not just DeclarationNode)
+	// This allows constexpr evaluation to find and evaluate the variable
 	// IMPORTANT: Use insertGlobal because we might be called during function parsing
 	// but we need to insert into global scope
-	[[maybe_unused]] bool insert_result = gSymbolTable.insertGlobal(persistent_name, new_decl_node);
+	[[maybe_unused]] bool insert_result = gSymbolTable.insertGlobal(persistent_name, instantiated_var_decl);
 	
 	// Verify it's there
 	auto verify = gSymbolTable.lookup(persistent_name);
