@@ -2604,7 +2604,27 @@ public:
 			}
 			
 			// Not found in symbol table or as struct static member
-			return EvalResult::error("Undefined qualified identifier in constant expression: " + qualified_id.full_name());
+			// Check if this looks like a template instantiation with dependent arguments
+			// Pattern: __template_name__DependentArg::member
+			const std::string full_name_str = qualified_id.full_name();
+			if (full_name_str.find("::") != std::string::npos) {
+				// Extract the base part before ::member
+				size_t last_colon = full_name_str.rfind("::");
+				std::string base_part = full_name_str.substr(0, last_colon);
+				
+				// Check if the base part looks like a template instantiation (contains template argument separator)
+				// Template names with arguments get mangled as template_name_arg1_arg2...
+				// If any argument is a template parameter (starts with _ often), it's template-dependent
+				if (base_part.find('_') != std::string::npos && context.parser != nullptr) {
+					// This might be a template instantiation with dependent arguments
+					// Treat it as template-dependent
+					return EvalResult::error("Template instantiation with dependent arguments in constant expression: " + full_name_str,
+					                         EvalErrorType::TemplateDependentExpression);
+				}
+			}
+			
+			// Not found in symbol table or as struct static member
+			return EvalResult::error("Undefined qualified identifier in constant expression: " + full_name_str);
 		}
 
 		const ASTNode& symbol_node = *symbol_opt;
