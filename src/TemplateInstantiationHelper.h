@@ -33,8 +33,8 @@ public:
 
 	/// Try to instantiate a template function with deduced or explicit arguments
 	///
-	/// This method attempts to instantiate a template function, trying various
-	/// name variations (qualified name, simple name, with namespace prefixes).
+	/// This method attempts to instantiate a template function by trying both
+	/// the qualified name and simple name.
 	///
 	/// @param parser Reference to the parser for triggering template instantiation
 	/// @param qualified_name The qualified function name (e.g., "std::__is_complete_or_unbounded")
@@ -46,12 +46,6 @@ public:
 		std::string_view qualified_name,
 		std::string_view simple_name,
 		const std::vector<TemplateTypeArg>& template_args);
-
-	/// Get common namespace prefixes to try when looking up template functions
-	///
-	/// @param func_name The function name to prefix
-	/// @return A vector of candidate names with common namespace prefixes
-	static std::vector<std::string> getNamespaceCandidates(std::string_view func_name);
 };
 
 // Implementation (inline for header-only usage)
@@ -83,13 +77,6 @@ inline std::vector<TemplateTypeArg> TemplateInstantiationHelper::deduceTemplateA
 	return deduced_args;
 }
 
-inline std::vector<std::string> TemplateInstantiationHelper::getNamespaceCandidates(std::string_view func_name) {
-	std::vector<std::string> candidates;
-	candidates.push_back(std::string("std::") + std::string(func_name));
-	candidates.push_back(std::string("__gnu_cxx::") + std::string(func_name));
-	return candidates;
-}
-
 inline std::optional<ASTNode> TemplateInstantiationHelper::tryInstantiateTemplateFunction(
 	Parser& parser,
 	std::string_view qualified_name,
@@ -116,16 +103,6 @@ inline std::optional<ASTNode> TemplateInstantiationHelper::tryInstantiateTemplat
 		instantiated_opt = parser.try_instantiate_template_explicit(simple_name, template_args);
 		if (instantiated_opt.has_value()) {
 			FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper: Instantiated with simple name: ", simple_name);
-			return instantiated_opt;
-		}
-	}
-	
-	// Try with common namespace prefixes
-	auto name_candidates = getNamespaceCandidates(simple_name);
-	for (const auto& candidate_name : name_candidates) {
-		instantiated_opt = parser.try_instantiate_template_explicit(candidate_name, template_args);
-		if (instantiated_opt.has_value()) {
-			FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper: Instantiated with namespace prefix: ", candidate_name);
 			return instantiated_opt;
 		}
 	}
