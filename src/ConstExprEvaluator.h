@@ -320,6 +320,20 @@ public:
 			return evaluate_type_trait(std::get<TypeTraitExprNode>(expr));
 		}
 
+		// For FoldExpressionNode (e.g., (args && ...))
+		// Fold expressions depend on template parameter packs and must be evaluated during template instantiation
+		if (std::holds_alternative<FoldExpressionNode>(expr)) {
+			return EvalResult::error("Fold expression requires template instantiation context",
+			                         EvalErrorType::TemplateDependentExpression);
+		}
+
+		// For PackExpansionExprNode (e.g., args...)
+		// Pack expansions depend on template parameter packs and must be evaluated during template instantiation
+		if (std::holds_alternative<PackExpansionExprNode>(expr)) {
+			return EvalResult::error("Pack expansion requires template instantiation context",
+			                         EvalErrorType::TemplateDependentExpression);
+		}
+
 		// Other expression types are not supported as constant expressions yet
 		return EvalResult::error("Expression type not supported in constant expressions");
 	}
@@ -796,6 +810,14 @@ private:
 		}
 
 		const ASTNode& symbol_node = symbol_opt.value();
+		
+		// Check if it's a TemplateVariableDeclarationNode - these are template-dependent
+		if (symbol_node.is<TemplateVariableDeclarationNode>()) {
+			// Variable template references with template arguments are template-dependent
+			// They need to be evaluated during template instantiation
+			return EvalResult::error("Variable template in constant expression - instantiation required: " + std::string(var_name),
+			                         EvalErrorType::TemplateDependentExpression);
+		}
 		
 		// Check if it's a VariableDeclarationNode
 		if (!symbol_node.is<VariableDeclarationNode>()) {
