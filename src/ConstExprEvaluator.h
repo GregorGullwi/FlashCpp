@@ -2675,7 +2675,45 @@ public:
 		
 		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
 		
-		// Check if it's a constexpr variable
+		// Before checking if the variable is constexpr, check if we're accessing a static member
+		// Static members can be accessed through any instance (even non-constexpr)
+		// because they don't depend on the instance
+		
+		// Get the type of the variable to look up the struct info
+		const DeclarationNode& var_declaration = var_decl.declaration();
+		const ASTNode& var_type_node = var_declaration.type_node();
+		if (var_type_node.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& var_type_spec = var_type_node.as<TypeSpecifierNode>();
+			TypeIndex var_type_index = var_type_spec.type_index();
+			
+			if (var_type_index != TypeIndex{0} && var_type_index < gTypeInfo.size()) {
+				const TypeInfo& var_type_info = gTypeInfo[var_type_index];
+				const StructTypeInfo* struct_info = var_type_info.getStructInfo();
+				
+				if (struct_info) {
+					// Look for static member
+					StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+					
+					if (static_member && owner_struct) {
+						FLASH_LOG(General, Debug, "ConstExpr: Accessing static member through instance: ", member_name);
+						
+						// Found a static member - evaluate its initializer if available
+						if (static_member->initializer.has_value()) {
+							return evaluate(static_member->initializer.value(), context);
+						}
+						
+						// If no initializer, return default value based on type
+						if (static_member->type == Type::Bool) {
+							return EvalResult::from_bool(false);
+						}
+						return EvalResult::from_int(0);
+					}
+				}
+			}
+		}
+		
+		// If not a static member access, check if it's a constexpr variable
 		if (!var_decl.is_constexpr()) {
 			return EvalResult::error("Variable in member access must be constexpr: " + std::string(var_name));
 		}
