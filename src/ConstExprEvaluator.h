@@ -1397,9 +1397,6 @@ private:
 		
 		// Check if it's a TemplateFunctionDeclarationNode (template function)
 		if (symbol_node.is<TemplateFunctionDeclarationNode>()) {
-			const TemplateFunctionDeclarationNode& template_func = symbol_node.as<TemplateFunctionDeclarationNode>();
-			const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
-			const auto& function_params = func_decl.parameter_nodes();
 			const auto& arguments = func_call.arguments();
 			
 			// Try to find or instantiate the function with the given arguments
@@ -1424,7 +1421,7 @@ private:
 			}
 			
 			// No pre-instantiated version found - try to instantiate on-demand if parser is available
-			if (context.parser && arguments.size() == function_params.size()) {
+			if (context.parser) {
 				// Try to deduce template arguments from function call arguments
 				// For template functions, we deduce template arguments from the types of function arguments
 				std::vector<TemplateTypeArg> deduced_args;
@@ -1447,9 +1444,10 @@ private:
 					}
 				}
 				
-				// If we deduced template arguments, try to instantiate
-				// Try with qualified name first, then unqualified, then try searching all templates
+				// Try to instantiate even if we have fewer deduced args than template params
+				// The template might have default parameters that can fill in the rest
 				if (!deduced_args.empty()) {
+					FLASH_LOG(Templates, Debug, "Attempting to instantiate template function with ", deduced_args.size(), " deduced arguments");
 					auto instantiated_opt = context.parser->try_instantiate_template_explicit(qualified_name, deduced_args);
 					if (!instantiated_opt.has_value() && qualified_name != func_name) {
 						instantiated_opt = context.parser->try_instantiate_template_explicit(func_name, deduced_args);
@@ -1478,7 +1476,13 @@ private:
 							std::unordered_map<std::string_view, EvalResult> empty_bindings;
 							return evaluate_function_call_with_bindings(instantiated_func, arguments, empty_bindings, context);
 						}
+					} else if (instantiated_opt.has_value()) {
+						FLASH_LOG(Templates, Debug, "Instantiation succeeded but result is not a FunctionDeclarationNode");
+					} else {
+						FLASH_LOG(Templates, Debug, "Template function instantiation failed for ", qualified_name);
 					}
+				} else {
+					FLASH_LOG(Templates, Debug, "No template arguments could be deduced from function call arguments");
 				}
 			}
 			
