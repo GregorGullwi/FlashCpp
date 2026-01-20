@@ -31095,42 +31095,30 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
 				} else if (!in_sfinae_context_) {
-					// Also check the full type name from gTypeInfo if available
+					// Also check the full type name from gTypeInfo for composite/qualified types
 					std::string_view check_name = !full_type_name.empty() ? full_type_name : type_name;
 					
-					for (const auto& param_name : current_template_param_names_) {
-						std::string_view param_sv = StringTable::getStringView(param_name);
-						// Check both as standalone identifier AND as substring
-						// BUT only check substring if the check_name contains underscores (mangled names)
-						// and contains "::type" (member type alias)
-						// This prevents false positives where common substrings match accidentally
-						bool contains_param = matches_identifier(check_name, param_sv);
-						if (!contains_param && check_name.find("::type") != std::string_view::npos && 
-						    check_name.find('_') != std::string_view::npos) {
-							// For mangled names like "remove_reference__Tp::type", check substring
-							contains_param = check_name.find(param_sv) != std::string_view::npos;
-						}
-						if (contains_param && check_name.find("::type") != std::string_view::npos) {
-							arg.is_dependent = true;
-							arg.dependent_name = StringTable::getOrInternStringHandle(check_name);
-							FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", check_name);
-							break;
-						}
-					}
-					
-					if (!arg.is_dependent && check_name.find("::type") != std::string_view::npos) {
-						// Check if the base type (before ::type) contains a template parameter
+					// Check if this is a qualified identifier (contains ::) which might be a member access
+					// If so, check if the base part contains any template parameter
+					size_t scope_pos = check_name.find("::");
+					if (scope_pos != std::string_view::npos) {
+						// This is a qualified identifier - extract the base part (before ::)
+						std::string_view base_part = check_name.substr(0, scope_pos);
+						
 						for (const auto& param_name : current_template_param_names_) {
 							std::string_view param_sv = StringTable::getStringView(param_name);
-							bool contains_param = matches_identifier(check_name, param_sv);
-							if (!contains_param && check_name.find('_') != std::string_view::npos) {
-								// For mangled names, check substring
-								contains_param = check_name.find(param_sv) != std::string_view::npos;
+							// Check both as standalone identifier AND as substring
+							// BUT only check substring if the base_part contains underscores (mangled names)
+							// This prevents false positives where common substrings match accidentally
+							bool contains_param = matches_identifier(base_part, param_sv);
+							if (!contains_param && base_part.find('_') != std::string_view::npos) {
+								// For mangled names like "remove_reference__Tp", check substring
+								contains_param = base_part.find(param_sv) != std::string_view::npos;
 							}
 							if (contains_param) {
 								arg.is_dependent = true;
 								arg.dependent_name = StringTable::getOrInternStringHandle(check_name);
-								FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias containing template param: {}", check_name);
+								FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to qualified identifier with template param: {}", check_name);
 								break;
 							}
 						}
