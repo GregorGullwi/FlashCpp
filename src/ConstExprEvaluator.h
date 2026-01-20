@@ -234,6 +234,26 @@ public:
 		if (std::holds_alternative<SizeofExprNode>(expr)) {
 			return evaluate_sizeof(std::get<SizeofExprNode>(expr), context);
 		}
+		
+		// For SizeofPackNode (sizeof... operator)
+		if (std::holds_alternative<SizeofPackNode>(expr)) {
+			const auto& sizeof_pack = std::get<SizeofPackNode>(expr);
+			// During template instantiation, sizeof... should be replaced with the actual pack size
+			// If we reach here in constant expression evaluation, the pack wasn't substituted
+			// This is an error unless we can look up the pack size from context
+			std::string_view pack_name = sizeof_pack.pack_name();
+			
+			// Try to get pack size from context (if available during template instantiation)
+			if (context.parser) {
+				// Check if this is a template parameter pack
+				// For now, return an error - proper support requires tracking pack expansions
+				return EvalResult::error("sizeof... requires template instantiation context for pack: " + 
+				                         std::string(pack_name),
+				                         EvalErrorType::TemplateDependentExpression);
+			}
+			
+			return EvalResult::error("sizeof... operator requires template context");
+		}
 
 		// For AlignofExprNode
 		if (std::holds_alternative<AlignofExprNode>(expr)) {
@@ -1335,6 +1355,73 @@ private:
 		if (func_call.has_qualified_name()) {
 			qualified_name = func_call.qualified_name();
 			FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
+		}
+		
+		// Special handling for std::__is_complete_or_unbounded
+		// This is a helper function in the standard library that checks if a type is complete
+		// __is_complete_or_unbounded evaluates to true if either:
+		// 1. T is a complete type, or
+		// 2. T is an unbounded array type (e.g. int[])
+		if (qualified_name == "std::__is_complete_or_unbounded" || func_name == "__is_complete_or_unbounded") {
+			FLASH_LOG(Templates, Debug, "Special handling for __is_complete_or_unbounded");
+			
+			// The function takes a __type_identity<T> argument
+			// We need to extract the type T and check if it's complete or unbounded
+			if (func_call.arguments().size() == 0) {
+				return EvalResult::error("__is_complete_or_unbounded requires a type argument");
+			}
+			
+			// Get the first argument (should be a ConstructorCallNode for __type_identity<T>{})
+			const ASTNode& arg = func_call.arguments()[0];
+			
+			// Try to extract the type from the argument
+			// The argument is typically __type_identity<T>{} which is a constructor call
+			if (arg.is<ExpressionNode>()) {
+				const ExpressionNode& expr = arg.as<ExpressionNode>();
+				if (std::holds_alternative<ConstructorCallNode>(expr)) {
+					const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
+					const ASTNode& type_node = ctor.type_node();
+					
+					if (type_node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+						Type base_type = type_spec.type();
+						bool is_reference = type_spec.is_reference();
+						size_t pointer_depth = type_spec.pointer_depth();
+						bool is_array = type_spec.is_array();
+						std::optional<size_t> array_size = type_spec.array_size();
+						
+						// Check for void - always incomplete
+						if (base_type == Type::Void && pointer_depth == 0 && !is_reference) {
+							return EvalResult::from_bool(false);
+						}
+						
+						// Check for unbounded array - always returns true
+						if (is_array && (!array_size.has_value() || *array_size == 0)) {
+							return EvalResult::from_bool(true);
+						}
+						
+						// Check for incomplete class/struct types
+						// A type is incomplete if it's a struct/class with no StructTypeInfo
+						TypeIndex type_idx = type_spec.type_index();
+						if (type_idx != TypeIndex{0} && (base_type == Type::Struct || base_type == Type::UserDefined)) {
+							const TypeInfo& type_info = gTypeInfo[type_idx];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							
+							// If it's a struct/class type with no struct_info, it's incomplete
+							if (!struct_info && pointer_depth == 0 && !is_reference) {
+								return EvalResult::from_bool(false);
+							}
+						}
+						
+						// All other types are considered complete
+						return EvalResult::from_bool(true);
+					}
+				}
+			}
+			
+			// If we can't extract the type, return true as a fallback
+			FLASH_LOG(Templates, Debug, "__is_complete_or_unbounded: couldn't extract type, returning true as fallback");
+			return EvalResult::from_bool(true);
 		}
 		
 		// First try simple name lookup in symbol table
@@ -2588,7 +2675,45 @@ public:
 		
 		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
 		
-		// Check if it's a constexpr variable
+		// Before checking if the variable is constexpr, check if we're accessing a static member
+		// Static members can be accessed through any instance (even non-constexpr)
+		// because they don't depend on the instance
+		
+		// Get the type of the variable to look up the struct info
+		const DeclarationNode& var_declaration = var_decl.declaration();
+		const ASTNode& var_type_node = var_declaration.type_node();
+		if (var_type_node.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& var_type_spec = var_type_node.as<TypeSpecifierNode>();
+			TypeIndex var_type_index = var_type_spec.type_index();
+			
+			if (var_type_index != TypeIndex{0} && var_type_index < gTypeInfo.size()) {
+				const TypeInfo& var_type_info = gTypeInfo[var_type_index];
+				const StructTypeInfo* struct_info = var_type_info.getStructInfo();
+				
+				if (struct_info) {
+					// Look for static member
+					StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+					
+					if (static_member && owner_struct) {
+						FLASH_LOG(General, Debug, "ConstExpr: Accessing static member through instance: ", member_name);
+						
+						// Found a static member - evaluate its initializer if available
+						if (static_member->initializer.has_value()) {
+							return evaluate(static_member->initializer.value(), context);
+						}
+						
+						// If no initializer, return default value based on type
+						if (static_member->type == Type::Bool) {
+							return EvalResult::from_bool(false);
+						}
+						return EvalResult::from_int(0);
+					}
+				}
+			}
+		}
+		
+		// If not a static member access, check if it's a constexpr variable
 		if (!var_decl.is_constexpr()) {
 			return EvalResult::error("Variable in member access must be constexpr: " + std::string(var_name));
 		}
@@ -3739,6 +3864,40 @@ public:
 				result = type_spec.is_array() & !is_reference & (pointer_depth == 0);
 				// For struct types, we need runtime type info, so fall through to default
 				break;
+
+			case TypeTraitKind::IsCompleteOrUnbounded:
+				// __is_complete_or_unbounded evaluates to true if either:
+				// 1. T is a complete type, or
+				// 2. T is an unbounded array type (e.g. int[])
+				// Returns false for: void, incomplete class types, bounded arrays with incomplete elements
+				
+				// Check for void - always incomplete
+				if (type == Type::Void && pointer_depth == 0 && !is_reference) {
+					return EvalResult::from_bool(false);
+				}
+				
+				// Check for unbounded array - always returns true
+				if (type_spec.is_array() && type_spec.array_size() == 0) {
+					return EvalResult::from_bool(true);
+				}
+				
+				// Check for incomplete class/struct types
+				// A type is incomplete if it's a struct/class with no StructTypeInfo
+				if ((type == Type::Struct || type == Type::UserDefined) && 
+				    pointer_depth == 0 && !is_reference) {
+					TypeIndex type_idx = type_spec.type_index();
+					if (type_idx != TypeIndex{0}) {
+						const TypeInfo& type_info = gTypeInfo[type_idx];
+						const StructTypeInfo* struct_info = type_info.getStructInfo();
+						// If no struct_info, the type is incomplete
+						if (!struct_info) {
+							return EvalResult::from_bool(false);
+						}
+					}
+				}
+				
+				// All other types are considered complete
+				return EvalResult::from_bool(true);
 
 			// Add more type traits as needed
 			// For now, other type traits return false during constexpr evaluation
