@@ -1317,16 +1317,16 @@ private:
 		
 		// Check if it's a TemplateFunctionDeclarationNode (template function)
 		if (symbol_node.is<TemplateFunctionDeclarationNode>()) {
-			// Try to find or instantiate the function with the given arguments
-			// For now, we'll look for a pre-instantiated version in the symbol table
-			// This is a simplified approach - full template argument deduction would be more complex
+			const TemplateFunctionDeclarationNode& template_func = symbol_node.as<TemplateFunctionDeclarationNode>();
+			const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+			const auto& function_params = func_decl.parameter_nodes();
+			const auto& arguments = func_call.arguments();
 			
-			// Try to find instantiated versions by looking for mangled names
-			// This is a workaround until we implement full instantiation in the evaluator
+			// Try to find or instantiate the function with the given arguments
+			// First, try to find an already-instantiated version in the symbol table
 			std::vector<ASTNode> all_overloads = context.symbols->lookup_all(func_name);
 			
 			// Look for a constexpr FunctionDeclarationNode that matches the argument count
-			const auto& arguments = func_call.arguments();
 			for (const auto& overload : all_overloads) {
 				if (overload.is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& candidate = overload.as<FunctionDeclarationNode>();
@@ -1339,7 +1339,45 @@ private:
 				}
 			}
 			
-			// No pre-instantiated version found
+			// No pre-instantiated version found - try to instantiate on-demand if parser is available
+			if (context.parser && arguments.size() == function_params.size()) {
+				// Try to deduce template arguments from function call arguments
+				// For template functions, we deduce template arguments from the types of function arguments
+				std::vector<TemplateTypeArg> deduced_args;
+				
+				for (size_t i = 0; i < arguments.size(); ++i) {
+					const ASTNode& arg = arguments[i];
+					
+					// Check if argument is a ConstructorCallNode (like __type_identity<int>{})
+					if (arg.is<ExpressionNode>()) {
+						const ExpressionNode& expr = arg.as<ExpressionNode>();
+						if (std::holds_alternative<ConstructorCallNode>(expr)) {
+							const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
+							const ASTNode& type_node = ctor.type_node();
+							if (type_node.is<TypeSpecifierNode>()) {
+								const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+								// Use this type as a template argument
+								deduced_args.emplace_back(type_spec);
+							}
+						}
+					}
+				}
+				
+				// If we deduced template arguments, try to instantiate
+				if (!deduced_args.empty()) {
+					auto instantiated_opt = context.parser->try_instantiate_template_explicit(func_name, deduced_args);
+					if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
+						const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
+						if (instantiated_func.is_constexpr()) {
+							// Successfully instantiated - evaluate it
+							std::unordered_map<std::string_view, EvalResult> empty_bindings;
+							return evaluate_function_call_with_bindings(instantiated_func, arguments, empty_bindings, context);
+						}
+					}
+				}
+			}
+			
+			// No pre-instantiated version found and couldn't instantiate on-demand
 			// Return a specific error indicating this is a template function issue
 			return EvalResult::error("Template function in constant expression - instantiation required: " + std::string(func_name));
 		}
