@@ -7533,6 +7533,20 @@ ParseResult Parser::parse_static_assert()
 		    eval_result.error_message.find("dependent") != std::string::npos) {
 			// This is a template-dependent expression - defer evaluation
 			FLASH_LOG(Templates, Debug, "Deferring static_assert evaluation in template body: ", eval_result.error_message);
+			
+			// Store the deferred static_assert in the current struct/class for later evaluation
+			if (!struct_parsing_context_stack_.empty()) {
+				const auto& struct_ctx = struct_parsing_context_stack_.back();
+				if (struct_ctx.struct_node) {
+					// Intern the message in StringTable for persistent storage
+					StringHandle message_handle = StringTable::getOrInternStringHandle(message);
+					// Store the condition expression and message for re-evaluation during template instantiation
+					struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+					FLASH_LOG(Templates, Debug, "Stored deferred static_assert in struct '", 
+					          struct_ctx.struct_node->name(), "' for later evaluation");
+				}
+			}
+			
 			return saved_position.success();
 		}
 		// Otherwise, it's a real error - report it
@@ -34861,6 +34875,62 @@ if (struct_type_info.getStructInfo()) {
 					mem_func.access
 				);
 			}
+		}
+		
+		// Re-evaluate deferred static_asserts with substituted template parameters
+		FLASH_LOG(Templates, Debug, "Checking ", pattern_struct.deferred_static_asserts().size(), 
+		          " deferred static_asserts for instantiation");
+		
+		for (const auto& deferred_assert : pattern_struct.deferred_static_asserts()) {
+			FLASH_LOG(Templates, Debug, "Re-evaluating deferred static_assert during template instantiation");
+			
+			// Build template parameter name to type mapping for substitution
+			std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+				// param.name() already returns string_view
+				param_map[param.name()] = template_args[i];
+			}
+			
+			// Create substitution context with template parameter mappings
+			ExpressionSubstitutor substitutor(param_map, *this);
+			
+			// Substitute template parameters in the condition expression
+			ASTNode substituted_expr = substitutor.substitute(deferred_assert.condition_expr);
+			
+			// Evaluate the substituted expression
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			eval_ctx.parser = this;
+			eval_ctx.struct_node = &instantiated_struct_ref;
+			
+			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
+			
+			if (!eval_result.success) {
+				std::string error_msg = "static_assert failed during template instantiation: " + 
+				                       eval_result.error_message;
+				std::string_view message_view = StringTable::getStringView(deferred_assert.message);
+				if (!message_view.empty()) {
+					error_msg += " - " + std::string(message_view);
+				}
+				FLASH_LOG(Templates, Error, error_msg);
+				// Don't return error - continue with other static_asserts
+				// This matches the behavior of most compilers which report all failures
+				continue;
+			}
+			
+			// Check if the assertion failed
+			if (!eval_result.as_bool()) {
+				std::string error_msg = "static_assert failed during template instantiation";
+				std::string_view message_view = StringTable::getStringView(deferred_assert.message);
+				if (!message_view.empty()) {
+					error_msg += ": " + std::string(message_view);
+				}
+				FLASH_LOG(Templates, Error, error_msg);
+				// Don't return error - continue with other static_asserts
+				continue;
+			}
+			
+			FLASH_LOG(Templates, Debug, "Deferred static_assert passed during template instantiation");
 		}
 		
 		// Mark instantiation complete with the type index

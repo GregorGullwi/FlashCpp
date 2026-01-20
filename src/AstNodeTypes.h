@@ -290,6 +290,15 @@ struct FunctionSignature {
 	bool is_volatile = false;                  // For volatile member functions
 };
 
+// Deferred static_assert information - stored during template definition, evaluated during instantiation
+struct DeferredStaticAssert {
+	ASTNode condition_expr;  // The condition expression to evaluate
+	StringHandle message;    // The assertion message (interned in StringTable for concatenated literals)
+	
+	DeferredStaticAssert(ASTNode expr, StringHandle msg)
+		: condition_expr(expr), message(msg) {}
+};
+
 // Struct member information
 struct StructMember {
 	StringHandle name;
@@ -2547,6 +2556,15 @@ public:
 		return name_;
 	}
 
+	// Deferred static_assert support (for templates)
+	void add_deferred_static_assert(ASTNode condition_expr, StringHandle message) {
+		deferred_static_asserts_.emplace_back(condition_expr, message);
+	}
+	
+	const std::vector<DeferredStaticAssert>& deferred_static_asserts() const {
+		return deferred_static_asserts_;
+	}
+
 private:
 	StringHandle name_;  // Points directly into source text from lexer token
 	std::vector<StructMemberDecl> members_;
@@ -2562,6 +2580,7 @@ private:
 	StructDeclarationNode* enclosing_class_ = nullptr;  // Enclosing class (if nested)
 	bool is_class_;  // true for class, false for struct
 	bool is_final_ = false;  // true if declared with 'final' keyword
+	std::vector<DeferredStaticAssert> deferred_static_asserts_;  // Static_asserts deferred during template definition
 };
 
 // Template class declaration node - represents a class template
