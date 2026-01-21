@@ -3090,8 +3090,20 @@ private:
 			// Handle empty parameter names (e.g., from defaulted constructors)
 			std::string_view param_name = param_decl.identifier_token().value();
 			if (param_name.empty()) {
-				func_param.name = StringTable::getOrInternStringHandle(
-					StringBuilder().append("__param_").append(ctor_unnamed_param_counter++).commit());
+				// For copy/move constructors (first parameter is a reference to same struct type),
+				// use "other" as the conventional name. This must match the body generation code
+				// that references "other" for memberwise copy operations.
+				bool is_copy_or_move_param = ctor_unnamed_param_counter == 0 &&
+					(param_type.is_reference() || param_type.is_rvalue_reference()) &&
+					node.parameter_nodes().size() == 1;
+				
+				if (is_copy_or_move_param) {
+					func_param.name = StringTable::getOrInternStringHandle("other");
+				} else {
+					func_param.name = StringTable::getOrInternStringHandle(
+						StringBuilder().append("__param_").append(ctor_unnamed_param_counter).commit());
+				}
+				ctor_unnamed_param_counter++;
 			} else {
 				func_param.name = StringTable::getOrInternStringHandle(param_name);
 			}
