@@ -394,12 +394,16 @@ template<typename _Tp>
 
 **Previous Issue:** Variable template partial specializations like `__is_ratio_v<ratio<_Num, _Den>>` were registered without the base template name in the pattern, causing lookup failures.
 
-**Fix Applied:** 
+**Fix Applied (Phase 1):** 
 1. Store the base type name in `dependent_name` field when parsing partial specialization patterns
 2. Check if `dependent_name` refers to a known template when building pattern key
 3. Include template name in pattern (e.g., `__is_ratio_v_ratio`) only for template instantiation patterns
 
-**Remaining Issue:** When variable templates with partial specializations are used inside function template bodies, the template parameter substitution doesn't propagate to nested variable template instantiations.
+**Fix Applied (Phase 2 - 2026-01-21 PM):**
+1. Extended `TemplateParamSubstitution` to include type parameter mappings (not just non-type values)
+2. Register type substitutions during function template body re-parsing
+3. Added substitution lookup in `try_instantiate_variable_template` to resolve template parameters
+4. Enables `__is_ratio_v<_R1>` inside function templates to correctly substitute `_R1` with concrete types
 
 **Example that NOW works:**
 ```cpp
@@ -411,18 +415,16 @@ constexpr bool __is_ratio_v<ratio<_Num, _Den>> = true;
 
 // Direct use works:
 static_assert(__is_ratio_v<ratio<1,2>> == true);  // ✅ Works
+
+// Simple function template returning variable template value:
+template<typename _R>
+constexpr bool is_ratio_check() { return __is_ratio_v<_R>; }  // ✅ Works
 ```
 
-**Example that STILL fails:**
-```cpp
-template<typename _R1, typename _R2>
-constexpr bool __are_both_ratios() {
-    if constexpr (__is_ratio_v<_R1>)  // ❌ _R1 not substituted
-        return true;
-    return false;
-}
-// Fails because _R1 is not substituted before variable template lookup
-```
+**Remaining Issue:** The `<ratio>` header still crashes during codegen because:
+1. `if constexpr` evaluation with variable templates isn't fully working
+2. The function `__are_both_ratios` uses nested `if constexpr` statements
+3. The variable template identifier `__is_ratio_v` is not found in symbol table during code generation
 
 **Affected Headers:** `<ratio>` (crashes during codegen in `__are_both_ratios`)
 
@@ -747,14 +749,19 @@ Changes are listed in reverse chronological order.
   - Pattern now includes template name (e.g., `__is_ratio_v_ratio`) for template instantiation patterns
   - Simple dependent types like `T&` still use minimal pattern (e.g., `is_reference_v_R`)
   - Test case: `static_assert(__is_ratio_v<ratio<1,2>> == true)` now works for direct usage
+- **Fixed variable template substitution in function template bodies (Phase 2):**
+  - Extended `TemplateParamSubstitution` to include type parameter mappings (not just non-type values)
+  - Register type substitutions during function template body re-parsing in `try_instantiate_template_explicit`
+  - Added substitution lookup in `try_instantiate_variable_template` to resolve template parameter names
+  - Enables simple function templates that return variable template values to work correctly
+  - Test case: `template<typename R> constexpr bool is_ratio_check() { return __is_ratio_v<R>; }` now works
 - **Test Results:**
-  - ✅ All 949 existing tests pass
+  - ✅ All 950 existing tests pass
   - ✅ Variable template partial specializations with template instantiation patterns work
-  - ⚠️ Variable templates used inside function template bodies still don't substitute properly (see blocker 7.4)
+  - ✅ Simple function templates returning variable template values work
+  - ⚠️ Complex patterns with `if constexpr` and variable templates still need work (see blocker 7.4)
 
-**Remaining Issue:** When `__is_ratio_v<_R1>` is used inside a function template body like `__are_both_ratios<R1,R2>()`, the template parameter `_R1` is not substituted before variable template lookup. This requires deeper integration with function template instantiation.
-
-**Affected:** `<ratio>` still crashes due to `__are_both_ratios()` function using variable templates internally.
+**Remaining Issue:** The `<ratio>` header still crashes because `if constexpr` evaluation with variable templates isn't fully working. The function `__are_both_ratios` uses nested `if constexpr` statements that require constexpr evaluation.
 
 ### 2026-01-20 (static_assert with Template-Dependent Expressions - PR #XXX)
 - **Fixed fold expression evaluation in static_assert:** Fold expressions like `(args && ...)` are now correctly treated as template-dependent
