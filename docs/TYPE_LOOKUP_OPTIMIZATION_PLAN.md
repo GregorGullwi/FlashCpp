@@ -1,48 +1,78 @@
 # Type Lookup Optimization Plan
 
-## Current Approach
+## Current Infrastructure
 
-Currently, FlashCpp uses string-based lookups for types and templates in several places:
+FlashCpp already has two mechanisms for type storage:
 
-1. **`gTypesByName`**: A global map from `StringHandle` (interned string) to `TypeInfo*`
-2. **Template argument matching**: Compares type names as strings
-3. **Struct/class lookups**: Uses `StringTable::getOrInternStringHandle()` to convert names to handles before lookup
+1. **`gTypeInfo`**: A `std::deque<TypeInfo>` where `TypeIndex` is simply an index into this deque
+2. **`gTypesByName`**: A `std::unordered_map<StringHandle, const TypeInfo*>` for name-based lookups
 
-### Examples of current patterns:
+The `TypeIndex` is already defined as `size_t` and used throughout the codebase (in `TypeSpecifierNode`, `StructMember`, `BaseClassSpecifier`, etc.).
+
+### Current Lookup Patterns
 
 ```cpp
-// Type lookup by name
-auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+// Index-based lookup (already fast - O(1)):
+const TypeInfo& type_info = gTypeInfo[type_index];
 
-// Template instantiation key generation
+// Name-based lookup (requires hashing):
+auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name));
+```
+
+## Problem: Template Instantiation Keys
+
+The main performance concern is in **template instantiation caching**, where string keys are built:
+
+```cpp
+// Current approach - builds string keys for template cache
 StringBuilder().append(template_name).append("_").append(type_name).commit();
 ```
 
-## Problems with String-Based Approach
+## Template Arguments: Types vs Non-Type Values
 
-1. **Performance**: String interning and hashing have overhead, even with interned strings
-2. **Memory**: Storing full qualified names takes more space than numeric indices
-3. **Complexity**: Building qualified names requires string concatenation
-4. **Fragility**: Typos in string names aren't caught at compile time
+Template arguments come in two forms that need different handling:
 
-## Proposed Solution: Type Index-Based Lookups
+### Type Template Arguments
+- Represent types like `int`, `std::string`, `MyClass`
+- Can be represented by a `TypeIndex` (index into `gTypeInfo`)
+- Example: `std::vector<int>` - the `int` is a type argument
 
-### 1. Use TypeIndex Directly
+### Non-Type Template Arguments  
+- Represent compile-time constant values like integers, pointers, or enums
+- Cannot be represented by `TypeIndex` - need the actual value
+- Example: `std::array<int, 5>` - the `5` is a non-type argument
+- Already stored as `std::vector<int64_t> non_type_template_args_` in the codebase
 
-Every `TypeInfo` already has a `type_index_` field. We should use this as the primary lookup key:
+### Combined Template Key Structure
 
 ```cpp
-// Instead of:
-std::unordered_map<StringHandle, TypeInfo*> gTypesByName;
+struct TemplateInstantiationKey {
+    TypeIndex base_template;              // The template being instantiated
+    std::vector<TypeIndex> type_args;     // Type arguments (e.g., <int, float>)
+    std::vector<int64_t> non_type_args;   // Non-type arguments (e.g., <5, true>)
+    
+    bool operator==(const TemplateInstantiationKey&) const = default;
+};
 
-// Use:
-std::vector<TypeInfo*> gTypesByIndex;  // Index = TypeIndex
-std::unordered_map<StringHandle, TypeIndex> gNameToTypeIndex;  // For initial name resolution only
+struct TemplateInstantiationKeyHash {
+    size_t operator()(const TemplateInstantiationKey& key) const {
+        size_t h = std::hash<TypeIndex>{}(key.base_template);
+        for (TypeIndex ti : key.type_args) {
+            h ^= std::hash<TypeIndex>{}(ti) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        }
+        for (int64_t v : key.non_type_args) {
+            h ^= std::hash<int64_t>{}(v) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        }
+        return h;
+    }
+};
 ```
 
-### 2. Template Instantiation Cache by TypeIndex
+## Proposed Optimizations
 
-Instead of building string keys for template instantiations:
+### 1. Template Instantiation Cache by TypeIndex
+
+Replace string-based template cache keys with numeric keys:
 
 ```cpp
 // Current approach (string-based):
@@ -53,44 +83,24 @@ for (const auto& arg : template_args) {
 }
 auto key = sb.commit();
 
-// Proposed approach (TypeIndex-based):
-struct TemplateInstantiationKey {
-    TypeIndex base_template;
-    std::vector<TypeIndex> type_args;
-    
-    bool operator==(const TemplateInstantiationKey&) const = default;
-};
-
-// Custom hash combining TypeIndices
-struct TemplateInstantiationKeyHash {
-    size_t operator()(const TemplateInstantiationKey& key) const {
-        size_t h = std::hash<TypeIndex>{}(key.base_template);
-        for (TypeIndex ti : key.type_args) {
-            h ^= std::hash<TypeIndex>{}(ti) + 0x9e3779b9 + (h << 6) + (h >> 2);
-        }
-        return h;
-    }
-};
-
+// Proposed approach (TypeIndex + value based):
+// Use TemplateInstantiationKey struct defined above
 std::unordered_map<TemplateInstantiationKey, TypeIndex, TemplateInstantiationKeyHash> 
     gTemplateInstantiations;
 ```
 
-### 3. Store TypeIndex in AST Nodes
+### 2. Consistent TypeIndex Usage in AST Nodes
 
-Currently, `TypeSpecifierNode` stores a `type_index_` but it's not always used for lookups. Ensure all type references use this index:
+`TypeSpecifierNode` already stores `type_index_` - ensure it's used consistently:
 
 ```cpp
-// In TypeSpecifierNode
-TypeIndex type_index_;  // Already exists - use it consistently
-
-// When looking up member types:
-const TypeInfo* getTypeInfo() const {
-    return type_index_ < gTypesByIndex.size() ? gTypesByIndex[type_index_] : nullptr;
+// Direct lookup via existing gTypeInfo:
+const TypeInfo& getTypeInfo() const {
+    return gTypeInfo[type_index_];
 }
 ```
 
-### 4. Function Overload Resolution by TypeIndex
+### 3. Function Overload Resolution by TypeIndex
 
 Instead of comparing parameter type names:
 
@@ -111,39 +121,41 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 
 ## Implementation Phases
 
-### Phase 1: TypeIndex Infrastructure
-- [ ] Create `gTypesByIndex` vector alongside existing `gTypesByName`
-- [ ] Ensure all TypeInfo registrations populate both
-- [ ] Add helper functions: `getTypeInfo(TypeIndex)`, `getTypeIndex(StringHandle)`
-
-### Phase 2: Template Instantiation Cache
-- [ ] Implement `TemplateInstantiationKey` with TypeIndex-based hashing
-- [ ] Replace string-based template cache keys
+### Phase 1: Template Instantiation Cache
+- [ ] Implement `TemplateInstantiationKey` with TypeIndex + non-type value based hashing
+- [ ] Replace string-based template cache keys with numeric keys
 - [ ] Update template instantiation code to use new cache
 
-### Phase 3: AST Node Updates
+### Phase 2: Audit TypeIndex Usage
 - [ ] Audit all TypeSpecifierNode usages
-- [ ] Replace name-based lookups with index-based where TypeIndex is available
-- [ ] Add `type_index_` to StructMember and other type-carrying structures
+- [ ] Replace name-based lookups with index-based where TypeIndex is already available
+- [ ] Ensure `gTypeInfo[type_index]` is used instead of `gTypesByName.find()`
 
-### Phase 4: Function Resolution
+### Phase 3: Function Resolution
 - [ ] Store function signatures as `std::vector<TypeIndex>`
 - [ ] Update overload resolution to compare TypeIndex vectors
 - [ ] Cache function lookup results by signature hash
 
 ## Expected Benefits
 
-1. **Performance**: O(1) vector access vs O(log n) or O(1) with hash overhead
-2. **Memory**: TypeIndex is 4 bytes vs variable-length strings
+1. **Performance**: Direct `gTypeInfo[type_index]` access is already O(1); the main gain is eliminating string concatenation for template instantiation keys
+2. **Memory**: Numeric keys (TypeIndex + int64_t values) are more compact than string keys
 3. **Type Safety**: TypeIndex comparisons can't have typos
-4. **Simplicity**: No string building/concatenation for type comparisons
+4. **Simplicity**: No string building/concatenation for template cache lookups
+
+## Existing Infrastructure (Already Available)
+
+- `gTypeInfo`: `std::deque<TypeInfo>` - direct index-based access
+- `gTypesByName`: `std::unordered_map<StringHandle, const TypeInfo*>` - name-based lookup  
+- `TypeIndex`: `size_t` alias - used throughout AST nodes
+- `TypeSpecifierNode::type_index_`: Already stores type index
+- `non_type_template_args_`: Already stores non-type template arguments as `std::vector<int64_t>`
 
 ## Migration Strategy
 
-1. Keep string-based APIs for backward compatibility during transition
-2. Add new TypeIndex-based APIs in parallel
-3. Gradually migrate callers to new APIs
-4. Deprecate and eventually remove string-based APIs
+1. Add `TemplateInstantiationKey`-based cache alongside existing string cache
+2. Gradually migrate template instantiation lookups to new cache
+3. Profile to confirm performance improvement before removing string cache
 
 ## Considerations
 
