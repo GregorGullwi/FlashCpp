@@ -27008,6 +27008,100 @@ ParseResult Parser::parse_template_declaration() {
 					discard_saved_token(saved_pos);
 				}
 				
+				// Check for destructor (~StructName followed by '(')
+				if (peek_token().has_value() && peek_token()->value() == "~") {
+					consume_token();  // consume '~'
+					
+					auto name_token_opt = consume_token();
+					if (!name_token_opt.has_value() || name_token_opt->type() != Token::Type::Identifier ||
+					    name_token_opt->value() != template_name) {
+						return ParseResult::error("Expected struct name after '~' in destructor", name_token_opt.value_or(Token()));
+					}
+					Token dtor_name_token = name_token_opt.value();
+					std::string_view dtor_name = dtor_name_token.value();
+					
+					if (!consume_punctuator("(")) {
+						return ParseResult::error("Expected '(' after destructor name", *peek_token());
+					}
+					
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Destructor cannot have parameters", *peek_token());
+					}
+					
+					auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(dtor_name));
+					
+					// Parse trailing specifiers (noexcept, override, final, = default, = delete, etc.)
+					FlashCpp::MemberQualifiers dtor_member_quals;
+					FlashCpp::FunctionSpecifiers dtor_func_specs;
+					auto dtor_specs_result = parse_function_trailing_specifiers(dtor_member_quals, dtor_func_specs);
+					if (dtor_specs_result.is_error()) {
+						return dtor_specs_result;
+					}
+					
+					// Apply specifiers
+					if (dtor_func_specs.is_noexcept) {
+						dtor_ref.set_noexcept(true);
+					}
+					
+					bool is_defaulted = dtor_func_specs.is_defaulted;
+					bool is_deleted = dtor_func_specs.is_deleted;
+					
+					// Handle defaulted destructors
+					if (is_defaulted) {
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= default'", *peek_token());
+						}
+						
+						// Create an empty block for the destructor body
+						auto [block_node, block_ref] = create_node_ref(BlockNode());
+						NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
+						dtor_ref.set_mangled_name(mangled);
+						dtor_ref.set_definition(block_node);
+						
+						struct_ref.add_destructor(dtor_node, current_access);
+						continue;
+					}
+					
+					// Handle deleted destructors
+					if (is_deleted) {
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+						}
+						// Deleted destructors are not added to the struct
+						continue;
+					}
+					
+					// Parse function body if present (and not defaulted/deleted)
+					if (peek_token().has_value() && peek_token()->value() == "{") {
+						// Save position at start of body
+						SaveHandle body_start = save_token_position();
+						
+						// Skip over the function body by counting braces
+						skip_balanced_braces();
+						
+						// Record for delayed parsing
+						delayed_function_bodies_.push_back({
+							nullptr,  // member_func_ref
+							body_start,
+							{},       // initializer_list_start (not used)
+							instantiated_name,
+							struct_type_info.type_index_,
+							&struct_ref,
+							false,    // has_initializer_list
+							false,    // is_constructor
+							true,     // is_destructor
+							nullptr,  // ctor_node
+							&dtor_ref,  // dtor_node
+							{}  // no template parameter names for specializations
+						});
+					} else if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected '{' or ';' after destructor declaration", *peek_token());
+					}
+					
+					struct_ref.add_destructor(dtor_node, current_access);
+					continue;
+				}
+				
 				// Parse member declaration using delayed parsing for function bodies
 				// (Same approach as full specialization to ensure member_function_context is available)
 				auto member_result = parse_type_and_name();
@@ -27048,6 +27142,47 @@ ParseResult Parser::parse_template_declaration() {
 					// Copy parameters from the parsed function
 					for (const auto& param : func_decl.parameter_nodes()) {
 						member_func_ref.add_parameter_node(param);
+					}
+					
+					// Parse trailing specifiers (const, volatile, noexcept, override, final, = default, = delete)
+					FlashCpp::MemberQualifiers member_quals;
+					FlashCpp::FunctionSpecifiers func_specs;
+					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+					if (specs_result.is_error()) {
+						return specs_result;
+					}
+					
+					// Extract parsed specifiers
+					bool is_defaulted = func_specs.is_defaulted;
+					bool is_deleted = func_specs.is_deleted;
+					
+					// Handle defaulted functions: create implicit function with empty body
+					if (is_defaulted) {
+						// Expect ';'
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= default'", *peek_token());
+						}
+						
+						// Mark as implicit
+						member_func_ref.set_is_implicit(true);
+						
+						// Create empty block for the function body
+						auto [block_node, block_ref] = create_node_ref(BlockNode());
+						member_func_ref.set_definition(block_node);
+						
+						// Add member function to struct
+						struct_ref.add_member_function(member_func_node, current_access);
+						continue;
+					}
+					
+					// Handle deleted functions: skip adding to struct
+					if (is_deleted) {
+						// Expect ';'
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+						}
+						// Deleted functions are not added to the struct
+						continue;
 					}
 					
 					// Check for function body and use delayed parsing
