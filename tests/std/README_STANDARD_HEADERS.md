@@ -4,9 +4,13 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
+✅ **Variable Template Partial Specialization Pattern Matching (2026-01-21):** Fixed pattern registration for partial specializations like `__is_ratio_v<ratio<_Num, _Den>>`. Now correctly includes base template name in pattern (e.g., `__is_ratio_v_ratio`). This enables variable template partial specializations with template instantiation patterns to work correctly when used directly.
+
+🔧 **Variable Template in Function Template Body (2026-01-21):** Variable templates with partial specializations used inside function template bodies (like `if constexpr (__is_ratio_v<_R1>)` inside `__are_both_ratios<R1, R2>()`) don't properly substitute template parameters. The variable template is instantiated with the template parameter name (`_R1`) instead of the substituted type. This affects `<ratio>` header's `__are_both_ratios()` function.
+
 ✅ **Trailing Specifiers in Partial Specializations (2026-01-21 PM):** Fixed parsing of `operator=(...) noexcept = default` and `~Destructor() noexcept = delete` in partial specializations. `<variant>` progresses from line 119 → 72.
 
-🔧 **Function Argument Parsing Issue (2026-01-21):** Postfix operator loop incorrectly consumes `)` when parsing `function(member_variable)` in member functions. Blocks `<exception>`, `<optional>`, `<iostream>`.
+🔧 **MemberAccess Missing Object in Codegen (2026-01-21):** `<exception>` header crashes during code generation with "MemberAccess missing object: other". This appears to be related to accessing members of reference parameters in certain contexts. Blocks `<exception>`, `<optional>`, `<iostream>`.
 
 ✅ **Typename Functional Cast (2026-01-21):** Fixed `typename T<Args>::member(args)` pattern in fold expressions. Unblocks `<vector>`, `<map>`, `<set>` from parse errors.
 
@@ -33,10 +37,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<source_location>` | N/A | ✅ Compiled | ~0.07s |
 | `<numbers>` | N/A | ✅ Compiled | ~1.2s release |
 | `<initializer_list>` | N/A | ✅ Compiled | ~0.04s |
-| `<ratio>` | `test_std_ratio.cpp` | ❌ Crash | 2026-01-21 PM: Crashes with missing __is_ratio_v variable template (~1.9s) |
+| `<ratio>` | `test_std_ratio.cpp` | ❌ Codegen | 2026-01-21: Variable template in function body issue (see blocker 7.4) |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
 | `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | 2026-01-21 PM: _Hash_bytes function lookup fails in typeinfo:122 (~3.7s) |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen | 2026-01-21: MemberAccess missing object issue (see blocker 7.5) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | 2026-01-21 PM: IMPROVED from line 119 to line 72 - decltype in partial spec pattern (~5.7s) |
 | `<any>` | `test_std_any.cpp` | ⏱️ Timeout | 2026-01-21: Times out at 60+ seconds (was misreported as parse error) |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
@@ -52,11 +56,11 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | 2026-01-21: Now progresses past typename funccast fix, times out |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | 2026-01-21: Times out during template instantiation |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | 2026-01-21: Blocked by function argument parsing bug (rethrow_exception issue) |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen | 2026-01-21: MemberAccess missing object issue |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<atomic>` | N/A | ❌ Parse Error | Complex decltype in partial specialization (see blockers) |
 | `<new>` | N/A | ✅ Compiled | ~0.08s |
-| `<exception>` | N/A | ❌ Parse Error | 2026-01-21: Blocked by function argument parsing bug (rethrow_exception in nested_exception.h:79) |
+| `<exception>` | N/A | ❌ Codegen | 2026-01-21: MemberAccess missing object during codegen |
 | `<typeinfo>` | N/A | ✅ Compiled | ~0.09s |
 | `<typeindex>` | N/A | ✅ Compiled | ~0.14s |
 | `<csetjmp>` | N/A | ✅ Compiled | ~0.04s |
@@ -386,66 +390,78 @@ template<typename _Tp>
 - **Context-dependent issues**: Parse errors occur only after including certain headers, suggesting parser state issues
   - Test case: `tests/test_utility_with_context.cpp`
 
-#### 7.4 Missing __is_ratio_v Variable Template (ACTIVE BLOCKER - 2026-01-21)
+#### 7.4 Variable Template Partial Specialization Pattern Matching (PARTIALLY FIXED - 2026-01-21)
 
-**Issue:** The `<ratio>` header crashes during code generation due to missing `__is_ratio_v` variable template.
+**Previous Issue:** Variable template partial specializations like `__is_ratio_v<ratio<_Num, _Den>>` were registered without the base template name in the pattern, causing lookup failures.
+
+**Fix Applied (Phase 1):** 
+1. Store the base type name in `dependent_name` field when parsing partial specialization patterns
+2. Check if `dependent_name` refers to a known template when building pattern key
+3. Include template name in pattern (e.g., `__is_ratio_v_ratio`) only for template instantiation patterns
+
+**Fix Applied (Phase 2 - 2026-01-21 PM):**
+1. Extended `TemplateParamSubstitution` to include type parameter mappings (not just non-type values)
+2. Register type substitutions during function template body re-parsing
+3. Added substitution lookup in `try_instantiate_variable_template` to resolve template parameters
+4. Enables `__is_ratio_v<_R1>` inside function templates to correctly substitute `_R1` with concrete types
+
+**Example that NOW works:**
+```cpp
+template<typename _Tp>
+constexpr bool __is_ratio_v = false;
+
+template<long _Num, long _Den>
+constexpr bool __is_ratio_v<ratio<_Num, _Den>> = true;
+
+// Direct use works:
+static_assert(__is_ratio_v<ratio<1,2>> == true);  // ✅ Works
+
+// Simple function template returning variable template value:
+template<typename _R>
+constexpr bool is_ratio_check() { return __is_ratio_v<_R>; }  // ✅ Works
+```
+
+**Remaining Issue:** The `<ratio>` header still crashes during codegen because:
+1. `if constexpr` evaluation with variable templates isn't fully working
+2. The function `__are_both_ratios` uses nested `if constexpr` statements
+3. The variable template identifier `__is_ratio_v` is not found in symbol table during code generation
+
+**Affected Headers:** `<ratio>` (crashes during codegen in `__are_both_ratios`)
+
+#### 7.5 MemberAccess Missing Object in Code Generation (ACTIVE BLOCKER - 2026-01-21)
+
+**Issue:** The `<exception>` header crashes during code generation with "MemberAccess missing object: other".
 
 **Error Message:**
 ```
-[ERROR][Parser] Missing identifier: __is_ratio_v
-[ERROR][Codegen] Symbol '__is_ratio_v' not found in symbol table during code generation
-FlashCpp: src/CodeGen.h:7887: Assertion failed: "Expected symbol to exist"
-```
-
-**Problematic Code Pattern:**
-```cpp
-// In bits/ratio.h or related headers:
-template<typename _Tp>
-  inline constexpr bool __is_ratio_v = /* ... */;
-
-// Used in other templates:
-static_assert(__is_ratio_v<_R1> && __is_ratio_v<_R2>, "...");
+[ERROR][Codegen] MemberAccess missing object: other
+FlashCpp: src/IRConverter.h:13112: Assertion failed: "Struct object not found in scope or globals"
 ```
 
 **Analysis:**
-- The variable template `__is_ratio_v` is not being registered or found during lookup
-- This could be a namespace qualification issue or variable template registration problem
-- The error occurs during code generation, suggesting the parser succeeded but symbol table is incomplete
+- The error occurs when accessing a member of a reference parameter named `other`
+- Simple test cases with `operator=(const Type& other)` work correctly
+- The issue appears in more complex contexts in the standard library
+- May be related to how reference parameters are handled in certain struct/class contexts
 
-**Affected Headers:** `<ratio>` (crashes at ~1.9s)
+**Test Results:**
+- Simple member access: ✅ Works
+- `<exception>` header: ❌ Crashes
 
-#### 7.5 _Hash_bytes Function Lookup Failure (ACTIVE BLOCKER - 2026-01-21)
+**Affected Headers:** `<exception>`, `<optional>`, `<iostream>` (all depend on exception handling)
 
-**Issue:** Calls to `std::_Hash_bytes` fail with "No matching function" error when called from member functions.
+#### 7.6 _Hash_bytes Function Lookup Failure (SUPERSEDED by 7.5)
 
-**Error Message:**
+**Note:** This issue may have been caused by the MemberAccess issue (7.5). The _Hash_bytes call was failing, but the root cause may be how reference parameters are handled, not the function lookup itself.
+
+**Previous Error Message:**
 ```
 /usr/include/c++/14/typeinfo:122:25: error: No matching function for call to '_Hash_bytes'
         return _Hash_bytes(name(), __builtin_strlen(name()), static_cast<size_t>(0xc70f6907UL));
                           ^
 ```
 
-**Problematic Code Pattern:**
-```cpp
-namespace std {
-  size_t _Hash_bytes(const void* __ptr, size_t __len, size_t __seed);
-  
-  class type_info {
-    size_t hash_code() const {
-      return _Hash_bytes(name(), __builtin_strlen(name()), 
-                        static_cast<size_t>(0xc70f6907UL));  // Lookup fails here
-    }
-  };
-}
-```
-
-**Analysis:**
-- Function `_Hash_bytes` is declared in `std` namespace
-- Call is made from within a member function of `std::type_info`
-- The function takes 3 arguments and should be found via namespace lookup
-- May be related to ADL (Argument-Dependent Lookup) or namespace visibility in member function context
-
-**Affected Headers:** `<optional>` (stops at ~3.7s), `<iostream>`, and any header depending on `<exception>` → `<typeinfo>`
+**Status:** Needs re-investigation after MemberAccess issue (7.5) is fixed.
 
 ### 8. Template Instantiation Performance
 
@@ -725,6 +741,27 @@ The following features have been implemented to support standard headers:
 ## Recent Changes
 
 Changes are listed in reverse chronological order.
+
+### 2026-01-21 (Variable Template Partial Specialization Pattern Matching)
+- **Fixed partial specialization pattern registration:** Partial specializations like `__is_ratio_v<ratio<_Num, _Den>>` now correctly include the base template name in the pattern key
+  - Store base type name in `dependent_name` field when parsing partial specialization patterns
+  - Check if `dependent_name` refers to a known template when building pattern key
+  - Pattern now includes template name (e.g., `__is_ratio_v_ratio`) for template instantiation patterns
+  - Simple dependent types like `T&` still use minimal pattern (e.g., `is_reference_v_R`)
+  - Test case: `static_assert(__is_ratio_v<ratio<1,2>> == true)` now works for direct usage
+- **Fixed variable template substitution in function template bodies (Phase 2):**
+  - Extended `TemplateParamSubstitution` to include type parameter mappings (not just non-type values)
+  - Register type substitutions during function template body re-parsing in `try_instantiate_template_explicit`
+  - Added substitution lookup in `try_instantiate_variable_template` to resolve template parameter names
+  - Enables simple function templates that return variable template values to work correctly
+  - Test case: `template<typename R> constexpr bool is_ratio_check() { return __is_ratio_v<R>; }` now works
+- **Test Results:**
+  - ✅ All 950 existing tests pass
+  - ✅ Variable template partial specializations with template instantiation patterns work
+  - ✅ Simple function templates returning variable template values work
+  - ⚠️ Complex patterns with `if constexpr` and variable templates still need work (see blocker 7.4)
+
+**Remaining Issue:** The `<ratio>` header still crashes because `if constexpr` evaluation with variable templates isn't fully working. The function `__are_both_ratios` uses nested `if constexpr` statements that require constexpr evaluation.
 
 ### 2026-01-20 (static_assert with Template-Dependent Expressions - PR #XXX)
 - **Fixed fold expression evaluation in static_assert:** Fold expressions like `(args && ...)` are now correctly treated as template-dependent
