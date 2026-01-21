@@ -25248,6 +25248,10 @@ ParseResult Parser::parse_template_declaration() {
 			gConceptRegistry.registerConcept(StringTable::getStringView(qualified_handle), concept_node);
 		}
 		
+		// Clean up template parameter context before returning
+		// Note: only clear current_template_param_names_, keep parsing_template_body_ as-is
+		current_template_param_names_.clear();
+		
 		return saved_position.success(concept_node);
 	} else if (is_alias_template) {
 		// Consume 'using' keyword
@@ -25417,6 +25421,10 @@ ParseResult Parser::parse_template_declaration() {
 			FLASH_LOG_FORMAT(Templates, Debug, "Registering alias template with qualified name: {}", qualified_name);
 			gTemplateRegistry.register_alias_template(std::string(qualified_name), alias_node);
 		}
+		
+		// Clean up template parameter context before returning
+		// Note: only clear current_template_param_names_, keep parsing_template_body_ as-is
+		current_template_param_names_.clear();
 		
 		return saved_position.success(alias_node);
 	}
@@ -25719,6 +25727,11 @@ ParseResult Parser::parse_template_declaration() {
 		// Also add to symbol table so identifier lookup works
 		gSymbolTable.insert(var_name, template_var_node);
 		
+		// Clean up template parameter context before returning
+		// Note: only clear current_template_param_names_, keep parsing_template_body_ as-is
+		// to avoid breaking template argument resolution in subsequent code
+		current_template_param_names_.clear();
+		
 		return saved_position.success(template_var_node);
 	}
 	else if (is_class_template) {
@@ -25864,14 +25877,33 @@ ParseResult Parser::parse_template_declaration() {
 						consume_token();
 					}
 
-					// Parse base class name
+					// Parse base class name - could be qualified like ns::Base or simple like Base
 					auto base_name_token_opt = consume_token();
 					if (!base_name_token_opt.has_value() || base_name_token_opt->type() != Token::Type::Identifier) {
 						return ParseResult::error("Expected base class name", base_name_token_opt.value_or(Token()));
 					}
 
 					Token base_name_token = *base_name_token_opt;
-					std::string_view base_class_name = base_name_token_opt->value();
+					std::string base_class_name_str{base_name_token_opt->value()};
+					
+					// Check for qualified name (e.g., ns::Base or std::false_type)
+					while (peek_token().has_value() && peek_token()->value() == "::") {
+						consume_token(); // consume '::'
+						
+						auto next_name_token = peek_token();
+						if (!next_name_token.has_value() || next_name_token->type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected identifier after '::'", next_name_token.value_or(Token()));
+						}
+						consume_token(); // consume the identifier
+						
+						base_class_name_str += "::";
+						base_class_name_str += next_name_token->value();
+						base_name_token = *next_name_token;  // Update for error reporting
+						
+						FLASH_LOG_FORMAT(Parser, Debug, "Parsing qualified base class name in full specialization: {}", base_class_name_str);
+					}
+					
+					std::string_view base_class_name = StringTable::getOrInternStringHandle(StringBuilder().append(base_class_name_str)).view();
 					std::vector<ASTNode> template_arg_nodes;
 					std::optional<std::vector<TemplateTypeArg>> base_template_args_opt;
 					std::optional<StringHandle> member_type_name;
@@ -26639,6 +26671,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Reset parsing context flags
 			parsing_template_class_ = false;
 			parsing_template_body_ = false;
+			current_template_param_names_.clear();
 		
 			// Don't add specialization to AST - it's stored in the template registry
 			// and will be used when Container<int> is instantiated
@@ -27648,6 +27681,9 @@ if (struct_type_info.getStructInfo()) {
 			// Register the specialization PATTERN (not exact match)
 			// This allows pattern matching during instantiation
 			gTemplateRegistry.registerSpecializationPattern(template_name, template_params, pattern_args, struct_node);
+			
+			// Clean up template parameter context before returning
+			current_template_param_names_.clear();
 			
 			return saved_position.success(struct_node);
 		}
