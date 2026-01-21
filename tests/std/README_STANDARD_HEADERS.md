@@ -286,18 +286,10 @@ constexpr _Enable_default_constructor() noexcept = delete;
   - Test case: `tests/test_utility_parse_error.cpp`
 
 ❌ **Actual Blockers:**
-- **Performance/Template Instantiation**: Headers timeout not due to parse errors but slow template processing
-  - `<type_traits>` times out after ~300 instantiations in debug builds
-  - Template cache hit rate only ~26% (needs optimization)
-  - Test cases: `tests/test_just_type_traits.cpp`, `tests/test_just_vector.cpp` (both timeout)
-- **Context-dependent issues**: Parse errors occur only after including certain headers, suggesting parser state issues
-  - Test case: `tests/test_utility_with_context.cpp` (timeouts when including full headers)
-- **Complex decltype in partial spec**: `__void_t<decltype(hash<T>()(...))>` still needs investigation
-
-
-❌ **Actual Blockers:**
 - **Logging Bug (FIXED 2026-01-21)**: Headers appeared to timeout not due to parse errors but due to logging bug where log arguments were evaluated even when filtered. With fix, headers compile in 8-11 seconds.
-  - `<type_traits>`, `<functional>`, `<chrono>` now compile successfully
+  - `<type_traits>` now compiles successfully
+  - Complex headers like `<utility>`, `<functional>`, `<chrono>` still timeout due to template complexity (performance issue, not correctness)
+- **Complex decltype in partial spec**: `__void_t<decltype(hash<T>()(...))>` still needs investigation
   - Test cases: `tests/test_just_type_traits.cpp` (was timing out, now works)
 - **Context-dependent issues**: Parse errors occur only after including certain headers, suggesting parser state issues
   - Test case: `tests/test_utility_with_context.cpp`
