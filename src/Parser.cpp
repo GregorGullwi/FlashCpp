@@ -16800,7 +16800,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				
 				// Parse function arguments
 				ChunkedVector<ASTNode> args;
-				if (current_token_.has_value() && current_token_->value() != ")") {
+				// Check if function call has arguments (not empty parentheses)
+				if (peek_token().has_value() && peek_token()->value() != ")") {
 					while (true) {
 						auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (arg_result.is_error()) {
@@ -21399,6 +21400,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
 										}
 									}
+									// Return early - we've created the FunctionCallNode with the args
+									if (result.has_value())
+										return ParseResult::success(*result);
 									break;
 								}
 							
