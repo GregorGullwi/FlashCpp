@@ -162,3 +162,18 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 - **TypeIndex stability**: TypeIndex values are assigned during parsing. Consider if they need to be stable across compilation units (for incremental compilation).
 - **Type aliases**: `typedef` and `using` create aliases that should resolve to the same TypeIndex
 - **Template parameters**: Template type parameters need special handling (they're not concrete types until instantiation)
+
+## Compatibility with C++ Features
+
+### Argument-Dependent Lookup (ADL)
+ADL is a **name resolution** feature, not a type lookup feature. It determines which namespaces to search for function overloads based on argument types. The TypeIndex optimization focuses on **type identity** comparisons for template instantiation caching - it doesn't affect how function names are resolved. ADL would continue to use the existing namespace and name-based lookup mechanisms.
+
+### Incomplete Types (Forward Declarations)
+Incomplete types (forward-declared classes) can still have a TypeIndex assigned - they exist in `gTypeInfo` as incomplete types. The TypeIndex represents type identity, not completeness. When the type becomes complete, the same TypeIndex is retained and the TypeInfo is updated with size/member information. This is already how the codebase works.
+
+### Partial Specializations
+Partial specializations involve **pattern matching** on template arguments, not type equality. The proposed TypeIndex optimization handles concrete instantiations (e.g., `vector<int>` maps to a specific TypeIndex). Partial specialization selection requires:
+1. Checking which patterns match the concrete types
+2. Selecting the most specialized matching pattern
+
+This pattern matching must remain string/pattern-based because it compares against symbolic patterns like `_Tp*`, `const _Tp&`, etc. The optimization focuses on **caching instantiation results** once a specialization is selected, not on the selection process itself.
