@@ -12076,17 +12076,18 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx)
 {
 	using namespace FlashCpp;
-	ChunkedVector<ASTNode> args;
-	std::vector<TypeSpecifierNode> arg_types;
 	
 	// Check if function call has arguments (not empty parentheses)
 	if (!peek_token().has_value() || peek_token()->value() == ")") {
-		// Empty argument list
-		if (ctx.collect_types) {
-			return ParsedFunctionArguments::make_success(std::move(args), std::move(arg_types));
-		}
-		return ParsedFunctionArguments::make_success(std::move(args));
+		// Empty argument list - return empty result without allocating
+		ParsedFunctionArguments result;
+		result.success = true;
+		return result;
 	}
+	
+	// We have arguments, so allocate storage
+	ChunkedVector<ASTNode> args;
+	std::vector<TypeSpecifierNode> arg_types;
 	
 	while (true) {
 		auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -12135,7 +12136,9 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 								.append(i)
 								.commit();
 							
-							Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
+							// Use ellipsis token position for proper error reporting
+							Token elem_token(Token::Type::Identifier, element_name, 
+								ellipsis_token.line(), ellipsis_token.column(), ellipsis_token.file_index());
 							auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
 							args.push_back(elem_node);
 							
@@ -12145,7 +12148,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 								if (elem_type.has_value()) {
 									arg_types.push_back(*elem_type);
 								} else {
-									arg_types.emplace_back(Type::Int, TypeQualifier::None, 32, Token());
+									arg_types.emplace_back(Type::Int, TypeQualifier::None, 32, ellipsis_token);
 								}
 							}
 						}
@@ -12165,7 +12168,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						if (arg_type.has_value()) {
 							arg_types.push_back(*arg_type);
 						} else {
-							arg_types.emplace_back(Type::Int, TypeQualifier::None, 32, Token());
+							arg_types.emplace_back(Type::Int, TypeQualifier::None, 32, ellipsis_token);
 						}
 					}
 				}
@@ -12181,6 +12184,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						arg_types.push_back(*arg_type);
 					} else {
 						// Fallback: try to deduce from the expression
+						// Use current_token_ for error location since we've just parsed the expression
 						Type deduced_type = Type::Int;
 						if (arg->is<ExpressionNode>()) {
 							const ExpressionNode& expr = arg->as<ExpressionNode>();
@@ -12196,7 +12200,8 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 								}
 							}
 						}
-						arg_types.emplace_back(deduced_type, TypeQualifier::None, get_type_size_bits(deduced_type), Token());
+						arg_types.emplace_back(deduced_type, TypeQualifier::None, get_type_size_bits(deduced_type), 
+							current_token_.value_or(Token()));
 					}
 				}
 			}
@@ -12219,6 +12224,52 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 		return ParsedFunctionArguments::make_success(std::move(args), std::move(arg_types));
 	}
 	return ParsedFunctionArguments::make_success(std::move(args));
+}
+
+// Helper to apply lvalue reference for perfect forwarding deduction
+// This is used when collecting argument types for template instantiation.
+// In perfect forwarding (T&&), lvalues should deduce to T& while rvalues deduce to T.
+std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
+	const ChunkedVector<ASTNode>& args, 
+	const std::vector<TypeSpecifierNode>& arg_types)
+{
+	std::vector<TypeSpecifierNode> result;
+	result.reserve(arg_types.size());
+	
+	for (size_t i = 0; i < arg_types.size(); ++i) {
+		TypeSpecifierNode arg_type_node = arg_types[i];
+		
+		// Check if this is an lvalue (for perfect forwarding deduction)
+		// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+		// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
+		if (i < args.size() && args[i].is<ExpressionNode>()) {
+			const ExpressionNode& expr = args[i].as<ExpressionNode>();
+			bool is_lvalue = std::visit([](const auto& inner) -> bool {
+				using T = std::decay_t<decltype(inner)>;
+				if constexpr (std::is_same_v<T, IdentifierNode>) {
+					return true;
+				} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+					return true;
+				} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+					return true;
+				} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+					return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+				} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+					return true;
+				} else {
+					return false;
+				}
+			}, expr);
+			
+			if (is_lvalue) {
+				arg_type_node.set_lvalue_reference(true);
+			}
+		}
+		
+		result.push_back(arg_type_node);
+	}
+	
+	return result;
 }
 
 // Phase 2: Unified trailing specifiers parsing
@@ -16962,38 +17013,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 					
 					// Apply lvalue reference for forwarding deduction on arg_types
-					std::vector<TypeSpecifierNode> arg_types;
-					arg_types.reserve(args_result.arg_types.size());
-					for (size_t i = 0; i < args_result.arg_types.size(); ++i) {
-						TypeSpecifierNode arg_type_node = args_result.arg_types[i];
-						
-						// Check if this is an lvalue (for perfect forwarding deduction)
-						if (i < args.size() && args[i].is<ExpressionNode>()) {
-							const ExpressionNode& expr = args[i].as<ExpressionNode>();
-							bool is_lvalue = std::visit([](const auto& inner) -> bool {
-								using T = std::decay_t<decltype(inner)>;
-								if constexpr (std::is_same_v<T, IdentifierNode>) {
-									return true;
-								} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-									return true;
-								} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-									return true;
-								} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-									return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-								} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-									return true;
-								} else {
-									return false;
-								}
-							}, expr);
-							
-							if (is_lvalue) {
-								arg_type_node.set_lvalue_reference(true);
-							}
-						}
-						
-						arg_types.push_back(arg_type_node);
-					}
+					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 					
 					// Try to instantiate the qualified template function
 					if (!arg_types.empty()) {
@@ -18198,38 +18218,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
 				
 				// Apply lvalue reference for forwarding deduction on arg_types
-				std::vector<TypeSpecifierNode> arg_types;
-				arg_types.reserve(args_result.arg_types.size());
-				for (size_t i = 0; i < args_result.arg_types.size(); ++i) {
-					TypeSpecifierNode arg_type_node = args_result.arg_types[i];
-					
-					// Check if this is an lvalue (for perfect forwarding deduction)
-					if (i < args.size() && args[i].is<ExpressionNode>()) {
-						const ExpressionNode& expr = args[i].as<ExpressionNode>();
-						bool is_lvalue = std::visit([](const auto& inner) -> bool {
-							using T = std::decay_t<decltype(inner)>;
-							if constexpr (std::is_same_v<T, IdentifierNode>) {
-								return true;
-							} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-								return true;
-							} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-								return true;
-							} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-								return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-							} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-								return true;
-							} else {
-								return false;
-							}
-						}, expr);
-						
-						if (is_lvalue) {
-							arg_type_node.set_lvalue_reference(true);
-						}
-					}
-					
-					arg_types.push_back(arg_type_node);
-				}
+				std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 				
 				// Try to instantiate the qualified template function
 				if (!arg_types.empty()) {
@@ -18779,38 +18768,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 				// If still not found and no explicit template arguments, try deducing from function arguments
 				// Apply lvalue reference for forwarding deduction on arg_types
-				std::vector<TypeSpecifierNode> arg_types;
-				arg_types.reserve(args_result.arg_types.size());
-				for (size_t i = 0; i < args_result.arg_types.size(); ++i) {
-					TypeSpecifierNode arg_type_node = args_result.arg_types[i];
-					
-					// Check if this is an lvalue (for perfect forwarding deduction)
-					if (i < args.size() && args[i].is<ExpressionNode>()) {
-						const ExpressionNode& expr = args[i].as<ExpressionNode>();
-						bool is_lvalue = std::visit([](const auto& inner) -> bool {
-							using T = std::decay_t<decltype(inner)>;
-							if constexpr (std::is_same_v<T, IdentifierNode>) {
-								return true;
-							} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-								return true;
-							} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-								return true;
-							} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-								return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-							} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-								return true;
-							} else {
-								return false;
-							}
-						}, expr);
-						
-						if (is_lvalue) {
-							arg_type_node.set_lvalue_reference(true);
-						}
-					}
-					
-					arg_types.push_back(arg_type_node);
-				}
+				std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 				
 				// Try to instantiate the qualified template function
 				if (!arg_types.empty()) {
@@ -19321,38 +19279,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 					
 					// Apply lvalue reference for forwarding deduction on arg_types
-					std::vector<TypeSpecifierNode> arg_types;
-					arg_types.reserve(args_result.arg_types.size());
-					for (size_t i = 0; i < args_result.arg_types.size(); ++i) {
-						TypeSpecifierNode arg_type_node = args_result.arg_types[i];
-						
-						// Check if this is an lvalue (for perfect forwarding deduction)
-						if (i < args.size() && args[i].is<ExpressionNode>()) {
-							const ExpressionNode& expr = args[i].as<ExpressionNode>();
-							bool is_lvalue = std::visit([](const auto& inner) -> bool {
-								using T = std::decay_t<decltype(inner)>;
-								if constexpr (std::is_same_v<T, IdentifierNode>) {
-									return true;
-								} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-									return true;
-								} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-									return true;
-								} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-									return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-								} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-									return true;
-								} else {
-									return false;
-								}
-							}, expr);
-							
-							if (is_lvalue) {
-								arg_type_node.set_lvalue_reference(true);
-							}
-						}
-						
-						arg_types.push_back(arg_type_node);
-					}
+					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 					
 					
 					// Try to instantiate the qualified template function
