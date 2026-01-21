@@ -2519,6 +2519,7 @@ private:
 		// Add parameters to function declaration
 		std::vector<CachedParamInfo> cached_params;
 		cached_params.reserve(node.parameter_nodes().size());
+		size_t unnamed_param_counter = 0;  // Counter for generating unique names for unnamed parameters
 		for (const auto& param : node.parameter_nodes()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
@@ -2539,7 +2540,27 @@ private:
 			// this direct value passing, while the is_rvalue_reference flag enables proper handling
 			// in both the caller (materialization + address-taking) and callee (dereferencing).
 			param_info.pointer_depth = pointer_depth;
-			param_info.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
+			
+			// Handle unnamed parameters (e.g., `operator=(const T&) = default;` without explicit param name)
+			// Generate a unique name like "__param_0", "__param_1", etc. for unnamed parameters
+			std::string_view param_name = param_decl.identifier_token().value();
+			if (param_name.empty()) {
+				// For implicit operator=, use "other" as the conventional name for the first parameter
+				// Otherwise use a generated name
+				if (node.is_implicit() && func_decl.identifier_token().value() == "operator=" && unnamed_param_counter == 0) {
+					param_info.name = StringTable::getOrInternStringHandle("other");
+					FLASH_LOG(Codegen, Debug, "  [FIX] Generated param name 'other' for implicit operator=");
+				} else {
+					// Generate unique name for unnamed parameter
+					std::string generated_name = "__param_" + std::to_string(unnamed_param_counter);
+					param_info.name = StringTable::getOrInternStringHandle(generated_name);
+					FLASH_LOG(Codegen, Debug, "  [FIX] Generated param name '", generated_name, "' for unnamed parameter");
+				}
+				unnamed_param_counter++;
+			} else {
+				param_info.name = StringTable::getOrInternStringHandle(param_name);
+			}
+			
 			param_info.is_reference = param_type.is_reference();  // Tracks ANY reference (lvalue or rvalue)
 			param_info.is_rvalue_reference = param_type.is_rvalue_reference();  // Specific rvalue ref flag
 			param_info.cv_qualifier = param_type.cv_qualifier();
@@ -2647,8 +2668,27 @@ private:
 // 					}
 // 				}
 
-				// Generate memberwise assignment from 'other' to 'this'
+				// Generate memberwise assignment from source parameter to 'this'
 				// (same code for both copy and move assignment - memberwise copy/move)
+				
+				// Get the parameter name from the function declaration
+				// For defaulted operator= without explicit parameter name (e.g., `operator=(const T&) = default;`),
+				// the parameter name might be empty. Use "other" as the default name.
+				// This name must match what's in func_decl_op.parameters.
+				StringHandle source_param_name_handle;
+				if (!node.parameter_nodes().empty()) {
+					const auto& param_node = node.parameter_nodes()[0];
+					if (param_node.is<DeclarationNode>()) {
+						std::string_view param_name = param_node.as<DeclarationNode>().identifier_token().value();
+						if (!param_name.empty()) {
+							source_param_name_handle = StringTable::getOrInternStringHandle(param_name);
+						}
+					}
+				}
+				// Default to "other" if no parameter name found
+				if (!source_param_name_handle.isValid()) {
+					source_param_name_handle = StringTable::getOrInternStringHandle("other");
+				}
 
 				// Look up the struct type
 				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
@@ -2659,13 +2699,13 @@ private:
 					if (struct_info) {
 						// Generate memberwise assignment
 						for (const auto& member : struct_info->members) {
-							// First, load the member from 'other'
+							// First, load the member from source parameter
 							TempVar member_value = var_counter.next();
 							MemberLoadOp member_load;
 							member_load.result.value = member_value;
 							member_load.result.type = member.type;
 							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
-							member_load.object = StringTable::getOrInternStringHandle("other");  // Load from 'other' parameter
+							member_load.object = source_param_name_handle;  // Load from source parameter
 							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
 							member_load.is_reference = member.is_reference;
