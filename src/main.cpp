@@ -9,6 +9,8 @@
 #include <chrono>
 #include <algorithm>
 #include <iomanip>
+#include <thread>
+#include <atomic>
 
 #include "FileTree.h"
 #include "FileReader.h"
@@ -406,7 +408,27 @@ int main_impl(int argc, char *argv[]) {
         PhaseTimer timer("Parsing", false, &parsing_time);
         // Note: Lexing happens lazily during parsing in this implementation
         // Template instantiation also happens during parsing
+        
+        // Start a watchdog thread to log progress if parsing takes too long
+        std::atomic<bool> parsing_complete{false};
+        std::thread watchdog([&parsing_complete]() {
+            auto start = std::chrono::steady_clock::now();
+            while (!parsing_complete) {
+                std::this_thread::sleep_for(std::chrono::seconds(10));
+                if (!parsing_complete) {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::steady_clock::now() - start).count();
+                    auto& stats = TemplateProfilingStats::getInstance();
+                    printf("[Watchdog] Parsing still in progress after %ld seconds. Total instantiations: %zu\n",
+                           elapsed, stats.getTotalInstantiationCount());
+                    fflush(stdout);
+                }
+            }
+        });
+        
         auto parse_result = parser->parse();
+        parsing_complete = true;
+        watchdog.join();
 
         if (parse_result.is_error()) {
             // Print formatted error with file:line:column information and include stack
