@@ -27,6 +27,45 @@ struct ParsedParameterList {
 	bool is_variadic = false;
 };
 
+// Context flags for parsing function call arguments
+struct FunctionArgumentContext {
+	bool handle_pack_expansion = true;    // Whether to handle ... after arguments
+	bool collect_types = false;           // Whether to collect argument types for template deduction
+	bool expand_simple_packs = false;     // Whether to expand simple pack identifiers
+};
+
+// Result of parsing function call arguments
+struct ParsedFunctionArguments {
+	ChunkedVector<ASTNode> args;                       // The parsed arguments
+	std::vector<TypeSpecifierNode> arg_types;          // Optional: argument types (for template deduction)
+	bool success = false;                              // Whether parsing succeeded
+	std::string error_message;                         // Error message if parsing failed
+	std::optional<Token> error_token;                  // Token where error occurred
+	
+	static ParsedFunctionArguments make_success(ChunkedVector<ASTNode>&& arguments) {
+		ParsedFunctionArguments result;
+		result.args = std::move(arguments);
+		result.success = true;
+		return result;
+	}
+	
+	static ParsedFunctionArguments make_success(ChunkedVector<ASTNode>&& arguments, std::vector<TypeSpecifierNode>&& types) {
+		ParsedFunctionArguments result;
+		result.args = std::move(arguments);
+		result.arg_types = std::move(types);
+		result.success = true;
+		return result;
+	}
+	
+	static ParsedFunctionArguments make_error(std::string_view msg, Token token) {
+		ParsedFunctionArguments result;
+		result.success = false;
+		result.error_message = msg;
+		result.error_token = token;
+		return result;
+	}
+};
+
 // Unified representation of what kind of function we're parsing
 enum class FunctionKind {
 	Free,           // Global or namespace-scope function
