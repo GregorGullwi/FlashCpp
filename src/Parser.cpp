@@ -1215,6 +1215,20 @@ ParseResult Parser::parse_top_level_node()
 }
 
 ParseResult Parser::parse_type_and_name() {
+    // Add parsing depth check to prevent infinite loops
+    if (++parsing_depth_ > MAX_PARSING_DEPTH) {
+        --parsing_depth_;
+        FLASH_LOG(Parser, Error, "Maximum parsing depth (", MAX_PARSING_DEPTH, ") exceeded in parse_type_and_name()");
+        FLASH_LOG(Parser, Error, "This indicates an infinite loop in type parsing");
+        return ParseResult::error("Maximum parsing depth exceeded - possible infinite loop", *current_token_);
+    }
+    
+    // RAII guard to decrement depth on all exit paths
+    struct DepthGuard {
+        size_t& depth;
+        ~DepthGuard() { --depth; }
+    } depth_guard{parsing_depth_};
+    
     FLASH_LOG(Parser, Debug, "parse_type_and_name: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
     
     // Check for alignas specifier before the type
@@ -10178,6 +10192,20 @@ void Parser::append_type_name_suffix(StringBuilder& sb, const TemplateTypeArg& a
 
 ParseResult Parser::parse_type_specifier()
 {
+	// Add parsing depth check to prevent infinite loops
+	if (++parsing_depth_ > MAX_PARSING_DEPTH) {
+		--parsing_depth_;
+		FLASH_LOG(Parser, Error, "Maximum parsing depth (", MAX_PARSING_DEPTH, ") exceeded in parse_type_specifier()");
+		FLASH_LOG(Parser, Error, "Current token: ", current_token_ ? current_token_->value() : "none");
+		return ParseResult::error("Maximum parsing depth exceeded - possible infinite loop", *current_token_);
+	}
+	
+	// RAII guard to decrement depth on all exit paths
+	struct DepthGuard {
+		size_t& depth;
+		~DepthGuard() { --depth; }
+	} depth_guard{parsing_depth_};
+	
 	FLASH_LOG(Parser, Debug, "parse_type_specifier: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	
 	auto current_token_opt = peek_token();
