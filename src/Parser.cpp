@@ -25496,6 +25496,22 @@ ParseResult Parser::parse_template_declaration() {
 			pattern_name.append(var_name);
 			for (const auto& arg : specialization_pattern) {
 				pattern_name.append("_");
+				
+				// Include base type name for user-defined types to distinguish patterns
+				// e.g., __is_ratio_v<ratio<N,D>> gets pattern "__is_ratio_v_ratio"
+				if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
+					if (arg.type_index < gTypeInfo.size()) {
+						// Get the simple name (without namespace) for pattern matching
+						std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+						// Strip namespace prefix if present
+						size_t last_colon = type_name.rfind("::");
+						if (last_colon != std::string_view::npos) {
+							type_name = type_name.substr(last_colon + 2);
+						}
+						pattern_name.append(type_name);
+					}
+				}
+				
 				if (arg.is_reference) {
 					pattern_name.append("R");  // lvalue reference
 				} else if (arg.is_rvalue_reference) {
@@ -33105,98 +33121,116 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		pattern_builder.append(simple_template_name);
 		pattern_builder.append("_");
 		
-		bool has_pattern = false;
+		// Include base type name for user-defined types to match partial specs
+		// e.g., for __is_ratio_v<ratio<1,2>>, look for pattern "__is_ratio_v_ratio"
+		if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
+			if (arg.type_index < gTypeInfo.size()) {
+				// Get the simple name (without namespace) for pattern matching
+				std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+				// Strip namespace prefix if present
+				size_t last_colon = type_name.rfind("::");
+				if (last_colon != std::string_view::npos) {
+					type_name = type_name.substr(last_colon + 2);
+				}
+				pattern_builder.append(type_name);
+			}
+		}
+		
+		// Build pattern suffix based on type qualifiers
 		if (arg.is_reference) {
 			pattern_builder.append("R");  // lvalue reference
-			has_pattern = true;
 		} else if (arg.is_rvalue_reference) {
 			pattern_builder.append("RR");  // rvalue reference
-			has_pattern = true;
 		}
 		for (size_t i = 0; i < arg.pointer_depth; ++i) {
 			pattern_builder.append("P");  // pointer
-			has_pattern = true;
 		}
 		
-		if (has_pattern) {
-			std::string_view pattern_key = pattern_builder.commit();
-			auto spec_opt = gTemplateRegistry.lookupVariableTemplate(pattern_key);
-			
-			// Also try with qualified name if simple name lookup failed
-			StringBuilder qualified_pattern_builder;
-			if (!spec_opt.has_value() && template_name != simple_template_name) {
-				qualified_pattern_builder.append(template_name);
-				qualified_pattern_builder.append("_");
-				if (arg.is_reference) {
-					qualified_pattern_builder.append("R");
-				} else if (arg.is_rvalue_reference) {
-					qualified_pattern_builder.append("RR");
-				}
-				for (size_t i = 0; i < arg.pointer_depth; ++i) {
-					qualified_pattern_builder.append("P");
-				}
-				std::string_view qualified_pattern_key = qualified_pattern_builder.commit();
-				spec_opt = gTemplateRegistry.lookupVariableTemplate(qualified_pattern_key);
-			} else {
-				qualified_pattern_builder.reset();
-			}
-			
-			if (spec_opt.has_value()) {
-				FLASH_LOG(Templates, Debug, "Found variable template partial specialization: ", pattern_key);
-				// Use the specialization instead of the primary template
-				if (spec_opt->is<TemplateVariableDeclarationNode>()) {
-					const TemplateVariableDeclarationNode& spec_template = spec_opt->as<TemplateVariableDeclarationNode>();
-					const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
-					
-					// Get original token info from the specialization for better error reporting
-					const Token& orig_token = spec_var_decl.declaration().identifier_token();
-					
-					// Generate unique name for this instantiation (use simple name without namespace for symbol table)
-					StringBuilder name_builder;
-					name_builder.append(simple_template_name);
-					for (const auto& targ : template_args) {
-						name_builder.append("_");
-						name_builder.append(targ.toString());
+		// Always try to look up partial specialization
+		std::string_view pattern_key = pattern_builder.commit();
+		auto spec_opt = gTemplateRegistry.lookupVariableTemplate(pattern_key);
+		
+		// Also try with qualified name if simple name lookup failed
+		StringBuilder qualified_pattern_builder;
+		if (!spec_opt.has_value() && template_name != simple_template_name) {
+			qualified_pattern_builder.append(template_name);
+			qualified_pattern_builder.append("_");
+			if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
+				if (arg.type_index < gTypeInfo.size()) {
+					std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+					size_t last_colon = type_name.rfind("::");
+					if (last_colon != std::string_view::npos) {
+						type_name = type_name.substr(last_colon + 2);
 					}
-					std::string_view persistent_name = name_builder.commit();
-					
-					// Check if already instantiated
-					if (gSymbolTable.lookup(persistent_name).has_value()) {
-						return gSymbolTable.lookup(persistent_name);
-					}
-					
-					// Create instantiated variable using the specialization's initializer
-					// Use original token's line/column/file info for better diagnostics
-					Token inst_token(Token::Type::Identifier, persistent_name, orig_token.line(), orig_token.column(), orig_token.file_index());
-					TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 8, orig_token);  // 8 bits = 1 byte
-					auto decl_node = emplace_node<DeclarationNode>(
-						emplace_node<TypeSpecifierNode>(bool_type),
-						inst_token
-					);
-					
-					// Create the initializer expression - use 'true' for specializations that match reference types
-					Token true_token(Token::Type::Keyword, "true", orig_token.line(), orig_token.column(), orig_token.file_index());
-					auto true_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
-					
-					auto var_decl_node = emplace_node<VariableDeclarationNode>(
-						decl_node,
-						true_expr,  // Use 'true' as the initializer for reference specializations
-						StorageClass::None
-					);
-					var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
-					
-					// Register in symbol table - use insertGlobal because we might be called during function parsing
-					gSymbolTable.insertGlobal(persistent_name, var_decl_node);
-					
-					// Add to AST nodes for code generation - insert at beginning so it's generated before functions that use it
-					ast_nodes_.insert(ast_nodes_.begin(), var_decl_node);
-					
-					return var_decl_node;
+					qualified_pattern_builder.append(type_name);
 				}
 			}
+			if (arg.is_reference) {
+				qualified_pattern_builder.append("R");
+			} else if (arg.is_rvalue_reference) {
+				qualified_pattern_builder.append("RR");
+			}
+			for (size_t i = 0; i < arg.pointer_depth; ++i) {
+				qualified_pattern_builder.append("P");
+			}
+			std::string_view qualified_pattern_key = qualified_pattern_builder.commit();
+			spec_opt = gTemplateRegistry.lookupVariableTemplate(qualified_pattern_key);
 		} else {
-			// Reset the StringBuilder if we didn't use it
-			pattern_builder.reset();
+			qualified_pattern_builder.reset();
+		}
+			
+		if (spec_opt.has_value()) {
+			FLASH_LOG(Templates, Debug, "Found variable template partial specialization: ", pattern_key);
+			// Use the specialization instead of the primary template
+			if (spec_opt->is<TemplateVariableDeclarationNode>()) {
+				const TemplateVariableDeclarationNode& spec_template = spec_opt->as<TemplateVariableDeclarationNode>();
+				const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
+				
+				// Get original token info from the specialization for better error reporting
+				const Token& orig_token = spec_var_decl.declaration().identifier_token();
+				
+				// Generate unique name for this instantiation (use simple name without namespace for symbol table)
+				StringBuilder name_builder;
+				name_builder.append(simple_template_name);
+				for (const auto& targ : template_args) {
+					name_builder.append("_");
+					name_builder.append(targ.toString());
+				}
+				std::string_view persistent_name = name_builder.commit();
+				
+				// Check if already instantiated
+				if (gSymbolTable.lookup(persistent_name).has_value()) {
+					return gSymbolTable.lookup(persistent_name);
+				}
+				
+				// Create instantiated variable using the specialization's initializer
+				// Use original token's line/column/file info for better diagnostics
+				Token inst_token(Token::Type::Identifier, persistent_name, orig_token.line(), orig_token.column(), orig_token.file_index());
+				TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 8, orig_token);  // 8 bits = 1 byte
+				auto decl_node = emplace_node<DeclarationNode>(
+					emplace_node<TypeSpecifierNode>(bool_type),
+					inst_token
+				);
+				
+				// Create the initializer expression - use 'true' for specializations that match reference types
+				Token true_token(Token::Type::Keyword, "true", orig_token.line(), orig_token.column(), orig_token.file_index());
+				auto true_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
+				
+				auto var_decl_node = emplace_node<VariableDeclarationNode>(
+					decl_node,
+					true_expr,  // Use 'true' as the initializer for reference specializations
+					StorageClass::None
+				);
+				var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
+				
+				// Register in symbol table - use insertGlobal because we might be called during function parsing
+				gSymbolTable.insertGlobal(persistent_name, var_decl_node);
+				
+				// Add to AST nodes for code generation - insert at beginning so it's generated before functions that use it
+				ast_nodes_.insert(ast_nodes_.begin(), var_decl_node);
+				
+				return var_decl_node;
+			}
 		}
 	}
 	
