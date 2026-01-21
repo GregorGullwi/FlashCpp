@@ -28667,8 +28667,6 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// This position is at the start of the return type, before parse_type_and_name()
 	SaveHandle declaration_start = save_token_position();
 	
-	FLASH_LOG(Templates, Debug, "[DEBUG_HANG] parse_template_function_declaration_body: Starting");
-	
 	// Parse storage class specifiers (constexpr, inline, static, etc.)
 	// This must be done BEFORE parse_type_and_name() to capture constexpr for template functions
 	auto specs = parse_declaration_specifiers();
@@ -28676,15 +28674,11 @@ ParseResult Parser::parse_template_function_declaration_body(
 	bool is_consteval = specs.is_consteval;
 	bool is_constinit = specs.is_constinit;
 	
-	FLASH_LOG(Templates, Debug, "[DEBUG_HANG] parse_template_function_declaration_body: About to parse type_and_name");
-	
 	// Parse the function declaration (type and name)
 	auto type_and_name_result = parse_type_and_name();
 	if (type_and_name_result.is_error()) {
 		return type_and_name_result;
 	}
-	
-	FLASH_LOG(Templates, Debug, "[DEBUG_HANG] parse_template_function_declaration_body: Parsed type_and_name successfully");
 
 	// Check if parse_type_and_name already returned a FunctionDeclarationNode
 	// This happens for complex declarators like: char (*func(params))[N]
