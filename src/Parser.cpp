@@ -12066,6 +12066,212 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 	return ParseResult::success();
 }
 
+// Unified function call argument parsing
+// This method consolidates the 6+ places where function call arguments are parsed in the codebase.
+// It handles:
+// - Comma-separated argument list parsing
+// - Pack expansion (...) after arguments
+// - Optional argument type collection for template deduction
+// - Simple pack identifier expansion (for already-expanded packs in symbol table)
+FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx)
+{
+	using namespace FlashCpp;
+	
+	// Check if function call has arguments (not empty parentheses)
+	if (!peek_token().has_value() || peek_token()->value() == ")") {
+		// Empty argument list - return empty result without allocating
+		ParsedFunctionArguments result;
+		result.success = true;
+		return result;
+	}
+	
+	// We have arguments, so allocate storage
+	ChunkedVector<ASTNode> args;
+	std::vector<TypeSpecifierNode> arg_types;
+	
+	while (true) {
+		auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (arg_result.is_error()) {
+			return ParsedFunctionArguments::make_error(arg_result.error_message(), 
+				arg_result.error_token());
+		}
+		
+		if (auto arg = arg_result.node()) {
+			// Check for pack expansion (...) after the argument
+			if (ctx.handle_pack_expansion && peek_token().has_value() && peek_token()->value() == "...") {
+				Token ellipsis_token = *peek_token();
+				consume_token(); // consume '...'
+				
+				// Handle simple pack expansion if enabled
+				bool expanded = false;
+				if (ctx.expand_simple_packs && arg->is<IdentifierNode>()) {
+					std::string_view pack_name = arg->as<IdentifierNode>().name();
+					
+					// Try to find expanded pack elements in the symbol table
+					// Pattern: pack_name_0, pack_name_1, etc.
+					size_t pack_size = 0;
+					StringBuilder sb;
+					for (size_t i = 0; i < MAX_PACK_ELEMENTS; ++i) {
+						std::string_view element_name = sb
+							.append(pack_name)
+							.append("_")
+							.append(i)
+							.preview();
+						
+						if (gSymbolTable.lookup(element_name).has_value()) {
+							++pack_size;
+							sb.reset();
+						} else {
+							break;
+						}
+					}
+					sb.reset();
+					
+					if (pack_size > 0) {
+						// Add each pack element as a separate argument
+						for (size_t i = 0; i < pack_size; ++i) {
+							std::string_view element_name = StringBuilder()
+								.append(pack_name)
+								.append("_")
+								.append(i)
+								.commit();
+							
+							// Use ellipsis token position for proper error reporting
+							Token elem_token(Token::Type::Identifier, element_name, 
+								ellipsis_token.line(), ellipsis_token.column(), ellipsis_token.file_index());
+							auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
+							args.push_back(elem_node);
+							
+							// Collect type if needed
+							if (ctx.collect_types) {
+								std::optional<TypeSpecifierNode> elem_type = get_expression_type(elem_node);
+								if (elem_type.has_value()) {
+									arg_types.push_back(*elem_type);
+								} else {
+									arg_types.emplace_back(Type::Int, TypeQualifier::None, 32, ellipsis_token);
+								}
+							}
+						}
+						expanded = true;
+					}
+				}
+				
+				if (!expanded) {
+					// Wrap the argument in a PackExpansionExprNode
+					auto pack_expr = emplace_node<ExpressionNode>(
+						PackExpansionExprNode(*arg, ellipsis_token));
+					args.push_back(pack_expr);
+					
+					// For pack expansions, we can't reliably determine the type
+					if (ctx.collect_types) {
+						std::optional<TypeSpecifierNode> arg_type = get_expression_type(*arg);
+						if (arg_type.has_value()) {
+							arg_types.push_back(*arg_type);
+						} else {
+							arg_types.emplace_back(Type::Int, TypeQualifier::None, 32, ellipsis_token);
+						}
+					}
+				}
+				
+				FLASH_LOG(Parser, Debug, "Handled pack expansion for function argument");
+			} else {
+				args.push_back(*arg);
+				
+				// Collect argument type if requested
+				if (ctx.collect_types) {
+					std::optional<TypeSpecifierNode> arg_type = get_expression_type(*arg);
+					if (arg_type.has_value()) {
+						arg_types.push_back(*arg_type);
+					} else {
+						// Fallback: try to deduce from the expression
+						// Use current_token_ for error location since we've just parsed the expression
+						Type deduced_type = Type::Int;
+						if (arg->is<ExpressionNode>()) {
+							const ExpressionNode& expr = arg->as<ExpressionNode>();
+							if (std::holds_alternative<NumericLiteralNode>(expr)) {
+								deduced_type = std::get<NumericLiteralNode>(expr).type();
+							} else if (std::holds_alternative<IdentifierNode>(expr)) {
+								const auto& ident = std::get<IdentifierNode>(expr);
+								auto symbol = lookup_symbol(StringTable::getOrInternStringHandle(ident.name()));
+								if (symbol.has_value()) {
+									if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+										deduced_type = decl->type_node().as<TypeSpecifierNode>().type();
+									}
+								}
+							}
+						}
+						arg_types.emplace_back(deduced_type, TypeQualifier::None, get_type_size_bits(deduced_type), 
+							current_token_.value_or(Token()));
+					}
+				}
+			}
+		}
+		
+		if (!peek_token().has_value()) {
+			return ParsedFunctionArguments::make_error("Expected ',' or ')' in function call", *current_token_);
+		}
+		
+		if (peek_token()->value() == ")") {
+			break;
+		}
+		
+		if (!consume_punctuator(",")) {
+			return ParsedFunctionArguments::make_error("Expected ',' between function arguments", *current_token_);
+		}
+	}
+	
+	if (ctx.collect_types) {
+		return ParsedFunctionArguments::make_success(std::move(args), std::move(arg_types));
+	}
+	return ParsedFunctionArguments::make_success(std::move(args));
+}
+
+// Helper to apply lvalue reference for perfect forwarding deduction
+// This is used when collecting argument types for template instantiation.
+// In perfect forwarding (T&&), lvalues should deduce to T& while rvalues deduce to T.
+std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
+	const ChunkedVector<ASTNode>& args, 
+	const std::vector<TypeSpecifierNode>& arg_types)
+{
+	std::vector<TypeSpecifierNode> result;
+	result.reserve(arg_types.size());
+	
+	for (size_t i = 0; i < arg_types.size(); ++i) {
+		TypeSpecifierNode arg_type_node = arg_types[i];
+		
+		// Check if this is an lvalue (for perfect forwarding deduction)
+		// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+		// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
+		if (i < args.size() && args[i].is<ExpressionNode>()) {
+			const ExpressionNode& expr = args[i].as<ExpressionNode>();
+			bool is_lvalue = std::visit([](const auto& inner) -> bool {
+				using T = std::decay_t<decltype(inner)>;
+				if constexpr (std::is_same_v<T, IdentifierNode>) {
+					return true;
+				} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+					return true;
+				} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+					return true;
+				} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+					return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+				} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+					return true;
+				} else {
+					return false;
+				}
+			}, expr);
+			
+			if (is_lvalue) {
+				arg_type_node.set_lvalue_reference(true);
+			}
+		}
+		
+		result.push_back(arg_type_node);
+	}
+	
+	return result;
+}
+
 // Phase 2: Unified trailing specifiers parsing
 // This method handles all common trailing specifiers after function parameters:
 // - CV qualifiers: const, volatile
@@ -16615,45 +16821,16 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			Token paren_token = *peek_token();
 			consume_token(); // consume '('
 
-			// Parse function arguments
-			ChunkedVector<ASTNode> args;
-			if (!peek_token().has_value() || peek_token()->value() != ")") {
-				while (true) {
-					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (arg_result.is_error()) {
-						return arg_result;
-					}
-					if (auto arg = arg_result.node()) {
-						// Check for pack expansion (...) after the argument
-						// Pattern: func(expr...) or func(arg1, expr..., arg3)
-						if (peek_token().has_value() && peek_token()->value() == "...") {
-							Token ellipsis_token = *peek_token();
-							consume_token(); // consume '...'
-							
-							// Wrap the argument in a PackExpansionExprNode
-							auto pack_expr = emplace_node<ExpressionNode>(
-								PackExpansionExprNode(*arg, ellipsis_token));
-							args.push_back(pack_expr);
-							
-							FLASH_LOG(Parser, Debug, "Created PackExpansionExprNode for function argument");
-						} else {
-							args.push_back(*arg);
-						}
-					}
-
-					if (!peek_token().has_value()) {
-						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-					}
-
-					if (peek_token()->value() == ")") {
-						break;
-					}
-
-					if (!consume_punctuator(",")) {
-						return ParseResult::error("Expected ',' between function arguments", *current_token_);
-					}
-				}
+			// Parse function arguments using unified helper
+			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+				.handle_pack_expansion = true,
+				.collect_types = false,
+				.expand_simple_packs = false
+			});
+			if (!args_result.success) {
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
 			}
+			ChunkedVector<ASTNode> args = std::move(args_result.args);
 
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
@@ -16798,44 +16975,16 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			if (peek_token().has_value() && peek_token()->value() == "(") {
 				consume_token(); // consume '('
 				
-				// Parse function arguments
-				ChunkedVector<ASTNode> args;
-				// Check if function call has arguments (not empty parentheses)
-				if (peek_token().has_value() && peek_token()->value() != ")") {
-					while (true) {
-						auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (arg_result.is_error()) {
-							return arg_result;
-						}
-						
-						if (auto arg = arg_result.node()) {
-							// Check for pack expansion (...) after the argument
-							if (peek_token().has_value() && peek_token()->value() == "...") {
-								Token ellipsis_token = *peek_token();
-								consume_token(); // consume '...'
-								
-								// Wrap the argument in a PackExpansionExprNode
-								auto pack_expr = emplace_node<ExpressionNode>(
-									PackExpansionExprNode(*arg, ellipsis_token));
-								args.push_back(pack_expr);
-							} else {
-								args.push_back(*arg);
-							}
-						}
-						
-						if (!peek_token().has_value()) {
-							return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-						}
-						
-						if (peek_token()->value() == ")") {
-							break;
-						}
-						
-						if (!consume_punctuator(",")) {
-							return ParseResult::error("Expected ',' between function arguments", *current_token_);
-						}
-					}
+				// Parse function arguments using unified helper (collect types for template deduction)
+				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+					.handle_pack_expansion = true,
+					.collect_types = true,
+					.expand_simple_packs = false
+				});
+				if (!args_result.success) {
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
 				}
+				ChunkedVector<ASTNode> args = std::move(args_result.args);
 				
 				if (!consume_punctuator(")")) {
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
@@ -16863,53 +17012,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					// Build qualified template name (e.g., "std::move")
 					std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 					
-					// Extract argument types for template instantiation
-					std::vector<TypeSpecifierNode> arg_types;
-					arg_types.reserve(args.size());
-					for (size_t i = 0; i < args.size(); ++i) {
-						const auto& arg = args[i];
-						if (arg.is<ExpressionNode>()) {
-							const ExpressionNode& expr = arg.as<ExpressionNode>();
-							std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
-							if (arg_type_opt.has_value()) {
-								TypeSpecifierNode arg_type_node = *arg_type_opt;
-								
-								// Check if this is an lvalue (for perfect forwarding deduction)
-								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
-								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
-								bool is_lvalue = std::visit([](const auto& inner) -> bool {
-									using T = std::decay_t<decltype(inner)>;
-									if constexpr (std::is_same_v<T, IdentifierNode>) {
-										// Named variables are lvalues
-										return true;
-									} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-										// Array subscript expressions are lvalues
-										return true;
-									} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-										// Member access expressions are lvalues
-										return true;
-									} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-										// Dereference (*ptr) is an lvalue
-										// Other unary operators like ++, --, etc. may also be lvalues
-										return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-										// String literals are lvalues in C++
-										return true;
-									} else {
-										// All other expressions (literals, temporaries, etc.) are rvalues
-										return false;
-									}
-								}, expr);
-								
-								if (is_lvalue) {
-									// For forwarding reference deduction: T&& deduces to T& for lvalues
-									arg_type_node.set_lvalue_reference(true);
-								}
-								
-								arg_types.push_back(arg_type_node);
-							}
-						}
-					}
+					// Apply lvalue reference for forwarding deduction on arg_types
+					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 					
 					// Try to instantiate the qualified template function
 					if (!arg_types.empty()) {
@@ -17124,67 +17228,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 
 			consume_token(); // consume '('
 
-			// Parse function arguments
-			ChunkedVector<ASTNode> args;
-			std::vector<TypeSpecifierNode> arg_types;  // Collect argument types for template deduction
-			
-			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
-				while (true) {
-					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (arg_result.is_error()) {
-						return arg_result;
-					}
-					if (auto arg = arg_result.node()) {
-						// Check for pack expansion (...) after the argument
-						[[maybe_unused]] bool is_pack_expansion = false;
-						if (peek_token().has_value() && peek_token()->value() == "...") {
-							Token ellipsis_token = *peek_token();
-							consume_token(); // consume '...'
-							is_pack_expansion = true;
-							
-							// Wrap the argument in a PackExpansionExprNode
-							auto pack_expr = emplace_node<ExpressionNode>(
-								PackExpansionExprNode(*arg, ellipsis_token));
-							args.push_back(pack_expr);
-						} else {
-							args.push_back(*arg);
-						}
-						
-						// Try to deduce the argument type for template instantiation
-						// For now, we'll deduce from literals and identifiers
-						Type arg_type = Type::Int;  // Default
-						if (arg->is<ExpressionNode>()) {
-							const ExpressionNode& expr = arg->as<ExpressionNode>();
-							if (std::holds_alternative<NumericLiteralNode>(expr)) {
-								const auto& lit = std::get<NumericLiteralNode>(expr);
-								arg_type = lit.type();
-							} else if (std::holds_alternative<IdentifierNode>(expr)) {
-								// Look up identifier type from symbol table
-								const auto& ident = std::get<IdentifierNode>(expr);
-								auto symbol = lookup_symbol(StringTable::getOrInternStringHandle(ident.name()));
-								if (symbol.has_value()) {
-									if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-										arg_type = decl->type_node().as<TypeSpecifierNode>().type();
-									}
-								}
-							}
-						}
-						arg_types.emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token());
-					}
-
-					if (!peek_token().has_value()) {
-						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-					}
-
-					if (peek_token()->value() == ")") {
-						break;
-					}
-
-					if (!consume_punctuator(",")) {
-						return ParseResult::error("Expected ',' between function arguments", *current_token_);
-					}
-				}
+			// Parse function arguments using unified helper (collect types for template deduction)
+			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+				.handle_pack_expansion = true,
+				.collect_types = true,
+				.expand_simple_packs = false
+			});
+			if (!args_result.success) {
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
 			}
+			ChunkedVector<ASTNode> args = std::move(args_result.args);
+			std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
 
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
@@ -18143,42 +18197,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		if (current_token_.has_value() && current_token_->value() == "(") {
 			consume_token(); // consume '('
 
-			// Parse function arguments first
-			ChunkedVector<ASTNode> args;
-			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
-				while (true) {
-					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (arg_result.is_error()) {
-						return arg_result;
-					}
-					if (auto arg = arg_result.node()) {
-						// Check for pack expansion (...) after the argument
-						if (peek_token().has_value() && peek_token()->value() == "...") {
-							Token ellipsis_token = *peek_token();
-							consume_token(); // consume '...'
-							
-							// Wrap the argument in a PackExpansionExprNode
-							auto pack_expr = emplace_node<ExpressionNode>(
-								PackExpansionExprNode(*arg, ellipsis_token));
-							args.push_back(pack_expr);
-						} else {
-							args.push_back(*arg);
-						}
-					}
-
-					if (!peek_token().has_value()) {
-						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-					}
-
-					if (peek_token()->value() == ")") {
-						break;
-					}
-
-					if (!consume_punctuator(",")) {
-						return ParseResult::error("Expected ',' between function arguments", *current_token_);
-					}
-				}
+			// Parse function arguments using unified helper (collect types for template deduction)
+			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+				.handle_pack_expansion = true,
+				.collect_types = true,
+				.expand_simple_packs = false
+			});
+			if (!args_result.success) {
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
 			}
+			ChunkedVector<ASTNode> args = std::move(args_result.args);
 
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
@@ -18189,53 +18217,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Build qualified template name (e.g., "::move" or "::std::move")
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
 				
-				// Extract argument types for template instantiation
-				std::vector<TypeSpecifierNode> arg_types;
-				arg_types.reserve(args.size());
-				for (size_t i = 0; i < args.size(); ++i) {
-					const auto& arg = args[i];
-					if (arg.is<ExpressionNode>()) {
-						const ExpressionNode& expr = arg.as<ExpressionNode>();
-						std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
-						if (arg_type_opt.has_value()) {
-							TypeSpecifierNode arg_type_node = *arg_type_opt;
-							
-							// Check if this is an lvalue (for perfect forwarding deduction)
-							// Lvalues: named variables, array subscripts, member access, dereferences, string literals
-							// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
-							bool is_lvalue = std::visit([](const auto& inner) -> bool {
-								using T = std::decay_t<decltype(inner)>;
-								if constexpr (std::is_same_v<T, IdentifierNode>) {
-									// Named variables are lvalues
-									return true;
-								} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-									// Array subscript expressions are lvalues
-									return true;
-								} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-									// Member access expressions are lvalues
-									return true;
-								} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-									// Dereference (*ptr) is an lvalue
-									// Other unary operators like ++, --, etc. may also be lvalues
-									return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-								} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-									// String literals are lvalues in C++
-									return true;
-								} else {
-									// All other expressions (literals, temporaries, etc.) are rvalues
-									return false;
-								}
-							}, expr);
-							
-							if (is_lvalue) {
-								// For forwarding reference deduction: T&& deduces to T& for lvalues
-								arg_type_node.set_lvalue_reference(true);
-							}
-							
-							arg_types.push_back(arg_type_node);
-						}
-					}
-				}
+				// Apply lvalue reference for forwarding deduction on arg_types
+				std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 				
 				// Try to instantiate the qualified template function
 				if (!arg_types.empty()) {
@@ -18746,95 +18729,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		if (current_token_.has_value() && current_token_->value() == "(") {
 			consume_token(); // consume '('
 
-			// Parse function arguments first
-			ChunkedVector<ASTNode> args;
-			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
-				while (true) {
-					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (arg_result.is_error()) {
-						return arg_result;
-					}
-					
-					// Check for pack expansion: expr...
-					if (peek_token().has_value() && peek_token()->value() == "...") {
-						consume_token(); // consume '...'
-						
-						// Pack expansion: need to expand the expression for each pack element
-						// Strategy: Try to find expanded pack elements in the symbol table
-						
-						if (auto arg_node = arg_result.node()) {
-							// Simple case: if the expression is just a single identifier that looks
-							// like a pack parameter, try to expand it
-							if (arg_node->is<IdentifierNode>()) {
-								std::string_view pack_name = arg_node->as<IdentifierNode>().name();
-								
-								// Try to find pack_name_0, pack_name_1, etc. in the symbol table
-								size_t pack_size = 0;
-								
-								StringBuilder sb;
-								for (size_t i = 0; i < 100; ++i) {  // reasonable limit
-									// Use StringBuilder to create a persistent string
-									std::string_view element_name = sb
-										.append(pack_name)
-										.append("_")
-										.append(i)
-										.preview();
-									
-									if (gSymbolTable.lookup(element_name).has_value()) {
-										++pack_size;
-										sb.reset();
-									} else {
-										break;
-									}
-								}
-								sb.reset();
-								
-								if (pack_size > 0) {
-									// Add each pack element as a separate argument
-									for (size_t i = 0; i < pack_size; ++i) {
-										// Use StringBuilder to create a persistent string for the token
-										std::string_view element_name = StringBuilder()
-											.append(pack_name)
-											.append("_")
-											.append(i)
-											.commit();
-										
-										Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
-										auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
-										args.push_back(elem_node);
-									}
-								} else {
-									args.push_back(*arg_node);
-								}
-							} else {
-								// Complex expression: wrap in PackExpansionExprNode
-								// The actual expansion will be handled during template instantiation
-								Token ellipsis_token(Token::Type::Operator, "...", 0, 0, 0);  // Approximate token
-								auto pack_expr = emplace_node<ExpressionNode>(
-									PackExpansionExprNode(*arg_node, ellipsis_token));
-								args.push_back(pack_expr);
-							}
-						}
-					} else {
-						// Regular argument
-						if (auto arg = arg_result.node()) {
-							args.push_back(*arg);
-						}
-					}
-
-					if (!peek_token().has_value()) {
-						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-					}
-
-					if (peek_token()->value() == ")") {
-						break;
-					}
-
-					if (!consume_punctuator(",")) {
-						return ParseResult::error("Expected ',' between function arguments", *current_token_);
-					}
-				}
+			// Parse function arguments using unified helper (expand simple packs for qualified calls)
+			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+				.handle_pack_expansion = true,
+				.collect_types = true,
+				.expand_simple_packs = true
+			});
+			if (!args_result.success) {
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
 			}
+			ChunkedVector<ASTNode> args = std::move(args_result.args);
 			
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
@@ -18863,53 +18767,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				
 				// If still not found and no explicit template arguments, try deducing from function arguments
-				// Extract argument types for template instantiation
-				std::vector<TypeSpecifierNode> arg_types;
-				arg_types.reserve(args.size());
-				for (size_t i = 0; i < args.size(); ++i) {
-					const auto& arg = args[i];
-					if (arg.is<ExpressionNode>()) {
-						const ExpressionNode& expr = arg.as<ExpressionNode>();
-						std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
-						if (arg_type_opt.has_value()) {
-							TypeSpecifierNode arg_type_node = *arg_type_opt;
-							
-							// Check if this is an lvalue (for perfect forwarding deduction)
-							// Lvalues: named variables, array subscripts, member access, dereferences, string literals
-							// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
-							bool is_lvalue = std::visit([](const auto& inner) -> bool {
-								using T = std::decay_t<decltype(inner)>;
-								if constexpr (std::is_same_v<T, IdentifierNode>) {
-									// Named variables are lvalues
-									return true;
-								} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-									// Array subscript expressions are lvalues
-									return true;
-								} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-									// Member access expressions are lvalues
-									return true;
-								} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-									// Dereference (*ptr) is an lvalue
-									// Other unary operators like ++, --, etc. may also be lvalues
-									return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-								} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-									// String literals are lvalues in C++
-									return true;
-								} else {
-									// All other expressions (literals, temporaries, etc.) are rvalues
-									return false;
-								}
-							}, expr);
-							
-							if (is_lvalue) {
-								// For forwarding reference deduction: T&& deduces to T& for lvalues
-								arg_type_node.set_lvalue_reference(true);
-							}
-							
-							arg_types.push_back(arg_type_node);
-						}
-					}
-				}
+				// Apply lvalue reference for forwarding deduction on arg_types
+				std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 				
 				// Try to instantiate the qualified template function
 				if (!arg_types.empty()) {
@@ -19399,43 +19258,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			if (peek_token().has_value() && peek_token()->value() == "(") {
 				consume_token(); // consume '('
 				
-				// Parse function arguments
-				ChunkedVector<ASTNode> args;
-				if (current_token_.has_value() && current_token_->value() != ")") {
-					while (true) {
-						auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (arg_result.is_error()) {
-							return arg_result;
-						}
-						
-						if (auto arg = arg_result.node()) {
-							// Check for pack expansion (...) after the argument
-							if (peek_token().has_value() && peek_token()->value() == "...") {
-								Token ellipsis_token = *peek_token();
-								consume_token(); // consume '...'
-								
-								// Wrap the argument in a PackExpansionExprNode
-								auto pack_expr = emplace_node<ExpressionNode>(
-									PackExpansionExprNode(*arg, ellipsis_token));
-								args.push_back(pack_expr);
-							} else {
-								args.push_back(*arg);
-							}
-						}
-						
-						if (!peek_token().has_value()) {
-							return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-						}
-						
-						if (peek_token()->value() == ")") {
-							break;
-						}
-						
-						if (!consume_punctuator(",")) {
-							return ParseResult::error("Expected ',' between function arguments", *current_token_);
-						}
-					}
+				// Parse function arguments using unified helper (collect types for template deduction)
+				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+					.handle_pack_expansion = true,
+					.collect_types = true,
+					.expand_simple_packs = false
+				});
+				if (!args_result.success) {
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
 				}
+				ChunkedVector<ASTNode> args = std::move(args_result.args);
 				
 				if (!consume_punctuator(")")) {
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
@@ -19446,53 +19278,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Build qualified template name
 					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 					
-					// Extract argument types for template instantiation
-					std::vector<TypeSpecifierNode> arg_types;
-					arg_types.reserve(args.size());
-					for (size_t i = 0; i < args.size(); ++i) {
-						const auto& arg = args[i];
-						if (arg.is<ExpressionNode>()) {
-							const ExpressionNode& expr = arg.as<ExpressionNode>();
-							std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
-							if (arg_type_opt.has_value()) {
-								TypeSpecifierNode arg_type_node = *arg_type_opt;
-								
-								// Check if this is an lvalue (for perfect forwarding deduction)
-								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
-								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
-								bool is_lvalue = std::visit([](const auto& inner) -> bool {
-									using T = std::decay_t<decltype(inner)>;
-									if constexpr (std::is_same_v<T, IdentifierNode>) {
-										// Named variables are lvalues
-										return true;
-									} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-										// Array subscript expressions are lvalues
-										return true;
-									} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-										// Member access expressions are lvalues
-										return true;
-									} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-										// Dereference (*ptr) is an lvalue
-										// Other unary operators like ++, --, etc. may also be lvalues
-										return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-										// String literals are lvalues in C++
-										return true;
-									} else {
-										// All other expressions (literals, temporaries, etc.) are rvalues
-										return false;
-									}
-								}, expr);
-								
-								if (is_lvalue) {
-									// For forwarding reference deduction: T&& deduces to T& for lvalues
-									arg_type_node.set_lvalue_reference(true);
-								}
-								
-								arg_types.push_back(arg_type_node);
-							}
-						}
-					}
+					// Apply lvalue reference for forwarding deduction on arg_types
+					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 					
 					
 					// Try to instantiate the qualified template function
