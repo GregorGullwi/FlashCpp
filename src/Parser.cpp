@@ -33490,6 +33490,18 @@ std::optional<ASTNode> Parser::substitute_nontype_template_param(
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 	
+	// Add iteration limit to prevent infinite loops during template instantiation
+	static thread_local int iteration_count = 0;
+	static thread_local const int MAX_ITERATIONS = 10000;  // Safety limit
+	
+	iteration_count++;
+	if (iteration_count > MAX_ITERATIONS) {
+		FLASH_LOG(Templates, Error, "Template instantiation iteration limit exceeded (", MAX_ITERATIONS, ")! Possible infinite loop.");
+		FLASH_LOG(Templates, Error, "Last template: '", template_name, "' with ", template_args.size(), " args");
+		iteration_count = 0;  // Reset for next compilation
+		return std::nullopt;
+	}
+	
 	// Log entry to help debug which call sites are causing issues
 	FLASH_LOG(Templates, Debug, "try_instantiate_class_template: template='", template_name, 
 	          "', args=", template_args.size(), ", force_eager=", force_eager);

@@ -411,17 +411,29 @@ int main_impl(int argc, char *argv[]) {
         
         // Start a watchdog thread to log progress if parsing takes too long
         std::atomic<bool> parsing_complete{false};
-        std::thread watchdog([&parsing_complete]() {
+        std::atomic<bool> force_stop{false};
+        std::thread watchdog([&parsing_complete, &force_stop]() {
             auto start = std::chrono::steady_clock::now();
+            int watchdog_count = 0;
             while (!parsing_complete) {
                 std::this_thread::sleep_for(std::chrono::seconds(10));
                 if (!parsing_complete) {
+                    watchdog_count++;
                     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
                         std::chrono::steady_clock::now() - start).count();
                     auto& stats = TemplateProfilingStats::getInstance();
+                    size_t inst_count = stats.getTotalInstantiationCount();
                     printf("[Watchdog] Parsing still in progress after %ld seconds. Total instantiations: %zu\n",
-                           elapsed, stats.getTotalInstantiationCount());
+                           elapsed, inst_count);
                     fflush(stdout);
+                    
+                    // Emergency timeout after 2 minutes with no progress
+                    if (watchdog_count > 12) {  // 120 seconds
+                        printf("[Watchdog] EMERGENCY TIMEOUT after 120 seconds! Forcing stop.\n");
+                        fflush(stdout);
+                        force_stop = true;
+                        break;
+                    }
                 }
             }
         });
@@ -429,6 +441,11 @@ int main_impl(int argc, char *argv[]) {
         auto parse_result = parser->parse();
         parsing_complete = true;
         watchdog.join();
+        
+        if (force_stop) {
+            std::cerr << "Compilation aborted: Parsing timeout after 120 seconds" << std::endl;
+            return 1;
+        }
 
         if (parse_result.is_error()) {
             // Print formatted error with file:line:column information and include stack
