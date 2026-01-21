@@ -228,7 +228,7 @@ struct Logger {
 // This allows avoiding construction of expensive debug strings when logging is disabled
 template<LogLevel Level, LogCategory Category>
 constexpr bool isLogEnabled() {
-    // Compile-time check: General category is always enabled
+    // Compile-time check: General category is always enabled at compile time
     // For other categories, enable if category is allowed at compile time
     constexpr bool compile_time_enabled =
         (Category == LogCategory::General) ||
@@ -238,10 +238,14 @@ constexpr bool isLogEnabled() {
         return false;
     }
 
-    // Runtime check
-    return (Category == LogCategory::General) ||
-           (static_cast<uint8_t>(Level) <= static_cast<uint8_t>(LogConfig::getLevelForCategory(Category)) &&
-            (static_cast<uint32_t>(Category) & static_cast<uint32_t>(LogConfig::runtimeCategories)) != 0);
+    // Runtime check: For General category, only allow Info, Warning, Error (not Debug/Trace)
+    // For other categories, use the configured level
+    if constexpr (Category == LogCategory::General) {
+        return static_cast<uint8_t>(Level) <= static_cast<uint8_t>(LogLevel::Info);
+    } else {
+        return static_cast<uint8_t>(Level) <= static_cast<uint8_t>(LogConfig::getLevelForCategory(Category)) &&
+               (static_cast<uint32_t>(Category) & static_cast<uint32_t>(LogConfig::runtimeCategories)) != 0;
+    }
 }
 
 // Convenience macros - zero overhead when disabled at compile time
