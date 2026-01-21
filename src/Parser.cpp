@@ -26879,6 +26879,37 @@ ParseResult Parser::parse_template_declaration() {
 							return static_assert_result;
 						}
 						continue;
+					} else if (peek_token()->value() == "constexpr" || 
+					           peek_token()->value() == "consteval" ||
+					           peek_token()->value() == "inline" ||
+					           peek_token()->value() == "explicit") {
+						// Handle constexpr/consteval/inline/explicit before constructor or member function
+						// Consume the specifier and continue to constructor/member check below
+					}
+				}
+				
+				// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
+				// This mirrors the handling in regular struct parsing
+				[[maybe_unused]] bool is_member_constexpr = false;
+				[[maybe_unused]] bool is_member_consteval = false;
+				[[maybe_unused]] bool is_member_inline = false;
+				[[maybe_unused]] bool is_member_explicit = false;
+				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+					std::string_view kw = peek_token()->value();
+					if (kw == "constexpr") {
+						is_member_constexpr = true;
+						consume_token();
+					} else if (kw == "consteval") {
+						is_member_consteval = true;
+						consume_token();
+					} else if (kw == "inline") {
+						is_member_inline = true;
+						consume_token();
+					} else if (kw == "explicit") {
+						is_member_explicit = true;
+						consume_token();
+					} else {
+						break;
 					}
 				}
 				
