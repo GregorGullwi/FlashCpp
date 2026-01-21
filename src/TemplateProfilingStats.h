@@ -10,6 +10,13 @@
 #include <cstdint>
 #include "StringTable.h"
 
+// Hash functor for StringHandle to use in unordered containers
+struct StringHandleHash {
+    size_t operator()(const StringHandle& h) const noexcept {
+        return h.hash();
+    }
+};
+
 // Define FLASHCPP_LOG_LEVEL if not already defined (e.g., by Log.h or build flags)
 // This allows this header to be included independently
 #ifndef FLASHCPP_LOG_LEVEL
@@ -78,9 +85,10 @@ public:
         return instance;
     }
 
-    // Record a template instantiation timing
-    void recordInstantiation(const std::string& template_name, std::chrono::microseconds duration) {
-        instantiations_[template_name].add(duration);
+    // Record a template instantiation timing using StringHandle for efficiency
+    // The template name is stored by index and only looked up when printing
+    void recordInstantiation(StringHandle template_name_handle, std::chrono::microseconds duration) {
+        instantiations_by_handle_[template_name_handle].add(duration);
         incrementInstantiationCount();
         
         // Log progress every 100 instantiations when Info level is enabled
@@ -90,6 +98,12 @@ public:
         recordInstantiationTime(duration.count());
         maybeLogProgress(50);  // Increased frequency: log every 50 instantiations instead of 100
         #endif
+    }
+    
+    // Overload for std::string for backward compatibility
+    void recordInstantiation(const std::string& template_name, std::chrono::microseconds duration) {
+        StringHandle handle = StringTable::getOrInternStringHandle(template_name);
+        recordInstantiation(handle, duration);
     }
 
 #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
@@ -121,14 +135,26 @@ public:
     }
 #endif
 
-    // Record a cache hit
+    // Record a cache hit using StringHandle for efficiency
+    void recordCacheHit(StringHandle template_name_handle) {
+        cache_hits_by_handle_[template_name_handle]++;
+    }
+    
+    // Overload for std::string for backward compatibility
     void recordCacheHit(const std::string& template_name) {
-        cache_hits_[template_name]++;
+        StringHandle handle = StringTable::getOrInternStringHandle(template_name);
+        recordCacheHit(handle);
     }
 
-    // Record a cache miss
+    // Record a cache miss using StringHandle for efficiency
+    void recordCacheMiss(StringHandle template_name_handle) {
+        cache_misses_by_handle_[template_name_handle]++;
+    }
+    
+    // Overload for std::string for backward compatibility
     void recordCacheMiss(const std::string& template_name) {
-        cache_misses_[template_name]++;
+        StringHandle handle = StringTable::getOrInternStringHandle(template_name);
+        recordCacheMiss(handle);
     }
 
     // Record template lookup time
@@ -174,10 +200,10 @@ public:
 
         printf("\nCache Statistics:\n");
         size_t total_hits = 0, total_misses = 0;
-        for (const auto& [name, hits] : cache_hits_) {
+        for (const auto& [handle, hits] : cache_hits_by_handle_) {
             total_hits += hits;
         }
-        for (const auto& [name, misses] : cache_misses_) {
+        for (const auto& [handle, misses] : cache_misses_by_handle_) {
             total_misses += misses;
         }
         size_t total_requests = total_hits + total_misses;
@@ -186,29 +212,32 @@ public:
         printf("  Cache Misses: %zu\n", total_misses);
         printf("  Hit Rate:     %.2f%%\n", hit_rate);
 
-        // Top 10 most instantiated templates
-        if (!instantiations_.empty()) {
+        // Top 10 most instantiated templates (lookup names only when printing)
+        if (!instantiations_by_handle_.empty()) {
             printf("\nTop 10 Most Instantiated Templates (by count):\n");
-            std::vector<std::pair<std::string, const TemplateProfilingAccumulator*>> sorted;
-            for (const auto& [name, acc] : instantiations_) {
-                sorted.push_back({name, &acc});
+            std::vector<std::pair<StringHandle, const TemplateProfilingAccumulator*>> sorted;
+            for (const auto& [handle, acc] : instantiations_by_handle_) {
+                sorted.push_back({handle, &acc});
             }
             std::sort(sorted.begin(), sorted.end(),
                      [](const auto& a, const auto& b) { return a.second->count() > b.second->count(); });
 
             for (size_t i = 0; i < (std::min)(size_t(10), sorted.size()); ++i) {
-                const auto& [name, acc] = sorted[i];
-                printf("  %2zu. %-40s: count=%5zu, total=%8.3f ms, mean=%8.3f μs\n",
-                       i + 1, name.c_str(), acc->count(), acc->total_duration() / 1000.0, acc->mean_duration());
+                const auto& [handle, acc] = sorted[i];
+                // Only lookup the name here when printing
+                std::string_view name = StringTable::getStringView(handle);
+                printf("  %2zu. %-40.*s: count=%5zu, total=%8.3f ms, mean=%8.3f μs\n",
+                       i + 1, (int)std::min(name.size(), size_t(40)), name.data(),
+                       acc->count(), acc->total_duration() / 1000.0, acc->mean_duration());
             }
         }
 
-        // Top 10 slowest templates
-        if (!instantiations_.empty()) {
+        // Top 10 slowest templates (lookup names only when printing)
+        if (!instantiations_by_handle_.empty()) {
             printf("\nTop 10 Slowest Templates (by total time):\n");
-            std::vector<std::pair<std::string, const TemplateProfilingAccumulator*>> sorted;
-            for (const auto& [name, acc] : instantiations_) {
-                sorted.push_back({name, &acc});
+            std::vector<std::pair<StringHandle, const TemplateProfilingAccumulator*>> sorted;
+            for (const auto& [handle, acc] : instantiations_by_handle_) {
+                sorted.push_back({handle, &acc});
             }
             std::sort(sorted.begin(), sorted.end(),
                      [](const auto& a, const auto& b) { 
@@ -216,9 +245,12 @@ public:
                      });
 
             for (size_t i = 0; i < (std::min)(size_t(10), sorted.size()); ++i) {
-                const auto& [name, acc] = sorted[i];
-                printf("  %2zu. %-40s: count=%5zu, total=%8.3f ms, mean=%8.3f μs\n",
-                       i + 1, name.c_str(), acc->count(), acc->total_duration() / 1000.0, acc->mean_duration());
+                const auto& [handle, acc] = sorted[i];
+                // Only lookup the name here when printing
+                std::string_view name = StringTable::getStringView(handle);
+                printf("  %2zu. %-40.*s: count=%5zu, total=%8.3f ms, mean=%8.3f μs\n",
+                       i + 1, (int)std::min(name.size(), size_t(40)), name.data(),
+                       acc->count(), acc->total_duration() / 1000.0, acc->mean_duration());
             }
         }
 
@@ -227,9 +259,9 @@ public:
 
     // Reset all statistics
     void reset() {
-        instantiations_.clear();
-        cache_hits_.clear();
-        cache_misses_.clear();
+        instantiations_by_handle_.clear();
+        cache_hits_by_handle_.clear();
+        cache_misses_by_handle_.clear();
         lookup_time_ = TemplateProfilingAccumulator();
         parsing_time_ = TemplateProfilingAccumulator();
         substitution_time_ = TemplateProfilingAccumulator();
@@ -265,10 +297,10 @@ public:
             auto interval_elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - interval_start_time_).count();
             
             size_t total_hits = 0, total_misses = 0;
-            for (const auto& [name, hits] : cache_hits_) {
+            for (const auto& [handle, hits] : cache_hits_by_handle_) {
                 total_hits += hits;
             }
-            for (const auto& [name, misses] : cache_misses_) {
+            for (const auto& [handle, misses] : cache_misses_by_handle_) {
                 total_misses += misses;
             }
             size_t total_requests = total_hits + total_misses;
@@ -327,9 +359,10 @@ private:
                                start_time_(std::chrono::high_resolution_clock::now()) {}
 #endif
 
-    std::unordered_map<std::string, TemplateProfilingAccumulator> instantiations_;
-    std::unordered_map<std::string, size_t> cache_hits_;
-    std::unordered_map<std::string, size_t> cache_misses_;
+    // Use StringHandle-based maps for efficiency (defer name lookup until printing)
+    std::unordered_map<StringHandle, TemplateProfilingAccumulator, StringHandleHash> instantiations_by_handle_;
+    std::unordered_map<StringHandle, size_t, StringHandleHash> cache_hits_by_handle_;
+    std::unordered_map<StringHandle, size_t, StringHandleHash> cache_misses_by_handle_;
     size_t total_instantiation_count_;
 #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
     size_t last_progress_count_;

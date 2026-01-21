@@ -15138,12 +15138,50 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		SaveHandle saved_pos = save_token_position();
 		ParseResult type_result = parse_type_specifier();
 
-		// Check if this is really a type by seeing if ')' follows
-		bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
-		                                 peek_token().has_value() && peek_token()->value() == ")";
+		// If we successfully parsed a type, check for pointer/reference declarators
+		// This handles alignof(void *), alignof(int **), alignof(Foo &), etc.
+		bool is_complete_type = false;
+		if (!type_result.is_error() && type_result.node().has_value()) {
+			// Parse any pointer (* const * volatile) or reference (& &&) declarators
+			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+			
+			while (peek_token().has_value()) {
+				auto next_token = peek_token();
+				if (next_token->value() == "*") {
+					// Parse pointer with optional cv-qualifiers
+					consume_token(); // consume '*'
+					
+					// Check for const/volatile after *
+					CVQualifier ptr_cv = parse_cv_qualifiers();
+					
+					type_spec.add_pointer_level(ptr_cv);
+				} else if (next_token->value() == "&") {
+					// Lvalue reference
+					consume_token();
+					
+					// Check if it's rvalue reference (&&)
+					if (peek_token().has_value() && peek_token()->value() == "&") {
+						consume_token();
+						type_spec.set_reference(true); // rvalue reference
+					} else {
+						type_spec.set_lvalue_reference(true);
+					}
+					// References can't have further declarators
+					break;
+				} else {
+					// Not a pointer or reference declarator
+					break;
+				}
+			}
+			
+			// Now check if ')' follows
+			if (peek_token().has_value() && peek_token()->value() == ")") {
+				is_complete_type = true;
+			}
+		}
 		
-		if (is_type_followed_by_paren) {
-			// Successfully parsed as type and ')' follows
+		if (is_complete_type) {
+			// Successfully parsed as type with declarators and ')' follows
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after " + std::string(alignof_name) + " type", *current_token_);
 			}
