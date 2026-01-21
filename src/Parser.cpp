@@ -1215,6 +1215,20 @@ ParseResult Parser::parse_top_level_node()
 }
 
 ParseResult Parser::parse_type_and_name() {
+    // Add parsing depth check to prevent infinite loops
+    if (++parsing_depth_ > MAX_PARSING_DEPTH) {
+        --parsing_depth_;
+        FLASH_LOG(Parser, Error, "Maximum parsing depth (", MAX_PARSING_DEPTH, ") exceeded in parse_type_and_name()");
+        FLASH_LOG(Parser, Error, "This indicates an infinite loop in type parsing");
+        return ParseResult::error("Maximum parsing depth exceeded - possible infinite loop", *current_token_);
+    }
+    
+    // RAII guard to decrement depth on all exit paths
+    struct DepthGuard {
+        size_t& depth;
+        ~DepthGuard() { --depth; }
+    } depth_guard{parsing_depth_};
+    
     FLASH_LOG(Parser, Debug, "parse_type_and_name: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
     
     // Check for alignas specifier before the type
@@ -10178,6 +10192,20 @@ void Parser::append_type_name_suffix(StringBuilder& sb, const TemplateTypeArg& a
 
 ParseResult Parser::parse_type_specifier()
 {
+	// Add parsing depth check to prevent infinite loops
+	if (++parsing_depth_ > MAX_PARSING_DEPTH) {
+		--parsing_depth_;
+		FLASH_LOG(Parser, Error, "Maximum parsing depth (", MAX_PARSING_DEPTH, ") exceeded in parse_type_specifier()");
+		FLASH_LOG(Parser, Error, "Current token: ", current_token_ ? current_token_->value() : "none");
+		return ParseResult::error("Maximum parsing depth exceeded - possible infinite loop", *current_token_);
+	}
+	
+	// RAII guard to decrement depth on all exit paths
+	struct DepthGuard {
+		size_t& depth;
+		~DepthGuard() { --depth; }
+	} depth_guard{parsing_depth_};
+	
 	FLASH_LOG(Parser, Debug, "parse_type_specifier: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	
 	auto current_token_opt = peek_token();
@@ -27694,8 +27722,18 @@ if (struct_type_info.getStructInfo()) {
 		// If we're in a namespace, register with both simple and qualified names
 		std::string_view simple_name = func_decl_node.identifier_token().value();
 		
+		// Add debug logging for __call_is_nt to track hang location
+		if (simple_name == "__call_is_nt") {
+			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Registering __call_is_nt template");
+			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Function has ", func_decl.parameter_nodes().size(), " parameters");
+		}
+		
 		// Register with simple name (for backward compatibility and unqualified lookups)
 		gTemplateRegistry.registerTemplate(simple_name, template_func_node);
+		
+		if (simple_name == "__call_is_nt") {
+			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Successfully registered __call_is_nt");
+		}
 		
 		// If in a namespace, also register with qualified name for namespace-qualified lookups
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
@@ -27709,6 +27747,10 @@ if (struct_type_info.getStructInfo()) {
 
 		// Add the template function to the symbol table so it can be found during overload resolution
 		gSymbolTable.insert(simple_name, template_func_node);
+		
+		if (simple_name == "__call_is_nt") {
+			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Completed all registration for __call_is_nt");
+		}
 
 		return saved_position.success(template_func_node);
 	}
@@ -31338,6 +31380,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Build template argument list
 	std::vector<TemplateArgument> template_args;
+	size_t explicit_idx = 0;  // Track position in explicit_types
 	for (size_t i = 0; i < template_params.size(); ++i) {
 		if (!template_params[i].is<TemplateParameterNode>()) {
 			FLASH_LOG_FORMAT(Templates, Error, "Template parameter {} is not a TemplateParameterNode (type: {})", i, template_params[i].type_name());
@@ -31345,13 +31388,33 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		}
 		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
 		if (param.kind() == TemplateParameterKind::Template) {
-			// Template template parameter - the explicit_types[i] should be a template name
-			// For now, we'll assume it's passed as a string in the type system
+			// Template template parameter - bounds check before access
+			if (explicit_idx >= explicit_types.size()) {
+				FLASH_LOG_FORMAT(Templates, Debug, "Template overload mismatch: need template argument at position {} but only {} types provided", 
+				                 explicit_idx, explicit_types.size());
+				return std::nullopt;
+			}
 			// TODO: Implement proper template template argument parsing
+			// For now, we'll use a placeholder since template template args are rarely used
 			template_args.push_back(TemplateArgument::makeTemplate(""));  // Placeholder
+			++explicit_idx;
+		} else if (param.is_variadic()) {
+			// Variadic parameter pack - consume all remaining explicit types
+			for (size_t j = explicit_idx; j < explicit_types.size(); ++j) {
+				template_args.push_back(toTemplateArgument(explicit_types[j]));
+			}
+			explicit_idx = explicit_types.size();  // All types consumed
 		} else {
+			// Regular type parameter - bounds check before access
+			if (explicit_idx >= explicit_types.size()) {
+				// Not enough explicit types - this overload doesn't match
+				FLASH_LOG_FORMAT(Templates, Debug, "Template overload mismatch: need argument at position {} but only {} types provided", 
+				                 explicit_idx, explicit_types.size());
+				return std::nullopt;
+			}
 			// Use toTemplateArgument() to preserve full type info including references
-			template_args.push_back(toTemplateArgument(explicit_types[i]));
+			template_args.push_back(toTemplateArgument(explicit_types[explicit_idx]));
+			++explicit_idx;
 		}
 	}
 
@@ -33489,6 +33552,18 @@ std::optional<ASTNode> Parser::substitute_nontype_template_param(
 // This is critical for SFINAE patterns like void_t
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
+	
+	// Add iteration limit to prevent infinite loops during template instantiation
+	static thread_local int iteration_count = 0;
+	static thread_local const int MAX_ITERATIONS = 10000;  // Safety limit
+	
+	iteration_count++;
+	if (iteration_count > MAX_ITERATIONS) {
+		FLASH_LOG(Templates, Error, "Template instantiation iteration limit exceeded (", MAX_ITERATIONS, ")! Possible infinite loop.");
+		FLASH_LOG(Templates, Error, "Last template: '", template_name, "' with ", template_args.size(), " args");
+		iteration_count = 0;  // Reset for next compilation
+		return std::nullopt;
+	}
 	
 	// Log entry to help debug which call sites are causing issues
 	FLASH_LOG(Templates, Debug, "try_instantiate_class_template: template='", template_name, 

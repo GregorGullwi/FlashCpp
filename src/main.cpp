@@ -148,6 +148,11 @@ int main(int argc, char *argv[]) {
 
     try {
         return main_impl(argc, argv);
+    } catch (const std::bad_any_cast& e) {
+        std::cerr << "Fatal error: std::bad_any_cast - " << e.what() << std::endl;
+        std::cerr << "This indicates an internal compiler error where a std::any was cast to the wrong type." << std::endl;
+        std::cerr << "This usually happens during IR conversion or template instantiation." << std::endl;
+        return 1;
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << std::endl;
         return 1;
@@ -401,6 +406,7 @@ int main_impl(int argc, char *argv[]) {
         PhaseTimer timer("Parsing", false, &parsing_time);
         // Note: Lexing happens lazily during parsing in this implementation
         // Template instantiation also happens during parsing
+        
         auto parse_result = parser->parse();
 
         if (parse_result.is_error()) {
@@ -512,6 +518,14 @@ int main_impl(int argc, char *argv[]) {
             FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] After irConverter.convert(), before destructor");
         }
         FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] After irConverter destructor");
+    } catch (const std::bad_any_cast& e) {
+        FLASH_LOG(General, Error, "Code generation failed with std::bad_any_cast: ", e.what());
+        FLASH_LOG(General, Error, "This indicates an IR instruction has an unexpected payload type.");
+        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
+        if (show_perf_stats) {
+            StackStringStats::print_stats();
+        }
+        return 1;
     } catch (const std::exception& e) {
         FLASH_LOG(General, Error, "Code generation failed: ", e.what());
         printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);

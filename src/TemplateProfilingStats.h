@@ -82,10 +82,11 @@ public:
     void recordInstantiation(const std::string& template_name, std::chrono::microseconds duration) {
         instantiations_[template_name].add(duration);
         incrementInstantiationCount();
+        
         // Log progress every 100 instantiations when Info level is enabled
         // This helps track where the compiler gets stuck during template-heavy compilations
         #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
-        maybeLogProgress(100);
+        maybeLogProgress(50);  // Increased frequency: log every 50 instantiations instead of 100
         #endif
     }
 

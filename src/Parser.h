@@ -425,6 +425,11 @@ private:
 
         // Track if we're parsing a template body (for template parameter reference recognition)
         bool parsing_template_body_ = false;
+        
+        // Add parsing depth counter to detect infinite loops
+        // This is incremented/decremented in critical parsing functions
+        size_t parsing_depth_ = 0;
+        static constexpr size_t MAX_PARSING_DEPTH = 500;  // Reasonable limit for nested parsing
         std::vector<std::string_view> template_param_names_;  // Template parameter names in current scope
         
         // Track if we're instantiating a lazy member function (to prevent infinite recursion)
