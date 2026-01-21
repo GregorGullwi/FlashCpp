@@ -343,11 +343,13 @@ Type& operator=(const Type&) noexcept = default;
 
 **Test Case:** Created `/tmp/test_operator_eq_template.cpp` which now compiles successfully
 
-#### 7.3 Complex decltype in Partial Specialization Template Arguments (ACTIVE BLOCKER - 2026-01-21)
+#### 7.3 Complex decltype in Partial Specialization Template Arguments (**FIXED** - 2026-01-21)
 
 **Issue:** Partial specializations with complex decltype expressions containing nested template instantiations and function calls fail to parse.
 
-**Error Message:**
+**Status:** **FIXED** - Added handling in `parse_primary_expression` to recognize class templates followed by template args and `(` as functional-style cast (constructor call creating temporary object).
+
+**Error Message (before fix):**
 ```
 /usr/include/c++/14/bits/functional_hash.h:72:26: error: Expected template argument pattern in partial specialization
       struct __poison_hash<_Tp, __void_t<decltype(hash<_Tp>()(declval<_Tp>()))>>
@@ -370,6 +372,15 @@ template<typename _Tp>
 - This is a decltype of a function call expression: `hash<_Tp>()(declval<_Tp>())`
 - Which consists of: instantiate hash<_Tp>, construct an instance, call operator() with declval<_Tp>() as argument
 - Parser needs to handle this complex nested expression as a template argument in partial specialization
+
+**Investigation Update (2026-01-21):**
+Root cause identified - the parser fails at step 2 (construct an instance) because:
+1. After parsing `hash<_Tp>`, the parser sees `(`
+2. `hash` is not recognized as a class template in this context, so `hash<_Tp>()` is not recognized as a functional-style cast / temporary object creation
+3. Parser emits "Missing identifier: hash" error because it doesn't find `hash` as a function
+4. This causes template argument parsing to fail with "Expected template argument pattern"
+
+The fix requires: when parsing primary expressions in template contexts, after seeing `identifier<args>(`, recognize this as a functional-style cast (temporary object creation) if the identifier resolves to a class template, not just for function templates.
 
 **Affected Headers:** `<variant>` (stops at line 72), potentially `<functional>`, `<optional>`, and others using hash-based SFINAE
 
@@ -428,9 +439,13 @@ constexpr bool is_ratio_check() { return __is_ratio_v<_R>; }  // ✅ Works
 
 **Affected Headers:** `<ratio>` (crashes during codegen in `__are_both_ratios`)
 
-#### 7.5 MemberAccess Missing Object in Code Generation (ACTIVE BLOCKER - 2026-01-21)
+#### 7.5 MemberAccess Missing Object in Code Generation (**FIXED** - 2026-01-21)
 
 **Issue:** The `<exception>` header crashes during code generation with "MemberAccess missing object: other".
+
+**Status:** **FIXED** - Two fixes applied:
+1. Parameter name generation for `operator=` with empty param names now uses "other" 
+2. Copy/move constructors with empty param names now also use "other" to match body generation code
 
 **Error Message:**
 ```
@@ -462,6 +477,21 @@ FlashCpp: src/IRConverter.h:13112: Assertion failed: "Struct object not found in
 ```
 
 **Status:** Needs re-investigation after MemberAccess issue (7.5) is fixed.
+
+#### 7.7 Base Class Namespace Resolution (ACTIVE BLOCKER - 2026-01-21)
+
+**Issue:** After fixing blocker #7.3, `<variant>` header progresses past line 72 but fails at line 299 with "Base class 'std' not found".
+
+**Error Message:**
+```
+/usr/include/c++/14/bits/functional_hash.h:299:58: error: Base class 'std' not found
+      struct __is_fast_hash<hash<long double>> : public std::false_type
+                                                           ^
+```
+
+**Analysis:** The base class `std::false_type` is not being resolved correctly. This appears to be a namespace resolution issue where `std` is not recognized as a namespace in the base class specification.
+
+**Affected Headers:** `<variant>`, potentially `<functional>`, `<optional>` and others that use `std::true_type` / `std::false_type` as base classes.
 
 ### 8. Template Instantiation Performance
 

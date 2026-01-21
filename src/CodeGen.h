@@ -2519,6 +2519,7 @@ private:
 		// Add parameters to function declaration
 		std::vector<CachedParamInfo> cached_params;
 		cached_params.reserve(node.parameter_nodes().size());
+		size_t unnamed_param_counter = 0;  // Counter for generating unique names for unnamed parameters
 		for (const auto& param : node.parameter_nodes()) {
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
@@ -2539,7 +2540,28 @@ private:
 			// this direct value passing, while the is_rvalue_reference flag enables proper handling
 			// in both the caller (materialization + address-taking) and callee (dereferencing).
 			param_info.pointer_depth = pointer_depth;
-			param_info.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
+			
+			// Handle unnamed parameters (e.g., `operator=(const T&) = default;` without explicit param name)
+			// Generate a unique name like "__param_0", "__param_1", etc. for unnamed parameters
+			std::string_view param_name = param_decl.identifier_token().value();
+			if (param_name.empty()) {
+				// For operator= functions (both explicit and implicit), use "other" as the conventional name
+				// for the first parameter. This handles both:
+				// 1. Implicitly generated operator= (created by parser for classes without user-defined one)
+				// 2. Explicitly defaulted operator= (`operator=(const T&) = default;` without param name)
+				// Otherwise use a generated name
+				if (func_decl.identifier_token().value() == "operator=" && unnamed_param_counter == 0) {
+					param_info.name = StringTable::getOrInternStringHandle("other");
+				} else {
+					// Generate unique name for unnamed parameter
+					param_info.name = StringTable::getOrInternStringHandle(
+						StringBuilder().append("__param_").append(unnamed_param_counter).commit());
+				}
+				unnamed_param_counter++;
+			} else {
+				param_info.name = StringTable::getOrInternStringHandle(param_name);
+			}
+			
 			param_info.is_reference = param_type.is_reference();  // Tracks ANY reference (lvalue or rvalue)
 			param_info.is_rvalue_reference = param_type.is_rvalue_reference();  // Specific rvalue ref flag
 			param_info.cv_qualifier = param_type.cv_qualifier();
@@ -2647,8 +2669,27 @@ private:
 // 					}
 // 				}
 
-				// Generate memberwise assignment from 'other' to 'this'
+				// Generate memberwise assignment from source parameter to 'this'
 				// (same code for both copy and move assignment - memberwise copy/move)
+				
+				// Get the parameter name from the function declaration
+				// For defaulted operator= without explicit parameter name (e.g., `operator=(const T&) = default;`),
+				// the parameter name might be empty. Use "other" as the default name.
+				// This name must match what's in func_decl_op.parameters.
+				StringHandle source_param_name_handle;
+				if (!node.parameter_nodes().empty()) {
+					const auto& param_node = node.parameter_nodes()[0];
+					if (param_node.is<DeclarationNode>()) {
+						std::string_view param_name = param_node.as<DeclarationNode>().identifier_token().value();
+						if (!param_name.empty()) {
+							source_param_name_handle = StringTable::getOrInternStringHandle(param_name);
+						}
+					}
+				}
+				// Default to "other" if no parameter name found
+				if (!source_param_name_handle.isValid()) {
+					source_param_name_handle = StringTable::getOrInternStringHandle("other");
+				}
 
 				// Look up the struct type
 				auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
@@ -2659,13 +2700,13 @@ private:
 					if (struct_info) {
 						// Generate memberwise assignment
 						for (const auto& member : struct_info->members) {
-							// First, load the member from 'other'
+							// First, load the member from source parameter
 							TempVar member_value = var_counter.next();
 							MemberLoadOp member_load;
 							member_load.result.value = member_value;
 							member_load.result.type = member.type;
 							member_load.result.size_in_bits = static_cast<int>(member.size * 8);
-							member_load.object = StringTable::getOrInternStringHandle("other");  // Load from 'other' parameter
+							member_load.object = source_param_name_handle;  // Load from source parameter
 							member_load.member_name = member.getName();
 							member_load.offset = static_cast<int>(member.offset);
 							member_load.is_reference = member.is_reference;
@@ -3036,6 +3077,7 @@ private:
 		// We don't add it here to avoid duplication
 
 		// Add parameter types to constructor declaration
+		size_t ctor_unnamed_param_counter = 0;
 		for (const auto& param : node.parameter_nodes()) {
 			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor decl operands");
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
@@ -3044,7 +3086,28 @@ private:
 			func_param.type = param_type.type();
 			func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
 			func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
-			func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
+			
+			// Handle empty parameter names (e.g., from defaulted constructors)
+			std::string_view param_name = param_decl.identifier_token().value();
+			if (param_name.empty()) {
+				// For copy/move constructors (first parameter is a reference to same struct type),
+				// use "other" as the conventional name. This must match the body generation code
+				// that references "other" for memberwise copy operations.
+				bool is_copy_or_move_param = ctor_unnamed_param_counter == 0 &&
+					(param_type.is_reference() || param_type.is_rvalue_reference()) &&
+					node.parameter_nodes().size() == 1;
+				
+				if (is_copy_or_move_param) {
+					func_param.name = StringTable::getOrInternStringHandle("other");
+				} else {
+					func_param.name = StringTable::getOrInternStringHandle(
+						StringBuilder().append("__param_").append(ctor_unnamed_param_counter).commit());
+				}
+				ctor_unnamed_param_counter++;
+			} else {
+				func_param.name = StringTable::getOrInternStringHandle(param_name);
+			}
+			
 			func_param.is_reference = param_type.is_reference();
 			func_param.is_rvalue_reference = param_type.is_rvalue_reference();
 			func_param.cv_qualifier = param_type.cv_qualifier();
@@ -19055,13 +19118,23 @@ private:
 
 		// Add parameters - use parameter_nodes to get complete type information
 		param_idx = 0;
+		size_t lambda_unnamed_param_counter = 0;
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
 				FunctionParam func_param;
-				func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
+				
+				// Handle empty parameter names
+				std::string_view param_name = param_decl.identifier_token().value();
+				if (param_name.empty()) {
+					func_param.name = StringTable::getOrInternStringHandle(
+						StringBuilder().append("__param_").append(lambda_unnamed_param_counter++).commit());
+				} else {
+					func_param.name = StringTable::getOrInternStringHandle(param_name);
+				}
+				
 				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
@@ -19212,13 +19285,23 @@ private:
 
 		// Add parameters - use parameter_nodes to get complete type information
 		param_idx = 0;
+		size_t invoke_unnamed_param_counter = 0;
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
 				FunctionParam func_param;
-				func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
+				
+				// Handle empty parameter names
+				std::string_view param_name = param_decl.identifier_token().value();
+				if (param_name.empty()) {
+					func_param.name = StringTable::getOrInternStringHandle(
+						StringBuilder().append("__param_").append(invoke_unnamed_param_counter++).commit());
+				} else {
+					func_param.name = StringTable::getOrInternStringHandle(param_name);
+				}
+				
 				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
@@ -19506,6 +19589,7 @@ private:
 		func_decl_op.mangled_name = full_func_name;
 
 		// Add function parameters with concrete types
+		size_t template_unnamed_param_counter = 0;
 		for (size_t i = 0; i < template_func_decl.parameter_nodes().size(); ++i) {
 			const auto& param_node = template_func_decl.parameter_nodes()[i];
 			if (param_node.is<DeclarationNode>()) {
@@ -19525,7 +19609,16 @@ private:
 					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
 					func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				}
-				func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
+				
+				// Handle empty parameter names
+				std::string_view param_name = param_decl.identifier_token().value();
+				if (param_name.empty()) {
+					func_param.name = StringTable::getOrInternStringHandle(
+						StringBuilder().append("__param_").append(template_unnamed_param_counter++).commit());
+				} else {
+					func_param.name = StringTable::getOrInternStringHandle(param_name);
+				}
+				
 				func_param.is_reference = false;
 				func_param.is_rvalue_reference = false;
 				func_param.cv_qualifier = CVQualifier::None;

@@ -20351,6 +20351,63 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							}
 						}
 						
+						// Handle functional-style cast for class templates: Template<Args>()
+						// This creates a temporary object of the instantiated class type
+						// Pattern: hash<_Tp>() creates a temporary hash<_Tp> object
+						if (!identifierType && peek_token().has_value() && peek_token()->value() == "(") {
+							auto class_template_opt = gTemplateRegistry.lookupTemplate(idenfifier_token.value());
+							if (class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
+								FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", idenfifier_token.value());
+								
+								// Build the instantiated type name
+								StringBuilder inst_name_builder;
+								inst_name_builder.append(idenfifier_token.value()).append("_");
+								for (size_t i = 0; i < explicit_template_args->size(); ++i) {
+									if (i > 0) inst_name_builder.append("_");
+									append_type_name_suffix(inst_name_builder, (*explicit_template_args)[i]);
+								}
+								std::string_view instantiated_type_name = inst_name_builder.commit();
+								
+								// Try to instantiate the class template (may fail for dependent args, which is OK)
+								try_instantiate_class_template(idenfifier_token.value(), *explicit_template_args);
+								
+								// Consume '(' and parse constructor arguments
+								consume_token(); // consume '('
+								
+								// Parse constructor arguments
+								ChunkedVector<ASTNode> args;
+								if (current_token_.has_value() && current_token_->value() != ")") {
+									while (true) {
+										auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+										if (arg_result.is_error()) {
+											return arg_result;
+										}
+										if (auto arg = arg_result.node()) {
+											args.push_back(*arg);
+										}
+										
+										if (!current_token_.has_value() || current_token_->value() != ",") {
+											break;
+										}
+										consume_token(); // consume ','
+									}
+								}
+								
+								if (!consume_punctuator(")")) {
+									return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+								}
+								
+								// Create TypeSpecifierNode for the instantiated template type
+								Token inst_type_token(Token::Type::Identifier, instantiated_type_name,
+								                      idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+								auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, inst_type_token);
+								
+								// Create ConstructorCallNode for functional-style cast
+								result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), inst_type_token));
+								return ParseResult::success(*result);
+							}
+						}
+						
 						// Check if this is a template alias - if so, treat as valid dependent expression
 						// This handles patterns like: __enable_if_t<...> in template argument contexts
 						if (!identifierType) {
@@ -20633,6 +20690,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						
 						if (class_template_opt.has_value()) {
 							FLASH_LOG(Parser, Debug, "Found class template '", idenfifier_token.value(), "' in expression context");
+							// Mark as found to prevent "Missing identifier" error
+							found_as_type_alias = true;  // Reuse this flag - class template acts like a type name
 							// Don't return - let it fall through to template argument parsing below
 						} else {
 							// Check if this is a variable template (e.g., is_reference_v<T>)
@@ -20874,6 +20933,64 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							return ParseResult::success(*result);
 						}
 					}
+				}
+			}
+			
+			// Handle functional-style cast for class templates: ClassName<Args>()
+			// This creates a temporary object of the instantiated class type
+			// Pattern: hash<_Tp>() creates a temporary hash<_Tp> object
+			if (explicit_template_args.has_value() && peek_token().has_value() && peek_token()->value() == "(") {
+				// Check if this is a class template
+				auto class_template_opt = gTemplateRegistry.lookupTemplate(idenfifier_token.value());
+				if (class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", idenfifier_token.value());
+					
+					// Build the instantiated type name
+					StringBuilder inst_name_builder;
+					inst_name_builder.append(idenfifier_token.value()).append("_");
+					for (size_t i = 0; i < explicit_template_args->size(); ++i) {
+						if (i > 0) inst_name_builder.append("_");
+						append_type_name_suffix(inst_name_builder, (*explicit_template_args)[i]);
+					}
+					std::string_view instantiated_type_name = inst_name_builder.commit();
+					
+					// Try to instantiate the class template
+					try_instantiate_class_template(idenfifier_token.value(), *explicit_template_args);
+					
+					// Consume '(' and parse constructor arguments
+					consume_token(); // consume '('
+					
+					// Parse constructor arguments
+					ChunkedVector<ASTNode> args;
+					if (current_token_.has_value() && current_token_->value() != ")") {
+						while (true) {
+							auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							if (arg_result.is_error()) {
+								return arg_result;
+							}
+							if (auto arg = arg_result.node()) {
+								args.push_back(*arg);
+							}
+							
+							if (!current_token_.has_value() || current_token_->value() != ",") {
+								break;
+							}
+							consume_token(); // consume ','
+						}
+					}
+					
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+					}
+					
+					// Create TypeSpecifierNode for the instantiated template type
+					Token inst_type_token(Token::Type::Identifier, instantiated_type_name,
+					                      idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, inst_type_token);
+					
+					// Create ConstructorCallNode for functional-style cast
+					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), inst_type_token));
+					return ParseResult::success(*result);
 				}
 			}
 
