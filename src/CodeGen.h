@@ -2554,8 +2554,8 @@ private:
 					param_info.name = StringTable::getOrInternStringHandle("other");
 				} else {
 					// Generate unique name for unnamed parameter
-					std::string generated_name = "__param_" + std::to_string(unnamed_param_counter);
-					param_info.name = StringTable::getOrInternStringHandle(generated_name);
+					param_info.name = StringTable::getOrInternStringHandle(
+						StringBuilder().append("__param_").append(unnamed_param_counter).commit());
 				}
 				unnamed_param_counter++;
 			} else {
@@ -3090,8 +3090,8 @@ private:
 			// Handle empty parameter names (e.g., from defaulted constructors)
 			std::string_view param_name = param_decl.identifier_token().value();
 			if (param_name.empty()) {
-				std::string generated_name = "__param_" + std::to_string(ctor_unnamed_param_counter++);
-				func_param.name = StringTable::getOrInternStringHandle(generated_name);
+				func_param.name = StringTable::getOrInternStringHandle(
+					StringBuilder().append("__param_").append(ctor_unnamed_param_counter++).commit());
 			} else {
 				func_param.name = StringTable::getOrInternStringHandle(param_name);
 			}
@@ -19117,8 +19117,8 @@ private:
 				// Handle empty parameter names
 				std::string_view param_name = param_decl.identifier_token().value();
 				if (param_name.empty()) {
-					std::string generated_name = "__param_" + std::to_string(lambda_unnamed_param_counter++);
-					func_param.name = StringTable::getOrInternStringHandle(generated_name);
+					func_param.name = StringTable::getOrInternStringHandle(
+						StringBuilder().append("__param_").append(lambda_unnamed_param_counter++).commit());
 				} else {
 					func_param.name = StringTable::getOrInternStringHandle(param_name);
 				}
@@ -19284,8 +19284,8 @@ private:
 				// Handle empty parameter names
 				std::string_view param_name = param_decl.identifier_token().value();
 				if (param_name.empty()) {
-					std::string generated_name = "__param_" + std::to_string(invoke_unnamed_param_counter++);
-					func_param.name = StringTable::getOrInternStringHandle(generated_name);
+					func_param.name = StringTable::getOrInternStringHandle(
+						StringBuilder().append("__param_").append(invoke_unnamed_param_counter++).commit());
 				} else {
 					func_param.name = StringTable::getOrInternStringHandle(param_name);
 				}
@@ -19601,8 +19601,8 @@ private:
 				// Handle empty parameter names
 				std::string_view param_name = param_decl.identifier_token().value();
 				if (param_name.empty()) {
-					std::string generated_name = "__param_" + std::to_string(template_unnamed_param_counter++);
-					func_param.name = StringTable::getOrInternStringHandle(generated_name);
+					func_param.name = StringTable::getOrInternStringHandle(
+						StringBuilder().append("__param_").append(template_unnamed_param_counter++).commit());
 				} else {
 					func_param.name = StringTable::getOrInternStringHandle(param_name);
 				}
