@@ -25420,6 +25420,9 @@ ParseResult Parser::parse_template_declaration() {
 					arg.is_reference = type_spec.is_lvalue_reference();
 					arg.is_rvalue_reference = type_spec.is_rvalue_reference();
 					arg.is_array = is_array;
+					// Mark as dependent - this is a partial specialization pattern,
+					// so all types are template parameters (dependent types)
+					arg.is_dependent = true;
 					specialization_pattern.push_back(arg);
 				}
 				
@@ -25499,7 +25502,10 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// Include base type name for user-defined types to distinguish patterns
 				// e.g., __is_ratio_v<ratio<N,D>> gets pattern "__is_ratio_v_ratio"
-				if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
+				// BUT: Don't include the type name if it's a dependent type (template parameter)
+				// e.g., is_reference_v<T&> should get pattern "is_reference_v_R", not "is_reference_v_TR"
+				if (!arg.is_dependent && 
+				    (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum)) {
 					if (arg.type_index < gTypeInfo.size()) {
 						// Get the simple name (without namespace) for pattern matching
 						std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
