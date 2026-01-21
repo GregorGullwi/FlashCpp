@@ -17325,7 +17325,30 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		Token first_type_token = *current_token_;
 		consume_token(); // consume first identifier
 		
-		// Parse :: and subsequent identifiers
+		// Handle template arguments after identifier: typename __promote<_Tp>::__type(0)
+		if (current_token_.has_value() && current_token_->value() == "<") {
+			type_name_sb.append("<");
+			consume_token(); // consume '<'
+			
+			// Parse template arguments, handling nested template arguments
+			int angle_bracket_depth = 1;
+			while (current_token_.has_value() && angle_bracket_depth > 0) {
+				if (current_token_->value() == "<") {
+					angle_bracket_depth++;
+				} else if (current_token_->value() == ">") {
+					angle_bracket_depth--;
+					if (angle_bracket_depth == 0) {
+						type_name_sb.append(">");
+						consume_token(); // consume final '>'
+						break;
+					}
+				}
+				type_name_sb.append(current_token_->value());
+				consume_token();
+			}
+		}
+		
+		// Parse :: and subsequent identifiers (with optional template args)
 		while (current_token_.has_value() && current_token_->value() == "::") {
 			type_name_sb.append("::");
 			consume_token(); // consume '::'
@@ -17336,6 +17359,29 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 			type_name_sb.append(current_token_->value());
 			consume_token(); // consume identifier
+			
+			// Handle template arguments after the identifier
+			if (current_token_.has_value() && current_token_->value() == "<") {
+				type_name_sb.append("<");
+				consume_token(); // consume '<'
+				
+				// Parse template arguments, handling nested template arguments
+				int angle_bracket_depth = 1;
+				while (current_token_.has_value() && angle_bracket_depth > 0) {
+					if (current_token_->value() == "<") {
+						angle_bracket_depth++;
+					} else if (current_token_->value() == ">") {
+						angle_bracket_depth--;
+						if (angle_bracket_depth == 0) {
+							type_name_sb.append(">");
+							consume_token(); // consume final '>'
+							break;
+						}
+					}
+					type_name_sb.append(current_token_->value());
+					consume_token();
+				}
+			}
 		}
 		
 		// Now we should have either '{}' (brace init) or '()' (paren init)
