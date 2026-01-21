@@ -247,7 +247,10 @@ public:
     }
 
 #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
-    // Record individual instantiation time for interval statistics
+    // Record individual instantiation time for both interval and total statistics.
+    // This is called from recordInstantiation() to track timing data that gets
+    // printed in periodic progress reports.
+    // @param duration_us The duration of the instantiation in microseconds
     void recordInstantiationTime(int64_t duration_us) {
         interval_stats_.add(std::chrono::microseconds(duration_us));
         total_stats_.add(std::chrono::microseconds(duration_us));
@@ -284,10 +287,11 @@ public:
             
             if (current_instantiation_.isValid() && instantiation_depth_ > 0) {
                 std::string_view current_name = StringTable::getStringView(current_instantiation_);
-                // Truncate long names
-                size_t max_len = 40;
+                // Truncate long names (max_len - 3 for "...")
+                constexpr size_t max_len = 40;
+                constexpr size_t truncate_len = max_len - 3;
                 if (current_name.size() > max_len) {
-                    printf(" depth=%zu current=%.37s...\n", instantiation_depth_, current_name.data());
+                    printf(" depth=%zu current=%.*s...\n", instantiation_depth_, (int)truncate_len, current_name.data());
                 } else {
                     printf(" depth=%zu current=%.*s\n", instantiation_depth_, (int)current_name.size(), current_name.data());
                 }
