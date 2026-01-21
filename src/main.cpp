@@ -416,7 +416,10 @@ int main_impl(int argc, char *argv[]) {
             auto start = std::chrono::steady_clock::now();
             int watchdog_count = 0;
             while (!parsing_complete) {
-                std::this_thread::sleep_for(std::chrono::seconds(10));
+                // Sleep in small increments so we can exit quickly when parsing completes
+                for (int i = 0; i < 100 && !parsing_complete; ++i) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
                 if (!parsing_complete) {
                     watchdog_count++;
                     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(

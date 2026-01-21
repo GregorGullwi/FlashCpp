@@ -260,32 +260,58 @@ template<typename... Args>
 inline void flash_log_unused(Args&&...) {}
 
 // FLASH_LOG macro - completely eliminated at preprocessing when level is disabled
+// Now with runtime check BEFORE evaluating arguments to avoid expensive string construction
 #if FLASHCPP_LOG_LEVEL >= 4  // Trace
-#define FLASH_LOG_Trace_IMPL(cat, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::Trace, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
+#define FLASH_LOG_Trace_IMPL(cat, ...) \
+    do { \
+        if (::FlashCpp::isLogEnabled<::FlashCpp::LogLevel::Trace, ::FlashCpp::LogCategory::cat>()) { \
+            ::FlashCpp::Logger<::FlashCpp::LogLevel::Trace, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__); \
+        } \
+    } while(0)
 #else
 #define FLASH_LOG_Trace_IMPL(cat, ...) ::FlashCpp::flash_log_unused(__VA_ARGS__)
 #endif
 
 #if FLASHCPP_LOG_LEVEL >= 3  // Debug
-#define FLASH_LOG_Debug_IMPL(cat, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::Debug, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
+#define FLASH_LOG_Debug_IMPL(cat, ...) \
+    do { \
+        if (::FlashCpp::isLogEnabled<::FlashCpp::LogLevel::Debug, ::FlashCpp::LogCategory::cat>()) { \
+            ::FlashCpp::Logger<::FlashCpp::LogLevel::Debug, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__); \
+        } \
+    } while(0)
 #else
 #define FLASH_LOG_Debug_IMPL(cat, ...) ::FlashCpp::flash_log_unused(__VA_ARGS__)
 #endif
 
 #if FLASHCPP_LOG_LEVEL >= 2  // Info
-#define FLASH_LOG_Info_IMPL(cat, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::Info, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
+#define FLASH_LOG_Info_IMPL(cat, ...) \
+    do { \
+        if (::FlashCpp::isLogEnabled<::FlashCpp::LogLevel::Info, ::FlashCpp::LogCategory::cat>()) { \
+            ::FlashCpp::Logger<::FlashCpp::LogLevel::Info, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__); \
+        } \
+    } while(0)
 #else
 #define FLASH_LOG_Info_IMPL(cat, ...) ::FlashCpp::flash_log_unused(__VA_ARGS__)
 #endif
 
 #if FLASHCPP_LOG_LEVEL >= 1  // Warning
-#define FLASH_LOG_Warning_IMPL(cat, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::Warning, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
+#define FLASH_LOG_Warning_IMPL(cat, ...) \
+    do { \
+        if (::FlashCpp::isLogEnabled<::FlashCpp::LogLevel::Warning, ::FlashCpp::LogCategory::cat>()) { \
+            ::FlashCpp::Logger<::FlashCpp::LogLevel::Warning, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__); \
+        } \
+    } while(0)
 #else
 #define FLASH_LOG_Warning_IMPL(cat, ...) ::FlashCpp::flash_log_unused(__VA_ARGS__)
 #endif
 
-// Error is always enabled
-#define FLASH_LOG_Error_IMPL(cat, ...) ::FlashCpp::Logger<::FlashCpp::LogLevel::Error, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__)
+// Error is always enabled - also add runtime check for consistency
+#define FLASH_LOG_Error_IMPL(cat, ...) \
+    do { \
+        if (::FlashCpp::isLogEnabled<::FlashCpp::LogLevel::Error, ::FlashCpp::LogCategory::cat>()) { \
+            ::FlashCpp::Logger<::FlashCpp::LogLevel::Error, ::FlashCpp::LogCategory::cat>::log(__VA_ARGS__); \
+        } \
+    } while(0)
 
 // Main FLASH_LOG macro that dispatches based on level
 #define FLASH_LOG(cat, level, ...) FLASH_LOG_##level##_IMPL(cat, __VA_ARGS__)
