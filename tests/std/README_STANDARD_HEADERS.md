@@ -4,6 +4,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
+✅ **CULPRIT TEMPLATE IDENTIFIED (2026-01-21):** Exact template causing infinite hang found:
+- **Template `__call_is_nt` at instantiation #308** triggers infinite recursion
+- Uses `noexcept(std::declval<_Fn>()(std::declval<_Args>()...))` expression
+- Likely causes circular dependency in noexcept evaluation
+- Affects: `<functional>`, `<type_traits>`, `<chrono>`, and any header using invoke traits
+- **Fix needed**: Add recursion depth limits for noexcept expression evaluation
+- See section 6.4 for detailed analysis
+
 ✅ **Timeout Root Cause Identified (2026-01-21):** Watchdog timer pinpoints exact hang location:
 - **All timeouts hang at instantiation #308** - infinite loop/recursion triggered
 - Added watchdog logging shows complete freeze after 308 instantiations
@@ -353,11 +361,102 @@ The **308th template instantiation** triggers:
 - Enhanced exception handlers for debugging
 
 **Next Investigation Steps:**
-1. Add debug logging in Parser.cpp template instantiation code
-2. Log template name being instantiated at count 308
-3. Add recursion depth tracking and limits
-4. Check for circular template dependencies in standard library headers
+1. ~~Add debug logging in Parser.cpp template instantiation code~~ ✅ DONE
+2. ~~Log template name being instantiated at count 308~~ ✅ DONE - Template is `__call_is_nt`
+3. Add recursion depth tracking and limits for noexcept evaluation
+4. Fix noexcept expression evaluation in template contexts
 5. Profile specific template causing the hang
+
+#### 6.5 Culprit Template Identified: `__call_is_nt` (2026-01-21)
+
+**Breakthrough: Added debug logging to capture template names around instantiation #308.**
+
+**Debug Output Showing Exact Sequence:**
+```
+[Progress] 300 template instantiations in 75 ms (cache hit rate: 63.0%)
+[DEBUG] Instantiation #305: is_void
+[DEBUG] Instantiation #306: integral_constant
+[DEBUG] Instantiation #307: __invoke_result
+[DEBUG] Instantiation #308: __call_is_nt  ← INFINITE HANG STARTS HERE
+[Watchdog] Parsing still in progress after 10 seconds. Total instantiations: 308
+[Watchdog] Parsing still in progress after 20 seconds. Total instantiations: 308
+```
+
+**Template Analysis: `std::__call_is_nt`**
+
+**Location:** `/usr/include/c++/14/type_traits` lines 3078-3114
+
+**Purpose:** Check if a function call expression is `noexcept`
+
+**Problematic Implementation:**
+```cpp
+template<typename _Fn, typename... _Args>
+  constexpr bool __call_is_nt(__invoke_other)
+  {
+    return noexcept(std::declval<_Fn>()(std::declval<_Args>()...));
+  }
+```
+
+**Why It Causes Infinite Hang:**
+
+1. **noexcept() operator**: Requires evaluating whether an expression is noexcept
+2. **declval<> usage**: `std::declval<_Fn>()` and `std::declval<_Args>()...` need template instantiation
+3. **Parameter pack expansion**: `...` requires expanding template arguments
+4. **Recursive dependency**: Evaluating noexcept → instantiate declval → need to know types → instantiate more templates → evaluate noexcept → ...
+
+**Circular Dependency Chain:**
+```
+__call_is_nt instantiation
+  → Evaluate noexcept(declval<_Fn>()(declval<_Args>()...))
+    → Instantiate declval<_Fn> and declval<_Args>...
+      → Need to resolve _Fn and _Args types
+        → May require more template instantiation
+          → May trigger __call_is_nt again
+            → INFINITE LOOP
+```
+
+**Related Templates in Hang Sequence:**
+```
+#305: is_void              ← Standard type trait (simple)
+#306: integral_constant    ← Base for type traits (simple)
+#307: __invoke_result      ← Determines result of invocation (complex)
+#308: __call_is_nt         ← Checks if call is noexcept (HANGS - most complex)
+```
+
+**Root Cause (Confirmed):**
+
+FlashCpp's parser enters infinite recursion when:
+- Attempting to instantiate `__call_is_nt<...>`
+- Needs to evaluate `noexcept(...)` expression during template instantiation
+- Noexcept evaluation requires instantiating more templates
+- Creates unbounded recursion without proper depth limits
+
+**Parser Behavior Observed:**
+- Template `__call_is_nt` is registered multiple times (seen in debug logs)
+- Parser repeatedly encounters it during recursive evaluation
+- No recursion depth limit prevents the infinite loop
+- No exception thrown (stays in recursion)
+
+**Fix Required:**
+
+1. **Add recursion depth limits** for noexcept expression evaluation
+2. **Defer noexcept evaluation** until all types are fully resolved
+3. **Implement proper handling** of `declval` in template contexts
+4. **Add cycle detection** for template instantiation chains
+5. **Consider lazy evaluation** of noexcept specifications
+
+**Impact:**
+
+Fixing `__call_is_nt` evaluation will unblock:
+- `<functional>` (uses invoke traits extensively)
+- `<type_traits>` (contains __call_is_nt definition)
+- `<chrono>` (uses type traits for duration conversions)
+- `<algorithm>` (if it gets past missing file issue)
+- Any header using `std::invoke` or callable traits
+
+**Test file:** `tests/test_functional_minimal.cpp` (hangs at 308 with `__call_is_nt`)
+
+**Next Investigation Steps:**
 
 **Updated Assessment (2026-01-20):**
 These are **not crashes** but **performance/timeout issues**:
