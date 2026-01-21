@@ -4,59 +4,25 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
-✅ **Trailing Specifiers in Partial Specializations Fix (2026-01-21 PM):** Fixed parsing of member functions and destructors with trailing specifiers (noexcept, = default, = delete) in template partial specializations:
-- Pattern: `Type& operator=(const Type&) noexcept = default;` in partial specializations now parses correctly
-- Pattern: `~Destructor() noexcept = delete;` in partial specializations now parses correctly
-- **Impact**: Fixes parse errors in `<variant>` and related headers that use `bits/enable_special_members.h`
-- **Root cause**: Partial specialization body parsing didn't call `parse_function_trailing_specifiers()` for member functions and destructors
-- **Fix location**: Parser.cpp lines ~27050 (member functions) and ~27010 (destructors)
-- **Current blockers**: After this fix, `<variant>` progresses from line 119 to line 72 (complex decltype in partial specialization)
+✅ **Trailing Specifiers in Partial Specializations (2026-01-21 PM):** Fixed parsing of `operator=(...) noexcept = default` and `~Destructor() noexcept = delete` in partial specializations. `<variant>` progresses from line 119 → 72.
 
-🔧 **Function Argument Parsing Issue Investigation (2026-01-21):** Discovered critical parsing bug affecting exception handling headers:
-- Pattern: `function_name(member_variable)` inside member functions fails to parse arguments correctly
-- Example: `rethrow_exception(_M_ptr)` in `nested_exception::rethrow_nested()`
-- **Symptom**: FlashCpp reports "found 1 overload(s), 0 argument(s)" when it should find 1 argument
-- **Root Cause**: parse_expression's postfix operator loop incorrectly consumes the closing `)` of the function call when parsing the argument
-- **Impact**: Blocks `<exception>`, `<optional>`, `<iostream>`, and any header that depends on exception handling
-- **Location**: Parser.cpp line ~16563 (postfix operator iteration loop)
-- **Partial Fix**: Added simple ADL support for std namespace (tries `std::` prefix when unqualified lookup fails), but this doesn't solve the argument parsing issue
-- **Note**: This error was previously misdiagnosed as "Template `rethrow_exception` not found" or "No matching function for call to `_Hash_bytes`"
-- **Test Case**: Created `/tmp/test_rethrow_simple.cpp` to reproduce the issue in isolation
+🔧 **Function Argument Parsing Issue (2026-01-21):** Postfix operator loop incorrectly consumes `)` when parsing `function(member_variable)` in member functions. Blocks `<exception>`, `<optional>`, `<iostream>`.
 
-✅ **Typename Functional Cast Fix (2026-01-21):** Fixed parsing of `typename T<Args>::member(args)` pattern used in fold expressions:
-- Pattern: `decltype((typename __promote<_Tp>::__type(0) + ...))` now parses correctly
-- This was blocking `<vector>`, `<map>`, `<set>` headers which now progress further (timeout instead of parse error)
-- Root cause: The typename type name parser didn't handle template arguments like `<_Tp>` before `::member`
+✅ **Typename Functional Cast (2026-01-21):** Fixed `typename T<Args>::member(args)` pattern in fold expressions. Unblocks `<vector>`, `<map>`, `<set>` from parse errors.
 
-✅ **Constexpr Constructor in Partial Specialization Fix (2026-01-21):** Fixed parsing of `constexpr` specifier before constructors in template partial specializations:
-- Pattern: `constexpr _Enable_default_constructor() noexcept = delete;` now parses
-- This was blocking `<variant>` header (though other issues remain)
-- Root cause: Partial specialization body parsing didn't handle constexpr/consteval/inline/explicit keywords before constructor names
+✅ **Constexpr Constructor in Partial Specialization (2026-01-21):** Fixed `constexpr _Enable_default_constructor() noexcept = delete` pattern in partial specializations.
 
-✅ **Logging Bug Fixed (2026-01-21):** Investigation revealed that apparent "hangs" were caused by a logging bug where log arguments were evaluated even when filtered at runtime. Fix: Modified FLASH_LOG macros to check runtime level BEFORE evaluating arguments. Debug builds now complete standard headers in 8-11 seconds (was 60+ seconds with bug).
+✅ **Logging Bug (2026-01-21):** Fixed FLASH_LOG macros evaluating arguments even when filtered. Debug builds now 8-11s instead of 60+s.
 
-✅ **Investigation Update (2026-01-20):** Comprehensive investigation of header compilation blockers reveals:
-- **Parser features are mostly complete**: Variadic non-type template params, complex template aliases work correctly
-- **Real blocker was logging performance**: Template instantiation appears slow in debug builds with logging enabled
-- **"Crashes" are actually timeouts**: Enhanced logging confirms no crashes - `<functional>`, `<algorithm>`, `<chrono>` compile successfully without logging
-- **Test coverage added**: 5 new test cases validate parser features 
-- See sections 6.3 and 6.4 below for detailed findings
+✅ **Investigation Update (2026-01-20):** Parser features mostly complete. Real blocker was logging performance. `<functional>`, `<algorithm>`, `<chrono>` compile without logging.
 
-✅ **static_assert with Template-Dependent Expressions (2026-01-20):** Fixed constant expression evaluation to properly handle template-dependent expressions in static_assert:
-- Fold expressions like `(args && ...)` are now correctly deferred to instantiation time
-- Variable templates like `is_integral_v<T>` with template parameters work in static_assert
-- Pack expansions and qualified identifiers with dependent template arguments are handled correctly
-- **Impact**: Essential foundation for many standard library headers that use static assertions with template metaprogramming patterns
-- See "Recent Changes" section below for detailed information
+✅ **static_assert with Template-Dependent Expressions (2026-01-20):** Fixed constant expression evaluation for fold expressions and variable templates in static_assert.
 
-✅ **Silent Failure Investigation (2026-01-19):** Added error tracing infrastructure to catch previously silent failures. Several headers that were silently failing with exit code 1 now properly display error messages:
-- Enhanced `main.cpp` to output parse errors to `stderr` even when logging is disabled
-- Added catch-all exception handlers to capture any uncaught exceptions
-- **Key Finding**: Headers like `<utility>`, `<tuple>`, `<variant>`, and `<span>` were failing silently because parse errors weren't being displayed in release builds
+✅ **Silent Failure Investigation (2026-01-19):** Added error tracing. Headers now properly display parse errors instead of silently failing.
 
-✅ **Log Level Bug Fixed (2026-01-18):** The bug that caused release builds to hang is now fixed. All log levels work correctly.
+✅ **Log Level Bug (2026-01-18):** Fixed release builds hang bug. All log levels work correctly.
 
-✅ **Comprehensive Header Audit (2026-01-19):** Re-tested all headers with extended timeouts (up to 5 minutes). Many headers previously marked as "timeout" actually fail with specific parse errors that can be addressed.
+✅ **Comprehensive Header Audit (2026-01-19):** Re-tested all headers with extended timeouts. Many "timeout" headers actually have specific parse errors.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
