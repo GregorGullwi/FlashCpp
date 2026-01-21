@@ -31394,9 +31394,14 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		}
 		const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
 		if (param.kind() == TemplateParameterKind::Template) {
-			// Template template parameter - the explicit_types[i] should be a template name
-			// For now, we'll assume it's passed as a string in the type system
+			// Template template parameter - bounds check before access
+			if (explicit_idx >= explicit_types.size()) {
+				FLASH_LOG_FORMAT(Templates, Debug, "Template overload mismatch: need template argument at position {} but only {} types provided", 
+				                 explicit_idx, explicit_types.size());
+				return std::nullopt;
+			}
 			// TODO: Implement proper template template argument parsing
+			// For now, we'll use a placeholder since template template args are rarely used
 			template_args.push_back(TemplateArgument::makeTemplate(""));  // Placeholder
 			++explicit_idx;
 		} else if (param.is_variadic()) {
@@ -31409,8 +31414,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			// Regular type parameter - bounds check before access
 			if (explicit_idx >= explicit_types.size()) {
 				// Not enough explicit types - this overload doesn't match
-				FLASH_LOG_FORMAT(Templates, Debug, "Template overload mismatch: need {} non-pack params but only {} types provided", 
-				                 i + 1, explicit_types.size());
+				FLASH_LOG_FORMAT(Templates, Debug, "Template overload mismatch: need argument at position {} but only {} types provided", 
+				                 explicit_idx, explicit_types.size());
 				return std::nullopt;
 			}
 			// Use toTemplateArgument() to preserve full type info including references
