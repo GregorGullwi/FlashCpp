@@ -4,6 +4,17 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
+🔧 **Function Argument Parsing Issue Investigation (2026-01-21):** Discovered critical parsing bug affecting exception handling headers:
+- Pattern: `function_name(member_variable)` inside member functions fails to parse arguments correctly
+- Example: `rethrow_exception(_M_ptr)` in `nested_exception::rethrow_nested()`
+- **Symptom**: FlashCpp reports "found 1 overload(s), 0 argument(s)" when it should find 1 argument
+- **Root Cause**: parse_expression's postfix operator loop incorrectly consumes the closing `)` of the function call when parsing the argument
+- **Impact**: Blocks `<exception>`, `<optional>`, `<iostream>`, and any header that depends on exception handling
+- **Location**: Parser.cpp line ~16563 (postfix operator iteration loop)
+- **Partial Fix**: Added simple ADL support for std namespace (tries `std::` prefix when unqualified lookup fails), but this doesn't solve the argument parsing issue
+- **Note**: This error was previously misdiagnosed as "Template `rethrow_exception` not found" or "No matching function for call to `_Hash_bytes`"
+- **Test Case**: Created `/tmp/test_rethrow_simple.cpp` to reproduce the issue in isolation
+
 ✅ **Typename Functional Cast Fix (2026-01-21):** Fixed parsing of `typename T<Args>::member(args)` pattern used in fold expressions:
 - Pattern: `decltype((typename __promote<_Tp>::__type(0) + ...))` now parses correctly
 - This was blocking `<vector>`, `<map>`, `<set>` headers which now progress further (timeout instead of parse error)
@@ -51,9 +62,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~1.4s |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | 2026-01-21: Now progresses past typename funccast fix, times out during template instantiation |
 | `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | 2026-01-21: Times out during template instantiation |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Error: No matching function for call to `_Hash_bytes` |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | 2026-01-21: Parse error on `operator=` with noexcept = default |
-| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Error: Missing identifier `bad_any_cast` |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | 2026-01-21: Blocked by function argument parsing bug (rethrow_exception issue) |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | 2026-01-21: Parse error on `operator=` with noexcept = default at line 119 |
+| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | 2026-01-21: Times out at 60+ seconds (was misreported as parse error) |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
 | `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | 2026-01-21: Times out during template instantiation |
 | `<bit>` | N/A | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
@@ -67,11 +78,11 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | 2026-01-21: Now progresses past typename funccast fix, times out |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | 2026-01-21: Times out during template instantiation |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Template `rethrow_exception` not found |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | 2026-01-21: Blocked by function argument parsing bug (rethrow_exception issue) |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<atomic>` | N/A | ❌ Parse Error | Complex decltype in partial specialization (see blockers) |
 | `<new>` | N/A | ✅ Compiled | ~0.08s |
-| `<exception>` | N/A | ❌ Parse Error | Template `rethrow_exception` not found |
+| `<exception>` | N/A | ❌ Parse Error | 2026-01-21: Blocked by function argument parsing bug (rethrow_exception in nested_exception.h:79) |
 | `<typeinfo>` | N/A | ✅ Compiled | ~0.09s |
 | `<typeindex>` | N/A | ✅ Compiled | ~0.14s |
 | `<csetjmp>` | N/A | ✅ Compiled | ~0.04s |
@@ -227,11 +238,70 @@ Added forward declaration support: `enum class byte : unsigned char;` now parses
 - **`__typeof__`**: Now works like `decltype` for GCC compatibility
 - **Using-declarations in structs**: `using Base::member;` now correctly imports member names
 
-### 6. Remaining Parse Blockers
+### 6. Function Argument Parsing in Member Functions (CRITICAL BLOCKER - 2026-01-21)
 
-#### 6.1 Context-Dependent Parse Error in `bits/utility.h` (2026-01-19)
+**Issue:** Function calls with member variable arguments inside member functions fail to parse correctly. FlashCpp reports finding the function overload but 0 arguments when it should find 1+ arguments.
 
-**Issue:** Several headers (`<utility>`, `<tuple>`, `<span>`, `<array>`) fail with a parse error when including `bits/utility.h` after certain other standard library headers have been included.
+**Error Message:**
+```
+/usr/include/c++/14/bits/nested_exception.h:79:18: error: No matching function for call to 'rethrow_exception'
+  rethrow_exception(_M_ptr);
+                   ^
+```
+
+**Debug output shows:**
+```
+[DEBUG][Parser] Function call to 'rethrow_exception': found 1 overload(s), 0 argument(s)
+```
+
+**Problematic Code Pattern:**
+```cpp
+class nested_exception {
+    exception_ptr _M_ptr;
+public:
+    void rethrow_nested() const {
+        rethrow_exception(_M_ptr);  // Fails here - argument not parsed
+    }
+};
+```
+
+**Investigation Findings:**
+- The function `rethrow_exception` is found correctly (1 overload)
+- The argument `_M_ptr` is identified and starts parsing
+- In parse_expression's postfix operator loop (Parser.cpp:~16563), after consuming `_M_ptr`, the closing `)` of the function call is incorrectly consumed
+- This causes the argument list to appear empty (0 arguments)
+- Detailed log sequence:
+  1. `consume_token: Consumed token='(', next token from lexer='_M_ptr'` - opens function call
+  2. `>>> parse_expression: Starting with precedence=2, context=0, depth=2, current token: _M_ptr` - starts parsing argument
+  3. `consume_token: Consumed token='_M_ptr', next token from lexer=')'` - consumes identifier
+  4. `Postfix operator iteration 1: peek token type=7, value=')'` - sees closing paren
+  5. `consume_token: Consumed token=')', next token from lexer=';'` - **INCORRECTLY CONSUMES closing paren**
+  6. `Function call to 'rethrow_exception': found 1 overload(s), 0 argument(s)` - args vector is empty
+
+**Root Cause:** The postfix operator loop in parse_expression doesn't properly stop when encountering `)` in a function argument context. The closing `)` should terminate argument parsing but is instead consumed as part of the argument expression.
+
+**Test Cases:**
+- Simple reproduction: `/tmp/test_rethrow_simple.cpp`
+- Full header: `#include <exception>`
+
+**Affected Headers:** 
+- `<exception>` - directly affected at nested_exception.h:79
+- `<optional>` - depends on `<exception>` 
+- `<iostream>` - depends on `<exception>`
+- Any header that uses exception handling
+
+**Impact:** This is a **critical blocker** preventing compilation of most standard library headers that deal with exceptions. Must be fixed before significant progress can be made on exception-related headers.
+
+**Potential Fix Direction:** The postfix operator loop needs to check if we're in a function argument context and avoid consuming `)` that belongs to the enclosing function call. This may require:
+1. Adding context tracking to parse_expression
+2. Checking expression context before entering postfix loop  
+3. Or ensuring the loop exits before consuming delimiter tokens
+
+### 7. Remaining Parse Blockers
+
+#### 7.1 Context-Dependent Parse Error in `bits/utility.h` (2026-01-19)
+
+**Note (2026-01-21):** This may be related to or masked by the function argument parsing issue (blocker #6). After fixing #6, this issue should be re-evaluated.
 
 **Error Message:**
 ```
@@ -262,7 +332,7 @@ template<typename _Tp,
 
 **Affected Headers:** `<utility>`, `<tuple>`, `<span>`, `<array>`, and any header that depends on these
 
-#### 6.2 Constructor with `noexcept = delete` in Context (2026-01-19)
+#### 7.2 Constructor with `noexcept = delete` in Context (2026-01-19)
 
 **Issue:** The `<variant>` header fails with a parse error for constructors marked `noexcept = delete`.
 
@@ -285,7 +355,7 @@ constexpr _Enable_default_constructor() noexcept = delete;
 
 **Affected Headers:** `<variant>`, potentially other headers using `bits/enable_special_members.h`
 
-#### 6.3 Investigation Update (2026-01-20)
+#### 7.3 Investigation Update (2026-01-20)
 
 **Key Finding:** Many patterns previously thought to be blockers actually **work correctly**:
 
@@ -305,7 +375,7 @@ constexpr _Enable_default_constructor() noexcept = delete;
   - Test case: `tests/test_utility_with_context.cpp`
 - **Complex decltype in partial spec**: `__void_t<decltype(hash<T>()(...))>` still needs investigation
 
-### 7. Template Instantiation Performance
+### 8. Template Instantiation Performance
 
 Template-heavy headers (`<concepts>`, `<bit>`, `<string>`, `<ranges>`) time out due to instantiation volume. Key optimization: improve template cache hit rate (currently ~26%).
 - Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
