@@ -37,10 +37,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<source_location>` | N/A | ✅ Compiled | ~0.07s |
 | `<numbers>` | N/A | ✅ Compiled | ~1.2s release |
 | `<initializer_list>` | N/A | ✅ Compiled | ~0.04s |
-| `<ratio>` | `test_std_ratio.cpp` | ❌ Codegen | 2026-01-21: Variable template in function body issue (see blocker #8) |
+| `<ratio>` | `test_std_ratio.cpp` | ❌ Codegen | 2026-01-21: Variable template in function body issue (see blocker 7.4) |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
 | `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen | 2026-01-21: MemberAccess missing object issue (see blocker #9) |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen | 2026-01-21: MemberAccess missing object issue (see blocker 7.5) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | 2026-01-21 PM: IMPROVED from line 119 to line 72 - decltype in partial spec pattern (~5.7s) |
 | `<any>` | `test_std_any.cpp` | ⏱️ Timeout | 2026-01-21: Times out at 60+ seconds (was misreported as parse error) |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
@@ -448,38 +448,18 @@ FlashCpp: src/IRConverter.h:13112: Assertion failed: "Struct object not found in
 
 **Affected Headers:** `<exception>`, `<optional>`, `<iostream>` (all depend on exception handling)
 
-#### 7.5 _Hash_bytes Function Lookup Failure (ACTIVE BLOCKER - 2026-01-21)
+#### 7.6 _Hash_bytes Function Lookup Failure (SUPERSEDED by 7.5)
 
-**Issue:** Calls to `std::_Hash_bytes` fail with "No matching function" error when called from member functions.
+**Note:** This issue may have been caused by the MemberAccess issue (7.5). The _Hash_bytes call was failing, but the root cause may be how reference parameters are handled, not the function lookup itself.
 
-**Error Message:**
+**Previous Error Message:**
 ```
 /usr/include/c++/14/typeinfo:122:25: error: No matching function for call to '_Hash_bytes'
         return _Hash_bytes(name(), __builtin_strlen(name()), static_cast<size_t>(0xc70f6907UL));
                           ^
 ```
 
-**Problematic Code Pattern:**
-```cpp
-namespace std {
-  size_t _Hash_bytes(const void* __ptr, size_t __len, size_t __seed);
-  
-  class type_info {
-    size_t hash_code() const {
-      return _Hash_bytes(name(), __builtin_strlen(name()), 
-                        static_cast<size_t>(0xc70f6907UL));  // Lookup fails here
-    }
-  };
-}
-```
-
-**Analysis:**
-- Function `_Hash_bytes` is declared in `std` namespace
-- Call is made from within a member function of `std::type_info`
-- The function takes 3 arguments and should be found via namespace lookup
-- May be related to ADL (Argument-Dependent Lookup) or namespace visibility in member function context
-
-**Affected Headers:** `<optional>` (stops at ~3.7s), `<iostream>`, and any header depending on `<exception>` → `<typeinfo>`
+**Status:** Needs re-investigation after MemberAccess issue (7.5) is fixed.
 
 ### 8. Template Instantiation Performance
 
