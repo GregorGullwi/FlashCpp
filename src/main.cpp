@@ -9,8 +9,6 @@
 #include <chrono>
 #include <algorithm>
 #include <iomanip>
-#include <thread>
-#include <atomic>
 
 #include "FileTree.h"
 #include "FileReader.h"
@@ -409,46 +407,7 @@ int main_impl(int argc, char *argv[]) {
         // Note: Lexing happens lazily during parsing in this implementation
         // Template instantiation also happens during parsing
         
-        // Start a watchdog thread to log progress if parsing takes too long
-        std::atomic<bool> parsing_complete{false};
-        std::atomic<bool> force_stop{false};
-        std::thread watchdog([&parsing_complete, &force_stop]() {
-            auto start = std::chrono::steady_clock::now();
-            int watchdog_count = 0;
-            while (!parsing_complete) {
-                // Sleep in small increments so we can exit quickly when parsing completes
-                for (int i = 0; i < 100 && !parsing_complete; ++i) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                }
-                if (!parsing_complete) {
-                    watchdog_count++;
-                    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::steady_clock::now() - start).count();
-                    auto& stats = TemplateProfilingStats::getInstance();
-                    size_t inst_count = stats.getTotalInstantiationCount();
-                    printf("[Watchdog] Parsing still in progress after %ld seconds. Total instantiations: %zu\n",
-                           elapsed, inst_count);
-                    fflush(stdout);
-                    
-                    // Emergency timeout after 2 minutes with no progress
-                    if (watchdog_count > 12) {  // 120 seconds
-                        printf("[Watchdog] EMERGENCY TIMEOUT after 120 seconds! Forcing stop.\n");
-                        fflush(stdout);
-                        force_stop = true;
-                        break;
-                    }
-                }
-            }
-        });
-        
         auto parse_result = parser->parse();
-        parsing_complete = true;
-        watchdog.join();
-        
-        if (force_stop) {
-            std::cerr << "Compilation aborted: Parsing timeout after 120 seconds" << std::endl;
-            return 1;
-        }
 
         if (parse_result.is_error()) {
             // Print formatted error with file:line:column information and include stack
