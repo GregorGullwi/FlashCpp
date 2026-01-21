@@ -45,11 +45,43 @@ Template arguments come in two forms that need different handling:
 
 ### Combined Template Key Structure
 
+Most templates have 1-4 arguments, so we use an inline array to avoid heap allocation in the common case:
+
 ```cpp
+// SmallVector-style container: inline storage for N elements, heap for more
+template<typename T, size_t N = 4>
+struct InlineVector {
+    std::array<T, N> inline_data;
+    std::vector<T> overflow;
+    uint8_t inline_count = 0;
+    
+    void push_back(T value) {
+        if (inline_count < N) {
+            inline_data[inline_count++] = value;
+        } else {
+            overflow.push_back(value);
+        }
+    }
+    
+    size_t size() const { return inline_count + overflow.size(); }
+    
+    T operator[](size_t i) const {
+        return i < N ? inline_data[i] : overflow[i - N];
+    }
+    
+    bool operator==(const InlineVector& other) const {
+        if (size() != other.size()) return false;
+        for (size_t i = 0; i < size(); ++i) {
+            if ((*this)[i] != other[i]) return false;
+        }
+        return true;
+    }
+};
+
 struct TemplateInstantiationKey {
-    TypeIndex base_template;              // The template being instantiated
-    std::vector<TypeIndex> type_args;     // Type arguments (e.g., <int, float>)
-    std::vector<int64_t> non_type_args;   // Non-type arguments (e.g., <5, true>)
+    TypeIndex base_template;                    // The template being instantiated
+    InlineVector<TypeIndex, 4> type_args;       // Type arguments - inline up to 4
+    InlineVector<int64_t, 4> non_type_args;     // Non-type arguments - inline up to 4
     
     bool operator==(const TemplateInstantiationKey&) const = default;
 };
@@ -57,16 +89,21 @@ struct TemplateInstantiationKey {
 struct TemplateInstantiationKeyHash {
     size_t operator()(const TemplateInstantiationKey& key) const {
         size_t h = std::hash<TypeIndex>{}(key.base_template);
-        for (TypeIndex ti : key.type_args) {
-            h ^= std::hash<TypeIndex>{}(ti) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        for (size_t i = 0; i < key.type_args.size(); ++i) {
+            h ^= std::hash<TypeIndex>{}(key.type_args[i]) + 0x9e3779b9 + (h << 6) + (h >> 2);
         }
-        for (int64_t v : key.non_type_args) {
-            h ^= std::hash<int64_t>{}(v) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        for (size_t i = 0; i < key.non_type_args.size(); ++i) {
+            h ^= std::hash<int64_t>{}(key.non_type_args[i]) + 0x9e3779b9 + (h << 6) + (h >> 2);
         }
         return h;
     }
 };
 ```
+
+This approach:
+- **No heap allocation** for templates with ≤4 type args and ≤4 non-type args (covers ~95% of templates)
+- **Falls back to vector** for larger template parameter lists
+- **Still O(1) access** regardless of which storage is used
 
 ## Proposed Optimizations
 
@@ -162,18 +199,3 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 - **TypeIndex stability**: TypeIndex values are assigned during parsing. Consider if they need to be stable across compilation units (for incremental compilation).
 - **Type aliases**: `typedef` and `using` create aliases that should resolve to the same TypeIndex
 - **Template parameters**: Template type parameters need special handling (they're not concrete types until instantiation)
-
-## Compatibility with C++ Features
-
-### Argument-Dependent Lookup (ADL)
-ADL is a **name resolution** feature, not a type lookup feature. It determines which namespaces to search for function overloads based on argument types. The TypeIndex optimization focuses on **type identity** comparisons for template instantiation caching - it doesn't affect how function names are resolved. ADL would continue to use the existing namespace and name-based lookup mechanisms.
-
-### Incomplete Types (Forward Declarations)
-Incomplete types (forward-declared classes) can still have a TypeIndex assigned - they exist in `gTypeInfo` as incomplete types. The TypeIndex represents type identity, not completeness. When the type becomes complete, the same TypeIndex is retained and the TypeInfo is updated with size/member information. This is already how the codebase works.
-
-### Partial Specializations
-Partial specializations involve **pattern matching** on template arguments, not type equality. The proposed TypeIndex optimization handles concrete instantiations (e.g., `vector<int>` maps to a specific TypeIndex). Partial specialization selection requires:
-1. Checking which patterns match the concrete types
-2. Selecting the most specialized matching pattern
-
-This pattern matching must remain string/pattern-based because it compares against symbolic patterns like `_Tp*`, `const _Tp&`, etc. The optimization focuses on **caching instantiation results** once a specialization is selected, not on the selection process itself.
