@@ -227,7 +227,7 @@ public:
                 // Only lookup the name here when printing
                 std::string_view name = StringTable::getStringView(handle);
                 printf("  %2zu. %-40.*s: count=%5zu, total=%8.3f ms, mean=%8.3f μs\n",
-                       i + 1, (int)std::min(name.size(), size_t(40)), name.data(),
+                       i + 1, (int)(std::min)(name.size(), size_t(40)), name.data(),
                        acc->count(), acc->total_duration() / 1000.0, acc->mean_duration());
             }
         }
@@ -249,7 +249,7 @@ public:
                 // Only lookup the name here when printing
                 std::string_view name = StringTable::getStringView(handle);
                 printf("  %2zu. %-40.*s: count=%5zu, total=%8.3f ms, mean=%8.3f μs\n",
-                       i + 1, (int)std::min(name.size(), size_t(40)), name.data(),
+                       i + 1, (int)(std::min)(name.size(), size_t(40)), name.data(),
                        acc->count(), acc->total_duration() / 1000.0, acc->mean_duration());
             }
         }
