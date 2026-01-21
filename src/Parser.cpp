@@ -25423,6 +25423,14 @@ ParseResult Parser::parse_template_declaration() {
 					// Mark as dependent - this is a partial specialization pattern,
 					// so all types are template parameters (dependent types)
 					arg.is_dependent = true;
+					
+					// Store the type name for pattern matching
+					// For template instantiations like ratio<_Num, _Den>, this will be "ratio"
+					// For simple types like T, this will be "T"
+					if (type_spec.token().value().size() > 0) {
+						arg.dependent_name = StringTable::getOrInternStringHandle(type_spec.token().value());
+					}
+					
 					specialization_pattern.push_back(arg);
 				}
 				
@@ -25502,11 +25510,14 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// Include base type name for user-defined types to distinguish patterns
 				// e.g., __is_ratio_v<ratio<N,D>> gets pattern "__is_ratio_v_ratio"
-				// BUT: Don't include the type name if it's a dependent type (template parameter)
+				// For simple dependent types (like T&), DON'T include the type name
 				// e.g., is_reference_v<T&> should get pattern "is_reference_v_R", not "is_reference_v_TR"
-				if (!arg.is_dependent && 
-				    (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum)) {
-					if (arg.type_index < gTypeInfo.size()) {
+				// BUT for dependent TEMPLATE INSTANTIATIONS (like ratio<_Num, _Den>), DO include the base template name
+				bool included_type_name = false;
+				
+				// First, check if we have a valid type_index pointing to a named type
+				if ((arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum)) {
+					if (arg.type_index < gTypeInfo.size() && arg.type_index > 0) {
 						// Get the simple name (without namespace) for pattern matching
 						std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
 						// Strip namespace prefix if present
@@ -25514,8 +25525,42 @@ ParseResult Parser::parse_template_declaration() {
 						if (last_colon != std::string_view::npos) {
 							type_name = type_name.substr(last_colon + 2);
 						}
-						pattern_name.append(type_name);
+						
+						// Only include type name for TEMPLATE INSTANTIATION patterns, not simple template parameters
+						// Template instantiation placeholders look like "ratio_void_void" (contain "_void")
+						// Simple template parameters look like "T" or "_Tp" (no "_void")
+						std::string type_name_str(type_name);
+						if (type_name_str.find("_void") != std::string::npos) {
+							// This is a dependent template instantiation like ratio<_Num, _Den>
+							// Extract just the base template name "ratio"
+							size_t first_underscore = type_name.find('_');
+							if (first_underscore != std::string_view::npos) {
+								type_name = type_name.substr(0, first_underscore);
+							}
+							pattern_name.append(type_name);
+							included_type_name = true;
+						} else if (!arg.is_dependent) {
+							// Non-dependent concrete type - include the full type name
+							pattern_name.append(type_name);
+							included_type_name = true;
+						}
+						// For simple dependent types (like T), don't include the name - they match any type
 					}
+				}
+				
+				// If type_index didn't give us a name and we have dependent_name, check if it's a template
+				// This handles cases where the template instantiation was skipped due to dependent args
+				if (!included_type_name && arg.dependent_name.isValid()) {
+					std::string_view dep_name = StringTable::getStringView(arg.dependent_name);
+					// Check if this name is a known template (not just a simple type like T)
+					// Template names are identifiers that have registered templates
+					auto template_opt = gTemplateRegistry.lookupTemplate(dep_name);
+					if (template_opt.has_value()) {
+						// This is a template instantiation pattern - include the template name
+						pattern_name.append(dep_name);
+						included_type_name = true;
+					}
+					// else: It's a simple type parameter like T - don't include in pattern
 				}
 				
 				if (arg.is_reference) {
