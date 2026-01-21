@@ -16800,7 +16800,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				
 				// Parse function arguments
 				ChunkedVector<ASTNode> args;
-				if (current_token_.has_value() && current_token_->value() != ")") {
+				// Check if function call has arguments (not empty parentheses)
+				if (peek_token().has_value() && peek_token()->value() != ")") {
 					while (true) {
 						auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (arg_result.is_error()) {
@@ -17049,6 +17050,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			// handle operator-> overload resolution. For raw pointers, it will generate
 			// the equivalent of (*ptr).member; for objects with operator->, it will call that.
 		} else {
+			FLASH_LOG_FORMAT(Parser, Debug, "Postfix loop: breaking, peek token type={}, value='{}'",
+				static_cast<int>(peek_token()->type()), peek_token()->value());
 			break;  // No more postfix operators
 		}
 
@@ -21187,99 +21190,119 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
 
 				ChunkedVector<ASTNode> args;
-				while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")"sv) {
-					ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (argResult.is_error()) {
-						return argResult;
-					}
-
-					// Check for pack expansion: expr...
-					if (peek_token().has_value() && peek_token()->value() == "...") {
-						consume_token(); // consume '...'
+				// Check if function call has arguments (not empty parentheses)
+				if (peek_token().has_value() && peek_token()->value() != ")") {
+					FLASH_LOG_FORMAT(Parser, Debug, "Parsing function arguments, peek='{}', current='{}'", 
+						peek_token()->value(), current_token_.has_value() ? current_token_->value() : "N/A");
+					while (true) {
+						ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (argResult.is_error()) {
+							return argResult;
+						}
 						
-						// Pack expansion: need to expand the expression for each pack element
-						if (auto arg_node = argResult.node()) {
-							// Check if this is an ExpressionNode containing an IdentifierNode
-							if (arg_node->is<ExpressionNode>()) {
-								const auto& expr = arg_node->as<ExpressionNode>();
-								if (std::holds_alternative<IdentifierNode>(expr)) {
-									const auto& ident_node = std::get<IdentifierNode>(expr);
-									std::string_view pack_name = ident_node.name();
-									// Try to find pack_name_0, pack_name_1, etc. in the symbol table
-									size_t pack_size = 0;
-									
-									StringBuilder sb;
-									for (size_t i = 0; i < 100; ++i) {  // reasonable limit
-										// Use StringBuilder to create a persistent string
-										std::string_view element_name = sb
-											.append(pack_name)
-											.append("_")
-											.append(i)
-											.preview();
-									
-										if (gSymbolTable.lookup(element_name).has_value()) {
-											++pack_size;
-										} else {
-											break;
-										}
+						FLASH_LOG_FORMAT(Parser, Debug, "Parsed one argument, peek='{}', has_node={}", 
+							peek_token().has_value() ? peek_token()->value() : "N/A", argResult.node().has_value());
 
-										sb.reset();
-									}
-									sb.reset();
-									
-									if (pack_size > 0) {
-										// Add each pack element as a separate argument
-										for (size_t i = 0; i < pack_size; ++i) {
-											// Use StringBuilder to create a persistent string for the token
+						// Check for pack expansion: expr...
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							consume_token(); // consume '...'
+							
+							// Pack expansion: need to expand the expression for each pack element
+							if (auto arg_node = argResult.node()) {
+								// Check if this is an ExpressionNode containing an IdentifierNode
+								if (arg_node->is<ExpressionNode>()) {
+									const auto& expr = arg_node->as<ExpressionNode>();
+									if (std::holds_alternative<IdentifierNode>(expr)) {
+										const auto& ident_node = std::get<IdentifierNode>(expr);
+										std::string_view pack_name = ident_node.name();
+										// Try to find pack_name_0, pack_name_1, etc. in the symbol table
+										size_t pack_size = 0;
+										
+										StringBuilder sb;
+										for (size_t i = 0; i < 100; ++i) {  // reasonable limit
+											// Use StringBuilder to create a persistent string
 											std::string_view element_name = sb
 												.append(pack_name)
 												.append("_")
 												.append(i)
-												.commit();
-											
-											Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
-											auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
-											args.push_back(elem_node);
+												.preview();
+										
+											if (gSymbolTable.lookup(element_name).has_value()) {
+												++pack_size;
+											} else {
+												break;
+											}
+
+											sb.reset();
+										}
+										sb.reset();
+										
+										if (pack_size > 0) {
+											// Add each pack element as a separate argument
+											for (size_t i = 0; i < pack_size; ++i) {
+												// Use StringBuilder to create a persistent string for the token
+												std::string_view element_name = sb
+													.append(pack_name)
+													.append("_")
+													.append(i)
+													.commit();
+												
+												Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
+												auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
+												args.push_back(elem_node);
+											}
+										} else {
+											if (auto node = argResult.node()) {
+												args.push_back(*node);
+											}
 										}
 									} else {
+										// Complex expression: need full rewriting (not implemented yet)
 										if (auto node = argResult.node()) {
 											args.push_back(*node);
 										}
 									}
 								} else {
-									// Complex expression: need full rewriting (not implemented yet)
+									// Not an ExpressionNode
 									if (auto node = argResult.node()) {
 										args.push_back(*node);
 									}
 								}
-							} else {
-								// Not an ExpressionNode
-								if (auto node = argResult.node()) {
-									args.push_back(*node);
-								}
+							}
+						} else {
+							// Regular argument
+							FLASH_LOG_FORMAT(Parser, Debug, "Adding regular argument to args, has_node={}", argResult.node().has_value());
+							if (auto node = argResult.node()) {
+								args.push_back(*node);
+								FLASH_LOG_FORMAT(Parser, Debug, "Added argument to args, new size={}", args.size());
 							}
 						}
-					} else {
-						// Regular argument
-						if (auto node = argResult.node()) {
-							args.push_back(*node);
+
+						// Check what comes after the argument
+						if (!peek_token().has_value()) {
+							return ParseResult::error(ParserError::NotImplemented, Token());
+						}
+						
+						if (peek_token()->value() == ")") {
+							// End of argument list
+							break;
+						}
+						else if (peek_token()->value() == ",") {
+							// More arguments follow
+							consume_token(); // Consume comma
+						}
+						else {
+							return ParseResult::error("Expected ',' or ')' after function argument", *peek_token());
 						}
 					}
-
-					if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ","sv) {
-						consume_token(); // Consume comma
-					}
-					else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")"sv) {
-						return ParseResult::error("Expected ',' or ')' after function argument", *current_token_);
-					}
-
-					if (!peek_token().has_value())
-						return ParseResult::error(ParserError::NotImplemented, Token());
 				}
 
 				if (!consume_punctuator(")")) {
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 				}
+				
+				FLASH_LOG_FORMAT(Parser, Debug, "After parsing args: size={}, has_operator_call={}, is_template_parameter={}, is_function_pointer={}", 
+					args.size(), has_operator_call, is_template_parameter, is_function_pointer);
 
 				// For operator() calls, create a member function call
 				if (has_operator_call) {
@@ -21343,14 +21366,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Check if this is a constructor call on a template parameter
 					if (result.has_value() && result->is<ExpressionNode>()) {
 						const ExpressionNode& expr = result->as<ExpressionNode>();
+						FLASH_LOG_FORMAT(Parser, Debug, "Checking if result is TemplateParameterReferenceNode, expr_index={}", expr.index());
 						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 							// This is a constructor call: T(args)
+							FLASH_LOG(Parser, Debug, "result IS TemplateParameterReferenceNode, moving args");
 							const auto& template_param = std::get<TemplateParameterReferenceNode>(expr);
 							// Create a TypeSpecifierNode for the template parameter
 							Token param_token(Token::Type::Identifier, template_param.param_name().view(), idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 							auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, param_token);
 							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
 						} else {
+							FLASH_LOG_FORMAT(Parser, Debug, "result is NOT TemplateParameterReferenceNode, proceeding to overload resolution, args.size()={}", args.size());
 							// Perform overload resolution for regular functions
 							// First, get all overloads of this function
 							auto all_overloads = gSymbolTable.lookup_all(idenfifier_token.value());
@@ -21374,6 +21400,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
 										}
 									}
+									// Return early - we've created the FunctionCallNode with the args
+									if (result.has_value())
+										return ParseResult::success(*result);
 									break;
 								}
 							
