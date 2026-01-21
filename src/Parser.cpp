@@ -9042,10 +9042,19 @@ ParseResult Parser::parse_friend_declaration()
 	// Skip optional qualifiers after parameter list using existing helper
 	skip_function_trailing_specifiers();
 
-	// Handle friend function body (inline definition) or semicolon (declaration only)
+	// Handle friend function body (inline definition), = default, = delete, or semicolon (declaration only)
 	if (peek_token().has_value() && peek_token()->value() == "{") {
 		// Friend function with inline body - skip the body using existing helper
 		skip_balanced_braces();
+	} else if (peek_token().has_value() && peek_token()->value() == "=") {
+		// Handle = default or = delete
+		consume_token(); // consume '='
+		if (peek_token().has_value() && (peek_token()->value() == "default" || peek_token()->value() == "delete")) {
+			consume_token(); // consume 'default' or 'delete'
+		}
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after friend function declaration", *current_token_);
+		}
 	} else if (!consume_punctuator(";")) {
 		return ParseResult::error("Expected ';' after friend function declaration", *current_token_);
 	}
@@ -15129,12 +15138,50 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		SaveHandle saved_pos = save_token_position();
 		ParseResult type_result = parse_type_specifier();
 
-		// Check if this is really a type by seeing if ')' follows
-		bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
-		                                 peek_token().has_value() && peek_token()->value() == ")";
+		// If we successfully parsed a type, check for pointer/reference declarators
+		// This handles alignof(void *), alignof(int **), alignof(Foo &), etc.
+		bool is_complete_type = false;
+		if (!type_result.is_error() && type_result.node().has_value()) {
+			// Parse any pointer (* const * volatile) or reference (& &&) declarators
+			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+			
+			while (peek_token().has_value()) {
+				auto next_token = peek_token();
+				if (next_token->value() == "*") {
+					// Parse pointer with optional cv-qualifiers
+					consume_token(); // consume '*'
+					
+					// Check for const/volatile after *
+					CVQualifier ptr_cv = parse_cv_qualifiers();
+					
+					type_spec.add_pointer_level(ptr_cv);
+				} else if (next_token->value() == "&") {
+					// Lvalue reference
+					consume_token();
+					
+					// Check if it's rvalue reference (&&)
+					if (peek_token().has_value() && peek_token()->value() == "&") {
+						consume_token();
+						type_spec.set_reference(true); // rvalue reference
+					} else {
+						type_spec.set_lvalue_reference(true);
+					}
+					// References can't have further declarators
+					break;
+				} else {
+					// Not a pointer or reference declarator
+					break;
+				}
+			}
+			
+			// Now check if ')' follows
+			if (peek_token().has_value() && peek_token()->value() == ")") {
+				is_complete_type = true;
+			}
+		}
 		
-		if (is_type_followed_by_paren) {
-			// Successfully parsed as type and ')' follows
+		if (is_complete_type) {
+			// Successfully parsed as type with declarators and ')' follows
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after " + std::string(alignof_name) + " type", *current_token_);
 			}
@@ -17325,7 +17372,30 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		Token first_type_token = *current_token_;
 		consume_token(); // consume first identifier
 		
-		// Parse :: and subsequent identifiers
+		// Handle template arguments after identifier: typename __promote<_Tp>::__type(0)
+		if (current_token_.has_value() && current_token_->value() == "<") {
+			type_name_sb.append("<");
+			consume_token(); // consume '<'
+			
+			// Parse template arguments, handling nested template arguments
+			int angle_bracket_depth = 1;
+			while (current_token_.has_value() && angle_bracket_depth > 0) {
+				if (current_token_->value() == "<") {
+					angle_bracket_depth++;
+				} else if (current_token_->value() == ">") {
+					angle_bracket_depth--;
+					if (angle_bracket_depth == 0) {
+						type_name_sb.append(">");
+						consume_token(); // consume final '>'
+						break;
+					}
+				}
+				type_name_sb.append(current_token_->value());
+				consume_token();
+			}
+		}
+		
+		// Parse :: and subsequent identifiers (with optional template args)
 		while (current_token_.has_value() && current_token_->value() == "::") {
 			type_name_sb.append("::");
 			consume_token(); // consume '::'
@@ -17336,6 +17406,29 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 			type_name_sb.append(current_token_->value());
 			consume_token(); // consume identifier
+			
+			// Handle template arguments after the identifier
+			if (current_token_.has_value() && current_token_->value() == "<") {
+				type_name_sb.append("<");
+				consume_token(); // consume '<'
+				
+				// Parse template arguments, handling nested template arguments
+				int angle_bracket_depth = 1;
+				while (current_token_.has_value() && angle_bracket_depth > 0) {
+					if (current_token_->value() == "<") {
+						angle_bracket_depth++;
+					} else if (current_token_->value() == ">") {
+						angle_bracket_depth--;
+						if (angle_bracket_depth == 0) {
+							type_name_sb.append(">");
+							consume_token(); // consume final '>'
+							break;
+						}
+					}
+					type_name_sb.append(current_token_->value());
+					consume_token();
+				}
+			}
 		}
 		
 		// Now we should have either '{}' (brace init) or '()' (paren init)
@@ -18958,8 +19051,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// and template class names are commonly used as template arguments in <type_traits>
 		if (!identifierType && !found_as_type_alias && peek_token().has_value()) {
 			std::string_view peek = peek_token()->value();
-			// Check gTypesByName if identifier is followed by :: (qualified name) or ( (constructor call)
-			bool should_check_types = (peek == "::" || peek == "(");
+			// Check gTypesByName if identifier is followed by :: (qualified name), ( (constructor call), or { (brace init)
+			bool should_check_types = (peek == "::" || peek == "(" || peek == "{");
 			
 			// In template argument context, also check for various tokens that indicate a type context.
 			// Type aliases and template class names are commonly used as template arguments
@@ -20992,6 +21085,41 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 					}
 				}
+			}
+
+			// Handle brace initialization for type names: TypeName{} or TypeName{args}
+			// This handles expressions like "throw bad_any_cast{}" where bad_any_cast is a class
+			if (found_as_type_alias && !identifierType && peek_token().has_value() && peek_token()->value() == "{") {
+				consume_token(); // consume '{'
+				
+				// Parse brace initializer arguments
+				ChunkedVector<ASTNode> args;
+				while (current_token_.has_value() && current_token_->value() != "}") {
+					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+					if (auto arg = arg_result.node()) {
+						args.push_back(*arg);
+					}
+					
+					if (current_token_.has_value() && current_token_->value() == ",") {
+						consume_token(); // consume ','
+					} else if (!current_token_.has_value() || current_token_->value() != "}") {
+						return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+					}
+				}
+				
+				if (!consume_punctuator("}")) {
+					return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+				}
+				
+				// Create TypeSpecifierNode for the type
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, idenfifier_token);
+				
+				// Create ConstructorCallNode for brace initialization
+				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
+				return ParseResult::success(*result);
 			}
 
 			// Initially set result to a simple identifier - will be upgraded to FunctionCallNode if it's a function call
@@ -26833,6 +26961,37 @@ ParseResult Parser::parse_template_declaration() {
 							return static_assert_result;
 						}
 						continue;
+					} else if (peek_token()->value() == "constexpr" || 
+					           peek_token()->value() == "consteval" ||
+					           peek_token()->value() == "inline" ||
+					           peek_token()->value() == "explicit") {
+						// Handle constexpr/consteval/inline/explicit before constructor or member function
+						// Consume the specifier and continue to constructor/member check below
+					}
+				}
+				
+				// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
+				// This mirrors the handling in regular struct parsing
+				[[maybe_unused]] bool is_member_constexpr = false;
+				[[maybe_unused]] bool is_member_consteval = false;
+				[[maybe_unused]] bool is_member_inline = false;
+				[[maybe_unused]] bool is_member_explicit = false;
+				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+					std::string_view kw = peek_token()->value();
+					if (kw == "constexpr") {
+						is_member_constexpr = true;
+						consume_token();
+					} else if (kw == "consteval") {
+						is_member_consteval = true;
+						consume_token();
+					} else if (kw == "inline") {
+						is_member_inline = true;
+						consume_token();
+					} else if (kw == "explicit") {
+						is_member_explicit = true;
+						consume_token();
+					} else {
+						break;
 					}
 				}
 				

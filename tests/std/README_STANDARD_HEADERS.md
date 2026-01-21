@@ -4,6 +4,16 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
+✅ **Typename Functional Cast Fix (2026-01-21):** Fixed parsing of `typename T<Args>::member(args)` pattern used in fold expressions:
+- Pattern: `decltype((typename __promote<_Tp>::__type(0) + ...))` now parses correctly
+- This was blocking `<vector>`, `<map>`, `<set>` headers which now progress further (timeout instead of parse error)
+- Root cause: The typename type name parser didn't handle template arguments like `<_Tp>` before `::member`
+
+✅ **Constexpr Constructor in Partial Specialization Fix (2026-01-21):** Fixed parsing of `constexpr` specifier before constructors in template partial specializations:
+- Pattern: `constexpr _Enable_default_constructor() noexcept = delete;` now parses
+- This was blocking `<variant>` header (though other issues remain)
+- Root cause: Partial specialization body parsing didn't handle constexpr/consteval/inline/explicit keywords before constructor names
+
 ✅ **Logging Bug Fixed (2026-01-21):** Investigation revealed that apparent "hangs" were caused by a logging bug where log arguments were evaluated even when filtered at runtime. Fix: Modified FLASH_LOG macros to check runtime level BEFORE evaluating arguments. Debug builds now complete standard headers in 8-11 seconds (was 60+ seconds with bug).
 
 ✅ **Investigation Update (2026-01-20):** Comprehensive investigation of header compilation blockers reveals:
@@ -39,26 +49,26 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~1.2s release |
 | `<initializer_list>` | N/A | ✅ Compiled | ~0.04s |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~1.4s |
-| `<vector>` | `test_std_vector.cpp` | ✅ Compiled | 2026-01-19: Now compiles after QualifiedIdentifierNode fix |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Context-dependent parse error in `bits/utility.h:139` |
-| `<optional>` | `test_std_optional.cpp` | ✅ Compiled | Warning: Template `_Hash_bytes` not found |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Parse error in `bits/enable_special_members.h:189` |
-| `<any>` | `test_std_any.cpp` | ✅ Compiled | Warning: Template `_Hash_bytes` not found |
+| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | 2026-01-21: Now progresses past typename funccast fix, times out during template instantiation |
+| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | 2026-01-21: Times out during template instantiation |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Error: No matching function for call to `_Hash_bytes` |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | 2026-01-21: Parse error on `operator=` with noexcept = default |
+| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Error: Missing identifier `bad_any_cast` |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
-| `<utility>` | `test_std_utility.cpp` | ❌ Parse Error | Context-dependent parse error in `bits/utility.h:140` |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | 2026-01-21: Times out during template instantiation |
 | `<bit>` | N/A | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Context-dependent parse error (depends on `<bits/utility.h>`) |
-| `<memory>` | `test_std_memory.cpp` | ❌ Missing File | Failed to include `execution_defs.h` |
-| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Times out at 60+ seconds (2026-01-20: confirmed timeout, not crash) |
-| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Times out at 60+ seconds (2026-01-20: confirmed timeout, not crash) |
-| `<map>` | `test_std_map.cpp` | ❌ Parse Error | Depends on failing headers |
-| `<set>` | `test_std_set.cpp` | ❌ Parse Error | Depends on failing headers |
-| `<span>` | `test_std_span.cpp` | ❌ Parse Error | Context-dependent parse error in `bits/utility.h:140` |
+| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | 2026-01-21: Times out during template instantiation |
+| `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | 2026-01-21: Times out during template instantiation |
+| `<functional>` | `test_std_functional.cpp` | ❌ Internal Error | Fatal error: std::bad_any_cast during IR conversion |
+| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
+| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | 2026-01-21: Now progresses past typename funccast fix, times out |
+| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | 2026-01-21: Now progresses past typename funccast fix, times out |
+| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | 2026-01-21: Times out during template instantiation |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Template `rethrow_exception` not found |
-| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out at 60+ seconds (2026-01-20: confirmed timeout, not crash) |
+| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<atomic>` | N/A | ❌ Parse Error | Complex decltype in partial specialization (see blockers) |
 | `<new>` | N/A | ✅ Compiled | ~0.08s |
 | `<exception>` | N/A | ❌ Parse Error | Template `rethrow_exception` not found |
