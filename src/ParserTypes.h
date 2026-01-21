@@ -57,7 +57,7 @@ struct ParsedFunctionArguments {
 		return result;
 	}
 	
-	static ParsedFunctionArguments make_error(std::string_view msg, Token token) {
+	static ParsedFunctionArguments make_error(const std::string& msg, Token token) {
 		ParsedFunctionArguments result;
 		result.success = false;
 		result.error_message = msg;
