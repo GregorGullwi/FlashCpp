@@ -30880,16 +30880,16 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		if (param.kind() == TemplateParameterKind::Template) {
 			// Template template parameter - extract the template name from explicit_types[i]
 			// The parser stores template names as Type::Struct with a type_index pointing to the TypeInfo
-			std::string template_name_str;
+			std::string_view template_name_str;
 			if (i < explicit_types.size()) {
 				const auto& arg = explicit_types[i];
 				// Template arguments are stored as Type::Struct with type_index pointing to the template's TypeInfo
 				if (arg.base_type == Type::Struct && arg.type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[arg.type_index];
-					template_name_str = std::string(StringTable::getStringView(type_info.name()));
+					template_name_str = StringTable::getStringView(type_info.name());
 				} else if (arg.is_dependent) {
 					// For dependent template arguments, use the dependent_name
-					template_name_str = std::string(arg.dependent_name.view());
+					template_name_str = arg.dependent_name.view();
 				}
 			}
 			template_args.push_back(TemplateArgument::makeTemplate(template_name_str));
