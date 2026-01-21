@@ -86,6 +86,8 @@ public:
         // Log progress every 100 instantiations when Info level is enabled
         // This helps track where the compiler gets stuck during template-heavy compilations
         #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
+        // Record in interval and total stats
+        recordInstantiationTime(duration.count());
         maybeLogProgress(50);  // Increased frequency: log every 50 instantiations instead of 100
         #endif
     }
@@ -245,12 +247,19 @@ public:
     }
 
 #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
+    // Record individual instantiation time for interval statistics
+    void recordInstantiationTime(int64_t duration_us) {
+        interval_stats_.add(std::chrono::microseconds(duration_us));
+        total_stats_.add(std::chrono::microseconds(duration_us));
+    }
+
     // Check if progress should be logged (every N instantiations)
     // Returns true if progress was logged
     bool maybeLogProgress(size_t interval = 1000) {
         if (total_instantiation_count_ - last_progress_count_ >= interval) {
             auto now = std::chrono::high_resolution_clock::now();
             auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time_).count();
+            auto interval_elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - interval_start_time_).count();
             
             size_t total_hits = 0, total_misses = 0;
             for (const auto& [name, hits] : cache_hits_) {
@@ -262,17 +271,34 @@ public:
             size_t total_requests = total_hits + total_misses;
             double hit_rate = total_requests > 0 ? (100.0 * total_hits / total_requests) : 0.0;
             
+            // Calculate templates per second for this interval
+            size_t interval_count = total_instantiation_count_ - last_progress_count_;
+            double templates_per_sec = interval_elapsed_ms > 0 ? (interval_count * 1000.0 / interval_elapsed_ms) : 0.0;
+            
+            // Print interval statistics
+            printf("[Progress] %zu templates in %lld ms total (%.0f/sec) | Interval: min=%.0fμs avg=%.0fμs max=%.0fμs | Total: min=%.0fμs avg=%.0fμs max=%.0fμs | cache=%.1f%%",
+                   total_instantiation_count_, (long long)elapsed_ms, templates_per_sec,
+                   (double)interval_stats_.min_duration(), interval_stats_.mean_duration(), (double)interval_stats_.max_duration(),
+                   (double)total_stats_.min_duration(), total_stats_.mean_duration(), (double)total_stats_.max_duration(),
+                   hit_rate);
+            
             if (current_instantiation_.isValid() && instantiation_depth_ > 0) {
                 std::string_view current_name = StringTable::getStringView(current_instantiation_);
-                printf("[Progress] %zu template instantiations in %lld ms (cache hit rate: %.1f%%, depth: %zu, current: %.*s)\n",
-                       total_instantiation_count_, (long long)elapsed_ms, hit_rate, 
-                       instantiation_depth_, (int)current_name.size(), current_name.data());
+                // Truncate long names
+                size_t max_len = 40;
+                if (current_name.size() > max_len) {
+                    printf(" depth=%zu current=%.37s...\n", instantiation_depth_, current_name.data());
+                } else {
+                    printf(" depth=%zu current=%.*s\n", instantiation_depth_, (int)current_name.size(), current_name.data());
+                }
             } else {
-                printf("[Progress] %zu template instantiations in %lld ms (cache hit rate: %.1f%%)\n",
-                       total_instantiation_count_, (long long)elapsed_ms, hit_rate);
+                printf("\n");
             }
             fflush(stdout);
             
+            // Reset interval stats but keep total stats
+            interval_stats_ = TemplateProfilingAccumulator();
+            interval_start_time_ = now;
             last_progress_count_ = total_instantiation_count_;
             return true;
         }
@@ -290,6 +316,7 @@ private:
     TemplateProfilingStats() : total_instantiation_count_(0), last_progress_count_(0),
                                instantiation_depth_(0),
                                current_instantiation_start_(std::chrono::high_resolution_clock::now()),
+                               interval_start_time_(std::chrono::high_resolution_clock::now()),
                                start_time_(std::chrono::high_resolution_clock::now()) {}
 #else
     TemplateProfilingStats() : total_instantiation_count_(0),
@@ -305,6 +332,9 @@ private:
     size_t instantiation_depth_;
     StringHandle current_instantiation_;
     std::chrono::high_resolution_clock::time_point current_instantiation_start_;
+    std::chrono::high_resolution_clock::time_point interval_start_time_;
+    TemplateProfilingAccumulator interval_stats_;  // Reset every interval print
+    TemplateProfilingAccumulator total_stats_;     // Never reset
 #endif
     std::chrono::high_resolution_clock::time_point start_time_;
     TemplateProfilingAccumulator lookup_time_;

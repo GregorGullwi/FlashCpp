@@ -9042,10 +9042,19 @@ ParseResult Parser::parse_friend_declaration()
 	// Skip optional qualifiers after parameter list using existing helper
 	skip_function_trailing_specifiers();
 
-	// Handle friend function body (inline definition) or semicolon (declaration only)
+	// Handle friend function body (inline definition), = default, = delete, or semicolon (declaration only)
 	if (peek_token().has_value() && peek_token()->value() == "{") {
 		// Friend function with inline body - skip the body using existing helper
 		skip_balanced_braces();
+	} else if (peek_token().has_value() && peek_token()->value() == "=") {
+		// Handle = default or = delete
+		consume_token(); // consume '='
+		if (peek_token().has_value() && (peek_token()->value() == "default" || peek_token()->value() == "delete")) {
+			consume_token(); // consume 'default' or 'delete'
+		}
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after friend function declaration", *current_token_);
+		}
 	} else if (!consume_punctuator(";")) {
 		return ParseResult::error("Expected ';' after friend function declaration", *current_token_);
 	}
@@ -19004,8 +19013,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// and template class names are commonly used as template arguments in <type_traits>
 		if (!identifierType && !found_as_type_alias && peek_token().has_value()) {
 			std::string_view peek = peek_token()->value();
-			// Check gTypesByName if identifier is followed by :: (qualified name) or ( (constructor call)
-			bool should_check_types = (peek == "::" || peek == "(");
+			// Check gTypesByName if identifier is followed by :: (qualified name), ( (constructor call), or { (brace init)
+			bool should_check_types = (peek == "::" || peek == "(" || peek == "{");
 			
 			// In template argument context, also check for various tokens that indicate a type context.
 			// Type aliases and template class names are commonly used as template arguments
@@ -21038,6 +21047,41 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 					}
 				}
+			}
+
+			// Handle brace initialization for type names: TypeName{} or TypeName{args}
+			// This handles expressions like "throw bad_any_cast{}" where bad_any_cast is a class
+			if (found_as_type_alias && !identifierType && peek_token().has_value() && peek_token()->value() == "{") {
+				consume_token(); // consume '{'
+				
+				// Parse brace initializer arguments
+				ChunkedVector<ASTNode> args;
+				while (current_token_.has_value() && current_token_->value() != "}") {
+					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+					if (auto arg = arg_result.node()) {
+						args.push_back(*arg);
+					}
+					
+					if (current_token_.has_value() && current_token_->value() == ",") {
+						consume_token(); // consume ','
+					} else if (!current_token_.has_value() || current_token_->value() != "}") {
+						return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+					}
+				}
+				
+				if (!consume_punctuator("}")) {
+					return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+				}
+				
+				// Create TypeSpecifierNode for the type
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, idenfifier_token);
+				
+				// Create ConstructorCallNode for brace initialization
+				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
+				return ParseResult::success(*result);
 			}
 
 			// Initially set result to a simple identifier - will be upgraded to FunctionCallNode if it's a function call

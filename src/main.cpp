@@ -369,6 +369,12 @@ int main_impl(int argc, char *argv[]) {
 
     // Count source lines for operand storage reservation
     size_t source_line_count = std::count(preprocessed_source.begin(), preprocessed_source.end(), '\n');
+    
+    // Log preprocessing completion for progress tracking with lines/second
+    double lines_per_sec = preprocessing_time > 0 ? (source_line_count * 1000.0 / preprocessing_time) : 0.0;
+    printf("[Progress] Preprocessing complete: %zu lines in %.1f ms (%.0f lines/sec)\n", 
+           source_line_count, preprocessing_time, lines_per_sec);
+    fflush(stdout);
 
 #ifdef USE_CHUNKED_OPERAND_STORAGE
     // Reserve space in global operand storage
