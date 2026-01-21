@@ -21354,6 +21354,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Perform overload resolution for regular functions
 							// First, get all overloads of this function
 							auto all_overloads = gSymbolTable.lookup_all(idenfifier_token.value());
+							
+							// Simple ADL (Argument-Dependent Lookup): if no overloads found, also try looking
+							// in the std:: namespace. This helps find functions like std::rethrow_exception
+							// when called unqualified from within std namespace member functions.
+							if (all_overloads.empty()) {
+								auto std_qualified_name = "std::" + std::string(idenfifier_token.value());
+								all_overloads = gSymbolTable.lookup_all(std_qualified_name);
+								FLASH_LOG(Parser, Debug, "ADL: tried std:: qualified lookup for '", std_qualified_name, "', found ", all_overloads.size(), " overload(s)");
+							}
 
 							// Extract argument types
 							std::vector<TypeSpecifierNode> arg_types;
