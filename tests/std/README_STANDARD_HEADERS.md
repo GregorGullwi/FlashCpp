@@ -371,6 +371,15 @@ template<typename _Tp>
 - Which consists of: instantiate hash<_Tp>, construct an instance, call operator() with declval<_Tp>() as argument
 - Parser needs to handle this complex nested expression as a template argument in partial specialization
 
+**Investigation Update (2026-01-21):**
+Root cause identified - the parser fails at step 2 (construct an instance) because:
+1. After parsing `hash<_Tp>`, the parser sees `(`
+2. `hash` is not recognized as a class template in this context, so `hash<_Tp>()` is not recognized as a functional-style cast / temporary object creation
+3. Parser emits "Missing identifier: hash" error because it doesn't find `hash` as a function
+4. This causes template argument parsing to fail with "Expected template argument pattern"
+
+The fix requires: when parsing primary expressions in template contexts, after seeing `identifier<args>(`, recognize this as a functional-style cast (temporary object creation) if the identifier resolves to a class template, not just for function templates.
+
 **Affected Headers:** `<variant>` (stops at line 72), potentially `<functional>`, `<optional>`, and others using hash-based SFINAE
 
 **Key Finding:** Many patterns previously thought to be blockers actually **work correctly**:
