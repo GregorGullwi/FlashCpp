@@ -82,6 +82,16 @@ public:
     void recordInstantiation(const std::string& template_name, std::chrono::microseconds duration) {
         instantiations_[template_name].add(duration);
         incrementInstantiationCount();
+        
+        // Log template name at specific instantiation counts to help debug hangs
+        #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
+        size_t count = getTotalInstantiationCount();
+        if (count >= 305 && count <= 315) {
+            printf("[DEBUG] Instantiation #%zu: %s\n", count, template_name.c_str());
+            fflush(stdout);
+        }
+        #endif
+        
         // Log progress every 100 instantiations when Info level is enabled
         // This helps track where the compiler gets stuck during template-heavy compilations
         #if ENABLE_TEMPLATE_INSTANTIATION_TRACKING
