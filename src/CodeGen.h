@@ -2545,16 +2545,17 @@ private:
 			// Generate a unique name like "__param_0", "__param_1", etc. for unnamed parameters
 			std::string_view param_name = param_decl.identifier_token().value();
 			if (param_name.empty()) {
-				// For implicit operator=, use "other" as the conventional name for the first parameter
+				// For operator= functions (both explicit and implicit), use "other" as the conventional name
+				// for the first parameter. This handles both:
+				// 1. Implicitly generated operator= (created by parser for classes without user-defined one)
+				// 2. Explicitly defaulted operator= (`operator=(const T&) = default;` without param name)
 				// Otherwise use a generated name
-				if (node.is_implicit() && func_decl.identifier_token().value() == "operator=" && unnamed_param_counter == 0) {
+				if (func_decl.identifier_token().value() == "operator=" && unnamed_param_counter == 0) {
 					param_info.name = StringTable::getOrInternStringHandle("other");
-					FLASH_LOG(Codegen, Debug, "  [FIX] Generated param name 'other' for implicit operator=");
 				} else {
 					// Generate unique name for unnamed parameter
 					std::string generated_name = "__param_" + std::to_string(unnamed_param_counter);
 					param_info.name = StringTable::getOrInternStringHandle(generated_name);
-					FLASH_LOG(Codegen, Debug, "  [FIX] Generated param name '", generated_name, "' for unnamed parameter");
 				}
 				unnamed_param_counter++;
 			} else {
@@ -3076,6 +3077,7 @@ private:
 		// We don't add it here to avoid duplication
 
 		// Add parameter types to constructor declaration
+		size_t ctor_unnamed_param_counter = 0;
 		for (const auto& param : node.parameter_nodes()) {
 			const DeclarationNode& param_decl = requireDeclarationNode(param, "ctor decl operands");
 			const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
@@ -3084,7 +3086,16 @@ private:
 			func_param.type = param_type.type();
 			func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
 			func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
-			func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
+			
+			// Handle empty parameter names (e.g., from defaulted constructors)
+			std::string_view param_name = param_decl.identifier_token().value();
+			if (param_name.empty()) {
+				std::string generated_name = "__param_" + std::to_string(ctor_unnamed_param_counter++);
+				func_param.name = StringTable::getOrInternStringHandle(generated_name);
+			} else {
+				func_param.name = StringTable::getOrInternStringHandle(param_name);
+			}
+			
 			func_param.is_reference = param_type.is_reference();
 			func_param.is_rvalue_reference = param_type.is_rvalue_reference();
 			func_param.cv_qualifier = param_type.cv_qualifier();
@@ -19095,13 +19106,23 @@ private:
 
 		// Add parameters - use parameter_nodes to get complete type information
 		param_idx = 0;
+		size_t lambda_unnamed_param_counter = 0;
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
 				FunctionParam func_param;
-				func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
+				
+				// Handle empty parameter names
+				std::string_view param_name = param_decl.identifier_token().value();
+				if (param_name.empty()) {
+					std::string generated_name = "__param_" + std::to_string(lambda_unnamed_param_counter++);
+					func_param.name = StringTable::getOrInternStringHandle(generated_name);
+				} else {
+					func_param.name = StringTable::getOrInternStringHandle(param_name);
+				}
+				
 				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
@@ -19252,13 +19273,23 @@ private:
 
 		// Add parameters - use parameter_nodes to get complete type information
 		param_idx = 0;
+		size_t invoke_unnamed_param_counter = 0;
 		for (const auto& param_node : lambda_info.parameter_nodes) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				
 				FunctionParam func_param;
-				func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
+				
+				// Handle empty parameter names
+				std::string_view param_name = param_decl.identifier_token().value();
+				if (param_name.empty()) {
+					std::string generated_name = "__param_" + std::to_string(invoke_unnamed_param_counter++);
+					func_param.name = StringTable::getOrInternStringHandle(generated_name);
+				} else {
+					func_param.name = StringTable::getOrInternStringHandle(param_name);
+				}
+				
 				func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				
 				// For 'auto' parameters (generic lambdas), use deduced type from call site
@@ -19546,6 +19577,7 @@ private:
 		func_decl_op.mangled_name = full_func_name;
 
 		// Add function parameters with concrete types
+		size_t template_unnamed_param_counter = 0;
 		for (size_t i = 0; i < template_func_decl.parameter_nodes().size(); ++i) {
 			const auto& param_node = template_func_decl.parameter_nodes()[i];
 			if (param_node.is<DeclarationNode>()) {
@@ -19565,7 +19597,16 @@ private:
 					func_param.size_in_bits = static_cast<int>(param_type.size_in_bits());
 					func_param.pointer_depth = static_cast<int>(param_type.pointer_depth());
 				}
-				func_param.name = StringTable::getOrInternStringHandle(param_decl.identifier_token().value());
+				
+				// Handle empty parameter names
+				std::string_view param_name = param_decl.identifier_token().value();
+				if (param_name.empty()) {
+					std::string generated_name = "__param_" + std::to_string(template_unnamed_param_counter++);
+					func_param.name = StringTable::getOrInternStringHandle(generated_name);
+				} else {
+					func_param.name = StringTable::getOrInternStringHandle(param_name);
+				}
+				
 				func_param.is_reference = false;
 				func_param.is_rvalue_reference = false;
 				func_param.cv_qualifier = CVQualifier::None;
