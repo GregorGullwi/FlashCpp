@@ -30900,6 +30900,67 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						restore_token_position(arg_saved_pos);
 						// Fall through to type parsing below
 					} else {
+						// Check if this is a template parameter that has a type substitution available
+						// This enables variable templates inside function templates to work correctly:
+						// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
+						bool substituted_type_param = false;
+						bool finished_parsing = false;  // Track if we consumed '>' and should break
+						std::string_view param_name_to_check;
+						
+						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+							const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+							param_name_to_check = StringTable::getStringView(tparam_ref.param_name());
+						} else if (std::holds_alternative<IdentifierNode>(expr)) {
+							const auto& id = std::get<IdentifierNode>(expr);
+							param_name_to_check = id.name();
+						}
+						
+						if (!param_name_to_check.empty()) {
+							// Check if we have a type substitution for this parameter
+							for (const auto& subst : template_param_substitutions_) {
+								if (subst.is_type_param && subst.param_name == param_name_to_check) {
+									// Found a type substitution! Use it instead of creating a dependent arg
+									FLASH_LOG(Templates, Debug, "Found type substitution for parameter '", 
+									          param_name_to_check, "' -> ", subst.substituted_type.toString());
+									
+									TemplateTypeArg substituted_arg = subst.substituted_type;
+									
+									// Check for pack expansion (...)
+									if (peek_token().has_value() && peek_token()->value() == "...") {
+										consume_token(); // consume '...'
+										substituted_arg.is_pack = true;
+										FLASH_LOG(Templates, Debug, "Marked substituted type as pack expansion");
+									}
+									
+									template_args.push_back(substituted_arg);
+									if (out_type_nodes && expr_result.node().has_value()) {
+										out_type_nodes->push_back(*expr_result.node());
+									}
+									discard_saved_token(arg_saved_pos);
+									substituted_type_param = true;
+									
+									// Handle next token
+									if (peek_token().has_value() && peek_token()->value() == ">>") {
+										split_right_shift_token();
+									}
+									if (peek_token().has_value() && peek_token()->value() == ">") {
+										consume_token();
+										finished_parsing = true;
+									} else if (peek_token().has_value() && peek_token()->value() == ",") {
+										consume_token();
+									}
+									break;  // Break from the for loop
+								}
+							}
+						}
+						
+						if (substituted_type_param) {
+							if (finished_parsing) {
+								break;  // Break from the outer while loop - we're done
+							}
+							continue;  // Continue to next template argument
+						}
+						
 						FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
 						// Successfully parsed a dependent expression
 						// Create a dependent template argument
@@ -31736,8 +31797,47 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 
+		// Set up template parameter substitutions for type parameters
+		// This enables variable templates inside the function body to work correctly:
+		// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
+		std::vector<TemplateParamSubstitution> saved_template_param_substitutions = std::move(template_param_substitutions_);
+		template_param_substitutions_.clear();
+		for (size_t i = 0; i < template_params.size() && i < explicit_types.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) continue;
+			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			const TemplateTypeArg& arg = explicit_types[i];
+			
+			if (param.kind() == TemplateParameterKind::NonType && arg.is_value) {
+				// Non-type parameter - store value for substitution
+				TemplateParamSubstitution subst;
+				subst.param_name = param.name();
+				subst.is_value_param = true;
+				subst.value = arg.value;
+				subst.value_type = arg.base_type;
+				template_param_substitutions_.push_back(subst);
+				
+				FLASH_LOG(Templates, Debug, "Registered non-type template parameter '", 
+				          param.name(), "' with value ", arg.value, " for function template body");
+			} else if (param.kind() == TemplateParameterKind::Type && !arg.is_value) {
+				// Type parameter - store type for substitution
+				TemplateParamSubstitution subst;
+				subst.param_name = param.name();
+				subst.is_value_param = false;
+				subst.is_type_param = true;
+				subst.substituted_type = arg;
+				template_param_substitutions_.push_back(subst);
+				
+				FLASH_LOG(Templates, Debug, "Registered type template parameter '", 
+				          param.name(), "' with type ", arg.toString(), " for function template body");
+			}
+		}
+
 		// Parse the function body
 		auto block_result = parse_block();
+		
+		// Restore the template parameter substitutions
+		template_param_substitutions_ = std::move(saved_template_param_substitutions);
+		
 		if (!block_result.is_error() && block_result.node().has_value()) {
 			// After parsing, we need to substitute template parameters in the body
 			// This is essential for features like fold expressions that need AST transformation
@@ -32769,8 +32869,56 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 
+		// Set up template parameter substitutions for type parameters
+		// This enables variable templates inside the function body to work correctly:
+		// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
+		std::vector<TemplateParamSubstitution> saved_template_param_substitutions = std::move(template_param_substitutions_);
+		template_param_substitutions_.clear();
+		for (size_t i = 0; i < func_template_params.size() && i < template_args.size(); ++i) {
+			if (!func_template_params[i].is<TemplateParameterNode>()) continue;
+			const TemplateParameterNode& param = func_template_params[i].as<TemplateParameterNode>();
+			const TemplateArgument& arg = template_args[i];
+			
+			if (arg.kind == TemplateArgument::Kind::Value) {
+				// Non-type parameter - store value for substitution
+				TemplateParamSubstitution subst;
+				subst.param_name = param.name();
+				subst.is_value_param = true;
+				subst.value = arg.int_value;
+				subst.value_type = arg.value_type;
+				template_param_substitutions_.push_back(subst);
+				
+				FLASH_LOG(Templates, Debug, "Registered non-type template parameter '", 
+				          param.name(), "' with value ", arg.int_value, " for function template body (deduced)");
+			} else if (arg.kind == TemplateArgument::Kind::Type) {
+				// Type parameter - convert TemplateArgument to TemplateTypeArg
+				TemplateParamSubstitution subst;
+				subst.param_name = param.name();
+				subst.is_value_param = false;
+				subst.is_type_param = true;
+				// Build TemplateTypeArg from TemplateArgument
+				subst.substituted_type.base_type = arg.type_value;
+				subst.substituted_type.type_index = arg.type_index;
+				subst.substituted_type.is_value = false;
+				subst.substituted_type.is_dependent = false;  // These are concrete types
+				if (arg.type_specifier.has_value()) {
+					subst.substituted_type.is_reference = arg.type_specifier->is_lvalue_reference();
+					subst.substituted_type.is_rvalue_reference = arg.type_specifier->is_rvalue_reference();
+					subst.substituted_type.pointer_depth = arg.type_specifier->pointer_levels().size();
+				}
+				template_param_substitutions_.push_back(subst);
+				
+				FLASH_LOG(Templates, Debug, "Registered type template parameter '", 
+				          param.name(), "' with type ", subst.substituted_type.toString(), " for function template body (deduced)");
+			}
+		}
+
 		// Parse the function body
 		auto block_result = parse_block();
+		
+		// Restore the template parameter substitutions
+		template_param_substitutions_ = std::move(saved_template_param_substitutions);
+		
 		if (!block_result.is_error() && block_result.node().has_value()) {
 			// After parsing, we need to substitute template parameters in the body
 			// This is essential for features like fold expressions that need AST transformation
@@ -33162,7 +33310,26 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		}
 	}
 	
-	for (const auto& arg : template_args) {
+	for (const auto& original_arg : template_args) {
+		// Check if this argument corresponds to a template parameter that has been substituted
+		// This happens when variable templates are used inside function template bodies
+		// e.g., __is_ratio_v<_R1> where _R1 has been substituted with ratio<1,2>
+		TemplateTypeArg arg = original_arg;  // Make a copy that we can modify
+		if ((arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) && 
+		    arg.type_index < gTypeInfo.size()) {
+			std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+			// Check if this is a template parameter with a substitution
+			for (const auto& subst : template_param_substitutions_) {
+				if (subst.is_type_param && subst.param_name == type_name) {
+					// Found! Use the substituted type instead
+					FLASH_LOG(Templates, Debug, "Substituting template parameter '", type_name, 
+					          "' with concrete type ", subst.substituted_type.toString());
+					arg = subst.substituted_type;
+					break;
+				}
+			}
+		}
+		
 		FLASH_LOG(Templates, Debug, "  arg: is_reference=", arg.is_reference, 
 			" is_rvalue_reference=", arg.is_rvalue_reference, 
 			" pointer_depth=", arg.pointer_depth,
@@ -38410,8 +38577,9 @@ if (struct_type_info.getStructInfo()) {
 			// Map template parameter names to actual types and values
 			current_template_param_names_ = delayed.template_param_names;
 			
-			// Create template parameter substitutions for non-type parameters
+			// Create template parameter substitutions for non-type AND type parameters
 			// This allows template parameters like 'v' in 'return v;' to be substituted with actual values
+			// and type parameters like '_R1' in '__is_ratio_v<_R1>' to be substituted with actual types
 			template_param_substitutions_.clear();
 			for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
 				const auto& param = template_params[i].as<TemplateParameterNode>();
@@ -38428,6 +38596,19 @@ if (struct_type_info.getStructInfo()) {
 					
 					FLASH_LOG(Templates, Debug, "Registered non-type template parameter '", 
 					          param.name(), "' with value ", arg.value);
+				} else if (param.kind() == TemplateParameterKind::Type && !arg.is_value) {
+					// Type parameter - store type for substitution
+					// This enables variable templates inside function templates to work correctly:
+					// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
+					TemplateParamSubstitution subst;
+					subst.param_name = param.name();
+					subst.is_value_param = false;
+					subst.is_type_param = true;
+					subst.substituted_type = arg;
+					template_param_substitutions_.push_back(subst);
+					
+					FLASH_LOG(Templates, Debug, "Registered type template parameter '", 
+					          param.name(), "' with type ", arg.toString());
 				}
 			}
 			
