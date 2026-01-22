@@ -7,38 +7,38 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.21s |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1.1s release, ~6s debug |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1.0s release |
 | `<compare>` | N/A | ✅ Compiled | ~0.07s |
 | `<version>` | N/A | ✅ Compiled | ~0.07s |
 | `<source_location>` | N/A | ✅ Compiled | ~0.07s |
 | `<numbers>` | N/A | ✅ Compiled | ~1.2s release |
 | `<initializer_list>` | N/A | ✅ Compiled | ~0.04s |
-| `<ratio>` | `test_std_ratio.cpp` | ❌ Codegen | 2026-01-21: Variable template in function body issue (see blocker 7.4) |
-| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
-| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | 2026-01-21 PM: Function return type loss issue with `_Hash_bytes` (see blocker) |
-| `<variant>` | `test_std_variant.cpp` | 💥 Crash | 2026-01-21 PM: Progresses past line 299 (base class fix), then crashes during codegen |
-| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | 2026-01-21: Times out at 60+ seconds (was misreported as parse error) |
+| `<ratio>` | `test_std_ratio.cpp` | ❌ Codegen | 2026-01-21: Variable template in function body issue (see blocker 3.3) |
+| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | 2026-01-22: Fixed include order bug, now times out (~450+ templates) |
+| `<variant>` | `test_std_variant.cpp` | 💥 Crash | 2026-01-22: Crashes ~500 templates due to std::any corruption in vector ops (see blocker 3.4) |
+| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
-| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<bit>` | N/A | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
 | `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
-| `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
-| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
+| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | 2026-01-21: Now progresses past typename funccast fix, times out |
-| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | 2026-01-21: Now progresses past typename funccast fix, times out |
-| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | 2026-01-21: Times out during template instantiation |
+| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen | 2026-01-21: MemberAccess missing object issue |
+| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Times out (depends on complex headers) |
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<atomic>` | N/A | ❌ Parse Error | Complex decltype in partial specialization (see blockers) |
+| `<atomic>` | N/A | ❌ Parse Error | Complex decltype in partial specialization |
 | `<new>` | N/A | ✅ Compiled | ~0.08s |
-| `<exception>` | N/A | ✅ Compiled | ~6s (2026-01-21 PM: Fixed MemberAccess issue) |
+| `<exception>` | N/A | ✅ Compiled | ~1.3s (2026-01-22: Fixed pending_explicit_template_args_ leak) |
 | `<typeinfo>` | N/A | ✅ Compiled | ~0.09s |
-| `<typeindex>` | N/A | ✅ Compiled | ~0.14s |
+| `<typeindex>` | N/A | ✅ Compiled | ~1.6s (depends on <exception>) |
 | `<csetjmp>` | N/A | ✅ Compiled | ~0.04s |
 | `<csignal>` | N/A | ✅ Compiled | ~0.13s |
 | `<stdfloat>` | N/A | ✅ Compiled | ~0.01s (C++23) |
@@ -50,9 +50,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~0.07s (C++23) |
 | `<coroutine>` | N/A | ❌ Not Supported | Coroutines require `-fcoroutines` flag |
 
-**Legend:** ✅ Compiled | ❌ Failed/Parse Error | ⏱️ Timeout (>30s)
+**Legend:** ✅ Compiled | ❌ Failed/Parse Error | ⏱️ Timeout (>30s) | 💥 Crash
 
-**Note (2026-01-20):** Previous reports of "💥 Crash" for `<functional>`, `<algorithm>`, and `<chrono>` were actually timeouts. Investigation with enhanced exception logging confirmed no crashes occur - these headers timeout due to excessive template instantiation. See section 6.4 for details.
+**Note (2026-01-22):** Most timeout headers parse successfully but trigger extensive template instantiation. The primary remaining blockers are template instantiation performance and a few codegen issues.
 
 ### C Library Wrappers (Also Working)
 
@@ -145,101 +145,42 @@ clang++ -DFLASHCPP_LOG_LEVEL=2 -O3 ...
 
 ## Current Blockers
 
-### 1. Function Argument Parsing in Member Functions (CRITICAL BLOCKER - 2026-01-21)
+### 1. Pending Template Arguments Leak (**FIXED** - 2026-01-22)
 
-**Issue:** Function calls with member variable arguments inside member functions fail to parse correctly. FlashCpp reports finding the function overload but 0 arguments when it should find 1+ arguments.
+**Status:** **FIXED** in commit 26a6675
 
-**Error Message:**
-```
-/usr/include/c++/14/bits/nested_exception.h:79:18: error: No matching function for call to 'rethrow_exception'
-  rethrow_exception(_M_ptr);
-                   ^
-```
+When parsing `Template<T>::template member` syntax, the `pending_explicit_template_args_` was not cleared when the `::template` keyword was encountered or on error paths. This caused the template arguments to "leak" to unrelated function calls later in the same scope.
 
-**Debug output shows:**
-```
-[DEBUG][Parser] Function call to 'rethrow_exception': found 1 overload(s), 0 argument(s)
-```
+**Root Cause:** Parsing expressions like `__xref<_Tp2>::template __type` would:
+1. Set `pending_explicit_template_args_` for `__xref` 
+2. Encounter `::template` which wasn't handled
+3. Return an error without clearing pending args
+4. Leaked args would be applied to subsequent function calls like `name()`
 
-**Problematic Code Pattern:**
-```cpp
-class nested_exception {
-    exception_ptr _M_ptr;
-public:
-    void rethrow_nested() const {
-        rethrow_exception(_M_ptr);  // Fails here - argument not parsed
-    }
-};
-```
+**Fix:**
+1. Handle `::template` syntax for dependent names
+2. Clear `pending_explicit_template_args_` before returning errors
 
-**Investigation Findings:**
-- The function `rethrow_exception` is found correctly (1 overload)
-- The argument `_M_ptr` is identified and starts parsing
-- In parse_expression's postfix operator loop (Parser.cpp:~16563), after consuming `_M_ptr`, the closing `)` of the function call is incorrectly consumed
-- This causes the argument list to appear empty (0 arguments)
-- Detailed log sequence:
-  1. `consume_token: Consumed token='(', next token from lexer='_M_ptr'` - opens function call
-  2. `>>> parse_expression: Starting with precedence=2, context=0, depth=2, current token: _M_ptr` - starts parsing argument
-  3. `consume_token: Consumed token='_M_ptr', next token from lexer=')'` - consumes identifier
-  4. `Postfix operator iteration 1: peek token type=7, value=')'` - sees closing paren
-  5. `consume_token: Consumed token=')', next token from lexer=';'` - **INCORRECTLY CONSUMES closing paren**
-  6. `Function call to 'rethrow_exception': found 1 overload(s), 0 argument(s)` - args vector is empty
+**Impact:** Fixed `<exception>` + `<type_traits>` combination, `<optional>` now progresses further.
 
-**Root Cause:** The postfix operator loop in parse_expression doesn't properly stop when encountering `)` in a function argument context. The closing `)` should terminate argument parsing but is instead consumed as part of the argument expression.
+---
 
-**Test Cases:**
-- Simple reproduction: `/tmp/test_rethrow_simple.cpp`
-- Full header: `#include <exception>`
+### 2. Context-Dependent Parse Error in `bits/utility.h` (**FIXED** - 2026-01-22)
 
-**Affected Headers:** 
-- `<exception>` - directly affected at nested_exception.h:79
-- `<optional>` - depends on `<exception>` 
-- `<iostream>` - depends on `<exception>`
-- Any header that uses exception handling
+**Status:** **FIXED** - This was fixed by the pending template arguments leak fix.
 
-**Impact:** This is a **critical blocker** preventing compilation of most standard library headers that deal with exceptions. Must be fixed before significant progress can be made on exception-related headers.
-
-**Potential Fix Direction:** The postfix operator loop needs to check if we're in a function argument context and avoid consuming `)` that belongs to the enclosing function call. This may require:
-1. Adding context tracking to parse_expression
-2. Checking expression context before entering postfix loop  
-3. Or ensuring the loop exits before consuming delimiter tokens
-
-### 2. Remaining Parse Blockers
-
-#### 2.1 Context-Dependent Parse Error in `bits/utility.h` (2026-01-19)
-
-**Note (2026-01-21):** This may be related to or masked by the function argument parsing issue (blocker #6). After fixing #6, this issue should be re-evaluated.
-
-**Error Message:**
-```
-/usr/include/c++/14/bits/utility.h:139:49: error: Expected type after '=' in template parameter default
-     typename _Up = typename remove_cv<_Tp>::type,
-                                                  ^
+**Test Result:**
+```bash
+$ FlashCpp -c test_utility.cpp   # includes <type_traits> + <bits/utility.h>
+[Progress] Preprocessing complete: 7074 lines
+# SUCCESS - compiles without errors
 ```
 
-**Problematic Code Pattern:**
-```cpp
-template<typename _Tp,
-         typename _Up = typename remove_cv<_Tp>::type,  // Error reported here
-         typename = typename enable_if<is_same<_Tp, _Up>::value>::type,
-         size_t = tuple_size<_Tp>::value>
-    using __enable_if_has_tuple_size = _Tp;
-```
+---
 
-**Investigation Findings:**
-- Simplified test cases with this exact pattern parse successfully in isolation
-- The error only occurs after including `<type_traits>` and `<bits/move.h>`
-- This suggests parser state pollution or context corruption from previous headers
-- The parser fails to parse `typename remove_cv<_Tp>::type` correctly in this context
-- `parse_type_specifier()` should stop at commas in template parameter lists, but appears to consume too much
+### 3. Remaining Blockers
 
-**Test Cases:**
-- `tests/test_template_alias_typename_default_ret0.cpp` - Works in isolation
-- `tests/test_utility_with_bits_move_ret0.cpp` - Fails when including `<bits/move.h>`
-
-**Affected Headers:** `<utility>`, `<tuple>`, `<span>`, `<array>`, and any header that depends on these
-
-#### 2.2 Constructor and Member Functions with `noexcept = delete` in Partial Specializations (FIXED - 2026-01-21)
+#### 3.1 Constructor and Member Functions with `noexcept = delete` in Partial Specializations (**FIXED** - 2026-01-21)
 
 **Issue:** ~~The `<variant>` header fails with a parse error for constructors and member functions marked `noexcept = delete` in template partial specializations.~~ **RESOLVED**
 
@@ -383,7 +324,31 @@ constexpr bool is_ratio_check() { return __is_ratio_v<_R>; }  // ✅ Works
 
 **Affected Headers:** `<variant>`, potentially `<functional>`, `<optional>` and others that use `std::true_type` / `std::false_type` as base classes.
 
-### 3. Template Instantiation Performance
+#### 3.4 Variant Header Crash During Parsing (**ACTIVE BLOCKER** - 2026-01-22)
+
+**Issue:** The `<variant>` header crashes with SIGSEGV around 500 template instantiations. AddressSanitizer identified three related memory bugs that were fixed, but the crash persists.
+
+**Bugs Fixed (2026-01-22):**
+1. **FileTree::addDependency() heap-use-after-free** - Map key was `string_view` from temporary `string`
+2. **get_numeric_literal_type() stack-use-after-scope** - `substr().c_str()` created dangling pointer
+3. **ASTNode::is<>() potential null access** - Missing `has_value()` check before `type()` call
+
+**Current Crash:**
+```
+Signal: SIGSEGV (Segmentation fault)
+Fault Address: (nil)
+Location: std::any::type() in AstNodeTypes.h:57
+Called from: restore_token_position() in Parser.cpp:495
+```
+
+**Analysis:** The crash occurs when iterating through `ast_nodes_` vector during `restore_token_position()` and calling `is<>()` on each node. The `std::any` inside an `ASTNode` appears to be corrupted. Possible causes:
+1. Vector reallocation invalidating references stored in `std::any`
+2. Use-after-move of `std::any` objects
+3. Race condition or memory corruption during intensive template instantiation
+
+**Affected Headers:** `<variant>` (crashes), likely affects other template-heavy headers if they reach 500+ instantiations
+
+### 4. Template Instantiation Performance
 
 Template-heavy headers (`<concepts>`, `<bit>`, `<string>`, `<ranges>`) time out due to instantiation volume. Key optimization: improve template cache hit rate (currently ~26%).
 - Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)

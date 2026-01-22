@@ -16039,17 +16039,17 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	if (is_hex_literal) {
 		// Hexadecimal literal
 		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 4.0 / 8) * 8);
-		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), &end_ptr, 16);
+		typeInfo.value = std::strtoull(lowerText.c_str() + 2, &end_ptr, 16);
 	}
 	else if (is_binary_literal) {
 		// Binary literal
 		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 2) * 1.0 / 8) * 8);
-		typeInfo.value = std::strtoull(lowerText.substr(2).c_str(), &end_ptr, 2);
+		typeInfo.value = std::strtoull(lowerText.c_str() + 2, &end_ptr, 2);
 	}
 	else if (lowerText.find("0") == 0 && lowerText.length() > 1 && lowerText[1] != '.') {
 		// Octal literal (but not "0." which is a float)
 		typeInfo.sizeInBits = static_cast<unsigned char>(std::ceil((lowerText.length() - 1) * 3.0 / 8) * 8);
-		typeInfo.value = std::strtoull(lowerText.substr(1).c_str(), &end_ptr, 8);
+		typeInfo.value = std::strtoull(lowerText.c_str() + 1, &end_ptr, 8);
 	}
 	else {
 		// Decimal integer literal
@@ -17154,8 +17154,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			// handle operator-> overload resolution. For raw pointers, it will generate
 			// the equivalent of (*ptr).member; for objects with operator->, it will call that.
 		} else {
-			FLASH_LOG_FORMAT(Parser, Debug, "Postfix loop: breaking, peek token type={}, value='{}'",
-				static_cast<int>(peek_token()->type()), peek_token()->value());
+			if (peek_token().has_value()) {
+				FLASH_LOG_FORMAT(Parser, Debug, "Postfix loop: breaking, peek token type={}, value='{}'",
+					static_cast<int>(peek_token()->type()), peek_token()->value());
+			} else {
+				FLASH_LOG(Parser, Debug, "Postfix loop: breaking, no more tokens");
+			}
 			break;  // No more postfix operators
 		}
 
@@ -20218,8 +20222,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								}
 								consume_token(); // consume ::
 								
+								// Handle ::template syntax for dependent names (e.g., __xref<T>::template __type)
+								if (peek_token().has_value() && peek_token()->value() == "template") {
+									consume_token(); // consume 'template' keyword
+								}
+								
 								// Get next identifier
 								if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+									pending_explicit_template_args_.reset(); // Clear pending to avoid leaking to unrelated calls
 									return ParseResult::error("Expected identifier after '::'", peek_token().value_or(Token()));
 								}
 								final_identifier = *peek_token();
