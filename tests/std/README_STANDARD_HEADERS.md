@@ -381,11 +381,12 @@ extern int pthread_create (pthread_t * __newthread, ...
 
 ### 6. Template Instantiation Performance
 
-Most headers timeout due to template instantiation volume, not parsing errors. Individual instantiations are fast (20-50μs), but standard headers trigger 400-500+ instantiations within 60 seconds.
+Most headers timeout due to template instantiation volume, not parsing errors. Standard headers trigger 400-500+ instantiations within 60 seconds before hitting the timeout.
 
-**Current Performance:**
+**Current Performance (from progress logs):**
 - Template cache hit rate: ~65-70%
-- Average instantiation time: 9-10μs
+- Average instantiation time: 8-10μs
+- Peak instantiation time: up to 800μs for complex templates
 - Timeout threshold: 60 seconds
 
 **Optimization opportunities:**
