@@ -15,7 +15,7 @@ public:
 	}
 
 	const std::unordered_set<std::string>& getDependencies(std::string_view file) const {
-		return dependencies_.at(file);
+		return dependencies_.at(std::string(file));
 	}
 
 	// Get all dependencies across all files
@@ -41,5 +41,5 @@ public:
 
 private:
 	std::unordered_set<std::string> files_;
-	std::unordered_map<std::string_view, std::unordered_set<std::string>> dependencies_;
+	std::unordered_map<std::string, std::unordered_set<std::string>> dependencies_;
 };
