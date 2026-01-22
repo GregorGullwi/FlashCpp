@@ -2599,6 +2599,54 @@ ParseResult Parser::parse_declaration_or_function_definition()
 			return ParseResult::error(ParserError::UnexpectedToken, decl_node.identifier_token());
 		}
 		
+		// Check if this is an out-of-line static member variable definition with parenthesized initializer
+		// Pattern: inline constexpr Type ClassName::member_name(initializer);
+		// This must be checked BEFORE assuming it's a function definition
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(function_name_token.value());
+		const StructStaticMember* static_member = struct_info->findStaticMember(member_name_handle);
+		if (static_member != nullptr && peek_token().has_value() && peek_token()->value() == "(") {
+			// This is a static member variable definition with parenthesized initializer
+			FLASH_LOG(Parser, Debug, "Found out-of-line static member variable definition: ", 
+			          class_name.view(), "::", function_name_token.value());
+			
+			consume_token();  // consume '('
+			
+			// Parse the initializer expression
+			auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (init_result.is_error() || !init_result.node().has_value()) {
+				FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable '",
+				          class_name.view(), "::", function_name_token.value(), "'");
+				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
+			}
+			
+			// Expect closing parenthesis
+			if (!consume_punctuator(")")) {
+				FLASH_LOG(Parser, Error, "Expected ')' after static member variable initializer");
+				return ParseResult::error(ParserError::UnexpectedToken, *peek_token());
+			}
+			
+			// Expect semicolon
+			if (!consume_punctuator(";")) {
+				FLASH_LOG(Parser, Error, "Expected ';' after static member variable definition");
+				return ParseResult::error(ParserError::UnexpectedToken, *peek_token());
+			}
+			
+			// Update the static member's initializer in the struct
+			// Cast away const since we need to update the initializer
+			StructStaticMember* mutable_member = const_cast<StructStaticMember*>(static_member);
+			mutable_member->initializer = *init_result.node();
+			
+			FLASH_LOG(Parser, Debug, "Successfully parsed out-of-line static member variable definition: ",
+			          class_name.view(), "::", function_name_token.value());
+			
+			// Return success with a placeholder node (the static member is already registered in the struct)
+			ASTNode return_type_node = decl_node.type_node();
+			auto [var_decl_node, var_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
+			auto [var_node, var_ref] = emplace_node_ref<VariableDeclarationNode>(var_decl_node, *init_result.node());
+			
+			return saved_position.success(var_node);
+		}
+		
 		// Create a new declaration node with the function name
 		ASTNode return_type_node = decl_node.type_node();
 		auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
@@ -4910,6 +4958,10 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Parse members
 	while (peek_token().has_value() && peek_token()->value() != "}") {
+		// Skip C++ attributes like [[nodiscard]], [[maybe_unused]], etc.
+		// These can appear on member declarations, conversion operators, etc.
+		skip_cpp_attributes();
+		
 		// Check for access specifier
 		if (peek_token()->type() == Token::Type::Keyword) {
 			std::string_view keyword = peek_token()->value();
@@ -17765,10 +17817,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			return ParseResult::success(*result);
 		}
 		else {
-			// Not in a member function context - this is an error or a free-standing operator call
-			// (free-standing operator calls are rare but technically possible)
-			return ParseResult::error("Operator call syntax 'operator==(args)' can only be used inside a member function", 
-			                         operator_keyword_token);
+			// Not in a member function context - create a free-standing operator call
+			// This is valid C++ for calling operator as a function, commonly used in requires expressions
+			// e.g., operator<=>(a, b) or requires { operator<=>(t, u); }
+			
+			// Look up the operator as a free function
+			auto func_lookup = gSymbolTable.lookup(operator_name);
+			if (func_lookup.has_value() && func_lookup->is<FunctionDeclarationNode>()) {
+				auto& func_decl = func_lookup->as<FunctionDeclarationNode>();
+				result = emplace_node<ExpressionNode>(
+					FunctionCallNode(func_decl.decl_node(), std::move(args), operator_name_token));
+				return ParseResult::success(*result);
+			}
+			
+			// Operator function not found - create a deferred call that will be resolved at instantiation
+			// This is common in template/requires contexts where the operator is dependent
+			auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, 0, 0, operator_name_token);
+			auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_name_token).as<DeclarationNode>();
+			result = emplace_node<ExpressionNode>(
+				FunctionCallNode(operator_decl, std::move(args), operator_name_token));
+			return ParseResult::success(*result);
 		}
 	}
 
