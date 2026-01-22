@@ -39,6 +39,10 @@ constexpr char separator_chars[] = {
 	'?', '[', ']', '^', '{', '|', '}', '~'      // Brackets, braces, and bitwise
 };
 
+// Maximum length of a raw string delimiter per C++11 standard [lex.string]
+// The d-char-sequence of a raw string literal has at most 16 characters
+constexpr size_t kMaxRawStringDelimiterLength = 16;
+
 // Constexpr function to build the separator bitset at compile-time
 constexpr uint64_t build_separator_bitset_chunk(int chunk_index) {
 	uint64_t result = 0;
@@ -1252,7 +1256,7 @@ private:
 		while ((raw_start = input.find("R\"", raw_start)) != std::string::npos) {
 			size_t delim_start = raw_start + 2;
 			size_t paren_pos = input.find('(', delim_start);
-			if (paren_pos != std::string::npos && paren_pos <= delim_start + 16) { // max delimiter length
+			if (paren_pos != std::string::npos && paren_pos <= delim_start + kMaxRawStringDelimiterLength) { // max delimiter length
 				std::string delimiter = input.substr(delim_start, paren_pos - delim_start);
 				std::string closing = ")" + delimiter + "\"";
 				if (input.find(closing, paren_pos) == std::string::npos) {
@@ -1301,7 +1305,7 @@ private:
 					// Start of raw string - find delimiter
 					size_t delim_start = pos + 2;
 					size_t paren = current.find('(', delim_start);
-					if (paren != std::string::npos && paren <= delim_start + 16) {
+					if (paren != std::string::npos && paren <= delim_start + kMaxRawStringDelimiterLength) {
 						raw_delimiter = current.substr(delim_start, paren - delim_start);
 						in_raw_string = true;
 						// Copy up to and including the opening paren
@@ -1442,7 +1446,11 @@ private:
 								
 								// Substitute macro arguments
 								if (args.size() < defineDirective->args.size()) {
-									// Not enough arguments per C++ standard - skip expansion
+									// Per C++ standard, insufficient arguments is an error
+									// Log a warning and skip expansion to avoid corrupted output
+									FLASH_LOG(Lexer, Warning, "Macro '", ident_str, "' requires ", 
+									          defineDirective->args.size(), " arguments but only ", 
+									          args.size(), " provided");
 									output += ident;
 									continue;
 								}
