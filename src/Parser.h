@@ -753,6 +753,7 @@ public:  // Public methods for template instantiation
         ParseResult parse_expression_statement() { return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal); }  // Wrapper for keyword map
         ParseResult parse_primary_expression(ExpressionContext context);
         ParseResult parse_postfix_expression(ExpressionContext context);  // Phase 3: New postfix operator layer
+        ParseResult apply_postfix_operators(ASTNode& result);  // Apply postfix operators (., ->, [], (), ++, --) to existing result
         ParseResult parse_unary_expression(ExpressionContext context);
         ParseResult parse_qualified_identifier();  // Parse namespace::identifier
         ParseResult parse_qualified_identifier_after_template(const Token& template_base_token, bool* had_template_keyword = nullptr);  // Parse Template<T>::member
