@@ -26,7 +26,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<functional>` | `test_std_functional.cpp` | 💥 Crash | std::bad_any_cast during parsing |
+| `<functional>` | `test_std_functional.cpp` | 💥 Crash | std::bad_any_cast during template instantiation |
 | `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Times out during template instantiation |
@@ -50,9 +50,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~17ms (C++23) |
 | `<coroutine>` | N/A | ⏱️ Timeout | Times out during template instantiation |
 
-**Legend:** ✅ Compiled | ❌ Failed/Parse Error | ⏱️ Timeout (>15s) | 💥 Crash
+**Legend:** ✅ Compiled | ❌ Failed/Parse Error | ⏱️ Timeout (>15s in tests) | 💥 Crash
 
-**Note (2026-01-22):** Most timeout headers parse successfully but trigger extensive template instantiation. The primary remaining blockers are:
+**Note (2026-01-22):** Timeout threshold is 15 seconds for quick testing. Most timeout headers parse successfully but trigger extensive template instantiation. The primary remaining blockers are:
 1. Template instantiation performance (most timeouts)
 2. Memory corruption causing crashes in `<variant>` and `<functional>`
 3. Variable template codegen issue in `<ratio>`
@@ -328,46 +328,58 @@ constexpr bool is_ratio_check() { return __is_ratio_v<_R>; }  // ✅ Works
 
 **Affected Headers:** `<variant>`, potentially `<functional>`, `<optional>` and others that use `std::true_type` / `std::false_type` as base classes.
 
-#### 3.4 Variant Header Crash During Parsing (**ACTIVE BLOCKER** - 2026-01-22)
+#### 3.4 Memory Corruption During Template Instantiation (**ACTIVE BLOCKER** - 2026-01-22)
 
-**Issue:** The `<variant>` header crashes with SIGSEGV around 500 template instantiations. AddressSanitizer identified three related memory bugs that were fixed, but the crash persists.
+**Issue:** Several headers crash with `std::bad_any_cast` or SIGSEGV around 400-500 template instantiations. The crash occurs during `restore_token_position()` when accessing `ast_nodes_` vector elements.
+
+**Affected Headers:**
+- `<variant>` - Crashes with SIGSEGV ~500 templates
+- `<functional>` - Crashes with `std::bad_any_cast` ~400 templates
 
 **Bugs Fixed (2026-01-22):**
 1. **FileTree::addDependency() heap-use-after-free** - Map key was `string_view` from temporary `string`
 2. **get_numeric_literal_type() stack-use-after-scope** - `substr().c_str()` created dangling pointer
 3. **ASTNode::is<>() potential null access** - Missing `has_value()` check before `type()` call
 
-**Current Crash:**
+**Current Crash Pattern:**
 ```
-Signal: SIGSEGV (Segmentation fault)
-Fault Address: (nil)
-Location: std::any::type() in AstNodeTypes.h:57
-Called from: restore_token_position() in Parser.cpp:495
+[Progress] 400 templates in 108 ms total
+Fatal error: std::bad_any_cast - bad any_cast
 ```
+
+Debug logging shows the crash happens after multiple consecutive `restore_token_position()` calls during backtracking.
 
 **Analysis:** The crash occurs when iterating through `ast_nodes_` vector during `restore_token_position()` and calling `is<>()` on each node. The `std::any` inside an `ASTNode` appears to be corrupted. Possible causes:
-1. Vector reallocation invalidating references stored in `std::any`
-2. Use-after-move of `std::any` objects
-3. Race condition or memory corruption during intensive template instantiation
+1. Vector reallocation invalidating references stored elsewhere
+2. Use-after-move of `std::any` objects during vector operations
+3. Memory corruption during intensive template instantiation with backtracking
 
-**Affected Headers:** `<variant>` (crashes), likely affects other template-heavy headers if they reach 500+ instantiations
+### 4. Missing pthread Types (**ACTIVE BLOCKER** - 2026-01-22)
 
-### 4. Template Instantiation Performance
+**Issue:** Headers that depend on pthreads fail because `pthread_t` and related types are not defined.
 
-Template-heavy headers (`<concepts>`, `<bit>`, `<string>`, `<ranges>`) time out due to instantiation volume. Key optimization: improve template cache hit rate (currently ~26%).
-- Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
-- Optimize string operations in template name generation
+**Error Message:**
+```
+/usr/include/pthread.h:205:37: error: Missing identifier
+extern int pthread_create (pthread_t * __newthread, ...
+                           ^~~~~~~~~
+```
 
-### 4. Template Instantiation Performance
+**Affected Headers:** `<atomic>`, `<barrier>`
+
+**Root Cause:** FlashCpp doesn't parse the `bits/pthreadtypes.h` header correctly, or the header is not being included. This affects headers that use threading primitives.
+
+### 5. Template Instantiation Performance
 
 Most headers timeout due to template instantiation volume, not parsing errors. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
 
 **Optimization opportunities:**
-- Improve template cache hit rate (currently ~26%)
+- Improve template cache hit rate (currently ~65-70%)
 - Optimize string operations in template name generation
 - Consider lazy evaluation strategies
+- Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
 
-### 5. std::initializer_list Compiler Magic (Known Limitation)
+### 6. std::initializer_list Compiler Magic (Known Limitation)
 
 **Issue:** `std::initializer_list<T>` requires special compiler support that is not yet implemented.
 
