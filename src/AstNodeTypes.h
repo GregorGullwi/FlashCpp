@@ -54,6 +54,7 @@ public:
 	}
 
 	template <typename T> bool is() const {
+		if (!node_.has_value()) return false;
 		return node_.type() == typeid(T*);
 	}
 

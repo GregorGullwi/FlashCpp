@@ -17154,8 +17154,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			// handle operator-> overload resolution. For raw pointers, it will generate
 			// the equivalent of (*ptr).member; for objects with operator->, it will call that.
 		} else {
-			FLASH_LOG_FORMAT(Parser, Debug, "Postfix loop: breaking, peek token type={}, value='{}'",
-				static_cast<int>(peek_token()->type()), peek_token()->value());
+			if (peek_token().has_value()) {
+				FLASH_LOG_FORMAT(Parser, Debug, "Postfix loop: breaking, peek token type={}, value='{}'",
+					static_cast<int>(peek_token()->type()), peek_token()->value());
+			} else {
+				FLASH_LOG(Parser, Debug, "Postfix loop: breaking, no more tokens");
+			}
 			break;  // No more postfix operators
 		}
 
