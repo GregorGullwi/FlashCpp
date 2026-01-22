@@ -29809,12 +29809,15 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				Token ctor_name_token = *peek_token();
 				consume_token();
 				
+				// Cache struct name handle for use throughout this scope
+				StringHandle struct_name_handle = struct_node.name();
+				
 				FLASH_LOG_FORMAT(Parser, Debug, "parse_member_function_template: Detected template constructor {}()", 
-				                 StringTable::getStringView(struct_node.name()));
+				                 StringTable::getStringView(struct_name_handle));
 				
 				// Create constructor declaration
 				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-					struct_node.name(), StringTable::getOrInternStringHandle(ctor_name_token.value()));
+					struct_name_handle, StringTable::getOrInternStringHandle(ctor_name_token.value()));
 				
 				// Apply specifiers to constructor
 				ctor_ref.set_explicit(is_explicit);
@@ -29904,15 +29907,46 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						return ParseResult::error("Expected ';' after '= default' or '= delete'", *peek_token());
 					}
 				} else if (peek_token().has_value() && peek_token()->value() == "{") {
-					// Parse constructor body
-					auto block_result = parse_block();
-					if (block_result.is_error()) {
-						current_template_param_names_ = std::move(saved_template_param_names);
-						return block_result;
+					// DELAYED PARSING: Save the current position (start of '{')
+					// This allows member variables declared later in the class to be visible
+					SaveHandle body_start = save_token_position();
+					
+					// Look up the struct type
+					auto type_it = gTypesByName.find(struct_name_handle);
+					size_t struct_type_index = 0;
+					if (type_it != gTypesByName.end()) {
+						struct_type_index = type_it->second->type_index_;
 					}
-					if (auto block = block_result.node()) {
-						ctor_ref.set_definition(*block);
+					
+					// Skip over the constructor body by counting braces
+					skip_balanced_braces();
+					
+					// Extract template parameter names for use during delayed body parsing
+					std::vector<StringHandle> template_param_name_handles;
+					for (const auto& param : template_params) {
+						if (param.is<TemplateParameterNode>()) {
+							template_param_name_handles.push_back(param.as<TemplateParameterNode>().nameHandle());
+						}
 					}
+					
+					FLASH_LOG_FORMAT(Parser, Debug, "Deferring template constructor body parsing for struct='{}', template_params={}", 
+						StringTable::getStringView(struct_name_handle), template_param_name_handles.size());
+					
+					// Record this for delayed parsing (with template parameters)
+					delayed_function_bodies_.push_back({
+						nullptr,  // func_node (not used for constructors)
+						body_start,
+						SaveHandle{},  // No initializer list position saved (already parsed)
+						struct_name_handle,
+						struct_type_index,
+						&struct_node,
+						false,     // has_initializer_list - already handled above  
+						true,  // is_constructor
+						false,  // is_destructor
+						&ctor_ref,  // ctor_node
+						nullptr,   // dtor_node
+						template_param_name_handles  // template_param_names for template constructors
+					});
 				} else if (!consume_punctuator(";")) {
 					current_template_param_names_ = std::move(saved_template_param_names);
 					return ParseResult::error("Expected '{', ';', '= default', or '= delete' after constructor declaration", *peek_token());
