@@ -8,37 +8,37 @@ This directory contains test files for C++ standard library headers to assess Fl
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~29ms |
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~31ms |
-| `<compare>` | N/A | ⏱️ Timeout | Times out during template instantiation |
+| `<compare>` | N/A | ⏱️ Timeout | ~400 templates before timeout |
 | `<version>` | N/A | ✅ Compiled | ~17ms |
 | `<source_location>` | N/A | ✅ Compiled | ~17ms |
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
-| `<ratio>` | `test_std_ratio.cpp` | 💥 Crash | Variable template `__is_ratio_v` not found in codegen (see blocker 3.3) |
-| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<variant>` | `test_std_variant.cpp` | 💥 Crash | Crashes ~500 templates due to memory corruption (see blocker 3.4) |
-| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<bit>` | N/A | ⏱️ Timeout | Times out during template instantiation |
-| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<functional>` | `test_std_functional.cpp` | 💥 Crash | std::bad_any_cast during template instantiation |
-| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<ratio>` | `test_std_ratio.cpp` | ⏱️ Timeout | Parses OK, times out in template instantiation |
+| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | ~500 templates before timeout |
+| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | ~450 templates before timeout |
+| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | ~450 templates before timeout |
+| `<variant>` | `test_std_variant.cpp` | 💥 Crash | Crashes at ~500 templates (memory corruption, see blocker 3.4) |
+| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | ~450 templates before timeout |
+| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | ~400 templates before timeout |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | ~450 templates before timeout |
+| `<bit>` | N/A | ⏱️ Timeout | ~400 templates before timeout |
+| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | ~400 templates before timeout |
+| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | ~400 templates before timeout |
+| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | ~400 templates before timeout |
+| `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Missing `execution_defs.h` |
+| `<functional>` | `test_std_functional.cpp` | 💥 Crash | Crashes at ~400 templates (std::bad_any_cast) |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Missing `execution_defs.h` |
+| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | ~500 templates before timeout |
+| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | ~500 templates before timeout |
+| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | ~400 templates before timeout |
+| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | ~400 templates before timeout |
+| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | ~500 templates before timeout |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Missing `unicode-data.h` |
 | `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
 | `<typeinfo>` | N/A | ✅ Compiled | ~18ms |
-| `<typeindex>` | N/A | ⏱️ Timeout | Times out during template instantiation |
+| `<typeindex>` | N/A | ⏱️ Timeout | ~400 templates before timeout |
 | `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
 | `<csignal>` | N/A | ✅ Compiled | ~22ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
@@ -48,14 +48,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<text_encoding>` | N/A | ✅ Compiled | ~17ms (C++26) |
 | `<barrier>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<stacktrace>` | N/A | ✅ Compiled | ~17ms (C++23) |
-| `<coroutine>` | N/A | ⏱️ Timeout | Times out during template instantiation |
+| `<coroutine>` | N/A | ⏱️ Timeout | ~400 templates before timeout |
 
-**Legend:** ✅ Compiled | ❌ Failed/Parse Error | ⏱️ Timeout (>15s in tests) | 💥 Crash
+**Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
-**Note (2026-01-22):** Timeout threshold is 15 seconds for quick testing. Most timeout headers parse successfully but trigger extensive template instantiation. The primary remaining blockers are:
-1. Template instantiation performance (most timeouts)
-2. Memory corruption causing crashes in `<variant>` and `<functional>`
-3. Variable template codegen issue in `<ratio>`
+**Note (2026-01-22):** Template counts show templates processed before timeout/crash at 60s. Most timeout headers parse successfully but get stuck during extensive template instantiation. The primary remaining blockers are:
+1. Template instantiation performance (most timeouts at 400-500 templates)
+2. Memory corruption causing crashes in `<variant>` (~500 templates) and `<functional>` (~400 templates)
+3. Missing include files (`execution_defs.h`, `unicode-data.h`) for `<memory>`, `<algorithm>`, `<chrono>`
 4. Missing pthread types for `<atomic>` and `<barrier>`
 
 ### C Library Wrappers (Also Working)
@@ -369,17 +369,32 @@ extern int pthread_create (pthread_t * __newthread, ...
 
 **Root Cause:** FlashCpp doesn't parse the `bits/pthreadtypes.h` header correctly, or the header is not being included. This affects headers that use threading primitives.
 
-### 5. Template Instantiation Performance
+### 5. Missing Internal Include Files (**ACTIVE BLOCKER** - 2026-01-22)
 
-Most headers timeout due to template instantiation volume, not parsing errors. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
+**Issue:** Some headers fail because internal GCC/libstdc++ headers cannot be found.
+
+**Missing Files:**
+- `execution_defs.h` - Required by `<memory>`, `<algorithm>`
+- `unicode-data.h` - Required by `<chrono>`
+
+**Root Cause:** These are internal implementation headers that may be in non-standard paths or require specific GCC version configuration.
+
+### 6. Template Instantiation Performance
+
+Most headers timeout due to template instantiation volume, not parsing errors. Individual instantiations are fast (20-50μs), but standard headers trigger 400-500+ instantiations within 60 seconds.
+
+**Current Performance:**
+- Template cache hit rate: ~65-70%
+- Average instantiation time: 9-10μs
+- Timeout threshold: 60 seconds
 
 **Optimization opportunities:**
-- Improve template cache hit rate (currently ~65-70%)
+- Improve template cache hit rate
 - Optimize string operations in template name generation
 - Consider lazy evaluation strategies
 - Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
 
-### 6. std::initializer_list Compiler Magic (Known Limitation)
+### 7. std::initializer_list Compiler Magic (Known Limitation)
 
 **Issue:** `std::initializer_list<T>` requires special compiler support that is not yet implemented.
 
