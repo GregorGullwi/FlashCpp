@@ -54,6 +54,7 @@ constexpr uint64_t build_separator_bitset_chunk(int chunk_index) {
 struct DefineDirective {
 	std::string body;
 	std::vector<std::string> args;
+	bool is_function_like = false;  // True if this is a function-like macro (even if it has no named args, like ...)
 };
 
 struct FunctionDirective {
@@ -1224,278 +1225,308 @@ private:
 		return result;
 	}
 
+	// Optimized single-pass macro expansion (C++20 compliant)
+	// Instead of searching for all ~200 defines at every position (O(D*N*M)),
+	// we scan the input once, extract identifiers, and look them up in the hash table (O(N*avgIdLen))
+	//
+	// C++ preprocessing rules observed:
+	// 1. Macro arguments are fully expanded before substitution (except for # and ##)
+	// 2. A function-like macro is only invoked if followed by '(' (whitespace allowed between)
+	// 3. Recursive expansion is prevented by tracking currently-expanding macros
+	// 4. Token pasting (##) is performed after argument substitution
+	// 5. Stringification (#) uses unexpanded argument text
 	std::string expandMacros(const std::string& input, std::unordered_set<std::string> expanding_macros = {}) {
-		std::string output = input;
-
 		// Check if we're inside a multiline raw string from a previous line
-		// If so, we need to check if this line ends the raw string
 		if (inside_multiline_raw_string_) {
-			// Scan this line to see if it contains the closing delimiter
 			std::string closing = ")" + multiline_raw_delimiter_ + "\"";
-			size_t close_pos = output.find(closing);
+			size_t close_pos = input.find(closing);
 			if (close_pos != std::string::npos) {
-				// Raw string ends on this line
 				inside_multiline_raw_string_ = false;
 				multiline_raw_delimiter_.clear();
 			}
-			// Don't expand macros on this line since we're inside a raw string
-			return output;
+			return input;
 		}
 
-		// Check if this line starts a multiline raw string
-		// Scan for R"delimiter( patterns
+		// Check for multiline raw string start
 		size_t raw_start = 0;
-		while ((raw_start = output.find("R\"", raw_start)) != std::string::npos) {
+		while ((raw_start = input.find("R\"", raw_start)) != std::string::npos) {
 			size_t delim_start = raw_start + 2;
-			size_t paren_pos = output.find('(', delim_start);
-			if (paren_pos != std::string::npos) {
-				std::string delimiter = output.substr(delim_start, paren_pos - delim_start);
+			size_t paren_pos = input.find('(', delim_start);
+			if (paren_pos != std::string::npos && paren_pos <= delim_start + 16) { // max delimiter length
+				std::string delimiter = input.substr(delim_start, paren_pos - delim_start);
 				std::string closing = ")" + delimiter + "\"";
-				size_t close_pos = output.find(closing, paren_pos);
-				if (close_pos == std::string::npos) {
-					// Raw string starts but doesn't end on this line
+				if (input.find(closing, paren_pos) == std::string::npos) {
 					inside_multiline_raw_string_ = true;
 					multiline_raw_delimiter_ = delimiter;
-					// Don't expand macros on this line
-					return output;
+					return input;
 				}
 			}
 			raw_start++;
 		}
 
-		//bool expanded = true;
-		size_t loop_guard = 1000;
-		size_t scan_pos = 0;  // Track where we are in the scan
+		// Use a working copy to avoid const_cast issues
+		std::string current = input;
+		std::string output;
+		output.reserve(current.size() * 2);  // Reserve space to avoid reallocations
 		
-		// Debug counter for tracking iterations
-		size_t iteration_count = 0;
-		size_t last_debug_pos = 0;
+		size_t loop_guard = 1000;  // Safety limit for expansion iterations
+		bool needs_another_pass = true;  // Controls iteration - start with true to do at least one pass
 		
-		while (scan_pos < output.size() && loop_guard-- > 0) {
-			iteration_count++;
+		// We need to iterate because expansions can introduce new macros
+		// Each pass scans the entire string for macros to expand
+		while (needs_another_pass && loop_guard-- > 0) {
+			needs_another_pass = false;  // Will be set true if we expand any macros
+			output.clear();
 			
-			// Debug: Print every 100 iterations or when scan_pos jumps significantly
-			if (settings_.isVerboseMode() && (iteration_count % 100 == 0 || scan_pos - last_debug_pos > 1000)) {
-				FLASH_LOG(Lexer, Trace, "Expansion iteration ", iteration_count, " at scan_pos ", scan_pos, 
-				          " / ", output.size(), " (loop_guard=", loop_guard, ")");
-				FLASH_LOG(Lexer, Trace, "  Context: ", output.substr(scan_pos, std::min<size_t>(80, output.size() - scan_pos)));
-				last_debug_pos = scan_pos;
-			}
+			size_t pos = 0;
+			size_t input_size = current.size();
+			bool in_string = false;
+			bool in_char = false;
+			bool in_raw_string = false;
+			std::string raw_delimiter;
 			
-			//expanded = false;
-			size_t last_char_index = output.size() - 1;
-			
-			// Try to find any macro starting from scan_pos
-			size_t best_pos = std::string::npos;
-			std::string best_pattern;
-			const Directive* best_directive = nullptr;
-			size_t best_pattern_end = 0;
-			
-			for (const auto& [pattern, directive] : defines_) {
-				// Skip if this macro is currently being expanded (prevent recursion)
-				if (expanding_macros.count(pattern) > 0) {
+			while (pos < input_size) {
+				char c = current[pos];
+				
+				// Handle escape sequences in strings
+				if ((in_string || in_char) && c == '\\' && pos + 1 < input_size) {
+					output += c;
+					output += current[++pos];
+					++pos;
 					continue;
 				}
 				
-				// Search for the pattern starting from scan_pos
-				size_t search_pos = scan_pos;
-				size_t pos = std::string::npos;
-
-				while ((search_pos = output.find(pattern, search_pos)) != std::string::npos) {
-					// Skip if the pattern is inside a string literal
-					if (is_inside_string_literal(output, search_pos)) {
-						search_pos++;
+				// Handle raw string literals
+				if (!in_string && !in_char && !in_raw_string && c == 'R' && pos + 1 < input_size && current[pos + 1] == '"') {
+					// Start of raw string - find delimiter
+					size_t delim_start = pos + 2;
+					size_t paren = current.find('(', delim_start);
+					if (paren != std::string::npos && paren <= delim_start + 16) {
+						raw_delimiter = current.substr(delim_start, paren - delim_start);
+						in_raw_string = true;
+						// Copy up to and including the opening paren
+						while (pos <= paren) {
+							output += current[pos++];
+						}
 						continue;
 					}
-
-					if (search_pos > 0 && !is_seperator_character(output[search_pos - 1])) {
-						search_pos++;
-						continue;
-					}
-					size_t pattern_end = search_pos + pattern.size();
-					if (pattern_end < last_char_index && !is_seperator_character(output[pattern_end])) {
-						search_pos++;
-						continue;
-					}
-
-					// Found a valid occurrence
-					pos = search_pos;
-					break;
 				}
-
-				// Keep track of the earliest match
-				if (pos != std::string::npos && (best_pos == std::string::npos || pos < best_pos)) {
-					best_pos = pos;
-					best_pattern = pattern;
-					best_directive = &directive;
-					best_pattern_end = pos + pattern.size();
+				
+				if (in_raw_string) {
+					// Look for closing delimiter
+					std::string closing = ")" + raw_delimiter + "\"";
+					if (pos + closing.size() <= input_size && 
+					    current.compare(pos, closing.size(), closing) == 0) {
+						// Found closing, copy it and exit raw string mode
+						output += current.substr(pos, closing.size());
+						pos += closing.size();
+						in_raw_string = false;
+						raw_delimiter.clear();
+						continue;
+					}
+					output += c;
+					++pos;
+					continue;
+				}
+				
+				// Handle regular string literals
+				if (!in_char && c == '"') {
+					in_string = !in_string;
+					output += c;
+					++pos;
+					continue;
+				}
+				
+				// Handle character literals
+				if (!in_string && c == '\'') {
+					in_char = !in_char;
+					output += c;
+					++pos;
+					continue;
+				}
+				
+				// Inside string/char literal, just copy
+				if (in_string || in_char) {
+					output += c;
+					++pos;
+					continue;
+				}
+				
+				// Check for identifier start (letter or underscore)
+				if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+					size_t ident_start = pos;
+					++pos;
+					// Consume the rest of the identifier
+					while (pos < input_size && (std::isalnum(static_cast<unsigned char>(current[pos])) || current[pos] == '_')) {
+						++pos;
+					}
+					
+					std::string_view ident(current.data() + ident_start, pos - ident_start);
+					std::string ident_str(ident);
+					
+					// Skip if this macro is being expanded (prevent recursion per C++ standard)
+					if (expanding_macros.count(ident_str) > 0) {
+						output += ident;
+						continue;
+					}
+					
+					// Look up identifier in defines
+					auto it = defines_.find(ident_str);
+					if (it != defines_.end()) {
+						const Directive& directive = it->second;
+						std::string replace_str;
+						
+						if (auto* defineDirective = directive.get_if<DefineDirective>()) {
+							replace_str = defineDirective->body;
+							
+							// Use the is_function_like flag to properly detect function-like macros
+							// This handles variadic macros like #define FOO(...) which have empty args but are function-like
+							if (defineDirective->is_function_like) {
+								// Look for opening parenthesis (skip whitespace)
+								size_t paren_pos = pos;
+								while (paren_pos < input_size && std::isspace(static_cast<unsigned char>(current[paren_pos]))) {
+									++paren_pos;
+								}
+								
+								if (paren_pos >= input_size || current[paren_pos] != '(') {
+									// No '(' found - this is not a macro invocation, just copy the identifier
+									output += ident;
+									continue;
+								}
+								
+								size_t args_start = paren_pos;
+								size_t args_end = findMatchingClosingParen(current, args_start);
+								if (args_end == std::string::npos) {
+									// Malformed - no closing paren
+									output += ident;
+									continue;
+								}
+								
+								std::vector<std::string_view> args = splitArgs(
+									std::string_view(current).substr(args_start + 1, args_end - args_start - 1));
+								
+								// Handle variadic arguments (__VA_ARGS__)
+								std::string va_args_str;
+								bool has_variadic_args = false;
+								if (args.size() > defineDirective->args.size()) {
+									has_variadic_args = true;
+									for (size_t i = defineDirective->args.size(); i < args.size(); ++i) {
+										if (!va_args_str.empty()) {
+											va_args_str += ", ";
+										}
+										va_args_str += args[i];
+									}
+								}
+								
+								// Handle __VA_OPT__ (C++20 feature)
+								// __VA_OPT__(content) expands to content if __VA_ARGS__ is non-empty, otherwise empty
+								size_t va_opt_pos = 0;
+								while ((va_opt_pos = replace_str.find("__VA_OPT__", va_opt_pos)) != std::string::npos) {
+									size_t opt_paren_start = replace_str.find('(', va_opt_pos + 10);
+									if (opt_paren_start != std::string::npos) {
+										size_t opt_paren_end = findMatchingClosingParen(replace_str, opt_paren_start);
+										if (opt_paren_end != std::string::npos) {
+											std::string opt_content = replace_str.substr(opt_paren_start + 1, opt_paren_end - opt_paren_start - 1);
+											std::string replacement = has_variadic_args ? opt_content : "";
+											replace_str.replace(va_opt_pos, opt_paren_end - va_opt_pos + 1, replacement);
+											va_opt_pos += replacement.length();
+										} else break;
+									} else break;
+								}
+								
+								// Handle __VA_ARGS__
+								size_t va_args_pos = replace_str.find("__VA_ARGS__");
+								if (va_args_pos != std::string::npos) {
+									replace_str.replace(va_args_pos, 11, va_args_str);
+								}
+								
+								// Substitute macro arguments
+								if (args.size() < defineDirective->args.size()) {
+									// Not enough arguments per C++ standard - skip expansion
+									output += ident;
+									continue;
+								}
+								
+								for (size_t i = 0; i < defineDirective->args.size(); ++i) {
+									// Handle stringification (#) - uses UNEXPANDED argument per C++ standard
+									size_t stringify_pos = 0;
+									std::string search_str = "#" + defineDirective->args[i];
+									while ((stringify_pos = replace_str.find(search_str, stringify_pos)) != std::string::npos) {
+										// Skip if part of ## (token pasting)
+										if (stringify_pos > 0 && replace_str[stringify_pos - 1] == '#') {
+											stringify_pos++;
+											continue;
+										}
+										size_t arg_end = stringify_pos + search_str.length();
+										if (arg_end < replace_str.length() && replace_str[arg_end] == '#') {
+											stringify_pos++;
+											continue;
+										}
+										// Stringification uses unexpanded argument
+										replace_str.replace(stringify_pos, search_str.length(), 
+											std::format("\"{0}\"", args[i]));
+										stringify_pos += args[i].length() + 2;
+									}
+									// Replace argument - per C++ standard, arguments ARE expanded before substitution
+									// (except for # and ## which we handled above)
+									replaceAll(replace_str, defineDirective->args[i], args[i]);
+								}
+								
+								pos = args_end + 1;  // Move past the closing paren
+							}
+						} else if (auto* function_directive = directive.get_if<FunctionDirective>()) {
+							replace_str = function_directive->getBody();
+						}
+						
+						// Recursively expand the replacement (with this macro marked as expanding)
+						auto new_expanding = expanding_macros;
+						new_expanding.insert(ident_str);
+						replace_str = expandMacros(replace_str, new_expanding);
+						
+						output += replace_str;
+						needs_another_pass = true;  // We expanded something, may need another pass
+					} else {
+						// Not a macro, copy the identifier as-is
+						output += ident;
+					}
+				} else {
+					// Not an identifier, just copy
+					output += c;
+					++pos;
 				}
 			}
-
-			if (best_pos != std::string::npos) {
-				size_t pattern_end = best_pattern_end;
-
-				// Debug: Print when we find a macro to expand
-				if (settings_.isVerboseMode()) {
-					FLASH_LOG(Lexer, Trace, "Found macro '", best_pattern, "' at position ", best_pos);
-					size_t context_start = (best_pos >= 20) ? (best_pos - 20) : 0;
-					size_t context_len = std::min<size_t>(80, output.size() - context_start);
-					FLASH_LOG(Lexer, Trace, "  Before: ", output.substr(context_start, context_len));
-				}
-
-				std::string replace_str;
-				if (auto* defineDirective = best_directive->get_if<DefineDirective>()) {
-					replace_str = defineDirective->body;
-
-					size_t args_start = output.find_first_of('(', pattern_end);
-					if (args_start != std::string::npos && output.find_first_not_of(' ', pattern_end) == args_start) {
-						size_t args_end = findMatchingClosingParen(output, args_start);
-						std::vector<std::string_view> args = splitArgs(std::string_view(output).substr(args_start + 1, args_end - args_start - 1));
-
-						// NOTE: Arguments should NOT be pre-expanded here.
-						// They will be expanded during the final recursive expansion with proper protection.
-						// Pre-expanding them causes issues with recursive macro definitions like SAL macros.
-
-						// Calculate variadic arguments
-							std::string va_args_str;
-							bool has_variadic_args = false;
-							if (args.size() > defineDirective->args.size()) {
-								has_variadic_args = true;
-								for (size_t i = defineDirective->args.size(); i < args.size(); ++i) {
-									va_args_str += args[i];
-									if (i < args.size() - 1) {
-										va_args_str += ", ";
-									}
-								}
-							}
-
-							// Handle __VA_OPT__ (C++20 feature)
-							// __VA_OPT__(content) expands to content if __VA_ARGS__ is non-empty, otherwise empty
-							size_t va_opt_pos = 0;
-							while ((va_opt_pos = replace_str.find("__VA_OPT__", va_opt_pos)) != std::string::npos) {
-								// Find the opening parenthesis
-								size_t opt_paren_start = replace_str.find('(', va_opt_pos + 10);
-								if (opt_paren_start != std::string::npos) {
-									size_t opt_paren_end = findMatchingClosingParen(replace_str, opt_paren_start);
-									if (opt_paren_end != std::string::npos) {
-										std::string opt_content = replace_str.substr(opt_paren_start + 1, opt_paren_end - opt_paren_start - 1);
-										// Replace __VA_OPT__(content) with content if variadic args exist, otherwise empty
-										std::string replacement = has_variadic_args ? opt_content : "";
-										replace_str.replace(va_opt_pos, opt_paren_end - va_opt_pos + 1, replacement);
-										// Continue searching from the replacement position
-										va_opt_pos += replacement.length();
-									} else {
-										break;
-									}
-								} else {
-									break;
-								}
-							}
-
-							// Handling the __VA_ARGS__ macro
-							size_t va_args_pos = replace_str.find("__VA_ARGS__");
-							if (va_args_pos != std::string::npos) {
-								replace_str.replace(va_args_pos, 11, va_args_str);
-							}
-
-						if (!defineDirective->args.empty()) {
-							if (args.size() < defineDirective->args.size()) {
-								// Not enough arguments, skip this macro and move forward
-								scan_pos = best_pos + 1;
-								continue;
-							}
-							for (size_t i = 0; i < defineDirective->args.size(); ++i) {
-									// Handle stringification operator (#) - but NOT token pasting (##)
-									// We need to avoid matching # when it's part of ##
-									size_t stringify_pos = 0;
-									while ((stringify_pos = replace_str.find("#" + defineDirective->args[i], stringify_pos)) != std::string::npos) {
-										// Check if this # is part of ##
-										if (stringify_pos > 0 && replace_str[stringify_pos - 1] == '#') {
-											// This is part of ##, skip it
-											stringify_pos += 1;
-											continue;
-										}
-										// Check if the next character after the argument is also #
-										size_t arg_end = stringify_pos + 1 + defineDirective->args[i].length();
-										if (arg_end < replace_str.length() && replace_str[arg_end] == '#') {
-											// This is part of ##, skip it
-											stringify_pos += 1;
-											continue;
-										}
-										// This is a real stringification operator
-										replace_str.replace(stringify_pos, 1 + defineDirective->args[i].length(), std::format("\"{0}\"", args[i]));
-										stringify_pos += args[i].length() + 2; // Skip past the replaced string
-									}
-								// Replace macro arguments (non-stringified)
-								replaceAll(replace_str, defineDirective->args[i], args[i]);
-							}
-						}
-
-						pattern_end = args_end + 1;
-					}
-				}
-				else if (auto* function_directive = best_directive->get_if<FunctionDirective>()) {
-					replace_str = function_directive->getBody();
-				}
-
-				// Add this macro to the expanding set to prevent recursion
-				auto new_expanding = expanding_macros;
-				new_expanding.insert(best_pattern);
-				
-				// Recursively expand macros in the replacement text
-				replace_str = expandMacros(replace_str, new_expanding);
-
-				// Debug: Print replacement
-				if (settings_.isVerboseMode()) {
-					FLASH_LOG(Lexer, Trace, "  Replacement: ", replace_str.substr(0, std::min<size_t>(100, replace_str.size())));
-				}
-
-				output = output.replace(output.begin() + best_pos, output.begin() + pattern_end, replace_str);
-				
-				// Move scan position to after the replacement
-				// This prevents rescanning the replacement we just made
-				scan_pos = best_pos + replace_str.size();
-				
-				// Debug: Print new scan position
-				if (settings_.isVerboseMode()) {
-					if (replace_str.size() >= best_pattern.size()) {
-						FLASH_LOG(Lexer, Trace, "  After expansion, scan_pos moved to ", scan_pos, 
-						          " (jumped forward by ", (replace_str.size() - best_pattern.size()), ")");
-					} else {
-						FLASH_LOG(Lexer, Trace, "  After expansion, scan_pos moved to ", scan_pos, 
-						          " (jumped backward by ", (best_pattern.size() - replace_str.size()), ")");
-					}
-				}
-				
-				//expanded = true;
-			} else {
-				// No more macros found from scan_pos, move forward
-				scan_pos++;
+			
+			// Prepare for next iteration if we had expansions
+			if (needs_another_pass) {
+				current = std::move(output);
+				output.clear();
+				output.reserve(current.size() * 2);
 			}
 		}
-
+		
 		if (loop_guard == 0) {
 			FLASH_LOG(Lexer, Warning, "Macro expansion limit reached for line (possible infinite recursion): ", input.substr(0, 100));
 		}
-
-		// Handle token-pasting operator (##) after replacing all the arguments
+		
+		// The final result is in 'output' if we completed a full pass without expansions,
+		// or in 'current' if we hit the loop guard during a pass with expansions
+		std::string& result = needs_another_pass ? current : output;
+		
+		// Handle token-pasting operator (##) - done after all substitutions per C++ standard
 		size_t paste_pos;
-		while ((paste_pos = output.find("##")) != std::string::npos) {
-			// Find whitespaces before ##
+		while ((paste_pos = result.find("##")) != std::string::npos) {
 			size_t ws_before = paste_pos;
-			while (ws_before > 0 && std::isspace(output[ws_before - 1])) {
+			while (ws_before > 0 && std::isspace(static_cast<unsigned char>(result[ws_before - 1]))) {
 				--ws_before;
 			}
-
-			// Find whitespaces after ##
 			size_t ws_after = paste_pos + 2;
-			ws_after = output.find_first_not_of(' ', ws_after);
-
-			// Concatenate the string without whitespaces and ##
-			output = output.substr(0, ws_before) + output.substr(ws_after);
+			while (ws_after < result.size() && std::isspace(static_cast<unsigned char>(result[ws_after]))) {
+				++ws_after;
+			}
+			result = result.substr(0, ws_before) + result.substr(ws_after);
 		}
 
-		return output;
+		return result;
 	}
 
 	void apply_operator(std::stack<long>& values, std::stack<Operator>& ops) {
@@ -2131,6 +2162,7 @@ private:
 
 				// Save the macro body after the closing parenthesis
 				rest_of_line.erase(0, rest_of_line.find_first_not_of(' ', close_paren + 1));
+				define.is_function_like = true;  // This is a function-like macro
 			}
 			else {
 				rest_of_line.erase(0, rest_of_line.find_first_not_of(' '));
