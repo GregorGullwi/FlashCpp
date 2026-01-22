@@ -18,7 +18,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | `requires requires` nested constraint not supported (~174ms) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~161ms) |
-| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Unexpected token in template body |
+| `<any>` | `test_std_any.cpp` | ❌ Parse Error | std::forward template syntax in function body (~128ms, was: template alias `>>` handling fixed) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<bit>` | N/A | ❌ Semantic Error | `<compare>` strong_order lookup failure |
@@ -26,7 +26,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string>` | `test_std_string.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<array>` | `test_std_array.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Test file missing |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Complex `__void_t<decltype(...)>>` in partial specialization (~124ms) |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Complex partial specialization with `__void_t<>` (~143ms, was: pointer-to-member-function syntax fixed) |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Test file missing |
 | `<map>` | `test_std_map.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<set>` | `test_std_set.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
@@ -70,6 +70,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 - **Fixed** Member operator call syntax `obj.operator<=>(args)` 
 - **Fixed** Postfix operators after cast expressions (`static_cast<T>(x).operator<=>()`)
 - **Fixed** `operator() [[nodiscard]] (...)` attribute placement between operator name and parameter list
+- **Fixed** `>>` token splitting in template parameter lookahead for member template aliases
+- **Fixed** Pointer-to-member-function parameter syntax: `Ret (T::*identifier)(params)` and `Ret (T::*identifier)(params) const`
 
 **Fixes Applied (2026-01-22 Earlier):**
 - **Fixed** `std::bad_any_cast` crash in `<functional>` - member template functions were incorrectly cast
