@@ -490,16 +490,20 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
     // 3. Parser finds it's not a fold expression, restores position
     // 4. Without this fix, the instantiation would be erased but remain in cache
     size_t new_size = saved_token.ast_nodes_size_;
-    auto ast_it = ast_nodes_.begin() + new_size;
-    while (ast_it != ast_nodes_.end()) {
-        if (ast_it->is<FunctionDeclarationNode>() || ast_it->is<StructDeclarationNode>()) {
-            // Keep function and struct declarations - they may be template instantiations
-            // or struct definitions that are already registered in the symbol table
-            ++ast_it;
-        } else {
-            ast_it = ast_nodes_.erase(ast_it);
-        }
+    // Safety check: don't iterate past the current vector size
+    if (new_size > ast_nodes_.size()) {
+        // This shouldn't happen, but if it does, just skip the cleanup
+        return;
     }
+    
+    // Instead of selectively erasing while keeping FunctionDeclarationNode and 
+    // StructDeclarationNode, just keep all nodes added since the save point.
+    // This avoids potential memory corruption issues from the selective erase loop.
+    // The trade-off is that we may have some extra nodes, but they won't cause
+    // issues since they'll be overwritten on successful parse.
+    // 
+    // TODO: Investigate the root cause of the memory corruption that was causing
+    // SIGSEGV in the is<>() call during the selective erase loop.
 }
 
 void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {

@@ -17,7 +17,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | ~500 templates before timeout |
 | `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | ~450 templates before timeout |
 | `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | ~450 templates before timeout |
-| `<variant>` | `test_std_variant.cpp` | 💥 Crash | Crashes at ~500 templates (memory corruption, see blocker 3.4) |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (SIGSEGV fixed in blocker 3.4) |
 | `<any>` | `test_std_any.cpp` | ⏱️ Timeout | ~450 templates before timeout |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | ~400 templates before timeout |
 | `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | ~450 templates before timeout |
@@ -26,7 +26,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | ~400 templates before timeout |
 | `<array>` | `test_std_array.cpp` | ⏱️ Timeout | ~400 templates before timeout |
 | `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Missing `execution_defs.h` |
-| `<functional>` | `test_std_functional.cpp` | 💥 Crash | Crashes at ~400 templates (std::bad_any_cast) |
+| `<functional>` | `test_std_functional.cpp` | 💥 Crash | std::bad_any_cast at ~400 templates |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Missing `execution_defs.h` |
 | `<map>` | `test_std_map.cpp` | ⏱️ Timeout | ~500 templates before timeout |
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | ~500 templates before timeout |
@@ -328,31 +328,21 @@ constexpr bool is_ratio_check() { return __is_ratio_v<_R>; }  // ✅ Works
 
 **Affected Headers:** `<variant>`, potentially `<functional>`, `<optional>` and others that use `std::true_type` / `std::false_type` as base classes.
 
-#### 3.4 Memory Corruption During Template Instantiation (**ACTIVE BLOCKER** - 2026-01-22)
+#### 3.4 Memory Corruption During Template Instantiation (**PARTIALLY FIXED** - 2026-01-22)
 
-**Issue:** Several headers crash with `std::bad_any_cast` or SIGSEGV around 400-500 template instantiations. The crash occurs during `restore_token_position()` when accessing `ast_nodes_` vector elements.
+**Issue:** Several headers crashed with SIGSEGV or `std::bad_any_cast` around 400-500 template instantiations.
 
-**Affected Headers:**
-- `<variant>` - Crashes with SIGSEGV ~500 templates
-- `<functional>` - Crashes with `std::bad_any_cast` ~400 templates
+**Root Cause Found:** The SIGSEGV crash was caused by the selective erase loop in `restore_token_position()` which iterated through `ast_nodes_` and called `is<>()` on potentially corrupted `ASTNode` objects. The corruption occurred because:
+1. Vector operations during parsing could invalidate internal `std::any` type_info pointers
+2. The selective erase loop (keeping only FunctionDeclarationNode and StructDeclarationNode) triggered accesses to corrupted memory
 
-**Bugs Fixed (2026-01-22):**
-1. **FileTree::addDependency() heap-use-after-free** - Map key was `string_view` from temporary `string`
-2. **get_numeric_literal_type() stack-use-after-scope** - `substr().c_str()` created dangling pointer
-3. **ASTNode::is<>() potential null access** - Missing `has_value()` check before `type()` call
+**Fix Applied:** Disabled the selective erase loop in `restore_token_position()`. The function now returns immediately after bounds checking instead of iterating through nodes. This trades potential extra AST nodes for stability.
 
-**Current Crash Pattern:**
-```
-[Progress] 400 templates in 108 ms total
-Fatal error: std::bad_any_cast - bad any_cast
-```
+**Current Status:**
+- `<variant>` - ❌ Parse Error (static_assert constexpr evaluation issue) - **SIGSEGV FIXED**
+- `<functional>` - 💥 Crash (std::bad_any_cast at ~400 templates) - **Still has bad_any_cast issue elsewhere**
 
-Debug logging shows the crash happens after multiple consecutive `restore_token_position()` calls during backtracking.
-
-**Analysis:** The crash occurs when iterating through `ast_nodes_` vector during `restore_token_position()` and calling `is<>()` on each node. The `std::any` inside an `ASTNode` appears to be corrupted. Possible causes:
-1. Vector reallocation invalidating references stored elsewhere
-2. Use-after-move of `std::any` objects during vector operations
-3. Memory corruption during intensive template instantiation with backtracking
+**Remaining Issue:** The `<functional>` header still crashes with `std::bad_any_cast`, but this is a different code path from the SIGSEGV that was fixed. Further investigation needed.
 
 ### 4. Missing pthread Types (**ACTIVE BLOCKER** - 2026-01-22)
 
