@@ -17,7 +17,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | 2026-01-22: Fixed include order bug, now times out (~450+ templates) |
-| `<variant>` | `test_std_variant.cpp` | 💥 Crash | 2026-01-21: Crashes during codegen after parsing succeeds |
+| `<variant>` | `test_std_variant.cpp` | 💥 Crash | 2026-01-22: Crashes ~500 templates due to std::any corruption in vector ops (see blocker 3.4) |
 | `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
 | `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Times out during template instantiation |
@@ -324,7 +324,31 @@ constexpr bool is_ratio_check() { return __is_ratio_v<_R>; }  // ✅ Works
 
 **Affected Headers:** `<variant>`, potentially `<functional>`, `<optional>` and others that use `std::true_type` / `std::false_type` as base classes.
 
-### 3. Template Instantiation Performance
+#### 3.4 Variant Header Crash During Parsing (**ACTIVE BLOCKER** - 2026-01-22)
+
+**Issue:** The `<variant>` header crashes with SIGSEGV around 500 template instantiations. AddressSanitizer identified three related memory bugs that were fixed, but the crash persists.
+
+**Bugs Fixed (2026-01-22):**
+1. **FileTree::addDependency() heap-use-after-free** - Map key was `string_view` from temporary `string`
+2. **get_numeric_literal_type() stack-use-after-scope** - `substr().c_str()` created dangling pointer
+3. **ASTNode::is<>() potential null access** - Missing `has_value()` check before `type()` call
+
+**Current Crash:**
+```
+Signal: SIGSEGV (Segmentation fault)
+Fault Address: (nil)
+Location: std::any::type() in AstNodeTypes.h:57
+Called from: restore_token_position() in Parser.cpp:495
+```
+
+**Analysis:** The crash occurs when iterating through `ast_nodes_` vector during `restore_token_position()` and calling `is<>()` on each node. The `std::any` inside an `ASTNode` appears to be corrupted. Possible causes:
+1. Vector reallocation invalidating references stored in `std::any`
+2. Use-after-move of `std::any` objects
+3. Race condition or memory corruption during intensive template instantiation
+
+**Affected Headers:** `<variant>` (crashes), likely affects other template-heavy headers if they reach 500+ instantiations
+
+### 4. Template Instantiation Performance
 
 Template-heavy headers (`<concepts>`, `<bit>`, `<string>`, `<ranges>`) time out due to instantiation volume. Key optimization: improve template cache hit rate (currently ~26%).
 - Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)

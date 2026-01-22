@@ -41,5 +41,8 @@ public:
 
 private:
 	std::unordered_set<std::string> files_;
+	// Note: Using std::string (not string_view) as key is intentional.
+	// addDependency() receives string_view parameters that may point to temporary strings.
+	// Using string_view as the key would cause heap-use-after-free when the temporary is destroyed.
 	std::unordered_map<std::string, std::unordered_set<std::string>> dependencies_;
 };
