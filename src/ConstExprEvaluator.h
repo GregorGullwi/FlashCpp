@@ -2597,16 +2597,20 @@ public:
 					
 					// Follow the type alias chain until we find a struct with actual StructTypeInfo
 					// Type aliases may have isStruct()=true but getStructInfo()=null
-					while (type_info && type_info->type_index_ > 0 && type_info->type_index_ < gTypeInfo.size()) {
+					// Limit iterations to prevent infinite loops from cycles
+					constexpr size_t MAX_ALIAS_CHAIN_DEPTH = 100;
+					size_t alias_depth = 0;
+					while (type_info && type_info->type_index_ > 0 && type_info->type_index_ < gTypeInfo.size() && alias_depth < MAX_ALIAS_CHAIN_DEPTH) {
 						// Check if we already have StructInfo - if so, we're done
 						if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
 							break;
 						}
 						// Follow the type_index_ to find the underlying type
 						const TypeInfo& underlying = gTypeInfo[type_info->type_index_];
-						if (&underlying == type_info) break;  // Avoid infinite loop
+						if (&underlying == type_info) break;  // Avoid direct self-reference
 						FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Following type alias to index ", type_info->type_index_);
 						type_info = &underlying;
+						++alias_depth;
 					}
 					
 					if (type_info && type_info->isStruct()) {
@@ -2615,6 +2619,7 @@ public:
 				}
 				
 				// If still not found, try resolving by checking if there's a type alias in gTypeInfo
+				// Note: This linear search is a fallback for edge cases; primary lookup uses gTypesByName
 				if (!struct_info) {
 					// Try looking up by iterating through gTypeInfo to find a type with matching name
 					for (const auto& type_info : gTypeInfo) {
@@ -2641,6 +2646,8 @@ public:
 						          ", has_initializer: ", static_member->initializer.has_value());
 						
 						// If static member has no initializer, try to trigger lazy instantiation
+						// Note: context.parser may be null in some evaluation contexts (e.g., standalone constant evaluation)
+						// In such cases, lazy instantiation is not possible and we fall through to default value
 						if (!static_member->initializer.has_value() && context.parser != nullptr) {
 							FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Triggering lazy instantiation for '", 
 							          StringTable::getStringView(owner_struct->name), "::", StringTable::getStringView(member_handle), "'");
@@ -2650,10 +2657,10 @@ public:
 							context.parser->instantiateLazyStaticMember(owner_struct->name, member_handle);
 							
 							// Re-lookup the static member after instantiation
-							auto [sm_after, os_after] = struct_info->findStaticMemberRecursive(member_handle);
-							if (sm_after && sm_after->initializer.has_value()) {
+							auto relookup_result = struct_info->findStaticMemberRecursive(member_handle);
+							if (relookup_result.first && relookup_result.first->initializer.has_value()) {
 								FLASH_LOG(General, Debug, "Phase 3 ConstExpr: After lazy instantiation, evaluating initializer");
-								return evaluate(sm_after->initializer.value(), context);
+								return evaluate(relookup_result.first->initializer.value(), context);
 							}
 						}
 						
