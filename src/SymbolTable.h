@@ -112,7 +112,8 @@ public:
 
 			// For non-function symbols (variables, etc.), don't allow duplicates in the same scope
 			// This includes DeclarationNode and VariableDeclarationNode
-			if (!node.is<FunctionDeclarationNode>()) {
+			// Use helper function to check for both FunctionDeclarationNode and TemplateFunctionDeclarationNode
+			if (!is_function_or_template_function(node)) {
 				// Check if any existing symbol has a different type
 				if (!existing_nodes.empty() && existing_nodes[0].type_name() != node.type_name()) {
 					return false;
@@ -121,17 +122,17 @@ public:
 				return false;
 			}
 
-			// For function declarations, allow overloading
+			// For function declarations (including template functions), allow overloading
 			// Check if a function with the same signature already exists
-			if (node.is<FunctionDeclarationNode>()) {
-				const auto& new_func = node.as<FunctionDeclarationNode>();
-				const auto& new_params = new_func.parameter_nodes();
+			const FunctionDeclarationNode* new_func = get_function_decl_node(node);
+			if (new_func) {
+				const auto& new_params = new_func->parameter_nodes();
 
 				// Check if a function with the same signature already exists
 				for (size_t i = 0; i < existing_nodes.size(); ++i) {
-					if (existing_nodes[i].is<FunctionDeclarationNode>()) {
-						const auto& existing_func = existing_nodes[i].as<FunctionDeclarationNode>();
-						const auto& existing_params = existing_func.parameter_nodes();
+					const FunctionDeclarationNode* existing_func = get_function_decl_node(existing_nodes[i]);
+					if (existing_func) {
+						const auto& existing_params = existing_func->parameter_nodes();
 
 						// Check if parameter counts match
 						if (new_params.size() == existing_params.size()) {
@@ -150,8 +151,8 @@ public:
 							// Also check return types for template specializations
 							// (e.g., get<0> returns int, get<1> returns double - different specializations)
 							if (all_match) {
-								const auto& new_return_type = new_func.decl_node().type_node().as<TypeSpecifierNode>();
-								const auto& existing_return_type = existing_func.decl_node().type_node().as<TypeSpecifierNode>();
+								const auto& new_return_type = new_func->decl_node().type_node().as<TypeSpecifierNode>();
+								const auto& existing_return_type = existing_func->decl_node().type_node().as<TypeSpecifierNode>();
 								if (!new_return_type.matches_signature(existing_return_type)) {
 									all_match = false;  // Different return types = different specializations
 								}
@@ -160,7 +161,7 @@ public:
 							if (all_match) {
 								// Same signature found - replace forward declaration with definition if needed
 								// If the new one has a definition and the existing one doesn't, replace it
-								if (new_func.get_definition().has_value() && !existing_func.get_definition().has_value()) {
+								if (new_func->get_definition().has_value() && !existing_func->get_definition().has_value()) {
 									existing_nodes[i] = node;
 									
 									// Also update the namespace_symbols_ map if we're in a namespace or global scope
@@ -173,9 +174,9 @@ public:
 										if (ns_it != ns_symbols.end()) {
 											// Find and replace the matching node in namespace_symbols_
 											for (size_t k = 0; k < ns_it->second.size(); ++k) {
-												if (ns_it->second[k].is<FunctionDeclarationNode>()) {
-													const auto& ns_func = ns_it->second[k].as<FunctionDeclarationNode>();
-													const auto& ns_params = ns_func.parameter_nodes();
+												const FunctionDeclarationNode* ns_func = get_function_decl_node(ns_it->second[k]);
+												if (ns_func) {
+													const auto& ns_params = ns_func->parameter_nodes();
 													
 													// Check if this is the same signature
 													if (ns_params.size() == new_params.size()) {

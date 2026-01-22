@@ -26578,8 +26578,11 @@ ParseResult Parser::parse_template_declaration() {
 						member_func_decl.is_virtual
 					);
 				} else {
-					const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
-					const DeclarationNode& decl = func_decl.decl_node();
+					const FunctionDeclarationNode* func_decl = get_function_decl_node(member_func_decl.function_declaration);
+					if (!func_decl) {
+						continue;  // Skip if we can't get the function declaration
+					}
+					const DeclarationNode& decl = func_decl->decl_node();
 
 					// Phase 7B: Intern function name and use StringHandle overload
 					StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());

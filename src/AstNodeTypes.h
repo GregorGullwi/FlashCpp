@@ -59,10 +59,28 @@ public:
 	}
 
 	template <typename T> T& as() {
+		// Debug: Check if type matches before casting
+		if (!is<T>()) {
+			std::cerr << "ERROR: bad_any_cast in ASTNode::as<" << typeid(T).name() << ">()" << std::endl;
+			std::cerr << "  Actual type: " << (node_.has_value() ? node_.type().name() : "(empty)") << std::endl;
+			std::cerr << "  Expected: " << typeid(T*).name() << std::endl;
+			// Print a simple stack trace using __builtin_return_address
+			void* addr = __builtin_return_address(0);
+			std::cerr << "  Return address: " << addr << std::endl;
+		}
 		return *std::any_cast<T*>(node_);
 	}
 
 	template <typename T> const T& as() const {
+		// Debug: Check if type matches before casting
+		if (!is<T>()) {
+			std::cerr << "ERROR: bad_any_cast in const ASTNode::as<" << typeid(T).name() << ">()" << std::endl;
+			std::cerr << "  Actual type: " << (node_.has_value() ? node_.type().name() : "(empty)") << std::endl;
+			std::cerr << "  Expected: " << typeid(T*).name() << std::endl;
+			// Print a simple stack trace using __builtin_return_address
+			void* addr = __builtin_return_address(0);
+			std::cerr << "  Return address: " << addr << std::endl;
+		}
 		return *std::any_cast<T*>(node_);
 	}
 
@@ -1939,6 +1957,37 @@ private:
 	ASTNode function_declaration_;  // FunctionDeclarationNode
 	std::optional<ASTNode> requires_clause_;  // Optional RequiresClauseNode
 };
+
+// Helper functions to safely extract FunctionDeclarationNode from either
+// FunctionDeclarationNode or TemplateFunctionDeclarationNode
+// This is needed because many places store ASTNode that could be either type
+
+/// Check if an ASTNode contains a function declaration (direct or template)
+inline bool is_function_or_template_function(const ASTNode& node) {
+	return node.is<FunctionDeclarationNode>() || node.is<TemplateFunctionDeclarationNode>();
+}
+
+/// Get the FunctionDeclarationNode from an ASTNode that is either a 
+/// FunctionDeclarationNode or TemplateFunctionDeclarationNode
+/// Returns nullptr if the node is neither type
+inline const FunctionDeclarationNode* get_function_decl_node(const ASTNode& node) {
+	if (node.is<FunctionDeclarationNode>()) {
+		return &node.as<FunctionDeclarationNode>();
+	} else if (node.is<TemplateFunctionDeclarationNode>()) {
+		return &node.as<TemplateFunctionDeclarationNode>().function_decl_node();
+	}
+	return nullptr;
+}
+
+/// Non-const version of get_function_decl_node
+inline FunctionDeclarationNode* get_function_decl_node_mut(ASTNode& node) {
+	if (node.is<FunctionDeclarationNode>()) {
+		return &node.as<FunctionDeclarationNode>();
+	} else if (node.is<TemplateFunctionDeclarationNode>()) {
+		return &node.as<TemplateFunctionDeclarationNode>().function_decl_node();
+	}
+	return nullptr;
+}
 
 // Template alias declaration: template<typename T> using Ptr = T*;
 class TemplateAliasNode {
