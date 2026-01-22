@@ -204,7 +204,7 @@ foreach ($file in $referenceFiles) {
     Write-Host "[$currentFile/$totalFiles] Testing $($file.Name)... " -NoNewline
 
     # Compile with FlashCpp
-    $flashCppArgs = @("--log-level=Codegen:error", $file.FullName)
+    $flashCppArgs = @("--log-level=1", $file.FullName)
     if ($file.Name -eq "test_no_access_control_flag.cpp") {
         $flashCppArgs = @("-fno-access-control") + $flashCppArgs
     }
