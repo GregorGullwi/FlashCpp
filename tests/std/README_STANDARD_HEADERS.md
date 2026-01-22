@@ -4,13 +4,21 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
+✅ **Qualified Base Class in Full Specializations (2026-01-21 PM):** Fixed parsing of namespace-qualified base classes like `std::false_type` in full template specializations. `<variant>` progresses past line 299 (was failing with "Base class 'std' not found").
+
+✅ **Template Parameter State Cleanup (2026-01-21 PM):** Fixed template parameter names leaking into subsequent code after parsing concept/alias/variable templates and full/partial specializations. This prevents incorrect function lookup failures.
+
+✅ **Exception Header Now Compiles (2026-01-21 PM):** The `<exception>` header now compiles successfully (~6s).
+
+🔧 **Function Return Type Loss (2026-01-21 PM):** Pre-existing bug where `get_expression_type` loses pointer information for function return types in certain contexts. For example, `name()` returning `const char*` is incorrectly seen as `char` instead of `char*`. This causes overload resolution to fail for functions like `_Hash_bytes(const void*, ...)` when the first argument comes from a function returning `const char*`. Blocks `<optional>` and headers that use `<type_traits>` + `<typeinfo>` together.
+
 ✅ **Variable Template Partial Specialization Pattern Matching (2026-01-21):** Fixed pattern registration for partial specializations like `__is_ratio_v<ratio<_Num, _Den>>`. Now correctly includes base template name in pattern (e.g., `__is_ratio_v_ratio`). This enables variable template partial specializations with template instantiation patterns to work correctly when used directly.
 
 🔧 **Variable Template in Function Template Body (2026-01-21):** Variable templates with partial specializations used inside function template bodies (like `if constexpr (__is_ratio_v<_R1>)` inside `__are_both_ratios<R1, R2>()`) don't properly substitute template parameters. The variable template is instantiated with the template parameter name (`_R1`) instead of the substituted type. This affects `<ratio>` header's `__are_both_ratios()` function.
 
 ✅ **Trailing Specifiers in Partial Specializations (2026-01-21 PM):** Fixed parsing of `operator=(...) noexcept = default` and `~Destructor() noexcept = delete` in partial specializations. `<variant>` progresses from line 119 → 72.
 
-🔧 **MemberAccess Missing Object in Codegen (2026-01-21):** `<exception>` header crashes during code generation with "MemberAccess missing object: other". This appears to be related to accessing members of reference parameters in certain contexts. Blocks `<exception>`, `<optional>`, `<iostream>`.
+✅ **MemberAccess Missing Object in Codegen (2026-01-21 PM - FIXED):** Previously crashed during code generation. Now `<exception>` compiles successfully.
 
 ✅ **Typename Functional Cast (2026-01-21):** Fixed `typename T<Args>::member(args)` pattern in fold expressions. Unblocks `<vector>`, `<map>`, `<set>` from parse errors.
 
@@ -40,8 +48,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Codegen | 2026-01-21: Variable template in function body issue (see blocker 7.4) |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
 | `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen | 2026-01-21: MemberAccess missing object issue (see blocker 7.5) |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | 2026-01-21 PM: IMPROVED from line 119 to line 72 - decltype in partial spec pattern (~5.7s) |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | 2026-01-21 PM: Function return type loss issue with `_Hash_bytes` (see blocker) |
+| `<variant>` | `test_std_variant.cpp` | 💥 Crash | 2026-01-21 PM: Progresses past line 299 (base class fix), then crashes during codegen |
 | `<any>` | `test_std_any.cpp` | ⏱️ Timeout | 2026-01-21: Times out at 60+ seconds (was misreported as parse error) |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
 | `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
@@ -60,7 +68,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<atomic>` | N/A | ❌ Parse Error | Complex decltype in partial specialization (see blockers) |
 | `<new>` | N/A | ✅ Compiled | ~0.08s |
-| `<exception>` | N/A | ❌ Codegen | 2026-01-21: MemberAccess missing object during codegen |
+| `<exception>` | N/A | ✅ Compiled | ~6s (2026-01-21 PM: Fixed MemberAccess issue) |
 | `<typeinfo>` | N/A | ✅ Compiled | ~0.09s |
 | `<typeindex>` | N/A | ✅ Compiled | ~0.14s |
 | `<csetjmp>` | N/A | ✅ Compiled | ~0.04s |
