@@ -25884,7 +25884,8 @@ ParseResult Parser::parse_template_declaration() {
 					}
 
 					Token base_name_token = *base_name_token_opt;
-					std::string base_class_name_str{base_name_token_opt->value()};
+					StringBuilder base_class_name_builder;
+					base_class_name_builder.append(base_name_token_opt->value());
 					
 					// Check for qualified name (e.g., ns::Base or std::false_type)
 					while (peek_token().has_value() && peek_token()->value() == "::") {
@@ -25896,14 +25897,14 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						consume_token(); // consume the identifier
 						
-						base_class_name_str += "::";
-						base_class_name_str += next_name_token->value();
+						base_class_name_builder.append("::"sv);
+						base_class_name_builder.append(next_name_token->value());
 						base_name_token = *next_name_token;  // Update for error reporting
 						
-						FLASH_LOG_FORMAT(Parser, Debug, "Parsing qualified base class name in full specialization: {}", base_class_name_str);
+						FLASH_LOG_FORMAT(Parser, Debug, "Parsing qualified base class name in full specialization: {}", base_class_name_builder.preview());
 					}
 					
-					std::string_view base_class_name = StringTable::getOrInternStringHandle(StringBuilder().append(base_class_name_str)).view();
+					std::string_view base_class_name = base_class_name_builder.commit();
 					std::vector<ASTNode> template_arg_nodes;
 					std::optional<std::vector<TemplateTypeArg>> base_template_args_opt;
 					std::optional<StringHandle> member_type_name;
