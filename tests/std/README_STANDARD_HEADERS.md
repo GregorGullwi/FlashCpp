@@ -484,7 +484,7 @@ extern int pthread_create (pthread_t * __newthread, ...
 
 ### 6. `<compare>` Header Out-of-Line Static Constexpr Definition (**FIXED** - 2026-01-22 This PR)
 
-**Status:** **FIXED** - The parsing issues have been resolved. The header now fails at a semantic level (function lookup).
+**Status:** **FIXED** - The parsing issues have been resolved. The header now fails at a semantic level (function lookup for `strong_order`).
 
 **Previous Issue:** The `<compare>` header failed to parse at line 153 with out-of-line static constexpr member definitions.
 
