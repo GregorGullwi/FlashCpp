@@ -8,37 +8,37 @@ This directory contains test files for C++ standard library headers to assess Fl
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~29ms |
 | `<type_traits>` | `test_std_type_traits.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~113ms) |
-| `<compare>` | N/A | ❌ Parse Error | Out-of-line static constexpr member definition (~136ms) |
+| `<compare>` | N/A | ❌ Semantic Error | Now parses successfully, fails at strong_order lookup (~142ms) |
 | `<version>` | N/A | ✅ Compiled | ~17ms |
 | `<source_location>` | N/A | ✅ Compiled | ~17ms |
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | static_assert constexpr evaluation (~155ms) |
-| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<vector>` | `test_std_vector.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | `requires requires` nested constraint not supported (~174ms) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~161ms) |
 | `<any>` | `test_std_any.cpp` | ❌ Parse Error | Unexpected token in template body |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
-| `<utility>` | `test_std_utility.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
-| `<bit>` | N/A | ❌ Parse Error | `<compare>` header out-of-line definition |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
-| `<string>` | `test_std_string.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<utility>` | `test_std_utility.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<bit>` | N/A | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<string>` | `test_std_string.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<array>` | `test_std_array.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Test file missing |
 | `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Complex `__void_t<decltype(...)>>` in partial specialization (~124ms) |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Test file missing |
-| `<map>` | `test_std_map.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
-| `<set>` | `test_std_set.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
-| `<span>` | `test_std_span.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<map>` | `test_std_map.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<set>` | `test_std_set.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<span>` | `test_std_span.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Test file missing |
 | `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
 | `<typeinfo>` | N/A | ✅ Compiled | ~18ms |
-| `<typeindex>` | N/A | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<typeindex>` | N/A | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
 | `<csignal>` | N/A | ✅ Compiled | ~22ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
@@ -48,20 +48,30 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<text_encoding>` | N/A | ✅ Compiled | ~17ms (C++26) |
 | `<barrier>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<stacktrace>` | N/A | ✅ Compiled | ~17ms (C++23) |
-| `<coroutine>` | N/A | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<coroutine>` | N/A | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
 **Note (2026-01-22 Evening Update):** All timeout issues have been resolved! The infinite loop bug in the parser has been fixed. Headers that were timing out now complete in 100-200ms. The remaining blockers are actual parsing/semantic issues.
 
+**Note (2026-01-22 Later Update):** Major `<compare>` header parsing fixes applied! The `<compare>` header now parses successfully. Many headers that were blocked by `<compare>` parse errors now progress to semantic errors (function lookup failures).
+
 **Primary Remaining Blockers:**
-1. **`<compare>` header out-of-line definition** - Many headers include `<compare>` which fails at line 153 with out-of-line static constexpr member definition syntax: `partial_ordering::less(__cmp_cat::_Ord::less);`
+1. **`<compare>` header strong_order lookup** - The header now parses but fails at line 621 looking up `strong_order` function (semantic error, not parse error)
 2. **`requires requires` nested constraints** - C++20 nested requires expressions like `requires requires { ... }` are not supported (affects `<optional>`, `<ptr_traits.h>`)
 3. **Complex partial specialization patterns** - Patterns with `__void_t<decltype(...)>>` in partial specializations (affects `<functional>`)
 4. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
 5. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
 
-**Fixes Applied (2026-01-22):**
+**Fixes Applied (2026-01-22 This PR):**
+- **Fixed** Out-of-line static constexpr member variable definition with parenthesized initializer (`partial_ordering::less(__cmp_cat::_Ord::less)`)
+- **Fixed** `[[nodiscard]]` and other attributes before conversion operators in struct bodies
+- **Fixed** Free-standing operator call syntax `operator<=>(args)` in requires expressions
+- **Fixed** Member operator call syntax `obj.operator<=>(args)` 
+- **Fixed** Postfix operators after cast expressions (`static_cast<T>(x).operator<=>()`)
+- **Fixed** `operator() [[nodiscard]] (...)` attribute placement between operator name and parameter list
+
+**Fixes Applied (2026-01-22 Earlier):**
 - **Fixed** `std::bad_any_cast` crash in `<functional>` - member template functions were incorrectly cast
 - **Fixed** `decltype(auto)` return type specifier (C++14 feature)
 - **Fixed** Nested struct/template with base classes in template class bodies
@@ -472,37 +482,40 @@ extern int pthread_create (pthread_t * __newthread, ...
 
 **Root Cause:** These are internal implementation headers that may be in non-standard paths or require specific GCC version configuration.
 
-### 6. `<compare>` Header Out-of-Line Static Constexpr Definition (**ACTIVE BLOCKER** - 2026-01-22)
+### 6. `<compare>` Header Out-of-Line Static Constexpr Definition (**FIXED** - 2026-01-22 This PR)
 
-**Issue:** The `<compare>` header fails to parse at line 153 with out-of-line static constexpr member definitions.
+**Status:** **FIXED** - The parsing issues have been resolved. The header now fails at a semantic level (function lookup).
 
-**Error Message:**
+**Previous Issue:** The `<compare>` header failed to parse at line 153 with out-of-line static constexpr member definitions.
+
+**Previous Error Message:**
 ```
 /usr/include/c++/14/compare:153:25: error: Unexpected token
     partial_ordering::less(__cmp_cat::_Ord::less);
                           ^
 ```
 
-**Problematic Code Pattern:**
-```cpp
-// In <compare> header, line 153
-inline constexpr partial_ordering
-partial_ordering::less(__cmp_cat::_Ord::less);
+**Current Error Message:** (now at line 621, semantic error)
+```
+/usr/include/c++/14/compare:621:31: error: No matching function for call to 'strong_order'
+    strong_ordering(strong_order(static_cast<_Tp&&>(__t), static_cast<_Up&&>(__u)));
+                                ^
 ```
 
-This is a C++ syntax for defining a static constexpr member outside the class:
-- `partial_ordering::less` is a static constexpr member of the `partial_ordering` class
-- It's being initialized with `__cmp_cat::_Ord::less`
+**Fixes Applied:**
+1. **Out-of-line static constexpr member definitions** - Parser now recognizes `ClassName::member(initializer)` syntax for static constexpr members
+2. **`[[nodiscard]]` attributes in struct bodies** - Added attribute skipping at start of struct body member parsing
+3. **Free-standing operator call syntax** - `operator<=>(args)` now works in requires expressions
+4. **Member operator call syntax** - `obj.operator<=>(args)` now works
+5. **Postfix operators after casts** - `static_cast<T>(x).operator<=>()` now works
+6. **`operator() [[nodiscard]] (...)` attribute placement** - Attributes between operator name and parameter list now handled
+
+**Remaining Issue:** The header now parses successfully but fails at semantic analysis (function lookup for `strong_order`). This is a semantic error, not a parse error.
 
 **Affected Headers:** Most C++20 standard headers include `<compare>` directly or indirectly:
 - `<vector>`, `<tuple>`, `<string>`, `<string_view>`, `<array>`
 - `<map>`, `<set>`, `<span>`, `<ranges>`, `<iostream>`
 - `<utility>`, `<bit>`, `<typeindex>`, `<coroutine>`
-
-**Root Cause:** The parser recognizes this as an out-of-line definition but then fails because it expects the member to already exist in the class. The specific issue may be that:
-1. The class wasn't fully parsed
-2. The member wasn't registered during class parsing
-3. The lookup for static constexpr members is failing
 
 ### 7. Nested `requires requires` Constraints (**ACTIVE BLOCKER** - 2026-01-22)
 

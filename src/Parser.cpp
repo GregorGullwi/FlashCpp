@@ -1670,6 +1670,10 @@ ParseResult Parser::parse_type_and_name() {
         identifier_token = Token(Token::Type::Identifier, operator_name,
                                 operator_keyword_token.line(), operator_keyword_token.column(),
                                 operator_keyword_token.file_index());
+        
+        // Skip any C++ attributes like [[nodiscard]] that may appear after the operator name
+        // but before the parameter list (e.g., operator() [[nodiscard]] (args))
+        skip_cpp_attributes();
     } else {
         // Regular identifier (or unnamed parameter)
         // Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
