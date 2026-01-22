@@ -17,7 +17,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | ~500 templates before timeout |
 | `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | ~450 templates before timeout |
 | `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | ~450 templates before timeout |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (SIGSEGV fixed in blocker 3.4) |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue |
 | `<any>` | `test_std_any.cpp` | ⏱️ Timeout | ~450 templates before timeout |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | ~400 templates before timeout |
 | `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | ~450 templates before timeout |
@@ -26,7 +26,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | ~400 templates before timeout |
 | `<array>` | `test_std_array.cpp` | ⏱️ Timeout | ~400 templates before timeout |
 | `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Missing `execution_defs.h` |
-| `<functional>` | `test_std_functional.cpp` | 💥 Crash | std::bad_any_cast at ~400 templates |
+| `<functional>` | `test_std_functional.cpp` | 💥 Crash | Crashes at ~400 templates (std::bad_any_cast) |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Missing `execution_defs.h` |
 | `<map>` | `test_std_map.cpp` | ⏱️ Timeout | ~500 templates before timeout |
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | ~500 templates before timeout |
