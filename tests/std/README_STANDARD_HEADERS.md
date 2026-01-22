@@ -7,38 +7,38 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~29ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~31ms |
-| `<compare>` | N/A | ⏱️ Timeout | ~400 templates before timeout |
+| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~113ms) |
+| `<compare>` | N/A | ❌ Parse Error | Out-of-line static constexpr member definition (~136ms) |
 | `<version>` | N/A | ✅ Compiled | ~17ms |
 | `<source_location>` | N/A | ✅ Compiled | ~17ms |
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
-| `<ratio>` | `test_std_ratio.cpp` | ⏱️ Timeout | Parses OK, times out in template instantiation |
-| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | ~500 templates before timeout |
-| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | ~450 templates before timeout |
-| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | ~450 templates before timeout |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue |
-| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | ~450 templates before timeout |
-| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | ~400 templates before timeout |
-| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | ~450 templates before timeout |
-| `<bit>` | N/A | ⏱️ Timeout | ~400 templates before timeout |
-| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | ~400 templates before timeout |
-| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | ~400 templates before timeout |
-| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | ~400 templates before timeout |
-| `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Missing `execution_defs.h` |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Complex `__void_t<decltype(...)>>` in partial specialization |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Missing `execution_defs.h` |
-| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | ~500 templates before timeout |
-| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | ~500 templates before timeout |
-| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | ~400 templates before timeout |
-| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | ~400 templates before timeout |
-| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | ~500 templates before timeout |
-| `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Missing `unicode-data.h` |
+| `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | static_assert constexpr evaluation (~155ms) |
+| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | `requires requires` nested constraint not supported (~174ms) |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~161ms) |
+| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Unexpected token in template body |
+| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
+| `<utility>` | `test_std_utility.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<bit>` | N/A | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<string>` | `test_std_string.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<array>` | `test_std_array.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Test file missing |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Complex `__void_t<decltype(...)>>` in partial specialization (~124ms) |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Test file missing |
+| `<map>` | `test_std_map.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<set>` | `test_std_set.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<span>` | `test_std_span.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | `<compare>` header out-of-line definition |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Test file missing |
 | `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
 | `<typeinfo>` | N/A | ✅ Compiled | ~18ms |
-| `<typeindex>` | N/A | ⏱️ Timeout | ~400 templates before timeout |
+| `<typeindex>` | N/A | ❌ Parse Error | `<compare>` header out-of-line definition |
 | `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
 | `<csignal>` | N/A | ✅ Compiled | ~22ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
@@ -48,20 +48,24 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<text_encoding>` | N/A | ✅ Compiled | ~17ms (C++26) |
 | `<barrier>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<stacktrace>` | N/A | ✅ Compiled | ~17ms (C++23) |
-| `<coroutine>` | N/A | ⏱️ Timeout | ~400 templates before timeout |
+| `<coroutine>` | N/A | ❌ Parse Error | `<compare>` header out-of-line definition |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
-**Note (2026-01-22 Updated):** Template counts show templates processed before timeout/crash at 60s. Most timeout headers parse successfully but get stuck during extensive template instantiation. The primary remaining blockers are:
-1. Template instantiation performance (most timeouts at 400-500 templates)
-2. Complex partial specialization patterns with nested `__void_t<decltype(...)>>` (see `<functional>`)
-3. Missing include files (`execution_defs.h`, `unicode-data.h`) for `<memory>`, `<algorithm>`, `<chrono>`
-4. Missing pthread types for `<atomic>` and `<barrier>`
+**Note (2026-01-22 Evening Update):** All timeout issues have been resolved! The infinite loop bug in the parser has been fixed. Headers that were timing out now complete in 100-200ms. The remaining blockers are actual parsing/semantic issues.
+
+**Primary Remaining Blockers:**
+1. **`<compare>` header out-of-line definition** - Many headers include `<compare>` which fails at line 153 with out-of-line static constexpr member definition syntax: `partial_ordering::less(__cmp_cat::_Ord::less);`
+2. **`requires requires` nested constraints** - C++20 nested requires expressions like `requires requires { ... }` are not supported (affects `<optional>`, `<ptr_traits.h>`)
+3. **Complex partial specialization patterns** - Patterns with `__void_t<decltype(...)>>` in partial specializations (affects `<functional>`)
+4. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
+5. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
 
 **Fixes Applied (2026-01-22):**
 - **Fixed** `std::bad_any_cast` crash in `<functional>` - member template functions were incorrectly cast
 - **Fixed** `decltype(auto)` return type specifier (C++14 feature)
 - **Fixed** Nested struct/template with base classes in template class bodies
+- **Fixed** Infinite loop when parser reaches EOF - `peek_token()` now returns `std::nullopt` for EndOfFile tokens, causing all `while (peek_token().has_value())` loops to properly terminate
 
 ### C Library Wrappers (Also Working)
 
@@ -153,6 +157,37 @@ clang++ -DFLASHCPP_LOG_LEVEL=2 -O3 ...
 ```
 
 ## Current Blockers
+
+### 0. Infinite Loop at EOF (**FIXED** - 2026-01-22)
+
+**Status:** **FIXED** in this PR
+
+When parsing source files, the parser would spin forever after reaching the end of file. Multiple loops in the parser used `while (peek_token().has_value())` to iterate, but `peek_token()` always returned a valid optional - even for EOF tokens (with type `EndOfFile` and empty value).
+
+**Root Cause:** The lexer returns an `EndOfFile` token at the end, which still has a value (empty string). All loops checking `peek_token().has_value()` would continue indefinitely because they expected `has_value()` to return `false` at EOF.
+
+**Symptoms:**
+- Standard header tests appearing to "timeout" after 400-500 templates
+- Process spinning at 100% CPU with no output
+- Memory not growing (not actually doing work, just spinning)
+
+**Fix:** Modified `peek_token()` to return `std::nullopt` when the current token is `EndOfFile`:
+```cpp
+std::optional<Token> Parser::peek_token() {
+    if (!current_token_.has_value()) {
+        current_token_.emplace(lexer_.next_token());
+    }
+    // Return nullopt for EndOfFile to make loops terminate at EOF
+    if (current_token_->type() == Token::Type::EndOfFile) {
+        return std::nullopt;
+    }
+    return current_token_;
+}
+```
+
+**Impact:** All standard header tests that were timing out now complete in 100-200ms. The issues revealed are now actual parsing/semantic errors, not infinite loops.
+
+---
 
 ### 1. Pending Template Arguments Leak (**FIXED** - 2026-01-22)
 
@@ -437,23 +472,79 @@ extern int pthread_create (pthread_t * __newthread, ...
 
 **Root Cause:** These are internal implementation headers that may be in non-standard paths or require specific GCC version configuration.
 
-### 6. Template Instantiation Performance
+### 6. `<compare>` Header Out-of-Line Static Constexpr Definition (**ACTIVE BLOCKER** - 2026-01-22)
 
-Most headers timeout due to template instantiation volume, not parsing errors. Standard headers trigger 400-500+ instantiations within 60 seconds before hitting the timeout.
+**Issue:** The `<compare>` header fails to parse at line 153 with out-of-line static constexpr member definitions.
+
+**Error Message:**
+```
+/usr/include/c++/14/compare:153:25: error: Unexpected token
+    partial_ordering::less(__cmp_cat::_Ord::less);
+                          ^
+```
+
+**Problematic Code Pattern:**
+```cpp
+// In <compare> header, line 153
+inline constexpr partial_ordering
+partial_ordering::less(__cmp_cat::_Ord::less);
+```
+
+This is a C++ syntax for defining a static constexpr member outside the class:
+- `partial_ordering::less` is a static constexpr member of the `partial_ordering` class
+- It's being initialized with `__cmp_cat::_Ord::less`
+
+**Affected Headers:** Most C++20 standard headers include `<compare>` directly or indirectly:
+- `<vector>`, `<tuple>`, `<string>`, `<string_view>`, `<array>`
+- `<map>`, `<set>`, `<span>`, `<ranges>`, `<iostream>`
+- `<utility>`, `<bit>`, `<typeindex>`, `<coroutine>`
+
+**Root Cause:** The parser recognizes this as an out-of-line definition but then fails because it expects the member to already exist in the class. The specific issue may be that:
+1. The class wasn't fully parsed
+2. The member wasn't registered during class parsing
+3. The lookup for static constexpr members is failing
+
+### 7. Nested `requires requires` Constraints (**ACTIVE BLOCKER** - 2026-01-22)
+
+**Issue:** C++20 nested requires expressions (requires-expression inside a requires-clause) are not supported.
+
+**Error Message:**
+```
+/usr/include/c++/14/bits/ptr_traits.h:109:15: error: Expected '{' or ';' after static member function declaration
+        requires requires {
+                ^
+```
+
+**Problematic Code Pattern:**
+```cpp
+static pointer pointer_to(element_type& __r)
+requires requires {
+    { pointer::pointer_to(__r) } -> convertible_to<pointer>;
+}
+{ return pointer::pointer_to(__r); }
+```
+
+**Affected Headers:** `<optional>`, `<ptr_traits.h>`, and other headers using this C++20 syntax.
+
+### 8. Template Instantiation Performance (NO LONGER A BLOCKER)
+
+**Status:** The timeout issues have been **FIXED**. All headers now complete in 100-200ms.
+
+Previously, headers appeared to timeout after 400-500 templates. This was actually caused by the infinite loop bug (see Blocker #0), not template instantiation performance.
 
 **Current Performance (from progress logs):**
 - Template cache hit rate: ~65-70%
 - Average instantiation time: 8-10μs
 - Peak instantiation time: up to 800μs for complex templates
-- Timeout threshold: 60 seconds
+- Standard headers complete in 100-200ms (no more timeouts)
 
-**Optimization opportunities:**
+**Optimization opportunities (for future work):**
 - Improve template cache hit rate
 - Optimize string operations in template name generation
 - Consider lazy evaluation strategies
 - Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
 
-### 7. std::initializer_list Compiler Magic (Known Limitation)
+### 9. std::initializer_list Compiler Magic (Known Limitation)
 
 **Issue:** `std::initializer_list<T>` requires special compiler support that is not yet implemented.
 
