@@ -18,6 +18,7 @@
 
 #include "CompileContext.h"
 #include "FileTree.h"
+#include "StackString.h"
 
 using namespace std::string_view_literals;
 
@@ -1242,8 +1243,13 @@ private:
 	std::string expandMacros(const std::string& input, std::unordered_set<std::string> expanding_macros = {}) {
 		// Check if we're inside a multiline raw string from a previous line
 		if (inside_multiline_raw_string_) {
-			std::string closing = ")" + multiline_raw_delimiter_ + "\"";
-			size_t close_pos = input.find(closing);
+			// Build closing pattern: ")" + delimiter + "\""
+			// Since delimiter is max 16 chars, closing is max 18 chars - use StackString to avoid allocation
+			StackString<20> closing;
+			closing += ')';
+			closing += multiline_raw_delimiter_.view();
+			closing += '"';
+			size_t close_pos = input.find(closing.view());
 			if (close_pos != std::string::npos) {
 				inside_multiline_raw_string_ = false;
 				multiline_raw_delimiter_.clear();
@@ -1256,22 +1262,30 @@ private:
 		while ((raw_start = input.find("R\"", raw_start)) != std::string::npos) {
 			size_t delim_start = raw_start + 2;
 			size_t paren_pos = input.find('(', delim_start);
-			if (paren_pos != std::string::npos && paren_pos <= delim_start + kMaxRawStringDelimiterLength) { // max delimiter length
-				std::string delimiter = input.substr(delim_start, paren_pos - delim_start);
-				std::string closing = ")" + delimiter + "\"";
-				if (input.find(closing, paren_pos) == std::string::npos) {
+			if (paren_pos != std::string::npos && paren_pos <= delim_start + kMaxRawStringDelimiterLength) {
+				// Use string_view to avoid allocation for delimiter
+				std::string_view delimiter(input.data() + delim_start, paren_pos - delim_start);
+				// Build closing pattern using StackString to avoid heap allocation
+				StackString<20> closing;
+				closing += ')';
+				closing += delimiter;
+				closing += '"';
+				if (input.find(closing.view(), paren_pos) == std::string::npos) {
 					inside_multiline_raw_string_ = true;
 					multiline_raw_delimiter_ = delimiter;
 					return input;
 				}
-			}
+					}
 			raw_start++;
 		}
 
-		// Use a working copy to avoid const_cast issues
-		std::string current = input;
+		// Use local strings with reserved capacity to minimize allocations
+		// Pre-reserve based on input size to avoid reallocations during processing
+		std::string current;
 		std::string output;
-		output.reserve(current.size() * 2);  // Reserve space to avoid reallocations
+		current.reserve(input.size());
+		current = input;
+		output.reserve(input.size() * 2);  // Macro expansion may increase size
 		
 		size_t loop_guard = 1000;  // Safety limit for expansion iterations
 		bool needs_another_pass = true;  // Controls iteration - start with true to do at least one pass
@@ -1287,7 +1301,7 @@ private:
 			bool in_string = false;
 			bool in_char = false;
 			bool in_raw_string = false;
-			std::string raw_delimiter;
+			StackString<kMaxRawStringDelimiterLength + 1> raw_delimiter;  // Use StackString to avoid heap allocation
 			
 			while (pos < input_size) {
 				char c = current[pos];
@@ -1306,7 +1320,7 @@ private:
 					size_t delim_start = pos + 2;
 					size_t paren = current.find('(', delim_start);
 					if (paren != std::string::npos && paren <= delim_start + kMaxRawStringDelimiterLength) {
-						raw_delimiter = current.substr(delim_start, paren - delim_start);
+						raw_delimiter = std::string_view(current.data() + delim_start, paren - delim_start);
 						in_raw_string = true;
 						// Copy up to and including the opening paren
 						while (pos <= paren) {
@@ -1317,10 +1331,13 @@ private:
 				}
 				
 				if (in_raw_string) {
-					// Look for closing delimiter
-					std::string closing = ")" + raw_delimiter + "\"";
+					// Look for closing delimiter using StackString to avoid heap allocation
+					StackString<20> closing;
+					closing += ')';
+					closing += raw_delimiter.view();
+					closing += '"';
 					if (pos + closing.size() <= input_size && 
-					    current.compare(pos, closing.size(), closing) == 0) {
+					    current.compare(pos, closing.size(), closing.view()) == 0) {
 						// Found closing, copy it and exit raw string mode
 						output += current.substr(pos, closing.size());
 						pos += closing.size();
@@ -2590,5 +2607,5 @@ private:
 
 	// State for tracking multiline raw string literals
 	bool inside_multiline_raw_string_ = false;
-	std::string multiline_raw_delimiter_;
+	StackString<kMaxRawStringDelimiterLength + 1> multiline_raw_delimiter_;  // Max 16 chars per C++11 standard
 };
