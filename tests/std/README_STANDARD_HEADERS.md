@@ -6,53 +6,57 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.21s |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1.0s release |
-| `<compare>` | N/A | ✅ Compiled | ~0.07s |
-| `<version>` | N/A | ✅ Compiled | ~0.07s |
-| `<source_location>` | N/A | ✅ Compiled | ~0.07s |
-| `<numbers>` | N/A | ✅ Compiled | ~1.2s release |
-| `<initializer_list>` | N/A | ✅ Compiled | ~0.04s |
-| `<ratio>` | `test_std_ratio.cpp` | ❌ Codegen | 2026-01-21: Variable template in function body issue (see blocker 3.3) |
-| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | 2026-01-22: Fixed include order bug, now times out (~450+ templates) |
-| `<variant>` | `test_std_variant.cpp` | 💥 Crash | 2026-01-22: Crashes ~500 templates due to std::any corruption in vector ops (see blocker 3.4) |
-| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
-| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<bit>` | N/A | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
-| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Times out (depends on complex headers) |
-| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<atomic>` | N/A | ❌ Parse Error | Complex decltype in partial specialization |
-| `<new>` | N/A | ✅ Compiled | ~0.08s |
-| `<exception>` | N/A | ✅ Compiled | ~1.3s (2026-01-22: Fixed pending_explicit_template_args_ leak) |
-| `<typeinfo>` | N/A | ✅ Compiled | ~0.09s |
-| `<typeindex>` | N/A | ✅ Compiled | ~1.6s (depends on <exception>) |
-| `<csetjmp>` | N/A | ✅ Compiled | ~0.04s |
-| `<csignal>` | N/A | ✅ Compiled | ~0.13s |
-| `<stdfloat>` | N/A | ✅ Compiled | ~0.01s (C++23) |
-| `<spanstream>` | N/A | ✅ Compiled | ~0.09s (C++23) |
-| `<print>` | N/A | ✅ Compiled | ~0.09s (C++23) |
-| `<expected>` | N/A | ✅ Compiled | ~0.08s (C++23) |
-| `<text_encoding>` | N/A | ✅ Compiled | ~0.08s (C++26) |
-| `<barrier>` | N/A | ✅ Compiled | ~0.07s (C++20) |
-| `<stacktrace>` | N/A | ✅ Compiled | ~0.07s (C++23) |
-| `<coroutine>` | N/A | ❌ Not Supported | Coroutines require `-fcoroutines` flag |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~29ms |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~31ms |
+| `<compare>` | N/A | ⏱️ Timeout | ~400 templates before timeout |
+| `<version>` | N/A | ✅ Compiled | ~17ms |
+| `<source_location>` | N/A | ✅ Compiled | ~17ms |
+| `<numbers>` | N/A | ✅ Compiled | ~33ms |
+| `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
+| `<ratio>` | `test_std_ratio.cpp` | ⏱️ Timeout | Parses OK, times out in template instantiation |
+| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | ~500 templates before timeout |
+| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | ~450 templates before timeout |
+| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | ~450 templates before timeout |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue |
+| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | ~450 templates before timeout |
+| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | ~400 templates before timeout |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | ~450 templates before timeout |
+| `<bit>` | N/A | ⏱️ Timeout | ~400 templates before timeout |
+| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | ~400 templates before timeout |
+| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | ~400 templates before timeout |
+| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | ~400 templates before timeout |
+| `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Missing `execution_defs.h` |
+| `<functional>` | `test_std_functional.cpp` | 💥 Crash | Crashes at ~400 templates (std::bad_any_cast) |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Missing `execution_defs.h` |
+| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | ~500 templates before timeout |
+| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | ~500 templates before timeout |
+| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | ~400 templates before timeout |
+| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | ~400 templates before timeout |
+| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | ~500 templates before timeout |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Missing `unicode-data.h` |
+| `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
+| `<new>` | N/A | ✅ Compiled | ~18ms |
+| `<exception>` | N/A | ✅ Compiled | ~43ms |
+| `<typeinfo>` | N/A | ✅ Compiled | ~18ms |
+| `<typeindex>` | N/A | ⏱️ Timeout | ~400 templates before timeout |
+| `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
+| `<csignal>` | N/A | ✅ Compiled | ~22ms |
+| `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
+| `<spanstream>` | N/A | ✅ Compiled | ~17ms (C++23) |
+| `<print>` | N/A | ✅ Compiled | ~17ms (C++23) |
+| `<expected>` | N/A | ✅ Compiled | ~18ms (C++23) |
+| `<text_encoding>` | N/A | ✅ Compiled | ~17ms (C++26) |
+| `<barrier>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
+| `<stacktrace>` | N/A | ✅ Compiled | ~17ms (C++23) |
+| `<coroutine>` | N/A | ⏱️ Timeout | ~400 templates before timeout |
 
-**Legend:** ✅ Compiled | ❌ Failed/Parse Error | ⏱️ Timeout (>30s) | 💥 Crash
+**Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
-**Note (2026-01-22):** Most timeout headers parse successfully but trigger extensive template instantiation. The primary remaining blockers are template instantiation performance and a few codegen issues.
+**Note (2026-01-22):** Template counts show templates processed before timeout/crash at 60s. Most timeout headers parse successfully but get stuck during extensive template instantiation. The primary remaining blockers are:
+1. Template instantiation performance (most timeouts at 400-500 templates)
+2. Memory corruption causing crashes in `<variant>` (~500 templates) and `<functional>` (~400 templates)
+3. Missing include files (`execution_defs.h`, `unicode-data.h`) for `<memory>`, `<algorithm>`, `<chrono>`
+4. Missing pthread types for `<atomic>` and `<barrier>`
 
 ### C Library Wrappers (Also Working)
 
@@ -324,46 +328,80 @@ constexpr bool is_ratio_check() { return __is_ratio_v<_R>; }  // ✅ Works
 
 **Affected Headers:** `<variant>`, potentially `<functional>`, `<optional>` and others that use `std::true_type` / `std::false_type` as base classes.
 
-#### 3.4 Variant Header Crash During Parsing (**ACTIVE BLOCKER** - 2026-01-22)
+#### 3.4 Memory Corruption During Template Instantiation (**PARTIALLY FIXED** - 2026-01-22)
 
-**Issue:** The `<variant>` header crashes with SIGSEGV around 500 template instantiations. AddressSanitizer identified three related memory bugs that were fixed, but the crash persists.
+**Issue:** Several headers crashed with SIGSEGV or `std::bad_any_cast` around 400-500 template instantiations.
 
-**Bugs Fixed (2026-01-22):**
-1. **FileTree::addDependency() heap-use-after-free** - Map key was `string_view` from temporary `string`
-2. **get_numeric_literal_type() stack-use-after-scope** - `substr().c_str()` created dangling pointer
-3. **ASTNode::is<>() potential null access** - Missing `has_value()` check before `type()` call
+**Root Cause Found:** The SIGSEGV crash was caused by the selective erase loop in `restore_token_position()` which iterated through `ast_nodes_` and called `is<>()` on potentially corrupted `ASTNode` objects. The corruption occurred because:
+1. Vector operations during parsing could invalidate internal `std::any` type_info pointers
+2. The selective erase loop (keeping only FunctionDeclarationNode and StructDeclarationNode) triggered accesses to corrupted memory
 
-**Current Crash:**
+**Fix Applied:** Modified `restore_token_position()` to move discarded nodes to `ast_discarded_nodes_` vector instead of erasing them. This keeps the nodes alive to prevent memory corruption while keeping the AST tree clean.
+
+**Current Status:**
+- `<variant>` - ❌ Parse Error (static_assert constexpr evaluation issue) - **SIGSEGV FIXED**
+- `<functional>` - 💥 Crash (std::bad_any_cast at ~400 templates) - **Still has bad_any_cast issue elsewhere**
+
+**Remaining Issue:** The `<functional>` header still crashes with `std::bad_any_cast`, but this is a different code path from the SIGSEGV that was fixed. Further investigation needed.
+
+#### 3.5 Type Alias Static Member Lookup in Constexpr (**FIXED** - 2026-01-22)
+
+**Issue:** Static assertions like `static_assert(my_true::value, "...")` failed when `my_true` is a type alias to a template instantiation like `integral_constant<bool, true>`.
+
+**Root Cause:** The constexpr evaluator couldn't:
+1. Resolve type aliases to their underlying struct types
+2. Follow the `type_index_` chain to find actual `StructTypeInfo` 
+3. Trigger lazy static member instantiation for template-instantiated static members
+
+**Fix Applied:** Enhanced `evaluate_qualified_identifier()` in ConstExprEvaluator.h:
+1. Follow type alias chains even when `isStruct()` is true but `getStructInfo()` is null
+2. Trigger lazy static member instantiation via `instantiateLazyStaticMember()` when needed
+3. Re-lookup static member after instantiation to get the substituted initializer
+
+**Note:** This fix works for global type aliases like `using my_true = integral_constant<bool, true>`. Local type aliases inside template class bodies (like in `<variant>`'s `parse_numbers.h`) still need additional work.
+
+### 4. Missing pthread Types (**ACTIVE BLOCKER** - 2026-01-22)
+
+**Issue:** Headers that depend on pthreads fail because `pthread_t` and related types are not defined.
+
+**Error Message:**
 ```
-Signal: SIGSEGV (Segmentation fault)
-Fault Address: (nil)
-Location: std::any::type() in AstNodeTypes.h:57
-Called from: restore_token_position() in Parser.cpp:495
+/usr/include/pthread.h:205:37: error: Missing identifier
+extern int pthread_create (pthread_t * __newthread, ...
+                           ^~~~~~~~~
 ```
 
-**Analysis:** The crash occurs when iterating through `ast_nodes_` vector during `restore_token_position()` and calling `is<>()` on each node. The `std::any` inside an `ASTNode` appears to be corrupted. Possible causes:
-1. Vector reallocation invalidating references stored in `std::any`
-2. Use-after-move of `std::any` objects
-3. Race condition or memory corruption during intensive template instantiation
+**Affected Headers:** `<atomic>`, `<barrier>`
 
-**Affected Headers:** `<variant>` (crashes), likely affects other template-heavy headers if they reach 500+ instantiations
+**Root Cause:** FlashCpp doesn't parse the `bits/pthreadtypes.h` header correctly, or the header is not being included. This affects headers that use threading primitives.
 
-### 4. Template Instantiation Performance
+### 5. Missing Internal Include Files (**ACTIVE BLOCKER** - 2026-01-22)
 
-Template-heavy headers (`<concepts>`, `<bit>`, `<string>`, `<ranges>`) time out due to instantiation volume. Key optimization: improve template cache hit rate (currently ~26%).
-- Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
-- Optimize string operations in template name generation
+**Issue:** Some headers fail because internal GCC/libstdc++ headers cannot be found.
 
-### 4. Template Instantiation Performance
+**Missing Files:**
+- `execution_defs.h` - Required by `<memory>`, `<algorithm>`
+- `unicode-data.h` - Required by `<chrono>`
 
-Most headers timeout due to template instantiation volume, not parsing errors. Individual instantiations are fast (20-50μs), but standard headers trigger thousands of instantiations.
+**Root Cause:** These are internal implementation headers that may be in non-standard paths or require specific GCC version configuration.
+
+### 6. Template Instantiation Performance
+
+Most headers timeout due to template instantiation volume, not parsing errors. Standard headers trigger 400-500+ instantiations within 60 seconds before hitting the timeout.
+
+**Current Performance (from progress logs):**
+- Template cache hit rate: ~65-70%
+- Average instantiation time: 8-10μs
+- Peak instantiation time: up to 800μs for complex templates
+- Timeout threshold: 60 seconds
 
 **Optimization opportunities:**
-- Improve template cache hit rate (currently ~26%)
+- Improve template cache hit rate
 - Optimize string operations in template name generation
 - Consider lazy evaluation strategies
+- Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
 
-### 5. std::initializer_list Compiler Magic (Known Limitation)
+### 7. std::initializer_list Compiler Magic (Known Limitation)
 
 **Issue:** `std::initializer_list<T>` requires special compiler support that is not yet implemented.
 
