@@ -5560,8 +5560,12 @@ ParseResult Parser::parse_struct_declaration()
 					// Could be pattern 2 or 3
 					consume_token(); // consume the identifier (struct name)
 					
-					if (peek_token().has_value() && (peek_token()->value() == "{" || peek_token()->value() == ";")) {
-						// Pattern 2: Nested struct declaration
+					// Pattern 2: Nested struct declaration
+					// Check for '{' (body), ';' (forward declaration), or ':' (base class)
+					if (peek_token().has_value() && (peek_token()->value() == "{" || 
+					                                  peek_token()->value() == ";" ||
+					                                  peek_token()->value() == ":")) {
+						// Pattern 2: Nested struct declaration (with or without base class)
 						restore_token_position(saved_pos);
 						auto nested_result = parse_struct_declaration();
 						if (nested_result.is_error()) {
@@ -30089,26 +30093,36 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	}
 
 	// Not a partial specialization - continue with primary template parsing
+	// Create the struct declaration node first so we can add base classes to it
+	// Member structs are prefixed with parent struct name for uniqueness
+	auto qualified_name = StringTable::getOrInternStringHandle(
+		StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
+	
+	auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
+		qualified_name, 
+		is_class
+	);
+
+	// Handle base class list if present (e.g., : true_type<T>)
+	if (peek_token().has_value() && peek_token()->value() == ":") {
+		consume_token();  // consume ':'
+		
+		// Parse base class(es) - skip tokens until '{' for now
+		// TODO: Implement full base class parsing for member struct templates
+		while (peek_token().has_value() && peek_token()->value() != "{") {
+			consume_token();
+		}
+	}
+
 	// Expect '{' to start struct body
 	if (!peek_token().has_value() || peek_token()->value() != "{") {
 		return ParseResult::error("Expected '{' to start struct body", *current_token_);
 	}
 	consume_token(); // consume '{'
 
-	// Create the struct declaration node
-	// Member structs are prefixed with parent struct name for uniqueness
-	auto qualified_name = StringTable::getOrInternStringHandle(
-		StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
-	
-	auto member_struct_node = emplace_node<StructDeclarationNode>(
-		qualified_name, 
-		is_class
-	);
-
 	// Parse struct body (members, methods, etc.)
 	// For template member structs, parse members but don't instantiate dependent types yet
 	// This matches C++ semantics where template members are parsed but not instantiated until needed
-	StructDeclarationNode& member_struct_ref = member_struct_node.as<StructDeclarationNode>();
 	AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
 	
 	while (peek_token().has_value() && peek_token()->value() != "}") {
