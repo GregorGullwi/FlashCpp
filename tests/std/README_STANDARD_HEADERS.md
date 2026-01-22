@@ -336,13 +336,29 @@ constexpr bool is_ratio_check() { return __is_ratio_v<_R>; }  // ✅ Works
 1. Vector operations during parsing could invalidate internal `std::any` type_info pointers
 2. The selective erase loop (keeping only FunctionDeclarationNode and StructDeclarationNode) triggered accesses to corrupted memory
 
-**Fix Applied:** Disabled the selective erase loop in `restore_token_position()`. The function now returns immediately after bounds checking instead of iterating through nodes. This trades potential extra AST nodes for stability.
+**Fix Applied:** Modified `restore_token_position()` to move discarded nodes to `ast_discarded_nodes_` vector instead of erasing them. This keeps the nodes alive to prevent memory corruption while keeping the AST tree clean.
 
 **Current Status:**
 - `<variant>` - ❌ Parse Error (static_assert constexpr evaluation issue) - **SIGSEGV FIXED**
 - `<functional>` - 💥 Crash (std::bad_any_cast at ~400 templates) - **Still has bad_any_cast issue elsewhere**
 
 **Remaining Issue:** The `<functional>` header still crashes with `std::bad_any_cast`, but this is a different code path from the SIGSEGV that was fixed. Further investigation needed.
+
+#### 3.5 Type Alias Static Member Lookup in Constexpr (**FIXED** - 2026-01-22)
+
+**Issue:** Static assertions like `static_assert(my_true::value, "...")` failed when `my_true` is a type alias to a template instantiation like `integral_constant<bool, true>`.
+
+**Root Cause:** The constexpr evaluator couldn't:
+1. Resolve type aliases to their underlying struct types
+2. Follow the `type_index_` chain to find actual `StructTypeInfo` 
+3. Trigger lazy static member instantiation for template-instantiated static members
+
+**Fix Applied:** Enhanced `evaluate_qualified_identifier()` in ConstExprEvaluator.h:
+1. Follow type alias chains even when `isStruct()` is true but `getStructInfo()` is null
+2. Trigger lazy static member instantiation via `instantiateLazyStaticMember()` when needed
+3. Re-lookup static member after instantiation to get the substituted initializer
+
+**Note:** This fix works for global type aliases like `using my_true = integral_constant<bool, true>`. Local type aliases inside template class bodies (like in `<variant>`'s `parse_numbers.h`) still need additional work.
 
 ### 4. Missing pthread Types (**ACTIVE BLOCKER** - 2026-01-22)
 

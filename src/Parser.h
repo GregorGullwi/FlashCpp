@@ -335,6 +335,7 @@ private:
         std::optional<Token> current_token_;
         std::optional<Token> injected_token_;  // Phase 5: For >> splitting in nested templates
         std::vector<ASTNode> ast_nodes_;
+        std::vector<ASTNode> ast_discarded_nodes_;  // Keep discarded nodes alive to prevent memory corruption
         std::string last_error_;
 
         // Track current function for __FUNCTION__, __func__, __PRETTY_FUNCTION__

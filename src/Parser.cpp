@@ -476,19 +476,18 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
     // This prevents issues when backtracking after >> splitting
     injected_token_.reset();
 	
-    // Erase AST nodes that were added after the saved position,
-    // BUT preserve FunctionDeclarationNodes which may be template instantiations.
-    // 
-    // Template instantiations are registered in gTemplateRegistry.instantiations_ cache
-    // when try_instantiate_template() is called. If we erase the instantiated function
-    // from ast_nodes_, the cache will have a reference to a node that won't be visited
-    // by the code generator, resulting in undefined symbols at link time.
-    // 
+    // Process AST nodes that were added after the saved position.
+    // We need to:
+    // 1. Keep FunctionDeclarationNode and StructDeclarationNode in ast_nodes_ - they may be 
+    //    template instantiations registered in gTemplateRegistry.instantiations_ cache
+    // 2. Move other nodes to ast_discarded_nodes_ to keep them alive (prevent memory corruption)
+    //    but not pollute the AST tree
+    //
     // This can happen when parsing expressions like `(all(1,1,1) ? 1 : 0)`:
     // 1. Parser tries fold expression patterns, saving position
     // 2. Parser parses `all(1,1,1)`, which instantiates the template
     // 3. Parser finds it's not a fold expression, restores position
-    // 4. Without this fix, the instantiation would be erased but remain in cache
+    // 4. Template instantiation must be kept in ast_nodes_ for code generation
     size_t new_size = saved_token.ast_nodes_size_;
     // Safety check: don't iterate past the current vector size
     if (new_size > ast_nodes_.size()) {
@@ -496,14 +495,20 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
         return;
     }
     
-    // Instead of selectively erasing while keeping FunctionDeclarationNode and 
-    // StructDeclarationNode, just keep all nodes added since the save point.
-    // This avoids potential memory corruption issues from the selective erase loop.
-    // The trade-off is that we may have some extra nodes, but they won't cause
-    // issues since they'll be overwritten on successful parse.
-    // 
-    // TODO: Investigate the root cause of the memory corruption that was causing
-    // SIGSEGV in the is<>() call during the selective erase loop.
+    // Iterate from the end to avoid invalidating iterators when removing elements
+    for (size_t i = ast_nodes_.size(); i > new_size; ) {
+        --i;
+        ASTNode& node = ast_nodes_[i];
+        if (node.is<FunctionDeclarationNode>() || node.is<StructDeclarationNode>()) {
+            // Keep function and struct declarations - they may be template instantiations
+            // or struct definitions that are already registered in the symbol table
+            // Leave this node in place
+        } else {
+            // Move this node to discarded list to keep it alive, then remove from ast_nodes_
+            ast_discarded_nodes_.push_back(std::move(node));
+            ast_nodes_.erase(ast_nodes_.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    }
 }
 
 void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
