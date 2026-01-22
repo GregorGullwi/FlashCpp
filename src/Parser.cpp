@@ -1421,6 +1421,92 @@ ParseResult Parser::parse_type_and_name() {
                     }
                 }
             }
+        } else if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+            // Check for pointer-to-member-function pattern: type (ClassName::*identifier)(params)
+            // After '(' we see an identifier, check if it's followed by ::*
+            SaveHandle ptrmf_check_pos = save_token_position();
+            Token class_name_token = *peek_token();
+            consume_token(); // consume class name
+            
+            if (peek_token().has_value() && peek_token()->value() == "::") {
+                consume_token(); // consume '::'
+                
+                if (peek_token().has_value() && peek_token()->value() == "*") {
+                    consume_token(); // consume '*'
+                    
+                    // Parse CV-qualifiers after * if any
+                    [[maybe_unused]] CVQualifier ptr_cv = parse_cv_qualifiers();
+                    
+                    // Check for identifier (parameter name) or ')' (unnamed parameter)
+                    Token identifier_token;
+                    if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+                        identifier_token = *peek_token();
+                        consume_token(); // consume identifier
+                    } else {
+                        // Unnamed pointer-to-member-function parameter
+                        identifier_token = Token(Token::Type::Identifier, "",
+                            current_token_->line(), current_token_->column(),
+                            current_token_->file_index());
+                    }
+                    
+                    // Expect ')'
+                    if (peek_token().has_value() && peek_token()->value() == ")") {
+                        consume_token(); // consume ')'
+                        
+                        // Expect '(' for function parameters
+                        if (peek_token().has_value() && peek_token()->value() == "(") {
+                            // This is a pointer-to-member-function declaration!
+                            FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Detected pointer-to-member-function: {} ({}::*{})()", 
+                                type_spec.token().value(), class_name_token.value(), identifier_token.value());
+                            
+                            // Skip the function parameter list by counting parentheses
+                            consume_token(); // consume '('
+                            int paren_depth = 1;
+                            while (paren_depth > 0 && peek_token().has_value()) {
+                                if (peek_token()->value() == "(") {
+                                    paren_depth++;
+                                } else if (peek_token()->value() == ")") {
+                                    paren_depth--;
+                                }
+                                consume_token();
+                            }
+                            
+                            // Skip any cv-qualifiers after the function parameters
+                            // e.g., _Ret (_Tp::*__pf)() const
+                            while (peek_token().has_value()) {
+                                std::string_view tok = peek_token()->value();
+                                if (tok == "const" || tok == "volatile" || tok == "noexcept") {
+                                    consume_token();
+                                } else {
+                                    break;
+                                }
+                            }
+                            
+                            // Set up the type as a pointer-to-member-function
+                            type_spec.set_member_class_name(StringTable::getOrInternStringHandle(class_name_token.value()));
+                            type_spec.add_pointer_level(CVQualifier::None);
+                            
+                            // Create declaration node
+                            auto decl_node = emplace_node<DeclarationNode>(
+                                emplace_node<TypeSpecifierNode>(type_spec),
+                                identifier_token
+                            );
+                            
+                            if (custom_alignment.has_value()) {
+                                decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+                            }
+                            
+                            discard_saved_token(saved_pos);
+                            discard_saved_token(ptrmf_check_pos);
+                            return ParseResult::success(decl_node);
+                        }
+                    }
+                }
+            }
+            // Not a pointer-to-member-function pattern, restore inner position
+            restore_token_position(ptrmf_check_pos);
+            // Continue to restore outer position below
+            restore_token_position(saved_pos);
         } else {
             // Not a function pointer or reference declarator, restore and continue with regular parsing
             FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Not a function pointer, restoring. Before restore: current_token={}", 
@@ -30692,12 +30778,16 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 		consume_token(); // consume '<'
 		
 		// Skip template parameters by counting angle brackets
+		// Handle >> token for nested templates (C++20 maximal munch)
 		int angle_bracket_depth = 1;
 		while (angle_bracket_depth > 0 && peek_token().has_value()) {
 			if (peek_token()->value() == "<") {
 				angle_bracket_depth++;
 			} else if (peek_token()->value() == ">") {
 				angle_bracket_depth--;
+			} else if (peek_token()->value() == ">>") {
+				// >> is two > tokens for nested templates
+				angle_bracket_depth -= 2;
 			}
 			consume_token();
 		}
