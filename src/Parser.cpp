@@ -5560,8 +5560,12 @@ ParseResult Parser::parse_struct_declaration()
 					// Could be pattern 2 or 3
 					consume_token(); // consume the identifier (struct name)
 					
-					if (peek_token().has_value() && (peek_token()->value() == "{" || peek_token()->value() == ";")) {
-						// Pattern 2: Nested struct declaration
+					// Pattern 2: Nested struct declaration
+					// Check for '{' (body), ';' (forward declaration), or ':' (base class)
+					if (peek_token().has_value() && (peek_token()->value() == "{" || 
+					                                  peek_token()->value() == ";" ||
+					                                  peek_token()->value() == ":")) {
+						// Pattern 2: Nested struct declaration (with or without base class)
 						restore_token_position(saved_pos);
 						auto nested_result = parse_struct_declaration();
 						if (nested_result.is_error()) {
@@ -11890,8 +11894,9 @@ ParseResult Parser::parse_type_specifier()
 
 ParseResult Parser::parse_decltype_specifier()
 {
-	// Parse decltype(expr) or __typeof__(expr) type specifier
+	// Parse decltype(expr) or decltype(auto) or __typeof__(expr) type specifier
 	// Example: decltype(x + y) result = x + y;
+	// Example: decltype(auto) result = x + y;  // C++14 deduced return type
 	// __typeof__ is a GCC extension that works like decltype
 
 	ScopedTokenPosition saved_position(*this);
@@ -11907,6 +11912,20 @@ ParseResult Parser::parse_decltype_specifier()
 	// Expect '('
 	if (!consume_punctuator("(")) {
 		return ParseResult::error(std::string("Expected '(' after '") + std::string(keyword) + "'", *current_token_);
+	}
+
+	// C++14: Check for decltype(auto) - special case for deduced return types
+	// decltype(auto) deduces the type preserving references and cv-qualifiers
+	if (keyword == "decltype" && peek_token().has_value() && peek_token()->value() == "auto") {
+		consume_token();  // consume 'auto'
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Expected ')' after 'decltype(auto)'", *current_token_);
+		}
+		// Return Type::Auto to indicate deduced return type
+		// The semantics of decltype(auto) vs auto differ during instantiation,
+		// but for parsing purposes, we treat it as auto with special handling
+		TypeSpecifierNode auto_type(Type::Auto, TypeQualifier::None, 0);
+		return saved_position.success(emplace_node<TypeSpecifierNode>(auto_type));
 	}
 
 	// Phase 3: Parse the expression with Decltype context for proper template disambiguation
@@ -26578,8 +26597,11 @@ ParseResult Parser::parse_template_declaration() {
 						member_func_decl.is_virtual
 					);
 				} else {
-					const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
-					const DeclarationNode& decl = func_decl.decl_node();
+					const FunctionDeclarationNode* func_decl = get_function_decl_node(member_func_decl.function_declaration);
+					if (!func_decl) {
+						continue;  // Skip if we can't get the function declaration
+					}
+					const DeclarationNode& decl = func_decl->decl_node();
 
 					// Phase 7B: Intern function name and use StringHandle overload
 					StringHandle func_name_handle = StringTable::getOrInternStringHandle(decl.identifier_token().value());
@@ -30071,26 +30093,36 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	}
 
 	// Not a partial specialization - continue with primary template parsing
+	// Create the struct declaration node first so we can add base classes to it
+	// Member structs are prefixed with parent struct name for uniqueness
+	auto qualified_name = StringTable::getOrInternStringHandle(
+		StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
+	
+	auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
+		qualified_name, 
+		is_class
+	);
+
+	// Handle base class list if present (e.g., : true_type<T>)
+	if (peek_token().has_value() && peek_token()->value() == ":") {
+		consume_token();  // consume ':'
+		
+		// Parse base class(es) - skip tokens until '{' for now
+		// TODO: Implement full base class parsing for member struct templates
+		while (peek_token().has_value() && peek_token()->value() != "{") {
+			consume_token();
+		}
+	}
+
 	// Expect '{' to start struct body
 	if (!peek_token().has_value() || peek_token()->value() != "{") {
 		return ParseResult::error("Expected '{' to start struct body", *current_token_);
 	}
 	consume_token(); // consume '{'
 
-	// Create the struct declaration node
-	// Member structs are prefixed with parent struct name for uniqueness
-	auto qualified_name = StringTable::getOrInternStringHandle(
-		StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
-	
-	auto member_struct_node = emplace_node<StructDeclarationNode>(
-		qualified_name, 
-		is_class
-	);
-
 	// Parse struct body (members, methods, etc.)
 	// For template member structs, parse members but don't instantiate dependent types yet
 	// This matches C++ semantics where template members are parsed but not instantiated until needed
-	StructDeclarationNode& member_struct_ref = member_struct_node.as<StructDeclarationNode>();
 	AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
 	
 	while (peek_token().has_value() && peek_token()->value() != "}") {

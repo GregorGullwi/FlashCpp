@@ -617,8 +617,9 @@ const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator() const {
             // Check if this is a copy assignment operator
             // Copy assignment operator has signature: Type& operator=(const Type& other)
             // or Type& operator=(Type& other)
-            const auto& func_node = func.function_decl.as<FunctionDeclarationNode>();
-            const auto& params = func_node.parameter_nodes();
+            const auto* func_node = get_function_decl_node(func.function_decl);
+            if (!func_node) continue;  // Skip if not a function (e.g., template that can't be resolved)
+            const auto& params = func_node->parameter_nodes();
 
             // Copy assignment operator has exactly one parameter (by reference)
             if (params.size() == 1) {
@@ -640,8 +641,9 @@ const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator() const {
         if (func.is_operator_overload && func.operator_symbol == "=") {
             // Check if this is a move assignment operator
             // Move assignment operator has signature: Type& operator=(Type&& other)
-            const auto& func_node = func.function_decl.as<FunctionDeclarationNode>();
-            const auto& params = func_node.parameter_nodes();
+            const auto* func_node = get_function_decl_node(func.function_decl);
+            if (!func_node) continue;  // Skip if not a function (e.g., template that can't be resolved)
+            const auto& params = func_node->parameter_nodes();
 
             // Move assignment operator has exactly one parameter (by rvalue reference)
             if (params.size() == 1) {

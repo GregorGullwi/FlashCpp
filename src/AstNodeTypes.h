@@ -1940,6 +1940,37 @@ private:
 	std::optional<ASTNode> requires_clause_;  // Optional RequiresClauseNode
 };
 
+// Helper functions to safely extract FunctionDeclarationNode from either
+// FunctionDeclarationNode or TemplateFunctionDeclarationNode
+// This is needed because many places store ASTNode that could be either type
+
+/// Check if an ASTNode contains a function declaration (direct or template)
+inline bool is_function_or_template_function(const ASTNode& node) {
+	return node.is<FunctionDeclarationNode>() || node.is<TemplateFunctionDeclarationNode>();
+}
+
+/// Get the FunctionDeclarationNode from an ASTNode that is either a 
+/// FunctionDeclarationNode or TemplateFunctionDeclarationNode
+/// Returns nullptr if the node is neither type
+inline const FunctionDeclarationNode* get_function_decl_node(const ASTNode& node) {
+	if (node.is<FunctionDeclarationNode>()) {
+		return &node.as<FunctionDeclarationNode>();
+	} else if (node.is<TemplateFunctionDeclarationNode>()) {
+		return &node.as<TemplateFunctionDeclarationNode>().function_decl_node();
+	}
+	return nullptr;
+}
+
+/// Non-const version of get_function_decl_node
+inline FunctionDeclarationNode* get_function_decl_node_mut(ASTNode& node) {
+	if (node.is<FunctionDeclarationNode>()) {
+		return &node.as<FunctionDeclarationNode>();
+	} else if (node.is<TemplateFunctionDeclarationNode>()) {
+		return &node.as<TemplateFunctionDeclarationNode>().function_decl_node();
+	}
+	return nullptr;
+}
+
 // Template alias declaration: template<typename T> using Ptr = T*;
 class TemplateAliasNode {
 public:
