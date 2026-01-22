@@ -47,7 +47,7 @@ enum class LogLevel : uint8_t {
     #ifdef NDEBUG
         #define FLASHCPP_LOG_LEVEL 2   // Release: up to Info level (General category always enabled regardless of level)
     #else
-        #define FLASHCPP_LOG_LEVEL 2   // Debug: up to Info level
+        #define FLASHCPP_LOG_LEVEL 4   // Debug: up to Trace level
     #endif
 #endif
 
@@ -58,7 +58,7 @@ enum class LogLevel : uint8_t {
 // Default runtime log level (can be different from compile-time level)
 // Set this via compiler flag: -DFLASHCPP_DEFAULT_RUNTIME_LEVEL=2
 #ifndef FLASHCPP_DEFAULT_RUNTIME_LEVEL
-    #define FLASHCPP_DEFAULT_RUNTIME_LEVEL FLASHCPP_LOG_LEVEL  // Same as compile-time by default
+    #define FLASHCPP_DEFAULT_RUNTIME_LEVEL 2   // Both Debug and Release default to Info level (General category always enabled regardless of level)
 #endif
 
 // ANSI color codes for terminal output
