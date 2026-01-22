@@ -188,6 +188,7 @@ int main_impl(int argc, char *argv[]) {
         if (sv == "Codegen") return FlashCpp::LogCategory::Codegen;
         if (sv == "Scope") return FlashCpp::LogCategory::Scope;
         if (sv == "Mangling") return FlashCpp::LogCategory::Mangling;
+        if (sv == "ConstExpr") return FlashCpp::LogCategory::ConstExpr;
         if (sv == "All") return FlashCpp::LogCategory::All;
         return FlashCpp::LogCategory::General; // default
     };

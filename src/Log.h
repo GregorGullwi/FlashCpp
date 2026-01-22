@@ -21,6 +21,7 @@ enum class LogCategory : uint32_t {
     Codegen     = 1 << 6,   // Code generation / IR
     Scope       = 1 << 7,   // Scope enter/exit
     Mangling    = 1 << 8,   // Name mangling
+    ConstExpr   = 1 << 9,   // Constant expression evaluation
     All         = 0xFFFFFFFF
 };
 
@@ -46,7 +47,7 @@ enum class LogLevel : uint8_t {
     #ifdef NDEBUG
         #define FLASHCPP_LOG_LEVEL 2   // Release: up to Info level (General category always enabled regardless of level)
     #else
-        #define FLASHCPP_LOG_LEVEL 4   // Debug: up to Debug level
+        #define FLASHCPP_LOG_LEVEL 4   // Debug: up to Trace level
     #endif
 #endif
 
@@ -57,7 +58,7 @@ enum class LogLevel : uint8_t {
 // Default runtime log level (can be different from compile-time level)
 // Set this via compiler flag: -DFLASHCPP_DEFAULT_RUNTIME_LEVEL=2
 #ifndef FLASHCPP_DEFAULT_RUNTIME_LEVEL
-    #define FLASHCPP_DEFAULT_RUNTIME_LEVEL FLASHCPP_LOG_LEVEL  // Same as compile-time by default
+    #define FLASHCPP_DEFAULT_RUNTIME_LEVEL 2   // Both Debug and Release default to Info level (General category always enabled regardless of level)
 #endif
 
 // ANSI color codes for terminal output
@@ -84,8 +85,8 @@ constexpr bool isSingleBitCategory(LogCategory cat) {
     return val != 0 && (val & (val - 1)) == 0;  // Power of 2 check
 }
 
-// Number of log categories (General through Mangling = 9)
-constexpr size_t NUM_LOG_CATEGORIES = 9;
+// Number of log categories (General through ConstExpr = 10)
+constexpr size_t NUM_LOG_CATEGORIES = 10;
 
 // Runtime filter (can be changed at runtime for enabled levels)
 struct LogConfig {
@@ -218,6 +219,7 @@ struct Logger {
             case LogCategory::Codegen:   return "Codegen";
             case LogCategory::Scope:     return "Scope";
             case LogCategory::Mangling:  return "Mangling";
+            case LogCategory::ConstExpr: return "ConstExpr";
             case LogCategory::All:       return "All";
             default:                     return "Unknown";  // Multi-category bitmask
         }

@@ -17050,7 +17050,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					const FunctionDeclarationNode& func_decl = qualified_symbol->as<FunctionDeclarationNode>();
 					if (func_decl.has_mangled_name()) {
 						std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
-						FLASH_LOG(Parser, Debug, "@@@ Set mangled name on qualified FunctionCallNode (postfix path): {}", func_decl.mangled_name());
+						FLASH_LOG(Parser, Debug, "Set mangled name on qualified FunctionCallNode (postfix path): {}", func_decl.mangled_name());
 					}
 				}
 				
@@ -19796,14 +19796,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						if (type_spec.type() == Type::Struct) {
 							// Get the type index to look up the type name
 							TypeIndex type_idx = type_spec.type_index();
-							FLASH_LOG_FORMAT(Parser, Debug, "@@@ Checking if '{}' is lambda variable: type_idx={}, gTypeInfo.size()={}", 
+							FLASH_LOG_FORMAT(Parser, Debug, "Checking if '{}' is lambda variable: type_idx={}, gTypeInfo.size()={}", 
 								idenfifier_token.value(), type_idx, gTypeInfo.size());
 							if (type_idx < gTypeInfo.size()) {
 								const TypeInfo& type_info = gTypeInfo[type_idx];
 								if (type_info.struct_info_) {
 									// Check if the struct name starts with "__lambda_"
 									std::string_view type_name = StringTable::getStringView(type_info.struct_info_->name);
-									FLASH_LOG_FORMAT(Parser, Debug, "@@@ Type name for '{}': '{}', starts_with __lambda_: {}", 
+									FLASH_LOG_FORMAT(Parser, Debug, "Type name for '{}': '{}', starts_with __lambda_: {}", 
 										idenfifier_token.value(), type_name, type_name.starts_with("__lambda_"));
 									if (type_name.starts_with("__lambda_")) {
 										is_lambda_variable = true;
@@ -19815,7 +19815,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 			}
 			
-			FLASH_LOG_FORMAT(Parser, Debug, "@@@ is_lambda_variable for '{}': {}", idenfifier_token.value(), is_lambda_variable);
+			FLASH_LOG_FORMAT(Parser, Debug, "is_lambda_variable for '{}': {}", idenfifier_token.value(), is_lambda_variable);
 
 			// Check if this is a function call or constructor call (forward reference)
 			// Identifier already consumed at line 1621
@@ -21055,43 +21055,43 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 			// Check if this looks like a function call
 			// Only consume '(' if the identifier is actually a function OR a function pointer OR has operator()
-			FLASH_LOG_FORMAT(Parser, Debug, "@@@ FUNCTION_CALL_CHECK for '{}', identifierType.has_value()={}", 
+			FLASH_LOG_FORMAT(Parser, Debug, "FUNCTION_CALL_CHECK for '{}', identifierType.has_value()={}", 
 				idenfifier_token.value(), identifierType.has_value());
 			bool is_function_decl = identifierType && (identifierType->is<FunctionDeclarationNode>() || identifierType->is<TemplateFunctionDeclarationNode>());
 			bool is_function_pointer = false;
 			bool has_operator_call = false;
 			if (identifierType) {
-				FLASH_LOG_FORMAT(Parser, Debug, "@@@ identifierType exists for '{}'", idenfifier_token.value());
+				FLASH_LOG_FORMAT(Parser, Debug, "identifierType exists for '{}'", idenfifier_token.value());
 				const DeclarationNode* decl = get_decl_from_symbol(*identifierType);
 				if (decl) {
-					FLASH_LOG_FORMAT(Parser, Debug, "@@@ decl exists for '{}'", idenfifier_token.value());
+					FLASH_LOG_FORMAT(Parser, Debug, "decl exists for '{}'", idenfifier_token.value());
 					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
-					FLASH_LOG_FORMAT(Parser, Debug, "@@@ type_node.type()={} for '{}'", static_cast<int>(type_node.type()), idenfifier_token.value());
+					FLASH_LOG_FORMAT(Parser, Debug, "type_node.type()={} for '{}'", static_cast<int>(type_node.type()), idenfifier_token.value());
 					// Check for function pointers or function references (both have function_signature)
 					is_function_pointer = type_node.is_function_pointer() || type_node.has_function_signature();
-					FLASH_LOG_FORMAT(Parser, Debug, "@@@ is_function_pointer={} (is_fp={}, has_sig={}) for '{}'", 
+					FLASH_LOG_FORMAT(Parser, Debug, "is_function_pointer={} (is_fp={}, has_sig={}) for '{}'", 
 						is_function_pointer, type_node.is_function_pointer(), type_node.has_function_signature(), idenfifier_token.value());
 
 					// Check if this is a struct with operator()
 					// Note: Lambda variables have Type::Auto (from auto lambda = [...]), not Type::Struct
 					if (type_node.type() == Type::Struct || type_node.type() == Type::UserDefined || type_node.type() == Type::Auto) {
 						TypeIndex type_index = type_node.type_index();
-						FLASH_LOG_FORMAT(Parser, Debug, "@@@ Checking identifier '{}' for operator(): type_index={}", idenfifier_token.value(), type_index);
+						FLASH_LOG_FORMAT(Parser, Debug, "Checking identifier '{}' for operator(): type_index={}", idenfifier_token.value(), type_index);
 						if (type_index < gTypeInfo.size()) {
 							const TypeInfo& type_info = gTypeInfo[type_index];
 							if (type_info.struct_info_) {
-								FLASH_LOG_FORMAT(Parser, Debug, "@@@ Struct '{}' has {} member functions", 
+								FLASH_LOG_FORMAT(Parser, Debug, "Struct '{}' has {} member functions", 
 									StringTable::getStringView(type_info.struct_info_->name), type_info.struct_info_->member_functions.size());
 								// Check if struct has operator()
 								for (const auto& member_func : type_info.struct_info_->member_functions) {
-									FLASH_LOG_FORMAT(Parser, Debug, "@@@ Member function: is_operator={}, symbol='{}'", 
+									FLASH_LOG_FORMAT(Parser, Debug, "Member function: is_operator={}, symbol='{}'", 
 										member_func.is_operator_overload, member_func.operator_symbol);
 									if (member_func.is_operator_overload && member_func.operator_symbol == "()") {
 										has_operator_call = true;
 										break;
 									}
 								}
-								FLASH_LOG_FORMAT(Parser, Debug, "@@@ has_operator_call for '{}': {}", idenfifier_token.value(), has_operator_call);
+								FLASH_LOG_FORMAT(Parser, Debug, "has_operator_call for '{}': {}", idenfifier_token.value(), has_operator_call);
 							}
 						}
 					}

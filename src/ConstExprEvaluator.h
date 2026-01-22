@@ -210,7 +210,7 @@ public:
 		const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 		
 		// Debug logging - show what type of expression we're evaluating
-		FLASH_LOG(General, Trace, "ConstExpr::evaluate: expr index=", expr.index());
+		FLASH_LOG(ConstExpr, Trace, "ConstExpr::evaluate: expr index=", expr.index());
 
 		// Check what type of expression it is
 		if (std::holds_alternative<BoolLiteralNode>(expr)) {
@@ -2559,7 +2559,7 @@ public:
 			NamespaceHandle ns_handle = qualified_id.namespace_handle();
 			std::string_view struct_name;
 			
-			FLASH_LOG(General, Debug, "Phase 3 ConstExpr: ns_handle.isGlobal()=", ns_handle.isGlobal(), 
+			FLASH_LOG(ConstExpr, Debug, "ns_handle.isGlobal()=", ns_handle.isGlobal(), 
 			          ", qualified_id='", qualified_id.full_name(), "'");
 			
 			if (!ns_handle.isGlobal()) {
@@ -2573,14 +2573,14 @@ public:
 				size_t last_scope_pos = full_name.rfind("::");
 				if (last_scope_pos != std::string::npos) {
 					struct_name = std::string_view(full_name.data(), last_scope_pos);
-					FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Extracted struct_name='", struct_name, "' from full_name='", full_name, "'");
+					FLASH_LOG(ConstExpr, Debug, "Extracted struct_name='", struct_name, "' from full_name='", full_name, "'");
 				}
 			}
 			
 			if (!struct_name.empty()) {
 				StringHandle struct_handle = StringTable::getOrInternStringHandle(struct_name);
 				
-				FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Looking up struct '", struct_name, "' for member '", qualified_id.name(), "'");
+				FLASH_LOG(ConstExpr, Debug, "Looking up struct '", struct_name, "' for member '", qualified_id.name(), "'");
 				
 				// Look up the struct in gTypesByName
 				auto struct_type_it = gTypesByName.find(struct_handle);
@@ -2592,7 +2592,7 @@ public:
 				if (struct_type_it != gTypesByName.end()) {
 					const TypeInfo* type_info = struct_type_it->second;
 					
-					FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Found type_info, isStruct=", type_info->isStruct(), 
+					FLASH_LOG(ConstExpr, Debug, "Found type_info, isStruct=", type_info->isStruct(), 
 					          ", type_index=", type_info->type_index_, ", hasStructInfo=", (type_info->getStructInfo() != nullptr));
 					
 					// Follow the type alias chain until we find a struct with actual StructTypeInfo
@@ -2608,7 +2608,7 @@ public:
 						// Follow the type_index_ to find the underlying type
 						const TypeInfo& underlying = gTypeInfo[type_info->type_index_];
 						if (&underlying == type_info) break;  // Avoid direct self-reference
-						FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Following type alias to index ", type_info->type_index_);
+						FLASH_LOG(ConstExpr, Debug, "Following type alias to index ", type_info->type_index_);
 						type_info = &underlying;
 						++alias_depth;
 					}
@@ -2638,18 +2638,18 @@ public:
 					StringHandle member_handle = StringTable::getOrInternStringHandle(qualified_id.name());
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
 					
-					FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Static member found: ", (static_member != nullptr), 
+					FLASH_LOG(ConstExpr, Debug, "Static member found: ", (static_member != nullptr), 
 					          ", owner: ", (owner_struct != nullptr));
 					
 					if (static_member && owner_struct) {
-						FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Static member is_const: ", static_member->is_const, 
+						FLASH_LOG(ConstExpr, Debug, "Static member is_const: ", static_member->is_const, 
 						          ", has_initializer: ", static_member->initializer.has_value());
 						
 						// If static member has no initializer, try to trigger lazy instantiation
 						// Note: context.parser may be null in some evaluation contexts (e.g., standalone constant evaluation)
 						// In such cases, lazy instantiation is not possible and we fall through to default value
 						if (!static_member->initializer.has_value() && context.parser != nullptr) {
-							FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Triggering lazy instantiation for '", 
+							FLASH_LOG(ConstExpr, Debug, "Triggering lazy instantiation for '", 
 							          StringTable::getStringView(owner_struct->name), "::", StringTable::getStringView(member_handle), "'");
 							
 							// Trigger lazy static member instantiation
@@ -2659,7 +2659,7 @@ public:
 							// Re-lookup the static member after instantiation
 							auto relookup_result = struct_info->findStaticMemberRecursive(member_handle);
 							if (relookup_result.first && relookup_result.first->initializer.has_value()) {
-								FLASH_LOG(General, Debug, "Phase 3 ConstExpr: After lazy instantiation, evaluating initializer");
+								FLASH_LOG(ConstExpr, Debug, "After lazy instantiation, evaluating initializer");
 								return evaluate(relookup_result.first->initializer.value(), context);
 							}
 						}
@@ -2667,12 +2667,12 @@ public:
 						// Found a static member - evaluate its initializer if available
 						// Note: Even if not marked const, we can evaluate constexpr initializers
 						if (static_member->initializer.has_value()) {
-							FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Evaluating static member initializer");
+							FLASH_LOG(ConstExpr, Debug, "Evaluating static member initializer");
 							return evaluate(static_member->initializer.value(), context);
 						}
 						
 						// If not constexpr or no initializer, return default value based on type
-						FLASH_LOG(General, Debug, "Phase 3 ConstExpr: Returning default value for type: ", static_cast<int>(static_member->type));
+						FLASH_LOG(ConstExpr, Debug, "Returning default value for type: ", static_cast<int>(static_member->type));
 						if (static_member->type == Type::Bool) {
 							return EvalResult::from_bool(false);
 						}
@@ -2814,7 +2814,7 @@ public:
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
 					
 					if (static_member && owner_struct) {
-						FLASH_LOG(General, Debug, "ConstExpr: Accessing static member through instance: ", member_name);
+						FLASH_LOG(ConstExpr, Debug, "Accessing static member through instance: ", member_name);
 						
 						// Found a static member - evaluate its initializer if available
 						if (static_member->initializer.has_value()) {
