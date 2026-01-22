@@ -30692,12 +30692,16 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 		consume_token(); // consume '<'
 		
 		// Skip template parameters by counting angle brackets
+		// Handle >> token for nested templates (C++20 maximal munch)
 		int angle_bracket_depth = 1;
 		while (angle_bracket_depth > 0 && peek_token().has_value()) {
 			if (peek_token()->value() == "<") {
 				angle_bracket_depth++;
 			} else if (peek_token()->value() == ">") {
 				angle_bracket_depth--;
+			} else if (peek_token()->value() == ">>") {
+				// >> is two > tokens for nested templates
+				angle_bracket_depth -= 2;
 			}
 			consume_token();
 		}
