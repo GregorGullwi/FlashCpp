@@ -26,7 +26,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string>` | `test_std_string.cpp` | ⏱️ Timeout | ~400 templates before timeout |
 | `<array>` | `test_std_array.cpp` | ⏱️ Timeout | ~400 templates before timeout |
 | `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Missing `execution_defs.h` |
-| `<functional>` | `test_std_functional.cpp` | 💥 Crash | Crashes at ~400 templates (std::bad_any_cast) |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Complex `__void_t<decltype(...)>>` in partial specialization |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Missing `execution_defs.h` |
 | `<map>` | `test_std_map.cpp` | ⏱️ Timeout | ~500 templates before timeout |
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | ~500 templates before timeout |
@@ -52,11 +52,16 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
-**Note (2026-01-22):** Template counts show templates processed before timeout/crash at 60s. Most timeout headers parse successfully but get stuck during extensive template instantiation. The primary remaining blockers are:
+**Note (2026-01-22 Updated):** Template counts show templates processed before timeout/crash at 60s. Most timeout headers parse successfully but get stuck during extensive template instantiation. The primary remaining blockers are:
 1. Template instantiation performance (most timeouts at 400-500 templates)
-2. Memory corruption causing crashes in `<variant>` (~500 templates) and `<functional>` (~400 templates)
+2. Complex partial specialization patterns with nested `__void_t<decltype(...)>>` (see `<functional>`)
 3. Missing include files (`execution_defs.h`, `unicode-data.h`) for `<memory>`, `<algorithm>`, `<chrono>`
 4. Missing pthread types for `<atomic>` and `<barrier>`
+
+**Fixes Applied (2026-01-22):**
+- **Fixed** `std::bad_any_cast` crash in `<functional>` - member template functions were incorrectly cast
+- **Fixed** `decltype(auto)` return type specifier (C++14 feature)
+- **Fixed** Nested struct/template with base classes in template class bodies
 
 ### C Library Wrappers (Also Working)
 
@@ -328,23 +333,70 @@ constexpr bool is_ratio_check() { return __is_ratio_v<_R>; }  // ✅ Works
 
 **Affected Headers:** `<variant>`, potentially `<functional>`, `<optional>` and others that use `std::true_type` / `std::false_type` as base classes.
 
-#### 3.4 Memory Corruption During Template Instantiation (**PARTIALLY FIXED** - 2026-01-22)
+#### 3.4 Memory Corruption / bad_any_cast During Template Instantiation (**FIXED** - 2026-01-22)
 
 **Issue:** Several headers crashed with SIGSEGV or `std::bad_any_cast` around 400-500 template instantiations.
 
-**Root Cause Found:** The SIGSEGV crash was caused by the selective erase loop in `restore_token_position()` which iterated through `ast_nodes_` and called `is<>()` on potentially corrupted `ASTNode` objects. The corruption occurred because:
-1. Vector operations during parsing could invalidate internal `std::any` type_info pointers
-2. The selective erase loop (keeping only FunctionDeclarationNode and StructDeclarationNode) triggered accesses to corrupted memory
+**Root Causes Found and Fixed:**
 
-**Fix Applied:** Modified `restore_token_position()` to move discarded nodes to `ast_discarded_nodes_` vector instead of erasing them. This keeps the nodes alive to prevent memory corruption while keeping the AST tree clean.
+1. **SIGSEGV (Fixed Previously):** The selective erase loop in `restore_token_position()` accessed potentially corrupted `ASTNode` objects.
+   - **Fix:** Move discarded nodes to `ast_discarded_nodes_` vector instead of erasing them.
+
+2. **std::bad_any_cast (Fixed 2026-01-22):** Member functions stored as `ASTNode` could be either `FunctionDeclarationNode` or `TemplateFunctionDeclarationNode`, but code called `.as<FunctionDeclarationNode>()` without checking.
+   - **Locations Fixed:**
+     - `Parser.cpp:26581` in `parse_template_declaration`
+     - `SymbolTable.h` insert function
+     - `AstNodeTypes.cpp` `findCopyAssignmentOperator` and `findMoveAssignmentOperator`
+   - **Fix:** Added helper functions `is_function_or_template_function()` and `get_function_decl_node()` to safely handle both node types.
 
 **Current Status:**
 - `<variant>` - ❌ Parse Error (static_assert constexpr evaluation issue) - **SIGSEGV FIXED**
-- `<functional>` - 💥 Crash (std::bad_any_cast at ~400 templates) - **Still has bad_any_cast issue elsewhere**
+- `<functional>` - ❌ Parse Error (complex partial specialization patterns) - **bad_any_cast FIXED**
 
-**Remaining Issue:** The `<functional>` header still crashes with `std::bad_any_cast`, but this is a different code path from the SIGSEGV that was fixed. Further investigation needed.
+#### 3.5 decltype(auto) Return Type (**FIXED** - 2026-01-22)
 
-#### 3.5 Type Alias Static Member Lookup in Constexpr (**FIXED** - 2026-01-22)
+**Issue:** `decltype(auto)` as a return type specifier was not recognized.
+
+**Error Message (before fix):**
+```
+error: Expected primary expression
+  static constexpr decltype(auto)
+                           ^
+```
+
+**Fix Applied:** Added special case in `parse_decltype_specifier()` to handle `decltype(auto)` - when `auto` immediately follows the opening parenthesis, treat it as a C++14 deduced return type.
+
+**Affected Headers:** `<functional>` (uses `decltype(auto)` in comparison operators)
+
+#### 3.6 Nested Struct/Template with Base Class in Template Body (**FIXED** - 2026-01-22)
+
+**Issue:** Nested structs and member templates with base classes inside template class bodies failed to parse.
+
+**Error Messages (before fix):**
+```
+error: Expected '{' to start struct body
+  struct __not_overloaded2 : true_type { };
+                            ^
+```
+
+**Root Causes:**
+1. `parse_struct_declaration()` only checked for `{` or `;` after struct name, not `:` (base class indicator)
+2. `parse_member_struct_template()` didn't handle base classes for non-partial-specialization templates
+
+**Fixes Applied:**
+1. Added `:` to the condition checking for nested struct declarations (line 5563)
+2. Added base class skipping logic in `parse_member_struct_template()` for primary templates (line ~30095)
+
+**Patterns that now work:**
+```cpp
+template<typename T>
+struct Outer {
+    struct Inner : Base { };  // Fixed
+    template<typename U> struct MemberTemplate : Base { };  // Fixed
+};
+```
+
+#### 3.7 Type Alias Static Member Lookup in Constexpr (**FIXED** - 2026-01-22)
 
 **Issue:** Static assertions like `static_assert(my_true::value, "...")` failed when `my_true` is a type alias to a template instantiation like `integral_constant<bool, true>`.
 
