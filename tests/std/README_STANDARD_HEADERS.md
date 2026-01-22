@@ -7,7 +7,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.21s |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1.1s release, ~6s debug |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1.0s release (2026-01-22: Test file uses static_assert which requires constant expression eval) |
 | `<compare>` | N/A | ✅ Compiled | ~0.07s |
 | `<version>` | N/A | ✅ Compiled | ~0.07s |
 | `<source_location>` | N/A | ✅ Compiled | ~0.07s |
@@ -16,7 +16,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Codegen | 2026-01-21: Variable template in function body issue (see blocker 7.4) |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
 | `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | 2026-01-21 PM: Function return type loss issue with `_Hash_bytes` (see blocker) |
+| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | 2026-01-22: Fixed include order bug, now times out (~450+ templates) |
 | `<variant>` | `test_std_variant.cpp` | 💥 Crash | 2026-01-21 PM: Progresses past line 299 (base class fix), then crashes during codegen |
 | `<any>` | `test_std_any.cpp` | ⏱️ Timeout | 2026-01-21: Times out at 60+ seconds (was misreported as parse error) |
 | `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
@@ -36,9 +36,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
 | `<atomic>` | N/A | ❌ Parse Error | Complex decltype in partial specialization (see blockers) |
 | `<new>` | N/A | ✅ Compiled | ~0.08s |
-| `<exception>` | N/A | ✅ Compiled | ~6s (2026-01-21 PM: Fixed MemberAccess issue) |
+| `<exception>` | N/A | ✅ Compiled | ~1.3s (2026-01-22: Fixed pending_explicit_template_args_ leak bug) |
 | `<typeinfo>` | N/A | ✅ Compiled | ~0.09s |
-| `<typeindex>` | N/A | ✅ Compiled | ~0.14s |
+| `<typeindex>` | N/A | ✅ Compiled | ~1.6s (depends on <exception>) |
 | `<csetjmp>` | N/A | ✅ Compiled | ~0.04s |
 | `<csignal>` | N/A | ✅ Compiled | ~0.13s |
 | `<stdfloat>` | N/A | ✅ Compiled | ~0.01s (C++23) |
@@ -145,70 +145,53 @@ clang++ -DFLASHCPP_LOG_LEVEL=2 -O3 ...
 
 ## Current Blockers
 
-### 1. Function Argument Parsing in Member Functions (CRITICAL BLOCKER - 2026-01-21)
+### 1. Pending Template Arguments Leak (**FIXED** - 2026-01-22)
 
-**Issue:** Function calls with member variable arguments inside member functions fail to parse correctly. FlashCpp reports finding the function overload but 0 arguments when it should find 1+ arguments.
+**Issue:** ~~When parsing `Template<T>::template member` syntax (common in dependent names), the `pending_explicit_template_args_` was not cleared when the `::template` keyword was encountered or on error paths. This caused the template arguments to "leak" to unrelated function calls later in the same scope.~~
 
-**Error Message:**
+**Status:** **FIXED** in commit 26a6675
+
+**Root Cause:** When parsing expressions like `__xref<_Tp2>::template __type`, the parser would:
+1. Set `pending_explicit_template_args_` for `__xref` 
+2. Encounter `::template` which wasn't handled
+3. Return an error without clearing pending args
+4. The leaked args would then be applied to subsequent unrelated function calls like `name()`
+
+**Impact:** This caused `_Hash_bytes(name(), ...)` calls in `<typeinfo>` to fail when `<type_traits>` was included first, because `name()` would incorrectly receive template arguments and be treated as a dependent call with a Bool placeholder return type.
+
+**Fix:**
+1. Handle `::template` syntax for dependent names (consume the `template` keyword)
+2. Clear `pending_explicit_template_args_` before returning errors in the `::` handling path
+
+**Previously Affected Headers:** 
+- `<optional>` - now times out instead of parse error (progress!)
+- `<exception>` + `<type_traits>` combination - now compiles correctly
+- `<typeindex>` - now compiles (depends on `<exception>`)
+
+---
+
+### 2. Function Argument Parsing in Member Functions (**OBSOLETE** - 2026-01-22)
+
+**Status:** This blocker description appears to be outdated. `<exception>` now compiles successfully. The issue described may have been fixed by earlier changes or may have been misdiagnosed. Leaving documentation for historical reference.
+
+~~**Issue:** Function calls with member variable arguments inside member functions fail to parse correctly.~~
+
+**Test Result (2026-01-22):**
+```bash
+$ cat > test.cpp << EOF
+#include <exception>
+int main() { return 0; }
+EOF
+$ FlashCpp test.cpp -o test.o
+[Progress] Preprocessing complete: 11838 lines in 1268.1 ms
+# SUCCESS - compiles without errors
 ```
-/usr/include/c++/14/bits/nested_exception.h:79:18: error: No matching function for call to 'rethrow_exception'
-  rethrow_exception(_M_ptr);
-                   ^
-```
 
-**Debug output shows:**
-```
-[DEBUG][Parser] Function call to 'rethrow_exception': found 1 overload(s), 0 argument(s)
-```
+### 3. Remaining Parse Blockers
 
-**Problematic Code Pattern:**
-```cpp
-class nested_exception {
-    exception_ptr _M_ptr;
-public:
-    void rethrow_nested() const {
-        rethrow_exception(_M_ptr);  // Fails here - argument not parsed
-    }
-};
-```
+#### 3.1 Context-Dependent Parse Error in `bits/utility.h` (2026-01-19)
 
-**Investigation Findings:**
-- The function `rethrow_exception` is found correctly (1 overload)
-- The argument `_M_ptr` is identified and starts parsing
-- In parse_expression's postfix operator loop (Parser.cpp:~16563), after consuming `_M_ptr`, the closing `)` of the function call is incorrectly consumed
-- This causes the argument list to appear empty (0 arguments)
-- Detailed log sequence:
-  1. `consume_token: Consumed token='(', next token from lexer='_M_ptr'` - opens function call
-  2. `>>> parse_expression: Starting with precedence=2, context=0, depth=2, current token: _M_ptr` - starts parsing argument
-  3. `consume_token: Consumed token='_M_ptr', next token from lexer=')'` - consumes identifier
-  4. `Postfix operator iteration 1: peek token type=7, value=')'` - sees closing paren
-  5. `consume_token: Consumed token=')', next token from lexer=';'` - **INCORRECTLY CONSUMES closing paren**
-  6. `Function call to 'rethrow_exception': found 1 overload(s), 0 argument(s)` - args vector is empty
-
-**Root Cause:** The postfix operator loop in parse_expression doesn't properly stop when encountering `)` in a function argument context. The closing `)` should terminate argument parsing but is instead consumed as part of the argument expression.
-
-**Test Cases:**
-- Simple reproduction: `/tmp/test_rethrow_simple.cpp`
-- Full header: `#include <exception>`
-
-**Affected Headers:** 
-- `<exception>` - directly affected at nested_exception.h:79
-- `<optional>` - depends on `<exception>` 
-- `<iostream>` - depends on `<exception>`
-- Any header that uses exception handling
-
-**Impact:** This is a **critical blocker** preventing compilation of most standard library headers that deal with exceptions. Must be fixed before significant progress can be made on exception-related headers.
-
-**Potential Fix Direction:** The postfix operator loop needs to check if we're in a function argument context and avoid consuming `)` that belongs to the enclosing function call. This may require:
-1. Adding context tracking to parse_expression
-2. Checking expression context before entering postfix loop  
-3. Or ensuring the loop exits before consuming delimiter tokens
-
-### 2. Remaining Parse Blockers
-
-#### 2.1 Context-Dependent Parse Error in `bits/utility.h` (2026-01-19)
-
-**Note (2026-01-21):** This may be related to or masked by the function argument parsing issue (blocker #6). After fixing #6, this issue should be re-evaluated.
+**Note (2026-01-22):** This may have been fixed by the pending template arguments leak fix. Needs re-evaluation.
 
 **Error Message:**
 ```

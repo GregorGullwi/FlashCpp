@@ -20105,7 +20105,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// ONLY if the next token is '(' (function call) or '::' (qualified name that might lead to function call)
 						// For other cases (brace init, etc.), the args will be consumed locally
 						if (peek_token().has_value() && (peek_token()->value() == "(" || peek_token()->value() == "::")) {
-							FLASH_LOG(Parser, Debug, "Setting pending_explicit_template_args_ for '", idenfifier_token.value(), "', next token='", peek_token()->value(), "'");
 							pending_explicit_template_args_ = explicit_template_args;
 						}
 						
@@ -21365,9 +21364,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								std::optional<std::vector<TemplateTypeArg>> effective_template_args;
 								if (explicit_template_args.has_value()) {
 									effective_template_args = explicit_template_args;
-									FLASH_LOG(Parser, Debug, "Using explicit_template_args for '", idenfifier_token.value(), "'");
 								} else if (pending_explicit_template_args_.has_value()) {
-									FLASH_LOG(Parser, Debug, "WARNING: Using pending_explicit_template_args_ for '", idenfifier_token.value(), "' - this might be a bug!");
 									effective_template_args = pending_explicit_template_args_;
 									// Clear the pending args after using them
 									pending_explicit_template_args_.reset();
