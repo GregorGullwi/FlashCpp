@@ -1281,10 +1281,8 @@ private:
 
 		// Use local strings with reserved capacity to minimize allocations
 		// Pre-reserve based on input size to avoid reallocations during processing
-		std::string current;
+		std::string current = input;  // Direct copy initialization
 		std::string output;
-		current.reserve(input.size());
-		current = input;
 		output.reserve(input.size() * 2);  // Macro expansion may increase size
 		
 		size_t loop_guard = 1000;  // Safety limit for expansion iterations
