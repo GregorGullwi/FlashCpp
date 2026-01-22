@@ -64,7 +64,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 3. **Complex partial specialization patterns** - Patterns with `__void_t<decltype(...)>>` in partial specializations (affects `<functional>`)
 4. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
 5. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
-6. **Non-template inline member function forward references** - Non-template constructors/member functions defined inline cannot access member variables declared later in the class (affects `<any>` copy/move constructors)
+6. **Non-template inline member function forward references** - Non-template constructors and member functions defined inline within the class body cannot access member variables declared later in the class. Out-of-line definitions work correctly. (affects `<any>` copy/move constructors)
 
 **Fixes Applied (2026-01-23 This PR):**
 - **Fixed** Member template constructor deferred body parsing - Template constructor bodies are now deferred until after the full class is parsed, enabling access to forward-declared member variables (complete-class context)

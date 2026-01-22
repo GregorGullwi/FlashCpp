@@ -29929,7 +29929,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						}
 					}
 					
-					FLASH_LOG_FORMAT(Parser, Debug, "Deferring template constructor body parsing for struct='{}', template_params={}", 
+					FLASH_LOG_FORMAT(Parser, Debug, "Deferring template constructor body parsing for struct='{}', param_count={}", 
 						StringTable::getStringView(struct_name_handle), template_param_name_handles.size());
 					
 					// Record this for delayed parsing (with template parameters)
