@@ -290,6 +290,15 @@ struct FunctionSignature {
 	bool is_volatile = false;                  // For volatile member functions
 };
 
+// Deferred static_assert information - stored during template definition, evaluated during instantiation
+struct DeferredStaticAssert {
+	ASTNode condition_expr;  // The condition expression to evaluate
+	StringHandle message;    // The assertion message (interned in StringTable for concatenated literals)
+	
+	DeferredStaticAssert(ASTNode expr, StringHandle msg)
+		: condition_expr(expr), message(msg) {}
+};
+
 // Struct member information
 struct StructMember {
 	StringHandle name;
@@ -1792,6 +1801,14 @@ public:
 	StringHandle mangled_name_handle() const { return mangled_name_; }
 	bool has_mangled_name() const { return mangled_name_.isValid(); }
 	
+	// Qualified source name support (for template lookup in constexpr evaluation)
+	// This stores the source-level qualified name (e.g., "std::__is_complete_or_unbounded")
+	// which is needed for template function lookup in the template registry
+	void set_qualified_name(std::string_view name) { qualified_name_ = StringTable::getOrInternStringHandle(name); }
+	std::string_view qualified_name() const { return qualified_name_.view(); }
+	StringHandle qualified_name_handle() const { return qualified_name_; }
+	bool has_qualified_name() const { return qualified_name_.isValid(); }
+	
 	// Explicit template arguments support (for calls like foo<int>())
 	// These are stored as expression nodes which may contain TemplateParameterReferenceNode for dependent args
 	void set_template_arguments(std::vector<ASTNode>&& template_args) { 
@@ -1810,6 +1827,7 @@ private:
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
 	StringHandle mangled_name_;  // Pre-computed mangled name
+	StringHandle qualified_name_;  // Source-level qualified name (e.g., "std::func")
 	std::vector<ASTNode> template_arguments_;  // Explicit template arguments (e.g., <T> in foo<T>())
 	bool is_indirect_call_ = false;  // True for function pointer/reference calls
 };
@@ -2538,6 +2556,15 @@ public:
 		return name_;
 	}
 
+	// Deferred static_assert support (for templates)
+	void add_deferred_static_assert(ASTNode condition_expr, StringHandle message) {
+		deferred_static_asserts_.emplace_back(condition_expr, message);
+	}
+	
+	const std::vector<DeferredStaticAssert>& deferred_static_asserts() const {
+		return deferred_static_asserts_;
+	}
+
 private:
 	StringHandle name_;  // Points directly into source text from lexer token
 	std::vector<StructMemberDecl> members_;
@@ -2553,6 +2580,7 @@ private:
 	StructDeclarationNode* enclosing_class_ = nullptr;  // Enclosing class (if nested)
 	bool is_class_;  // true for class, false for struct
 	bool is_final_ = false;  // true if declared with 'final' keyword
+	std::vector<DeferredStaticAssert> deferred_static_asserts_;  // Static_asserts deferred during template definition
 };
 
 // Template class declaration node - represents a class template
@@ -2681,16 +2709,21 @@ private:
 class EnumDeclarationNode {
 public:
 	explicit EnumDeclarationNode(StringHandle name_handle, bool is_scoped = false)
-		: name_(StringTable::getStringView(name_handle)), is_scoped_(is_scoped), underlying_type_() {}
+		: name_(StringTable::getStringView(name_handle)), is_scoped_(is_scoped), is_forward_declaration_(false), underlying_type_() {}
 
 	std::string_view name() const { return name_; }
 	bool is_scoped() const { return is_scoped_; }  // true for enum class, false for enum
+	bool is_forward_declaration() const { return is_forward_declaration_; }
 	bool has_underlying_type() const { return underlying_type_.has_value(); }
 	const std::optional<ASTNode>& underlying_type() const { return underlying_type_; }
 	const std::vector<ASTNode>& enumerators() const { return enumerators_; }
 
 	void set_underlying_type(ASTNode type) {
 		underlying_type_ = type;
+	}
+
+	void set_is_forward_declaration(bool value) {
+		is_forward_declaration_ = value;
 	}
 
 	void add_enumerator(ASTNode enumerator) {
@@ -2700,6 +2733,7 @@ public:
 private:
 	std::string_view name_;                 // Points directly into source text from lexer token
 	bool is_scoped_;                        // true for enum class, false for enum
+	bool is_forward_declaration_;           // true for forward declarations without body
 	std::optional<ASTNode> underlying_type_; // Optional underlying type (TypeSpecifierNode)
 	std::vector<ASTNode> enumerators_;      // List of EnumeratorNode
 };
@@ -2964,7 +2998,8 @@ enum class TypeTraitKind {
 	HasVirtualDestructor,    // __has_virtual_destructor(T) - check if type has virtual destructor
 	// Special traits
 	UnderlyingType,      // __underlying_type(T) - returns the underlying type of an enum
-	IsConstantEvaluated  // __is_constant_evaluated() - no arguments, returns bool
+	IsConstantEvaluated, // __is_constant_evaluated() - no arguments, returns bool
+	IsCompleteOrUnbounded // __is_complete_or_unbounded - helper for standard library, always returns true
 };
 
 class TypeTraitExprNode {
@@ -3075,6 +3110,9 @@ public:
 			case TypeTraitKind::IsConstantEvaluated: return "__is_constant_evaluated";
 			case TypeTraitKind::IsLayoutCompatible: return "__is_layout_compatible";
 			case TypeTraitKind::IsPointerInterconvertibleBaseOf: return "__is_pointer_interconvertible_base_of";
+			case TypeTraitKind::HasTrivialDestructor: return "__has_trivial_destructor";
+			case TypeTraitKind::HasVirtualDestructor: return "__has_virtual_destructor";
+			case TypeTraitKind::IsCompleteOrUnbounded: return "__is_complete_or_unbounded";
 			default: return "__unknown_trait";
 		}
 	}

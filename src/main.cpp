@@ -117,6 +117,9 @@ void printTimingSummary(double preprocessing_time, double lexer_setup_time, doub
     FLASH_LOG(General, Info, "\n");
 }
 
+// Forward declaration
+int main_impl(int argc, char *argv[]);
+
 // Helper function to set mangling style in both CompileContext and NameMangling namespace
 // Also sets the data model to match (MSVC -> LLP64, Itanium -> LP64)
 // This automatic association assumes typical platform conventions:
@@ -143,6 +146,23 @@ int main(int argc, char *argv[]) {
     // Install crash handler for automatic crash logging with stack traces
     CrashHandler::install();
 
+    try {
+        return main_impl(argc, argv);
+    } catch (const std::bad_any_cast& e) {
+        std::cerr << "Fatal error: std::bad_any_cast - " << e.what() << std::endl;
+        std::cerr << "This indicates an internal compiler error where a std::any was cast to the wrong type." << std::endl;
+        std::cerr << "This usually happens during IR conversion or template instantiation." << std::endl;
+        return 1;
+    } catch (const std::exception& e) {
+        std::cerr << "Fatal error: " << e.what() << std::endl;
+        return 1;
+    } catch (...) {
+        std::cerr << "Fatal error: Unknown exception caught" << std::endl;
+        return 1;
+    }
+}
+
+int main_impl(int argc, char *argv[]) {
     auto total_start = std::chrono::high_resolution_clock::now();
 
     CompileContext context;
@@ -322,6 +342,7 @@ int main(int argc, char *argv[]) {
         PhaseTimer timer("Preprocessing", false, &preprocessing_time);
         if (!file_reader.readFile(context.getInputFile().value())) {
             FLASH_LOG(General, Error, "Failed to read input file: ", context.getInputFile().value());
+            std::cerr << "Error: Failed to read input file: " << context.getInputFile().value() << std::endl;
             return 1;
         }
     }
@@ -348,6 +369,12 @@ int main(int argc, char *argv[]) {
 
     // Count source lines for operand storage reservation
     size_t source_line_count = std::count(preprocessed_source.begin(), preprocessed_source.end(), '\n');
+    
+    // Log preprocessing completion for progress tracking with lines/second
+    double lines_per_sec = preprocessing_time > 0 ? (source_line_count * 1000.0 / preprocessing_time) : 0.0;
+    printf("[Progress] Preprocessing complete: %zu lines in %.1f ms (%.0f lines/sec)\n", 
+           source_line_count, preprocessing_time, lines_per_sec);
+    fflush(stdout);
 
 #ifdef USE_CHUNKED_OPERAND_STORAGE
     // Reserve space in global operand storage
@@ -385,11 +412,15 @@ int main(int argc, char *argv[]) {
         PhaseTimer timer("Parsing", false, &parsing_time);
         // Note: Lexing happens lazily during parsing in this implementation
         // Template instantiation also happens during parsing
+        
         auto parse_result = parser->parse();
 
         if (parse_result.is_error()) {
             // Print formatted error with file:line:column information and include stack
-            FLASH_LOG(Parser, Info, parse_result.format_error(lexer.file_paths(), file_reader.get_line_map(), &lexer));
+            std::string error_msg = parse_result.format_error(lexer.file_paths(), file_reader.get_line_map(), &lexer);
+            FLASH_LOG(Parser, Error, error_msg);
+            // Also print to stderr to ensure error is visible even with minimal logging
+            std::cerr << error_msg << std::endl;
             return 1;
         }
     }
@@ -493,6 +524,14 @@ int main(int argc, char *argv[]) {
             FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] After irConverter.convert(), before destructor");
         }
         FLASH_LOG(Codegen, Debug, "[STACK_OVERFLOW_DEBUG] After irConverter destructor");
+    } catch (const std::bad_any_cast& e) {
+        FLASH_LOG(General, Error, "Code generation failed with std::bad_any_cast: ", e.what());
+        FLASH_LOG(General, Error, "This indicates an IR instruction has an unexpected payload type.");
+        printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);
+        if (show_perf_stats) {
+            StackStringStats::print_stats();
+        }
+        return 1;
     } catch (const std::exception& e) {
         FLASH_LOG(General, Error, "Code generation failed: ", e.what());
         printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, ir_conversion_time, deferred_gen_time, codegen_time, total_start);

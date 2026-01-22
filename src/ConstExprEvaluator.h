@@ -1,6 +1,9 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "TemplateRegistry.h"  // For gTemplateRegistry
+#include "TemplateInstantiationHelper.h"  // For shared template instantiation utilities
+#include "Log.h"  // For FLASH_LOG
 #include <optional>
 #include <string>
 #include <variant>
@@ -9,12 +12,51 @@
 // Forward declarations
 class SymbolTable;
 struct TypeInfo;
+class Parser;  // For template instantiation
+
+/// @file ConstExprEvaluator.h
+/// @brief Constant expression evaluation for static_assert, constexpr variables, etc.
+///
+/// ## Purpose
+///
+/// ConstExpr::Evaluator performs **value computation** at compile time.
+/// It evaluates expressions to produce primitive values (int, bool, double).
+///
+/// ## Key Differences from ExpressionSubstitutor
+///
+/// | Aspect      | ExpressionSubstitutor        | ConstExpr::Evaluator         |
+/// |-------------|------------------------------|------------------------------|
+/// | Operation   | AST transformation           | Value computation            |
+/// | Input       | AST with template params     | AST with concrete types      |
+/// | Output      | Modified AST                 | Primitive value (int/bool)   |
+/// | When used   | Template instantiation       | static_assert, constexpr     |
+///
+/// ## Typical Flow
+///
+/// ```
+/// Parser.parse_static_assert()
+///   → ConstExpr::Evaluator.evaluate()
+///     → evaluate_function_call() → TemplateInstantiationHelper (if template)
+///     → evaluate_binary_operator()
+///     → evaluate_unary_operator()
+///   → EvalResult (bool/int/double value)
+/// ```
+///
+/// @see ExpressionSubstitutor for template parameter substitution
+/// @see TemplateInstantiationHelper for shared template instantiation utilities
 
 namespace ConstExpr {
 
+// Error type classification for constexpr evaluation failures
+enum class EvalErrorType {
+	None,                        // No error (success)
+	TemplateDependentExpression, // Error due to template-dependent expression
+	NotConstantExpression,       // Expression is not a constant expression
+	Other                        // Other types of errors
+};
+
 // Result of constant expression evaluation
 struct EvalResult {
-	bool success;
 	std::variant<
 		bool,                    // Boolean constant
 		long long,               // Signed integer constant
@@ -22,35 +64,41 @@ struct EvalResult {
 		double                   // Floating-point constant
 	> value;
 	std::string error_message;
+	EvalErrorType error_type = EvalErrorType::None;
 	
 	// Array support for local arrays in constexpr functions
 	bool is_array = false;
 	std::vector<int64_t> array_values;
 
+	// Check if evaluation was successful
+	bool success() const {
+		return error_type == EvalErrorType::None;
+	}
+
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{true, val, "", false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{true, val, "", false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{true, val, "", false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{true, val, "", false, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}};
 	}
 
-	static EvalResult error(const std::string& msg) {
-		return EvalResult{false, false, msg, false, {}};
+	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
+		return EvalResult{false, msg, type, false, {}};
 	}
 
 	// Convenience helpers for common operations
 	bool as_bool() const {
-		if (!success) return false;
+		if (!success()) return false;
 		
 		// Any non-zero value is true
 		if (std::holds_alternative<bool>(value)) {
@@ -66,7 +114,7 @@ struct EvalResult {
 	}
 
 	long long as_int() const {
-		if (!success) return 0;
+		if (!success()) return 0;
 		
 		if (std::holds_alternative<bool>(value)) {
 			return std::get<bool>(value) ? 1 : 0;
@@ -81,7 +129,7 @@ struct EvalResult {
 	}
 
 	double as_double() const {
-		if (!success) return 0.0;
+		if (!success()) return 0.0;
 		
 		if (std::holds_alternative<bool>(value)) {
 			return std::get<bool>(value) ? 1.0 : 0.0;
@@ -131,6 +179,9 @@ struct EvaluationContext {
 	// Struct being parsed (for looking up static members in static_assert within struct)
 	const StructDeclarationNode* struct_node = nullptr;
 	const StructTypeInfo* struct_info = nullptr;
+	
+	// Parser pointer for template instantiation (optional)
+	Parser* parser = nullptr;
 
 	// Constructor requires symbol table to prevent missing it
 	explicit EvaluationContext(const SymbolTable& symbol_table)
@@ -183,6 +234,26 @@ public:
 		if (std::holds_alternative<SizeofExprNode>(expr)) {
 			return evaluate_sizeof(std::get<SizeofExprNode>(expr), context);
 		}
+		
+		// For SizeofPackNode (sizeof... operator)
+		if (std::holds_alternative<SizeofPackNode>(expr)) {
+			const auto& sizeof_pack = std::get<SizeofPackNode>(expr);
+			// During template instantiation, sizeof... should be replaced with the actual pack size
+			// If we reach here in constant expression evaluation, the pack wasn't substituted
+			// This is an error unless we can look up the pack size from context
+			std::string_view pack_name = sizeof_pack.pack_name();
+			
+			// Try to get pack size from context (if available during template instantiation)
+			if (context.parser) {
+				// Check if this is a template parameter pack
+				// For now, return an error - proper support requires tracking pack expansions
+				return EvalResult::error("sizeof... requires template instantiation context for pack: " + 
+				                         std::string(pack_name),
+				                         EvalErrorType::TemplateDependentExpression);
+			}
+			
+			return EvalResult::error("sizeof... operator requires template context");
+		}
 
 		// For AlignofExprNode
 		if (std::holds_alternative<AlignofExprNode>(expr)) {
@@ -197,6 +268,16 @@ public:
 		// For IdentifierNode (variable references like 'x' in 'constexpr int y = x + 1;')
 		if (std::holds_alternative<IdentifierNode>(expr)) {
 			return evaluate_identifier(std::get<IdentifierNode>(expr), context);
+		}
+
+		// For TemplateParameterReferenceNode (references to template parameters like 'T' or 'N')
+		if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+			const auto& template_param = std::get<TemplateParameterReferenceNode>(expr);
+			// Template parameters cannot be evaluated at template definition time
+			// This is a template-dependent expression that needs to be deferred
+			return EvalResult::error("Template parameter in constant expression: " + 
+			                         std::string(StringTable::getStringView(template_param.param_name())),
+			                         EvalErrorType::TemplateDependentExpression);
 		}
 
 		// For TernaryOperatorNode (condition ? true_expr : false_expr)
@@ -239,6 +320,20 @@ public:
 			return evaluate_type_trait(std::get<TypeTraitExprNode>(expr));
 		}
 
+		// For FoldExpressionNode (e.g., (args && ...))
+		// Fold expressions depend on template parameter packs and must be evaluated during template instantiation
+		if (std::holds_alternative<FoldExpressionNode>(expr)) {
+			return EvalResult::error("Fold expression requires template instantiation context",
+			                         EvalErrorType::TemplateDependentExpression);
+		}
+
+		// For PackExpansionExprNode (e.g., args...)
+		// Pack expansions depend on template parameter packs and must be evaluated during template instantiation
+		if (std::holds_alternative<PackExpansionExprNode>(expr)) {
+			return EvalResult::error("Pack expansion requires template instantiation context",
+			                         EvalErrorType::TemplateDependentExpression);
+		}
+
 		// Other expression types are not supported as constant expressions yet
 		return EvalResult::error("Expression type not supported in constant expressions");
 	}
@@ -265,10 +360,10 @@ private:
 		auto lhs_result = evaluate(lhs_node, context);
 		auto rhs_result = evaluate(rhs_node, context);
 
-		if (!lhs_result.success) {
+		if (!lhs_result.success()) {
 			return lhs_result;
 		}
-		if (!rhs_result.success) {
+		if (!rhs_result.success()) {
 			return rhs_result;
 		}
 
@@ -280,7 +375,7 @@ private:
 		// Recursively evaluate operand
 		auto operand_result = evaluate(operand_node, context);
 
-		if (!operand_result.success) {
+		if (!operand_result.success()) {
 			return operand_result;
 		}
 
@@ -356,7 +451,7 @@ private:
 									bool all_evaluated = true;
 									for (const auto& dim_expr : dims) {
 										auto eval_result = evaluate(dim_expr, context);
-										if (eval_result.success && eval_result.as_int() > 0) {
+										if (eval_result.success() && eval_result.as_int() > 0) {
 											total_count *= eval_result.as_int();
 										} else {
 											all_evaluated = false;
@@ -414,7 +509,7 @@ private:
 										bool all_evaluated = true;
 										for (const auto& dim_expr : dims) {
 											auto eval_result = evaluate(dim_expr, context);
-											if (eval_result.success && eval_result.as_int() > 0) {
+											if (eval_result.success() && eval_result.as_int() > 0) {
 												total_count *= eval_result.as_int();
 											} else {
 												all_evaluated = false;
@@ -552,14 +647,11 @@ private:
 	}
 
 	static EvalResult evaluate_constructor_call(const ConstructorCallNode& ctor_call, EvaluationContext& context) {
-		// Constructor calls like float(3.14), int(100), double(2.718)
+		// Constructor calls like float(3.14), int(100), double(2.718), or type_identity<int>{}
 		// These are essentially type conversions/casts in constant expressions
-		// Get the argument(s) - for basic type conversions, should have exactly 1 argument
+		// Get the argument(s)
 		const auto& args = ctor_call.arguments();
-		if (args.size() != 1) {
-			return EvalResult::error("Constructor call must have exactly 1 argument for constant evaluation");
-		}
-
+		
 		// Get the target type
 		const ASTNode& type_node = ctor_call.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
@@ -567,6 +659,46 @@ private:
 		}
 		
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+		
+		// Handle empty constructor calls (default/value initialization): Type{}
+		if (args.size() == 0) {
+			// For struct types, this is valid - it's default initialization
+			// Return a success result with default value (0 for integers, false for bool, etc.)
+			// This allows the constructor call to be used for template argument deduction
+			switch (type_spec.type()) {
+				case Type::Bool:
+					return EvalResult::from_bool(false);
+				case Type::Char:
+				case Type::Short:
+				case Type::Int:
+				case Type::Long:
+				case Type::LongLong:
+					return EvalResult::from_int(0);
+				case Type::UnsignedChar:
+				case Type::UnsignedShort:
+				case Type::UnsignedInt:
+				case Type::UnsignedLong:
+				case Type::UnsignedLongLong:
+					return EvalResult::from_int(0);
+				case Type::Float:
+				case Type::Double:
+				case Type::LongDouble:
+					return EvalResult::from_double(0.0);
+				case Type::Struct:
+				case Type::UserDefined:
+					// For struct types, return a success result with value 0
+					// This indicates successful default construction
+					return EvalResult::from_int(0);
+				default:
+					return EvalResult::error("Unsupported type for default construction in constant expression");
+			}
+		}
+		
+		// For basic type conversions with 1 argument: Type(value)
+		if (args.size() != 1) {
+			return EvalResult::error("Constructor call must have 0 or 1 arguments for constant evaluation");
+		}
+		
 		return evaluate_expr_node(type_spec.type(), args[0], context, "Unsupported type in constructor call for constant evaluation");
 	}
 
@@ -587,7 +719,7 @@ private:
 
 	static EvalResult evaluate_expr_node(Type target_type, const ASTNode& expr, EvaluationContext& context, const char* invalidTypeErrorStr) {
 		auto expr_result = evaluate(expr, context);
-		if (!expr_result.success) {
+		if (!expr_result.success()) {
 			return expr_result;
 		}
 		
@@ -664,10 +796,28 @@ private:
 				}
 			}
 			
+			// Variable not found - might be a template parameter that hasn't been substituted yet
+			// Check if we have a parser context (indicates we're in template definition)
+			// Template parameters have short names (typically single letters like T, N, etc.)
+			// If the identifier looks like a template parameter, mark it as template-dependent
+			if (context.parser != nullptr || var_name.length() <= 2) {
+				// Likely a template parameter - return template-dependent error
+				return EvalResult::error("Template parameter or undefined variable in constant expression: " + std::string(var_name),
+				                         EvalErrorType::TemplateDependentExpression);
+			}
+			
 			return EvalResult::error("Undefined variable in constant expression: " + std::string(var_name));
 		}
 
 		const ASTNode& symbol_node = symbol_opt.value();
+		
+		// Check if it's a TemplateVariableDeclarationNode - these are template-dependent
+		if (symbol_node.is<TemplateVariableDeclarationNode>()) {
+			// Variable template references with template arguments are template-dependent
+			// They need to be evaluated during template instantiation
+			return EvalResult::error("Variable template in constant expression - instantiation required: " + std::string(var_name),
+			                         EvalErrorType::TemplateDependentExpression);
+		}
 		
 		// Check if it's a VariableDeclarationNode
 		if (!symbol_node.is<VariableDeclarationNode>()) {
@@ -696,7 +846,7 @@ private:
 			std::vector<int64_t> array_values;
 			for (const auto& elem : initializers) {
 				auto elem_result = evaluate(elem, context);
-				if (!elem_result.success) {
+				if (!elem_result.success()) {
 					return elem_result;
 				}
 				array_values.push_back(elem_result.as_int());
@@ -704,7 +854,7 @@ private:
 			
 			// Return as an array result
 			EvalResult array_result;
-			array_result.success = true;
+			array_result.error_type = EvalErrorType::None;
 			array_result.is_array = true;
 			array_result.array_values = std::move(array_values);
 			return array_result;
@@ -717,7 +867,7 @@ private:
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context) {
 		// Evaluate the condition
 		auto cond_result = evaluate(ternary.condition(), context);
-		if (!cond_result.success) {
+		if (!cond_result.success()) {
 			return cond_result;
 		}
 
@@ -770,7 +920,7 @@ private:
 					// Check for init-capture: [x = expr]
 					if (capture.has_initializer()) {
 						auto init_result = evaluate(capture.initializer().value(), context);
-						if (!init_result.success) {
+						if (!init_result.success()) {
 							return EvalResult::error("Failed to evaluate init-capture '" + 
 								std::string(var_name) + "': " + init_result.error_message);
 						}
@@ -806,7 +956,7 @@ private:
 						}
 						
 						auto var_result = evaluate(var_decl.initializer().value(), context);
-						if (!var_result.success) {
+						if (!var_result.success()) {
 							return EvalResult::error("Failed to evaluate captured variable '" + 
 								std::string(var_name) + "': " + var_result.error_message);
 						}
@@ -832,7 +982,7 @@ private:
 		
 		// Success - all captures evaluated
 		EvalResult success;
-		success.success = true;
+		success.error_type = EvalErrorType::None;
 		success.value = 0LL;  // Dummy value, not used
 		return success;
 	}
@@ -890,7 +1040,7 @@ private:
 			
 			// Evaluate argument
 			auto arg_result = evaluate(arguments[i], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			bindings[param_name] = arg_result;
@@ -899,7 +1049,7 @@ private:
 		// Handle captures - evaluate each captured variable and add to bindings
 		const auto& captures = lambda.captures();
 		auto capture_result = evaluate_lambda_captures(captures, bindings, context);
-		if (!capture_result.success) {
+		if (!capture_result.success()) {
 			return capture_result;
 		}
 		
@@ -941,7 +1091,7 @@ private:
 				return EvalResult::error("__builtin_clzll requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned long long value;
@@ -977,7 +1127,7 @@ private:
 				return EvalResult::error("__builtin_clz requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned int value;
@@ -1008,7 +1158,7 @@ private:
 				return EvalResult::error("__builtin_ctzll requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned long long value;
@@ -1038,7 +1188,7 @@ private:
 				return EvalResult::error("__builtin_ctz requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned int value;
@@ -1068,7 +1218,7 @@ private:
 				return EvalResult::error("__builtin_popcountll requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned long long value;
@@ -1094,7 +1244,7 @@ private:
 				return EvalResult::error("__builtin_popcount requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned int value;
@@ -1120,7 +1270,7 @@ private:
 				return EvalResult::error("__builtin_ffsll requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned long long value;
@@ -1150,7 +1300,7 @@ private:
 				return EvalResult::error("__builtin_ffs requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			unsigned int value;
@@ -1181,7 +1331,7 @@ private:
 			}
 			// In a constexpr context, if we can evaluate the argument, it's a constant
 			auto arg_result = evaluate(arguments[0], context);
-			return EvalResult::from_int(arg_result.success ? 1LL : 0LL);
+			return EvalResult::from_int(arg_result.success() ? 1LL : 0LL);
 		}
 		
 		// Handle __builtin_abs, __builtin_labs, __builtin_llabs
@@ -1190,7 +1340,7 @@ private:
 				return EvalResult::error(std::string(func_name) + " requires exactly 1 argument");
 			}
 			auto arg_result = evaluate(arguments[0], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			long long value = arg_result.as_int();
@@ -1220,7 +1370,115 @@ private:
 		}
 
 		std::string_view func_name = func_decl_node.identifier_token().value();
+		
+		// First try to get the qualified source name (e.g., "std::__is_complete_or_unbounded")
+		// This is set by the parser for qualified function calls
+		std::string_view qualified_name = func_name;
+		if (func_call.has_qualified_name()) {
+			qualified_name = func_call.qualified_name();
+			FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
+		}
+		
+		// Special handling for std::__is_complete_or_unbounded
+		// This is a helper function in the standard library that checks if a type is complete
+		// __is_complete_or_unbounded evaluates to true if either:
+		// 1. T is a complete type, or
+		// 2. T is an unbounded array type (e.g. int[])
+		if (qualified_name == "std::__is_complete_or_unbounded" || func_name == "__is_complete_or_unbounded") {
+			FLASH_LOG(Templates, Debug, "Special handling for __is_complete_or_unbounded");
+			
+			// The function takes a __type_identity<T> argument
+			// We need to extract the type T and check if it's complete or unbounded
+			if (func_call.arguments().size() == 0) {
+				return EvalResult::error("__is_complete_or_unbounded requires a type argument");
+			}
+			
+			// Get the first argument (should be a ConstructorCallNode for __type_identity<T>{})
+			const ASTNode& arg = func_call.arguments()[0];
+			
+			// Try to extract the type from the argument
+			// The argument is typically __type_identity<T>{} which is a constructor call
+			if (arg.is<ExpressionNode>()) {
+				const ExpressionNode& expr = arg.as<ExpressionNode>();
+				if (std::holds_alternative<ConstructorCallNode>(expr)) {
+					const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr);
+					const ASTNode& type_node = ctor.type_node();
+					
+					if (type_node.is<TypeSpecifierNode>()) {
+						const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+						Type base_type = type_spec.type();
+						bool is_reference = type_spec.is_reference();
+						size_t pointer_depth = type_spec.pointer_depth();
+						bool is_array = type_spec.is_array();
+						std::optional<size_t> array_size = type_spec.array_size();
+						
+						// Check for void - always incomplete
+						if (base_type == Type::Void && pointer_depth == 0 && !is_reference) {
+							return EvalResult::from_bool(false);
+						}
+						
+						// Check for unbounded array - always returns true
+						if (is_array && (!array_size.has_value() || *array_size == 0)) {
+							return EvalResult::from_bool(true);
+						}
+						
+						// Check for incomplete class/struct types
+						// A type is incomplete if it's a struct/class with no StructTypeInfo
+						TypeIndex type_idx = type_spec.type_index();
+						if (type_idx != TypeIndex{0} && (base_type == Type::Struct || base_type == Type::UserDefined)) {
+							const TypeInfo& type_info = gTypeInfo[type_idx];
+							const StructTypeInfo* struct_info = type_info.getStructInfo();
+							
+							// If it's a struct/class type with no struct_info, it's incomplete
+							if (!struct_info && pointer_depth == 0 && !is_reference) {
+								return EvalResult::from_bool(false);
+							}
+						}
+						
+						// All other types are considered complete
+						return EvalResult::from_bool(true);
+					}
+				}
+			}
+			
+			// If we can't extract the type, return true as a fallback
+			FLASH_LOG(Templates, Debug, "__is_complete_or_unbounded: couldn't extract type, returning true as fallback");
+			return EvalResult::from_bool(true);
+		}
+		
+		// First try simple name lookup in symbol table
 		auto symbol_opt = context.symbols->lookup(func_name);
+		
+		// If not found in symbol table, try the global template registry
+		// This handles cases where a template function is defined but not yet instantiated
+		if (!symbol_opt.has_value() && context.parser) {
+			// Try to find the template in the global registry with qualified name first
+			auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
+			
+			// If not found with qualified name, try with simple name
+			if (!template_opt.has_value() && qualified_name != func_name) {
+				template_opt = gTemplateRegistry.lookupTemplate(func_name);
+			}
+			
+			// If still not found with simple name, try with common namespace prefixes
+			if (!template_opt.has_value()) {
+				std::vector<std::string> name_candidates;
+				name_candidates.push_back(std::string("std::") + std::string(func_name));
+				name_candidates.push_back(std::string("__gnu_cxx::") + std::string(func_name));
+				
+				for (const auto& candidate_name : name_candidates) {
+					template_opt = gTemplateRegistry.lookupTemplate(candidate_name);
+					if (template_opt.has_value()) {
+						break;
+					}
+				}
+			}
+			
+			// If we found the template, use it
+			if (template_opt.has_value()) {
+				symbol_opt = template_opt;
+			}
+		}
 		
 		// If simple lookup fails, try to find the function as a static member in struct types
 		if (!symbol_opt.has_value()) {
@@ -1270,7 +1528,7 @@ private:
 			// Check if this is a compiler builtin function (starts with __builtin)
 			if (func_name.starts_with("__builtin")) {
 				auto builtin_result = evaluate_builtin_function(func_name, func_call.arguments(), context);
-				if (builtin_result.success) {
+				if (builtin_result.success()) {
 					return builtin_result;
 				}
 				// Builtin evaluation failed - propagate the specific error
@@ -1309,6 +1567,64 @@ private:
 			// Pass empty bindings for top-level function calls
 			std::unordered_map<std::string_view, EvalResult> empty_bindings;
 			return evaluate_function_call_with_bindings(func_decl, arguments, empty_bindings, context);
+		}
+		
+		// Check if it's a TemplateFunctionDeclarationNode (template function)
+		if (symbol_node.is<TemplateFunctionDeclarationNode>()) {
+			const auto& arguments = func_call.arguments();
+			
+			// Try to find or instantiate the function with the given arguments
+			// First, try to find an already-instantiated version in the symbol table
+			// Try both qualified and unqualified names
+			std::vector<ASTNode> all_overloads = context.symbols->lookup_all(qualified_name);
+			if (all_overloads.empty() && qualified_name != func_name) {
+				all_overloads = context.symbols->lookup_all(func_name);
+			}
+			
+			// Look for a constexpr FunctionDeclarationNode that matches the argument count
+			for (const auto& overload : all_overloads) {
+				if (overload.is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& candidate = overload.as<FunctionDeclarationNode>();
+					if (candidate.is_constexpr() && 
+					    candidate.parameter_nodes().size() == arguments.size()) {
+						// Found a potential match - try to evaluate it
+						std::unordered_map<std::string_view, EvalResult> empty_bindings;
+						return evaluate_function_call_with_bindings(candidate, arguments, empty_bindings, context);
+					}
+				}
+			}
+			
+			// No pre-instantiated version found - try to instantiate on-demand if parser is available
+			if (context.parser) {
+				// Use shared helper to deduce template arguments from function call arguments
+				std::vector<TemplateTypeArg> deduced_args = TemplateInstantiationHelper::deduceTemplateArgsFromCall(arguments);
+				
+				// Try to instantiate even if we have fewer deduced args than template params
+				// The template might have default parameters that can fill in the rest
+				if (!deduced_args.empty()) {
+					// Use shared helper to try instantiation with various name variations
+					auto instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
+						*context.parser, qualified_name, func_name, deduced_args);
+					
+					if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
+						const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
+						if (instantiated_func.is_constexpr()) {
+							// Successfully instantiated - evaluate it
+							std::unordered_map<std::string_view, EvalResult> empty_bindings;
+							return evaluate_function_call_with_bindings(instantiated_func, arguments, empty_bindings, context);
+						}
+					} else if (instantiated_opt.has_value()) {
+						FLASH_LOG(Templates, Debug, "Instantiation succeeded but result is not a FunctionDeclarationNode");
+					}
+				} else {
+					FLASH_LOG(Templates, Debug, "No template arguments could be deduced from function call arguments");
+				}
+			}
+			
+			// No pre-instantiated version found and couldn't instantiate on-demand
+			// Return a specific error indicating this is a template function issue
+			return EvalResult::error("Template function in constant expression - instantiation required: " + std::string(qualified_name), 
+			                         EvalErrorType::TemplateDependentExpression);
 		}
 		
 		// Check if it's a VariableDeclarationNode (could be a lambda/functor callable object)
@@ -1351,7 +1667,7 @@ private:
 		for (size_t i = 0; i < arguments.size(); ++i) {
 			// Evaluate the argument with outer bindings (for nested calls)
 			auto arg_result = evaluate_expression_with_bindings_const(arguments[i], outer_bindings, context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			
@@ -1391,14 +1707,14 @@ private:
 			// If the result is successful, it means a return value was computed
 			// This can happen either directly from a return statement, or indirectly
 			// from an if/while/for statement that contains a return
-			if (result.success) {
+			if (result.success()) {
 				context.current_depth--;
 				return result;
 			}
 			
 			// For other statements (like variable declarations), result contains the binding info
 			// The binding has already been added to local_bindings by evaluate_statement_with_bindings
-			if (!result.success && result.error_message != "Statement executed (not a return)") {
+			if (!result.success() && result.error_message != "Statement executed (not a return)") {
 				// An actual error occurred
 				context.current_depth--;
 				return result;
@@ -1445,7 +1761,7 @@ private:
 					std::vector<int64_t> array_values;
 					for (size_t i = 0; i < initializers.size(); i++) {
 						auto elem_result = evaluate_expression_with_bindings(initializers[i], bindings, context);
-						if (!elem_result.success) {
+						if (!elem_result.success()) {
 							return elem_result;
 						}
 						array_values.push_back(elem_result.as_int());
@@ -1453,7 +1769,7 @@ private:
 					
 					// Store as an array binding
 					EvalResult array_result;
-					array_result.success = true;
+					array_result.error_type = EvalErrorType::None;
 					array_result.is_array = true;
 					array_result.array_values = std::move(array_values);
 					bindings[var_name] = array_result;
@@ -1464,7 +1780,7 @@ private:
 				
 				// Regular expression initializer
 				auto init_result = evaluate_expression_with_bindings(init_expr, bindings, context);
-				if (!init_result.success) {
+				if (!init_result.success()) {
 					return init_result;
 				}
 				
@@ -1498,7 +1814,7 @@ private:
 				// Evaluate condition if present
 				if (for_stmt.has_condition()) {
 					auto cond_result = evaluate_expression_with_bindings(for_stmt.get_condition().value(), bindings, context);
-					if (!cond_result.success) {
+					if (!cond_result.success()) {
 						return cond_result;
 					}
 					if (!cond_result.as_bool()) {
@@ -1548,7 +1864,7 @@ private:
 				
 				// Evaluate condition
 				auto cond_result = evaluate_expression_with_bindings(while_stmt.get_condition(), bindings, context);
-				if (!cond_result.success) {
+				if (!cond_result.success()) {
 					return cond_result;
 				}
 				if (!cond_result.as_bool()) {
@@ -1591,7 +1907,7 @@ private:
 			
 			// Evaluate condition
 			auto cond_result = evaluate_expression_with_bindings(if_stmt.get_condition(), bindings, context);
-			if (!cond_result.success) {
+			if (!cond_result.success()) {
 				return cond_result;
 			}
 			
@@ -1712,7 +2028,7 @@ private:
 						
 						// Evaluate the right-hand side
 						auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
-						if (!rhs_result.success) return rhs_result;
+						if (!rhs_result.success()) return rhs_result;
 						
 						// Perform the assignment
 						if (op == "=") {
@@ -1740,7 +2056,7 @@ private:
 								new_value = apply_binary_op(current, rhs_result, "%");
 							}
 							
-							if (!new_value.success) return new_value;
+							if (!new_value.success()) return new_value;
 							bindings[var_name] = new_value;
 							return new_value;
 						}
@@ -1753,8 +2069,8 @@ private:
 			auto lhs_result = evaluate_expression_with_bindings(bin_op.get_lhs(), bindings, context);
 			auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
 			
-			if (!lhs_result.success) return lhs_result;
-			if (!rhs_result.success) return rhs_result;
+			if (!lhs_result.success()) return lhs_result;
+			if (!rhs_result.success()) return rhs_result;
 			
 			return apply_binary_op(lhs_result, rhs_result, bin_op.op());
 		}
@@ -1789,7 +2105,7 @@ private:
 							new_value = apply_binary_op(current, one, "-");
 						}
 						
-						if (!new_value.success) return new_value;
+						if (!new_value.success()) return new_value;
 						bindings[var_name] = new_value;
 						
 						// Return old value for postfix, new value for prefix
@@ -1805,7 +2121,7 @@ private:
 			
 			// Regular unary operators
 			auto operand_result = evaluate_expression_with_bindings(unary_op.get_operand(), bindings, context);
-			if (!operand_result.success) return operand_result;
+			if (!operand_result.success()) return operand_result;
 			return apply_unary_op(operand_result, op);
 		}
 		
@@ -1814,7 +2130,7 @@ private:
 			const auto& ternary = std::get<TernaryOperatorNode>(expr);
 			auto cond_result = evaluate_expression_with_bindings(ternary.condition(), bindings, context);
 			
-			if (!cond_result.success) return cond_result;
+			if (!cond_result.success()) return cond_result;
 			
 			if (cond_result.as_bool()) {
 				return evaluate_expression_with_bindings(ternary.true_expr(), bindings, context);
@@ -1902,8 +2218,8 @@ private:
 			auto lhs_result = evaluate_expression_with_bindings_const(bin_op.get_lhs(), bindings, context);
 			auto rhs_result = evaluate_expression_with_bindings_const(bin_op.get_rhs(), bindings, context);
 			
-			if (!lhs_result.success) return lhs_result;
-			if (!rhs_result.success) return rhs_result;
+			if (!lhs_result.success()) return lhs_result;
+			if (!rhs_result.success()) return rhs_result;
 			
 			return apply_binary_op(lhs_result, rhs_result, bin_op.op());
 		}
@@ -1913,7 +2229,7 @@ private:
 			const auto& ternary = std::get<TernaryOperatorNode>(expr);
 			auto cond_result = evaluate_expression_with_bindings_const(ternary.condition(), bindings, context);
 			
-			if (!cond_result.success) return cond_result;
+			if (!cond_result.success()) return cond_result;
 			
 			if (cond_result.as_bool()) {
 				return evaluate_expression_with_bindings_const(ternary.true_expr(), bindings, context);
@@ -1986,7 +2302,7 @@ private:
 			
 			// Evaluate the index
 			auto index_result = evaluate_expression_with_bindings_const(subscript.index_expr(), bindings, context);
-			if (!index_result.success) {
+			if (!index_result.success()) {
 				return index_result;
 			}
 			
@@ -2288,6 +2604,24 @@ public:
 			}
 			
 			// Not found in symbol table or as struct static member
+			// Check if this looks like a template instantiation with dependent arguments
+			// Pattern: __template_name__DependentArg::member
+			// Work with string_view to avoid unnecessary copies
+			std::string_view ns_name = gNamespaceRegistry.getQualifiedName(qualified_id.namespace_handle());
+			std::string_view member_name = qualified_id.name();
+			
+			// Check if the namespace part looks like a template instantiation (contains template argument separator)
+			// Template names with arguments get mangled as template_name_arg1_arg2...
+			// If any argument is a template parameter (starts with _ often), it's template-dependent
+			if (!ns_name.empty() && ns_name.find('_') != std::string_view::npos && context.parser != nullptr) {
+				// This might be a template instantiation with dependent arguments
+				// Treat it as template-dependent
+				return EvalResult::error("Template instantiation with dependent arguments in constant expression: " + 
+				                         std::string(ns_name) + "::" + std::string(member_name),
+				                         EvalErrorType::TemplateDependentExpression);
+			}
+			
+			// Not found in symbol table or as struct static member
 			return EvalResult::error("Undefined qualified identifier in constant expression: " + qualified_id.full_name());
 		}
 
@@ -2346,6 +2680,11 @@ public:
 					// Array subscript on struct - evaluate array element then access member
 					return evaluate_array_subscript_member_access(std::get<ArraySubscriptNode>(expr_node), member_name, context);
 				}
+				// Check for FunctionCallNode - evaluate the return type and access static member
+				if (std::holds_alternative<FunctionCallNode>(expr_node)) {
+					const FunctionCallNode& func_call = std::get<FunctionCallNode>(expr_node);
+					return evaluate_function_call_member_access(func_call, member_name, context);
+				}
 				return EvalResult::error("Complex member access expressions not yet supported in constant expressions");
 			}
 			const IdentifierNode& id_node = std::get<IdentifierNode>(expr_node);
@@ -2376,7 +2715,45 @@ public:
 		
 		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
 		
-		// Check if it's a constexpr variable
+		// Before checking if the variable is constexpr, check if we're accessing a static member
+		// Static members can be accessed through any instance (even non-constexpr)
+		// because they don't depend on the instance
+		
+		// Get the type of the variable to look up the struct info
+		const DeclarationNode& var_declaration = var_decl.declaration();
+		const ASTNode& var_type_node = var_declaration.type_node();
+		if (var_type_node.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& var_type_spec = var_type_node.as<TypeSpecifierNode>();
+			TypeIndex var_type_index = var_type_spec.type_index();
+			
+			if (var_type_index != TypeIndex{0} && var_type_index < gTypeInfo.size()) {
+				const TypeInfo& var_type_info = gTypeInfo[var_type_index];
+				const StructTypeInfo* struct_info = var_type_info.getStructInfo();
+				
+				if (struct_info) {
+					// Look for static member
+					StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+					
+					if (static_member && owner_struct) {
+						FLASH_LOG(General, Debug, "ConstExpr: Accessing static member through instance: ", member_name);
+						
+						// Found a static member - evaluate its initializer if available
+						if (static_member->initializer.has_value()) {
+							return evaluate(static_member->initializer.value(), context);
+						}
+						
+						// If no initializer, return default value based on type
+						if (static_member->type == Type::Bool) {
+							return EvalResult::from_bool(false);
+						}
+						return EvalResult::from_int(0);
+					}
+				}
+			}
+		}
+		
+		// If not a static member access, check if it's a constexpr variable
 		if (!var_decl.is_constexpr()) {
 			return EvalResult::error("Variable in member access must be constexpr: " + std::string(var_name));
 		}
@@ -2453,7 +2830,7 @@ public:
 				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
 				std::string_view param_name = param_decl.identifier_token().value();
 				auto arg_result = evaluate(ctor_args[i], context);
-				if (!arg_result.success) {
+				if (!arg_result.success()) {
 					return arg_result;
 				}
 				param_bindings[param_name] = arg_result;
@@ -2658,7 +3035,7 @@ public:
 					const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
 					std::string_view param_name = param_decl.identifier_token().value();
 					auto arg_result = evaluate(base_ctor_args[i], context);
-					if (!arg_result.success) {
+					if (!arg_result.success()) {
 						return arg_result;
 					}
 					param_bindings[param_name] = arg_result;
@@ -2704,7 +3081,7 @@ public:
 		// Evaluate the intermediate initializer with parameter bindings
 		// This gives us the argument value to pass to the inner struct's constructor
 		auto init_arg_result = evaluate_expression_with_bindings(intermediate_init, param_bindings, context);
-		if (!init_arg_result.success) {
+		if (!init_arg_result.success()) {
 			return init_arg_result;
 		}
 		
@@ -2760,6 +3137,123 @@ public:
 		// TODO: Implement array subscript followed by member access evaluation
 		// For now, return an error - this is more complex
 		return EvalResult::error("Array subscript followed by member access not yet supported");
+	}
+
+	// Helper function to look up and evaluate static member from struct info
+	static EvalResult evaluate_static_member_from_struct(
+		const StructTypeInfo* struct_info,
+		const TypeInfo& type_info,
+		StringHandle member_name_handle,
+		std::string_view member_name,
+		EvaluationContext& context) {
+		
+		// Look up the static member in the struct
+		// Search for a static member variable with the given name
+		for (const auto& static_member : struct_info->static_members) {
+			if (static_member.getName() == member_name_handle) {
+				// Found the static member - check if it has an initializer
+				if (static_member.initializer.has_value()) {
+					// Evaluate the initializer directly
+					return evaluate(*static_member.initializer, context);
+				}
+				
+				// If no inline initializer, try to find the definition in the symbol table
+				// Build qualified member name using StringBuilder
+				StringBuilder qualified_name_builder;
+				qualified_name_builder.append(StringTable::getStringView(type_info.name_));
+				qualified_name_builder.append("::");
+				qualified_name_builder.append(member_name);
+				std::string_view qualified_member_name = qualified_name_builder.commit();
+				
+				auto member_symbol = context.symbols->lookup(qualified_member_name);
+				if (member_symbol.has_value()) {
+					const ASTNode& member_node = member_symbol.value();
+					if (member_node.is<VariableDeclarationNode>()) {
+						const VariableDeclarationNode& var_decl = member_node.as<VariableDeclarationNode>();
+						if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
+							return evaluate(*var_decl.initializer(), context);
+						}
+					}
+				}
+				
+				return EvalResult::error("Static member '" + std::string(member_name) + "' found but has no constexpr initializer");
+			}
+		}
+		
+		return EvalResult::error("Member '" + std::string(member_name) + "' not found in return type");
+	}
+
+	// Evaluate function call followed by member access (e.g., get_struct().member)
+	// This is used for accessing static members of the return type
+	static EvalResult evaluate_function_call_member_access(
+		const FunctionCallNode& func_call,
+		std::string_view member_name,
+		EvaluationContext& context) {
+		
+		// Get the function declaration to determine return type
+		const DeclarationNode& func_decl_node = func_call.function_declaration();
+		
+		// Look up the function in the symbol table
+		if (!context.symbols) {
+			return EvalResult::error("Cannot evaluate function call member access: no symbol table provided");
+		}
+		
+		std::string_view func_name = func_decl_node.identifier_token().value();
+		auto symbol_opt = context.symbols->lookup(func_name);
+		
+		if (!symbol_opt.has_value()) {
+			return EvalResult::error("Function not found: " + std::string(func_name));
+		}
+		
+		const ASTNode& symbol_node = symbol_opt.value();
+		
+		// Convert member_name to StringHandle once for efficient comparison
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		
+		// Extract FunctionDeclarationNode from either regular or template function
+		const FunctionDeclarationNode* func_decl = nullptr;
+		
+		if (symbol_node.is<FunctionDeclarationNode>()) {
+			func_decl = &symbol_node.as<FunctionDeclarationNode>();
+		} else if (symbol_node.is<TemplateFunctionDeclarationNode>()) {
+			const TemplateFunctionDeclarationNode& template_func = symbol_node.as<TemplateFunctionDeclarationNode>();
+			const ASTNode& func_node = template_func.function_declaration();
+			if (func_node.is<FunctionDeclarationNode>()) {
+				func_decl = &func_node.as<FunctionDeclarationNode>();
+			}
+		}
+		
+		if (!func_decl) {
+			return EvalResult::error("Unsupported function type for member access");
+		}
+		
+		// Get the return type from the declaration node
+		const ASTNode& type_node = func_decl->decl_node().type_node();
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return EvalResult::error("Function return type is not a TypeSpecifierNode");
+		}
+		
+		const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
+		
+		// Get the type name - this should be a struct/class type
+		if (return_type.type() != Type::UserDefined && return_type.type() != Type::Struct) {
+			return EvalResult::error("Function return type is not a struct - cannot access member");
+		}
+		
+		// Get the struct type name
+		TypeIndex type_index = return_type.type_index();
+		if (type_index >= gTypeInfo.size()) {
+			return EvalResult::error("Invalid type index for function return type");
+		}
+		
+		const TypeInfo& type_info = gTypeInfo[type_index];
+		const StructTypeInfo* struct_info = type_info.getStructInfo();
+		if (!struct_info) {
+			return EvalResult::error("Return type is not a struct");
+		}
+		
+		// Use the helper function to look up and evaluate the static member
+		return evaluate_static_member_from_struct(struct_info, type_info, member_name_handle, member_name, context);
 	}
 
 	// Evaluate constexpr member function call (e.g., p.sum() in constexpr context)
@@ -2892,7 +3386,7 @@ public:
 		std::unordered_map<std::string_view, EvalResult> member_bindings;
 		
 		auto member_extraction_result = extract_object_members(object_expr, member_bindings, context);
-		if (!member_extraction_result.success) {
+		if (!member_extraction_result.success()) {
 			return member_extraction_result;
 		}
 		
@@ -2915,7 +3409,7 @@ public:
 			
 			// Evaluate argument
 			auto arg_result = evaluate(arguments[i], context);
-			if (!arg_result.success) {
+			if (!arg_result.success()) {
 				return arg_result;
 			}
 			member_bindings[param_name] = arg_result;
@@ -3050,7 +3544,7 @@ public:
 				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
 				std::string_view param_name = param_decl.identifier_token().value();
 				auto arg_result = evaluate(ctor_args[i], context);
-				if (!arg_result.success) {
+				if (!arg_result.success()) {
 					return arg_result;
 				}
 				ctor_param_bindings[param_name] = arg_result;
@@ -3060,7 +3554,7 @@ public:
 		// Extract member values from the initializer list
 		for (const auto& mem_init : matching_ctor->member_initializers()) {
 			auto member_result = evaluate_expression_with_bindings(mem_init.initializer_expr, ctor_param_bindings, context);
-			if (!member_result.success) {
+			if (!member_result.success()) {
 				return member_result;
 			}
 			member_bindings[mem_init.member_name] = member_result;
@@ -3071,7 +3565,7 @@ public:
 			std::string_view name_view = StringTable::getStringView(member.getName());
 			if (member_bindings.find(name_view) == member_bindings.end() && member.default_initializer.has_value()) {
 				auto default_result = evaluate(member.default_initializer.value(), context);
-				if (default_result.success) {
+				if (default_result.success()) {
 					member_bindings[name_view] = default_result;
 				}
 			}
@@ -3084,7 +3578,7 @@ public:
 	static EvalResult evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context) {
 		// First, evaluate the index expression to get the constant index
 		auto index_result = evaluate(subscript.index_expr(), context);
-		if (!index_result.success) {
+		if (!index_result.success()) {
 			return index_result;
 		}
 		
@@ -3215,7 +3709,7 @@ public:
 						const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
 						std::string_view param_name = param_decl.identifier_token().value();
 						auto arg_result = evaluate(ctor_args[i], context);
-						if (!arg_result.success) {
+						if (!arg_result.success()) {
 							return arg_result;
 						}
 						param_bindings[param_name] = arg_result;
@@ -3410,6 +3904,40 @@ public:
 				result = type_spec.is_array() & !is_reference & (pointer_depth == 0);
 				// For struct types, we need runtime type info, so fall through to default
 				break;
+
+			case TypeTraitKind::IsCompleteOrUnbounded:
+				// __is_complete_or_unbounded evaluates to true if either:
+				// 1. T is a complete type, or
+				// 2. T is an unbounded array type (e.g. int[])
+				// Returns false for: void, incomplete class types, bounded arrays with incomplete elements
+				
+				// Check for void - always incomplete
+				if (type == Type::Void && pointer_depth == 0 && !is_reference) {
+					return EvalResult::from_bool(false);
+				}
+				
+				// Check for unbounded array - always returns true
+				if (type_spec.is_array() && type_spec.array_size() == 0) {
+					return EvalResult::from_bool(true);
+				}
+				
+				// Check for incomplete class/struct types
+				// A type is incomplete if it's a struct/class with no StructTypeInfo
+				if ((type == Type::Struct || type == Type::UserDefined) && 
+				    pointer_depth == 0 && !is_reference) {
+					TypeIndex type_idx = type_spec.type_index();
+					if (type_idx != TypeIndex{0}) {
+						const TypeInfo& type_info = gTypeInfo[type_idx];
+						const StructTypeInfo* struct_info = type_info.getStructInfo();
+						// If no struct_info, the type is incomplete
+						if (!struct_info) {
+							return EvalResult::from_bool(false);
+						}
+					}
+				}
+				
+				// All other types are considered complete
+				return EvalResult::from_bool(true);
 
 			// Add more type traits as needed
 			// For now, other type traits return false during constexpr evaluation

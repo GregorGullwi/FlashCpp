@@ -1215,6 +1215,20 @@ ParseResult Parser::parse_top_level_node()
 }
 
 ParseResult Parser::parse_type_and_name() {
+    // Add parsing depth check to prevent infinite loops
+    if (++parsing_depth_ > MAX_PARSING_DEPTH) {
+        --parsing_depth_;
+        FLASH_LOG(Parser, Error, "Maximum parsing depth (", MAX_PARSING_DEPTH, ") exceeded in parse_type_and_name()");
+        FLASH_LOG(Parser, Error, "This indicates an infinite loop in type parsing");
+        return ParseResult::error("Maximum parsing depth exceeded - possible infinite loop", *current_token_);
+    }
+    
+    // RAII guard to decrement depth on all exit paths
+    struct DepthGuard {
+        size_t& depth;
+        ~DepthGuard() { --depth; }
+    } depth_guard{parsing_depth_};
+    
     FLASH_LOG(Parser, Debug, "parse_type_and_name: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
     
     // Check for alignas specifier before the type
@@ -3084,7 +3098,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				//   the variable is treated as a regular const variable.
 				// - constinit: variable MUST be initialized with a constant expression (C++20).
 				//   Failure to evaluate at compile time is always an error.
-				if (!eval_result.success && is_constinit) {
+				if (!eval_result.success() && is_constinit) {
 					return ParseResult::error(
 						std::string(keyword_name) + " variable initializer must be a constant expression: " + eval_result.error_message,
 						identifier_token
@@ -3483,17 +3497,82 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 // Helper function to parse and register a type alias (typedef or using) inside a struct/template
 // Handles both "typedef Type Alias;" and "using Alias = Type;" syntax
 // Also handles inline definitions: "typedef struct { ... } Alias;"
+// Also handles using-declarations: "using namespace::name;" (member access import)
 // Returns ParseResult with no node on success, error on failure
 ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access)
 {
 	consume_token(); // consume 'typedef' or 'using'
 	
-	// For 'using', always simple syntax: using Alias = Type;
+	// For 'using', check if it's an alias or a using-declaration
 	if (keyword == "using") {
 		auto alias_token = peek_token();
 		if (!alias_token.has_value() || alias_token->type() != Token::Type::Identifier) {
 			return ParseResult::error("Expected alias name after 'using'", peek_token().value_or(Token()));
 		}
+		
+		// Look ahead to see if this is:
+		// 1. Type alias: using Alias = Type;  (identifier followed by '=')
+		// 2. Using-declaration: using namespace::member;  (identifier followed by '::')
+		SaveHandle lookahead_pos = save_token_position();
+		consume_token(); // consume first identifier
+		auto next_token = peek_token();
+		
+		if (next_token.has_value() && next_token->value() == "::") {
+			// This is a using-declaration like: using std::__is_integer<_Tp>::__value;
+			// Parse and extract the member name to register it in the current scope
+			std::string_view member_name;
+			
+			while (peek_token().has_value() && peek_token()->value() == "::") {
+				consume_token(); // consume '::'
+				
+				// Consume the next identifier or template
+				if (peek_token().has_value()) {
+					if (peek_token()->type() == Token::Type::Identifier) {
+						member_name = peek_token()->value();  // Track last identifier as potential member name
+						consume_token(); // consume identifier
+						
+						// Check for template arguments
+						if (peek_token().has_value() && peek_token()->value() == "<") {
+							// Skip template arguments
+							int depth = 1;
+							consume_token(); // consume '<'
+							while (depth > 0 && peek_token().has_value()) {
+								if (peek_token()->value() == "<") depth++;
+								else if (peek_token()->value() == ">") depth--;
+								consume_token();
+							}
+							// After template args, the member name is whatever comes next
+							member_name = "";  // Reset - next identifier after :: will be the member
+						}
+					} else {
+						break;
+					}
+				}
+			}
+			
+			// Register the imported member name in the struct parsing context
+			// This makes the member accessible by its simple name even when the
+			// base class is a dependent type (template) that can't be resolved yet
+			if (!member_name.empty()) {
+				if (!struct_parsing_context_stack_.empty()) {
+					StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+					struct_parsing_context_stack_.back().imported_members.push_back(member_handle);
+					FLASH_LOG(Parser, Debug, "Using-declaration imports member '", member_name, "' into struct parsing context");
+				}
+			}
+			
+			// Consume trailing semicolon
+			if (peek_token().has_value() && peek_token()->value() == ";") {
+				consume_token(); // consume ';'
+			}
+			
+			// Discard the saved position - we successfully parsed the using-declaration
+			discard_saved_token(lookahead_pos);
+			return ParseResult::success();
+		}
+		
+		// Restore position - this is a type alias
+		restore_token_position(lookahead_pos);
 		
 		StringHandle alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 		consume_token(); // consume alias name
@@ -4350,7 +4429,7 @@ ParseResult Parser::parse_struct_declaration()
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 
 	// Push struct parsing context for nested class support
-	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name), &struct_ref, nullptr});
+	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name), &struct_ref, nullptr, {}});
 	
 	// RAII guard to ensure stack is always popped, even on early returns
 	auto pop_stack_guard = [this](void*) { 
@@ -5410,7 +5489,7 @@ ParseResult Parser::parse_struct_declaration()
 							for (const auto& dim_expr : anon_array_dimensions) {
 								ConstExpr::EvaluationContext ctx(gSymbolTable);
 								auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-								if (eval_result.success && eval_result.as_int() > 0) {
+								if (eval_result.success() && eval_result.as_int() > 0) {
 									size_t dim_size = static_cast<size_t>(eval_result.as_int());
 									array_dimensions.push_back(dim_size);
 									member_size *= dim_size;
@@ -6522,7 +6601,7 @@ ParseResult Parser::parse_struct_declaration()
 			for (const auto& dim_expr : dims) {
 				ConstExpr::EvaluationContext ctx(gSymbolTable);
 				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
-				if (eval_result.success && eval_result.as_int() > 0) {
+				if (eval_result.success() && eval_result.as_int() > 0) {
 					size_t dim_size = static_cast<size_t>(eval_result.as_int());
 					array_dimensions.push_back(dim_size);
 					member_size *= dim_size;
@@ -7254,7 +7333,33 @@ ParseResult Parser::parse_enum_declaration()
 		}
 	}
 
-	// Expect opening brace
+	// Check for forward declaration (semicolon without body)
+	// C++11: enum class Name : underlying_type;
+	// This is a forward declaration, not a definition
+	FLASH_LOG(Parser, Debug, "Checking for enum forward declaration, peek_token has_value=", peek_token().has_value(),
+	          peek_token().has_value() ? (std::string(" value='") + std::string(peek_token()->value()) + "'") : "");
+	if (peek_token().has_value() && peek_token()->value() == ";") {
+		// This is a forward declaration
+		consume_token(); // Consume the semicolon
+		
+		// For scoped enums with underlying type, forward declarations are valid C++11
+		// We mark this as a forward declaration
+		enum_ref.set_is_forward_declaration(true);
+		
+		// Set size on TypeInfo for forward-declared enum (use type_size_)
+		if (enum_ref.has_underlying_type()) {
+			const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
+			enum_type_info.type_size_ = type_spec.size_in_bits();
+		} else if (is_scoped) {
+			// Scoped enums without underlying type default to int (32 bits)
+			enum_type_info.type_size_ = 32;
+		}
+		
+		FLASH_LOG(Parser, Debug, "Parsed enum forward declaration: ", std::string(StringTable::getStringView(enum_name)));
+		return saved_position.success(enum_node);
+	}
+
+	// Expect opening brace for full definition
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' after enum name", *peek_token());
 	}
@@ -7412,15 +7517,15 @@ ParseResult Parser::parse_static_assert()
 		return ParseResult::error("Expected ';' after static_assert", *current_token_);
 	}
 
-	// If we're inside a template body, defer static_assert evaluation until instantiation
+	// If we're inside a template body during template DEFINITION (not instantiation),
+	// defer static_assert evaluation until instantiation.
+	// However, if we can evaluate it now (non-dependent expression), we should do so to catch errors early.
 	// The expression may depend on template parameters that are not yet known
-	if (parsing_template_body_ && !current_template_param_names_.empty()) {
-		// Skip evaluation - the static_assert will be checked during template instantiation
-		return saved_position.success();
-	}
-
-	// Evaluate the constant expression using ConstExprEvaluator
+	bool is_in_template_definition = parsing_template_body_ && !current_template_param_names_.empty();
+	
+	// Try to evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable);
+	ctx.parser = this;  // Enable template function instantiation
 	
 	// Pass struct context for static member lookup in static_assert within struct body
 	if (!struct_parsing_context_stack_.empty()) {
@@ -7431,7 +7536,34 @@ ParseResult Parser::parse_static_assert()
 	
 	auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
 	
-	if (!eval_result.success) {
+	// If we're in a template definition and evaluation failed due to dependent types,
+	// that's okay - skip it and it will be checked during instantiation
+	if (is_in_template_definition && !eval_result.success()) {
+		// Check if the error is due to template-dependent expressions using the error_type enum
+		FLASH_LOG(Templates, Debug, "static_assert evaluation failed in template body: ", eval_result.error_message);
+		if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
+			// This is a template-dependent expression - defer evaluation
+			FLASH_LOG(Templates, Debug, "Deferring static_assert evaluation in template body: ", eval_result.error_message);
+			
+			// Store the deferred static_assert in the current struct/class for later evaluation
+			if (!struct_parsing_context_stack_.empty()) {
+				const auto& struct_ctx = struct_parsing_context_stack_.back();
+				if (struct_ctx.struct_node) {
+					// Intern the message in StringTable for persistent storage
+					StringHandle message_handle = StringTable::getOrInternStringHandle(message);
+					// Store the condition expression and message for re-evaluation during template instantiation
+					struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
+					FLASH_LOG(Templates, Debug, "Stored deferred static_assert in struct '", 
+					          struct_ctx.struct_node->name(), "' for later evaluation");
+				}
+			}
+			
+			return saved_position.success();
+		}
+		// Otherwise, it's a real error - report it
+	}
+	
+	if (!eval_result.success()) {
 		return ParseResult::error(
 			"static_assert condition is not a constant expression: " + eval_result.error_message,
 			*static_assert_keyword
@@ -8006,7 +8138,7 @@ ParseResult Parser::parse_typedef_declaration()
 		auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name_for_typedef, false);
 
 		// Push struct parsing context
-		struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name_for_typedef), &struct_ref, nullptr});
+		struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name_for_typedef), &struct_ref, nullptr, {}});
 
 		// Create StructTypeInfo
 		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public);
@@ -8747,7 +8879,7 @@ ParseResult Parser::parse_typedef_declaration()
 			if (size_result.node().has_value()) {
 				ConstExpr::EvaluationContext ctx(gSymbolTable);
 				auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), ctx);
-				if (eval_result.success && eval_result.as_int() > 0) {
+				if (eval_result.success() && eval_result.as_int() > 0) {
 					array_size = static_cast<size_t>(eval_result.as_int());
 				}
 			}
@@ -8910,10 +9042,19 @@ ParseResult Parser::parse_friend_declaration()
 	// Skip optional qualifiers after parameter list using existing helper
 	skip_function_trailing_specifiers();
 
-	// Handle friend function body (inline definition) or semicolon (declaration only)
+	// Handle friend function body (inline definition), = default, = delete, or semicolon (declaration only)
 	if (peek_token().has_value() && peek_token()->value() == "{") {
 		// Friend function with inline body - skip the body using existing helper
 		skip_balanced_braces();
+	} else if (peek_token().has_value() && peek_token()->value() == "=") {
+		// Handle = default or = delete
+		consume_token(); // consume '='
+		if (peek_token().has_value() && (peek_token()->value() == "default" || peek_token()->value() == "delete")) {
+			consume_token(); // consume 'default' or 'delete'
+		}
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after friend function declaration", *current_token_);
+		}
 	} else if (!consume_punctuator(";")) {
 		return ParseResult::error("Expected ';' after friend function declaration", *current_token_);
 	}
@@ -10060,12 +10201,28 @@ void Parser::append_type_name_suffix(StringBuilder& sb, const TemplateTypeArg& a
 
 ParseResult Parser::parse_type_specifier()
 {
+	// Add parsing depth check to prevent infinite loops
+	if (++parsing_depth_ > MAX_PARSING_DEPTH) {
+		--parsing_depth_;
+		FLASH_LOG(Parser, Error, "Maximum parsing depth (", MAX_PARSING_DEPTH, ") exceeded in parse_type_specifier()");
+		FLASH_LOG(Parser, Error, "Current token: ", current_token_ ? current_token_->value() : "none");
+		return ParseResult::error("Maximum parsing depth exceeded - possible infinite loop", *current_token_);
+	}
+	
+	// RAII guard to decrement depth on all exit paths
+	struct DepthGuard {
+		size_t& depth;
+		~DepthGuard() { --depth; }
+	} depth_guard{parsing_depth_};
+	
 	FLASH_LOG(Parser, Debug, "parse_type_specifier: Starting, current token: ", peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
 	
 	auto current_token_opt = peek_token();
 
-	// Check for decltype FIRST, before any other checks
-	if (current_token_opt.has_value() && current_token_opt->value() == "decltype") {
+	// Check for decltype or __typeof__ FIRST, before any other checks
+	// __typeof__ is a GCC extension that works like decltype
+	if (current_token_opt.has_value() && 
+	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__")) {
 		return parse_decltype_specifier();
 	}
 
@@ -10094,10 +10251,12 @@ ParseResult Parser::parse_type_specifier()
 		}
 	}
 
-	// Check for decltype after function specifiers (e.g., static decltype(...))
+	// Check for decltype or __typeof__ after function specifiers (e.g., static decltype(...))
 	// This check MUST come after skipping function specifiers to handle patterns like:
 	// "static decltype(_S_test_2<_Tp, _Up>(0))" which appear in standard library headers
-	if (current_token_opt.has_value() && current_token_opt->value() == "decltype") {
+	// __typeof__ is a GCC extension that works like decltype
+	if (current_token_opt.has_value() && 
+	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__")) {
 		return parse_decltype_specifier();
 	}
 
@@ -11722,21 +11881,23 @@ ParseResult Parser::parse_type_specifier()
 
 ParseResult Parser::parse_decltype_specifier()
 {
-	// Parse decltype(expr) type specifier
+	// Parse decltype(expr) or __typeof__(expr) type specifier
 	// Example: decltype(x + y) result = x + y;
+	// __typeof__ is a GCC extension that works like decltype
 
 	ScopedTokenPosition saved_position(*this);
 
-	// Consume 'decltype' keyword
+	// Consume 'decltype' or '__typeof__' keyword
 	auto decltype_token_opt = consume_token();
 	if (!decltype_token_opt.has_value()) {
-		return ParseResult::error("Expected 'decltype' keyword", *current_token_);
+		return ParseResult::error("Expected 'decltype' or '__typeof__' keyword", *current_token_);
 	}
 	Token decltype_token = *decltype_token_opt;
+	std::string_view keyword = decltype_token.value();
 
 	// Expect '('
 	if (!consume_punctuator("(")) {
-		return ParseResult::error("Expected '(' after 'decltype'", *current_token_);
+		return ParseResult::error(std::string("Expected '(' after '") + std::string(keyword) + "'", *current_token_);
 	}
 
 	// Phase 3: Parse the expression with Decltype context for proper template disambiguation
@@ -11903,6 +12064,212 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 	}
 
 	return ParseResult::success();
+}
+
+// Unified function call argument parsing
+// This method consolidates the 6+ places where function call arguments are parsed in the codebase.
+// It handles:
+// - Comma-separated argument list parsing
+// - Pack expansion (...) after arguments
+// - Optional argument type collection for template deduction
+// - Simple pack identifier expansion (for already-expanded packs in symbol table)
+FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx)
+{
+	using namespace FlashCpp;
+	
+	// Check if function call has arguments (not empty parentheses)
+	if (!peek_token().has_value() || peek_token()->value() == ")") {
+		// Empty argument list - return empty result without allocating
+		ParsedFunctionArguments result;
+		result.success = true;
+		return result;
+	}
+	
+	// We have arguments, so allocate storage
+	ChunkedVector<ASTNode> args;
+	std::vector<TypeSpecifierNode> arg_types;
+	
+	while (true) {
+		auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (arg_result.is_error()) {
+			return ParsedFunctionArguments::make_error(arg_result.error_message(), 
+				arg_result.error_token());
+		}
+		
+		if (auto arg = arg_result.node()) {
+			// Check for pack expansion (...) after the argument
+			if (ctx.handle_pack_expansion && peek_token().has_value() && peek_token()->value() == "...") {
+				Token ellipsis_token = *peek_token();
+				consume_token(); // consume '...'
+				
+				// Handle simple pack expansion if enabled
+				bool expanded = false;
+				if (ctx.expand_simple_packs && arg->is<IdentifierNode>()) {
+					std::string_view pack_name = arg->as<IdentifierNode>().name();
+					
+					// Try to find expanded pack elements in the symbol table
+					// Pattern: pack_name_0, pack_name_1, etc.
+					size_t pack_size = 0;
+					StringBuilder sb;
+					for (size_t i = 0; i < MAX_PACK_ELEMENTS; ++i) {
+						std::string_view element_name = sb
+							.append(pack_name)
+							.append("_")
+							.append(i)
+							.preview();
+						
+						if (gSymbolTable.lookup(element_name).has_value()) {
+							++pack_size;
+							sb.reset();
+						} else {
+							break;
+						}
+					}
+					sb.reset();
+					
+					if (pack_size > 0) {
+						// Add each pack element as a separate argument
+						for (size_t i = 0; i < pack_size; ++i) {
+							std::string_view element_name = StringBuilder()
+								.append(pack_name)
+								.append("_")
+								.append(i)
+								.commit();
+							
+							// Use ellipsis token position for proper error reporting
+							Token elem_token(Token::Type::Identifier, element_name, 
+								ellipsis_token.line(), ellipsis_token.column(), ellipsis_token.file_index());
+							auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
+							args.push_back(elem_node);
+							
+							// Collect type if needed
+							if (ctx.collect_types) {
+								std::optional<TypeSpecifierNode> elem_type = get_expression_type(elem_node);
+								if (elem_type.has_value()) {
+									arg_types.push_back(*elem_type);
+								} else {
+									arg_types.emplace_back(Type::Int, TypeQualifier::None, 32, ellipsis_token);
+								}
+							}
+						}
+						expanded = true;
+					}
+				}
+				
+				if (!expanded) {
+					// Wrap the argument in a PackExpansionExprNode
+					auto pack_expr = emplace_node<ExpressionNode>(
+						PackExpansionExprNode(*arg, ellipsis_token));
+					args.push_back(pack_expr);
+					
+					// For pack expansions, we can't reliably determine the type
+					if (ctx.collect_types) {
+						std::optional<TypeSpecifierNode> arg_type = get_expression_type(*arg);
+						if (arg_type.has_value()) {
+							arg_types.push_back(*arg_type);
+						} else {
+							arg_types.emplace_back(Type::Int, TypeQualifier::None, 32, ellipsis_token);
+						}
+					}
+				}
+				
+				FLASH_LOG(Parser, Debug, "Handled pack expansion for function argument");
+			} else {
+				args.push_back(*arg);
+				
+				// Collect argument type if requested
+				if (ctx.collect_types) {
+					std::optional<TypeSpecifierNode> arg_type = get_expression_type(*arg);
+					if (arg_type.has_value()) {
+						arg_types.push_back(*arg_type);
+					} else {
+						// Fallback: try to deduce from the expression
+						// Use current_token_ for error location since we've just parsed the expression
+						Type deduced_type = Type::Int;
+						if (arg->is<ExpressionNode>()) {
+							const ExpressionNode& expr = arg->as<ExpressionNode>();
+							if (std::holds_alternative<NumericLiteralNode>(expr)) {
+								deduced_type = std::get<NumericLiteralNode>(expr).type();
+							} else if (std::holds_alternative<IdentifierNode>(expr)) {
+								const auto& ident = std::get<IdentifierNode>(expr);
+								auto symbol = lookup_symbol(StringTable::getOrInternStringHandle(ident.name()));
+								if (symbol.has_value()) {
+									if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+										deduced_type = decl->type_node().as<TypeSpecifierNode>().type();
+									}
+								}
+							}
+						}
+						arg_types.emplace_back(deduced_type, TypeQualifier::None, get_type_size_bits(deduced_type), 
+							current_token_.value_or(Token()));
+					}
+				}
+			}
+		}
+		
+		if (!peek_token().has_value()) {
+			return ParsedFunctionArguments::make_error("Expected ',' or ')' in function call", *current_token_);
+		}
+		
+		if (peek_token()->value() == ")") {
+			break;
+		}
+		
+		if (!consume_punctuator(",")) {
+			return ParsedFunctionArguments::make_error("Expected ',' between function arguments", *current_token_);
+		}
+	}
+	
+	if (ctx.collect_types) {
+		return ParsedFunctionArguments::make_success(std::move(args), std::move(arg_types));
+	}
+	return ParsedFunctionArguments::make_success(std::move(args));
+}
+
+// Helper to apply lvalue reference for perfect forwarding deduction
+// This is used when collecting argument types for template instantiation.
+// In perfect forwarding (T&&), lvalues should deduce to T& while rvalues deduce to T.
+std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
+	const ChunkedVector<ASTNode>& args, 
+	const std::vector<TypeSpecifierNode>& arg_types)
+{
+	std::vector<TypeSpecifierNode> result;
+	result.reserve(arg_types.size());
+	
+	for (size_t i = 0; i < arg_types.size(); ++i) {
+		TypeSpecifierNode arg_type_node = arg_types[i];
+		
+		// Check if this is an lvalue (for perfect forwarding deduction)
+		// Lvalues: named variables, array subscripts, member access, dereferences, string literals
+		// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
+		if (i < args.size() && args[i].is<ExpressionNode>()) {
+			const ExpressionNode& expr = args[i].as<ExpressionNode>();
+			bool is_lvalue = std::visit([](const auto& inner) -> bool {
+				using T = std::decay_t<decltype(inner)>;
+				if constexpr (std::is_same_v<T, IdentifierNode>) {
+					return true;
+				} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+					return true;
+				} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+					return true;
+				} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+					return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+				} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+					return true;
+				} else {
+					return false;
+				}
+			}, expr);
+			
+			if (is_lvalue) {
+				arg_type_node.set_lvalue_reference(true);
+			}
+		}
+		
+		result.push_back(arg_type_node);
+	}
+	
+	return result;
 }
 
 // Phase 2: Unified trailing specifiers parsing
@@ -13487,7 +13854,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 				// Try to evaluate the array size as a constant expression
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 				auto eval_result = ConstExpr::Evaluator::evaluate(*decl_node.array_size(), eval_ctx);
-				if (eval_result.success) {
+				if (eval_result.success()) {
 					array_size_val = static_cast<size_t>(eval_result.as_int());
 				}
 			}
@@ -14977,12 +15344,50 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		SaveHandle saved_pos = save_token_position();
 		ParseResult type_result = parse_type_specifier();
 
-		// Check if this is really a type by seeing if ')' follows
-		bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
-		                                 peek_token().has_value() && peek_token()->value() == ")";
+		// If we successfully parsed a type, check for pointer/reference declarators
+		// This handles alignof(void *), alignof(int **), alignof(Foo &), etc.
+		bool is_complete_type = false;
+		if (!type_result.is_error() && type_result.node().has_value()) {
+			// Parse any pointer (* const * volatile) or reference (& &&) declarators
+			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+			
+			while (peek_token().has_value()) {
+				auto next_token = peek_token();
+				if (next_token->value() == "*") {
+					// Parse pointer with optional cv-qualifiers
+					consume_token(); // consume '*'
+					
+					// Check for const/volatile after *
+					CVQualifier ptr_cv = parse_cv_qualifiers();
+					
+					type_spec.add_pointer_level(ptr_cv);
+				} else if (next_token->value() == "&") {
+					// Lvalue reference
+					consume_token();
+					
+					// Check if it's rvalue reference (&&)
+					if (peek_token().has_value() && peek_token()->value() == "&") {
+						consume_token();
+						type_spec.set_reference(true); // rvalue reference
+					} else {
+						type_spec.set_lvalue_reference(true);
+					}
+					// References can't have further declarators
+					break;
+				} else {
+					// Not a pointer or reference declarator
+					break;
+				}
+			}
+			
+			// Now check if ')' follows
+			if (peek_token().has_value() && peek_token()->value() == ")") {
+				is_complete_type = true;
+			}
+		}
 		
-		if (is_type_followed_by_paren) {
-			// Successfully parsed as type and ')' follows
+		if (is_complete_type) {
+			// Successfully parsed as type with declarators and ')' follows
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after " + std::string(alignof_name) + " type", *current_token_);
 			}
@@ -15118,7 +15523,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		if (arg_result.node().has_value()) {
 			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 			auto eval_result = ConstExpr::Evaluator::evaluate(*arg_result.node(), eval_ctx);
-			if (eval_result.success) {
+			if (eval_result.success()) {
 				result = 1;
 			}
 		}
@@ -16416,45 +16821,16 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			Token paren_token = *peek_token();
 			consume_token(); // consume '('
 
-			// Parse function arguments
-			ChunkedVector<ASTNode> args;
-			if (!peek_token().has_value() || peek_token()->value() != ")") {
-				while (true) {
-					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (arg_result.is_error()) {
-						return arg_result;
-					}
-					if (auto arg = arg_result.node()) {
-						// Check for pack expansion (...) after the argument
-						// Pattern: func(expr...) or func(arg1, expr..., arg3)
-						if (peek_token().has_value() && peek_token()->value() == "...") {
-							Token ellipsis_token = *peek_token();
-							consume_token(); // consume '...'
-							
-							// Wrap the argument in a PackExpansionExprNode
-							auto pack_expr = emplace_node<ExpressionNode>(
-								PackExpansionExprNode(*arg, ellipsis_token));
-							args.push_back(pack_expr);
-							
-							FLASH_LOG(Parser, Debug, "Created PackExpansionExprNode for function argument");
-						} else {
-							args.push_back(*arg);
-						}
-					}
-
-					if (!peek_token().has_value()) {
-						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-					}
-
-					if (peek_token()->value() == ")") {
-						break;
-					}
-
-					if (!consume_punctuator(",")) {
-						return ParseResult::error("Expected ',' between function arguments", *current_token_);
-					}
-				}
+			// Parse function arguments using unified helper
+			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+				.handle_pack_expansion = true,
+				.collect_types = false,
+				.expand_simple_packs = false
+			});
+			if (!args_result.success) {
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
 			}
+			ChunkedVector<ASTNode> args = std::move(args_result.args);
 
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
@@ -16525,7 +16901,6 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 
 		// Check for scope resolution operator :: (namespace/class member access)
 		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "::"sv) {
-			FLASH_LOG(Parser, Warning, "@@@ POSTFIX :: OPERATOR DETECTED");
 			// Handle namespace::member or class::static_member syntax
 			// We have an identifier (in result), now parse :: and the member name
 			consume_token(); // consume '::'
@@ -16577,47 +16952,39 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				// If parsing failed, it might be a less-than operator, continue normally
 			}
 			
+			// Check if this is a brace initialization: ns::Class<Args>{}
+			if (template_args.has_value() && peek_token().has_value() && peek_token()->value() == "{") {
+				// Build the qualified name for lookup
+				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
+				
+				// Try to instantiate the class template
+				try_instantiate_class_template(qualified_name, *template_args);
+				
+				// Parse the brace initialization using the helper
+				ParseResult brace_init_result = parse_template_brace_initialization(*template_args, qualified_name, final_identifier);
+				if (brace_init_result.is_error()) {
+					// If parsing failed, fall through to error handling
+					FLASH_LOG_FORMAT(Parser, Debug, "Brace initialization parsing failed: {}", brace_init_result.error_message());
+				} else if (brace_init_result.node().has_value()) {
+					result = brace_init_result.node();
+					continue; // Check for more postfix operators
+				}
+			}
+			
 			// Check if this is a function call
 			if (peek_token().has_value() && peek_token()->value() == "(") {
 				consume_token(); // consume '('
 				
-				// Parse function arguments
-				ChunkedVector<ASTNode> args;
-				if (current_token_.has_value() && current_token_->value() != ")") {
-					while (true) {
-						auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (arg_result.is_error()) {
-							return arg_result;
-						}
-						
-						if (auto arg = arg_result.node()) {
-							// Check for pack expansion (...) after the argument
-							if (peek_token().has_value() && peek_token()->value() == "...") {
-								Token ellipsis_token = *peek_token();
-								consume_token(); // consume '...'
-								
-								// Wrap the argument in a PackExpansionExprNode
-								auto pack_expr = emplace_node<ExpressionNode>(
-									PackExpansionExprNode(*arg, ellipsis_token));
-								args.push_back(pack_expr);
-							} else {
-								args.push_back(*arg);
-							}
-						}
-						
-						if (!peek_token().has_value()) {
-							return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-						}
-						
-						if (peek_token()->value() == ")") {
-							break;
-						}
-						
-						if (!consume_punctuator(",")) {
-							return ParseResult::error("Expected ',' between function arguments", *current_token_);
-						}
-					}
+				// Parse function arguments using unified helper (collect types for template deduction)
+				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+					.handle_pack_expansion = true,
+					.collect_types = true,
+					.expand_simple_packs = false
+				});
+				if (!args_result.success) {
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
 				}
+				ChunkedVector<ASTNode> args = std::move(args_result.args);
 				
 				if (!consume_punctuator(")")) {
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
@@ -16645,53 +17012,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					// Build qualified template name (e.g., "std::move")
 					std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 					
-					// Extract argument types for template instantiation
-					std::vector<TypeSpecifierNode> arg_types;
-					arg_types.reserve(args.size());
-					for (size_t i = 0; i < args.size(); ++i) {
-						const auto& arg = args[i];
-						if (arg.is<ExpressionNode>()) {
-							const ExpressionNode& expr = arg.as<ExpressionNode>();
-							std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
-							if (arg_type_opt.has_value()) {
-								TypeSpecifierNode arg_type_node = *arg_type_opt;
-								
-								// Check if this is an lvalue (for perfect forwarding deduction)
-								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
-								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
-								bool is_lvalue = std::visit([](const auto& inner) -> bool {
-									using T = std::decay_t<decltype(inner)>;
-									if constexpr (std::is_same_v<T, IdentifierNode>) {
-										// Named variables are lvalues
-										return true;
-									} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-										// Array subscript expressions are lvalues
-										return true;
-									} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-										// Member access expressions are lvalues
-										return true;
-									} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-										// Dereference (*ptr) is an lvalue
-										// Other unary operators like ++, --, etc. may also be lvalues
-										return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-										// String literals are lvalues in C++
-										return true;
-									} else {
-										// All other expressions (literals, temporaries, etc.) are rvalues
-										return false;
-									}
-								}, expr);
-								
-								if (is_lvalue) {
-									// For forwarding reference deduction: T&& deduces to T& for lvalues
-									arg_type_node.set_lvalue_reference(true);
-								}
-								
-								arg_types.push_back(arg_type_node);
-							}
-						}
-					}
+					// Apply lvalue reference for forwarding deduction on arg_types
+					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 					
 					// Try to instantiate the qualified template function
 					if (!arg_types.empty()) {
@@ -16770,6 +17092,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				return ParseResult::error("Undefined qualified identifier", final_identifier);
 			}
 		}
+		
 		// Check for member access operator . or -> (or pointer-to-member .* or ->*)
 		bool is_arrow_access = false;
 		Token operator_start_token;  // Track the operator token for error reporting
@@ -16831,6 +17154,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			// handle operator-> overload resolution. For raw pointers, it will generate
 			// the equivalent of (*ptr).member; for objects with operator->, it will call that.
 		} else {
+			FLASH_LOG_FORMAT(Parser, Debug, "Postfix loop: breaking, peek token type={}, value='{}'",
+				static_cast<int>(peek_token()->type()), peek_token()->value());
 			break;  // No more postfix operators
 		}
 
@@ -16903,67 +17228,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 
 			consume_token(); // consume '('
 
-			// Parse function arguments
-			ChunkedVector<ASTNode> args;
-			std::vector<TypeSpecifierNode> arg_types;  // Collect argument types for template deduction
-			
-			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
-				while (true) {
-					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (arg_result.is_error()) {
-						return arg_result;
-					}
-					if (auto arg = arg_result.node()) {
-						// Check for pack expansion (...) after the argument
-						[[maybe_unused]] bool is_pack_expansion = false;
-						if (peek_token().has_value() && peek_token()->value() == "...") {
-							Token ellipsis_token = *peek_token();
-							consume_token(); // consume '...'
-							is_pack_expansion = true;
-							
-							// Wrap the argument in a PackExpansionExprNode
-							auto pack_expr = emplace_node<ExpressionNode>(
-								PackExpansionExprNode(*arg, ellipsis_token));
-							args.push_back(pack_expr);
-						} else {
-							args.push_back(*arg);
-						}
-						
-						// Try to deduce the argument type for template instantiation
-						// For now, we'll deduce from literals and identifiers
-						Type arg_type = Type::Int;  // Default
-						if (arg->is<ExpressionNode>()) {
-							const ExpressionNode& expr = arg->as<ExpressionNode>();
-							if (std::holds_alternative<NumericLiteralNode>(expr)) {
-								const auto& lit = std::get<NumericLiteralNode>(expr);
-								arg_type = lit.type();
-							} else if (std::holds_alternative<IdentifierNode>(expr)) {
-								// Look up identifier type from symbol table
-								const auto& ident = std::get<IdentifierNode>(expr);
-								auto symbol = lookup_symbol(StringTable::getOrInternStringHandle(ident.name()));
-								if (symbol.has_value()) {
-									if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-										arg_type = decl->type_node().as<TypeSpecifierNode>().type();
-									}
-								}
-							}
-						}
-						arg_types.emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token());
-					}
-
-					if (!peek_token().has_value()) {
-						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-					}
-
-					if (peek_token()->value() == ")") {
-						break;
-					}
-
-					if (!consume_punctuator(",")) {
-						return ParseResult::error("Expected ',' between function arguments", *current_token_);
-					}
-				}
+			// Parse function arguments using unified helper (collect types for template deduction)
+			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+				.handle_pack_expansion = true,
+				.collect_types = true,
+				.expand_simple_packs = false
+			});
+			if (!args_result.success) {
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
 			}
+			ChunkedVector<ASTNode> args = std::move(args_result.args);
+			std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
 
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
@@ -17154,7 +17429,30 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		Token first_type_token = *current_token_;
 		consume_token(); // consume first identifier
 		
-		// Parse :: and subsequent identifiers
+		// Handle template arguments after identifier: typename __promote<_Tp>::__type(0)
+		if (current_token_.has_value() && current_token_->value() == "<") {
+			type_name_sb.append("<");
+			consume_token(); // consume '<'
+			
+			// Parse template arguments, handling nested template arguments
+			int angle_bracket_depth = 1;
+			while (current_token_.has_value() && angle_bracket_depth > 0) {
+				if (current_token_->value() == "<") {
+					angle_bracket_depth++;
+				} else if (current_token_->value() == ">") {
+					angle_bracket_depth--;
+					if (angle_bracket_depth == 0) {
+						type_name_sb.append(">");
+						consume_token(); // consume final '>'
+						break;
+					}
+				}
+				type_name_sb.append(current_token_->value());
+				consume_token();
+			}
+		}
+		
+		// Parse :: and subsequent identifiers (with optional template args)
 		while (current_token_.has_value() && current_token_->value() == "::") {
 			type_name_sb.append("::");
 			consume_token(); // consume '::'
@@ -17165,6 +17463,29 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 			type_name_sb.append(current_token_->value());
 			consume_token(); // consume identifier
+			
+			// Handle template arguments after the identifier
+			if (current_token_.has_value() && current_token_->value() == "<") {
+				type_name_sb.append("<");
+				consume_token(); // consume '<'
+				
+				// Parse template arguments, handling nested template arguments
+				int angle_bracket_depth = 1;
+				while (current_token_.has_value() && angle_bracket_depth > 0) {
+					if (current_token_->value() == "<") {
+						angle_bracket_depth++;
+					} else if (current_token_->value() == ">") {
+						angle_bracket_depth--;
+						if (angle_bracket_depth == 0) {
+							type_name_sb.append(">");
+							consume_token(); // consume final '>'
+							break;
+						}
+					}
+					type_name_sb.append(current_token_->value());
+					consume_token();
+				}
+			}
 		}
 		
 		// Now we should have either '{}' (brace init) or '()' (paren init)
@@ -17472,6 +17793,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	// But exclude regular builtin functions like __builtin_labs, __builtin_abs, etc.
 	// IMPORTANT: Only treat as type trait intrinsic if followed by '(' - if followed by '<', it's a
 	// template class name (e.g., __is_swappable<T> from the standard library)
+	// ALSO: Skip if this identifier is already registered as a function template in the template registry
+	// (e.g., __is_complete_or_unbounded is a library function template, not a compiler intrinsic)
 	else if (current_token_->type() == Token::Type::Identifier && 
 	         (current_token_->value().starts_with("__is_") || 
 	          current_token_->value().starts_with("__has_") ||
@@ -17480,211 +17803,293 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 	            current_token_->value().starts_with("__builtin_has_")))) &&
 	         // Only parse as intrinsic if NEXT token is '(' - otherwise it's a template class name
 	         peek_token(1).has_value() && peek_token(1)->value() == "(") {
-		// Parse type trait intrinsics
+		// Check if this is actually a declared function template (library function, not intrinsic)
+		// If so, skip this branch and let it fall through to normal function call parsing
 		std::string_view trait_name = current_token_->value();
-		Token trait_token = *current_token_;
-		consume_token(); // consume the trait name
-
-		// Normalize __builtin_ prefix to __ prefix for easier matching
-		// e.g., __builtin_is_constant_evaluated -> __is_constant_evaluated
-		// Use string_view to avoid allocation - substr is essentially free with string_view
-		std::string_view normalized_view = trait_name;
-		std::string builtin_normalized; // Only used if we need to normalize __builtin_ prefix
-		if (trait_name.starts_with("__builtin_")) {
-			builtin_normalized = "__" + std::string(trait_name.substr(10)); // Remove "__builtin_" and add back "__"
-			normalized_view = builtin_normalized;
-		}
-
-		// Lookup trait info using a static table
-		struct TraitInfo {
-			TypeTraitKind kind;
-			bool is_binary;
-			bool is_variadic;
-			bool is_no_arg;
-		};
+		bool is_declared_template = gTemplateRegistry.lookupTemplate(trait_name).has_value();
 		
-		static const std::unordered_map<std::string_view, TraitInfo> trait_map = {
-			// Primary type categories
-			{"__is_void", {TypeTraitKind::IsVoid, false, false, false}},
-			{"__is_nullptr", {TypeTraitKind::IsNullptr, false, false, false}},
-			{"__is_integral", {TypeTraitKind::IsIntegral, false, false, false}},
-			{"__is_floating_point", {TypeTraitKind::IsFloatingPoint, false, false, false}},
-			{"__is_array", {TypeTraitKind::IsArray, false, false, false}},
-			{"__is_pointer", {TypeTraitKind::IsPointer, false, false, false}},
-			{"__is_lvalue_reference", {TypeTraitKind::IsLvalueReference, false, false, false}},
-			{"__is_rvalue_reference", {TypeTraitKind::IsRvalueReference, false, false, false}},
-			{"__is_member_object_pointer", {TypeTraitKind::IsMemberObjectPointer, false, false, false}},
-			{"__is_member_function_pointer", {TypeTraitKind::IsMemberFunctionPointer, false, false, false}},
-			{"__is_enum", {TypeTraitKind::IsEnum, false, false, false}},
-			{"__is_union", {TypeTraitKind::IsUnion, false, false, false}},
-			{"__is_class", {TypeTraitKind::IsClass, false, false, false}},
-			{"__is_function", {TypeTraitKind::IsFunction, false, false, false}},
-			// Composite type categories
-			{"__is_reference", {TypeTraitKind::IsReference, false, false, false}},
-			{"__is_arithmetic", {TypeTraitKind::IsArithmetic, false, false, false}},
-			{"__is_fundamental", {TypeTraitKind::IsFundamental, false, false, false}},
-			{"__is_object", {TypeTraitKind::IsObject, false, false, false}},
-			{"__is_scalar", {TypeTraitKind::IsScalar, false, false, false}},
-			{"__is_compound", {TypeTraitKind::IsCompound, false, false, false}},
-			// Type relationships (binary traits)
-			{"__is_base_of", {TypeTraitKind::IsBaseOf, true, false, false}},
-			{"__is_same", {TypeTraitKind::IsSame, true, false, false}},
-			{"__is_convertible", {TypeTraitKind::IsConvertible, true, false, false}},
-			{"__is_nothrow_convertible", {TypeTraitKind::IsNothrowConvertible, true, false, false}},
-			// Type properties
-			{"__is_polymorphic", {TypeTraitKind::IsPolymorphic, false, false, false}},
-			{"__is_final", {TypeTraitKind::IsFinal, false, false, false}},
-			{"__is_abstract", {TypeTraitKind::IsAbstract, false, false, false}},
-			{"__is_empty", {TypeTraitKind::IsEmpty, false, false, false}},
-			{"__is_aggregate", {TypeTraitKind::IsAggregate, false, false, false}},
-			{"__is_standard_layout", {TypeTraitKind::IsStandardLayout, false, false, false}},
-			{"__has_unique_object_representations", {TypeTraitKind::HasUniqueObjectRepresentations, false, false, false}},
-			{"__is_trivially_copyable", {TypeTraitKind::IsTriviallyCopyable, false, false, false}},
-			{"__is_trivial", {TypeTraitKind::IsTrivial, false, false, false}},
-			{"__is_pod", {TypeTraitKind::IsPod, false, false, false}},
-			{"__is_literal_type", {TypeTraitKind::IsLiteralType, false, false, false}},
-			{"__is_const", {TypeTraitKind::IsConst, false, false, false}},
-			{"__is_volatile", {TypeTraitKind::IsVolatile, false, false, false}},
-			{"__is_signed", {TypeTraitKind::IsSigned, false, false, false}},
-			{"__is_unsigned", {TypeTraitKind::IsUnsigned, false, false, false}},
-			{"__is_bounded_array", {TypeTraitKind::IsBoundedArray, false, false, false}},
-			{"__is_unbounded_array", {TypeTraitKind::IsUnboundedArray, false, false, false}},
-			// Constructibility traits (variadic)
-			{"__is_constructible", {TypeTraitKind::IsConstructible, false, true, false}},
-			{"__is_trivially_constructible", {TypeTraitKind::IsTriviallyConstructible, false, true, false}},
-			{"__is_nothrow_constructible", {TypeTraitKind::IsNothrowConstructible, false, true, false}},
-			// Assignability traits (binary)
-			{"__is_assignable", {TypeTraitKind::IsAssignable, true, false, false}},
-			{"__is_trivially_assignable", {TypeTraitKind::IsTriviallyAssignable, true, false, false}},
-			{"__is_nothrow_assignable", {TypeTraitKind::IsNothrowAssignable, true, false, false}},
-			// Destructibility traits
-			{"__is_destructible", {TypeTraitKind::IsDestructible, false, false, false}},
-			{"__is_trivially_destructible", {TypeTraitKind::IsTriviallyDestructible, false, false, false}},
-			{"__is_nothrow_destructible", {TypeTraitKind::IsNothrowDestructible, false, false, false}},
-			{"__has_trivial_destructor", {TypeTraitKind::HasTrivialDestructor, false, false, false}},
-			{"__has_virtual_destructor", {TypeTraitKind::HasVirtualDestructor, false, false, false}},
-			// C++20 layout compatibility traits (binary)
-			{"__is_layout_compatible", {TypeTraitKind::IsLayoutCompatible, true, false, false}},
-			{"__is_pointer_interconvertible_base_of", {TypeTraitKind::IsPointerInterconvertibleBaseOf, true, false, false}},
-			// Special traits
-			{"__underlying_type", {TypeTraitKind::UnderlyingType, false, false, false}},
-			{"__is_constant_evaluated", {TypeTraitKind::IsConstantEvaluated, false, false, true}},
-		};
-
-		auto it = trait_map.find(normalized_view);
-		if (it == trait_map.end()) {
-			// Unknown type trait intrinsic - this shouldn't happen since we only reach here
-			// if followed by '(' which means it was intended as a type trait call
-			return ParseResult::error("Unknown type trait intrinsic", trait_token);
+		// Also check namespace-qualified name if in namespace
+		if (!is_declared_template) {
+			NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
+			if (!current_namespace_handle.isGlobal()) {
+				StringHandle trait_name_handle = StringTable::getOrInternStringHandle(trait_name);
+				StringHandle qualified_name_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, trait_name_handle);
+				is_declared_template = gTemplateRegistry.lookupTemplate(StringTable::getStringView(qualified_name_handle)).has_value();
+			}
 		}
+		
+		if (!is_declared_template) {
+			// Parse type trait intrinsics
+			Token trait_token = *current_token_;
+			consume_token(); // consume the trait name
 
-		TypeTraitKind kind = it->second.kind;
-		bool is_binary_trait = it->second.is_binary;
-		bool is_variadic_trait = it->second.is_variadic;
-		bool is_no_arg_trait = it->second.is_no_arg;
-
-		if (!consume_punctuator("(")) {
-			return ParseResult::error("Expected '(' after type trait intrinsic", *current_token_);
-		}
-
-		if (is_no_arg_trait) {
-			// No-argument trait like __is_constant_evaluated()
-			if (!consume_punctuator(")")) {
-				return ParseResult::error("Expected ')' for no-argument type trait", *current_token_);
+			// Normalize __builtin_ prefix to __ prefix for easier matching
+			// e.g., __builtin_is_constant_evaluated -> __is_constant_evaluated
+			std::string_view normalized_view = trait_name;
+			if (trait_name.starts_with("__builtin_")) {
+				StringBuilder builtin_normalized;
+				builtin_normalized.append("__").append(trait_name.substr(10)); // Remove "__builtin_" and add back "__"
+				normalized_view = builtin_normalized.commit();
 			}
 
-			result = emplace_node<ExpressionNode>(
-				TypeTraitExprNode(kind, trait_token));
-		} else {
-			// Parse the first type argument
-			ParseResult type_result = parse_type_specifier();
-			if (type_result.is_error() || !type_result.node().has_value()) {
-				return ParseResult::error("Expected type in type trait intrinsic", *current_token_);
-			}
-
-			// Parse pointer/reference modifiers after the base type
-			// e.g., int* or int&& in type trait arguments
-			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+			// Lookup trait info using a static table
+			struct TraitInfo {
+				TypeTraitKind kind;
+				bool is_binary;
+				bool is_variadic;
+				bool is_no_arg;
+			};
 			
-			// Parse pointer depth (*)
-			while (peek_token().has_value() && peek_token()->value() == "*") {
-				consume_token();
-				type_spec.add_pointer_level();
-			}
-			
-			// Parse reference (&) or rvalue reference (&&)
-			// Note: The lexer tokenizes && as a single token, not two separate & tokens
-			ReferenceQualifier ref_qual = parse_reference_qualifier();
-			if (ref_qual == ReferenceQualifier::RValueReference) {
-				type_spec.set_reference(true);  // true for rvalue reference
-			} else if (ref_qual == ReferenceQualifier::LValueReference) {
-				type_spec.set_reference(false);  // false for lvalue reference
+			static const std::unordered_map<std::string_view, TraitInfo> trait_map = {
+				// Primary type categories
+				{"__is_void", {TypeTraitKind::IsVoid, false, false, false}},
+				{"__is_nullptr", {TypeTraitKind::IsNullptr, false, false, false}},
+				{"__is_integral", {TypeTraitKind::IsIntegral, false, false, false}},
+				{"__is_floating_point", {TypeTraitKind::IsFloatingPoint, false, false, false}},
+				{"__is_array", {TypeTraitKind::IsArray, false, false, false}},
+				{"__is_pointer", {TypeTraitKind::IsPointer, false, false, false}},
+				{"__is_lvalue_reference", {TypeTraitKind::IsLvalueReference, false, false, false}},
+				{"__is_rvalue_reference", {TypeTraitKind::IsRvalueReference, false, false, false}},
+				{"__is_member_object_pointer", {TypeTraitKind::IsMemberObjectPointer, false, false, false}},
+				{"__is_member_function_pointer", {TypeTraitKind::IsMemberFunctionPointer, false, false, false}},
+				{"__is_enum", {TypeTraitKind::IsEnum, false, false, false}},
+				{"__is_union", {TypeTraitKind::IsUnion, false, false, false}},
+				{"__is_class", {TypeTraitKind::IsClass, false, false, false}},
+				{"__is_function", {TypeTraitKind::IsFunction, false, false, false}},
+				// Composite type categories
+				{"__is_reference", {TypeTraitKind::IsReference, false, false, false}},
+				{"__is_arithmetic", {TypeTraitKind::IsArithmetic, false, false, false}},
+				{"__is_fundamental", {TypeTraitKind::IsFundamental, false, false, false}},
+				{"__is_object", {TypeTraitKind::IsObject, false, false, false}},
+				{"__is_scalar", {TypeTraitKind::IsScalar, false, false, false}},
+				{"__is_compound", {TypeTraitKind::IsCompound, false, false, false}},
+				// Type relationships (binary traits)
+				{"__is_base_of", {TypeTraitKind::IsBaseOf, true, false, false}},
+				{"__is_same", {TypeTraitKind::IsSame, true, false, false}},
+				{"__is_convertible", {TypeTraitKind::IsConvertible, true, false, false}},
+				{"__is_nothrow_convertible", {TypeTraitKind::IsNothrowConvertible, true, false, false}},
+				// Type properties
+				{"__is_polymorphic", {TypeTraitKind::IsPolymorphic, false, false, false}},
+				{"__is_final", {TypeTraitKind::IsFinal, false, false, false}},
+				{"__is_abstract", {TypeTraitKind::IsAbstract, false, false, false}},
+				{"__is_empty", {TypeTraitKind::IsEmpty, false, false, false}},
+				{"__is_aggregate", {TypeTraitKind::IsAggregate, false, false, false}},
+				{"__is_standard_layout", {TypeTraitKind::IsStandardLayout, false, false, false}},
+				{"__has_unique_object_representations", {TypeTraitKind::HasUniqueObjectRepresentations, false, false, false}},
+				{"__is_trivially_copyable", {TypeTraitKind::IsTriviallyCopyable, false, false, false}},
+				{"__is_trivial", {TypeTraitKind::IsTrivial, false, false, false}},
+				{"__is_pod", {TypeTraitKind::IsPod, false, false, false}},
+				{"__is_literal_type", {TypeTraitKind::IsLiteralType, false, false, false}},
+				{"__is_const", {TypeTraitKind::IsConst, false, false, false}},
+				{"__is_volatile", {TypeTraitKind::IsVolatile, false, false, false}},
+				{"__is_signed", {TypeTraitKind::IsSigned, false, false, false}},
+				{"__is_unsigned", {TypeTraitKind::IsUnsigned, false, false, false}},
+				{"__is_bounded_array", {TypeTraitKind::IsBoundedArray, false, false, false}},
+				{"__is_unbounded_array", {TypeTraitKind::IsUnboundedArray, false, false, false}},
+				// Constructibility traits (variadic)
+				{"__is_constructible", {TypeTraitKind::IsConstructible, false, true, false}},
+				{"__is_trivially_constructible", {TypeTraitKind::IsTriviallyConstructible, false, true, false}},
+				{"__is_nothrow_constructible", {TypeTraitKind::IsNothrowConstructible, false, true, false}},
+				// Assignability traits (binary)
+				{"__is_assignable", {TypeTraitKind::IsAssignable, true, false, false}},
+				{"__is_trivially_assignable", {TypeTraitKind::IsTriviallyAssignable, true, false, false}},
+				{"__is_nothrow_assignable", {TypeTraitKind::IsNothrowAssignable, true, false, false}},
+				// Destructibility traits
+				{"__is_destructible", {TypeTraitKind::IsDestructible, false, false, false}},
+				{"__is_trivially_destructible", {TypeTraitKind::IsTriviallyDestructible, false, false, false}},
+				{"__is_nothrow_destructible", {TypeTraitKind::IsNothrowDestructible, false, false, false}},
+				{"__has_trivial_destructor", {TypeTraitKind::HasTrivialDestructor, false, false, false}},
+				{"__has_virtual_destructor", {TypeTraitKind::HasVirtualDestructor, false, false, false}},
+				// C++20 layout compatibility traits (binary)
+				{"__is_layout_compatible", {TypeTraitKind::IsLayoutCompatible, true, false, false}},
+				{"__is_pointer_interconvertible_base_of", {TypeTraitKind::IsPointerInterconvertibleBaseOf, true, false, false}},
+				// Special traits
+				{"__underlying_type", {TypeTraitKind::UnderlyingType, false, false, false}},
+				{"__is_constant_evaluated", {TypeTraitKind::IsConstantEvaluated, false, false, true}},
+				{"__is_complete_or_unbounded", {TypeTraitKind::IsCompleteOrUnbounded, false, false, false}},
+			};
+
+			auto it = trait_map.find(normalized_view);
+			if (it == trait_map.end()) {
+				// Unknown type trait intrinsic - this shouldn't happen since we only reach here
+				// if followed by '(' which means it was intended as a type trait call
+				return ParseResult::error("Unknown type trait intrinsic", trait_token);
 			}
 
-			// Parse array specifications ([N] or [])
-			if (peek_token().has_value() && peek_token()->value() == "[") {
-				consume_token();  // consume '['
+			TypeTraitKind kind = it->second.kind;
+			bool is_binary_trait = it->second.is_binary;
+			bool is_variadic_trait = it->second.is_variadic;
+			bool is_no_arg_trait = it->second.is_no_arg;
+
+			if (!consume_punctuator("(")) {
+				return ParseResult::error("Expected '(' after type trait intrinsic", *current_token_);
+			}
+
+			if (is_no_arg_trait) {
+				// No-argument trait like __is_constant_evaluated()
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' for no-argument type trait", *current_token_);
+				}
+
+				result = emplace_node<ExpressionNode>(
+					TypeTraitExprNode(kind, trait_token));
+			} else {
+				// Parse the first type argument
+				ParseResult type_result = parse_type_specifier();
+				if (type_result.is_error() || !type_result.node().has_value()) {
+					return ParseResult::error("Expected type in type trait intrinsic", *current_token_);
+				}
+
+				// Parse pointer/reference modifiers after the base type
+				// e.g., int* or int&& in type trait arguments
+				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 				
-				// Check for array size expression or empty brackets
-				std::optional<size_t> array_size_val;
-				if (peek_token().has_value() && peek_token()->value() != "]") {
-					// Parse array size expression
-					ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (size_result.is_error()) {
-						return ParseResult::error("Expected array size expression", *current_token_);
-					}
+				// Parse pointer depth (*)
+				while (peek_token().has_value() && peek_token()->value() == "*") {
+					consume_token();
+					type_spec.add_pointer_level();
+				}
+				
+				// Parse reference (&) or rvalue reference (&&)
+				// Note: The lexer tokenizes && as a single token, not two separate & tokens
+				ReferenceQualifier ref_qual = parse_reference_qualifier();
+				if (ref_qual == ReferenceQualifier::RValueReference) {
+					type_spec.set_reference(true);  // true for rvalue reference
+				} else if (ref_qual == ReferenceQualifier::LValueReference) {
+					type_spec.set_reference(false);  // false for lvalue reference
+				}
+
+				// Parse array specifications ([N] or [])
+				if (peek_token().has_value() && peek_token()->value() == "[") {
+					consume_token();  // consume '['
 					
-					// Try to evaluate the array size as a constant expression
-					if (size_result.node().has_value()) {
-						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-						auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-						if (eval_result.success) {
-							array_size_val = static_cast<size_t>(eval_result.as_int());
+					// Check for array size expression or empty brackets
+					std::optional<size_t> array_size_val;
+					if (peek_token().has_value() && peek_token()->value() != "]") {
+						// Parse array size expression
+						ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (size_result.is_error()) {
+							return ParseResult::error("Expected array size expression", *current_token_);
+						}
+						
+						// Try to evaluate the array size as a constant expression
+						if (size_result.node().has_value()) {
+							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+							auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
+							if (eval_result.success()) {
+								array_size_val = static_cast<size_t>(eval_result.as_int());
+							}
 						}
 					}
-				}
-				
-				if (!consume_punctuator("]")) {
-					return ParseResult::error("Expected ']' after array size", *current_token_);
-				}
-				
-				type_spec.set_array(true, array_size_val);
-			}
-
-			// Check for pack expansion (...) after the first type argument
-			if (peek_token().has_value() && peek_token()->value() == "...") {
-				consume_token();  // consume '...'
-				type_spec.set_pack_expansion(true);
-			}
-
-			if (is_variadic_trait) {
-				// Variadic trait: parse comma-separated additional types
-				std::vector<ASTNode> additional_types;
-				while (peek_token().has_value() && peek_token()->value() == ",") {
-					consume_punctuator(",");
-					ParseResult arg_type_result = parse_type_specifier();
-					if (arg_type_result.is_error() || !arg_type_result.node().has_value()) {
-						return ParseResult::error("Expected type argument in variadic type trait", *current_token_);
+					
+					if (!consume_punctuator("]")) {
+						return ParseResult::error("Expected ']' after array size", *current_token_);
 					}
 					
-					// Parse pointer/reference modifiers for additional type arguments
-					TypeSpecifierNode& arg_type_spec = arg_type_result.node()->as<TypeSpecifierNode>();
+					type_spec.set_array(true, array_size_val);
+				}
+
+				// Check for pack expansion (...) after the first type argument
+				if (peek_token().has_value() && peek_token()->value() == "...") {
+					consume_token();  // consume '...'
+					type_spec.set_pack_expansion(true);
+				}
+
+				if (is_variadic_trait) {
+					// Variadic trait: parse comma-separated additional types
+					std::vector<ASTNode> additional_types;
+					while (peek_token().has_value() && peek_token()->value() == ",") {
+						consume_punctuator(",");
+						ParseResult arg_type_result = parse_type_specifier();
+						if (arg_type_result.is_error() || !arg_type_result.node().has_value()) {
+							return ParseResult::error("Expected type argument in variadic type trait", *current_token_);
+						}
+						
+						// Parse pointer/reference modifiers for additional type arguments
+						TypeSpecifierNode& arg_type_spec = arg_type_result.node()->as<TypeSpecifierNode>();
+						while (peek_token().has_value() && peek_token()->value() == "*") {
+							consume_token();
+							arg_type_spec.add_pointer_level();
+						}
+						
+						// Parse reference qualifiers (&, &&)
+						ReferenceQualifier arg_ref_qual = parse_reference_qualifier();
+						if (arg_ref_qual == ReferenceQualifier::RValueReference) {
+							arg_type_spec.set_reference(true);  // rvalue reference
+						} else if (arg_ref_qual == ReferenceQualifier::LValueReference) {
+							arg_type_spec.set_reference(false);  // lvalue reference
+						}
+						
+						// Parse array specifications ([N] or []) for variadic trait additional args
+						std::optional<size_t> array_size_val;
+						if (peek_token().has_value() && peek_token()->value() == "[") {
+							consume_token();  // consume '['
+							
+							if (peek_token().has_value() && peek_token()->value() != "]") {
+								ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+								if (size_result.is_error()) {
+									return ParseResult::error("Expected array size expression", *current_token_);
+								}
+								if (size_result.node().has_value()) {
+									ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+									auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
+									if (eval_result.success()) {
+										array_size_val = static_cast<size_t>(eval_result.as_int());
+									}
+								}
+							}
+							
+							if (!consume_punctuator("]")) {
+								return ParseResult::error("Expected ']' after array size", *current_token_);
+							}
+							
+							arg_type_spec.set_array(true, array_size_val);
+						}
+
+						// Check for pack expansion (...) after the type argument
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							consume_token();  // consume '...'
+							arg_type_spec.set_pack_expansion(true);
+						}
+						
+						additional_types.push_back(*arg_type_result.node());
+					}
+
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
+					}
+
+					result = emplace_node<ExpressionNode>(
+						TypeTraitExprNode(kind, *type_result.node(), std::move(additional_types), trait_token));
+				} else if (is_binary_trait) {
+					// Binary trait: parse comma and second type
+					if (!consume_punctuator(",")) {
+						return ParseResult::error("Expected ',' after first type in binary type trait", *current_token_);
+					}
+
+					ParseResult second_type_result = parse_type_specifier();
+					if (second_type_result.is_error() || !second_type_result.node().has_value()) {
+						return ParseResult::error("Expected second type in binary type trait", *current_token_);
+					}
+
+					// Parse pointer/reference modifiers for second type
+					TypeSpecifierNode& second_type_spec = second_type_result.node()->as<TypeSpecifierNode>();
 					while (peek_token().has_value() && peek_token()->value() == "*") {
 						consume_token();
-						arg_type_spec.add_pointer_level();
+						second_type_spec.add_pointer_level();
 					}
 					if (peek_token().has_value()) {
 						std::string_view next_token = peek_token()->value();
 						if (next_token == "&&") {
 							consume_token();
-							arg_type_spec.set_reference(true);  // rvalue reference
+							second_type_spec.set_reference(true);  // rvalue reference
 						} else if (next_token == "&") {
 							consume_token();
-							arg_type_spec.set_reference(false);  // lvalue reference
+							second_type_spec.set_reference(false);  // lvalue reference
 						}
 					}
-					
-					// Parse array specifications ([N] or []) for variadic trait additional args
+
+					// Parse array specifications ([N] or []) for binary trait second type
 					std::optional<size_t> array_size_val;
 					if (peek_token().has_value() && peek_token()->value() == "[") {
 						consume_token();  // consume '['
@@ -17697,7 +18102,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (size_result.node().has_value()) {
 								ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 								auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-								if (eval_result.success) {
+								if (eval_result.success()) {
 									array_size_val = static_cast<size_t>(eval_result.as_int());
 								}
 							}
@@ -17707,94 +18112,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							return ParseResult::error("Expected ']' after array size", *current_token_);
 						}
 						
-						arg_type_spec.set_array(true, array_size_val);
+						second_type_spec.set_array(true, array_size_val);
 					}
 
-					// Check for pack expansion (...) after the type argument
-					if (peek_token().has_value() && peek_token()->value() == "...") {
-						consume_token();  // consume '...'
-						arg_type_spec.set_pack_expansion(true);
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
 					}
-					
-					additional_types.push_back(*arg_type_result.node());
-				}
 
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
-				}
-
-				result = emplace_node<ExpressionNode>(
-					TypeTraitExprNode(kind, *type_result.node(), std::move(additional_types), trait_token));
-			} else if (is_binary_trait) {
-				// Binary trait: parse comma and second type
-				if (!consume_punctuator(",")) {
-					return ParseResult::error("Expected ',' after first type in binary type trait", *current_token_);
-				}
-
-				ParseResult second_type_result = parse_type_specifier();
-				if (second_type_result.is_error() || !second_type_result.node().has_value()) {
-					return ParseResult::error("Expected second type in binary type trait", *current_token_);
-				}
-
-				// Parse pointer/reference modifiers for second type
-				TypeSpecifierNode& second_type_spec = second_type_result.node()->as<TypeSpecifierNode>();
-				while (peek_token().has_value() && peek_token()->value() == "*") {
-					consume_token();
-					second_type_spec.add_pointer_level();
-				}
-				if (peek_token().has_value()) {
-					std::string_view next_token = peek_token()->value();
-					if (next_token == "&&") {
-						consume_token();
-						second_type_spec.set_reference(true);  // rvalue reference
-					} else if (next_token == "&") {
-						consume_token();
-						second_type_spec.set_reference(false);  // lvalue reference
+					result = emplace_node<ExpressionNode>(
+						TypeTraitExprNode(kind, *type_result.node(), *second_type_result.node(), trait_token));
+				} else {
+					// Unary trait: just close paren
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Expected ')' after type trait argument", *current_token_);
 					}
-				}
 
-				// Parse array specifications ([N] or []) for binary trait second type
-				std::optional<size_t> array_size_val;
-				if (peek_token().has_value() && peek_token()->value() == "[") {
-					consume_token();  // consume '['
-					
-					if (peek_token().has_value() && peek_token()->value() != "]") {
-						ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (size_result.is_error()) {
-							return ParseResult::error("Expected array size expression", *current_token_);
-						}
-						if (size_result.node().has_value()) {
-							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-							auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
-							if (eval_result.success) {
-								array_size_val = static_cast<size_t>(eval_result.as_int());
-							}
-						}
-					}
-					
-					if (!consume_punctuator("]")) {
-						return ParseResult::error("Expected ']' after array size", *current_token_);
-					}
-					
-					second_type_spec.set_array(true, array_size_val);
+					result = emplace_node<ExpressionNode>(
+						TypeTraitExprNode(kind, *type_result.node(), trait_token));
 				}
-
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after type trait arguments", *current_token_);
-				}
-
-				result = emplace_node<ExpressionNode>(
-					TypeTraitExprNode(kind, *type_result.node(), *second_type_result.node(), trait_token));
-			} else {
-				// Unary trait: just close paren
-				if (!consume_punctuator(")")) {
-					return ParseResult::error("Expected ')' after type trait argument", *current_token_);
-				}
-
-				result = emplace_node<ExpressionNode>(
-					TypeTraitExprNode(kind, *type_result.node(), trait_token));
 			}
-		}
+		} // end if (!is_declared_template)
 	}
 	// Check for global namespace scope operator :: at the beginning
 	else if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == "::") {
@@ -17860,42 +18197,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		if (current_token_.has_value() && current_token_->value() == "(") {
 			consume_token(); // consume '('
 
-			// Parse function arguments first
-			ChunkedVector<ASTNode> args;
-			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
-				while (true) {
-					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (arg_result.is_error()) {
-						return arg_result;
-					}
-					if (auto arg = arg_result.node()) {
-						// Check for pack expansion (...) after the argument
-						if (peek_token().has_value() && peek_token()->value() == "...") {
-							Token ellipsis_token = *peek_token();
-							consume_token(); // consume '...'
-							
-							// Wrap the argument in a PackExpansionExprNode
-							auto pack_expr = emplace_node<ExpressionNode>(
-								PackExpansionExprNode(*arg, ellipsis_token));
-							args.push_back(pack_expr);
-						} else {
-							args.push_back(*arg);
-						}
-					}
-
-					if (!peek_token().has_value()) {
-						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-					}
-
-					if (peek_token()->value() == ")") {
-						break;
-					}
-
-					if (!consume_punctuator(",")) {
-						return ParseResult::error("Expected ',' between function arguments", *current_token_);
-					}
-				}
+			// Parse function arguments using unified helper (collect types for template deduction)
+			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+				.handle_pack_expansion = true,
+				.collect_types = true,
+				.expand_simple_packs = false
+			});
+			if (!args_result.success) {
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
 			}
+			ChunkedVector<ASTNode> args = std::move(args_result.args);
 
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
@@ -17906,53 +18217,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Build qualified template name (e.g., "::move" or "::std::move")
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
 				
-				// Extract argument types for template instantiation
-				std::vector<TypeSpecifierNode> arg_types;
-				arg_types.reserve(args.size());
-				for (size_t i = 0; i < args.size(); ++i) {
-					const auto& arg = args[i];
-					if (arg.is<ExpressionNode>()) {
-						const ExpressionNode& expr = arg.as<ExpressionNode>();
-						std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
-						if (arg_type_opt.has_value()) {
-							TypeSpecifierNode arg_type_node = *arg_type_opt;
-							
-							// Check if this is an lvalue (for perfect forwarding deduction)
-							// Lvalues: named variables, array subscripts, member access, dereferences, string literals
-							// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
-							bool is_lvalue = std::visit([](const auto& inner) -> bool {
-								using T = std::decay_t<decltype(inner)>;
-								if constexpr (std::is_same_v<T, IdentifierNode>) {
-									// Named variables are lvalues
-									return true;
-								} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-									// Array subscript expressions are lvalues
-									return true;
-								} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-									// Member access expressions are lvalues
-									return true;
-								} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-									// Dereference (*ptr) is an lvalue
-									// Other unary operators like ++, --, etc. may also be lvalues
-									return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-								} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-									// String literals are lvalues in C++
-									return true;
-								} else {
-									// All other expressions (literals, temporaries, etc.) are rvalues
-									return false;
-								}
-							}, expr);
-							
-							if (is_lvalue) {
-								// For forwarding reference deduction: T&& deduces to T& for lvalues
-								arg_type_node.set_lvalue_reference(true);
-							}
-							
-							arg_types.push_back(arg_type_node);
-						}
-					}
-				}
+				// Apply lvalue reference for forwarding deduction on arg_types
+				std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 				
 				// Try to instantiate the qualified template function
 				if (!arg_types.empty()) {
@@ -18449,99 +18715,30 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Try to look up the qualified identifier
 		auto identifierType = gSymbolTable.lookup_qualified(qual_id.namespace_handle(), qual_id.name());
 		
+		// Check if this is a brace initialization: ns::Template<Args>{}
+		if (template_args.has_value() && current_token_.has_value() && current_token_->value() == "{") {
+			// Parse the brace initialization using the helper
+			ParseResult brace_init_result = parse_template_brace_initialization(*template_args, qual_id.name(), final_identifier);
+			if (!brace_init_result.is_error() && brace_init_result.node().has_value()) {
+				return brace_init_result;
+			}
+			// If parsing failed, fall through to function call check
+		}
+		
 		// Check if followed by '(' for function call
 		if (current_token_.has_value() && current_token_->value() == "(") {
 			consume_token(); // consume '('
 
-			// Parse function arguments first
-			ChunkedVector<ASTNode> args;
-			if (!peek_token().has_value() || peek_token()->value() != ")"sv) {
-				while (true) {
-					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (arg_result.is_error()) {
-						return arg_result;
-					}
-					
-					// Check for pack expansion: expr...
-					if (peek_token().has_value() && peek_token()->value() == "...") {
-						consume_token(); // consume '...'
-						
-						// Pack expansion: need to expand the expression for each pack element
-						// Strategy: Try to find expanded pack elements in the symbol table
-						
-						if (auto arg_node = arg_result.node()) {
-							// Simple case: if the expression is just a single identifier that looks
-							// like a pack parameter, try to expand it
-							if (arg_node->is<IdentifierNode>()) {
-								std::string_view pack_name = arg_node->as<IdentifierNode>().name();
-								
-								// Try to find pack_name_0, pack_name_1, etc. in the symbol table
-								size_t pack_size = 0;
-								
-								StringBuilder sb;
-								for (size_t i = 0; i < 100; ++i) {  // reasonable limit
-									// Use StringBuilder to create a persistent string
-									std::string_view element_name = sb
-										.append(pack_name)
-										.append("_")
-										.append(i)
-										.preview();
-									
-									if (gSymbolTable.lookup(element_name).has_value()) {
-										++pack_size;
-										sb.reset();
-									} else {
-										break;
-									}
-								}
-								sb.reset();
-								
-								if (pack_size > 0) {
-									// Add each pack element as a separate argument
-									for (size_t i = 0; i < pack_size; ++i) {
-										// Use StringBuilder to create a persistent string for the token
-										std::string_view element_name = StringBuilder()
-											.append(pack_name)
-											.append("_")
-											.append(i)
-											.commit();
-										
-										Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
-										auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
-										args.push_back(elem_node);
-									}
-								} else {
-									args.push_back(*arg_node);
-								}
-							} else {
-								// Complex expression: wrap in PackExpansionExprNode
-								// The actual expansion will be handled during template instantiation
-								Token ellipsis_token(Token::Type::Operator, "...", 0, 0, 0);  // Approximate token
-								auto pack_expr = emplace_node<ExpressionNode>(
-									PackExpansionExprNode(*arg_node, ellipsis_token));
-								args.push_back(pack_expr);
-							}
-						}
-					} else {
-						// Regular argument
-						if (auto arg = arg_result.node()) {
-							args.push_back(*arg);
-						}
-					}
-
-					if (!peek_token().has_value()) {
-						return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-					}
-
-					if (peek_token()->value() == ")") {
-						break;
-					}
-
-					if (!consume_punctuator(",")) {
-						return ParseResult::error("Expected ',' between function arguments", *current_token_);
-					}
-				}
+			// Parse function arguments using unified helper (expand simple packs for qualified calls)
+			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+				.handle_pack_expansion = true,
+				.collect_types = true,
+				.expand_simple_packs = true
+			});
+			if (!args_result.success) {
+				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
 			}
+			ChunkedVector<ASTNode> args = std::move(args_result.args);
 			
 			if (!consume_punctuator(")")) {
 				return ParseResult::error("Expected ')' after function call arguments", *current_token_);
@@ -18570,53 +18767,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				
 				// If still not found and no explicit template arguments, try deducing from function arguments
-				// Extract argument types for template instantiation
-				std::vector<TypeSpecifierNode> arg_types;
-				arg_types.reserve(args.size());
-				for (size_t i = 0; i < args.size(); ++i) {
-					const auto& arg = args[i];
-					if (arg.is<ExpressionNode>()) {
-						const ExpressionNode& expr = arg.as<ExpressionNode>();
-						std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
-						if (arg_type_opt.has_value()) {
-							TypeSpecifierNode arg_type_node = *arg_type_opt;
-							
-							// Check if this is an lvalue (for perfect forwarding deduction)
-							// Lvalues: named variables, array subscripts, member access, dereferences, string literals
-							// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
-							bool is_lvalue = std::visit([](const auto& inner) -> bool {
-								using T = std::decay_t<decltype(inner)>;
-								if constexpr (std::is_same_v<T, IdentifierNode>) {
-									// Named variables are lvalues
-									return true;
-								} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-									// Array subscript expressions are lvalues
-									return true;
-								} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-									// Member access expressions are lvalues
-									return true;
-								} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-									// Dereference (*ptr) is an lvalue
-									// Other unary operators like ++, --, etc. may also be lvalues
-									return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-								} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-									// String literals are lvalues in C++
-									return true;
-								} else {
-									// All other expressions (literals, temporaries, etc.) are rvalues
-									return false;
-								}
-							}, expr);
-							
-							if (is_lvalue) {
-								// For forwarding reference deduction: T&& deduces to T& for lvalues
-								arg_type_node.set_lvalue_reference(true);
-							}
-							
-							arg_types.push_back(arg_type_node);
-						}
-					}
-				}
+				// Apply lvalue reference for forwarding deduction on arg_types
+				std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 				
 				// Try to instantiate the qualified template function
 				if (!arg_types.empty()) {
@@ -18654,11 +18806,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					FLASH_LOG(Templates, Debug, "Stored ", template_arg_nodes.size(), " template argument nodes in FunctionCallNode (path 1)");
 				}
 				
+				// Store the qualified source name for template lookup during constexpr evaluation
+				std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
+				FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
+				func_call.set_qualified_name(qualified_name);
+				FLASH_LOG(Parser, Debug, "Set qualified name on FunctionCallNode: ", qualified_name);
+				
 				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 				if (identifierType->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 					if (func_decl.has_mangled_name()) {
-						std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+						func_call.set_mangled_name(func_decl.mangled_name());
 					}
 				}
 			} else {
@@ -18691,6 +18849,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		if (!identifierType && !struct_parsing_context_stack_.empty()) {
 			StringHandle identifier_handle = StringTable::getOrInternStringHandle(idenfifier_token.value());
 			const auto& ctx = struct_parsing_context_stack_.back();
+			FLASH_LOG_FORMAT(Parser, Debug, "Checking struct context for '{}': struct_node={}, local_struct_info={}", 
+				idenfifier_token.value(), ctx.struct_node != nullptr, ctx.local_struct_info != nullptr);
 			
 			// Check the struct_node's static_members (for non-template structs)
 			if (ctx.struct_node != nullptr) {
@@ -18715,6 +18875,34 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 				}
 			}
+			
+			// BUGFIX: Check for members imported via using-declarations
+			// This handles cases like: using BaseClass::__value;
+			// where the base class is a dependent template type that can't be resolved yet
+			if (!found_as_type_alias) {
+				for (const auto& imported_member : ctx.imported_members) {
+					if (imported_member == identifier_handle) {
+						FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as imported member via using-declaration", 
+							idenfifier_token.value());
+						found_as_type_alias = true;
+						break;
+					}
+				}
+			}
+			
+			// Also search base classes for static members (if base classes are resolved)
+			// This handles using-declarations like: using BaseClass::__value;
+			// which make base class static members accessible by their simple name
+			if (!found_as_type_alias && ctx.local_struct_info != nullptr && !ctx.local_struct_info->base_classes.empty()) {
+				FLASH_LOG_FORMAT(Parser, Debug, "Searching base classes for '{}', num_bases={}", 
+					idenfifier_token.value(), ctx.local_struct_info->base_classes.size());
+				auto [base_static_member, owner_struct] = ctx.local_struct_info->findStaticMemberRecursive(identifier_handle);
+				if (base_static_member) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as static member in base class '{}'", 
+						idenfifier_token.value(), StringTable::getStringView(owner_struct->getName()));
+					found_as_type_alias = true;  // Found it, suppress "Missing identifier" error
+				}
+			}
 		}
 		
 		// BUGFIX: If identifier not found in symbol table, check if it's a type alias in gTypesByName
@@ -18725,8 +18913,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// and template class names are commonly used as template arguments in <type_traits>
 		if (!identifierType && !found_as_type_alias && peek_token().has_value()) {
 			std::string_view peek = peek_token()->value();
-			// Check gTypesByName if identifier is followed by :: (qualified name) or ( (constructor call)
-			bool should_check_types = (peek == "::" || peek == "(");
+			// Check gTypesByName if identifier is followed by :: (qualified name), ( (constructor call), or { (brace init)
+			bool should_check_types = (peek == "::" || peek == "(" || peek == "{");
 			
 			// In template argument context, also check for various tokens that indicate a type context.
 			// Type aliases and template class names are commonly used as template arguments
@@ -18868,7 +19056,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// 1. Identifier not found (might be namespace name)
 		// 2. Identifier found but followed by :: (namespace or class scope resolution)
 		if (peek_token().has_value() && peek_token()->value() == "::") {
-			FLASH_LOG_FORMAT(Parser, Warning, "@@@ QUALIFIED ID DETECTED: Identifier '{}' followed by '::', identifierType found: {}", idenfifier_token.value(), identifierType.has_value());
 			// Parse as qualified identifier: Namespace::identifier
 			// Even if we don't know if it's a namespace, try parsing it as a qualified identifier
 			std::vector<StringType<32>> namespaces;
@@ -18994,7 +19181,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 				if (instantiated.has_value()) {
 					const auto& inst_struct = instantiated->as<StructDeclarationNode>();
-					FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated class template: {}", StringTable::getStringView(inst_struct.name()));
 					
 					// Look up the instantiated template
 					identifierType = gSymbolTable.lookup(StringTable::getStringView(inst_struct.name()));
@@ -19006,6 +19192,52 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							auto qualified_node2 = qualified_result.node()->as<QualifiedIdentifierNode>();
 							result = emplace_node<ExpressionNode>(qualified_node2);
 							return ParseResult::success(*result);
+						}
+					}
+					
+					// Check if this is a brace initialization: ns::Template<Args>{}
+					if (peek_token().has_value() && peek_token()->value() == "{") {
+						consume_token(); // consume '{'
+						
+						ChunkedVector<ASTNode> args;
+						while (peek_token().has_value() && peek_token()->value() != "}") {
+							auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							if (argResult.is_error()) {
+								return argResult;
+							}
+							if (auto node = argResult.node()) {
+								args.push_back(*node);
+							}
+							
+							if (peek_token().has_value() && peek_token()->value() == ",") {
+								consume_token(); // consume ','
+							} else if (!peek_token().has_value() || peek_token()->value() != "}") {
+								return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+							}
+						}
+						
+						if (!consume_punctuator("}")) {
+							return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+						}
+						
+						// Look up the instantiated type
+						auto type_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(inst_struct.name()));
+						auto type_it = gTypesByName.find(type_handle);
+						if (type_it != gTypesByName.end()) {
+							// Create TypeSpecifierNode for the instantiated class
+							const TypeInfo& type_info = *type_it->second;
+							TypeIndex type_index = type_info.type_index_;
+							int type_size = 0;
+							if (type_info.struct_info_) {
+								type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
+							}
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, final_identifier);
+							
+							// Create ConstructorCallNode
+							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
+							return ParseResult::success(*result);
+						} else {
+							return ParseResult::error("Failed to look up instantiated template type", final_identifier);
 						}
 					}
 					
@@ -19026,43 +19258,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			if (peek_token().has_value() && peek_token()->value() == "(") {
 				consume_token(); // consume '('
 				
-				// Parse function arguments
-				ChunkedVector<ASTNode> args;
-				if (current_token_.has_value() && current_token_->value() != ")") {
-					while (true) {
-						auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (arg_result.is_error()) {
-							return arg_result;
-						}
-						
-						if (auto arg = arg_result.node()) {
-							// Check for pack expansion (...) after the argument
-							if (peek_token().has_value() && peek_token()->value() == "...") {
-								Token ellipsis_token = *peek_token();
-								consume_token(); // consume '...'
-								
-								// Wrap the argument in a PackExpansionExprNode
-								auto pack_expr = emplace_node<ExpressionNode>(
-									PackExpansionExprNode(*arg, ellipsis_token));
-								args.push_back(pack_expr);
-							} else {
-								args.push_back(*arg);
-							}
-						}
-						
-						if (!peek_token().has_value()) {
-							return ParseResult::error("Expected ',' or ')' in function call", *current_token_);
-						}
-						
-						if (peek_token()->value() == ")") {
-							break;
-						}
-						
-						if (!consume_punctuator(",")) {
-							return ParseResult::error("Expected ',' between function arguments", *current_token_);
-						}
-					}
+				// Parse function arguments using unified helper (collect types for template deduction)
+				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+					.handle_pack_expansion = true,
+					.collect_types = true,
+					.expand_simple_packs = false
+				});
+				if (!args_result.success) {
+					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(*current_token_));
 				}
+				ChunkedVector<ASTNode> args = std::move(args_result.args);
 				
 				if (!consume_punctuator(")")) {
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
@@ -19073,53 +19278,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Build qualified template name
 					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 					
-					// Extract argument types for template instantiation
-					std::vector<TypeSpecifierNode> arg_types;
-					arg_types.reserve(args.size());
-					for (size_t i = 0; i < args.size(); ++i) {
-						const auto& arg = args[i];
-						if (arg.is<ExpressionNode>()) {
-							const ExpressionNode& expr = arg.as<ExpressionNode>();
-							std::optional<TypeSpecifierNode> arg_type_opt = get_expression_type(arg);
-							if (arg_type_opt.has_value()) {
-								TypeSpecifierNode arg_type_node = *arg_type_opt;
-								
-								// Check if this is an lvalue (for perfect forwarding deduction)
-								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
-								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
-								bool is_lvalue = std::visit([](const auto& inner) -> bool {
-									using T = std::decay_t<decltype(inner)>;
-									if constexpr (std::is_same_v<T, IdentifierNode>) {
-										// Named variables are lvalues
-										return true;
-									} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-										// Array subscript expressions are lvalues
-										return true;
-									} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-										// Member access expressions are lvalues
-										return true;
-									} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-										// Dereference (*ptr) is an lvalue
-										// Other unary operators like ++, --, etc. may also be lvalues
-										return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-										// String literals are lvalues in C++
-										return true;
-									} else {
-										// All other expressions (literals, temporaries, etc.) are rvalues
-										return false;
-									}
-								}, expr);
-								
-								if (is_lvalue) {
-									// For forwarding reference deduction: T&& deduces to T& for lvalues
-									arg_type_node.set_lvalue_reference(true);
-								}
-								
-								arg_types.push_back(arg_type_node);
-							}
-						}
-					}
+					// Apply lvalue reference for forwarding deduction on arg_types
+					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 					
 					
 					// Try to instantiate the qualified template function
@@ -20191,6 +20351,63 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							}
 						}
 						
+						// Handle functional-style cast for class templates: Template<Args>()
+						// This creates a temporary object of the instantiated class type
+						// Pattern: hash<_Tp>() creates a temporary hash<_Tp> object
+						if (!identifierType && peek_token().has_value() && peek_token()->value() == "(") {
+							auto class_template_opt = gTemplateRegistry.lookupTemplate(idenfifier_token.value());
+							if (class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
+								FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", idenfifier_token.value());
+								
+								// Build the instantiated type name
+								StringBuilder inst_name_builder;
+								inst_name_builder.append(idenfifier_token.value()).append("_");
+								for (size_t i = 0; i < explicit_template_args->size(); ++i) {
+									if (i > 0) inst_name_builder.append("_");
+									append_type_name_suffix(inst_name_builder, (*explicit_template_args)[i]);
+								}
+								std::string_view instantiated_type_name = inst_name_builder.commit();
+								
+								// Try to instantiate the class template (may fail for dependent args, which is OK)
+								try_instantiate_class_template(idenfifier_token.value(), *explicit_template_args);
+								
+								// Consume '(' and parse constructor arguments
+								consume_token(); // consume '('
+								
+								// Parse constructor arguments
+								ChunkedVector<ASTNode> args;
+								if (current_token_.has_value() && current_token_->value() != ")") {
+									while (true) {
+										auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+										if (arg_result.is_error()) {
+											return arg_result;
+										}
+										if (auto arg = arg_result.node()) {
+											args.push_back(*arg);
+										}
+										
+										if (!current_token_.has_value() || current_token_->value() != ",") {
+											break;
+										}
+										consume_token(); // consume ','
+									}
+								}
+								
+								if (!consume_punctuator(")")) {
+									return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+								}
+								
+								// Create TypeSpecifierNode for the instantiated template type
+								Token inst_type_token(Token::Type::Identifier, instantiated_type_name,
+								                      idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+								auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, inst_type_token);
+								
+								// Create ConstructorCallNode for functional-style cast
+								result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), inst_type_token));
+								return ParseResult::success(*result);
+							}
+						}
+						
 						// Check if this is a template alias - if so, treat as valid dependent expression
 						// This handles patterns like: __enable_if_t<...> in template argument contexts
 						if (!identifierType) {
@@ -20473,6 +20690,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						
 						if (class_template_opt.has_value()) {
 							FLASH_LOG(Parser, Debug, "Found class template '", idenfifier_token.value(), "' in expression context");
+							// Mark as found to prevent "Missing identifier" error
+							found_as_type_alias = true;  // Reuse this flag - class template acts like a type name
 							// Don't return - let it fall through to template argument parsing below
 						} else {
 							// Check if this is a variable template (e.g., is_reference_v<T>)
@@ -20716,6 +20935,99 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					}
 				}
 			}
+			
+			// Handle functional-style cast for class templates: ClassName<Args>()
+			// This creates a temporary object of the instantiated class type
+			// Pattern: hash<_Tp>() creates a temporary hash<_Tp> object
+			if (explicit_template_args.has_value() && peek_token().has_value() && peek_token()->value() == "(") {
+				// Check if this is a class template
+				auto class_template_opt = gTemplateRegistry.lookupTemplate(idenfifier_token.value());
+				if (class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", idenfifier_token.value());
+					
+					// Build the instantiated type name
+					StringBuilder inst_name_builder;
+					inst_name_builder.append(idenfifier_token.value()).append("_");
+					for (size_t i = 0; i < explicit_template_args->size(); ++i) {
+						if (i > 0) inst_name_builder.append("_");
+						append_type_name_suffix(inst_name_builder, (*explicit_template_args)[i]);
+					}
+					std::string_view instantiated_type_name = inst_name_builder.commit();
+					
+					// Try to instantiate the class template
+					try_instantiate_class_template(idenfifier_token.value(), *explicit_template_args);
+					
+					// Consume '(' and parse constructor arguments
+					consume_token(); // consume '('
+					
+					// Parse constructor arguments
+					ChunkedVector<ASTNode> args;
+					if (current_token_.has_value() && current_token_->value() != ")") {
+						while (true) {
+							auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+							if (arg_result.is_error()) {
+								return arg_result;
+							}
+							if (auto arg = arg_result.node()) {
+								args.push_back(*arg);
+							}
+							
+							if (!current_token_.has_value() || current_token_->value() != ",") {
+								break;
+							}
+							consume_token(); // consume ','
+						}
+					}
+					
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+					}
+					
+					// Create TypeSpecifierNode for the instantiated template type
+					Token inst_type_token(Token::Type::Identifier, instantiated_type_name,
+					                      idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, inst_type_token);
+					
+					// Create ConstructorCallNode for functional-style cast
+					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), inst_type_token));
+					return ParseResult::success(*result);
+				}
+			}
+
+			// Handle brace initialization for type names: TypeName{} or TypeName{args}
+			// This handles expressions like "throw bad_any_cast{}" where bad_any_cast is a class
+			if (found_as_type_alias && !identifierType && peek_token().has_value() && peek_token()->value() == "{") {
+				consume_token(); // consume '{'
+				
+				// Parse brace initializer arguments
+				ChunkedVector<ASTNode> args;
+				while (current_token_.has_value() && current_token_->value() != "}") {
+					auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+					if (arg_result.is_error()) {
+						return arg_result;
+					}
+					if (auto arg = arg_result.node()) {
+						args.push_back(*arg);
+					}
+					
+					if (current_token_.has_value() && current_token_->value() == ",") {
+						consume_token(); // consume ','
+					} else if (!current_token_.has_value() || current_token_->value() != "}") {
+						return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+					}
+				}
+				
+				if (!consume_punctuator("}")) {
+					return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+				}
+				
+				// Create TypeSpecifierNode for the type
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, idenfifier_token);
+				
+				// Create ConstructorCallNode for brace initialization
+				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
+				return ParseResult::success(*result);
+			}
 
 			// Initially set result to a simple identifier - will be upgraded to FunctionCallNode if it's a function call
 			if (!result.has_value()) {
@@ -20782,99 +21094,119 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					return ParseResult::error(ParserError::NotImplemented, idenfifier_token);
 
 				ChunkedVector<ASTNode> args;
-				while (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")"sv) {
-					ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (argResult.is_error()) {
-						return argResult;
-					}
-
-					// Check for pack expansion: expr...
-					if (peek_token().has_value() && peek_token()->value() == "...") {
-						consume_token(); // consume '...'
+				// Check if function call has arguments (not empty parentheses)
+				if (peek_token().has_value() && peek_token()->value() != ")") {
+					FLASH_LOG_FORMAT(Parser, Debug, "Parsing function arguments, peek='{}', current='{}'", 
+						peek_token()->value(), current_token_.has_value() ? current_token_->value() : "N/A");
+					while (true) {
+						ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (argResult.is_error()) {
+							return argResult;
+						}
 						
-						// Pack expansion: need to expand the expression for each pack element
-						if (auto arg_node = argResult.node()) {
-							// Check if this is an ExpressionNode containing an IdentifierNode
-							if (arg_node->is<ExpressionNode>()) {
-								const auto& expr = arg_node->as<ExpressionNode>();
-								if (std::holds_alternative<IdentifierNode>(expr)) {
-									const auto& ident_node = std::get<IdentifierNode>(expr);
-									std::string_view pack_name = ident_node.name();
-									// Try to find pack_name_0, pack_name_1, etc. in the symbol table
-									size_t pack_size = 0;
-									
-									StringBuilder sb;
-									for (size_t i = 0; i < 100; ++i) {  // reasonable limit
-										// Use StringBuilder to create a persistent string
-										std::string_view element_name = sb
-											.append(pack_name)
-											.append("_")
-											.append(i)
-											.preview();
-									
-										if (gSymbolTable.lookup(element_name).has_value()) {
-											++pack_size;
-										} else {
-											break;
-										}
+						FLASH_LOG_FORMAT(Parser, Debug, "Parsed one argument, peek='{}', has_node={}", 
+							peek_token().has_value() ? peek_token()->value() : "N/A", argResult.node().has_value());
 
-										sb.reset();
-									}
-									sb.reset();
-									
-									if (pack_size > 0) {
-										// Add each pack element as a separate argument
-										for (size_t i = 0; i < pack_size; ++i) {
-											// Use StringBuilder to create a persistent string for the token
+						// Check for pack expansion: expr...
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							consume_token(); // consume '...'
+							
+							// Pack expansion: need to expand the expression for each pack element
+							if (auto arg_node = argResult.node()) {
+								// Check if this is an ExpressionNode containing an IdentifierNode
+								if (arg_node->is<ExpressionNode>()) {
+									const auto& expr = arg_node->as<ExpressionNode>();
+									if (std::holds_alternative<IdentifierNode>(expr)) {
+										const auto& ident_node = std::get<IdentifierNode>(expr);
+										std::string_view pack_name = ident_node.name();
+										// Try to find pack_name_0, pack_name_1, etc. in the symbol table
+										size_t pack_size = 0;
+										
+										StringBuilder sb;
+										for (size_t i = 0; i < 100; ++i) {  // reasonable limit
+											// Use StringBuilder to create a persistent string
 											std::string_view element_name = sb
 												.append(pack_name)
 												.append("_")
 												.append(i)
-												.commit();
-											
-											Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
-											auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
-											args.push_back(elem_node);
+												.preview();
+										
+											if (gSymbolTable.lookup(element_name).has_value()) {
+												++pack_size;
+											} else {
+												break;
+											}
+
+											sb.reset();
+										}
+										sb.reset();
+										
+										if (pack_size > 0) {
+											// Add each pack element as a separate argument
+											for (size_t i = 0; i < pack_size; ++i) {
+												// Use StringBuilder to create a persistent string for the token
+												std::string_view element_name = sb
+													.append(pack_name)
+													.append("_")
+													.append(i)
+													.commit();
+												
+												Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
+												auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
+												args.push_back(elem_node);
+											}
+										} else {
+											if (auto node = argResult.node()) {
+												args.push_back(*node);
+											}
 										}
 									} else {
+										// Complex expression: need full rewriting (not implemented yet)
 										if (auto node = argResult.node()) {
 											args.push_back(*node);
 										}
 									}
 								} else {
-									// Complex expression: need full rewriting (not implemented yet)
+									// Not an ExpressionNode
 									if (auto node = argResult.node()) {
 										args.push_back(*node);
 									}
 								}
-							} else {
-								// Not an ExpressionNode
-								if (auto node = argResult.node()) {
-									args.push_back(*node);
-								}
+							}
+						} else {
+							// Regular argument
+							FLASH_LOG_FORMAT(Parser, Debug, "Adding regular argument to args, has_node={}", argResult.node().has_value());
+							if (auto node = argResult.node()) {
+								args.push_back(*node);
+								FLASH_LOG_FORMAT(Parser, Debug, "Added argument to args, new size={}", args.size());
 							}
 						}
-					} else {
-						// Regular argument
-						if (auto node = argResult.node()) {
-							args.push_back(*node);
+
+						// Check what comes after the argument
+						if (!peek_token().has_value()) {
+							return ParseResult::error(ParserError::NotImplemented, Token());
+						}
+						
+						if (peek_token()->value() == ")") {
+							// End of argument list
+							break;
+						}
+						else if (peek_token()->value() == ",") {
+							// More arguments follow
+							consume_token(); // Consume comma
+						}
+						else {
+							return ParseResult::error("Expected ',' or ')' after function argument", *peek_token());
 						}
 					}
-
-					if (current_token_->type() == Token::Type::Punctuator && current_token_->value() == ","sv) {
-						consume_token(); // Consume comma
-					}
-					else if (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")"sv) {
-						return ParseResult::error("Expected ',' or ')' after function argument", *current_token_);
-					}
-
-					if (!peek_token().has_value())
-						return ParseResult::error(ParserError::NotImplemented, Token());
 				}
 
 				if (!consume_punctuator(")")) {
 					return ParseResult::error("Expected ')' after function call arguments", *current_token_);
 				}
+				
+				FLASH_LOG_FORMAT(Parser, Debug, "After parsing args: size={}, has_operator_call={}, is_template_parameter={}, is_function_pointer={}", 
+					args.size(), has_operator_call, is_template_parameter, is_function_pointer);
 
 				// For operator() calls, create a member function call
 				if (has_operator_call) {
@@ -20938,14 +21270,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Check if this is a constructor call on a template parameter
 					if (result.has_value() && result->is<ExpressionNode>()) {
 						const ExpressionNode& expr = result->as<ExpressionNode>();
+						FLASH_LOG_FORMAT(Parser, Debug, "Checking if result is TemplateParameterReferenceNode, expr_index={}", expr.index());
 						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 							// This is a constructor call: T(args)
+							FLASH_LOG(Parser, Debug, "result IS TemplateParameterReferenceNode, moving args");
 							const auto& template_param = std::get<TemplateParameterReferenceNode>(expr);
 							// Create a TypeSpecifierNode for the template parameter
 							Token param_token(Token::Type::Identifier, template_param.param_name().view(), idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 							auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, param_token);
 							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), idenfifier_token));
 						} else {
+							FLASH_LOG_FORMAT(Parser, Debug, "result is NOT TemplateParameterReferenceNode, proceeding to overload resolution, args.size()={}", args.size());
 							// Perform overload resolution for regular functions
 							// First, get all overloads of this function
 							auto all_overloads = gSymbolTable.lookup_all(idenfifier_token.value());
@@ -20969,6 +21304,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
 										}
 									}
+									// Return early - we've created the FunctionCallNode with the args
+									if (result.has_value())
+										return ParseResult::success(*result);
 									break;
 								}
 							
@@ -23029,6 +23367,103 @@ ParseResult Parser::parse_qualified_identifier() {
 	return ParseResult::success(qualified_node);
 }
 
+// Helper: Parse template brace initialization: Template<Args>{}
+// Parses the brace initializer, looks up the instantiated type, and creates a ConstructorCallNode
+ParseResult Parser::parse_template_brace_initialization(
+        const std::vector<TemplateTypeArg>& template_args,
+        std::string_view template_name,
+        const Token& identifier_token) {
+	
+	// Build the instantiated type name
+	std::string_view instantiated_name = get_instantiated_class_name(template_name, template_args);
+	
+	// Look up the instantiated type
+	auto type_handle = StringTable::getOrInternStringHandle(instantiated_name);
+	auto type_it = gTypesByName.find(type_handle);
+	if (type_it == gTypesByName.end()) {
+		// Type not found - instantiation may have failed
+		return ParseResult::error("Template instantiation failed or type not found", identifier_token);
+	}
+	
+	// Determine which token checking method to use based on what token is '{'
+	// If current_token_ is '{', we use current_token_ style checking
+	// Otherwise, we use peek_token() style checking
+	bool use_current_token = current_token_.has_value() && current_token_->value() == "{";
+	
+	// Consume the opening '{'
+	if (use_current_token) {
+		consume_token(); // consume '{'
+	} else if (peek_token().has_value() && peek_token()->value() == "{") {
+		consume_token(); // consume '{'
+	} else {
+		return ParseResult::error("Expected '{' for brace initialization", identifier_token);
+	}
+	
+	// Parse arguments inside braces
+	ChunkedVector<ASTNode> args;
+	while (true) {
+		// Check for closing brace
+		bool at_close = use_current_token 
+			? (current_token_.has_value() && current_token_->value() == "}")
+			: (peek_token().has_value() && peek_token()->value() == "}");
+		
+		if (at_close) {
+			break;
+		}
+		
+		// Parse argument expression
+		auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (argResult.is_error()) {
+			return argResult;
+		}
+		if (auto node = argResult.node()) {
+			args.push_back(*node);
+		}
+		
+		// Check for comma or closing brace
+		bool has_comma = use_current_token
+			? (current_token_.has_value() && current_token_->value() == ",")
+			: (peek_token().has_value() && peek_token()->value() == ",");
+		
+		bool has_close = use_current_token
+			? (current_token_.has_value() && current_token_->value() == "}")
+			: (peek_token().has_value() && peek_token()->value() == "}");
+		
+		if (has_comma) {
+			consume_token(); // consume ','
+		} else if (!has_close) {
+			return ParseResult::error("Expected ',' or '}' in brace initializer", *current_token_);
+		}
+	}
+	
+	// Consume the closing '}'
+	if (use_current_token) {
+		if (!current_token_.has_value() || current_token_->value() != "}") {
+			return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+		}
+		consume_token();
+	} else {
+		if (!consume_punctuator("}")) {
+			return ParseResult::error("Expected '}' after brace initializer", *current_token_);
+		}
+	}
+	
+	// Create TypeSpecifierNode for the instantiated class
+	const TypeInfo& type_info = *type_it->second;
+	TypeIndex type_index = type_info.type_index_;
+	int type_size = 0;
+	if (type_info.struct_info_) {
+		type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
+	}
+	Token type_token(Token::Type::Identifier, instantiated_name, 
+	                identifier_token.line(), identifier_token.column(), identifier_token.file_index());
+	auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, type_token);
+	
+	// Create ConstructorCallNode
+	std::optional<ASTNode> result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), type_token));
+	return ParseResult::success(*result);
+}
+
 // Helper: Parse qualified identifier path after template arguments (Template<T>::member)
 // Assumes we're positioned right after template arguments and next token is ::
 // Returns a QualifiedIdentifierNode wrapped in ExpressionNode if successful
@@ -24813,6 +25248,10 @@ ParseResult Parser::parse_template_declaration() {
 			gConceptRegistry.registerConcept(StringTable::getStringView(qualified_handle), concept_node);
 		}
 		
+		// Clean up template parameter context before returning
+		// Note: only clear current_template_param_names_, keep parsing_template_body_ as-is
+		current_template_param_names_.clear();
+		
 		return saved_position.success(concept_node);
 	} else if (is_alias_template) {
 		// Consume 'using' keyword
@@ -24983,6 +25422,10 @@ ParseResult Parser::parse_template_declaration() {
 			gTemplateRegistry.register_alias_template(std::string(qualified_name), alias_node);
 		}
 		
+		// Clean up template parameter context before returning
+		// Note: only clear current_template_param_names_, keep parsing_template_body_ as-is
+		current_template_param_names_.clear();
+		
 		return saved_position.success(alias_node);
 	}
 	else if (is_variable_template) {
@@ -25102,6 +25545,17 @@ ParseResult Parser::parse_template_declaration() {
 					arg.is_reference = type_spec.is_lvalue_reference();
 					arg.is_rvalue_reference = type_spec.is_rvalue_reference();
 					arg.is_array = is_array;
+					// Mark as dependent - this is a partial specialization pattern,
+					// so all types are template parameters (dependent types)
+					arg.is_dependent = true;
+					
+					// Store the type name for pattern matching
+					// For template instantiations like ratio<_Num, _Den>, this will be "ratio"
+					// For simple types like T, this will be "T"
+					if (type_spec.token().value().size() > 0) {
+						arg.dependent_name = StringTable::getOrInternStringHandle(type_spec.token().value());
+					}
+					
 					specialization_pattern.push_back(arg);
 				}
 				
@@ -25178,6 +25632,62 @@ ParseResult Parser::parse_template_declaration() {
 			pattern_name.append(var_name);
 			for (const auto& arg : specialization_pattern) {
 				pattern_name.append("_");
+				
+				// Include base type name for user-defined types to distinguish patterns
+				// e.g., __is_ratio_v<ratio<N,D>> gets pattern "__is_ratio_v_ratio"
+				// For simple dependent types (like T&), DON'T include the type name
+				// e.g., is_reference_v<T&> should get pattern "is_reference_v_R", not "is_reference_v_TR"
+				// BUT for dependent TEMPLATE INSTANTIATIONS (like ratio<_Num, _Den>), DO include the base template name
+				bool included_type_name = false;
+				
+				// First, check if we have a valid type_index pointing to a named type
+				if ((arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum)) {
+					if (arg.type_index < gTypeInfo.size() && arg.type_index > 0) {
+						// Get the simple name (without namespace) for pattern matching
+						std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+						// Strip namespace prefix if present
+						size_t last_colon = type_name.rfind("::");
+						if (last_colon != std::string_view::npos) {
+							type_name = type_name.substr(last_colon + 2);
+						}
+						
+						// Only include type name for TEMPLATE INSTANTIATION patterns, not simple template parameters
+						// Template instantiation placeholders look like "ratio_void_void" (contain "_void")
+						// Simple template parameters look like "T" or "_Tp" (no "_void")
+						std::string type_name_str(type_name);
+						if (type_name_str.find("_void") != std::string::npos) {
+							// This is a dependent template instantiation like ratio<_Num, _Den>
+							// Extract just the base template name "ratio"
+							size_t first_underscore = type_name.find('_');
+							if (first_underscore != std::string_view::npos) {
+								type_name = type_name.substr(0, first_underscore);
+							}
+							pattern_name.append(type_name);
+							included_type_name = true;
+						} else if (!arg.is_dependent) {
+							// Non-dependent concrete type - include the full type name
+							pattern_name.append(type_name);
+							included_type_name = true;
+						}
+						// For simple dependent types (like T), don't include the name - they match any type
+					}
+				}
+				
+				// If type_index didn't give us a name and we have dependent_name, check if it's a template
+				// This handles cases where the template instantiation was skipped due to dependent args
+				if (!included_type_name && arg.dependent_name.isValid()) {
+					std::string_view dep_name = StringTable::getStringView(arg.dependent_name);
+					// Check if this name is a known template (not just a simple type like T)
+					// Template names are identifiers that have registered templates
+					auto template_opt = gTemplateRegistry.lookupTemplate(dep_name);
+					if (template_opt.has_value()) {
+						// This is a template instantiation pattern - include the template name
+						pattern_name.append(dep_name);
+						included_type_name = true;
+					}
+					// else: It's a simple type parameter like T - don't include in pattern
+				}
+				
 				if (arg.is_reference) {
 					pattern_name.append("R");  // lvalue reference
 				} else if (arg.is_rvalue_reference) {
@@ -25216,6 +25726,11 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Also add to symbol table so identifier lookup works
 		gSymbolTable.insert(var_name, template_var_node);
+		
+		// Clean up template parameter context before returning
+		// Note: only clear current_template_param_names_, keep parsing_template_body_ as-is
+		// to avoid breaking template argument resolution in subsequent code
+		current_template_param_names_.clear();
 		
 		return saved_position.success(template_var_node);
 	}
@@ -25362,14 +25877,34 @@ ParseResult Parser::parse_template_declaration() {
 						consume_token();
 					}
 
-					// Parse base class name
+					// Parse base class name - could be qualified like ns::Base or simple like Base
 					auto base_name_token_opt = consume_token();
 					if (!base_name_token_opt.has_value() || base_name_token_opt->type() != Token::Type::Identifier) {
 						return ParseResult::error("Expected base class name", base_name_token_opt.value_or(Token()));
 					}
 
 					Token base_name_token = *base_name_token_opt;
-					std::string_view base_class_name = base_name_token_opt->value();
+					StringBuilder base_class_name_builder;
+					base_class_name_builder.append(base_name_token_opt->value());
+					
+					// Check for qualified name (e.g., ns::Base or std::false_type)
+					while (peek_token().has_value() && peek_token()->value() == "::") {
+						consume_token(); // consume '::'
+						
+						auto next_name_token = peek_token();
+						if (!next_name_token.has_value() || next_name_token->type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected identifier after '::'", next_name_token.value_or(Token()));
+						}
+						consume_token(); // consume the identifier
+						
+						base_class_name_builder.append("::"sv);
+						base_class_name_builder.append(next_name_token->value());
+						base_name_token = *next_name_token;  // Update for error reporting
+						
+						FLASH_LOG_FORMAT(Parser, Debug, "Parsing qualified base class name in full specialization: {}", base_class_name_builder.preview());
+					}
+					
+					std::string_view base_class_name = base_class_name_builder.commit();
 					std::vector<ASTNode> template_arg_nodes;
 					std::optional<std::vector<TemplateTypeArg>> base_template_args_opt;
 					std::optional<StringHandle> member_type_name;
@@ -26137,6 +26672,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Reset parsing context flags
 			parsing_template_class_ = false;
 			parsing_template_body_ = false;
+			current_template_param_names_.clear();
 		
 			// Don't add specialization to AST - it's stored in the template registry
 			// and will be used when Container<int> is instantiated
@@ -26383,7 +26919,7 @@ ParseResult Parser::parse_template_declaration() {
 			// BUGFIX: Pass local_struct_info for static member visibility in template partial specializations
 			// This fixes the issue where static constexpr members (e.g., __g, __d2) are not visible
 			// when used as template arguments in typedef declarations within the same struct body
-			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref, struct_info.get()});
+			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name), &struct_ref, struct_info.get(), {}});
 			
 			// Parse class body (same as full specialization)
 			while (peek_token().has_value() && peek_token()->value() != "}") {
@@ -26459,6 +26995,37 @@ ParseResult Parser::parse_template_declaration() {
 							return static_assert_result;
 						}
 						continue;
+					} else if (peek_token()->value() == "constexpr" || 
+					           peek_token()->value() == "consteval" ||
+					           peek_token()->value() == "inline" ||
+					           peek_token()->value() == "explicit") {
+						// Handle constexpr/consteval/inline/explicit before constructor or member function
+						// Consume the specifier and continue to constructor/member check below
+					}
+				}
+				
+				// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
+				// This mirrors the handling in regular struct parsing
+				[[maybe_unused]] bool is_member_constexpr = false;
+				[[maybe_unused]] bool is_member_consteval = false;
+				[[maybe_unused]] bool is_member_inline = false;
+				[[maybe_unused]] bool is_member_explicit = false;
+				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+					std::string_view kw = peek_token()->value();
+					if (kw == "constexpr") {
+						is_member_constexpr = true;
+						consume_token();
+					} else if (kw == "consteval") {
+						is_member_consteval = true;
+						consume_token();
+					} else if (kw == "inline") {
+						is_member_inline = true;
+						consume_token();
+					} else if (kw == "explicit") {
+						is_member_explicit = true;
+						consume_token();
+					} else {
+						break;
 					}
 				}
 				
@@ -26659,6 +27226,100 @@ ParseResult Parser::parse_template_declaration() {
 					discard_saved_token(saved_pos);
 				}
 				
+				// Check for destructor (~StructName followed by '(')
+				if (peek_token().has_value() && peek_token()->value() == "~") {
+					consume_token();  // consume '~'
+					
+					auto name_token_opt = consume_token();
+					if (!name_token_opt.has_value() || name_token_opt->type() != Token::Type::Identifier ||
+					    name_token_opt->value() != template_name) {
+						return ParseResult::error("Expected struct name after '~' in destructor", name_token_opt.value_or(Token()));
+					}
+					Token dtor_name_token = name_token_opt.value();
+					std::string_view dtor_name = dtor_name_token.value();
+					
+					if (!consume_punctuator("(")) {
+						return ParseResult::error("Expected '(' after destructor name", *peek_token());
+					}
+					
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Destructor cannot have parameters", *peek_token());
+					}
+					
+					auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(dtor_name));
+					
+					// Parse trailing specifiers (noexcept, override, final, = default, = delete, etc.)
+					FlashCpp::MemberQualifiers dtor_member_quals;
+					FlashCpp::FunctionSpecifiers dtor_func_specs;
+					auto dtor_specs_result = parse_function_trailing_specifiers(dtor_member_quals, dtor_func_specs);
+					if (dtor_specs_result.is_error()) {
+						return dtor_specs_result;
+					}
+					
+					// Apply specifiers
+					if (dtor_func_specs.is_noexcept) {
+						dtor_ref.set_noexcept(true);
+					}
+					
+					bool is_defaulted = dtor_func_specs.is_defaulted;
+					bool is_deleted = dtor_func_specs.is_deleted;
+					
+					// Handle defaulted destructors
+					if (is_defaulted) {
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= default'", *peek_token());
+						}
+						
+						// Create an empty block for the destructor body
+						auto [block_node, block_ref] = create_node_ref(BlockNode());
+						NameMangling::MangledName mangled = NameMangling::generateMangledNameFromNode(dtor_ref);
+						dtor_ref.set_mangled_name(mangled);
+						dtor_ref.set_definition(block_node);
+						
+						struct_ref.add_destructor(dtor_node, current_access);
+						continue;
+					}
+					
+					// Handle deleted destructors
+					if (is_deleted) {
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+						}
+						// Deleted destructors are not added to the struct
+						continue;
+					}
+					
+					// Parse function body if present (and not defaulted/deleted)
+					if (peek_token().has_value() && peek_token()->value() == "{") {
+						// Save position at start of body
+						SaveHandle body_start = save_token_position();
+						
+						// Skip over the function body by counting braces
+						skip_balanced_braces();
+						
+						// Record for delayed parsing
+						delayed_function_bodies_.push_back({
+							nullptr,  // member_func_ref
+							body_start,
+							{},       // initializer_list_start (not used)
+							instantiated_name,
+							struct_type_info.type_index_,
+							&struct_ref,
+							false,    // has_initializer_list
+							false,    // is_constructor
+							true,     // is_destructor
+							nullptr,  // ctor_node
+							&dtor_ref,  // dtor_node
+							{}  // no template parameter names for specializations
+						});
+					} else if (!consume_punctuator(";")) {
+						return ParseResult::error("Expected '{' or ';' after destructor declaration", *peek_token());
+					}
+					
+					struct_ref.add_destructor(dtor_node, current_access);
+					continue;
+				}
+				
 				// Parse member declaration using delayed parsing for function bodies
 				// (Same approach as full specialization to ensure member_function_context is available)
 				auto member_result = parse_type_and_name();
@@ -26699,6 +27360,47 @@ ParseResult Parser::parse_template_declaration() {
 					// Copy parameters from the parsed function
 					for (const auto& param : func_decl.parameter_nodes()) {
 						member_func_ref.add_parameter_node(param);
+					}
+					
+					// Parse trailing specifiers (const, volatile, noexcept, override, final, = default, = delete)
+					FlashCpp::MemberQualifiers member_quals;
+					FlashCpp::FunctionSpecifiers func_specs;
+					auto specs_result = parse_function_trailing_specifiers(member_quals, func_specs);
+					if (specs_result.is_error()) {
+						return specs_result;
+					}
+					
+					// Extract parsed specifiers
+					bool is_defaulted = func_specs.is_defaulted;
+					bool is_deleted = func_specs.is_deleted;
+					
+					// Handle defaulted functions: create implicit function with empty body
+					if (is_defaulted) {
+						// Expect ';'
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= default'", *peek_token());
+						}
+						
+						// Mark as implicit
+						member_func_ref.set_is_implicit(true);
+						
+						// Create empty block for the function body
+						auto [block_node, block_ref] = create_node_ref(BlockNode());
+						member_func_ref.set_definition(block_node);
+						
+						// Add member function to struct
+						struct_ref.add_member_function(member_func_node, current_access);
+						continue;
+					}
+					
+					// Handle deleted functions: skip adding to struct
+					if (is_deleted) {
+						// Expect ';'
+						if (!consume_punctuator(";")) {
+							return ParseResult::error("Expected ';' after '= delete'", *peek_token());
+						}
+						// Deleted functions are not added to the struct
+						continue;
 					}
 					
 					// Check for function body and use delayed parsing
@@ -26980,6 +27682,9 @@ if (struct_type_info.getStructInfo()) {
 			// Register the specialization PATTERN (not exact match)
 			// This allows pattern matching during instantiation
 			gTemplateRegistry.registerSpecializationPattern(template_name, template_params, pattern_args, struct_node);
+			
+			// Clean up template parameter context before returning
+			current_template_param_names_.clear();
 			
 			return saved_position.success(struct_node);
 		}
@@ -27348,8 +28053,18 @@ if (struct_type_info.getStructInfo()) {
 		// If we're in a namespace, register with both simple and qualified names
 		std::string_view simple_name = func_decl_node.identifier_token().value();
 		
+		// Add debug logging for __call_is_nt to track hang location
+		if (simple_name == "__call_is_nt") {
+			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Registering __call_is_nt template");
+			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Function has ", func_decl.parameter_nodes().size(), " parameters");
+		}
+		
 		// Register with simple name (for backward compatibility and unqualified lookups)
 		gTemplateRegistry.registerTemplate(simple_name, template_func_node);
+		
+		if (simple_name == "__call_is_nt") {
+			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Successfully registered __call_is_nt");
+		}
 		
 		// If in a namespace, also register with qualified name for namespace-qualified lookups
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
@@ -27363,6 +28078,10 @@ if (struct_type_info.getStructInfo()) {
 
 		// Add the template function to the symbol table so it can be found during overload resolution
 		gSymbolTable.insert(simple_name, template_func_node);
+		
+		if (simple_name == "__call_is_nt") {
+			FLASH_LOG(Templates, Info, "[DEBUG_HANG] Completed all registration for __call_is_nt");
+		}
 
 		return saved_position.success(template_func_node);
 	}
@@ -27525,6 +28244,69 @@ ParseResult Parser::parse_requires_expression() {
 			// Parse pointer/reference modifiers after the type
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 			
+			// Check for parenthesized declarator: type(&name)(params) or type(*name)(params)
+			// This is used for function pointer/reference parameters
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				consume_token(); // consume '('
+				
+				// Expect & or * for function reference/pointer
+				if (peek_token().has_value() && peek_token()->value() == "&") {
+					consume_token(); // consume '&'
+					type_spec.set_reference(false);  // lvalue reference
+				} else if (peek_token().has_value() && peek_token()->value() == "*") {
+					consume_token(); // consume '*'
+					type_spec.add_pointer_level(CVQualifier::None);
+				} else {
+					return ParseResult::error("Expected '&' or '*' in function declarator", *current_token_);
+				}
+				
+				// Parse parameter name
+				if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+					return ParseResult::error("Expected identifier in function declarator", *current_token_);
+				}
+				Token param_name = *peek_token();
+				consume_token();
+				
+				// Expect closing ')'
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after function declarator name", *current_token_);
+				}
+				
+				// Parse function parameter list: (params)
+				if (!consume_punctuator("(")) {
+					return ParseResult::error("Expected '(' for function parameter list", *current_token_);
+				}
+				
+				// Skip function parameters (we don't need them for requires expressions)
+				int paren_depth = 1;
+				while (paren_depth > 0 && peek_token().has_value()) {
+					if (peek_token()->value() == "(") {
+						paren_depth++;
+					} else if (peek_token()->value() == ")") {
+						paren_depth--;
+					}
+					if (paren_depth > 0) consume_token();
+				}
+				
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after function parameter list", *current_token_);
+				}
+				
+				// Create a declaration node for the parameter
+				auto decl_node = emplace_node<DeclarationNode>(*type_result.node(), param_name);
+				parameters.push_back(decl_node);
+				
+				// Add parameter to the scope so it can be used in the requires body
+				gSymbolTable.insert(param_name.value(), decl_node);
+				
+				// Check for comma (more parameters) or end
+				if (peek_token().has_value() && peek_token()->value() == ",") {
+					consume_token(); // consume ','
+				}
+				
+				continue; // Skip the rest of the loop for this parameter
+			}
+			
 			// Parse cv-qualifiers (const, volatile)
 			CVQualifier cv = parse_cv_qualifiers();
 			type_spec.add_cv_qualifier(cv);
@@ -27551,6 +28333,29 @@ ParseResult Parser::parse_requires_expression() {
 			}
 			Token param_name = *peek_token();
 			consume_token();
+			
+			// Check if this is a function reference/pointer: type(&name)(params) or type(*name)(params)
+			// After the parameter name, if we see '(', it's a function declarator
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				// Pattern: void(&f)(T) means f is a reference to function taking T
+				consume_token(); // consume '('
+				
+				// Parse the function parameter list (simplified - just skip to ')')
+				// We don't need the full parameter info for requires expressions
+				int paren_depth = 1;
+				while (paren_depth > 0 && peek_token().has_value()) {
+					if (peek_token()->value() == "(") {
+						paren_depth++;
+					} else if (peek_token()->value() == ")") {
+						paren_depth--;
+					}
+					if (paren_depth > 0) consume_token();
+				}
+				
+				if (!consume_punctuator(")")) {
+					return ParseResult::error("Expected ')' after function declarator parameter list", *current_token_);
+				}
+			}
 			
 			// Create a declaration node for the parameter
 			auto decl_node = emplace_node<DeclarationNode>(*type_result.node(), param_name);
@@ -29757,7 +30562,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		FLASH_LOG(Templates, Debug, "Evaluating ternary operator expression");
 		ConstExpr::EvaluationContext ctx(gSymbolTable);
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
-		if (eval_result.success) {
+		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Ternary evaluated to: {}", eval_result.as_int());
 			return ConstantValue{eval_result.as_int(), Type::Int};
 		}
@@ -29776,7 +30581,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			ctx.struct_info = struct_ctx.local_struct_info;
 		}
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
-		if (eval_result.success) {
+		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Binary op evaluated to: {}", eval_result.as_int());
 			return ConstantValue{eval_result.as_int(), Type::Int};
 		}
@@ -30018,11 +30823,14 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// that should be accepted as a dependent template argument.
 				// NoexceptExprNode, SizeofExprNode, AlignofExprNode, and TypeTraitExprNode are
 				// compile-time expressions that may contain dependent expressions.
+				// QualifiedIdentifierNode represents patterns like is_same<T, int>::value where
+				// the expression is a static member access that depends on template parameters.
 				// If the next token is a valid delimiter, accept the expression as dependent.
 				bool is_compile_time_expr = std::holds_alternative<NoexceptExprNode>(expr) ||
 				                            std::holds_alternative<SizeofExprNode>(expr) ||
 				                            std::holds_alternative<AlignofExprNode>(expr) ||
-				                            std::holds_alternative<TypeTraitExprNode>(expr);
+				                            std::holds_alternative<TypeTraitExprNode>(expr) ||
+				                            std::holds_alternative<QualifiedIdentifierNode>(expr);
 				
 				if (is_compile_time_expr && peek_token().has_value()) {
 					// Handle >> token splitting for nested templates
@@ -30246,6 +31054,67 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						restore_token_position(arg_saved_pos);
 						// Fall through to type parsing below
 					} else {
+						// Check if this is a template parameter that has a type substitution available
+						// This enables variable templates inside function templates to work correctly:
+						// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
+						bool substituted_type_param = false;
+						bool finished_parsing = false;  // Track if we consumed '>' and should break
+						std::string_view param_name_to_check;
+						
+						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+							const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+							param_name_to_check = StringTable::getStringView(tparam_ref.param_name());
+						} else if (std::holds_alternative<IdentifierNode>(expr)) {
+							const auto& id = std::get<IdentifierNode>(expr);
+							param_name_to_check = id.name();
+						}
+						
+						if (!param_name_to_check.empty()) {
+							// Check if we have a type substitution for this parameter
+							for (const auto& subst : template_param_substitutions_) {
+								if (subst.is_type_param && subst.param_name == param_name_to_check) {
+									// Found a type substitution! Use it instead of creating a dependent arg
+									FLASH_LOG(Templates, Debug, "Found type substitution for parameter '", 
+									          param_name_to_check, "' -> ", subst.substituted_type.toString());
+									
+									TemplateTypeArg substituted_arg = subst.substituted_type;
+									
+									// Check for pack expansion (...)
+									if (peek_token().has_value() && peek_token()->value() == "...") {
+										consume_token(); // consume '...'
+										substituted_arg.is_pack = true;
+										FLASH_LOG(Templates, Debug, "Marked substituted type as pack expansion");
+									}
+									
+									template_args.push_back(substituted_arg);
+									if (out_type_nodes && expr_result.node().has_value()) {
+										out_type_nodes->push_back(*expr_result.node());
+									}
+									discard_saved_token(arg_saved_pos);
+									substituted_type_param = true;
+									
+									// Handle next token
+									if (peek_token().has_value() && peek_token()->value() == ">>") {
+										split_right_shift_token();
+									}
+									if (peek_token().has_value() && peek_token()->value() == ">") {
+										consume_token();
+										finished_parsing = true;
+									} else if (peek_token().has_value() && peek_token()->value() == ",") {
+										consume_token();
+									}
+									break;  // Break from the for loop
+								}
+							}
+						}
+						
+						if (substituted_type_param) {
+							if (finished_parsing) {
+								break;  // Break from the outer while loop - we're done
+							}
+							continue;  // Continue to next template argument
+						}
+						
 						FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
 						// Successfully parsed a dependent expression
 						// Create a dependent template argument
@@ -30602,13 +31471,29 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		FLASH_LOG_FORMAT(Templates, Debug, "Checking dependency for template argument: type={}, type_index={}, in_sfinae_context={}", 
 		                 static_cast<int>(type_node.type()), type_node.type_index(), in_sfinae_context_);
 		if (type_node.type() == Type::UserDefined) {
-			// Check if the type name contains "_unknown" or is a template parameter
+			// BUGFIX: Use the original token value instead of looking up via type_index
+			// When template parameters are parsed, they may have type_index=0 (void),
+			// which causes incorrect dependency checks. The token value is always correct.
+			std::string_view type_name = type_node.token().value();
+			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, type_name from token: {}", type_name);
+			
+			// Also get the full type name from gTypeInfo for composite/qualified types
+			// The token may only have the base name (e.g., "remove_reference")
+			// but gTypeInfo has the full name (e.g., "remove_reference__Tp::type")
+			std::string_view full_type_name;
 			TypeIndex idx = type_node.type_index();
-			FLASH_LOG_FORMAT(Templates, Debug, "UserDefined type, idx={}, gTypeInfo.size()={}", idx, gTypeInfo.size());
 			if (idx < gTypeInfo.size()) {
-				std::string_view type_name = StringTable::getStringView(gTypeInfo[idx].name());
-				FLASH_LOG_FORMAT(Templates, Debug, "Type name: {}", type_name);
-				
+				full_type_name = StringTable::getStringView(gTypeInfo[idx].name());
+				FLASH_LOG_FORMAT(Templates, Debug, "Full type name from gTypeInfo: {}", full_type_name);
+			}
+			
+			// Fallback to gTypeInfo lookup only if token is empty
+			if (type_name.empty()) {
+				type_name = full_type_name;
+				FLASH_LOG(Templates, Debug, "Fallback: using full type name");
+			}
+			
+			if (!type_name.empty()) {
 				auto matches_identifier = [](std::string_view haystack, std::string_view needle) {
 					size_t pos = haystack.find(needle);
 					auto is_ident_char = [](char ch) {
@@ -30644,23 +31529,39 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Template argument is dependent (type name: {})", type_name);
 				} else if (!in_sfinae_context_) {
-					for (const auto& param_name : current_template_param_names_) {
-						std::string_view param_sv = StringTable::getStringView(param_name);
-						if (matches_identifier(type_name, param_sv) && type_name.find("::type") != std::string_view::npos) {
-							arg.is_dependent = true;
-							arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
-							FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", type_name);
-							break;
+					// Also check the full type name from gTypeInfo for composite/qualified types
+					std::string_view check_name = !full_type_name.empty() ? full_type_name : type_name;
+					
+					// Check if this is a qualified identifier (contains ::) which might be a member access
+					// If so, check if the base part contains any template parameter
+					size_t scope_pos = check_name.find("::");
+					if (scope_pos != std::string_view::npos) {
+						// This is a qualified identifier - extract the base part (before ::)
+						std::string_view base_part = check_name.substr(0, scope_pos);
+						
+						for (const auto& param_name : current_template_param_names_) {
+							std::string_view param_sv = StringTable::getStringView(param_name);
+							// Check both as standalone identifier AND as substring
+							// BUT only check substring if the base_part contains underscores (mangled names)
+							// This prevents false positives where common substrings match accidentally
+							bool contains_param = matches_identifier(base_part, param_sv);
+							if (!contains_param && base_part.find('_') != std::string_view::npos) {
+								// For mangled names like "remove_reference__Tp", check substring
+								contains_param = base_part.find(param_sv) != std::string_view::npos;
+							}
+							if (contains_param) {
+								arg.is_dependent = true;
+								arg.dependent_name = StringTable::getOrInternStringHandle(check_name);
+								FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to qualified identifier with template param: {}", check_name);
+								break;
+							}
 						}
 					}
-					
-					if (!arg.is_dependent && type_name.find("::type") != std::string_view::npos) {
-						arg.is_dependent = true;
-						arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
-						FLASH_LOG_FORMAT(Templates, Debug, "Template argument marked dependent due to member type alias: {}", type_name);
-					}
 				}
-			} else if (idx == 0) {
+			}
+			
+			// Also check for type_index=0 as a fallback indicator of dependent types
+			if (!arg.is_dependent && type_node.type_index() == 0) {
 				arg.is_dependent = true;
 				FLASH_LOG(Templates, Debug, "Template argument is dependent (placeholder with type_index=0)");
 			}
@@ -30871,6 +31772,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Build template argument list
 	std::vector<TemplateArgument> template_args;
+	size_t explicit_idx = 0;  // Track position in explicit_types
 	for (size_t i = 0; i < template_params.size(); ++i) {
 		if (!template_params[i].is<TemplateParameterNode>()) {
 			FLASH_LOG_FORMAT(Templates, Error, "Template parameter {} is not a TemplateParameterNode (type: {})", i, template_params[i].type_name());
@@ -30893,9 +31795,24 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				}
 			}
 			template_args.push_back(TemplateArgument::makeTemplate(template_name_str));
+			++explicit_idx;
+		} else if (param.is_variadic()) {
+			// Variadic parameter pack - consume all remaining explicit types
+			for (size_t j = explicit_idx; j < explicit_types.size(); ++j) {
+				template_args.push_back(toTemplateArgument(explicit_types[j]));
+			}
+			explicit_idx = explicit_types.size();  // All types consumed
 		} else {
+			// Regular type parameter - bounds check before access
+			if (explicit_idx >= explicit_types.size()) {
+				// Not enough explicit types - this overload doesn't match
+				FLASH_LOG_FORMAT(Templates, Debug, "Template overload mismatch: need argument at position {} but only {} types provided", 
+				                 explicit_idx, explicit_types.size());
+				return std::nullopt;
+			}
 			// Use toTemplateArgument() to preserve full type info including references
-			template_args.push_back(toTemplateArgument(explicit_types[i]));
+			template_args.push_back(toTemplateArgument(explicit_types[explicit_idx]));
+			++explicit_idx;
 		}
 	}
 
@@ -31040,8 +31957,47 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 
+		// Set up template parameter substitutions for type parameters
+		// This enables variable templates inside the function body to work correctly:
+		// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
+		std::vector<TemplateParamSubstitution> saved_template_param_substitutions = std::move(template_param_substitutions_);
+		template_param_substitutions_.clear();
+		for (size_t i = 0; i < template_params.size() && i < explicit_types.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) continue;
+			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			const TemplateTypeArg& arg = explicit_types[i];
+			
+			if (param.kind() == TemplateParameterKind::NonType && arg.is_value) {
+				// Non-type parameter - store value for substitution
+				TemplateParamSubstitution subst;
+				subst.param_name = param.name();
+				subst.is_value_param = true;
+				subst.value = arg.value;
+				subst.value_type = arg.base_type;
+				template_param_substitutions_.push_back(subst);
+				
+				FLASH_LOG(Templates, Debug, "Registered non-type template parameter '", 
+				          param.name(), "' with value ", arg.value, " for function template body");
+			} else if (param.kind() == TemplateParameterKind::Type && !arg.is_value) {
+				// Type parameter - store type for substitution
+				TemplateParamSubstitution subst;
+				subst.param_name = param.name();
+				subst.is_value_param = false;
+				subst.is_type_param = true;
+				subst.substituted_type = arg;
+				template_param_substitutions_.push_back(subst);
+				
+				FLASH_LOG(Templates, Debug, "Registered type template parameter '", 
+				          param.name(), "' with type ", arg.toString(), " for function template body");
+			}
+		}
+
 		// Parse the function body
 		auto block_result = parse_block();
+		
+		// Restore the template parameter substitutions
+		template_param_substitutions_ = std::move(saved_template_param_substitutions);
+		
 		if (!block_result.is_error() && block_result.node().has_value()) {
 			// After parsing, we need to substitute template parameters in the body
 			// This is essential for features like fold expressions that need AST transformation
@@ -31169,7 +32125,9 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	}
 	
 	if (!all_templates || all_templates->empty()) {
-		FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
+		// This is expected for regular (non-template) functions - the caller will fall back
+		// to creating a forward declaration. Only log at Debug level to avoid noise.
+		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
 		recursion_depth--;
 		return std::nullopt;
 	}
@@ -32071,8 +33029,56 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 
+		// Set up template parameter substitutions for type parameters
+		// This enables variable templates inside the function body to work correctly:
+		// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
+		std::vector<TemplateParamSubstitution> saved_template_param_substitutions = std::move(template_param_substitutions_);
+		template_param_substitutions_.clear();
+		for (size_t i = 0; i < func_template_params.size() && i < template_args.size(); ++i) {
+			if (!func_template_params[i].is<TemplateParameterNode>()) continue;
+			const TemplateParameterNode& param = func_template_params[i].as<TemplateParameterNode>();
+			const TemplateArgument& arg = template_args[i];
+			
+			if (arg.kind == TemplateArgument::Kind::Value) {
+				// Non-type parameter - store value for substitution
+				TemplateParamSubstitution subst;
+				subst.param_name = param.name();
+				subst.is_value_param = true;
+				subst.value = arg.int_value;
+				subst.value_type = arg.value_type;
+				template_param_substitutions_.push_back(subst);
+				
+				FLASH_LOG(Templates, Debug, "Registered non-type template parameter '", 
+				          param.name(), "' with value ", arg.int_value, " for function template body (deduced)");
+			} else if (arg.kind == TemplateArgument::Kind::Type) {
+				// Type parameter - convert TemplateArgument to TemplateTypeArg
+				TemplateParamSubstitution subst;
+				subst.param_name = param.name();
+				subst.is_value_param = false;
+				subst.is_type_param = true;
+				// Build TemplateTypeArg from TemplateArgument
+				subst.substituted_type.base_type = arg.type_value;
+				subst.substituted_type.type_index = arg.type_index;
+				subst.substituted_type.is_value = false;
+				subst.substituted_type.is_dependent = false;  // These are concrete types
+				if (arg.type_specifier.has_value()) {
+					subst.substituted_type.is_reference = arg.type_specifier->is_lvalue_reference();
+					subst.substituted_type.is_rvalue_reference = arg.type_specifier->is_rvalue_reference();
+					subst.substituted_type.pointer_depth = arg.type_specifier->pointer_levels().size();
+				}
+				template_param_substitutions_.push_back(subst);
+				
+				FLASH_LOG(Templates, Debug, "Registered type template parameter '", 
+				          param.name(), "' with type ", subst.substituted_type.toString(), " for function template body (deduced)");
+			}
+		}
+
 		// Parse the function body
 		auto block_result = parse_block();
+		
+		// Restore the template parameter substitutions
+		template_param_substitutions_ = std::move(saved_template_param_substitutions);
+		
 		if (!block_result.is_error() && block_result.node().has_value()) {
 			// After parsing, we need to substitute template parameters in the body
 			// This is essential for features like fold expressions that need AST transformation
@@ -32464,7 +33470,26 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		}
 	}
 	
-	for (const auto& arg : template_args) {
+	for (const auto& original_arg : template_args) {
+		// Check if this argument corresponds to a template parameter that has been substituted
+		// This happens when variable templates are used inside function template bodies
+		// e.g., __is_ratio_v<_R1> where _R1 has been substituted with ratio<1,2>
+		TemplateTypeArg arg = original_arg;  // Make a copy that we can modify
+		if ((arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) && 
+		    arg.type_index < gTypeInfo.size()) {
+			std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+			// Check if this is a template parameter with a substitution
+			for (const auto& subst : template_param_substitutions_) {
+				if (subst.is_type_param && subst.param_name == type_name) {
+					// Found! Use the substituted type instead
+					FLASH_LOG(Templates, Debug, "Substituting template parameter '", type_name, 
+					          "' with concrete type ", subst.substituted_type.toString());
+					arg = subst.substituted_type;
+					break;
+				}
+			}
+		}
+		
 		FLASH_LOG(Templates, Debug, "  arg: is_reference=", arg.is_reference, 
 			" is_rvalue_reference=", arg.is_rvalue_reference, 
 			" pointer_depth=", arg.pointer_depth,
@@ -32474,98 +33499,141 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		pattern_builder.append(simple_template_name);
 		pattern_builder.append("_");
 		
-		bool has_pattern = false;
+		// Include base type name for user-defined types to match partial specs
+		// e.g., for __is_ratio_v<ratio<1,2>>, look for pattern "__is_ratio_v_ratio"
+		if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
+			if (arg.type_index < gTypeInfo.size()) {
+				// Get the simple name (without namespace) for pattern matching
+				std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+				// Strip namespace prefix if present
+				size_t last_colon = type_name.rfind("::");
+				if (last_colon != std::string_view::npos) {
+					type_name = type_name.substr(last_colon + 2);
+				}
+				
+				// Extract base template name from instantiation name
+				// For template instantiations like "ratio_1_2", extract "ratio"
+				// Template instantiation names are built as "template_name_arg1_arg2..."
+				size_t first_underscore = type_name.find('_');
+				if (first_underscore != std::string_view::npos) {
+					// Check if this looks like a template instantiation (has underscore)
+					// Extract the base name before the first underscore
+					std::string_view base_name = type_name.substr(0, first_underscore);
+					// Verify this is likely a template instantiation by checking if there's
+					// something after the underscore (not just a trailing underscore)
+					if (first_underscore + 1 < type_name.length()) {
+						type_name = base_name;
+					}
+					// else: keep full name (might be a type with underscore in the name itself)
+				}
+				
+				pattern_builder.append(type_name);
+			}
+		}
+		
+		// Build pattern suffix based on type qualifiers
 		if (arg.is_reference) {
 			pattern_builder.append("R");  // lvalue reference
-			has_pattern = true;
 		} else if (arg.is_rvalue_reference) {
 			pattern_builder.append("RR");  // rvalue reference
-			has_pattern = true;
 		}
 		for (size_t i = 0; i < arg.pointer_depth; ++i) {
 			pattern_builder.append("P");  // pointer
-			has_pattern = true;
 		}
 		
-		if (has_pattern) {
-			std::string_view pattern_key = pattern_builder.commit();
-			auto spec_opt = gTemplateRegistry.lookupVariableTemplate(pattern_key);
-			
-			// Also try with qualified name if simple name lookup failed
-			StringBuilder qualified_pattern_builder;
-			if (!spec_opt.has_value() && template_name != simple_template_name) {
-				qualified_pattern_builder.append(template_name);
-				qualified_pattern_builder.append("_");
-				if (arg.is_reference) {
-					qualified_pattern_builder.append("R");
-				} else if (arg.is_rvalue_reference) {
-					qualified_pattern_builder.append("RR");
-				}
-				for (size_t i = 0; i < arg.pointer_depth; ++i) {
-					qualified_pattern_builder.append("P");
-				}
-				std::string_view qualified_pattern_key = qualified_pattern_builder.commit();
-				spec_opt = gTemplateRegistry.lookupVariableTemplate(qualified_pattern_key);
-			} else {
-				qualified_pattern_builder.reset();
-			}
-			
-			if (spec_opt.has_value()) {
-				FLASH_LOG(Templates, Debug, "Found variable template partial specialization: ", pattern_key);
-				// Use the specialization instead of the primary template
-				if (spec_opt->is<TemplateVariableDeclarationNode>()) {
-					const TemplateVariableDeclarationNode& spec_template = spec_opt->as<TemplateVariableDeclarationNode>();
-					const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
-					
-					// Get original token info from the specialization for better error reporting
-					const Token& orig_token = spec_var_decl.declaration().identifier_token();
-					
-					// Generate unique name for this instantiation (use simple name without namespace for symbol table)
-					StringBuilder name_builder;
-					name_builder.append(simple_template_name);
-					for (const auto& targ : template_args) {
-						name_builder.append("_");
-						name_builder.append(targ.toString());
-					}
-					std::string_view persistent_name = name_builder.commit();
-					
-					// Check if already instantiated
-					if (gSymbolTable.lookup(persistent_name).has_value()) {
-						return gSymbolTable.lookup(persistent_name);
+		// Always try to look up partial specialization
+		std::string_view pattern_key = pattern_builder.commit();
+		auto spec_opt = gTemplateRegistry.lookupVariableTemplate(pattern_key);
+		
+		// Also try with qualified name if simple name lookup failed
+		StringBuilder qualified_pattern_builder;
+		if (!spec_opt.has_value() && template_name != simple_template_name) {
+			qualified_pattern_builder.append(template_name);
+			qualified_pattern_builder.append("_");
+			if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
+				if (arg.type_index < gTypeInfo.size()) {
+					std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+					size_t last_colon = type_name.rfind("::");
+					if (last_colon != std::string_view::npos) {
+						type_name = type_name.substr(last_colon + 2);
 					}
 					
-					// Create instantiated variable using the specialization's initializer
-					// Use original token's line/column/file info for better diagnostics
-					Token inst_token(Token::Type::Identifier, persistent_name, orig_token.line(), orig_token.column(), orig_token.file_index());
-					TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 8, orig_token);  // 8 bits = 1 byte
-					auto decl_node = emplace_node<DeclarationNode>(
-						emplace_node<TypeSpecifierNode>(bool_type),
-						inst_token
-					);
+					// Extract base template name from instantiation name
+					// For template instantiations like "ratio_1_2", extract "ratio"
+					size_t first_underscore = type_name.find('_');
+					if (first_underscore != std::string_view::npos && first_underscore + 1 < type_name.length()) {
+						type_name = type_name.substr(0, first_underscore);
+					}
 					
-					// Create the initializer expression - use 'true' for specializations that match reference types
-					Token true_token(Token::Type::Keyword, "true", orig_token.line(), orig_token.column(), orig_token.file_index());
-					auto true_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
-					
-					auto var_decl_node = emplace_node<VariableDeclarationNode>(
-						decl_node,
-						true_expr,  // Use 'true' as the initializer for reference specializations
-						StorageClass::None
-					);
-					var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
-					
-					// Register in symbol table - use insertGlobal because we might be called during function parsing
-					gSymbolTable.insertGlobal(persistent_name, var_decl_node);
-					
-					// Add to AST nodes for code generation - insert at beginning so it's generated before functions that use it
-					ast_nodes_.insert(ast_nodes_.begin(), var_decl_node);
-					
-					return var_decl_node;
+					qualified_pattern_builder.append(type_name);
 				}
 			}
+			if (arg.is_reference) {
+				qualified_pattern_builder.append("R");
+			} else if (arg.is_rvalue_reference) {
+				qualified_pattern_builder.append("RR");
+			}
+			for (size_t i = 0; i < arg.pointer_depth; ++i) {
+				qualified_pattern_builder.append("P");
+			}
+			std::string_view qualified_pattern_key = qualified_pattern_builder.commit();
+			spec_opt = gTemplateRegistry.lookupVariableTemplate(qualified_pattern_key);
 		} else {
-			// Reset the StringBuilder if we didn't use it
-			pattern_builder.reset();
+			qualified_pattern_builder.reset();
+		}
+			
+		if (spec_opt.has_value()) {
+			FLASH_LOG(Templates, Debug, "Found variable template partial specialization: ", pattern_key);
+			// Use the specialization instead of the primary template
+			if (spec_opt->is<TemplateVariableDeclarationNode>()) {
+				const TemplateVariableDeclarationNode& spec_template = spec_opt->as<TemplateVariableDeclarationNode>();
+				const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
+				
+				// Get original token info from the specialization for better error reporting
+				const Token& orig_token = spec_var_decl.declaration().identifier_token();
+				
+				// Generate unique name for this instantiation (use simple name without namespace for symbol table)
+				StringBuilder name_builder;
+				name_builder.append(simple_template_name);
+				for (const auto& targ : template_args) {
+					name_builder.append("_");
+					name_builder.append(targ.toString());
+				}
+				std::string_view persistent_name = name_builder.commit();
+				
+				// Check if already instantiated
+				if (gSymbolTable.lookup(persistent_name).has_value()) {
+					return gSymbolTable.lookup(persistent_name);
+				}
+				
+				// Create instantiated variable using the specialization's initializer
+				// Use original token's line/column/file info for better diagnostics
+				Token inst_token(Token::Type::Identifier, persistent_name, orig_token.line(), orig_token.column(), orig_token.file_index());
+				TypeSpecifierNode bool_type(Type::Bool, TypeQualifier::None, 8, orig_token);  // 8 bits = 1 byte
+				auto decl_node = emplace_node<DeclarationNode>(
+					emplace_node<TypeSpecifierNode>(bool_type),
+					inst_token
+				);
+				
+				// Create the initializer expression - use 'true' for specializations that match reference types
+				Token true_token(Token::Type::Keyword, "true", orig_token.line(), orig_token.column(), orig_token.file_index());
+				auto true_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
+				
+				auto var_decl_node = emplace_node<VariableDeclarationNode>(
+					decl_node,
+					true_expr,  // Use 'true' as the initializer for reference specializations
+					StorageClass::None
+				);
+				var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
+				
+				// Register in symbol table - use insertGlobal because we might be called during function parsing
+				gSymbolTable.insertGlobal(persistent_name, var_decl_node);
+				
+				// Add to AST nodes for code generation - insert at beginning so it's generated before functions that use it
+				ast_nodes_.insert(ast_nodes_.begin(), var_decl_node);
+				
+				return var_decl_node;
+			}
 		}
 	}
 	
@@ -32760,12 +33828,14 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		new_initializer,
 		orig_var_decl.storage_class()
 	);
+	// Mark as constexpr to match the template pattern
+	instantiated_var_decl.as<VariableDeclarationNode>().set_is_constexpr(true);
 	
-	// Register the DeclarationNode in symbol table (not the VariableDeclarationNode)
-	// This is how normal variables are registered
+	// Register the VariableDeclarationNode in symbol table (not just DeclarationNode)
+	// This allows constexpr evaluation to find and evaluate the variable
 	// IMPORTANT: Use insertGlobal because we might be called during function parsing
 	// but we need to insert into global scope
-	[[maybe_unused]] bool insert_result = gSymbolTable.insertGlobal(persistent_name, new_decl_node);
+	[[maybe_unused]] bool insert_result = gSymbolTable.insertGlobal(persistent_name, instantiated_var_decl);
 	
 	// Verify it's there
 	auto verify = gSymbolTable.lookup(persistent_name);
@@ -33029,6 +34099,18 @@ std::optional<ASTNode> Parser::substitute_nontype_template_param(
 // This is critical for SFINAE patterns like void_t
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
+	
+	// Add iteration limit to prevent infinite loops during template instantiation
+	static thread_local int iteration_count = 0;
+	static thread_local const int MAX_ITERATIONS = 10000;  // Safety limit
+	
+	iteration_count++;
+	if (iteration_count > MAX_ITERATIONS) {
+		FLASH_LOG(Templates, Error, "Template instantiation iteration limit exceeded (", MAX_ITERATIONS, ")! Possible infinite loop.");
+		FLASH_LOG(Templates, Error, "Last template: '", template_name, "' with ", template_args.size(), " args");
+		iteration_count = 0;  // Reset for next compilation
+		return std::nullopt;
+	}
 	
 	// Log entry to help debug which call sites are causing issues
 	FLASH_LOG(Templates, Debug, "try_instantiate_class_template: template='", template_name, 
@@ -34523,6 +35605,62 @@ if (struct_type_info.getStructInfo()) {
 			}
 		}
 		
+		// Re-evaluate deferred static_asserts with substituted template parameters
+		FLASH_LOG(Templates, Debug, "Checking ", pattern_struct.deferred_static_asserts().size(), 
+		          " deferred static_asserts for instantiation");
+		
+		for (const auto& deferred_assert : pattern_struct.deferred_static_asserts()) {
+			FLASH_LOG(Templates, Debug, "Re-evaluating deferred static_assert during template instantiation");
+			
+			// Build template parameter name to type mapping for substitution
+			std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+				// param.name() already returns string_view
+				param_map[param.name()] = template_args[i];
+			}
+			
+			// Create substitution context with template parameter mappings
+			ExpressionSubstitutor substitutor(param_map, *this);
+			
+			// Substitute template parameters in the condition expression
+			ASTNode substituted_expr = substitutor.substitute(deferred_assert.condition_expr);
+			
+			// Evaluate the substituted expression
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			eval_ctx.parser = this;
+			eval_ctx.struct_node = &instantiated_struct_ref;
+			
+			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
+			
+			if (!eval_result.success()) {
+				std::string error_msg = "static_assert failed during template instantiation: " + 
+				                       eval_result.error_message;
+				std::string_view message_view = StringTable::getStringView(deferred_assert.message);
+				if (!message_view.empty()) {
+					error_msg += " - " + std::string(message_view);
+				}
+				FLASH_LOG(Templates, Error, error_msg);
+				// Don't return error - continue with other static_asserts
+				// This matches the behavior of most compilers which report all failures
+				continue;
+			}
+			
+			// Check if the assertion failed
+			if (!eval_result.as_bool()) {
+				std::string error_msg = "static_assert failed during template instantiation";
+				std::string_view message_view = StringTable::getStringView(deferred_assert.message);
+				if (!message_view.empty()) {
+					error_msg += ": " + std::string(message_view);
+				}
+				FLASH_LOG(Templates, Error, error_msg);
+				// Don't return error - continue with other static_asserts
+				continue;
+			}
+			
+			FLASH_LOG(Templates, Debug, "Deferred static_assert passed during template instantiation");
+		}
+		
 		// Mark instantiation complete with the type index
 		FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
 		in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
@@ -35927,7 +37065,7 @@ if (struct_type_info.getStructInfo()) {
 					ConstExpr::EvaluationContext eval_context(gSymbolTable);
 					ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_context);
 					
-					if (result.success) {
+					if (result.success()) {
 						substituted_initializer = make_pack_size_literal(static_cast<size_t>(result.as_int()));
 						FLASH_LOG(Templates, Debug, "Evaluated expression with sizeof... using ConstExpr::Evaluator to ", result.as_int());
 					}
@@ -37599,8 +38737,9 @@ if (struct_type_info.getStructInfo()) {
 			// Map template parameter names to actual types and values
 			current_template_param_names_ = delayed.template_param_names;
 			
-			// Create template parameter substitutions for non-type parameters
+			// Create template parameter substitutions for non-type AND type parameters
 			// This allows template parameters like 'v' in 'return v;' to be substituted with actual values
+			// and type parameters like '_R1' in '__is_ratio_v<_R1>' to be substituted with actual types
 			template_param_substitutions_.clear();
 			for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
 				const auto& param = template_params[i].as<TemplateParameterNode>();
@@ -37617,6 +38756,19 @@ if (struct_type_info.getStructInfo()) {
 					
 					FLASH_LOG(Templates, Debug, "Registered non-type template parameter '", 
 					          param.name(), "' with value ", arg.value);
+				} else if (param.kind() == TemplateParameterKind::Type && !arg.is_value) {
+					// Type parameter - store type for substitution
+					// This enables variable templates inside function templates to work correctly:
+					// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
+					TemplateParamSubstitution subst;
+					subst.param_name = param.name();
+					subst.is_value_param = false;
+					subst.is_type_param = true;
+					subst.substituted_type = arg;
+					template_param_substitutions_.push_back(subst);
+					
+					FLASH_LOG(Templates, Debug, "Registered type template parameter '", 
+					          param.name(), "' with type ", arg.toString());
 				}
 			}
 			
@@ -37670,6 +38822,61 @@ if (struct_type_info.getStructInfo()) {
 	struct_info_ptr->needs_default_constructor = !has_constructor;
 	FLASH_LOG(Templates, Debug, "Instantiated struct ", instantiated_name, " has_constructor=", has_constructor, 
 	          ", needs_default_constructor=", struct_info_ptr->needs_default_constructor);
+	
+	// Re-evaluate deferred static_asserts with substituted template parameters
+	FLASH_LOG(Templates, Debug, "Checking deferred static_asserts for struct '", class_decl.name(), 
+	          "': found ", class_decl.deferred_static_asserts().size(), " deferred asserts");
+	
+	for (const auto& deferred_assert : class_decl.deferred_static_asserts()) {
+		FLASH_LOG(Templates, Debug, "Re-evaluating deferred static_assert during template instantiation");
+		
+		// Build template parameter name to type mapping for substitution
+		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+		for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
+			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			param_map[param.name()] = template_args_to_use[i];
+		}
+		
+		// Create substitution context with template parameter mappings
+		ExpressionSubstitutor substitutor(param_map, *this);
+		
+		// Substitute template parameters in the condition expression
+		ASTNode substituted_expr = substitutor.substitute(deferred_assert.condition_expr);
+		
+		// Evaluate the substituted expression
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		eval_ctx.parser = this;
+		eval_ctx.struct_node = &instantiated_struct.as<StructDeclarationNode>();
+		
+		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
+		
+		if (!eval_result.success()) {
+			std::string error_msg = "static_assert failed during template instantiation: " + 
+			                       eval_result.error_message;
+			std::string_view message_view = StringTable::getStringView(deferred_assert.message);
+			if (!message_view.empty()) {
+				error_msg += " - " + std::string(message_view);
+			}
+			FLASH_LOG(Templates, Error, error_msg);
+			// Don't return error - continue with other static_asserts
+			// This matches the behavior of most compilers which report all failures
+			continue;
+		}
+		
+		// Check if the assertion failed
+		if (!eval_result.as_bool()) {
+			std::string error_msg = "static_assert failed during template instantiation";
+			std::string_view message_view = StringTable::getStringView(deferred_assert.message);
+			if (!message_view.empty()) {
+				error_msg += ": " + std::string(message_view);
+			}
+			FLASH_LOG(Templates, Error, error_msg);
+			// Don't return error - continue with other static_asserts
+			continue;
+		}
+		
+		FLASH_LOG(Templates, Debug, "Deferred static_assert passed during template instantiation");
+	}
 	
 	// Mark instantiation complete with the type index
 	FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);

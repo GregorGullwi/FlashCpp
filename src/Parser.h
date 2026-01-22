@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <chrono>
 #include <limits>
 #include <optional>
 #include <sstream>
@@ -29,6 +30,11 @@
 #endif // WITH_DEBUG_INFO
 
 using namespace std::literals::string_view_literals;
+
+// Forward declarations
+namespace ConstExpr {
+	class Evaluator;
+}
 
 // RAII helper to execute a cleanup function on scope exit
 // Usage: ScopeGuard guard([&]() { cleanup(); });
@@ -250,6 +256,8 @@ struct QualifiedIdParseResult {
 class Parser {
 	// Friend classes that need access to private members
 	friend class ExpressionSubstitutor;
+	friend class ConstExpr::Evaluator;  // Allow constexpr evaluator to instantiate templates
+	friend class TemplateInstantiationHelper;  // Allow shared template helper to instantiate templates
 	
 public:
         static constexpr size_t default_ast_tree_size_ = 256 * 1024;
@@ -260,10 +268,31 @@ public:
                 gSymbolTable = SymbolTable();
                 register_builtin_functions();
                 ParseResult parseResult;
+#if FLASHCPP_LOG_LEVEL >= 2  // Info level progress logging
+                size_t top_level_count = 0;
+                auto start_time = std::chrono::high_resolution_clock::now();
+#endif
                 while (peek_token().has_value() && !parseResult.is_error() &&
                         peek_token()->type() != Token::Type::EndOfFile) {
                         parseResult = parse_top_level_node();
+#if FLASHCPP_LOG_LEVEL >= 2  // Info level progress logging
+                        ++top_level_count;
+                        // Log progress every 500 top-level nodes
+                        if (top_level_count % 500 == 0) {
+                            auto now = std::chrono::high_resolution_clock::now();
+                            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
+                            FLASH_LOG(General, Info, "[Progress] Parsed ", top_level_count, " top-level nodes in ", elapsed_ms, " ms");
+                        }
+#endif
                 }
+
+#if FLASHCPP_LOG_LEVEL >= 2  // Info level progress logging
+                // Log final summary (even on error) for debugging
+                auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::high_resolution_clock::now() - start_time).count();
+                FLASH_LOG(General, Info, "[Progress] Parsing ", (parseResult.is_error() ? "stopped" : "complete"), ": ", 
+                          top_level_count, " top-level nodes, ", ast_nodes_.size(), " AST nodes in ", total_time, " ms");
+#endif
 
                 if (parseResult.is_error()) {
                     last_error_ = parseResult.error_message();
@@ -333,6 +362,7 @@ private:
                 std::string_view struct_name;  // Points directly into source text from lexer token
                 StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
                 StructTypeInfo* local_struct_info = nullptr;  // Pointer to StructTypeInfo being built (for static member lookup)
+                std::vector<StringHandle> imported_members;  // Members imported via using-declarations
         };
         std::vector<StructParsingContext> struct_parsing_context_stack_;
 
@@ -384,17 +414,25 @@ private:
 		std::vector<StringHandle> current_template_param_names_;  // Names of current template parameters - from Token storage
 
         // Template parameter substitution for deferred template body parsing
-        // Maps template parameter names to their substituted values (for non-type parameters)
+        // Maps template parameter names to their substituted values (for non-type AND type parameters)
         struct TemplateParamSubstitution {
             std::string_view param_name;
             bool is_value_param;  // true for non-type parameters
             int64_t value;        // For non-type parameters
             Type value_type;      // Type of the value
+            // For type parameters - the concrete type to substitute
+            bool is_type_param = false;
+            TemplateTypeArg substituted_type;  // The concrete type for type parameters
         };
         std::vector<TemplateParamSubstitution> template_param_substitutions_;
 
         // Track if we're parsing a template body (for template parameter reference recognition)
         bool parsing_template_body_ = false;
+        
+        // Add parsing depth counter to detect infinite loops
+        // This is incremented/decremented in critical parsing functions
+        size_t parsing_depth_ = 0;
+        static constexpr size_t MAX_PARSING_DEPTH = 500;  // Reasonable limit for nested parsing
         std::vector<std::string_view> template_param_names_;  // Template parameter names in current scope
         
         // Track if we're instantiating a lazy member function (to prevent infinite recursion)
@@ -543,6 +581,8 @@ private:
         ParseResult parse_out_of_line_constructor_or_destructor(std::string_view class_name, bool is_destructor, const FlashCpp::DeclarationSpecifiers& specs);  // NEW: Parse out-of-line constructor/destructor
         ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default);
         ParseResult parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);  // Phase 1: Unified parameter list parsing
+        FlashCpp::ParsedFunctionArguments parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx = {});  // Unified function call argument parsing
+        std::vector<TypeSpecifierNode> apply_lvalue_reference_deduction(const ChunkedVector<ASTNode>& args, const std::vector<TypeSpecifierNode>& arg_types);  // For template deduction: marks lvalue args with lvalue_reference for T&& forwarding
         ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);  // Phase 2: Unified trailing specifiers
         ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);  // Phase 4: Unified function header parsing
         ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);  // Phase 4: Create FunctionDeclarationNode from header
@@ -714,6 +754,13 @@ public:  // Public methods for template instantiation
         ParseResult parse_unary_expression(ExpressionContext context);
         ParseResult parse_qualified_identifier();  // Parse namespace::identifier
         ParseResult parse_qualified_identifier_after_template(const Token& template_base_token, bool* had_template_keyword = nullptr);  // Parse Template<T>::member
+        
+        // Helper to parse template brace initialization: Template<Args>{}
+        // Returns ParseResult with ConstructorCallNode on success
+        ParseResult parse_template_brace_initialization(
+                const std::vector<TemplateTypeArg>& template_args,
+                std::string_view template_name,
+                const Token& identifier_token);
         
         // Helper to parse member template function calls: Template<T>::member<U>()
         // Returns:

@@ -583,6 +583,8 @@ public:
 	bool preprocessFileContent(const std::string& file_content) {
 		std::istringstream stream(file_content);
 		std::string line;
+		std::string pending_line;  // Line that was read but needs to be processed on next iteration
+		bool has_pending_line = false;
 		bool in_comment = false;
 		std::stack<bool> skipping_stack;
 		skipping_stack.push(false); // Initial state: not skipping
@@ -596,7 +598,18 @@ public:
 		long prev_line_number = -1;
 		const bool isPreprocessorOnlyMode = settings_.isPreprocessorOnlyMode();
 		size_t line_counter = 0;  // Add counter for debugging
-		while (std::getline(stream, line)) {
+		
+		// Modified loop to handle pending lines
+		auto getNextLine = [&]() -> bool {
+			if (has_pending_line) {
+				line = std::move(pending_line);
+				has_pending_line = false;
+				return true;
+			}
+			return static_cast<bool>(std::getline(stream, line));
+		};
+		
+		while (getNextLine()) {
 			line_counter++;
 			if (settings_.isVerboseMode() && line_counter % 100 == 0) {
 				std::cout << "Processing line " << line_counter << " in " << filestack_.top().file_name << std::endl;
@@ -639,7 +652,8 @@ public:
 			}
 
 			if (skipping_stack.size() == 0) {
-				FLASH_LOG(Lexer, Error, "Internal compiler error in file ", filestack_.top().file_name, ":", line_number);
+				FLASH_LOG(Lexer, Error, "Internal compiler error in file ", filestack_.top().file_name, ":", line_number,
+				          " - preprocessor directive stack underflow (too many #endif directives or preprocessor state corruption). Line content: '", line, "'");
 				return false;
 			}
 			const bool skipping = skipping_stack.top();
@@ -671,14 +685,17 @@ public:
 
 			if (skipping) {
 				if (line.find("#endif", 0) == 0) {
+					FLASH_LOG(Lexer, Debug, "Preprocessor: #endif while skipping, stack size before pop: ", skipping_stack.size(), " at ", filestack_.top().file_name, ":", line_number);
 					skipping_stack.pop();
 					condition_was_true_stack.pop();
+					FLASH_LOG(Lexer, Debug, "Preprocessor: stack size after pop: ", skipping_stack.size());
 				}
 				else if (line.find("#if", 0) == 0) {
 					// Nesting: #if, #ifdef, #ifndef all start with "#if"
 					// Push a new skipping state for any nested conditional
 					// Mark condition_was_true as true to prevent #else/#elif from activating
 					// (since we're skipping due to an outer condition, not this one)
+					FLASH_LOG(Lexer, Debug, "Preprocessor: #if while skipping, pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
 					skipping_stack.push(true);
 					condition_was_true_stack.push(true);  // Changed from false
 				}
@@ -769,6 +786,7 @@ public:
 				// to check if the feature is available, then uses __has_builtin(x) with arguments.
 				// We return true for "#ifdef __has_builtin" so the library defines _GLIBCXX_HAS_BUILTIN.
 				bool is_defined = (symbol == "__has_builtin") || (defines_.count(symbol) > 0);
+				FLASH_LOG(Lexer, Debug, "Preprocessor: #ifdef ", symbol, " (defined=", is_defined, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.push(!is_defined);
 				condition_was_true_stack.push(is_defined);
 				append_line_with_tracking("");  // Preserve line numbering
@@ -779,6 +797,7 @@ public:
 				std::string symbol;
 				iss >> symbol;
 				bool is_defined = defines_.count(symbol) > 0;
+				FLASH_LOG(Lexer, Debug, "Preprocessor: #ifndef ", symbol, " (defined=", is_defined, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.push(is_defined);
 				condition_was_true_stack.push(!is_defined);
 				append_line_with_tracking("");  // Preserve line numbering
@@ -790,6 +809,7 @@ public:
 				std::istringstream iss(condition);
 				long expression_result = evaluate_expression(iss);
 				bool condition_true = (expression_result != 0);
+				FLASH_LOG(Lexer, Debug, "Preprocessor: #if (result=", condition_true, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.push(!condition_true);
 				condition_was_true_stack.push(condition_true);
 				append_line_with_tracking("");  // Preserve line numbering
@@ -833,8 +853,10 @@ public:
 			}
 			else if (line.find("#endif", 0) == 0) {
 				if (!skipping_stack.empty()) {
+					FLASH_LOG(Lexer, Debug, "Preprocessor: #endif (not skipping), stack size before pop: ", skipping_stack.size(), " at ", filestack_.top().file_name, ":", line_number);
 					skipping_stack.pop();
 					condition_was_true_stack.pop();
+					FLASH_LOG(Lexer, Debug, "Preprocessor: stack size after pop: ", skipping_stack.size());
 				}
 				else {
 					FLASH_LOG(Lexer, Error, "Unmatched #endif directive");
@@ -890,12 +912,28 @@ public:
 				// Handle multiline macro invocations.
 				// If a line has an incomplete macro invocation (unmatched parens),
 				// keep reading lines until we have matching parens.
+				// BUT: Stop if the next line is a preprocessor directive (starts with #)
+				// because preprocessor directives cannot be inside macro invocations.
 				while (hasIncompleteMacroInvocation(line)) {
 					std::string next_line;
 					if (!std::getline(stream, next_line)) break;
 					++line_number;
-					// Join with the previous line (preserving whitespace)
-					line += "\n" + next_line;
+					
+					// Check if next_line is a preprocessor directive
+					// First, find the first non-whitespace character
+					size_t first_non_ws = next_line.find_first_not_of(" \t");
+					if (first_non_ws != std::string::npos && next_line[first_non_ws] == '#') {
+						// The next line is a preprocessor directive - don't merge it!
+						// Store it as a pending line to be processed on the next iteration
+						pending_line = std::move(next_line);
+						has_pending_line = true;
+						--line_number;  // Undo the increment; it will be incremented when pending_line is processed
+						break;
+					}
+					
+					// Join with the previous line with a space (not newline) to avoid line_map mismatch
+					// The newline preservation isn't critical for macro expansion
+					line += " " + next_line;
 				}
 				
 				// Expand macros in non-directive lines (regular source code).
@@ -2152,26 +2190,69 @@ private:
 
 		// C++ feature test macros (SD-6)
 		// These indicate which C++ language features are supported
-		defines_["__cpp_exceptions"] = DefineDirective{ "199711L", {} };  // Exception handling
-		defines_["__cpp_rtti"] = DefineDirective{ "199711L", {} };  // RTTI (typeid, dynamic_cast)
-		defines_["__cpp_static_assert"] = DefineDirective{ "201411L", {} };  // C++17 static_assert with message
-		defines_["__cpp_decltype"] = DefineDirective{ "200707L", {} };  // decltype
-		defines_["__cpp_auto_type"] = DefineDirective{ "200606L", {} };  // auto type deduction
-		defines_["__cpp_nullptr"] = DefineDirective{ "200704L", {} };  // nullptr keyword
-		defines_["__cpp_lambdas"] = DefineDirective{ "200907L", {} };  // Lambda expressions
-		defines_["__cpp_range_based_for"] = DefineDirective{ "200907L", {} };  // Range-based for loops
-		defines_["__cpp_variadic_templates"] = DefineDirective{ "200704L", {} };  // Variadic templates
-		defines_["__cpp_initializer_lists"] = DefineDirective{ "200806L", {} };  // Initializer lists
-		defines_["__cpp_delegating_constructors"] = DefineDirective{ "200604L", {} };  // Delegating constructors
-		defines_["__cpp_constexpr"] = DefineDirective{ "201603L", {} };  // C++17 constexpr (relaxed)
-		defines_["__cpp_if_constexpr"] = DefineDirective{ "201606L", {} };  // C++17 if constexpr
-		defines_["__cpp_inline_variables"] = DefineDirective{ "201606L", {} };  // C++17 inline variables
-		defines_["__cpp_structured_bindings"] = DefineDirective{ "201606L", {} };  // C++17 structured bindings
-		defines_["__cpp_noexcept_function_type"] = DefineDirective{ "201510L", {} };  // C++17 noexcept in type
-		defines_["__cpp_concepts"] = DefineDirective{ "202002L", {} };  // C++20 concepts
 		defines_["__cpp_aggregate_bases"] = DefineDirective{ "201603L", {} };  // C++17 aggregate base classes
-		// Coroutines are not supported - see tests/std/README_STANDARD_HEADERS.md
-		// defines_["__cpp_impl_coroutine"] = DefineDirective{ "201902L", {} };  // C++20 coroutine support
+		defines_["__cpp_aggregate_nsdmi"] = DefineDirective{ "201304L", {} };  // Aggregate NSDMI
+		defines_["__cpp_aggregate_paren_init"] = DefineDirective{ "201902L", {} };  // Aggregate direct init
+		defines_["__cpp_alias_templates"] = DefineDirective{ "200704L", {} };  // Alias templates
+		defines_["__cpp_aligned_new"] = DefineDirective{ "201606L", {} };  // Over-aligned new
+		defines_["__cpp_attributes"] = DefineDirective{ "200809L", {} };  // Attributes
+		defines_["__cpp_auto_type"] = DefineDirective{ "200606L", {} };  // auto type deduction
+		defines_["__cpp_binary_literals"] = DefineDirective{ "201304L", {} };  // Binary literals
+		defines_["__cpp_capture_star_this"] = DefineDirective{ "201603L", {} };  // Lambda capture *this by value
+		defines_["__cpp_char8_t"] = DefineDirective{ "201811L", {} };  // char8_t
+		defines_["__cpp_concepts"] = DefineDirective{ "201907L", {} };  // C++20 concepts
+		defines_["__cpp_conditional_explicit"] = DefineDirective{ "201806L", {} };  // explicit(bool)
+		defines_["__cpp_conditional_trivial"] = DefineDirective{ "202002L", {} };  // Conditional trivial special members
+		defines_["__cpp_consteval"] = DefineDirective{ "201811L", {} };  // consteval
+		defines_["__cpp_constexpr"] = DefineDirective{ "202002L", {} };  // C++20 constexpr extensions
+		defines_["__cpp_constexpr_dynamic_alloc"] = DefineDirective{ "201907L", {} };  // constexpr dynamic alloc
+		defines_["__cpp_constexpr_in_decltype"] = DefineDirective{ "201711L", {} };  // decltype during constant eval
+		defines_["__cpp_constinit"] = DefineDirective{ "201907L", {} };  // constinit
+		defines_["__cpp_decltype"] = DefineDirective{ "200707L", {} };  // decltype
+		defines_["__cpp_decltype_auto"] = DefineDirective{ "201304L", {} };  // decltype(auto)
+		defines_["__cpp_deduction_guides"] = DefineDirective{ "201907L", {} };  // CTAD for aggregates/aliases
+		defines_["__cpp_delegating_constructors"] = DefineDirective{ "200604L", {} };  // Delegating constructors
+		defines_["__cpp_designated_initializers"] = DefineDirective{ "201707L", {} };  // Designated initializers
+		defines_["__cpp_enumerator_attributes"] = DefineDirective{ "201411L", {} };  // Enumerator attributes
+		defines_["__cpp_exceptions"] = DefineDirective{ "199711L", {} };  // Exception handling
+		defines_["__cpp_fold_expressions"] = DefineDirective{ "201603L", {} };  // Fold expressions
+		defines_["__cpp_generic_lambdas"] = DefineDirective{ "201707L", {} };  // Generic lambdas with template params
+		defines_["__cpp_guaranteed_copy_elision"] = DefineDirective{ "201606L", {} };  // Guaranteed copy elision
+		defines_["__cpp_hex_float"] = DefineDirective{ "201603L", {} };  // Hexadecimal float literals
+		defines_["__cpp_if_constexpr"] = DefineDirective{ "201606L", {} };  // C++17 if constexpr
+		defines_["__cpp_impl_coroutine"] = DefineDirective{ "201902L", {} };  // C++20 coroutine support
+		defines_["__cpp_impl_destroying_delete"] = DefineDirective{ "201806L", {} };  // Destroying delete
+		defines_["__cpp_impl_three_way_comparison"] = DefineDirective{ "201907L", {} };  // <=> support
+		defines_["__cpp_inheriting_constructors"] = DefineDirective{ "200802L", {} };  // Inheriting constructors
+		defines_["__cpp_init_captures"] = DefineDirective{ "201803L", {} };  // Lambda init-capture pack expansion
+		defines_["__cpp_initializer_lists"] = DefineDirective{ "200806L", {} };  // Initializer lists
+		defines_["__cpp_inline_variables"] = DefineDirective{ "201606L", {} };  // C++17 inline variables
+		defines_["__cpp_lambdas"] = DefineDirective{ "200907L", {} };  // Lambda expressions
+		//defines_["__cpp_modules"] = DefineDirective{ "201907L", {} };  // Modules
+		defines_["__cpp_namespace_attributes"] = DefineDirective{ "201411L", {} };  // Namespace attributes
+		defines_["__cpp_noexcept_function_type"] = DefineDirective{ "201510L", {} };  // C++17 noexcept in type
+		defines_["__cpp_nontype_template_args"] = DefineDirective{ "201911L", {} };  // Class/float NTTP
+		defines_["__cpp_nontype_template_parameter_auto"] = DefineDirective{ "201606L", {} };  // auto NTTP
+		defines_["__cpp_nullptr"] = DefineDirective{ "200704L", {} };  // nullptr keyword
+		defines_["__cpp_nsdmi"] = DefineDirective{ "200809L", {} };  // Non-static data member initializers
+		defines_["__cpp_range_based_for"] = DefineDirective{ "201603L", {} };  // Range-based for (C++17 update)
+		defines_["__cpp_raw_strings"] = DefineDirective{ "200710L", {} };  // Raw string literals
+		defines_["__cpp_ref_qualifiers"] = DefineDirective{ "200710L", {} };  // Ref-qualified member funcs
+		defines_["__cpp_return_type_deduction"] = DefineDirective{ "201304L", {} };  // Return type deduction
+		defines_["__cpp_rtti"] = DefineDirective{ "199711L", {} };  // RTTI (typeid, dynamic_cast)
+		defines_["__cpp_rvalue_references"] = DefineDirective{ "200610L", {} };  // Rvalue references
+		defines_["__cpp_sized_deallocation"] = DefineDirective{ "201309L", {} };  // Sized deallocation
+		defines_["__cpp_static_assert"] = DefineDirective{ "201411L", {} };  // C++17 static_assert with message
+		defines_["__cpp_structured_bindings"] = DefineDirective{ "201606L", {} };  // C++17 structured bindings
+		defines_["__cpp_template_template_args"] = DefineDirective{ "201611L", {} };  // Template template parameter matching
+		defines_["__cpp_threadsafe_static_init"] = DefineDirective{ "200806L", {} };  // Thread-safe static init
+		defines_["__cpp_unicode_characters"] = DefineDirective{ "200704L", {} };  // char16_t/char32_t
+		defines_["__cpp_unicode_literals"] = DefineDirective{ "200710L", {} };  // Unicode string literals
+		defines_["__cpp_user_defined_literals"] = DefineDirective{ "200809L", {} };  // User Defined Literals
+		defines_["__cpp_using_enum"] = DefineDirective{ "201907L", {} };  // using enum
+		defines_["__cpp_variable_templates"] = DefineDirective{ "201304L", {} };  // Variable templates
+		defines_["__cpp_variadic_templates"] = DefineDirective{ "200704L", {} };  // Variadic templates
+		defines_["__cpp_variadic_using"] = DefineDirective{ "201611L", {} };  // Pack expansions in using
 
 		// Note: __has_builtin is NOT defined as a macro here
 		// It is handled specially in expandMacrosForConditional and evaluate_expression

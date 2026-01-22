@@ -1104,7 +1104,15 @@ public:
 			if (i > 0) mangled.append("_");
 
 			if (args[i].kind == TemplateArgument::Kind::Type) {
-				mangled.append(typeToString(args[i].type_value));
+				// For UserDefined and Struct types, look up the actual type name
+				if ((args[i].type_value == Type::UserDefined || args[i].type_value == Type::Struct) 
+				    && args[i].type_index < gTypeInfo.size()) {
+					const TypeInfo& ti = gTypeInfo[args[i].type_index];
+					std::string_view type_name = StringTable::getStringView(ti.name());
+					mangled.append(type_name);
+				} else {
+					mangled.append(typeToString(args[i].type_value));
+				}
 				// Include reference qualifiers in mangled name for unique instantiations
 				// This ensures int, int&, and int&& generate different mangled names
 				if (args[i].type_specifier.has_value()) {

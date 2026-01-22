@@ -8,6 +8,7 @@
 #include "IRConverter.h"
 #include "ChunkedAnyVector.h"
 #include "TemplateRegistry.h"  // Includes ConceptRegistry as well
+#include "InstantiationQueue.h"
 #include <string>
 #include <algorithm>
 #include <cctype>
@@ -30,6 +31,11 @@ bool g_enable_debug_output = false;
 bool g_enable_exceptions = true;
 
 NamespaceRegistry gNamespaceRegistry;
+
+namespace FlashCpp {
+LazyMemberResolver gLazyMemberResolver;
+InstantiationQueue gInstantiationQueue;
+} // namespace FlashCpp
 
 // Helper function to read test files from Reference directory
 std::string read_test_file(const std::string& filename) {

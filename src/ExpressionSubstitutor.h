@@ -9,6 +9,37 @@
 // Forward declaration
 class Parser;
 
+/// @file ExpressionSubstitutor.h
+/// @brief Template parameter substitution in expression AST nodes.
+///
+/// ## Purpose
+///
+/// ExpressionSubstitutor performs **AST transformation** during template instantiation.
+/// It replaces template parameter references (T, Args...) with concrete types (int, etc.).
+///
+/// ## Key Differences from ConstExpr::Evaluator
+///
+/// | Aspect      | ExpressionSubstitutor        | ConstExpr::Evaluator         |
+/// |-------------|------------------------------|------------------------------|
+/// | Operation   | AST transformation           | Value computation            |
+/// | Input       | AST with template params     | AST with concrete types      |
+/// | Output      | Modified AST                 | Primitive value (int/bool)   |
+/// | When used   | Template instantiation       | static_assert, constexpr     |
+///
+/// ## Typical Flow
+///
+/// ```
+/// Parser.instantiate_template()
+///   → ExpressionSubstitutor.substitute()
+///     → substituteFunctionCall() → TemplateInstantiationHelper
+///     → substituteConstructorCall()
+///     → substituteBinaryOp() / substituteUnaryOp()
+///   → Modified AST with concrete types
+/// ```
+///
+/// @see ConstExpr::Evaluator for constant expression evaluation
+/// @see TemplateInstantiationHelper for shared template instantiation utilities
+
 /// ExpressionSubstitutor - Performs template parameter substitution in expression AST nodes
 ///
 /// This class traverses expression AST nodes and substitutes template parameters with concrete

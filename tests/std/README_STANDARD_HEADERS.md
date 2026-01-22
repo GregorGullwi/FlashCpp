@@ -4,55 +4,87 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 ## Current Status
 
-✅ **Log Level Bug Fixed (2026-01-18):** The bug that caused release builds to hang is now fixed. All log levels work correctly.
+✅ **Qualified Base Class in Full Specializations (2026-01-21 PM):** Fixed parsing of namespace-qualified base classes like `std::false_type` in full template specializations. `<variant>` progresses past line 299 (was failing with "Base class 'std' not found").
+
+✅ **Template Parameter State Cleanup (2026-01-21 PM):** Fixed template parameter names leaking into subsequent code after parsing concept/alias/variable templates and full/partial specializations. This prevents incorrect function lookup failures.
+
+✅ **Exception Header Now Compiles (2026-01-21 PM):** The `<exception>` header now compiles successfully (~6s).
+
+🔧 **Function Return Type Loss (2026-01-21 PM):** Pre-existing bug where `get_expression_type` loses pointer information for function return types in certain contexts. For example, `name()` returning `const char*` is incorrectly seen as `char` instead of `char*`. This causes overload resolution to fail for functions like `_Hash_bytes(const void*, ...)` when the first argument comes from a function returning `const char*`. Blocks `<optional>` and headers that use `<type_traits>` + `<typeinfo>` together.
+
+✅ **Variable Template Partial Specialization Pattern Matching (2026-01-21):** Fixed pattern registration for partial specializations like `__is_ratio_v<ratio<_Num, _Den>>`. Now correctly includes base template name in pattern (e.g., `__is_ratio_v_ratio`). This enables variable template partial specializations with template instantiation patterns to work correctly when used directly.
+
+🔧 **Variable Template in Function Template Body (2026-01-21):** Variable templates with partial specializations used inside function template bodies (like `if constexpr (__is_ratio_v<_R1>)` inside `__are_both_ratios<R1, R2>()`) don't properly substitute template parameters. The variable template is instantiated with the template parameter name (`_R1`) instead of the substituted type. This affects `<ratio>` header's `__are_both_ratios()` function.
+
+✅ **Trailing Specifiers in Partial Specializations (2026-01-21 PM):** Fixed parsing of `operator=(...) noexcept = default` and `~Destructor() noexcept = delete` in partial specializations. `<variant>` progresses from line 119 → 72.
+
+✅ **MemberAccess Missing Object in Codegen (2026-01-21 PM - FIXED):** Previously crashed during code generation. Now `<exception>` compiles successfully.
+
+✅ **Typename Functional Cast (2026-01-21):** Fixed `typename T<Args>::member(args)` pattern in fold expressions. Unblocks `<vector>`, `<map>`, `<set>` from parse errors.
+
+✅ **Constexpr Constructor in Partial Specialization (2026-01-21):** Fixed `constexpr _Enable_default_constructor() noexcept = delete` pattern in partial specializations.
+
+✅ **Logging Bug (2026-01-21):** Fixed FLASH_LOG macros evaluating arguments even when filtered. Debug builds now 8-11s instead of 60+s.
+
+✅ **Investigation Update (2026-01-20):** Parser features mostly complete. Real blocker was logging performance. `<functional>`, `<algorithm>`, `<chrono>` compile without logging.
+
+✅ **static_assert with Template-Dependent Expressions (2026-01-20):** Fixed constant expression evaluation for fold expressions and variable templates in static_assert.
+
+✅ **Silent Failure Investigation (2026-01-19):** Added error tracing. Headers now properly display parse errors instead of silently failing.
+
+✅ **Log Level Bug (2026-01-18):** Fixed release builds hang bug. All log levels work correctly.
+
+✅ **Comprehensive Header Audit (2026-01-19):** Re-tested all headers with extended timeouts. Many "timeout" headers actually have specific parse errors.
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.30s |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1.1s release, ~6s debug (2026-01-18: Log level bug fixed) |
-| `<compare>` | N/A | ✅ Compiled | ~0.10s |
-| `<version>` | N/A | ✅ Compiled | ~0.09s |
-| `<source_location>` | N/A | ✅ Compiled | ~0.10s |
-| `<numbers>` | N/A | ✅ Compiled | ~1.2s release (doesn't include `<concepts>`) |
-| `<initializer_list>` | N/A | ✅ Compiled | ~0.07s |
-| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Parsing fixed (2026-01-19), times out during template instantiation |
-| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Parsing fixed, times out during template instantiation |
-| `<bit>` | N/A | ⏱️ Timeout | Parsing fixed (2026-01-19), times out during template instantiation |
-| `<ratio>` | N/A | ⏱️ Timeout | Fixed crashes (2026-01-19), now times out during template instantiation |
-| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<variant>` | `test_std_variant.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Template-heavy header (2026-01-17: Fixed `_Hash_bytes`) |
-| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Template-heavy header |
-| `<atomic>` | N/A | ⏱️ Timeout | Template-heavy header |
-| `<new>` | N/A | ✅ Compiled | ~0.10s |
-| `<exception>` | N/A | ⏱️ Timeout | Template-heavy header |
-| `<typeinfo>` | N/A | ✅ Compiled | ~0.10s |
-| `<typeindex>` | N/A | ✅ Compiled | ~0.16s |
-| `<csetjmp>` | N/A | ✅ Compiled | ~0.06s |
-| `<csignal>` | N/A | ✅ Compiled | ~0.18s (2026-01-18: Fixed unsupported member size assertions) |
-| `<stdfloat>` | N/A | ✅ Compiled | ~0.03s (C++23 - 2026-01-18) |
-| `<spanstream>` | N/A | ✅ Compiled | ~0.09s (C++23 - 2026-01-18) |
-| `<print>` | N/A | ✅ Compiled | ~0.09s (C++23 - 2026-01-18) |
-| `<expected>` | N/A | ✅ Compiled | ~0.09s (C++23 - 2026-01-18) |
-| `<text_encoding>` | N/A | ✅ Compiled | ~0.08s (C++26 - 2026-01-18) |
-| `<barrier>` | N/A | ✅ Compiled | ~0.10s (C++20 - 2026-01-18) |
-| `<stacktrace>` | N/A | ✅ Compiled | ~0.08s (C++23 - 2026-01-18) |
-| `<coroutine>` | N/A | ❌ Not Supported | Coroutines require `-fcoroutines` flag (not supported) |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.21s |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1.1s release, ~6s debug |
+| `<compare>` | N/A | ✅ Compiled | ~0.07s |
+| `<version>` | N/A | ✅ Compiled | ~0.07s |
+| `<source_location>` | N/A | ✅ Compiled | ~0.07s |
+| `<numbers>` | N/A | ✅ Compiled | ~1.2s release |
+| `<initializer_list>` | N/A | ✅ Compiled | ~0.04s |
+| `<ratio>` | `test_std_ratio.cpp` | ❌ Codegen | 2026-01-21: Variable template in function body issue (see blocker 7.4) |
+| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
+| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | 2026-01-21 PM: Function return type loss issue with `_Hash_bytes` (see blocker) |
+| `<variant>` | `test_std_variant.cpp` | 💥 Crash | 2026-01-21 PM: Progresses past line 299 (base class fix), then crashes during codegen |
+| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | 2026-01-21: Times out at 60+ seconds (was misreported as parse error) |
+| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
+| `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
+| `<bit>` | N/A | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
+| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
+| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
+| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
+| `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
+| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | 2026-01-21 PM: Times out at 15s during template instantiation |
+| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
+| `<map>` | `test_std_map.cpp` | ⏱️ Timeout | 2026-01-21: Now progresses past typename funccast fix, times out |
+| `<set>` | `test_std_set.cpp` | ⏱️ Timeout | 2026-01-21: Now progresses past typename funccast fix, times out |
+| `<span>` | `test_std_span.cpp` | ⏱️ Timeout | 2026-01-21: Times out during template instantiation |
+| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen | 2026-01-21: MemberAccess missing object issue |
+| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
+| `<atomic>` | N/A | ❌ Parse Error | Complex decltype in partial specialization (see blockers) |
+| `<new>` | N/A | ✅ Compiled | ~0.08s |
+| `<exception>` | N/A | ✅ Compiled | ~6s (2026-01-21 PM: Fixed MemberAccess issue) |
+| `<typeinfo>` | N/A | ✅ Compiled | ~0.09s |
+| `<typeindex>` | N/A | ✅ Compiled | ~0.14s |
+| `<csetjmp>` | N/A | ✅ Compiled | ~0.04s |
+| `<csignal>` | N/A | ✅ Compiled | ~0.13s |
+| `<stdfloat>` | N/A | ✅ Compiled | ~0.01s (C++23) |
+| `<spanstream>` | N/A | ✅ Compiled | ~0.09s (C++23) |
+| `<print>` | N/A | ✅ Compiled | ~0.09s (C++23) |
+| `<expected>` | N/A | ✅ Compiled | ~0.08s (C++23) |
+| `<text_encoding>` | N/A | ✅ Compiled | ~0.08s (C++26) |
+| `<barrier>` | N/A | ✅ Compiled | ~0.07s (C++20) |
+| `<stacktrace>` | N/A | ✅ Compiled | ~0.07s (C++23) |
+| `<coroutine>` | N/A | ❌ Not Supported | Coroutines require `-fcoroutines` flag |
 
-**Legend:** ✅ Compiled | ❌ Failed/Parse Error | 💥 Crash | ⏱️ Timeout (>30s)
+**Legend:** ✅ Compiled | ❌ Failed/Parse Error | ⏱️ Timeout (>30s)
+
+**Note (2026-01-20):** Previous reports of "💥 Crash" for `<functional>`, `<algorithm>`, and `<chrono>` were actually timeouts. Investigation with enhanced exception logging confirmed no crashes occur - these headers timeout due to excessive template instantiation. See section 6.4 for details.
 
 ### C Library Wrappers (Also Working)
 
@@ -87,6 +119,36 @@ cd tests/std
 ./test_std_headers_comprehensive.sh
 ```
 
+## Viewing Parser Progress
+
+To see progress logging during compilation, build with Info level logging enabled:
+
+```bash
+# Build release with progress logging
+clang++ -std=c++20 -DFLASHCPP_LOG_LEVEL=2 -O3 -I src -o x64/InfoRelease/FlashCpp \
+    src/AstNodeTypes.cpp src/ChunkedAnyVector.cpp src/Parser.cpp \
+    src/CodeViewDebug.cpp src/ExpressionSubstitutor.cpp src/main.cpp
+
+# Run with progress output
+./x64/InfoRelease/FlashCpp tests/std/test_std_type_traits.cpp
+# Output: [Progress] 100 template instantiations in 1 ms (cache hit rate: 44.4%)
+#         [Progress] 200 template instantiations in 4 ms (cache hit rate: 55.3%)
+#         [Progress] Parsing complete: 7 top-level nodes, 58 AST nodes in 9 ms
+```
+
+### Template Profiling Statistics
+
+For detailed template instantiation statistics, use the `--perf-stats` flag:
+
+```bash
+./x64/Release/FlashCpp test.cpp --perf-stats
+# Shows:
+#   - Template instantiation counts and timing
+#   - Cache hit/miss rates
+#   - Top 10 most instantiated templates
+#   - Top 10 slowest templates
+```
+
 ## Disabling Logging
 
 Logging can be controlled at runtime and compile-time.
@@ -108,7 +170,9 @@ Logging can be controlled at runtime and compile-time.
 
 ```bash
 # Build with specific log level (0=error, 1=warning, 2=info, 3=debug, 4=trace)
-clang++ -DFLASHCPP_LOG_LEVEL=1 -O3 ...
+# Note: Default release build uses level 1 (warning only)
+# Use level 2 to include Info messages (including progress logging)
+clang++ -DFLASHCPP_LOG_LEVEL=2 -O3 ...
 ```
 
 ## Current Blockers
@@ -143,27 +207,303 @@ The `if constexpr (enabled)` blocks in logging macros previously caused hangs wh
 
 **Impact:** Patterns like `SomeTemplate<namespace::alias<ConcreteType>>` now work correctly. The `<concepts>` header still times out due to template instantiation volume, but the parsing phase now completes successfully.
 
-### 3. `<ratio>` Header Crash (FIXED - 2026-01-19)
+### 3. `<ratio>` Header (FIXED - 2026-01-19)
 
 Two crashes were fixed:
 1. Skip deferred base class instantiation when template arguments can't be fully resolved
 2. Guard `handleGlobalLoad` against being called outside function context
 
-**Current Status:** The `<ratio>` header no longer crashes. It now times out due to template instantiation volume like other complex headers.
+**Current Status:** The `<ratio>` header now **compiles successfully** in ~1.4 seconds!
 
-### 4. Template Instantiation Performance (Secondary Blocker)
+### 4. Enum Class Forward Declaration (FIXED - 2026-01-19)
 
-Template-heavy headers that don't include `<concepts>` may still experience slow compilation due to template instantiation volume. However, many headers previously thought to be "timing out" actually have specific parsing errors or crashes (see table above).
+Added forward declaration support: `enum class byte : unsigned char;` now parses correctly.
 
-**Key metrics (from `<type_traits>` timing):**
-- Preprocessing: ~5s (89%)
-- Parsing: ~0.5s (10%)
-- IR/Codegen: ~0.05s (1%)
+### 5. GCC Extensions Support (FIXED - 2026-01-19)
 
-**Root cause:** Each template instantiation creates new AST nodes and triggers further dependent instantiations. Standard library metaprogramming uses deeply nested type traits patterns.
+- **`__typeof__`**: Now works like `decltype` for GCC compatibility
+- **Using-declarations in structs**: `using Base::member;` now correctly imports member names
 
-**Optimization opportunities:**
-- Improve template cache hit rate (currently ~26%)
+### 6. Function Argument Parsing in Member Functions (CRITICAL BLOCKER - 2026-01-21)
+
+**Issue:** Function calls with member variable arguments inside member functions fail to parse correctly. FlashCpp reports finding the function overload but 0 arguments when it should find 1+ arguments.
+
+**Error Message:**
+```
+/usr/include/c++/14/bits/nested_exception.h:79:18: error: No matching function for call to 'rethrow_exception'
+  rethrow_exception(_M_ptr);
+                   ^
+```
+
+**Debug output shows:**
+```
+[DEBUG][Parser] Function call to 'rethrow_exception': found 1 overload(s), 0 argument(s)
+```
+
+**Problematic Code Pattern:**
+```cpp
+class nested_exception {
+    exception_ptr _M_ptr;
+public:
+    void rethrow_nested() const {
+        rethrow_exception(_M_ptr);  // Fails here - argument not parsed
+    }
+};
+```
+
+**Investigation Findings:**
+- The function `rethrow_exception` is found correctly (1 overload)
+- The argument `_M_ptr` is identified and starts parsing
+- In parse_expression's postfix operator loop (Parser.cpp:~16563), after consuming `_M_ptr`, the closing `)` of the function call is incorrectly consumed
+- This causes the argument list to appear empty (0 arguments)
+- Detailed log sequence:
+  1. `consume_token: Consumed token='(', next token from lexer='_M_ptr'` - opens function call
+  2. `>>> parse_expression: Starting with precedence=2, context=0, depth=2, current token: _M_ptr` - starts parsing argument
+  3. `consume_token: Consumed token='_M_ptr', next token from lexer=')'` - consumes identifier
+  4. `Postfix operator iteration 1: peek token type=7, value=')'` - sees closing paren
+  5. `consume_token: Consumed token=')', next token from lexer=';'` - **INCORRECTLY CONSUMES closing paren**
+  6. `Function call to 'rethrow_exception': found 1 overload(s), 0 argument(s)` - args vector is empty
+
+**Root Cause:** The postfix operator loop in parse_expression doesn't properly stop when encountering `)` in a function argument context. The closing `)` should terminate argument parsing but is instead consumed as part of the argument expression.
+
+**Test Cases:**
+- Simple reproduction: `/tmp/test_rethrow_simple.cpp`
+- Full header: `#include <exception>`
+
+**Affected Headers:** 
+- `<exception>` - directly affected at nested_exception.h:79
+- `<optional>` - depends on `<exception>` 
+- `<iostream>` - depends on `<exception>`
+- Any header that uses exception handling
+
+**Impact:** This is a **critical blocker** preventing compilation of most standard library headers that deal with exceptions. Must be fixed before significant progress can be made on exception-related headers.
+
+**Potential Fix Direction:** The postfix operator loop needs to check if we're in a function argument context and avoid consuming `)` that belongs to the enclosing function call. This may require:
+1. Adding context tracking to parse_expression
+2. Checking expression context before entering postfix loop  
+3. Or ensuring the loop exits before consuming delimiter tokens
+
+### 7. Remaining Parse Blockers
+
+#### 7.1 Context-Dependent Parse Error in `bits/utility.h` (2026-01-19)
+
+**Note (2026-01-21):** This may be related to or masked by the function argument parsing issue (blocker #6). After fixing #6, this issue should be re-evaluated.
+
+**Error Message:**
+```
+/usr/include/c++/14/bits/utility.h:139:49: error: Expected type after '=' in template parameter default
+     typename _Up = typename remove_cv<_Tp>::type,
+                                                  ^
+```
+
+**Problematic Code Pattern:**
+```cpp
+template<typename _Tp,
+         typename _Up = typename remove_cv<_Tp>::type,  // Error reported here
+         typename = typename enable_if<is_same<_Tp, _Up>::value>::type,
+         size_t = tuple_size<_Tp>::value>
+    using __enable_if_has_tuple_size = _Tp;
+```
+
+**Investigation Findings:**
+- Simplified test cases with this exact pattern parse successfully in isolation
+- The error only occurs after including `<type_traits>` and `<bits/move.h>`
+- This suggests parser state pollution or context corruption from previous headers
+- The parser fails to parse `typename remove_cv<_Tp>::type` correctly in this context
+- `parse_type_specifier()` should stop at commas in template parameter lists, but appears to consume too much
+
+**Test Cases:**
+- `tests/test_template_alias_typename_default_ret0.cpp` - Works in isolation
+- `tests/test_utility_with_bits_move_ret0.cpp` - Fails when including `<bits/move.h>`
+
+**Affected Headers:** `<utility>`, `<tuple>`, `<span>`, `<array>`, and any header that depends on these
+
+#### 7.2 Constructor and Member Functions with `noexcept = delete` in Partial Specializations (FIXED - 2026-01-21)
+
+**Issue:** ~~The `<variant>` header fails with a parse error for constructors and member functions marked `noexcept = delete` in template partial specializations.~~ **RESOLVED**
+
+**Previous Error Messages:**
+```
+/usr/include/c++/14/bits/enable_special_members.h:119:61: error: Expected type specifier
+      operator=(_Enable_default_constructor const&) noexcept = default;
+                                                              ^
+
+/usr/include/c++/14/bits/enable_special_members.h:130:6: error: Expected type specifier
+    { ~_Enable_destructor() noexcept = delete; };
+       ^
+```
+
+**Problematic Code Patterns:**
+```cpp
+// In template partial specialization:
+Type& operator=(const Type&) noexcept = default;
+~Destructor() noexcept = delete;
+```
+
+**Root Cause:** Partial specialization body parsing didn't call `parse_function_trailing_specifiers()` to handle trailing specifiers (noexcept, override, final, = default, = delete) on member functions and destructors.
+
+**Fix Applied:** 
+1. Added `parse_function_trailing_specifiers()` call after parsing member function parameters in partial specializations (Parser.cpp ~line 27050)
+2. Added destructor parsing support in partial specialization bodies with full trailing specifiers support (Parser.cpp ~line 27010)
+3. Both defaulted and deleted functions/destructors are now properly handled
+
+**Impact:** The `<variant>` header now progresses from line 119 (operator=) to line 72 (complex decltype in partial specialization pattern). This fix unblocks many headers that use `bits/enable_special_members.h`.
+
+**Test Case:** Created `/tmp/test_operator_eq_template.cpp` which now compiles successfully
+
+#### 7.3 Complex decltype in Partial Specialization Template Arguments (**FIXED** - 2026-01-21)
+
+**Issue:** Partial specializations with complex decltype expressions containing nested template instantiations and function calls fail to parse.
+
+**Status:** **FIXED** - Added handling in `parse_primary_expression` to recognize class templates followed by template args and `(` as functional-style cast (constructor call creating temporary object).
+
+**Error Message (before fix):**
+```
+/usr/include/c++/14/bits/functional_hash.h:72:26: error: Expected template argument pattern in partial specialization
+      struct __poison_hash<_Tp, __void_t<decltype(hash<_Tp>()(declval<_Tp>()))>>
+                           ^
+```
+
+**Problematic Code Pattern:**
+```cpp
+template<typename _Tp, typename = void>
+  struct __poison_hash { };
+
+// Partial specialization with complex decltype:
+template<typename _Tp>
+  struct __poison_hash<_Tp, __void_t<decltype(hash<_Tp>()(declval<_Tp>()))>>
+  { /* ... */ };
+```
+
+**Analysis:**
+- The pattern involves: `decltype(hash<_Tp>()(declval<_Tp>()))`
+- This is a decltype of a function call expression: `hash<_Tp>()(declval<_Tp>())`
+- Which consists of: instantiate hash<_Tp>, construct an instance, call operator() with declval<_Tp>() as argument
+- Parser needs to handle this complex nested expression as a template argument in partial specialization
+
+**Investigation Update (2026-01-21):**
+Root cause identified - the parser fails at step 2 (construct an instance) because:
+1. After parsing `hash<_Tp>`, the parser sees `(`
+2. `hash` is not recognized as a class template in this context, so `hash<_Tp>()` is not recognized as a functional-style cast / temporary object creation
+3. Parser emits "Missing identifier: hash" error because it doesn't find `hash` as a function
+4. This causes template argument parsing to fail with "Expected template argument pattern"
+
+The fix requires: when parsing primary expressions in template contexts, after seeing `identifier<args>(`, recognize this as a functional-style cast (temporary object creation) if the identifier resolves to a class template, not just for function templates.
+
+**Affected Headers:** `<variant>` (stops at line 72), potentially `<functional>`, `<optional>`, and others using hash-based SFINAE
+
+**Key Finding:** Many patterns previously thought to be blockers actually **work correctly**:
+
+✅ **Verified Working Patterns:**
+- **Variadic non-type template params**: `template<size_t... _Indexes>` - Compiles successfully
+  - Test case: `tests/test_variadic_nontype.cpp` 
+- **Template alias with complex defaults**: Patterns like `typename _Up = typename remove_cv<_Tp>::type` work in isolation
+  - Test case: `tests/test_utility_parse_error.cpp`
+
+❌ **Actual Blockers:**
+- **Logging Bug (FIXED 2026-01-21)**: Headers appeared to timeout not due to parse errors but due to logging bug where log arguments were evaluated even when filtered. With fix, headers compile in 8-11 seconds.
+  - `<type_traits>` now compiles successfully
+  - Complex headers like `<utility>`, `<functional>`, `<chrono>` still timeout due to template complexity (performance issue, not correctness)
+- **Complex decltype in partial spec**: `__void_t<decltype(hash<T>()(...))>` still needs investigation
+  - Test cases: `tests/test_just_type_traits.cpp` (was timing out, now works)
+- **Context-dependent issues**: Parse errors occur only after including certain headers, suggesting parser state issues
+  - Test case: `tests/test_utility_with_context.cpp`
+
+#### 7.4 Variable Template Partial Specialization Pattern Matching (PARTIALLY FIXED - 2026-01-21)
+
+**Previous Issue:** Variable template partial specializations like `__is_ratio_v<ratio<_Num, _Den>>` were registered without the base template name in the pattern, causing lookup failures.
+
+**Fix Applied (Phase 1):** 
+1. Store the base type name in `dependent_name` field when parsing partial specialization patterns
+2. Check if `dependent_name` refers to a known template when building pattern key
+3. Include template name in pattern (e.g., `__is_ratio_v_ratio`) only for template instantiation patterns
+
+**Fix Applied (Phase 2 - 2026-01-21 PM):**
+1. Extended `TemplateParamSubstitution` to include type parameter mappings (not just non-type values)
+2. Register type substitutions during function template body re-parsing
+3. Added substitution lookup in `try_instantiate_variable_template` to resolve template parameters
+4. Enables `__is_ratio_v<_R1>` inside function templates to correctly substitute `_R1` with concrete types
+
+**Example that NOW works:**
+```cpp
+template<typename _Tp>
+constexpr bool __is_ratio_v = false;
+
+template<long _Num, long _Den>
+constexpr bool __is_ratio_v<ratio<_Num, _Den>> = true;
+
+// Direct use works:
+static_assert(__is_ratio_v<ratio<1,2>> == true);  // ✅ Works
+
+// Simple function template returning variable template value:
+template<typename _R>
+constexpr bool is_ratio_check() { return __is_ratio_v<_R>; }  // ✅ Works
+```
+
+**Remaining Issue:** The `<ratio>` header still crashes during codegen because:
+1. `if constexpr` evaluation with variable templates isn't fully working
+2. The function `__are_both_ratios` uses nested `if constexpr` statements
+3. The variable template identifier `__is_ratio_v` is not found in symbol table during code generation
+
+**Affected Headers:** `<ratio>` (crashes during codegen in `__are_both_ratios`)
+
+#### 7.5 MemberAccess Missing Object in Code Generation (**FIXED** - 2026-01-21)
+
+**Issue:** The `<exception>` header crashes during code generation with "MemberAccess missing object: other".
+
+**Status:** **FIXED** - Two fixes applied:
+1. Parameter name generation for `operator=` with empty param names now uses "other" 
+2. Copy/move constructors with empty param names now also use "other" to match body generation code
+
+**Error Message:**
+```
+[ERROR][Codegen] MemberAccess missing object: other
+FlashCpp: src/IRConverter.h:13112: Assertion failed: "Struct object not found in scope or globals"
+```
+
+**Analysis:**
+- The error occurs when accessing a member of a reference parameter named `other`
+- Simple test cases with `operator=(const Type& other)` work correctly
+- The issue appears in more complex contexts in the standard library
+- May be related to how reference parameters are handled in certain struct/class contexts
+
+**Test Results:**
+- Simple member access: ✅ Works
+- `<exception>` header: ❌ Crashes
+
+**Affected Headers:** `<exception>`, `<optional>`, `<iostream>` (all depend on exception handling)
+
+#### 7.6 _Hash_bytes Function Lookup Failure (SUPERSEDED by 7.5)
+
+**Note:** This issue may have been caused by the MemberAccess issue (7.5). The _Hash_bytes call was failing, but the root cause may be how reference parameters are handled, not the function lookup itself.
+
+**Previous Error Message:**
+```
+/usr/include/c++/14/typeinfo:122:25: error: No matching function for call to '_Hash_bytes'
+        return _Hash_bytes(name(), __builtin_strlen(name()), static_cast<size_t>(0xc70f6907UL));
+                          ^
+```
+
+**Status:** Needs re-investigation after MemberAccess issue (7.5) is fixed.
+
+#### 7.7 Base Class Namespace Resolution (ACTIVE BLOCKER - 2026-01-21)
+
+**Issue:** After fixing blocker #7.3, `<variant>` header progresses past line 72 but fails at line 299 with "Base class 'std' not found".
+
+**Error Message:**
+```
+/usr/include/c++/14/bits/functional_hash.h:299:58: error: Base class 'std' not found
+      struct __is_fast_hash<hash<long double>> : public std::false_type
+                                                           ^
+```
+
+**Analysis:** The base class `std::false_type` is not being resolved correctly. This appears to be a namespace resolution issue where `std` is not recognized as a namespace in the base class specification.
+
+**Affected Headers:** `<variant>`, potentially `<functional>`, `<optional>` and others that use `std::true_type` / `std::false_type` as base classes.
+
+### 8. Template Instantiation Performance
+
+Template-heavy headers (`<concepts>`, `<bit>`, `<string>`, `<ranges>`) time out due to instantiation volume. Key optimization: improve template cache hit rate (currently ~26%).
 - Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
 - Optimize string operations in template name generation
 
@@ -438,67 +778,134 @@ The following features have been implemented to support standard headers:
 
 ## Recent Changes
 
-Changes are listed in reverse chronological order. For detailed implementation notes, see the git commit history.
+Changes are listed in reverse chronological order.
 
-### 2026-01-19 (Qualified Template Alias Fix)
-- **FEATURE:** Namespace-qualified template aliases now work in template argument contexts
-- **Root cause:** Parser only checked for class/variable templates when deciding if `<` is template arguments
-- **Fix:** Added `lookup_alias_template` in 3 parser code paths; alias templates now register with qualified names
-- **Test case:** `tests/test_qualified_template_alias_ret0.cpp`
-- **Impact:** Patterns like `Wrapper<namespace::alias<int>>` now compile correctly
+### 2026-01-21 (Variable Template Partial Specialization Pattern Matching)
+- **Fixed partial specialization pattern registration:** Partial specializations like `__is_ratio_v<ratio<_Num, _Den>>` now correctly include the base template name in the pattern key
+  - Store base type name in `dependent_name` field when parsing partial specialization patterns
+  - Check if `dependent_name` refers to a known template when building pattern key
+  - Pattern now includes template name (e.g., `__is_ratio_v_ratio`) for template instantiation patterns
+  - Simple dependent types like `T&` still use minimal pattern (e.g., `is_reference_v_R`)
+  - Test case: `static_assert(__is_ratio_v<ratio<1,2>> == true)` now works for direct usage
+- **Fixed variable template substitution in function template bodies (Phase 2):**
+  - Extended `TemplateParamSubstitution` to include type parameter mappings (not just non-type values)
+  - Register type substitutions during function template body re-parsing in `try_instantiate_template_explicit`
+  - Added substitution lookup in `try_instantiate_variable_template` to resolve template parameter names
+  - Enables simple function templates that return variable template values to work correctly
+  - Test case: `template<typename R> constexpr bool is_ratio_check() { return __is_ratio_v<R>; }` now works
+- **Test Results:**
+  - ✅ All 950 existing tests pass
+  - ✅ Variable template partial specializations with template instantiation patterns work
+  - ✅ Simple function templates returning variable template values work
+  - ⚠️ Complex patterns with `if constexpr` and variable templates still need work (see blocker 7.4)
 
-### 2026-01-18 (Log Level Bug Fix)
-- **BUG FIXED:** Log level bug that caused hangs is now resolved (commit 6ea920f)
-- **Root cause:** `if constexpr (enabled)` blocks in logging macros caused issues when compiled out
-- **Solution:** Replaced with preprocessor `#if FLASHCPP_LOG_LEVEL >= X` checks
-- **All log levels now work:** Release builds with `-DFLASHCPP_LOG_LEVEL=1` compile successfully
-- **Performance:** `<type_traits>` compiles in ~1.1s (release) or ~6.8s (debug)
+**Remaining Issue:** The `<ratio>` header still crashes because `if constexpr` evaluation with variable templates isn't fully working. The function `__are_both_ratios` uses nested `if constexpr` statements that require constexpr evaluation.
 
-### 2026-01-18 (Header Verification)
-- **Verified working headers:**
-  - `<limits>` (~0.30s), `<compare>` (~0.10s), `<version>` (~0.09s), `<source_location>` (~0.10s)
-  - `<initializer_list>` (~0.07s), `<new>` (~0.10s), `<typeinfo>` (~0.10s), `<typeindex>` (~0.16s)
-  - `<csetjmp>` (~0.06s), `<csignal>` (~0.18s), `<stdfloat>` (~0.03s)
-  - `<spanstream>` (~0.09s), `<print>` (~0.09s), `<expected>` (~0.09s)
-  - `<text_encoding>` (~0.08s), `<barrier>` (~0.10s), `<stacktrace>` (~0.08s)
+### 2026-01-20 (static_assert with Template-Dependent Expressions - PR #XXX)
+- **Fixed fold expression evaluation in static_assert:** Fold expressions like `(args && ...)` are now correctly treated as template-dependent
+  - Added `FoldExpressionNode` handling in `ConstExprEvaluator` to return `TemplateDependentExpression` error type
+  - Allows static assertions with fold expressions to be deferred until template instantiation
+  - Test case: `template<typename... Args> struct Test { static_assert((true && ...), "test"); };` now compiles
+  - **Impact:** Essential for many C++ standard library headers that use fold expressions in static assertions
+- **Fixed pack expansion evaluation:** Pack expansions like `args...` are now treated as template-dependent
+  - Added `PackExpansionExprNode` handling in `ConstExprEvaluator`
+  - Prevents premature evaluation of pack expansions during template definition parsing
+- **Fixed variable template handling:** Variable templates like `is_integral_v<_Tp>` with template parameters now work correctly
+  - Added check for `TemplateVariableDeclarationNode` in `evaluate_identifier()` to defer evaluation
+  - Prevents errors when variable templates appear in static_assert conditions with template parameters
+  - Test case: `template<typename T> struct Test { static_assert(is_integral_v<T>); };` now compiles
+- **Fixed qualified identifier with dependent template arguments:** Patterns like `__static_abs<_Pn>::value` now work
+  - Enhanced `evaluate_qualified_identifier()` to detect template instantiations with dependent arguments
+  - Checks if namespace part contains template argument separators and marks as template-dependent
+  - Prevents "Undefined qualified identifier" errors for valid template-dependent code
+- **Optimized string handling:** Refactored to use `string_view` to avoid unnecessary string copies
+  - Works directly with namespace handle and name components instead of calling `full_name()`
+  - Ensures `string_view` doesn't reference temporaries while improving performance
+- **Test Results:**
+  - ✅ All 945 existing tests pass
+  - ✅ `<limits>` continues to compile successfully
+  - ✅ `<type_traits>` continues to compile successfully
+  - ⚠️ `<ratio>`, `<utility>`, `<tuple>`, `<variant>` still have parse/timeout issues (see blockers below)
 
-### 2026-01-18 (Afternoon)
-- **`__cpp_impl_coroutine` macro:** ~~Added~~ Disabled predefined macro - coroutines are not supported at this time
-- **Pointer-to-member typedef:** Support for `typedef T Class::* alias;` syntax used in `<type_traits>` result_of patterns
-- **Trailing return type parameter visibility:** Function parameters now visible in trailing return type expressions like `auto func(T __t, U __u) -> decltype(__t + __u)`
-- **StringHandle interning fix:** Fixed `NamespaceRegistry::buildQualifiedIdentifier` to use `getOrInternStringHandle` instead of `createStringHandle`, preventing duplicate handles for the same string
-- **Forward declaration fix:** Fixed `add_struct_type` to return existing TypeInfo if type name is already registered, fixing out-of-line constructors in nested namespaces
-- **Out-of-line constructor parameter scope:** Fixed to use definition's parameter names in member initializer parsing instead of declaration's names
-- **Out-of-line operator definitions:** Added support for patterns like `ReturnType ClassName::operator=(...)`
-- **Out-of-line member function parameter scope:** Fixed to update parameter nodes with definition's parameter names during code generation (2026-01-18)
-- **New headers compiling:** `<stdfloat>`, `<spanstream>`, `<print>`, `<expected>`, `<text_encoding>`, `<barrier>`, `<stacktrace>`
-- **Test case:** `tests/test_out_of_line_param_names_ret42.cpp` - tests parameter name differences between declaration and definition
-- **Impact:** `<exception>` header now progresses past the parameter scope issue (times out due to template instantiation volume)
+**Commits:** c6c20eb, 3c555fd, 575a839
 
-### 2026-01-18 (Morning)
-- **Unsupported size handling:** Fixed assertions that crashed on non-standard member sizes (3, 5, 6, 7, 0 bytes)
-- **Affected functions:** `emitStoreToMemory`, `handleMemberAccess`, `loadValueFromStack`, `storeValueToStack`, `loadValueFromGlobal`, `storeValueToGlobal`, `handleBinaryOp`
-- **Graceful degradation:** Non-standard sizes now log a warning and skip instead of crashing
-- **Test case:** `test_c_compat_headers.cpp` - tests all 16 C compatibility headers
-- **Impact:** `<csignal>` now compiles successfully (~2.7s), previously crashed on struct members with non-standard padding
+**Next Steps:**
+1. **Context-Dependent Parse Errors** (High Priority): Investigate and fix the parse errors in `bits/utility.h` that affect `<utility>`, `<tuple>`, `<span>`, `<array>`
+   - Root cause: Parser state pollution when certain headers are included before others
+   - Pattern: `typename _Up = typename remove_cv<_Tp>::type` fails only in specific contexts
+2. **Constructor with `noexcept = delete`** (Medium Priority): Fix parse error for constructors marked `noexcept = delete`
+   - Affects: `<variant>` and potentially other headers using `bits/enable_special_members.h`
+3. **Template Instantiation Performance** (Long-term): Optimize template instantiation to prevent timeouts
+   - Headers like `<concepts>`, `<bit>`, `<string>`, `<ranges>` time out due to instantiation volume
+   - Current cache hit rate: ~26% - needs improvement
+   - Consider implementing lazy instantiation for static members and template classes
+
+### 2026-01-19 (Silent Failure Investigation & Error Tracing)
+- **Added error tracing infrastructure:** Parse errors are now always visible, even in release builds
+  - Enhanced `main.cpp` to output parse errors to stderr in addition to logging system
+  - Added catch-all exception handlers around main logic to catch uncaught exceptions
+  - Previously silent failures (exit code 1 with no output) now show proper error messages
+- **Discovered context-dependent parse errors:** Several headers fail with parse errors only when other headers are included first
+  - `<utility>`, `<tuple>`, `<span>`, `<array>`: Fail with "Expected type after '=' in template parameter default" in `bits/utility.h:139`
+  - `<variant>`: Fails with "Expected identifier token" for constructor with `noexcept = delete`
+  - All simplified test cases pass in isolation, suggesting parser state corruption
+- **Regression identified:** Headers previously marked as compiling (`<tuple>`, `<variant>`) now fail due to context-dependent issues
+  - This may be related to recent parser changes or standard library version differences
+  - Investigation ongoing to identify root cause
+
+### 2026-01-19 (QualifiedIdentifierNode Fix - Some Headers Compile!)
+- **Fixed nested template expressions in template parameter defaults:**
+  - Added `QualifiedIdentifierNode` to the list of accepted dependent compile-time expressions
+  - This fixes patterns like `template<typename T, typename X = enable_if<is_same<T, int>::value>>`
+  - The `is_same<T, int>::value` expression was previously failing to be accepted as a dependent template argument
+- **Status Update:** Some headers now have context-dependent failures (see above)
+  - `<optional>`: Still compiles (with non-fatal warning about `_Hash_bytes` template)
+  - `<any>`: Still compiles (with non-fatal warning about `_Hash_bytes` template)
+
+### 2026-01-19 (Template Profiling & Progress Logging Improvements)
+- **Enhanced template instantiation progress logging:** Added periodic progress reports during template instantiation
+  - Logs every 100 template instantiations with elapsed time, cache hit rate, and instantiation depth
+  - Example: `[Progress] 400 template instantiations in 8 ms (cache hit rate: 59.7%)`
+  - Helps identify where compilation gets stuck during template-heavy headers
+- **Template instantiation tracking:** Added start/end tracking for individual template instantiations
+  - Tracks current instantiation depth to identify recursive template issues
+  - Useful for debugging infinite loops or extremely slow recursive instantiation
+- **Build with info logging:** Use `-DFLASHCPP_LOG_LEVEL=2` to enable progress logging in release builds
+  - Create dedicated InfoRelease build: `clang++ -DFLASHCPP_LOG_LEVEL=2 -O3 ...`
+- **Findings from extended timeout testing:**
+  - `<concepts>` completes 400 instantiations in 8ms then gets stuck (likely infinite recursion or loop)
+  - `<type_traits>` compiles successfully with ~400 template instantiations, 59.7% cache hit rate
+  - `<string_view>` and `<string>` timeout at 60+ seconds (true performance issue, not parse error)
+  - Many headers marked as "timeout" actually fail silently with exit code 1
+
+### 2026-01-19 (Progress Logging & Analysis)
+- **Progress logging added:** Parser now logs progress every 500 top-level nodes with elapsed time
+  - Build with `-DFLASHCPP_LOG_LEVEL=2` to see Info-level progress messages
+  - Example: `[Progress] Parsed 500 top-level nodes in 150 ms`
+  - Final summary: `[Progress] Parsing complete: 1200 top-level nodes, 5000 AST nodes in 2500 ms`
+- **`<vector>` root cause identified:** Fails during `<type_traits>` processing, not `<vector>` itself
+  - Error occurs at `bits/utility.h:56` pattern: `typename _Up = typename remove_cv<_Tp>::type`
+  - The parse succeeds for standalone test cases but fails when embedded in full `<type_traits>` context
+  - Issue is likely related to template instantiation state during complex nested template contexts
+- **Performance insight:** `<type_traits>` alone takes ~10ms for 8 top-level nodes due to heavy template instantiation
+
+### 2026-01-19 (Parse Error Fixes)
+- **`__typeof__` GCC extension:** Works like `decltype` for GCC compatibility
+- **Using-declarations:** `using Base::member;` now imports member names into derived class scope
+- **Enum forward declarations:** `enum class byte : unsigned char;` now parses correctly
+- **`<ratio>` now compiles:** ~1.4 seconds (was marked as timeout)
+
+### 2026-01-19 (Comprehensive Audit)
+- Re-tested all headers with extended timeouts; many "timeouts" are actually parse errors
+- Identified specific blockers: variadic non-type params, complex decltype patterns
+- True timeouts: `<concepts>`, `<bit>`, `<string_view>`, `<string>`, `<ranges>`
+
+### 2026-01-18
+- Log level bug fix, pointer-to-member typedef, trailing return type params
+- New headers: `<stdfloat>`, `<spanstream>`, `<print>`, `<expected>`, `<barrier>`, `<stacktrace>`
 
 ### 2026-01-17
-- **Friend function declarations:** Support for `noexcept`, `const`, `volatile`, `&`, `&&`, `__attribute__` qualifiers
-- **Friend operator functions:** `friend bool operator==(...)` now parsed correctly  
-- **Friend inline definitions:** Friend functions can be defined inline in class body
-- **Out-of-line constructors/destructors:** `MyClass::MyClass()` and `MyClass::~MyClass()` patterns supported
-- **Elaborated type specifiers:** `const class std::type_info*` syntax supported
-- **Test cases:** `test_friend_noexcept_ret0.cpp`, `test_out_of_line_ctor_ret0.cpp`
-- **Impact:** `<exception>` header now parses (times out during template instantiation)
-
-### 2026-01-17
-- **`__builtin_strlen`:** Added builtin function registration with correct `size_t` return type
-- **UserDefined type alias resolution:** Fixed overload resolution for `size_t` parameters
-- **Test case:** `test_builtin_strlen_ret5.cpp`
-- **Impact:** `<any>` header progresses past `_Hash_bytes` function call
-
-### 2026-01-16
-- **Parenthesized identifier disambiguation:** `(x) < 8` correctly parsed as comparison, not C-style cast
+- Friend functions, out-of-line ctors/dtors, elaborated type specifiers, `__builtin_strlen`
 - **Test case:** `test_parens_less_than_ret0.cpp`
 - **Impact:** `<cwctype>` now compiles (~0.78s)
 

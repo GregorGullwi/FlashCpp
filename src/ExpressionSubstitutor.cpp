@@ -1,5 +1,6 @@
 #include "ExpressionSubstitutor.h"
 #include "Parser.h"
+#include "TemplateInstantiationHelper.h"
 #include "Log.h"
 
 ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
@@ -404,7 +405,50 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 		}
 	}
 	
-	// If not a template constructor call or no substitution needed, return as-is
+	// If not a template constructor call or no substitution needed, check if the function itself is a template
+	// Look up the function in the symbol table
+	std::string_view template_func_name = decl_node.identifier_token().value();
+	auto symbol_opt = gSymbolTable.lookup(template_func_name);
+	
+	if (symbol_opt.has_value() && symbol_opt->is<TemplateFunctionDeclarationNode>()) {
+		FLASH_LOG(Templates, Debug, "  Function is a template: ", template_func_name);
+		
+		// This is a template function call - we need to instantiate it
+		// Try to deduce template arguments from the substituted function arguments
+		ChunkedVector<ASTNode> substituted_args;
+		for (size_t i = 0; i < call.arguments().size(); ++i) {
+			substituted_args.push_back(substitute(call.arguments()[i]));
+		}
+		
+		// Use shared helper to deduce template arguments from constructor call patterns
+		std::vector<TemplateTypeArg> deduced_template_args = TemplateInstantiationHelper::deduceTemplateArgsFromCall(substituted_args);
+		
+		// If we deduced template arguments, try to instantiate the template function
+		if (!deduced_template_args.empty()) {
+			// Use shared helper to try instantiation with various name variations
+			auto instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
+				parser_, template_func_name, template_func_name, deduced_template_args);
+			
+			if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
+				const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
+				FLASH_LOG(Templates, Debug, "  Successfully instantiated template function");
+				
+				// Create a new FunctionCallNode with the instantiated function
+				FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
+					const_cast<DeclarationNode&>(instantiated_func.decl_node()),
+					std::move(substituted_args),
+					call.called_from()
+				);
+				
+				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
+				return ASTNode(&new_expr);
+			} else {
+				FLASH_LOG(Templates, Warning, "  Failed to instantiate template function: ", template_func_name);
+			}
+		}
+	}
+	
+	// If not a template function call or instantiation failed, return as-is
 	FLASH_LOG(Templates, Debug, "  Returning function call as-is");
 	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
 	return ASTNode(&new_expr);
