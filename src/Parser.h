@@ -272,8 +272,7 @@ public:
                 size_t top_level_count = 0;
                 auto start_time = std::chrono::high_resolution_clock::now();
 #endif
-                while (peek_token().has_value() && !parseResult.is_error() &&
-                        peek_token()->type() != Token::Type::EndOfFile) {
+                while (peek_token().has_value() && !parseResult.is_error()) {
                         parseResult = parse_top_level_node();
 #if FLASHCPP_LOG_LEVEL >= 2  // Info level progress logging
                         ++top_level_count;

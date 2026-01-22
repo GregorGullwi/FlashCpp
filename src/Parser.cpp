@@ -370,6 +370,11 @@ std::optional<Token> Parser::peek_token() {
         // because we always set current_token_ when injecting
         current_token_.emplace(lexer_.next_token());
     }
+    // Return nullopt for EndOfFile to make loops like
+    // "while (peek_token().has_value())" terminate at EOF
+    if (current_token_->type() == Token::Type::EndOfFile) {
+        return std::nullopt;
+    }
     return current_token_;
 }
 
