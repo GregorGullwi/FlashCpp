@@ -6,53 +6,57 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~0.21s |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1.0s release |
-| `<compare>` | N/A | ✅ Compiled | ~0.07s |
-| `<version>` | N/A | ✅ Compiled | ~0.07s |
-| `<source_location>` | N/A | ✅ Compiled | ~0.07s |
-| `<numbers>` | N/A | ✅ Compiled | ~1.2s release |
-| `<initializer_list>` | N/A | ✅ Compiled | ~0.04s |
-| `<ratio>` | `test_std_ratio.cpp` | ❌ Codegen | 2026-01-21: Variable template in function body issue (see blocker 3.3) |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~29ms |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~31ms |
+| `<compare>` | N/A | ⏱️ Timeout | Times out during template instantiation |
+| `<version>` | N/A | ✅ Compiled | ~17ms |
+| `<source_location>` | N/A | ✅ Compiled | ~17ms |
+| `<numbers>` | N/A | ✅ Compiled | ~33ms |
+| `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
+| `<ratio>` | `test_std_ratio.cpp` | 💥 Crash | Variable template `__is_ratio_v` not found in codegen (see blocker 3.3) |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | 2026-01-22: Fixed include order bug, now times out (~450+ templates) |
-| `<variant>` | `test_std_variant.cpp` | 💥 Crash | 2026-01-22: Crashes ~500 templates due to std::any corruption in vector ops (see blocker 3.4) |
-| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
+| `<optional>` | `test_std_optional.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<variant>` | `test_std_variant.cpp` | 💥 Crash | Crashes ~500 templates due to memory corruption (see blocker 3.4) |
+| `<any>` | `test_std_any.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<concepts>` | `test_std_concepts.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<utility>` | `test_std_utility.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<bit>` | N/A | ⏱️ Timeout | Times out at 5+ minutes during template instantiation |
-| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
+| `<bit>` | N/A | ⏱️ Timeout | Times out during template instantiation |
+| `<string_view>` | `test_std_string_view.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<string>` | `test_std_string.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<memory>` | `test_std_memory.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
+| `<functional>` | `test_std_functional.cpp` | 💥 Crash | std::bad_any_cast during parsing |
+| `<algorithm>` | `test_std_algorithm.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Times out during template instantiation |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Times out during template instantiation |
-| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Times out (depends on complex headers) |
-| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out at 60+ seconds |
-| `<atomic>` | N/A | ❌ Parse Error | Complex decltype in partial specialization |
-| `<new>` | N/A | ✅ Compiled | ~0.08s |
-| `<exception>` | N/A | ✅ Compiled | ~1.3s (2026-01-22: Fixed pending_explicit_template_args_ leak) |
-| `<typeinfo>` | N/A | ✅ Compiled | ~0.09s |
-| `<typeindex>` | N/A | ✅ Compiled | ~1.6s (depends on <exception>) |
-| `<csetjmp>` | N/A | ✅ Compiled | ~0.04s |
-| `<csignal>` | N/A | ✅ Compiled | ~0.13s |
-| `<stdfloat>` | N/A | ✅ Compiled | ~0.01s (C++23) |
-| `<spanstream>` | N/A | ✅ Compiled | ~0.09s (C++23) |
-| `<print>` | N/A | ✅ Compiled | ~0.09s (C++23) |
-| `<expected>` | N/A | ✅ Compiled | ~0.08s (C++23) |
-| `<text_encoding>` | N/A | ✅ Compiled | ~0.08s (C++26) |
-| `<barrier>` | N/A | ✅ Compiled | ~0.07s (C++20) |
-| `<stacktrace>` | N/A | ✅ Compiled | ~0.07s (C++23) |
-| `<coroutine>` | N/A | ❌ Not Supported | Coroutines require `-fcoroutines` flag |
+| `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<iostream>` | `test_std_iostream.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<chrono>` | `test_std_chrono.cpp` | ⏱️ Timeout | Times out during template instantiation |
+| `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
+| `<new>` | N/A | ✅ Compiled | ~18ms |
+| `<exception>` | N/A | ✅ Compiled | ~43ms |
+| `<typeinfo>` | N/A | ✅ Compiled | ~18ms |
+| `<typeindex>` | N/A | ⏱️ Timeout | Times out during template instantiation |
+| `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
+| `<csignal>` | N/A | ✅ Compiled | ~22ms |
+| `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
+| `<spanstream>` | N/A | ✅ Compiled | ~17ms (C++23) |
+| `<print>` | N/A | ✅ Compiled | ~17ms (C++23) |
+| `<expected>` | N/A | ✅ Compiled | ~18ms (C++23) |
+| `<text_encoding>` | N/A | ✅ Compiled | ~17ms (C++26) |
+| `<barrier>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
+| `<stacktrace>` | N/A | ✅ Compiled | ~17ms (C++23) |
+| `<coroutine>` | N/A | ⏱️ Timeout | Times out during template instantiation |
 
-**Legend:** ✅ Compiled | ❌ Failed/Parse Error | ⏱️ Timeout (>30s) | 💥 Crash
+**Legend:** ✅ Compiled | ❌ Failed/Parse Error | ⏱️ Timeout (>15s) | 💥 Crash
 
-**Note (2026-01-22):** Most timeout headers parse successfully but trigger extensive template instantiation. The primary remaining blockers are template instantiation performance and a few codegen issues.
+**Note (2026-01-22):** Most timeout headers parse successfully but trigger extensive template instantiation. The primary remaining blockers are:
+1. Template instantiation performance (most timeouts)
+2. Memory corruption causing crashes in `<variant>` and `<functional>`
+3. Variable template codegen issue in `<ratio>`
+4. Missing pthread types for `<atomic>` and `<barrier>`
 
 ### C Library Wrappers (Also Working)
 
