@@ -59,28 +59,10 @@ public:
 	}
 
 	template <typename T> T& as() {
-		// Debug: Check if type matches before casting
-		if (!is<T>()) {
-			std::cerr << "ERROR: bad_any_cast in ASTNode::as<" << typeid(T).name() << ">()" << std::endl;
-			std::cerr << "  Actual type: " << (node_.has_value() ? node_.type().name() : "(empty)") << std::endl;
-			std::cerr << "  Expected: " << typeid(T*).name() << std::endl;
-			// Print a simple stack trace using __builtin_return_address
-			void* addr = __builtin_return_address(0);
-			std::cerr << "  Return address: " << addr << std::endl;
-		}
 		return *std::any_cast<T*>(node_);
 	}
 
 	template <typename T> const T& as() const {
-		// Debug: Check if type matches before casting
-		if (!is<T>()) {
-			std::cerr << "ERROR: bad_any_cast in const ASTNode::as<" << typeid(T).name() << ">()" << std::endl;
-			std::cerr << "  Actual type: " << (node_.has_value() ? node_.type().name() : "(empty)") << std::endl;
-			std::cerr << "  Expected: " << typeid(T*).name() << std::endl;
-			// Print a simple stack trace using __builtin_return_address
-			void* addr = __builtin_return_address(0);
-			std::cerr << "  Return address: " << addr << std::endl;
-		}
 		return *std::any_cast<T*>(node_);
 	}
 

@@ -11890,8 +11890,9 @@ ParseResult Parser::parse_type_specifier()
 
 ParseResult Parser::parse_decltype_specifier()
 {
-	// Parse decltype(expr) or __typeof__(expr) type specifier
+	// Parse decltype(expr) or decltype(auto) or __typeof__(expr) type specifier
 	// Example: decltype(x + y) result = x + y;
+	// Example: decltype(auto) result = x + y;  // C++14 deduced return type
 	// __typeof__ is a GCC extension that works like decltype
 
 	ScopedTokenPosition saved_position(*this);
@@ -11907,6 +11908,20 @@ ParseResult Parser::parse_decltype_specifier()
 	// Expect '('
 	if (!consume_punctuator("(")) {
 		return ParseResult::error(std::string("Expected '(' after '") + std::string(keyword) + "'", *current_token_);
+	}
+
+	// C++14: Check for decltype(auto) - special case for deduced return types
+	// decltype(auto) deduces the type preserving references and cv-qualifiers
+	if (keyword == "decltype" && peek_token().has_value() && peek_token()->value() == "auto") {
+		consume_token();  // consume 'auto'
+		if (!consume_punctuator(")")) {
+			return ParseResult::error("Expected ')' after 'decltype(auto)'", *current_token_);
+		}
+		// Return Type::Auto to indicate deduced return type
+		// The semantics of decltype(auto) vs auto differ during instantiation,
+		// but for parsing purposes, we treat it as auto with special handling
+		TypeSpecifierNode auto_type(Type::Auto, TypeQualifier::None, 0);
+		return saved_position.success(emplace_node<TypeSpecifierNode>(auto_type));
 	}
 
 	// Phase 3: Parse the expression with Decltype context for proper template disambiguation
