@@ -8,7 +8,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~29ms |
 | `<type_traits>` | `test_std_type_traits.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~113ms) |
-| `<compare>` | N/A | ❌ Parse Error | Fails at line 763 - template constructor parsing issue |
+| `<compare>` | N/A | ❌ Parse Error | Fails at line 1210 - requires-requires clause in inline constexpr struct |
 | `<version>` | N/A | ✅ Compiled | ~17ms |
 | `<source_location>` | N/A | ✅ Compiled | ~17ms |
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
@@ -52,7 +52,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
-**Note (2026-01-23 Latest Update):** Fixed block scope handling in if/else statements (fixes `<any>` variable redeclaration error). Fixed SFINAE context for requires expression bodies so function lookup failures no longer produce errors. Disabled `__cpp_using_enum` macro since parser doesn't support "using enum" yet. The `<compare>` header now progresses past line 621 but fails at line 763 due to template constructor parsing issues.
+**Note (2026-01-23 Latest Update):** Fixed multiple `<compare>` header blockers including variable template lookup with dependent args, constructor parsing in member struct templates, and inline constexpr struct with trailing variable initializers. The header now progresses from line 763 to line 1210, failing on `requires requires` clause in inline constexpr struct member function (`_Synth3way::operator()`).
+
+**Note (2026-01-23 Previous Update):** Fixed block scope handling in if/else statements (fixes `<any>` variable redeclaration error). Fixed SFINAE context for requires expression bodies so function lookup failures no longer produce errors. Disabled `__cpp_using_enum` macro since parser doesn't support "using enum" yet. The `<compare>` header now progresses past line 621 but fails at line 763 due to template constructor parsing issues.
 
 **Note (2026-01-22 Evening Update):** All timeout issues have been resolved! The infinite loop bug in the parser has been fixed. Headers that were timing out now complete in 100-200ms. The remaining blockers are actual parsing/semantic issues.
 
@@ -63,12 +65,18 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Note (2026-01-23 Later Update):** Fixed partial specialization forward declarations (`template<typename T> struct X<T*>;`) which were causing the parser to incorrectly enter struct body mode. Also fixed qualified concept lookup so namespaced concepts like `std::same_as<T>` work correctly. Fixed parenthesized concept expressions in constraints (e.g., `(concept<T>) && ...`). The `<optional>` header now progresses to semantic errors (function lookup).
 
 **Primary Remaining Blockers:**
-1. **`<compare>` header template constructor parsing** - The header fails at line 763 parsing a template struct constructor `_Int(_Tp __hi, uint64_t __lo)`. Earlier parsing errors (missing `__cmp_cat_id` identifier) may be causing parser state corruption.
+1. **`<compare>` header requires-requires clause** - The header fails at line 1210 parsing a `requires requires { __t < __u }` clause in an inline constexpr struct member function. Function parameters aren't properly scoped within the nested requires expression.
 2. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
 3. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
 4. **Out-of-line nested template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported yet (affects `<any>`)
 
 **Fixes Applied (2026-01-23 This PR):**
+- **Fixed** Variable template lookup with dependent arguments - When a variable template is found but can't be instantiated due to dependent args, create placeholder node instead of error
+- **Fixed** Constructor parsing in member struct templates - Properly skip constructors when parsing member struct template bodies
+- **Fixed** Member function body parsing in member struct templates - Skip function bodies to defer until template instantiation
+- **Fixed** Inline constexpr struct detection - `inline constexpr struct Name { ... } var = {};` pattern now delegates to struct parsing
+- **Fixed** Trailing variable initializers after struct definition - `struct S {} s = {};` initializer syntax now supported
+- **Refactored** Specifier parsing to use `parse_declaration_specifiers()` for common keywords
 - **Fixed** Block scope handling in if/else statements - Variables declared in different branches of if/else are now correctly scoped
 - **Fixed** SFINAE context in requires expression bodies - Function lookup failures inside requires expressions no longer produce errors
 - **Fixed** `__cpp_using_enum` macro disabled - Parser doesn't support "using enum" statement yet, so fallback code paths are now used
