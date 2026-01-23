@@ -2381,6 +2381,112 @@ private:
 			defines_["__SIG_ATOMIC_TYPE__"] = DefineDirective{ "int", {} };
 			defines_["__CHAR16_TYPE__"] = DefineDirective{ "unsigned short", {} };
 			defines_["__CHAR32_TYPE__"] = DefineDirective{ "unsigned int", {} };
+
+			// GCC/Clang specific predefined macros
+			defines_["__STRICT_ANSI__"] = DefineDirective{ "1", {} };
+			defines_["__ELF__"] = DefineDirective{ "1", {} };
+			defines_["__VERSION__"] = DefineDirective{ "\"FlashCpp (gcc compatibility)\"", {} };
+
+			defines_["__BASE_FILE__"] = FunctionDirective{ [this]() -> std::string {
+				// Prefer the main input file if available, otherwise fall back to the current file
+				if (auto input = settings_.getInputFile()) {
+					std::filesystem::path p(*input);
+					return "\"" + p.generic_string() + "\"";
+				}
+				if (!filestack_.empty()) {
+					std::filesystem::path p(filestack_.top().file_name);
+					return "\"" + p.generic_string() + "\"";
+				}
+				return "\"\"";
+			} };
+
+			defines_["__FILE_NAME__"] = FunctionDirective{ [this]() -> std::string {
+				if (filestack_.empty()) {
+					return "\"\"";
+				}
+				std::filesystem::path file_path(filestack_.top().file_name);
+				return "\"" + file_path.filename().generic_string() + "\"";
+			} };
+
+			// Integer limit macros
+			defines_["__SIG_ATOMIC_MAX__"] = DefineDirective{ "2147483647", {} };
+			defines_["__SIG_ATOMIC_MIN__"] = DefineDirective{ "(-2147483648)", {} };
+
+			defines_["__INT_LEAST8_MAX__"] = DefineDirective{ "127", {} };
+			defines_["__INT_LEAST16_MAX__"] = DefineDirective{ "32767", {} };
+			defines_["__INT_LEAST32_MAX__"] = DefineDirective{ "2147483647", {} };
+			defines_["__INT_LEAST64_MAX__"] = DefineDirective{ "9223372036854775807L", {} };
+			defines_["__UINT_LEAST8_MAX__"] = DefineDirective{ "255", {} };
+			defines_["__UINT_LEAST16_MAX__"] = DefineDirective{ "65535", {} };
+			defines_["__UINT_LEAST32_MAX__"] = DefineDirective{ "4294967295U", {} };
+			defines_["__UINT_LEAST64_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
+
+			defines_["__INT_FAST8_MAX__"] = DefineDirective{ "127", {} };
+			defines_["__INT_FAST16_MAX__"] = DefineDirective{ "9223372036854775807L", {} };
+			defines_["__INT_FAST32_MAX__"] = DefineDirective{ "9223372036854775807L", {} };
+			defines_["__INT_FAST64_MAX__"] = DefineDirective{ "9223372036854775807L", {} };
+			defines_["__UINT_FAST8_MAX__"] = DefineDirective{ "255", {} };
+			defines_["__UINT_FAST16_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
+			defines_["__UINT_FAST32_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
+			defines_["__UINT_FAST64_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
+
+			defines_["__INTPTR_MAX__"] = DefineDirective{ "9223372036854775807L", {} };
+			defines_["__UINTPTR_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
+
+			defines_["__WCHAR_MIN__"] = DefineDirective{ "(-2147483648)", {} };
+			defines_["__WINT_MIN__"] = DefineDirective{ "0", {} };
+
+			// Integer constant macros
+			{
+				DefineDirective macro{ "c", { "c" } };
+				macro.is_function_like = true;
+				defines_["__INT8_C"] = std::move(macro);
+			}
+			{
+				DefineDirective macro{ "c", { "c" } };
+				macro.is_function_like = true;
+				defines_["__INT16_C"] = std::move(macro);
+			}
+			{
+				DefineDirective macro{ "c", { "c" } };
+				macro.is_function_like = true;
+				defines_["__INT32_C"] = std::move(macro);
+			}
+			{
+				DefineDirective macro{ "c ## L", { "c" } };
+				macro.is_function_like = true;
+				defines_["__INT64_C"] = std::move(macro);
+			}
+			{
+				DefineDirective macro{ "c", { "c" } };
+				macro.is_function_like = true;
+				defines_["__UINT8_C"] = std::move(macro);
+			}
+			{
+				DefineDirective macro{ "c ## U", { "c" } };
+				macro.is_function_like = true;
+				defines_["__UINT16_C"] = std::move(macro);
+			}
+			{
+				DefineDirective macro{ "c ## U", { "c" } };
+				macro.is_function_like = true;
+				defines_["__UINT32_C"] = std::move(macro);
+			}
+			{
+				DefineDirective macro{ "c ## UL", { "c" } };
+				macro.is_function_like = true;
+				defines_["__UINT64_C"] = std::move(macro);
+			}
+			{
+				DefineDirective macro{ "c ## L", { "c" } };
+				macro.is_function_like = true;
+				defines_["__INTMAX_C"] = std::move(macro);
+			}
+			{
+				DefineDirective macro{ "c ## UL", { "c" } };
+				macro.is_function_like = true;
+				defines_["__UINTMAX_C"] = std::move(macro);
+			}
 		}
 
 		// Compiler builtin macros for numeric limits - required by <limits> header
@@ -2484,6 +2590,26 @@ private:
 		defines_["__LDBL_HAS_QUIET_NAN__"] = DefineDirective{ "1", {} };
 		defines_["__LDBL_IS_IEC_60559__"] = DefineDirective{ "1", {} };
 
+		// Width / word order / deprecation markers (common for GCC compatibility)
+		defines_["__SCHAR_WIDTH__"] = DefineDirective{ "8", {} };
+		defines_["__SHRT_WIDTH__"] = DefineDirective{ "16", {} };
+		defines_["__INT_WIDTH__"] = DefineDirective{ "32", {} };
+		defines_["__LONG_WIDTH__"] = DefineDirective{ settings_.getLongSizeBits() == 32 ? "32" : "64", {} };
+		defines_["__LONG_LONG_WIDTH__"] = DefineDirective{ "64", {} };
+		defines_["__PTRDIFF_WIDTH__"] = DefineDirective{ "64", {} };
+		defines_["__SIG_ATOMIC_WIDTH__"] = DefineDirective{ "32", {} };
+		defines_["__SIZE_WIDTH__"] = DefineDirective{ "64", {} };
+		defines_["__WCHAR_WIDTH__"] = DefineDirective{ "32", {} };
+		defines_["__WINT_WIDTH__"] = DefineDirective{ "32", {} };
+		defines_["__INTPTR_WIDTH__"] = DefineDirective{ "64", {} };
+		defines_["__INTMAX_WIDTH__"] = DefineDirective{ "64", {} };
+
+		// Floating-point word order
+		defines_["__FLOAT_WORD_ORDER__"] = DefineDirective{ "__BYTE_ORDER__", {} };
+
+		// Deprecation marker
+		defines_["__DEPRECATED"] = DefineDirective{};
+		
 		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string {
 			// Use std::filesystem to normalize path separators for cross-platform compatibility
 			// This converts backslashes to forward slashes on all platforms
