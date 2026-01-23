@@ -8,37 +8,37 @@ This directory contains test files for C++ standard library headers to assess Fl
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~29ms |
 | `<type_traits>` | `test_std_type_traits.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~113ms) |
-| `<compare>` | N/A | ❌ Semantic Error | Now parses successfully, fails at strong_order lookup (~142ms) |
+| `<compare>` | N/A | ❌ Parse Error | Fails at line 763 - template constructor parsing issue |
 | `<version>` | N/A | ✅ Compiled | ~17ms |
 | `<source_location>` | N/A | ✅ Compiled | ~17ms |
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | static_assert constexpr evaluation (~155ms) |
-| `<vector>` | `test_std_vector.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
 | `<optional>` | `test_std_optional.cpp` | ❌ Semantic Error | iter_move function lookup (~174ms) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~161ms) |
-| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Non-template inline constructor forward reference issue (~128ms) |
+| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Out-of-line nested template member function definition (~128ms) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
-| `<utility>` | `test_std_utility.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
-| `<bit>` | N/A | ❌ Semantic Error | `<compare>` strong_order lookup failure |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
-| `<string>` | `test_std_string.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
-| `<array>` | `test_std_array.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<utility>` | `test_std_utility.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
+| `<bit>` | N/A | ❌ Parse Error | `<compare>` header parsing failure |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
+| `<string>` | `test_std_string.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
+| `<array>` | `test_std_array.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
 | `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Test file missing |
-| `<functional>` | `test_std_functional.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure (~143ms) |
+| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | `<compare>` header parsing failure (~143ms) |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Test file missing |
-| `<map>` | `test_std_map.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
-| `<set>` | `test_std_set.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
-| `<span>` | `test_std_span.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<map>` | `test_std_map.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
+| `<set>` | `test_std_set.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
+| `<span>` | `test_std_span.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
 | `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Test file missing |
 | `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
 | `<typeinfo>` | N/A | ✅ Compiled | ~18ms |
-| `<typeindex>` | N/A | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<typeindex>` | N/A | ❌ Parse Error | `<compare>` header parsing failure |
 | `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
 | `<csignal>` | N/A | ✅ Compiled | ~22ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
@@ -48,9 +48,11 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<text_encoding>` | N/A | ✅ Compiled | ~17ms (C++26) |
 | `<barrier>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<stacktrace>` | N/A | ✅ Compiled | ~17ms (C++23) |
-| `<coroutine>` | N/A | ❌ Semantic Error | `<compare>` strong_order lookup failure |
+| `<coroutine>` | N/A | ❌ Parse Error | `<compare>` header parsing failure |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
+
+**Note (2026-01-23 Latest Update):** Fixed block scope handling in if/else statements (fixes `<any>` variable redeclaration error). Fixed SFINAE context for requires expression bodies so function lookup failures no longer produce errors. Disabled `__cpp_using_enum` macro since parser doesn't support "using enum" yet. The `<compare>` header now progresses past line 621 but fails at line 763 due to template constructor parsing issues.
 
 **Note (2026-01-22 Evening Update):** All timeout issues have been resolved! The infinite loop bug in the parser has been fixed. Headers that were timing out now complete in 100-200ms. The remaining blockers are actual parsing/semantic issues.
 
@@ -61,12 +63,15 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Note (2026-01-23 Later Update):** Fixed partial specialization forward declarations (`template<typename T> struct X<T*>;`) which were causing the parser to incorrectly enter struct body mode. Also fixed qualified concept lookup so namespaced concepts like `std::same_as<T>` work correctly. Fixed parenthesized concept expressions in constraints (e.g., `(concept<T>) && ...`). The `<optional>` header now progresses to semantic errors (function lookup).
 
 **Primary Remaining Blockers:**
-1. **`<compare>` header strong_order lookup** - The header now parses but fails at line 621 looking up `strong_order` function (semantic error, not parse error). In requires expressions, function lookup failures should not cause errors - they indicate the constraint is not satisfied.
+1. **`<compare>` header template constructor parsing** - The header fails at line 763 parsing a template struct constructor `_Int(_Tp __hi, uint64_t __lo)`. Earlier parsing errors (missing `__cmp_cat_id` identifier) may be causing parser state corruption.
 2. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
 3. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
-4. **Non-template inline member function forward references** - Non-template constructors and member functions defined inline within the class body cannot access member variables declared later in the class. Out-of-line definitions work correctly. (affects `<any>` copy/move constructors)
+4. **Out-of-line nested template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported yet (affects `<any>`)
 
 **Fixes Applied (2026-01-23 This PR):**
+- **Fixed** Block scope handling in if/else statements - Variables declared in different branches of if/else are now correctly scoped
+- **Fixed** SFINAE context in requires expression bodies - Function lookup failures inside requires expressions no longer produce errors
+- **Fixed** `__cpp_using_enum` macro disabled - Parser doesn't support "using enum" statement yet, so fallback code paths are now used
 - **Fixed** Member template constructor deferred body parsing - Template constructor bodies are now deferred until after the full class is parsed, enabling access to forward-declared member variables (complete-class context)
 - **Fixed** Trailing `requires` clause support for static member functions - patterns like `static int f(int& r) requires requires { r; } { ... }` now parse correctly
 - **Fixed** Function parameter scope in trailing requires clauses - parameters are now visible inside the requires expression
