@@ -1802,36 +1802,115 @@ ParseResult Parser::parse_type_and_name() {
         skip_cpp_attributes();
     } else {
         // Regular identifier (or unnamed parameter)
-        // Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
-        FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Parsing identifier. current_token={}, peek={}", 
-            current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
-            peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
-        if (peek_token().has_value()) {
-            auto next = peek_token()->value();
-            if (next == "," || next == ")" || next == "=" || next == "[") {
-                // This is an unnamed parameter - create a synthetic empty identifier
-                FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Unnamed parameter detected, next={}", std::string(next));
-                identifier_token = Token(Token::Type::Identifier, "",
-                                        current_token_->line(), current_token_->column(),
-                                        current_token_->file_index());
+        // First, skip any specifiers that may appear after the return type but before the identifier
+        // This handles non-standard (but valid in GCC/libstdc++) patterns like: void constexpr operator=()
+        while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+            std::string_view kw = peek_token()->value();
+            if (kw == "constexpr" || kw == "consteval" || kw == "inline") {
+                consume_token(); // skip the specifier
             } else {
-                // Regular identifier
-                FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consuming token as identifier, peek={}", std::string(next));
-                auto id_token = consume_token();
-                if (!id_token) {
-                    return ParseResult::error("Expected identifier token", Token());
-                }
-                if (id_token->type() != Token::Type::Identifier) {
-                    return ParseResult::error("Expected identifier token", *id_token);
-                }
-                identifier_token = *id_token;
-                FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consumed identifier={}, now current_token={}, peek={}", 
-                    std::string(identifier_token.value()),
-                    current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
-                    peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+                break;
             }
+        }
+        
+        // After skipping specifiers, check if this is now an operator (e.g., void constexpr operator=())
+        if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+            peek_token()->value() == "operator") {
+            Token operator_keyword_token = *peek_token();
+            consume_token(); // consume 'operator'
+            
+            std::string_view operator_name;
+            
+            // Check for operator()
+            if (peek_token().has_value() && peek_token()->value() == "(") {
+                consume_token(); // consume '('
+                if (!peek_token().has_value() || peek_token()->value() != ")") {
+                    return ParseResult::error("Expected ')' after 'operator('", operator_keyword_token);
+                }
+                consume_token(); // consume ')'
+                static const std::string operator_call_name = "operator()";
+                operator_name = operator_call_name;
+            }
+            // Check for other operators
+            else if (peek_token().has_value() && peek_token()->type() == Token::Type::Operator) {
+                Token operator_symbol_token = *peek_token();
+                std::string_view operator_symbol = operator_symbol_token.value();
+                consume_token(); // consume operator symbol
+                
+                // Build operator name
+                static std::unordered_map<std::string_view, std::string> operator_names_late = {
+                    {"=", "operator="}, {"<=>", "operator<=>"},
+                    {"<<", "operator<<"}, {">>", "operator>>"},
+                    {"+", "operator+"}, {"-", "operator-"},
+                    {"*", "operator*"}, {"/", "operator/"},
+                    {"%", "operator%"}, {"&", "operator&"},
+                    {"|", "operator|"}, {"^", "operator^"},
+                    {"~", "operator~"}, {"!", "operator!"},
+                    {"<", "operator<"}, {">", "operator>"},
+                    {"<=", "operator<="}, {">=", "operator>="},
+                    {"==", "operator=="}, {"!=", "operator!="},
+                    {"&&", "operator&&"}, {"||", "operator||"},
+                    {"++", "operator++"}, {"--", "operator--"},
+                    {"->", "operator->"}, {"->*", "operator->*"},
+                    {",", "operator,"}
+                };
+                
+                auto it = operator_names_late.find(operator_symbol);
+                if (it != operator_names_late.end()) {
+                    operator_name = it->second;
+                } else {
+                    return ParseResult::error("Unknown operator symbol", operator_symbol_token);
+                }
+            }
+            // Check for subscript operator
+            else if (peek_token().has_value() && peek_token()->value() == "[") {
+                consume_token(); // consume '['
+                if (!peek_token().has_value() || peek_token()->value() != "]") {
+                    return ParseResult::error("Expected ']' after 'operator['", operator_keyword_token);
+                }
+                consume_token(); // consume ']'
+                static const std::string operator_subscript_name = "operator[]";
+                operator_name = operator_subscript_name;
+            } else {
+                return ParseResult::error("Unknown operator", operator_keyword_token);
+            }
+            
+            // Create a synthetic identifier token for the operator
+            identifier_token = Token(Token::Type::Identifier, operator_name,
+                                    operator_keyword_token.line(), operator_keyword_token.column(),
+                                    operator_keyword_token.file_index());
         } else {
-            return ParseResult::error("Expected identifier or end of parameter", Token());
+            // Check if this might be an unnamed parameter (next token is ',', ')', '=', or '[')
+            FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Parsing identifier. current_token={}, peek={}", 
+                current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+                peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+            if (peek_token().has_value()) {
+                auto next = peek_token()->value();
+                if (next == "," || next == ")" || next == "=" || next == "[") {
+                    // This is an unnamed parameter - create a synthetic empty identifier
+                    FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Unnamed parameter detected, next={}", std::string(next));
+                    identifier_token = Token(Token::Type::Identifier, "",
+                                            current_token_->line(), current_token_->column(),
+                                            current_token_->file_index());
+                } else {
+                    // Regular identifier
+                    FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consuming token as identifier, peek={}", std::string(next));
+                    auto id_token = consume_token();
+                    if (!id_token) {
+                        return ParseResult::error("Expected identifier token", Token());
+                    }
+                    if (id_token->type() != Token::Type::Identifier) {
+                        return ParseResult::error("Expected identifier token", *id_token);
+                    }
+                    identifier_token = *id_token;
+                    FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Consumed identifier={}, now current_token={}, peek={}", 
+                        std::string(identifier_token.value()),
+                        current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
+                        peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+                }
+            } else {
+                return ParseResult::error("Expected identifier or end of parameter", Token());
+            }
         }
     }
 
