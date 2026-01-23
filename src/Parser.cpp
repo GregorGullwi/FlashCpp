@@ -11,6 +11,7 @@
 #include "TypeTraitEvaluator.h"
 #include "LazyMemberResolver.h"
 #include "InstantiationQueue.h"
+#include <atomic> // Include atomic for constrained partial specialization counter
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -3157,6 +3158,23 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				ParseResult trailing_type_specifier = parse_type_specifier();
 				if (trailing_type_specifier.is_error())
 					return trailing_type_specifier;
+
+				// Apply pointer and reference qualifiers (e.g., T*, T&, T&&)
+				if (trailing_type_specifier.node().has_value() && 
+				    trailing_type_specifier.node()->is<TypeSpecifierNode>()) {
+					TypeSpecifierNode& trailing_ts = trailing_type_specifier.node()->as<TypeSpecifierNode>();
+					
+					// Apply pointer qualifiers if present (e.g., T*, T**)
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+					       peek_token()->value() == "*") {
+						consume_token(); // consume '*'
+						CVQualifier ptr_cv = parse_cv_qualifiers();
+						trailing_ts.add_pointer_level(ptr_cv);
+					}
+					
+					// Apply reference qualifiers if present (e.g., T& or T&&)
+					apply_trailing_reference_qualifiers(trailing_ts);
+				}
 
 				type_specifier = as<TypeSpecifierNode>(trailing_type_specifier);
 			}
@@ -6848,7 +6866,35 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Check for variable declarations after struct definition: struct Point { ... } p, q;
 	// Also handles: inline constexpr struct Name { ... } variable = {};
+	// And: struct S { ... } inline constexpr s{};  (C++17 inline variables)
 	std::vector<ASTNode> struct_variables;
+	
+	// First, skip any storage class specifiers before the variable name
+	// Valid specifiers: inline, constexpr, static, extern, thread_local
+	bool has_inline = false;
+	bool has_constexpr = false;
+	[[maybe_unused]] bool has_static = false;
+	while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+		std::string_view kw = peek_token()->value();
+		if (kw == "inline") {
+			has_inline = true;
+			consume_token();
+		} else if (kw == "constexpr") {
+			has_constexpr = true;
+			consume_token();
+		} else if (kw == "static") {
+			has_static = true;
+			consume_token();
+		} else if (kw == "const") {
+			consume_token();
+		} else {
+			break;
+		}
+	}
+	
+	(void)has_inline;  // Mark as used
+	(void)has_constexpr;  // Mark as used
+	
 	if (peek_token().has_value() && 
 	    (peek_token()->type() == Token::Type::Identifier || 
 	     (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "*"))) {
@@ -6886,6 +6932,13 @@ ParseResult Parser::parse_struct_declaration()
 			std::optional<ASTNode> init_expr;
 			if (peek_token().has_value() && peek_token()->value() == "=") {
 				consume_token(); // consume '='
+				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				init_expr = init_result.node();
+			} else if (peek_token().has_value() && peek_token()->value() == "{") {
+				// C++11 brace initialization: struct S { } s{};
 				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (init_result.is_error()) {
 					return init_result;
@@ -9542,12 +9595,22 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 		// and are primarily for ADL (Argument-Dependent Lookup) purposes.
 		// The empty name is acceptable because we only need to record that a friend 
 		// declaration exists; the actual function resolution happens at call sites.
-		while (peek_token().has_value() && peek_token()->value() != ";") {
+		
+		// Skip until ';' or '{' (for friend function templates with inline definitions)
+		while (peek_token().has_value() && peek_token()->value() != ";" && peek_token()->value() != "{") {
 			consume_token();
 		}
-		if (!consume_punctuator(";")) {
-			return ParseResult::error("Expected ';' after template friend declaration", *peek_token());
+		
+		// Handle inline friend function template body: { ... }
+		if (peek_token().has_value() && peek_token()->value() == "{") {
+			skip_balanced_braces();
 		}
+		
+		// Skip trailing semicolon if present (for declarations without body)
+		if (peek_token().has_value() && peek_token()->value() == ";") {
+			consume_token();
+		}
+		
 		// Create a minimal friend declaration node - name is empty since we skipped parsing
 		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, StringHandle{});
 		struct_node.add_friend(friend_node);
@@ -13137,6 +13200,23 @@ ParseResult Parser::parse_function_header(
 		if (trailing_result.is_error()) {
 			return trailing_result;
 		}
+		
+		// Apply pointer and reference qualifiers (e.g., T*, T&, T&&)
+		if (trailing_result.node().has_value() && trailing_result.node()->is<TypeSpecifierNode>()) {
+			TypeSpecifierNode& type_spec = trailing_result.node()->as<TypeSpecifierNode>();
+			
+			// Apply pointer qualifiers if present (e.g., T*, T**)
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+			       peek_token()->value() == "*") {
+				consume_token(); // consume '*'
+				CVQualifier ptr_cv = parse_cv_qualifiers();
+				type_spec.add_pointer_level(ptr_cv);
+			}
+			
+			// Apply reference qualifiers if present (e.g., T& or T&&)
+			apply_trailing_reference_qualifiers(type_spec);
+		}
+		
 		out_header.trailing_return_type = trailing_result.node();
 	}
 
@@ -28099,6 +28179,26 @@ ParseResult Parser::parse_template_declaration() {
 						// They're registered in the global type system by parse_enum_declaration
 						// The semicolon is already consumed by parse_enum_declaration
 						continue;
+					} else if (peek_token()->value() == "struct" || peek_token()->value() == "class") {
+						// Handle nested struct/class declarations inside partial specialization body
+						// e.g., struct __type { ... };
+						consume_token(); // consume 'struct' or 'class'
+						
+						// Skip struct name if present
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+							consume_token(); // consume struct name
+						}
+						
+						// Skip to body or semicolon
+						if (peek_token().has_value() && peek_token()->value() == "{") {
+							skip_balanced_braces();
+						}
+						
+						// Consume trailing semicolon
+						if (peek_token().has_value() && peek_token()->value() == ";") {
+							consume_token();
+						}
+						continue;
 					} else if (peek_token()->value() == "static") {
 						// Handle static members: static const int size = 10;
 						consume_token(); // consume "static"
@@ -29850,7 +29950,9 @@ ParseResult Parser::parse_template_parameter() {
 		std::string_view potential_concept = StringTable::getStringView(concept_handle);
 		
 		// Check if this identifier is a registered concept
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_template_parameter: Checking if '{}' is a concept", potential_concept);
 		if (gConceptRegistry.hasConcept(potential_concept)) {
+			FLASH_LOG_FORMAT(Parser, Debug, "parse_template_parameter: '{}' IS a registered concept", potential_concept);
 			// Check for template arguments: Concept<U>
 			// For now, we'll skip template argument parsing for concepts
 			// and just expect the parameter name
@@ -29906,8 +30008,18 @@ ParseResult Parser::parse_template_parameter() {
 				}
 				
 				if (default_type_result.node().has_value()) {
+					TypeSpecifierNode& type_spec = default_type_result.node()->as<TypeSpecifierNode>();
+					
+					// Apply pointer qualifiers if present (e.g., T*, T**, const T*)
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+					       peek_token()->value() == "*") {
+						consume_token(); // consume '*'
+						CVQualifier ptr_cv = parse_cv_qualifiers();
+						type_spec.add_pointer_level(ptr_cv);
+					}
+					
 					// Apply reference qualifiers if present (e.g., T& or T&&)
-					apply_trailing_reference_qualifiers(default_type_result.node()->as<TypeSpecifierNode>());
+					apply_trailing_reference_qualifiers(type_spec);
 					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
 				}
 			}
@@ -29983,8 +30095,18 @@ ParseResult Parser::parse_template_parameter() {
 				}
 				
 				if (default_type_result.node().has_value()) {
+					TypeSpecifierNode& type_spec = default_type_result.node()->as<TypeSpecifierNode>();
+					
+					// Apply pointer qualifiers if present (e.g., T*, T**, const T*)
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+					       peek_token()->value() == "*") {
+						consume_token(); // consume '*'
+						CVQualifier ptr_cv = parse_cv_qualifiers();
+						type_spec.add_pointer_level(ptr_cv);
+					}
+					
 					// Apply reference qualifiers if present (e.g., T& or T&&)
-					apply_trailing_reference_qualifiers(default_type_result.node()->as<TypeSpecifierNode>());
+					apply_trailing_reference_qualifiers(type_spec);
 					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
 				}
 			}
@@ -30244,7 +30366,21 @@ ParseResult Parser::parse_template_function_declaration_body(
 		if (!trailing_type_specifier.node().has_value() || !trailing_type_specifier.node()->is<TypeSpecifierNode>()) {
 			return ParseResult::error("Expected type specifier for trailing return type", *current_token_);
 		}
-		const auto& trailing_ts = trailing_type_specifier.node()->as<TypeSpecifierNode>();
+		
+		// Apply pointer and reference qualifiers to the trailing return type (e.g., T*, T&, T&&)
+		TypeSpecifierNode& trailing_ts = trailing_type_specifier.node()->as<TypeSpecifierNode>();
+		
+		// Apply pointer qualifiers if present (e.g., T*, T**, const T*)
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+		       peek_token()->value() == "*") {
+			consume_token(); // consume '*'
+			CVQualifier ptr_cv = parse_cv_qualifiers();
+			trailing_ts.add_pointer_level(ptr_cv);
+		}
+		
+		// Apply reference qualifiers if present (e.g., T& or T&&)
+		apply_trailing_reference_qualifiers(trailing_ts);
+		
 		FLASH_LOG(Templates, Debug, "Template instantiation: parsed trailing return type: type=", static_cast<int>(trailing_ts.type()),
 		          ", index=", trailing_ts.type_index(), ", token='", trailing_ts.token().value(), "'");
 		if (trailing_ts.type_index() < gTypeInfo.size()) {
@@ -31032,6 +31168,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 		}
 		
+		// When there's a requires clause, add a unique counter suffix to disambiguate
+		// multiple partial specializations with the same pattern but different constraints.
+		// e.g., __cat<_Iter> with requires A<_Iter> vs __cat<_Iter> with requires B<_Iter>
+		if (requires_clause.has_value()) {
+			static std::atomic<size_t> constrained_pattern_counter{0};
+			pattern_name.append("_C"sv).append(static_cast<int64_t>(constrained_pattern_counter.fetch_add(1)));
+		}
+		
 		// Qualify with parent struct name
 		std::string_view pattern_name_str = pattern_name.commit();
 		auto qualified_pattern_name = StringTable::getOrInternStringHandle(
@@ -31076,6 +31220,28 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					if (keyword == "public") current_access = AccessSpecifier::Public;
 					else if (keyword == "private") current_access = AccessSpecifier::Private;
 					else if (keyword == "protected") current_access = AccessSpecifier::Protected;
+					continue;
+				}
+				// Handle nested struct/class declarations inside partial specialization body
+				// e.g., struct __type { ... };
+				if (keyword == "struct" || keyword == "class") {
+					// Skip the entire nested struct declaration including its body
+					consume_token(); // consume 'struct' or 'class'
+					
+					// Skip struct name if present
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+						consume_token(); // consume struct name
+					}
+					
+					// Skip to body or semicolon
+					if (peek_token().has_value() && peek_token()->value() == "{") {
+						skip_balanced_braces();
+					}
+					
+					// Consume trailing semicolon
+					if (peek_token().has_value() && peek_token()->value() == ";") {
+						consume_token();
+					}
 					continue;
 				}
 				// Handle member type alias (using) declarations
@@ -31696,20 +31862,23 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 					}
 					// Type specifiers (identifiers not in constraint) indicate end of requires clause
 					// BUT only if the identifier is NOT followed by '<' (which would indicate a template)
+					// or '::' (which would indicate a qualified name like __detail::A<_Iter>)
 					else if (peek_token()->type() == Token::Type::Identifier) {
 						// Peek ahead to see if this is a template instantiation (part of constraint)
+						// or a qualified name (namespace::concept)
 						// Save position, check next token, then restore
 						SaveHandle id_check_pos = save_token_position();
 						consume_token(); // consume the identifier
-						bool is_template_part = peek_token().has_value() && peek_token()->value() == "<";
+						bool is_constraint_part = peek_token().has_value() && 
+						                          (peek_token()->value() == "<" || peek_token()->value() == "::");
 						restore_token_position(id_check_pos);
 						
-						if (!is_template_part) {
-							// This identifier is followed by something other than '<'
+						if (!is_constraint_part) {
+							// This identifier is followed by something other than '<' or '::'
 							// It's likely the start of the declaration (a type), not part of the constraint
 							break;
 						}
-						// Otherwise, it's a template like is_reference_v<T> - continue skipping
+						// Otherwise, it's a template like is_reference_v<T> or qualified name - continue skipping
 					}
 				}
 				
@@ -31717,14 +31886,19 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 			}
 		}
 		
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_member_template_or_function: After skipping template params, peek={}", 
+		    peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+		
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 			std::string_view next_keyword = peek_token()->value();
+			FLASH_LOG_FORMAT(Parser, Debug, "parse_member_template_or_function: Detected keyword '{}'", next_keyword);
 			if (next_keyword == "using") {
 				is_template_alias = true;
 			} else if (next_keyword == "struct" || next_keyword == "class") {
 				is_struct_or_class_template = true;
 			} else if (next_keyword == "friend") {
 				is_template_friend = true;
+				FLASH_LOG(Parser, Debug, "parse_member_template_or_function: is_template_friend = true");
 			}
 		}
 	}
