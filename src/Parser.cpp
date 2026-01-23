@@ -6849,7 +6849,35 @@ ParseResult Parser::parse_struct_declaration()
 
 	// Check for variable declarations after struct definition: struct Point { ... } p, q;
 	// Also handles: inline constexpr struct Name { ... } variable = {};
+	// And: struct S { ... } inline constexpr s{};  (C++17 inline variables)
 	std::vector<ASTNode> struct_variables;
+	
+	// First, skip any storage class specifiers before the variable name
+	// Valid specifiers: inline, constexpr, static, extern, thread_local
+	bool has_inline = false;
+	bool has_constexpr = false;
+	[[maybe_unused]] bool has_static = false;
+	while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+		std::string_view kw = peek_token()->value();
+		if (kw == "inline") {
+			has_inline = true;
+			consume_token();
+		} else if (kw == "constexpr") {
+			has_constexpr = true;
+			consume_token();
+		} else if (kw == "static") {
+			has_static = true;
+			consume_token();
+		} else if (kw == "const") {
+			consume_token();
+		} else {
+			break;
+		}
+	}
+	
+	(void)has_inline;  // Mark as used
+	(void)has_constexpr;  // Mark as used
+	
 	if (peek_token().has_value() && 
 	    (peek_token()->type() == Token::Type::Identifier || 
 	     (peek_token()->type() == Token::Type::Operator && peek_token()->value() == "*"))) {
@@ -6887,6 +6915,13 @@ ParseResult Parser::parse_struct_declaration()
 			std::optional<ASTNode> init_expr;
 			if (peek_token().has_value() && peek_token()->value() == "=") {
 				consume_token(); // consume '='
+				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				init_expr = init_result.node();
+			} else if (peek_token().has_value() && peek_token()->value() == "{") {
+				// C++11 brace initialization: struct S { } s{};
 				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (init_result.is_error()) {
 					return init_result;
@@ -29939,8 +29974,18 @@ ParseResult Parser::parse_template_parameter() {
 				}
 				
 				if (default_type_result.node().has_value()) {
+					TypeSpecifierNode& type_spec = default_type_result.node()->as<TypeSpecifierNode>();
+					
+					// Apply pointer qualifiers if present (e.g., T*, T**, const T*)
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+					       peek_token()->value() == "*") {
+						consume_token(); // consume '*'
+						CVQualifier ptr_cv = parse_cv_qualifiers();
+						type_spec.add_pointer_level(ptr_cv);
+					}
+					
 					// Apply reference qualifiers if present (e.g., T& or T&&)
-					apply_trailing_reference_qualifiers(default_type_result.node()->as<TypeSpecifierNode>());
+					apply_trailing_reference_qualifiers(type_spec);
 					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
 				}
 			}
@@ -30016,8 +30061,18 @@ ParseResult Parser::parse_template_parameter() {
 				}
 				
 				if (default_type_result.node().has_value()) {
+					TypeSpecifierNode& type_spec = default_type_result.node()->as<TypeSpecifierNode>();
+					
+					// Apply pointer qualifiers if present (e.g., T*, T**, const T*)
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+					       peek_token()->value() == "*") {
+						consume_token(); // consume '*'
+						CVQualifier ptr_cv = parse_cv_qualifiers();
+						type_spec.add_pointer_level(ptr_cv);
+					}
+					
 					// Apply reference qualifiers if present (e.g., T& or T&&)
-					apply_trailing_reference_qualifiers(default_type_result.node()->as<TypeSpecifierNode>());
+					apply_trailing_reference_qualifiers(type_spec);
 					param_node.as<TemplateParameterNode>().set_default_value(*default_type_result.node());
 				}
 			}
