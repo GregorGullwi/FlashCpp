@@ -228,6 +228,9 @@ public:
 		else if (node.is<UsingDeclarationNode>()) {
 			visitUsingDeclarationNode(node.as<UsingDeclarationNode>());
 		}
+		else if (node.is<UsingEnumNode>()) {
+			visitUsingEnumNode(node.as<UsingEnumNode>());
+		}
 		else if (node.is<NamespaceAliasNode>()) {
 			visitNamespaceAliasNode(node.as<NamespaceAliasNode>());
 		}
@@ -3721,6 +3724,41 @@ private:
 			node.namespace_handle(),
 			node.identifier_name()
 		);
+	}
+
+	void visitUsingEnumNode(const UsingEnumNode& node) {
+		// C++20 using enum - brings all enumerators of a scoped enum into the current scope
+		// Look up the enum type and add all enumerators to the local symbol table
+		StringHandle enum_name = node.enum_type_name();
+		
+		auto type_it = gTypesByName.find(enum_name);
+		if (type_it != gTypesByName.end() && type_it->second->getEnumInfo()) {
+			const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
+			TypeIndex enum_type_index = type_it->second->type_index_;
+			
+			// Add each enumerator to the local symbol table
+			for (const auto& enumerator : enum_info->enumerators) {
+				// Create a type node for the enum type
+				Token enum_type_token(Token::Type::Identifier, 
+					StringTable::getStringView(enum_name), 0, 0, 0);
+				auto enum_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+					Type::Enum, enum_type_index, enum_info->underlying_size, enum_type_token);
+				
+				// Create a declaration node for the enumerator
+				Token enumerator_token(Token::Type::Identifier, 
+					StringTable::getStringView(enumerator.getName()), 0, 0, 0);
+				auto enumerator_decl = ASTNode::emplace_node<DeclarationNode>(enum_type_node, enumerator_token);
+				
+				// Insert into local symbol table
+				symbol_table.insert(StringTable::getStringView(enumerator.getName()), enumerator_decl);
+			}
+			
+			FLASH_LOG(Codegen, Debug, "Using enum '", StringTable::getStringView(enum_name), 
+				"' - added ", enum_info->enumerators.size(), " enumerators to local scope");
+		} else {
+			FLASH_LOG(Codegen, Warning, "Enum type '", StringTable::getStringView(enum_name), 
+				"' not found for 'using enum' declaration");
+		}
 	}
 
 	void visitNamespaceAliasNode(const NamespaceAliasNode& node) {

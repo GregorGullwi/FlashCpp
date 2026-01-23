@@ -10021,16 +10021,39 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			return ParseResult::error("Expected ';' after 'using enum' declaration", *current_token_);
 		}
 
-		// For now, we'll create an IdentifierNode to represent the enum type
-		// The enum members are brought into scope, allowing unqualified access
-		// TODO: Actually look up the enum and add its enumerators to the symbol table
-		FLASH_LOG(Parser, Debug, "Parsed 'using enum ", enum_type_token.value(), "'");
-
-		// Return success with an identifier node for the enum type
-		// Full semantic support would require looking up the enum type and adding all its
-		// enumerator constants to the current scope
-		auto enum_node = emplace_node<IdentifierNode>(enum_type_token);
-		return saved_position.success(enum_node);
+		// Create the using enum node - CodeGen will also handle this for its local scope
+		StringHandle enum_name_handle = StringTable::getOrInternStringHandle(enum_type_token.value());
+		auto using_enum_node = emplace_node<UsingEnumNode>(enum_name_handle, using_token);
+		
+		// Add enumerators to gSymbolTable NOW so they're available during parsing
+		// This is needed because the parser needs to resolve identifiers like 'Red' when
+		// parsing subsequent expressions (e.g., static_cast<int>(Red))
+		auto type_it = gTypesByName.find(enum_name_handle);
+		if (type_it != gTypesByName.end() && type_it->second->getEnumInfo()) {
+			const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
+			
+			for (const auto& enumerator : enum_info->enumerators) {
+				// Create a type node for the enum type
+				auto enum_type_node = emplace_node<TypeSpecifierNode>(
+					Type::Enum, type_it->second->type_index_, enum_info->underlying_size, enum_type_token);
+				
+				// Create a declaration node for the enumerator
+				Token enumerator_token(Token::Type::Identifier, 
+					StringTable::getStringView(enumerator.getName()), 0, 0, 0);
+				auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_token);
+				
+				// Insert into gSymbolTable so it's available during parsing
+				gSymbolTable.insert(StringTable::getStringView(enumerator.getName()), enumerator_decl);
+			}
+			
+			FLASH_LOG(Parser, Debug, "Using enum '", enum_type_token.value(), 
+				"' - added ", enum_info->enumerators.size(), " enumerators to parser scope");
+		} else {
+			FLASH_LOG(Parser, Warning, "Enum type '", enum_type_token.value(), 
+				"' not found for 'using enum' declaration");
+		}
+		
+		return saved_position.success(using_enum_node);
 	}
 
 	// Otherwise, this is a using declaration: using std::vector; or using ::name;
