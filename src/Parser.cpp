@@ -5862,6 +5862,10 @@ ParseResult Parser::parse_struct_declaration()
 			} else if (kw == "explicit") {
 				is_member_explicit = true;
 				consume_token();
+				// C++20 explicit(condition) - skip the condition expression
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					skip_balanced_parens();
+				}
 			} else {
 				break;
 			}
@@ -5921,6 +5925,37 @@ ParseResult Parser::parse_struct_declaration()
 				// Parse exception specifier (noexcept or throw()) before initializer list
 				if (parse_constructor_exception_specifier()) {
 					ctor_ref.set_noexcept(true);
+				}
+
+				// Handle trailing requires clause: pair() requires constraint : first(), second() { }
+				// Skip the constraint expression (we don't enforce constraints yet, but need to parse them)
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+				    peek_token()->value() == "requires") {
+					consume_token(); // consume 'requires'
+					
+					// Skip the constraint expression by counting balanced brackets/parens
+					// The constraint expression ends before ':', '{', or ';'
+					int paren_depth = 0;
+					int angle_depth = 0;
+					while (peek_token().has_value()) {
+						std::string_view tok_val = peek_token()->value();
+						
+						// Track nested brackets
+						if (tok_val == "(") paren_depth++;
+						else if (tok_val == ")") paren_depth--;
+						else if (tok_val == "<") angle_depth++;
+						else if (tok_val == ">") angle_depth--;
+						
+						// At top level, check for end of constraint
+						if (paren_depth == 0 && angle_depth == 0) {
+							// Initializer list, body, or declaration end
+							if (tok_val == ":" || tok_val == "{" || tok_val == ";") {
+								break;
+							}
+						}
+						
+						consume_token();
+					}
 				}
 
 				// Check for member initializer list (: Base(args), member(value), ...)
@@ -10549,6 +10584,10 @@ ParseResult Parser::parse_type_specifier()
 		    kw == "inline" || kw == "static" || kw == "extern" ||
 		    kw == "virtual" || kw == "explicit" || kw == "friend") {
 			consume_token(); // skip the function specifier
+			// C++20 explicit(condition) - skip the condition expression
+			if (kw == "explicit" && peek_token().has_value() && peek_token()->value() == "(") {
+				skip_balanced_parens();
+			}
 			skip_cpp_attributes(); // there might be attributes after the specifier
 			current_token_opt = peek_token();
 		} else if (kw == "noexcept") {
@@ -12708,6 +12747,41 @@ ParseResult Parser::parse_function_trailing_specifiers(
 					else if (peek_token()->value() == ")") paren_depth--;
 					consume_token();
 				}
+			}
+			continue;
+		}
+
+		// Parse requires clause - skip the constraint expression
+		// Pattern: func() noexcept requires constraint { }
+		if (token->type() == Token::Type::Keyword && token->value() == "requires") {
+			consume_token(); // consume 'requires'
+			
+			// Skip the constraint expression by counting balanced brackets/parens
+			// The constraint expression ends before '{', ';', '= default', '= delete', or '= 0'
+			int paren_depth = 0;
+			int angle_depth = 0;
+			while (peek_token().has_value()) {
+				std::string_view tok_val = peek_token()->value();
+				
+				// Track nested brackets
+				if (tok_val == "(") paren_depth++;
+				else if (tok_val == ")") paren_depth--;
+				else if (tok_val == "<") angle_depth++;
+				else if (tok_val == ">") angle_depth--;
+				
+				// At top level, check for end of constraint
+				if (paren_depth == 0 && angle_depth == 0) {
+					// Body start or end of declaration
+					if (tok_val == "{" || tok_val == ";") {
+						break;
+					}
+					// Check for = default, = delete, = 0
+					if (tok_val == "=") {
+						break;
+					}
+				}
+				
+				consume_token();
 			}
 			continue;
 		}
@@ -27920,6 +27994,10 @@ ParseResult Parser::parse_template_declaration() {
 					} else if (kw == "explicit") {
 						is_member_explicit = true;
 						consume_token();
+						// C++20 explicit(condition) - skip the condition expression
+						if (peek_token().has_value() && peek_token()->value() == "(") {
+							skip_balanced_parens();
+						}
 					} else {
 						break;
 					}
@@ -30015,8 +30093,21 @@ ParseResult Parser::parse_template_function_declaration_body(
 		Token requires_token = *peek_token();
 		consume_token(); // consume 'requires'
 		
+		// Enter a temporary scope for trailing requires clause parsing
+		// This allows parameter names to be visible in requires expressions
+		// Example: func(T __t, U __u) requires requires { __t + __u; }
+		gSymbolTable.enter_scope(ScopeType::Function);
+		
+		// Register function parameters so they're visible in the constraint expression
+		const auto& params = func_decl.parameter_nodes();
+		register_parameters_in_scope(params);
+		
 		// Parse the constraint expression
 		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		
+		// Exit the temporary scope
+		gSymbolTable.exit_scope();
+		
 		if (constraint_result.is_error()) {
 			return constraint_result;
 		}
@@ -30164,9 +30255,13 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		parse_declaration_specifiers();
 		
 		// Also skip 'explicit' which is constructor-specific and not in parse_declaration_specifiers
+		// C++20 explicit(condition) - also skip the condition expression
 		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
 		       peek_token()->value() == "explicit") {
 			consume_token();
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				skip_balanced_parens();
+			}
 		}
 		
 		// Check if next identifier is the struct name
@@ -30186,11 +30281,15 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				auto specs = parse_declaration_specifiers();
 				
 				// Track 'explicit' separately (constructor-specific, not in DeclarationSpecifiers)
+				// C++20 explicit(condition) - also skip the condition expression
 				bool is_explicit = false;
 				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
 				       peek_token()->value() == "explicit") {
 					is_explicit = true;
 					consume_token();
+					if (peek_token().has_value() && peek_token()->value() == "(") {
+						skip_balanced_parens();
+					}
 				}
 				
 				// Now at the constructor name - consume it
@@ -30910,11 +31009,15 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			[[maybe_unused]] auto member_specs = parse_declaration_specifiers();
 			
 			// Handle 'explicit' keyword separately (constructor-specific, not in parse_declaration_specifiers)
+			// C++20 explicit(condition) - also skip the condition expression
 			[[maybe_unused]] bool is_member_explicit = false;
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
 			    peek_token()->value() == "explicit") {
 				is_member_explicit = true;
 				consume_token();
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					skip_balanced_parens();
+				}
 			}
 			
 			// Check for constructor (identifier matching struct name followed by '(')
@@ -31155,11 +31258,15 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		[[maybe_unused]] auto member_specs2 = parse_declaration_specifiers();
 		
 		// Handle 'explicit' keyword separately (constructor-specific, not in parse_declaration_specifiers)
+		// C++20 explicit(condition) - also skip the condition expression
 		[[maybe_unused]] bool is_member_explicit2 = false;
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
 		    peek_token()->value() == "explicit") {
 			is_member_explicit2 = true;
 			consume_token();
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				skip_balanced_parens();
+			}
 		}
 		
 		// Check for constructor (identifier matching struct name followed by '(')
@@ -31235,18 +31342,15 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 			
 			// Handle function body or semicolon
+			// For member struct templates, we skip the body and save the position for later
+			// re-parsing during template instantiation (similar to member function templates)
 			if (peek_token().has_value() && peek_token()->value() == "{") {
-				// Parse function body
-				auto body_result = parse_block();
-				if (body_result.is_error()) {
-					return body_result;
-				}
+				// Save position for re-parsing during instantiation
+				SaveHandle body_start = save_token_position();
+				member_func_ref.set_template_body_position(body_start);
 				
-				if (body_result.node().has_value()) {
-					// Generate mangled name and set definition
-					compute_and_set_mangled_name(member_func_ref);
-					member_func_ref.set_definition(*body_result.node());
-				}
+				// Skip over the body (skip_balanced_braces consumes the '{' and everything up to the matching '}')
+				skip_balanced_braces();
 			} else if (peek_token().has_value() && peek_token()->value() == ";") {
 				consume_token(); // consume ';'
 			}
