@@ -2220,6 +2220,12 @@ private:
 		defines_["_M_X64"] = DefineDirective{ "100", {} };  // MSVC-style
 		defines_["_M_AMD64"] = DefineDirective{ "100", {} };
 
+		// Byte order macros (needed by <compare> and other headers)
+		defines_["__ORDER_LITTLE_ENDIAN__"] = DefineDirective{ "1234", {} };
+		defines_["__ORDER_BIG_ENDIAN__"] = DefineDirective{ "4321", {} };
+		defines_["__ORDER_PDP_ENDIAN__"] = DefineDirective{ "3412", {} };
+		defines_["__BYTE_ORDER__"] = DefineDirective{ "__ORDER_LITTLE_ENDIAN__", {} };  // x86_64 is little endian
+
 		// C++ feature test macros (SD-6)
 		// These indicate which C++ language features are supported
 		defines_["__cpp_aggregate_bases"] = DefineDirective{ "201603L", {} };  // C++17 aggregate base classes
