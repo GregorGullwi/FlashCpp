@@ -29851,7 +29851,9 @@ ParseResult Parser::parse_template_parameter() {
 		std::string_view potential_concept = StringTable::getStringView(concept_handle);
 		
 		// Check if this identifier is a registered concept
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_template_parameter: Checking if '{}' is a concept", potential_concept);
 		if (gConceptRegistry.hasConcept(potential_concept)) {
+			FLASH_LOG_FORMAT(Parser, Debug, "parse_template_parameter: '{}' IS a registered concept", potential_concept);
 			// Check for template arguments: Concept<U>
 			// For now, we'll skip template argument parsing for concepts
 			// and just expect the parameter name
@@ -31085,6 +31087,28 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					if (keyword == "public") current_access = AccessSpecifier::Public;
 					else if (keyword == "private") current_access = AccessSpecifier::Private;
 					else if (keyword == "protected") current_access = AccessSpecifier::Protected;
+					continue;
+				}
+				// Handle nested struct/class declarations inside partial specialization body
+				// e.g., struct __type { ... };
+				if (keyword == "struct" || keyword == "class") {
+					// Skip the entire nested struct declaration including its body
+					consume_token(); // consume 'struct' or 'class'
+					
+					// Skip struct name if present
+					if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+						consume_token(); // consume struct name
+					}
+					
+					// Skip to body or semicolon
+					if (peek_token().has_value() && peek_token()->value() == "{") {
+						skip_balanced_braces();
+					}
+					
+					// Consume trailing semicolon
+					if (peek_token().has_value() && peek_token()->value() == ";") {
+						consume_token();
+					}
 					continue;
 				}
 				// Handle member type alias (using) declarations
