@@ -9990,6 +9990,49 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		return saved_position.success(directive_node);
 	}
 
+	// Check if this is C++20 "using enum" declaration
+	if (peek_token().has_value() && peek_token()->value() == "enum") {
+		consume_token(); // consume 'enum'
+
+		// Parse enum type name (can be qualified: namespace::EnumType or just EnumType)
+		std::vector<StringType<>> namespace_path;
+		Token enum_type_token;
+
+		while (true) {
+			auto token = consume_token();
+			if (!token.has_value() || token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected enum type name after 'using enum'", token.value_or(Token()));
+			}
+
+			// Check if followed by ::
+			if (peek_token().has_value() && peek_token()->value() == "::") {
+				// This is a namespace part
+				namespace_path.emplace_back(StringType<>(token->value()));
+				consume_token(); // consume ::
+			} else {
+				// This is the final enum type name
+				enum_type_token = *token;
+				break;
+			}
+		}
+
+		// Expect semicolon
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after 'using enum' declaration", *current_token_);
+		}
+
+		// For now, we'll create an IdentifierNode to represent the enum type
+		// The enum members are brought into scope, allowing unqualified access
+		// TODO: Actually look up the enum and add its enumerators to the symbol table
+		FLASH_LOG(Parser, Debug, "Parsed 'using enum ", enum_type_token.value(), "'");
+
+		// Return success with an identifier node for the enum type
+		// Full semantic support would require looking up the enum type and adding all its
+		// enumerator constants to the current scope
+		auto enum_node = emplace_node<IdentifierNode>(enum_type_token);
+		return saved_position.success(enum_node);
+	}
+
 	// Otherwise, this is a using declaration: using std::vector; or using ::name;
 	std::vector<StringType<>> namespace_path;
 	Token identifier_token;
@@ -13483,8 +13526,7 @@ ParseResult Parser::parse_statement_or_declaration()
 
 	// Handle nested blocks
 	if (current_token.type() == Token::Type::Punctuator && current_token.value() == "{") {
-		// Create a new scope for the nested block
-		FlashCpp::SymbolTableScope nested_scope(ScopeType::Block);
+		// parse_block() creates its own scope, so no need to create one here
 		return parse_block();
 	}
 

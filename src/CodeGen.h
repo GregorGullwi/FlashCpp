@@ -4811,15 +4811,9 @@ private:
 		// Note: visitVariableDeclarationNode will add it to the symbol table
 		visit(loop_var_with_init);
 
-		// Visit loop body
+		// Visit loop body - use visit() to properly handle block scopes
 		auto body_stmt = node.get_body_statement();
-		if (body_stmt.is<BlockNode>()) {
-			body_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
-				visit(statement);
-			});
-		} else {
-			visit(body_stmt);
-		}
+		visit(body_stmt);
 
 		// Loop increment label (for continue statements)
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
@@ -5003,15 +4997,9 @@ private:
 		// Generate IR for loop variable declaration
 		visit(loop_var_with_init);
 
-		// Visit loop body
+		// Visit loop body - use visit() to properly handle block scopes
 		auto body_stmt = node.get_body_statement();
-		if (body_stmt.is<BlockNode>()) {
-			body_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
-				visit(statement);
-			});
-		} else {
-			visit(body_stmt);
-		}
+		visit(body_stmt);
 
 		// Loop increment label (for continue statements)
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_increment_label}, Token()));
