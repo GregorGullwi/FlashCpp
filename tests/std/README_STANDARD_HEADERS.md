@@ -16,7 +16,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | static_assert constexpr evaluation (~155ms) |
 | `<vector>` | `test_std_vector.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | `requires requires` nested constraint not supported (~174ms) |
+| `<optional>` | `test_std_optional.cpp` | ❌ Semantic Error | iter_move function lookup (~174ms) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~161ms) |
 | `<any>` | `test_std_any.cpp` | ❌ Parse Error | Non-template inline constructor forward reference issue (~128ms) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
@@ -26,7 +26,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string>` | `test_std_string.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<array>` | `test_std_array.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Test file missing |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Complex partial specialization with `__void_t<>` (~143ms, was: pointer-to-member-function syntax fixed) |
+| `<functional>` | `test_std_functional.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure (~143ms) |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Test file missing |
 | `<map>` | `test_std_map.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<set>` | `test_std_set.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
@@ -58,19 +58,23 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Note (2026-01-23 Update):** Implemented deferred body parsing for member template constructors. This allows template constructors to access member variables that are declared later in the class definition (complete-class context). However, non-template inline member functions inside class bodies still have issues accessing forward-declared members.
 
+**Note (2026-01-23 Later Update):** Fixed partial specialization forward declarations (`template<typename T> struct X<T*>;`) which were causing the parser to incorrectly enter struct body mode. Also fixed qualified concept lookup so namespaced concepts like `std::same_as<T>` work correctly. Fixed parenthesized concept expressions in constraints (e.g., `(concept<T>) && ...`). The `<optional>` header now progresses to semantic errors (function lookup).
+
 **Primary Remaining Blockers:**
 1. **`<compare>` header strong_order lookup** - The header now parses but fails at line 621 looking up `strong_order` function (semantic error, not parse error). In requires expressions, function lookup failures should not cause errors - they indicate the constraint is not satisfied.
-2. **Type requirements in requires expressions** - `typename T` syntax inside requires expressions for checking type validity is not fully supported (affects `<iterator_concepts.h>`)
-3. **Complex partial specialization patterns** - Patterns with `__void_t<decltype(...)>>` in partial specializations (affects `<functional>`)
-4. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
-5. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
-6. **Non-template inline member function forward references** - Non-template constructors and member functions defined inline within the class body cannot access member variables declared later in the class. Out-of-line definitions work correctly. (affects `<any>` copy/move constructors)
+2. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
+3. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
+4. **Non-template inline member function forward references** - Non-template constructors and member functions defined inline within the class body cannot access member variables declared later in the class. Out-of-line definitions work correctly. (affects `<any>` copy/move constructors)
 
 **Fixes Applied (2026-01-23 This PR):**
 - **Fixed** Member template constructor deferred body parsing - Template constructor bodies are now deferred until after the full class is parsed, enabling access to forward-declared member variables (complete-class context)
 - **Fixed** Trailing `requires` clause support for static member functions - patterns like `static int f(int& r) requires requires { r; } { ... }` now parse correctly
 - **Fixed** Function parameter scope in trailing requires clauses - parameters are now visible inside the requires expression
 - **Fixed** Dependent member template access syntax `::template` - patterns like `typename _Tp::template rebind<_Up>` now parse correctly
+- **Fixed** Partial specialization forward declarations - `template<typename T> struct X<T*>;` forward declarations now parse correctly
+- **Fixed** Qualified concept lookup - Concepts in namespaces (like `std::same_as<T>`) are now looked up correctly in expressions
+- **Fixed** Parenthesized concept expressions in constraints - `(concept<T>) && ...` patterns no longer parsed as C-style casts
+- **Fixed** Empty template argument lists with `>>` token splitting - `__void_t<>>` patterns now parse correctly
 
 **Fixes Applied (2026-01-22 This PR):**
 - **Fixed** Out-of-line static constexpr member variable definition with parenthesized initializer (`partial_ordering::less(__cmp_cat::_Ord::less)`)
@@ -528,18 +532,13 @@ extern int pthread_create (pthread_t * __newthread, ...
 - `<map>`, `<set>`, `<span>`, `<ranges>`, `<iostream>`
 - `<utility>`, `<bit>`, `<typeindex>`, `<coroutine>`
 
-### 7. Nested `requires requires` Constraints (**ACTIVE BLOCKER** - 2026-01-22)
+### 7. Nested `requires requires` Constraints (**FIXED** - 2026-01-23)
 
-**Issue:** C++20 nested requires expressions (requires-expression inside a requires-clause) are not supported.
+**Status:** **FIXED** in this PR
 
-**Error Message:**
-```
-/usr/include/c++/14/bits/ptr_traits.h:109:15: error: Expected '{' or ';' after static member function declaration
-        requires requires {
-                ^
-```
+The `requires requires` syntax now works correctly. The previous issue was actually caused by partial specialization forward declarations not being handled properly, which caused the parser to think it was inside a struct body when it wasn't.
 
-**Problematic Code Pattern:**
+**Problematic Code Pattern (now works):**
 ```cpp
 static pointer pointer_to(element_type& __r)
 requires requires {
@@ -548,9 +547,27 @@ requires requires {
 { return pointer::pointer_to(__r); }
 ```
 
-**Affected Headers:** `<optional>`, `<ptr_traits.h>`, and other headers using this C++20 syntax.
+**Fixes Applied:**
+- Added handling for partial specialization forward declarations (`template<typename T> struct X<T*>;`)
+- Added qualified concept lookup for namespaced concepts (`std::same_as<T, U>`)
 
-### 8. Template Instantiation Performance (NO LONGER A BLOCKER)
+### 8. Parenthesized Concept Expressions in Constraints (**FIXED** - 2026-01-23)
+
+**Status:** **FIXED** in this PR
+
+Parenthesized concept expressions are now correctly recognized as concepts rather than C-style casts.
+
+**Problematic Code Pattern (now works):**
+```cpp
+template<typename _Tp>
+concept __adl_imove
+  = (std::__detail::__class_or_enum<remove_reference_t<_Tp>>)  // parenthesized concept - now works
+  && requires(_Tp&& __t) { iter_move(static_cast<_Tp&&>(__t)); };
+```
+
+**Fix Applied:** Added qualified name tracking during C-style cast detection to check if the "type" is actually a concept.
+
+### 9. Template Instantiation Performance (NO LONGER A BLOCKER)
 
 **Status:** The timeout issues have been **FIXED**. All headers now complete in 100-200ms.
 
@@ -568,7 +585,7 @@ Previously, headers appeared to timeout after 400-500 templates. This was actual
 - Consider lazy evaluation strategies
 - Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
 
-### 9. std::initializer_list Compiler Magic (Known Limitation)
+### 10. std::initializer_list Compiler Magic (Known Limitation)
 
 **Issue:** `std::initializer_list<T>` requires special compiler support that is not yet implemented.
 

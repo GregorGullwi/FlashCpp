@@ -15186,6 +15186,33 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		SaveHandle saved_pos = save_token_position();
 		consume_token(); // consume '('
 
+		// Save the position and build the qualified type name for concept checking
+		// This is needed because parse_type_specifier() may parse a qualified name
+		// like std::__detail::__class_or_enum but only return the last component in the token
+		SaveHandle pre_type_pos = save_token_position();
+		StringBuilder qualified_type_name;
+		
+		// Build qualified name by collecting identifiers and :: tokens
+		while (peek_token().has_value()) {
+			if (peek_token()->type() == Token::Type::Identifier) {
+				qualified_type_name.append(peek_token()->value());
+				consume_token();
+				// Check for :: to continue qualified name
+				if (peek_token().has_value() && peek_token()->value() == "::") {
+					qualified_type_name.append("::");
+					consume_token();
+				} else {
+					break;
+				}
+			} else {
+				break;
+			}
+		}
+		std::string_view qualified_name_view = qualified_type_name.commit();
+		
+		// Restore position to parse the type properly
+		restore_token_position(pre_type_pos);
+
 		// Try to parse as type
 		ParseResult type_result = parse_type_specifier();
 
@@ -15225,6 +15252,25 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					if (!parsing_template_body_) {
 						// Not in a template body, so this is likely a variable, not a type
 						is_valid_type = false;
+					}
+				}
+				
+				// Check if this "type" is actually a concept - concepts evaluate to boolean
+				// and should not be treated as C-style casts.
+				// Example: (std::same_as<T, int>) && other_constraint
+				// Here, same_as<T, int> is a concept, not a type to cast to.
+				if (is_valid_type && type_spec.token().type() == Token::Type::Identifier) {
+					std::string_view type_name = type_spec.token().value();
+					auto concept_opt = gConceptRegistry.lookupConcept(type_name);
+					if (!concept_opt.has_value() && !qualified_name_view.empty()) {
+						// Try looking up by the full qualified name
+						concept_opt = gConceptRegistry.lookupConcept(qualified_name_view);
+					}
+					if (concept_opt.has_value()) {
+						// This is a concept, not a type - don't treat as C-style cast
+						is_valid_type = false;
+						FLASH_LOG_FORMAT(Parser, Debug, "Parenthesized expression is a concept '{}', not a C-style cast", 
+						                 qualified_name_view.empty() ? type_name : qualified_name_view);
 					}
 				}
 				
@@ -19077,6 +19123,32 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
 						return ParseResult::success(*result);
 					}
+				}
+				
+				// Check if this is a concept application (e.g., std::same_as<T, U>)
+				// Concepts evaluate to boolean values at compile time
+				auto concept_opt = gConceptRegistry.lookupConcept(qualified_name);
+				if (!concept_opt.has_value()) {
+					// Try with simple name
+					concept_opt = gConceptRegistry.lookupConcept(qual_id.name());
+				}
+				
+				if (concept_opt.has_value()) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with template arguments (qualified lookup)", qualified_name);
+					
+					// Evaluate the concept constraint with the provided template arguments
+					auto constraint_result = evaluateConstraint(
+						concept_opt->as<ConceptDeclarationNode>().constraint_expr(),
+						*template_args,
+						{}  // No template param names needed for concrete types
+					);
+					
+					// Create a BoolLiteralNode with the result
+					bool concept_satisfied = constraint_result.satisfied;
+					Token bool_token(Token::Type::Keyword, concept_satisfied ? "true" : "false",
+					                final_identifier.line(), final_identifier.column(), final_identifier.file_index());
+					result = emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, concept_satisfied));
+					return ParseResult::success(*result);
 				}
 				
 				// Check if this is an alias template (like detail::cref<int> -> int)
@@ -27472,14 +27544,79 @@ ParseResult Parser::parse_template_declaration() {
 				}
 			}
 
+			// Check for forward declaration: template<typename T> struct Name<T*>;
+			if (peek_token().has_value() && peek_token()->value() == ";") {
+				consume_token(); // consume ';'
+				
+				// Register the partial specialization pattern in the template registry
+				// This allows the template to be found when instantiated
+				std::vector<std::string_view> param_names_view;
+				for (const auto& name : template_param_names) {
+					param_names_view.push_back(StringTable::getStringView(name));
+				}
+				auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
+					template_params,
+					std::move(param_names_view),
+					struct_node
+				);
+				
+				// Build pattern key for lookup
+				StringBuilder pattern_key;
+				pattern_key.append(template_name).append("_pattern");
+				for (const auto& arg : pattern_args) {
+					pattern_key.append("_");
+					for (size_t i = 0; i < arg.pointer_depth; ++i) {
+						pattern_key.append("P");
+					}
+					if (arg.is_rvalue_reference) {
+						pattern_key.append("RR");
+					} else if (arg.is_reference) {
+						pattern_key.append("R");
+					}
+				}
+				std::string_view pattern_key_view = pattern_key.commit();
+				
+				gTemplateRegistry.registerSpecialization(template_name, pattern_args, template_class_node);
+				FLASH_LOG_FORMAT(Parser, Debug, "Registered forward declaration for partial specialization: {} with pattern {}", template_name, pattern_key_view);
+				
+				// Clean up template parameter context
+				current_template_param_names_.clear();
+				parsing_template_body_ = false;
+				
+				return saved_position.success(template_class_node);
+			}
+			
 			// Ensure we're positioned at the specialization body even if complex base parsing left extra tokens
-			while (peek_token().has_value() && peek_token()->value() != "{") {
+			while (peek_token().has_value() && peek_token()->value() != "{" && peek_token()->value() != ";") {
 				consume_token();
+			}
+			
+			// Check again for forward declaration after consuming any extra tokens
+			if (peek_token().has_value() && peek_token()->value() == ";") {
+				consume_token(); // consume ';'
+				
+				std::vector<std::string_view> param_names_view2;
+				for (const auto& name : template_param_names) {
+					param_names_view2.push_back(StringTable::getStringView(name));
+				}
+				auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
+					template_params,
+					std::move(param_names_view2),
+					struct_node
+				);
+				
+				gTemplateRegistry.registerSpecialization(template_name, pattern_args, template_class_node);
+				FLASH_LOG_FORMAT(Parser, Debug, "Registered forward declaration for partial specialization (after extra tokens): {}", template_name);
+				
+				current_template_param_names_.clear();
+				parsing_template_body_ = false;
+				
+				return saved_position.success(template_class_node);
 			}
 
 			// Expect opening brace
 			if (!consume_punctuator("{")) {
-				return ParseResult::error("Expected '{' after partial specialization header", *peek_token());
+				return ParseResult::error("Expected '{' or ';' after partial specialization header", *peek_token());
 			}
 			
 			AccessSpecifier current_access = struct_ref.default_access();
@@ -31258,11 +31395,24 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	std::vector<TemplateTypeArg> template_args;
 
 	// Check for empty template argument list (e.g., Container<>)
+	// Also handle >> for nested templates: Container<__void_t<>>
 	if (peek_token().has_value() && peek_token()->value() == ">") {
 		consume_token(); // consume '>'
 		// Success - discard saved position
 		discard_saved_token(saved_pos);
 		return template_args;  // Return empty vector
+	}
+	
+	// Handle >> token for empty template arguments in nested context (e.g., __void_t<>>)
+	if (peek_token().has_value() && peek_token()->value() == ">>") {
+		FLASH_LOG(Parser, Debug, "Empty template argument list with >> token, splitting");
+		split_right_shift_token();
+		// Now peek_token() returns '>'
+		if (peek_token().has_value() && peek_token()->value() == ">") {
+			consume_token(); // consume first '>'
+			discard_saved_token(saved_pos);
+			return template_args;  // Return empty vector
+		}
 	}
 
 	// Parse template arguments
