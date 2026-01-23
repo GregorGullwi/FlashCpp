@@ -26208,9 +26208,7 @@ ParseResult Parser::parse_template_declaration() {
 							consume_token();
 							int angle_depth = 1;
 							while (angle_depth > 0 && peek_token().has_value()) {
-								if (peek_token()->value() == "<") angle_depth++;
-								else if (peek_token()->value() == ">") angle_depth--;
-								else if (peek_token()->value() == ">>") angle_depth -= 2;
+								update_angle_depth(peek_token()->value(), angle_depth);
 								consume_token();
 							}
 							if (peek_token().has_value() && 
