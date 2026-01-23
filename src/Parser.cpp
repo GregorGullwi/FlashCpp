@@ -38924,7 +38924,7 @@ if (struct_type_info.getStructInfo()) {
 			const DeclarationNode& decl = func_decl.decl_node();
 
 			// For lazy instantiation, register function for later instantiation instead of instantiating now
-			if (use_lazy_instantiation && func_decl.get_definition().has_value()) {
+			if (use_lazy_instantiation && (func_decl.get_definition().has_value() || func_decl.has_template_body_position())) {
 				// Register this member function for lazy instantiation
 				LazyMemberFunctionInfo lazy_info;
 				lazy_info.class_template_name = StringTable::getOrInternStringHandle(template_name);
@@ -39097,8 +39097,8 @@ if (struct_type_info.getStructInfo()) {
 			}
 			
 			// EAGER INSTANTIATION PATH (original code)
-			// If the function has a definition, we need to substitute template parameters
-			if (func_decl.get_definition().has_value()) {
+			// If the function has a definition or deferred body, we need to substitute template parameters
+			if (func_decl.get_definition().has_value() || func_decl.has_template_body_position()) {
 				// Substitute return type
 				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
 				auto [return_type, return_type_index] = substitute_template_parameter(
@@ -39176,32 +39176,104 @@ if (struct_type_info.getStructInfo()) {
 					}
 				}
 
-				// Substitute template parameters in the function body
-				// Convert TemplateTypeArg vector to TemplateArgument vector
-				std::vector<TemplateArgument> converted_template_args;
-				for (const auto& ttype_arg : template_args_to_use) {
-					if (ttype_arg.is_value) {
-						converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
-					} else {
-						converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+				// Get the function body - either from definition or by re-parsing from saved position
+				std::optional<ASTNode> body_to_substitute;
+				
+				if (func_decl.get_definition().has_value()) {
+					// Use the already-parsed definition
+					body_to_substitute = func_decl.get_definition();
+				} else if (func_decl.has_template_body_position()) {
+					// Re-parse the function body from saved position
+					// This is needed for member struct templates where body parsing is deferred
+					
+					// Set up template parameter types in the type system for body parsing
+					FlashCpp::TemplateParameterScope template_scope;
+					std::vector<std::string_view> param_names;
+					param_names.reserve(template_params.size());
+					for (const auto& tparam_node : template_params) {
+						if (tparam_node.is<TemplateParameterNode>()) {
+							param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+						}
 					}
+					
+					for (size_t i = 0; i < param_names.size() && i < template_args_to_use.size(); ++i) {
+						std::string_view param_name = param_names[i];
+						Type concrete_type = template_args_to_use[i].base_type;
+
+						auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
+						type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
+						
+						// Copy reference qualifiers from template arg
+						type_info.is_reference_ = template_args_to_use[i].is_reference;
+						type_info.is_rvalue_reference_ = template_args_to_use[i].is_rvalue_reference;
+						
+						gTypesByName.emplace(type_info.name(), &type_info);
+						template_scope.addParameter(&type_info);
+					}
+
+					// Save current position and parsing context
+					SaveHandle current_pos = save_token_position();
+					const FunctionDeclarationNode* saved_current_function = current_function_;
+
+					// Restore to the function body start
+					restore_lexer_position_only(func_decl.template_body_position());
+
+					// Set up parsing context for the function
+					gSymbolTable.enter_scope(ScopeType::Function);
+					current_function_ = &new_func_ref;
+
+					// Add parameters to symbol table
+					for (const auto& param : new_func_ref.parameter_nodes()) {
+						if (param.is<DeclarationNode>()) {
+							const auto& param_decl = param.as<DeclarationNode>();
+							gSymbolTable.insert(param_decl.identifier_token().value(), param);
+						}
+					}
+
+					// Parse the function body
+					auto block_result = parse_block();
+					
+					if (!block_result.is_error() && block_result.node().has_value()) {
+						body_to_substitute = block_result.node();
+					}
+					
+					// Clean up context
+					current_function_ = saved_current_function;
+					gSymbolTable.exit_scope();
+
+					// Restore original position
+					restore_lexer_position_only(current_pos);
+					discard_saved_token(current_pos);
 				}
 
-				try {
-					ASTNode substituted_body = substituteTemplateParameters(
-						*func_decl.get_definition(),
-						template_params,
-						converted_template_args
-					);
-					new_func_ref.set_definition(substituted_body);
-				} catch (const std::exception& e) {
-					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for function ", 
-					          decl.identifier_token().value(), ": ", e.what());
-					throw;
-				} catch (...) {
-					FLASH_LOG(Templates, Error, "Unknown exception during template parameter substitution for function ", 
-					          decl.identifier_token().value());
-					throw;
+				// Substitute template parameters in the function body
+				if (body_to_substitute.has_value()) {
+					// Convert TemplateTypeArg vector to TemplateArgument vector
+					std::vector<TemplateArgument> converted_template_args;
+					for (const auto& ttype_arg : template_args_to_use) {
+						if (ttype_arg.is_value) {
+							converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+						} else {
+							converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+						}
+					}
+
+					try {
+						ASTNode substituted_body = substituteTemplateParameters(
+							*body_to_substitute,
+							template_params,
+							converted_template_args
+						);
+						new_func_ref.set_definition(substituted_body);
+					} catch (const std::exception& e) {
+						FLASH_LOG(Templates, Error, "Exception during template parameter substitution for function ", 
+						          decl.identifier_token().value(), ": ", e.what());
+						throw;
+					} catch (...) {
+						FLASH_LOG(Templates, Error, "Unknown exception during template parameter substitution for function ", 
+						          decl.identifier_token().value());
+						throw;
+					}
 				}
 
 				// Add the substituted function to the instantiated struct
@@ -40917,8 +40989,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	const FunctionDeclarationNode& func_decl = lazy_info.original_function_node.as<FunctionDeclarationNode>();
 	const DeclarationNode& decl = func_decl.decl_node();
 	
-	if (!func_decl.get_definition().has_value()) {
-		FLASH_LOG(Templates, Error, "Lazy member function has no definition");
+	if (!func_decl.get_definition().has_value() && !func_decl.has_template_body_position()) {
+		FLASH_LOG(Templates, Error, "Lazy member function has no definition and no deferred body position");
 		return std::nullopt;
 	}
 	
@@ -41000,32 +41072,104 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		}
 	}
 
-	// Substitute template parameters in the function body
-	// Convert TemplateTypeArg vector to TemplateArgument vector
-	std::vector<TemplateArgument> converted_template_args;
-	for (const auto& ttype_arg : lazy_info.template_args) {
-		if (ttype_arg.is_value) {
-			converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
-		} else {
-			converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+	// Get the function body - either from definition or by re-parsing from saved position
+	std::optional<ASTNode> body_to_substitute;
+	
+	if (func_decl.get_definition().has_value()) {
+		// Use the already-parsed definition
+		body_to_substitute = func_decl.get_definition();
+	} else if (func_decl.has_template_body_position()) {
+		// Re-parse the function body from saved position
+		// This is needed for member struct templates where body parsing is deferred
+		
+		// Set up template parameter types in the type system for body parsing
+		FlashCpp::TemplateParameterScope template_scope;
+		std::vector<std::string_view> param_names;
+		param_names.reserve(lazy_info.template_params.size());
+		for (const auto& tparam_node : lazy_info.template_params) {
+			if (tparam_node.is<TemplateParameterNode>()) {
+				param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+			}
 		}
+		
+		for (size_t i = 0; i < param_names.size() && i < lazy_info.template_args.size(); ++i) {
+			std::string_view param_name = param_names[i];
+			Type concrete_type = lazy_info.template_args[i].base_type;
+
+			auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(param_name), concrete_type, gTypeInfo.size());
+			type_info.type_size_ = getTypeSizeForTemplateParameter(concrete_type, 0);
+			
+			// Copy reference qualifiers from template arg
+			type_info.is_reference_ = lazy_info.template_args[i].is_reference;
+			type_info.is_rvalue_reference_ = lazy_info.template_args[i].is_rvalue_reference;
+			
+			gTypesByName.emplace(type_info.name(), &type_info);
+			template_scope.addParameter(&type_info);
+		}
+
+		// Save current position and parsing context
+		SaveHandle current_pos = save_token_position();
+		const FunctionDeclarationNode* saved_current_function = current_function_;
+
+		// Restore to the function body start
+		restore_lexer_position_only(func_decl.template_body_position());
+
+		// Set up parsing context for the function
+		gSymbolTable.enter_scope(ScopeType::Function);
+		current_function_ = &new_func_ref;
+
+		// Add parameters to symbol table
+		for (const auto& param : new_func_ref.parameter_nodes()) {
+			if (param.is<DeclarationNode>()) {
+				const auto& param_decl = param.as<DeclarationNode>();
+				gSymbolTable.insert(param_decl.identifier_token().value(), param);
+			}
+		}
+
+		// Parse the function body
+		auto block_result = parse_block();
+		
+		if (!block_result.is_error() && block_result.node().has_value()) {
+			body_to_substitute = block_result.node();
+		}
+		
+		// Clean up context
+		current_function_ = saved_current_function;
+		gSymbolTable.exit_scope();
+
+		// Restore original position
+		restore_lexer_position_only(current_pos);
+		discard_saved_token(current_pos);
 	}
 
-	try {
-		ASTNode substituted_body = substituteTemplateParameters(
-			*func_decl.get_definition(),
-			lazy_info.template_params,
-			converted_template_args
-		);
-		new_func_ref.set_definition(substituted_body);
-	} catch (const std::exception& e) {
-		FLASH_LOG(Templates, Error, "Exception during lazy template parameter substitution for function ", 
-		          decl.identifier_token().value(), ": ", e.what());
-		throw;
-	} catch (...) {
-		FLASH_LOG(Templates, Error, "Unknown exception during lazy template parameter substitution for function ", 
-		          decl.identifier_token().value());
-		throw;
+	// Substitute template parameters in the function body
+	if (body_to_substitute.has_value()) {
+		// Convert TemplateTypeArg vector to TemplateArgument vector
+		std::vector<TemplateArgument> converted_template_args;
+		for (const auto& ttype_arg : lazy_info.template_args) {
+			if (ttype_arg.is_value) {
+				converted_template_args.push_back(TemplateArgument::makeValue(ttype_arg.value, ttype_arg.base_type));
+			} else {
+				converted_template_args.push_back(TemplateArgument::makeType(ttype_arg.base_type));
+			}
+		}
+
+		try {
+			ASTNode substituted_body = substituteTemplateParameters(
+				*body_to_substitute,
+				lazy_info.template_params,
+				converted_template_args
+			);
+			new_func_ref.set_definition(substituted_body);
+		} catch (const std::exception& e) {
+			FLASH_LOG(Templates, Error, "Exception during lazy template parameter substitution for function ", 
+			          decl.identifier_token().value(), ": ", e.what());
+			throw;
+		} catch (...) {
+			FLASH_LOG(Templates, Error, "Unknown exception during lazy template parameter substitution for function ", 
+			          decl.identifier_token().value());
+			throw;
+		}
 	}
 
 	// Copy function properties
