@@ -4149,26 +4149,14 @@ private:
 
 			// Only compile the taken branch
 			if (result.as_bool()) {
-				// Compile then branch
+				// Compile then branch - use visit() for proper scope handling
 				auto then_stmt = node.get_then_statement();
-				if (then_stmt.is<BlockNode>()) {
-					then_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
-						visit(statement);
-					});
-				} else {
-					visit(then_stmt);
-				}
+				visit(then_stmt);
 			} else if (node.has_else()) {
-				// Compile else branch
+				// Compile else branch - use visit() for proper scope handling
 				auto else_stmt = node.get_else_statement();
 				if (else_stmt.has_value()) {
-					if (else_stmt->is<BlockNode>()) {
-						else_stmt->as<BlockNode>().get_statements().visit([&](ASTNode statement) {
-							visit(statement);
-						});
-					} else {
-						visit(*else_stmt);
-					}
+					visit(*else_stmt);
 				}
 			}
 			// Note: Non-taken branch is completely discarded (not compiled)
@@ -4213,15 +4201,9 @@ private:
 		// Then block
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(then_label)}, Token()));
 
-		// Visit then statement
+		// Visit then statement - always use visit() to properly handle block scopes
 		auto then_stmt = node.get_then_statement();
-		if (then_stmt.is<BlockNode>()) {
-			then_stmt.as<BlockNode>().get_statements().visit([&](ASTNode statement) {
-				visit(statement);
-			});
-		} else {
-			visit(then_stmt);
-		}
+		visit(then_stmt);
 
 		// Branch to end after then block (skip else)
 		if (node.has_else()) {
@@ -4236,13 +4218,8 @@ private:
 
 			auto else_stmt = node.get_else_statement();
 			if (else_stmt.has_value()) {
-				if (else_stmt->is<BlockNode>()) {
-					else_stmt->as<BlockNode>().get_statements().visit([&](ASTNode statement) {
-						visit(statement);
-					});
-				} else {
-					visit(*else_stmt);
-				}
+				// Always use visit() to properly handle block scopes
+				visit(*else_stmt);
 			}
 		}
 

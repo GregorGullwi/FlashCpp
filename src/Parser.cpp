@@ -13426,6 +13426,9 @@ ParseResult Parser::parse_block()
 		return ParseResult::error("Expected '{' for block", *current_token_);
 	}
 
+	// Enter a new scope for this block (C++ standard: each block creates a scope)
+	FlashCpp::SymbolTableScope block_scope(ScopeType::Block);
+
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_block: Entered block. current_token={}, peek={}", 
 		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
 		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
@@ -22148,7 +22151,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												}
 											}
 										} else {
-											return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+											// In SFINAE context (e.g., requires expression), function lookup failure
+											// means the constraint is not satisfied - not an error
+											if (in_sfinae_context_) {
+												// Create a placeholder node to indicate failed lookup
+												// The requires expression will treat this as "constraint not satisfied"
+												result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+											} else {
+												return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+											}
 										}
 									} else {
 										// Have overloads - do overload resolution
@@ -22180,7 +22191,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 													}
 												}
 											} else {
-												return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+												// In SFINAE context (e.g., requires expression), function lookup failure
+												// means the constraint is not satisfied - not an error
+												if (in_sfinae_context_) {
+													// Create a placeholder node to indicate failed lookup
+													result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+												} else {
+													return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+												}
 											}
 										} else {
 											// Get the selected overload
@@ -29150,6 +29168,15 @@ ParseResult Parser::parse_requires_expression() {
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' to begin requires expression body", *current_token_);
 	}
+
+	// Enable SFINAE context for the requires expression body
+	// In requires expressions, function lookup failures and type errors should not produce errors -
+	// they indicate that the constraint is not satisfied (the expression is invalid)
+	bool prev_sfinae_context = in_sfinae_context_;
+	in_sfinae_context_ = true;
+	
+	// RAII guard to restore SFINAE context on all code paths
+	ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
 
 	// Parse requirements (expressions that must be valid)
 	std::vector<ASTNode> requirements;
