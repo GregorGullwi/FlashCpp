@@ -2436,9 +2436,6 @@ private:
 			defines_["__WCHAR_MIN__"] = DefineDirective{ "(-2147483648)", {} };
 			defines_["__WINT_MIN__"] = DefineDirective{ "0", {} };
 
-			// Deprecation marker (GCC)
-			defines_["__DEPRECATED"] = DefineDirective{};
-
 			// Integer constant macros
 			{
 				DefineDirective macro{ "c", { "c" } };
@@ -2456,7 +2453,7 @@ private:
 				defines_["__INT32_C"] = std::move(macro);
 			}
 			{
-				DefineDirective macro{ "c ## L", { "c" } };
+				DefineDirective macro{ "c##L", { "c" } };
 				macro.is_function_like = true;
 				defines_["__INT64_C"] = std::move(macro);
 			}
@@ -2466,27 +2463,27 @@ private:
 				defines_["__UINT8_C"] = std::move(macro);
 			}
 			{
-				DefineDirective macro{ "c ## U", { "c" } };
+				DefineDirective macro{ "c##U", { "c" } };
 				macro.is_function_like = true;
 				defines_["__UINT16_C"] = std::move(macro);
 			}
 			{
-				DefineDirective macro{ "c ## U", { "c" } };
+				DefineDirective macro{ "c##U", { "c" } };
 				macro.is_function_like = true;
 				defines_["__UINT32_C"] = std::move(macro);
 			}
 			{
-				DefineDirective macro{ "c ## UL", { "c" } };
+				DefineDirective macro{ "c##UL", { "c" } };
 				macro.is_function_like = true;
 				defines_["__UINT64_C"] = std::move(macro);
 			}
 			{
-				DefineDirective macro{ "c ## L", { "c" } };
+				DefineDirective macro{ "c##L", { "c" } };
 				macro.is_function_like = true;
 				defines_["__INTMAX_C"] = std::move(macro);
 			}
 			{
-				DefineDirective macro{ "c ## UL", { "c" } };
+				DefineDirective macro{ "c##UL", { "c" } };
 				macro.is_function_like = true;
 				defines_["__UINTMAX_C"] = std::move(macro);
 			}
