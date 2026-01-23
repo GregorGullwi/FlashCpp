@@ -2586,6 +2586,9 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	    (peek_token()->value() == "struct" || peek_token()->value() == "class")) {
 		// Delegate to struct parsing which will handle the full definition
 		// and any trailing variable declarations
+		// TODO: Pass specs (is_constexpr, is_inline, etc.) to parse_struct_declaration()
+		// so they can be applied to trailing variable declarations after the struct body.
+		// Currently, these specifiers are parsed but not propagated.
 		auto result = parse_struct_declaration();
 		if (!result.is_error()) {
 			// Successfully parsed struct, propagate the result
@@ -6664,6 +6667,7 @@ ParseResult Parser::parse_struct_declaration()
 	}
 
 	// Check for variable declarations after struct definition: struct Point { ... } p, q;
+	// Also handles: inline constexpr struct Name { ... } variable = {};
 	std::vector<ASTNode> struct_variables;
 	if (peek_token().has_value() && 
 	    (peek_token()->type() == Token::Type::Identifier || 
@@ -6698,8 +6702,19 @@ ParseResult Parser::parse_struct_declaration()
 			// Add to symbol table so it can be referenced later in the code
 			gSymbolTable.insert(var_name_token->value(), var_decl);
 
+			// Check for initializer: struct S {} s = {};
+			std::optional<ASTNode> init_expr;
+			if (peek_token().has_value() && peek_token()->value() == "=") {
+				consume_token(); // consume '='
+				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				init_expr = init_result.node();
+			}
+
 			// Wrap in VariableDeclarationNode so it gets processed properly by code generator
-			auto var_decl_node = emplace_node<VariableDeclarationNode>(var_decl, std::nullopt);
+			auto var_decl_node = emplace_node<VariableDeclarationNode>(var_decl, init_expr);
 
 			struct_variables.push_back(var_decl_node);
 
