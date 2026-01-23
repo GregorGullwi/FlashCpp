@@ -2579,6 +2579,21 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	attr_info.linkage = specs.linkage;
 	attr_info.calling_convention = specs.calling_convention;
 
+	// Check for inline/constexpr struct/class definition pattern:
+	// inline constexpr struct Name { ... } variable = {};
+	// This is a struct definition combined with a variable declaration
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+	    (peek_token()->value() == "struct" || peek_token()->value() == "class")) {
+		// Delegate to struct parsing which will handle the full definition
+		// and any trailing variable declarations
+		auto result = parse_struct_declaration();
+		if (!result.is_error()) {
+			// Successfully parsed struct, propagate the result
+			return saved_position.propagate(std::move(result));
+		}
+		// If struct parsing fails, fall through to normal parsing
+	}
+
 	// Check for out-of-line constructor/destructor pattern: ClassName::ClassName(...) or ClassName::~ClassName()
 	// These have no return type, so we need to detect them before parse_type_and_name()
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
@@ -21231,6 +21246,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											                idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 											result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
 											return ParseResult::success(*result);
+										} else {
+											// Variable template found but couldn't instantiate (likely dependent args)
+											// Create a placeholder identifier node
+											FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' (qualified as '{}') found but not instantiated (dependent args)", idenfifier_token.value(), qualified_name);
+											result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+											return ParseResult::success(*result);
 										}
 									}
 								}
@@ -21254,6 +21275,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									Token inst_token(Token::Type::Identifier, inst_name, 
 									                idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 									result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
+									return ParseResult::success(*result);
+								} else {
+									// Variable template found but couldn't instantiate (likely dependent args)
+									// Create a placeholder identifier node - will be resolved during actual template instantiation
+									FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' found but not instantiated (dependent args)", idenfifier_token.value());
+									result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
 									return ParseResult::success(*result);
 								}
 							}
@@ -30859,6 +30886,59 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 			}
 			
+			// Handle constexpr/consteval/inline/explicit specifiers before checking for constructor
+			// These can appear on both constructors and regular member functions
+			bool is_member_constexpr = false;
+			bool is_member_consteval = false;
+			bool is_member_inline = false;
+			bool is_member_explicit = false;
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+				std::string_view kw = peek_token()->value();
+				if (kw == "constexpr") {
+					is_member_constexpr = true;
+					consume_token();
+				} else if (kw == "consteval") {
+					is_member_consteval = true;
+					consume_token();
+				} else if (kw == "inline") {
+					is_member_inline = true;
+					consume_token();
+				} else if (kw == "explicit") {
+					is_member_explicit = true;
+					consume_token();
+				} else {
+					break;
+				}
+			}
+			(void)is_member_constexpr;  // Suppress unused warning for now
+			(void)is_member_consteval;
+			(void)is_member_inline;
+			(void)is_member_explicit;
+			
+			// Check for constructor (identifier matching struct name followed by '(')
+			// For member struct templates, struct_name is the simple name (e.g., "_Int")
+			SaveHandle member_saved_pos = save_token_position();
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+			    peek_token()->value() == struct_name) {
+				// Look ahead to see if this is a constructor (next token is '(')
+				consume_token(); // consume struct name
+				
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					// This is a constructor - skip it for now
+					// Member struct template constructors will be instantiated when the template is used
+					discard_saved_token(member_saved_pos);
+					FLASH_LOG_FORMAT(Parser, Debug, "parse_member_struct_template: Skipping constructor for {}", struct_name);
+					skip_member_declaration_to_semicolon();
+					continue;
+				} else {
+					// Not a constructor, restore position
+					restore_token_position(member_saved_pos);
+				}
+			} else {
+				// Not starting with struct name, restore position
+				restore_token_position(member_saved_pos);
+			}
+			
 			// Parse member declaration (data member or function)
 			auto member_result = parse_type_and_name();
 			if (member_result.is_error()) {
@@ -31060,6 +31140,59 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 		}
 
+		// Handle constexpr/consteval/inline/explicit specifiers before checking for constructor
+		// These can appear on both constructors and regular member functions
+		bool is_member_constexpr2 = false;
+		bool is_member_consteval2 = false;
+		bool is_member_inline2 = false;
+		bool is_member_explicit2 = false;
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+			std::string_view kw = peek_token()->value();
+			if (kw == "constexpr") {
+				is_member_constexpr2 = true;
+				consume_token();
+			} else if (kw == "consteval") {
+				is_member_consteval2 = true;
+				consume_token();
+			} else if (kw == "inline") {
+				is_member_inline2 = true;
+				consume_token();
+			} else if (kw == "explicit") {
+				is_member_explicit2 = true;
+				consume_token();
+			} else {
+				break;
+			}
+		}
+		(void)is_member_constexpr2;  // Suppress unused warning for now
+		(void)is_member_consteval2;
+		(void)is_member_inline2;
+		(void)is_member_explicit2;
+		
+		// Check for constructor (identifier matching struct name followed by '(')
+		// For member struct templates, struct_name is the simple name (e.g., "_Int")
+		SaveHandle member_saved_pos2 = save_token_position();
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+		    peek_token()->value() == struct_name) {
+			// Look ahead to see if this is a constructor (next token is '(')
+			consume_token(); // consume struct name
+			
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				// This is a constructor - skip it for now
+				// Member struct template constructors will be instantiated when the template is used
+				discard_saved_token(member_saved_pos2);
+				FLASH_LOG_FORMAT(Parser, Debug, "parse_member_struct_template (primary): Skipping constructor for {}", struct_name);
+				skip_member_declaration_to_semicolon();
+				continue;
+			} else {
+				// Not a constructor, restore position
+				restore_token_position(member_saved_pos2);
+			}
+		} else {
+			// Not starting with struct name, restore position
+			restore_token_position(member_saved_pos2);
+		}
+
 		// Parse member declaration (data member or function)
 		auto member_result = parse_type_and_name();
 		if (member_result.is_error()) {
@@ -31106,17 +31239,12 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			
 			// Handle function body or semicolon
 			if (peek_token().has_value() && peek_token()->value() == "{") {
-				// Parse function body
-				auto body_result = parse_block();
-				if (body_result.is_error()) {
-					return body_result;
-				}
-				
-				if (body_result.node().has_value()) {
-					// Generate mangled name and set definition
-					compute_and_set_mangled_name(member_func_ref);
-					member_func_ref.set_definition(*body_result.node());
-				}
+				// For member struct templates, skip the function body
+				// It will be properly parsed when the template is instantiated
+				// This avoids issues with member variables not being in scope during template parsing
+				FLASH_LOG_FORMAT(Parser, Debug, "parse_member_struct_template: Skipping member function body for {}", 
+					decl_node.identifier_token().value());
+				skip_balanced_braces();
 			} else if (peek_token().has_value() && peek_token()->value() == ";") {
 				consume_token(); // consume ';'
 			}
