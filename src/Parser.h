@@ -924,6 +924,18 @@ public:  // Public methods for template instantiation
         void skip_balanced_braces();  // Skip over a balanced brace block
         void skip_balanced_parens();  // Skip over a balanced parentheses block
         void skip_member_declaration_to_semicolon();  // Skip member declaration until ';' or end of struct
+        
+        // Helper to update angle bracket depth for template parsing
+        // Handles both '>' (decrement by 1) and '>>' (decrement by 2) for nested templates
+        inline void update_angle_depth(std::string_view tok, int& angle_depth) {
+            if (tok == "<") {
+                angle_depth++;
+            } else if (tok == ">>") {
+                angle_depth -= 2;  // Handle nested templates (e.g., vector<vector<int>>)
+            } else if (tok == ">") {
+                angle_depth--;
+            }
+        }
 };
 
 struct TypedNumeric {

@@ -603,11 +603,8 @@ void Parser::skip_member_declaration_to_semicolon() {
 		} else if (tok == ")") {
 			paren_depth--;
 			consume_token();
-		} else if (tok == "<") {
-			angle_depth++;
-			consume_token();
-		} else if (tok == ">") {
-			angle_depth--;
+		} else if (tok == "<" || tok == ">" || tok == ">>") {
+			update_angle_depth(tok, angle_depth);
 			consume_token();
 		} else if (tok == "{") {
 			brace_depth++;
@@ -6083,8 +6080,7 @@ ParseResult Parser::parse_struct_declaration()
 						// Track nested brackets
 						if (tok_val == "(") paren_depth++;
 						else if (tok_val == ")") paren_depth--;
-						else if (tok_val == "<") angle_depth++;
-						else if (tok_val == ">") angle_depth--;
+						else update_angle_depth(tok_val, angle_depth);
 						
 						// At top level, check for end of constraint
 						if (paren_depth == 0 && angle_depth == 0) {
@@ -12906,8 +12902,7 @@ ParseResult Parser::parse_function_trailing_specifiers(
 				// Track nested brackets
 				if (tok_val == "(") paren_depth++;
 				else if (tok_val == ")") paren_depth--;
-				else if (tok_val == "<") angle_depth++;
-				else if (tok_val == ">") angle_depth--;
+				else update_angle_depth(tok_val, angle_depth);
 				
 				// At top level, check for end of constraint
 				if (paren_depth == 0 && angle_depth == 0) {
@@ -26213,9 +26208,7 @@ ParseResult Parser::parse_template_declaration() {
 							consume_token();
 							int angle_depth = 1;
 							while (angle_depth > 0 && peek_token().has_value()) {
-								if (peek_token()->value() == "<") angle_depth++;
-								else if (peek_token()->value() == ">") angle_depth--;
-								else if (peek_token()->value() == ">>") angle_depth -= 2;
+								update_angle_depth(peek_token()->value(), angle_depth);
 								consume_token();
 							}
 							if (peek_token().has_value() && 
@@ -29826,8 +29819,7 @@ ParseResult Parser::parse_template_parameter() {
 				// TODO: Parse and store concept template arguments
 				int angle_depth = 0;
 				do {
-					if (peek_token()->value() == "<") angle_depth++;
-					if (peek_token()->value() == ">") angle_depth--;
+					update_angle_depth(peek_token()->value(), angle_depth);
 					consume_token();
 				} while (angle_depth > 0 && peek_token().has_value());
 			}
@@ -31585,10 +31577,9 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 				// Track nested brackets
 				if (tok_val == "(") paren_depth++;
 				else if (tok_val == ")") paren_depth--;
-				else if (tok_val == "<") angle_depth++;
-				else if (tok_val == ">") angle_depth--;
 				else if (tok_val == "{") brace_depth++;
 				else if (tok_val == "}") brace_depth--;
+				else update_angle_depth(tok_val, angle_depth);
 				
 				// At top level, check for the actual declaration keyword
 				if (paren_depth == 0 && angle_depth == 0 && brace_depth == 0) {
