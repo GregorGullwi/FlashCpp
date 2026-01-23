@@ -30684,7 +30684,40 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						}
 					}
 					
-					// Expect semicolon
+					// Check if this is a static member function (has '(')
+					// Static member functions in member template structs should be skipped for now
+					// (they will be instantiated when the template is used)
+					if (peek_token().has_value() && peek_token()->value() == "(") {
+						// This is a static member function - skip until ';' or '}'
+						int paren_depth = 0;
+						int brace_depth = 0;
+						while (peek_token().has_value()) {
+							if (peek_token()->value() == "(") {
+								paren_depth++;
+								consume_token();
+							} else if (peek_token()->value() == ")") {
+								paren_depth--;
+								consume_token();
+							} else if (peek_token()->value() == "{") {
+								brace_depth++;
+								consume_token();
+							} else if (peek_token()->value() == "}") {
+								if (brace_depth == 0) {
+									break;  // Don't consume - this is end of struct
+								}
+								brace_depth--;
+								consume_token();
+							} else if (peek_token()->value() == ";" && paren_depth == 0 && brace_depth == 0) {
+								consume_token();
+								break;
+							} else {
+								consume_token();
+							}
+						}
+						continue;
+					}
+					
+					// Expect semicolon (for static data member)
 					if (!consume_punctuator(";")) {
 						return ParseResult::error("Expected ';' after static member declaration", *current_token_);
 					}
@@ -30849,7 +30882,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Check for access specifiers
 		if (peek_token()->type() == Token::Type::Keyword) {
 			std::string_view keyword = peek_token()->value();
-			if (keyword == "public" || keyword == "private" || keyword == "protected") {
+				if (keyword == "public" || keyword == "private" || keyword == "protected") {
 				consume_token(); // consume access specifier
 				if (!consume_punctuator(":")) {
 					return ParseResult::error("Expected ':' after access specifier", *current_token_);
@@ -30859,7 +30892,40 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				else if (keyword == "protected") current_access = AccessSpecifier::Protected;
 				continue;
 			}
-			// Handle static members (including static constexpr with initializers)
+			// Handle member function templates - skip them for now
+			// They will be properly instantiated when the member template struct is used
+			if (keyword == "template") {
+				// Skip the entire template declaration (could be function, type alias, etc.)
+				int angle_depth = 0;
+				int brace_depth = 0;
+				consume_token(); // consume 'template'
+				
+				while (peek_token().has_value()) {
+					if (peek_token()->value() == "<") {
+						angle_depth++;
+						consume_token();
+					} else if (peek_token()->value() == ">") {
+						angle_depth--;
+						consume_token();
+					} else if (peek_token()->value() == "{") {
+						brace_depth++;
+						consume_token();
+					} else if (peek_token()->value() == "}") {
+						if (brace_depth == 0) {
+							break;  // Don't consume - this is end of struct
+						}
+						brace_depth--;
+						consume_token();
+					} else if (peek_token()->value() == ";" && angle_depth == 0 && brace_depth == 0) {
+						consume_token();
+						break;
+					} else {
+						consume_token();
+					}
+				}
+				continue;
+			}
+				// Handle static members (including static constexpr with initializers)
 			if (keyword == "static") {
 				consume_token(); // consume 'static'
 				
@@ -30879,6 +30945,38 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					return type_and_name_result;
 				}
 				
+				// Check if this is a static member function (has '(')
+				// Static member functions in member template structs should be skipped for now
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					// This is a static member function - skip until ';' or '}'
+					int paren_depth = 0;
+					int brace_depth = 0;
+					while (peek_token().has_value()) {
+						if (peek_token()->value() == "(") {
+							paren_depth++;
+							consume_token();
+						} else if (peek_token()->value() == ")") {
+							paren_depth--;
+							consume_token();
+						} else if (peek_token()->value() == "{") {
+							brace_depth++;
+							consume_token();
+						} else if (peek_token()->value() == "}") {
+							if (brace_depth == 0) {
+								break;  // Don't consume - this is end of struct
+							}
+							brace_depth--;
+							consume_token();
+						} else if (peek_token()->value() == ";" && paren_depth == 0 && brace_depth == 0) {
+							consume_token();
+							break;
+						} else {
+							consume_token();
+						}
+					}
+					continue;
+				}
+				
 				// Check for initialization (e.g., = sizeof(T))
 				if (peek_token().has_value() && peek_token()->value() == "=") {
 					consume_token(); // consume '='
@@ -30891,7 +30989,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					// We parse but don't store the initializer for member templates
 				}
 				
-				// Expect semicolon
+				// Expect semicolon (for static data member)
 				if (!consume_punctuator(";")) {
 					return ParseResult::error("Expected ';' after static member declaration", *current_token_);
 				}
