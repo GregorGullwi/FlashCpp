@@ -30886,34 +30886,17 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 			}
 			
-			// Handle constexpr/consteval/inline/explicit specifiers before checking for constructor
-			// These can appear on both constructors and regular member functions
-			bool is_member_constexpr = false;
-			bool is_member_consteval = false;
-			bool is_member_inline = false;
-			bool is_member_explicit = false;
-			while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-				std::string_view kw = peek_token()->value();
-				if (kw == "constexpr") {
-					is_member_constexpr = true;
-					consume_token();
-				} else if (kw == "consteval") {
-					is_member_consteval = true;
-					consume_token();
-				} else if (kw == "inline") {
-					is_member_inline = true;
-					consume_token();
-				} else if (kw == "explicit") {
-					is_member_explicit = true;
-					consume_token();
-				} else {
-					break;
-				}
+			// Handle specifiers before checking for constructor
+			// Use parse_declaration_specifiers for common keywords, then check explicit separately
+			[[maybe_unused]] auto member_specs = parse_declaration_specifiers();
+			
+			// Handle 'explicit' keyword separately (constructor-specific, not in parse_declaration_specifiers)
+			[[maybe_unused]] bool is_member_explicit = false;
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+			    peek_token()->value() == "explicit") {
+				is_member_explicit = true;
+				consume_token();
 			}
-			(void)is_member_constexpr;  // Suppress unused warning for now
-			(void)is_member_consteval;
-			(void)is_member_inline;
-			(void)is_member_explicit;
 			
 			// Check for constructor (identifier matching struct name followed by '(')
 			// For member struct templates, struct_name is the simple name (e.g., "_Int")
@@ -31140,34 +31123,17 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 		}
 
-		// Handle constexpr/consteval/inline/explicit specifiers before checking for constructor
-		// These can appear on both constructors and regular member functions
-		bool is_member_constexpr2 = false;
-		bool is_member_consteval2 = false;
-		bool is_member_inline2 = false;
-		bool is_member_explicit2 = false;
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-			std::string_view kw = peek_token()->value();
-			if (kw == "constexpr") {
-				is_member_constexpr2 = true;
-				consume_token();
-			} else if (kw == "consteval") {
-				is_member_consteval2 = true;
-				consume_token();
-			} else if (kw == "inline") {
-				is_member_inline2 = true;
-				consume_token();
-			} else if (kw == "explicit") {
-				is_member_explicit2 = true;
-				consume_token();
-			} else {
-				break;
-			}
+		// Handle specifiers before checking for constructor
+		// Use parse_declaration_specifiers for common keywords, then check explicit separately
+		[[maybe_unused]] auto member_specs2 = parse_declaration_specifiers();
+		
+		// Handle 'explicit' keyword separately (constructor-specific, not in parse_declaration_specifiers)
+		[[maybe_unused]] bool is_member_explicit2 = false;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+		    peek_token()->value() == "explicit") {
+			is_member_explicit2 = true;
+			consume_token();
 		}
-		(void)is_member_constexpr2;  // Suppress unused warning for now
-		(void)is_member_consteval2;
-		(void)is_member_inline2;
-		(void)is_member_explicit2;
 		
 		// Check for constructor (identifier matching struct name followed by '(')
 		// For member struct templates, struct_name is the simple name (e.g., "_Int")
