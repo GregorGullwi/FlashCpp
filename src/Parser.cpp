@@ -11,6 +11,7 @@
 #include "TypeTraitEvaluator.h"
 #include "LazyMemberResolver.h"
 #include "InstantiationQueue.h"
+#include <atomic> // Include atomic for constrained partial specialization counter
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
 #include <ranges> // Include ranges for std::ranges::find
@@ -31032,6 +31033,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 		}
 		
+		// When there's a requires clause, add a unique counter suffix to disambiguate
+		// multiple partial specializations with the same pattern but different constraints.
+		// e.g., __cat<_Iter> with requires A<_Iter> vs __cat<_Iter> with requires B<_Iter>
+		if (requires_clause.has_value()) {
+			static std::atomic<size_t> constrained_pattern_counter{0};
+			pattern_name.append("_C"sv).append(static_cast<int64_t>(constrained_pattern_counter.fetch_add(1)));
+		}
+		
 		// Qualify with parent struct name
 		std::string_view pattern_name_str = pattern_name.commit();
 		auto qualified_pattern_name = StringTable::getOrInternStringHandle(
@@ -31696,20 +31705,23 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 					}
 					// Type specifiers (identifiers not in constraint) indicate end of requires clause
 					// BUT only if the identifier is NOT followed by '<' (which would indicate a template)
+					// or '::' (which would indicate a qualified name like __detail::A<_Iter>)
 					else if (peek_token()->type() == Token::Type::Identifier) {
 						// Peek ahead to see if this is a template instantiation (part of constraint)
+						// or a qualified name (namespace::concept)
 						// Save position, check next token, then restore
 						SaveHandle id_check_pos = save_token_position();
 						consume_token(); // consume the identifier
-						bool is_template_part = peek_token().has_value() && peek_token()->value() == "<";
+						bool is_constraint_part = peek_token().has_value() && 
+						                          (peek_token()->value() == "<" || peek_token()->value() == "::");
 						restore_token_position(id_check_pos);
 						
-						if (!is_template_part) {
-							// This identifier is followed by something other than '<'
+						if (!is_constraint_part) {
+							// This identifier is followed by something other than '<' or '::'
 							// It's likely the start of the declaration (a type), not part of the constraint
 							break;
 						}
-						// Otherwise, it's a template like is_reference_v<T> - continue skipping
+						// Otherwise, it's a template like is_reference_v<T> or qualified name - continue skipping
 					}
 				}
 				
