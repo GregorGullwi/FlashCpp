@@ -9543,12 +9543,22 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 		// and are primarily for ADL (Argument-Dependent Lookup) purposes.
 		// The empty name is acceptable because we only need to record that a friend 
 		// declaration exists; the actual function resolution happens at call sites.
-		while (peek_token().has_value() && peek_token()->value() != ";") {
+		
+		// Skip until ';' or '{' (for friend function templates with inline definitions)
+		while (peek_token().has_value() && peek_token()->value() != ";" && peek_token()->value() != "{") {
 			consume_token();
 		}
-		if (!consume_punctuator(";")) {
-			return ParseResult::error("Expected ';' after template friend declaration", *peek_token());
+		
+		// Handle inline friend function template body: { ... }
+		if (peek_token().has_value() && peek_token()->value() == "{") {
+			skip_balanced_braces();
 		}
+		
+		// Skip trailing semicolon if present (for declarations without body)
+		if (peek_token().has_value() && peek_token()->value() == ";") {
+			consume_token();
+		}
+		
 		// Create a minimal friend declaration node - name is empty since we skipped parsing
 		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, StringHandle{});
 		struct_node.add_friend(friend_node);
@@ -31773,14 +31783,19 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 			}
 		}
 		
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_member_template_or_function: After skipping template params, peek={}", 
+		    peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+		
 		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
 			std::string_view next_keyword = peek_token()->value();
+			FLASH_LOG_FORMAT(Parser, Debug, "parse_member_template_or_function: Detected keyword '{}'", next_keyword);
 			if (next_keyword == "using") {
 				is_template_alias = true;
 			} else if (next_keyword == "struct" || next_keyword == "class") {
 				is_struct_or_class_template = true;
 			} else if (next_keyword == "friend") {
 				is_template_friend = true;
+				FLASH_LOG(Parser, Debug, "parse_member_template_or_function: is_template_friend = true");
 			}
 		}
 	}
