@@ -28100,6 +28100,26 @@ ParseResult Parser::parse_template_declaration() {
 						// They're registered in the global type system by parse_enum_declaration
 						// The semicolon is already consumed by parse_enum_declaration
 						continue;
+					} else if (peek_token()->value() == "struct" || peek_token()->value() == "class") {
+						// Handle nested struct/class declarations inside partial specialization body
+						// e.g., struct __type { ... };
+						consume_token(); // consume 'struct' or 'class'
+						
+						// Skip struct name if present
+						if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+							consume_token(); // consume struct name
+						}
+						
+						// Skip to body or semicolon
+						if (peek_token().has_value() && peek_token()->value() == "{") {
+							skip_balanced_braces();
+						}
+						
+						// Consume trailing semicolon
+						if (peek_token().has_value() && peek_token()->value() == ";") {
+							consume_token();
+						}
+						continue;
 					} else if (peek_token()->value() == "static") {
 						// Handle static members: static const int size = 10;
 						consume_token(); // consume "static"
