@@ -2370,11 +2370,11 @@ private:
 			defines_["__UINT_LEAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
 			defines_["__UINT_LEAST32_TYPE__"] = DefineDirective{ "unsigned int", {} };
 			defines_["__UINT_LEAST64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
-			defines_["__INT_FAST8_TYPE__"] = DefineDirective{ "signed char", {} };
+			defines_["__INT_FAST8_TYPE__"] = DefineDirective{ "long int", {} };
 			defines_["__INT_FAST16_TYPE__"] = DefineDirective{ "long int", {} };
 			defines_["__INT_FAST32_TYPE__"] = DefineDirective{ "long int", {} };
 			defines_["__INT_FAST64_TYPE__"] = DefineDirective{ "long int", {} };
-			defines_["__UINT_FAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
+			defines_["__UINT_FAST8_TYPE__"] = DefineDirective{ "unsigned long int", {} };
 			defines_["__UINT_FAST16_TYPE__"] = DefineDirective{ "unsigned long int", {} };
 			defines_["__UINT_FAST32_TYPE__"] = DefineDirective{ "unsigned long int", {} };
 			defines_["__UINT_FAST64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
@@ -2384,7 +2384,9 @@ private:
 
 			// GCC/Clang specific predefined macros
 			defines_["__STRICT_ANSI__"] = DefineDirective{ "1", {} };
-			defines_["__ELF__"] = DefineDirective{ "1", {} };
+			if (settings_.getDataModel() == CompileContext::DataModel::LP64) {
+				defines_["__ELF__"] = DefineDirective{ "1", {} };
+			}
 			defines_["__VERSION__"] = DefineDirective{ "\"FlashCpp (gcc compatibility)\"", {} };
 
 			defines_["__BASE_FILE__"] = FunctionDirective{ [this]() -> std::string {
@@ -2421,11 +2423,11 @@ private:
 			defines_["__UINT_LEAST32_MAX__"] = DefineDirective{ "4294967295U", {} };
 			defines_["__UINT_LEAST64_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
 
-			defines_["__INT_FAST8_MAX__"] = DefineDirective{ "127", {} };
+			defines_["__INT_FAST8_MAX__"] = DefineDirective{ "9223372036854775807L", {} };
 			defines_["__INT_FAST16_MAX__"] = DefineDirective{ "9223372036854775807L", {} };
 			defines_["__INT_FAST32_MAX__"] = DefineDirective{ "9223372036854775807L", {} };
 			defines_["__INT_FAST64_MAX__"] = DefineDirective{ "9223372036854775807L", {} };
-			defines_["__UINT_FAST8_MAX__"] = DefineDirective{ "255", {} };
+			defines_["__UINT_FAST8_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
 			defines_["__UINT_FAST16_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
 			defines_["__UINT_FAST32_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
 			defines_["__UINT_FAST64_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
