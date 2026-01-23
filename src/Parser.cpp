@@ -31395,11 +31395,24 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 	std::vector<TemplateTypeArg> template_args;
 
 	// Check for empty template argument list (e.g., Container<>)
+	// Also handle >> for nested templates: Container<__void_t<>>
 	if (peek_token().has_value() && peek_token()->value() == ">") {
 		consume_token(); // consume '>'
 		// Success - discard saved position
 		discard_saved_token(saved_pos);
 		return template_args;  // Return empty vector
+	}
+	
+	// Handle >> token for empty template arguments in nested context (e.g., __void_t<>>)
+	if (peek_token().has_value() && peek_token()->value() == ">>") {
+		FLASH_LOG(Parser, Debug, "Empty template argument list with >> token, splitting");
+		split_right_shift_token();
+		// Now peek_token() returns '>'
+		if (peek_token().has_value() && peek_token()->value() == ">") {
+			consume_token(); // consume first '>'
+			discard_saved_token(saved_pos);
+			return template_args;  // Return empty vector
+		}
 	}
 
 	// Parse template arguments

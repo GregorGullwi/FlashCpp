@@ -26,7 +26,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string>` | `test_std_string.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<array>` | `test_std_array.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Test file missing |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | Complex partial specialization with `__void_t<>` (~143ms, was: pointer-to-member-function syntax fixed) |
+| `<functional>` | `test_std_functional.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure (~143ms) |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Test file missing |
 | `<map>` | `test_std_map.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<set>` | `test_std_set.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
@@ -62,10 +62,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Primary Remaining Blockers:**
 1. **`<compare>` header strong_order lookup** - The header now parses but fails at line 621 looking up `strong_order` function (semantic error, not parse error). In requires expressions, function lookup failures should not cause errors - they indicate the constraint is not satisfied.
-2. **Complex partial specialization patterns** - Patterns with `__void_t<decltype(...)>>` in partial specializations (affects `<functional>`)
-3. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
-4. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
-5. **Non-template inline member function forward references** - Non-template constructors and member functions defined inline within the class body cannot access member variables declared later in the class. Out-of-line definitions work correctly. (affects `<any>` copy/move constructors)
+2. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
+3. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
+4. **Non-template inline member function forward references** - Non-template constructors and member functions defined inline within the class body cannot access member variables declared later in the class. Out-of-line definitions work correctly. (affects `<any>` copy/move constructors)
 
 **Fixes Applied (2026-01-23 This PR):**
 - **Fixed** Member template constructor deferred body parsing - Template constructor bodies are now deferred until after the full class is parsed, enabling access to forward-declared member variables (complete-class context)
@@ -75,6 +74,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 - **Fixed** Partial specialization forward declarations - `template<typename T> struct X<T*>;` forward declarations now parse correctly
 - **Fixed** Qualified concept lookup - Concepts in namespaces (like `std::same_as<T>`) are now looked up correctly in expressions
 - **Fixed** Parenthesized concept expressions in constraints - `(concept<T>) && ...` patterns no longer parsed as C-style casts
+- **Fixed** Empty template argument lists with `>>` token splitting - `__void_t<>>` patterns now parse correctly
 
 **Fixes Applied (2026-01-22 This PR):**
 - **Fixed** Out-of-line static constexpr member variable definition with parenthesized initializer (`partial_ordering::less(__cmp_cat::_Ord::less)`)
