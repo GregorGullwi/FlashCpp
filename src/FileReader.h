@@ -2375,7 +2375,7 @@ private:
 			defines_["__INT_FAST32_TYPE__"] = DefineDirective{ "long int", {} };
 			defines_["__INT_FAST64_TYPE__"] = DefineDirective{ "long int", {} };
 			defines_["__UINT_FAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
-			defines_["__UINT_FAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
+			defines_["__UINT_FAST16_TYPE__"] = DefineDirective{ "unsigned long int", {} };
 			defines_["__UINT_FAST32_TYPE__"] = DefineDirective{ "unsigned long int", {} };
 			defines_["__UINT_FAST64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
 			defines_["__SIG_ATOMIC_TYPE__"] = DefineDirective{ "int", {} };
@@ -2590,7 +2590,7 @@ private:
 		defines_["__LDBL_HAS_QUIET_NAN__"] = DefineDirective{ "1", {} };
 		defines_["__LDBL_IS_IEC_60559__"] = DefineDirective{ "1", {} };
 
-		// Width / word order / deprecation markers (common for GCC compatibility)
+		// Width / word order / deprecation markers (GCC compatibility)
 		defines_["__SCHAR_WIDTH__"] = DefineDirective{ "8", {} };
 		defines_["__SHRT_WIDTH__"] = DefineDirective{ "16", {} };
 		defines_["__INT_WIDTH__"] = DefineDirective{ "32", {} };
@@ -2608,7 +2608,7 @@ private:
 		defines_["__FLOAT_WORD_ORDER__"] = DefineDirective{ "__BYTE_ORDER__", {} };
 
 		// Deprecation marker
-		defines_["__DEPRECATED"] = DefineDirective{};
+		defines_["__DEPRECATED"] = DefineDirective{ "__attribute__((deprecated))", {} };
 		
 		defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string {
 			// Use std::filesystem to normalize path separators for cross-platform compatibility
