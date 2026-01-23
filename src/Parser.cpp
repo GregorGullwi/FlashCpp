@@ -12439,6 +12439,31 @@ ParseResult Parser::parse_decltype_specifier()
 	// In decltype context, < after qualified-id should strongly prefer template arguments over comparison
 	ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Decltype);
 	if (expr_result.is_error()) {
+		// If we're in a template context and the expression parsing fails (e.g., due to
+		// unresolved function calls with dependent arguments), create a dependent type
+		// placeholder instead of propagating the error. The actual function lookup
+		// will happen during template instantiation when the dependent types are known.
+		if (parsing_template_body_ || !current_template_param_names_.empty()) {
+			FLASH_LOG(Templates, Debug, "Creating dependent type for failed decltype expression in template context");
+			// Skip to closing ')' to recover parsing
+			int paren_depth = 1;
+			while (peek_token().has_value() && paren_depth > 0) {
+				if (peek_token()->value() == "(") {
+					paren_depth++;
+				} else if (peek_token()->value() == ")") {
+					paren_depth--;
+					if (paren_depth == 0) break;  // Don't consume the final ')'
+				}
+				consume_token();
+			}
+			// Consume the final ')'
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after decltype expression", *current_token_);
+			}
+			// Create a placeholder type for the dependent decltype expression
+			TypeSpecifierNode dependent_type(Type::Auto, TypeQualifier::None, 0);
+			return saved_position.success(emplace_node<TypeSpecifierNode>(dependent_type));
+		}
 		return expr_result;
 	}
 
@@ -31074,6 +31099,26 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					auto type_result = parse_type_specifier();
 					if (type_result.is_error()) {
 						return type_result;
+					}
+					
+					// Parse reference modifiers after the type (e.g., T&, T&&)
+					// This allows patterns like: using type = remove_reference_t<T>&&;
+					if (type_result.node().has_value()) {
+						TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+						
+						// Handle && (rvalue reference) - either as single token or two & tokens
+						if (peek_token().has_value() && peek_token()->value() == "&&") {
+							consume_token(); // consume '&&'
+							type_spec.set_reference(true);  // true = rvalue reference
+						} else if (peek_token().has_value() && peek_token()->value() == "&") {
+							consume_token(); // consume first '&'
+							if (peek_token().has_value() && peek_token()->value() == "&") {
+								consume_token(); // consume second '&'
+								type_spec.set_reference(true);  // rvalue reference
+							} else {
+								type_spec.set_lvalue_reference(true);  // lvalue reference
+							}
+						}
 					}
 					
 					// Expect ';'
