@@ -27530,7 +27530,7 @@ ParseResult Parser::parse_template_declaration() {
 				}
 				std::string_view pattern_key_view = pattern_key.commit();
 				
-				gTemplateRegistry.registerSpecialization(std::string(template_name), pattern_args, template_class_node);
+				gTemplateRegistry.registerSpecialization(template_name, pattern_args, template_class_node);
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered forward declaration for partial specialization: {} with pattern {}", template_name, pattern_key_view);
 				
 				// Clean up template parameter context
@@ -27559,7 +27559,7 @@ ParseResult Parser::parse_template_declaration() {
 					struct_node
 				);
 				
-				gTemplateRegistry.registerSpecialization(std::string(template_name), pattern_args, template_class_node);
+				gTemplateRegistry.registerSpecialization(template_name, pattern_args, template_class_node);
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered forward declaration for partial specialization (after extra tokens): {}", template_name);
 				
 				current_template_param_names_.clear();
