@@ -10679,6 +10679,20 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		return expr_result;
 	}
 	
+	// Check for pack expansion (...) after the expression
+	// This handles patterns like: int(__args...) in decltype contexts
+	std::optional<ASTNode> final_expr = expr_result.node();
+	if (peek_token().has_value() && peek_token()->value() == "...") {
+		Token ellipsis_token = *peek_token();
+		consume_token(); // consume '...'
+		
+		// Wrap the expression in a PackExpansionExprNode
+		if (final_expr.has_value()) {
+			final_expr = emplace_node<ExpressionNode>(
+				PackExpansionExprNode(*final_expr, ellipsis_token));
+		}
+	}
+	
 	if (!consume_punctuator(")")) {
 		return ParseResult::error("Expected ')' after functional cast expression", *current_token_);
 	}
@@ -10687,7 +10701,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	
 	// Create a static cast node (functional cast behaves like static_cast)
 	auto result = emplace_node<ExpressionNode>(
-		StaticCastNode(type_node, *expr_result.node(), type_token));
+		StaticCastNode(type_node, *final_expr, type_token));
 	
 	return ParseResult::success(result);
 }
@@ -15881,7 +15895,19 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					}
 
 					if (auto arg_node = arg_result.node()) {
-						args.push_back(*arg_node);
+						// Check for pack expansion (...) after the argument
+						// This handles patterns like: new Type(__args...) in decltype contexts
+						if (peek_token().has_value() && peek_token()->value() == "...") {
+							Token ellipsis_token = *peek_token();
+							consume_token(); // consume '...'
+							
+							// Wrap the argument in a PackExpansionExprNode
+							auto pack_expr = emplace_node<ExpressionNode>(
+								PackExpansionExprNode(*arg_node, ellipsis_token));
+							args.push_back(pack_expr);
+						} else {
+							args.push_back(*arg_node);
+						}
 					}
 
 					if (peek_token().has_value() && peek_token()->value() == ",") {
@@ -21952,9 +21978,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 					}
 				} else if (!identifierType && !found_as_type_alias) {
-					// Not a function call, template member access, template parameter reference, pack expansion, or alias template - this is an error
-					FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
-					return ParseResult::error("Missing identifier", idenfifier_token);
+					// Not a function call, template member access, template parameter reference, pack expansion, or alias template
+					// In template context, treat unknown identifiers as potentially member references that will resolve at instantiation time
+					if (parsing_template_body_ || !current_template_param_names_.empty() || !struct_parsing_context_stack_.empty()) {
+						FLASH_LOG(Parser, Debug, "Treating unknown identifier '", idenfifier_token.value(), "' as dependent in template context");
+						result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+						// Don't return error - let it continue as a dependent expression
+					} else {
+						FLASH_LOG(Parser, Error, "Missing identifier: ", idenfifier_token.value());
+						return ParseResult::error("Missing identifier", idenfifier_token);
+					}
 				}
 			}
 		}
@@ -31795,6 +31828,146 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	return saved_position.success();
 }
 
+// Parse member variable template: template<...> static constexpr Type var = ...;
+// This handles variable templates declared inside struct/class bodies.
+ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct_node, [[maybe_unused]] AccessSpecifier access) {
+	ScopedTokenPosition saved_position(*this);
+	
+	// Consume 'template' keyword
+	if (!consume_keyword("template")) {
+		return ParseResult::error("Expected 'template' keyword", *peek_token());
+	}
+	
+	// Parse template parameter list
+	if (!peek_token().has_value() || peek_token()->value() != "<") {
+		return ParseResult::error("Expected '<' after 'template' keyword", *current_token_);
+	}
+	consume_token(); // consume '<'
+	
+	std::vector<ASTNode> template_params;
+	std::vector<std::string_view> template_param_names;
+	
+	auto param_list_result = parse_template_parameter_list(template_params);
+	if (param_list_result.is_error()) {
+		return param_list_result;
+	}
+	
+	// Extract parameter names
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			template_param_names.push_back(param.as<TemplateParameterNode>().name());
+		}
+	}
+	
+	// Expect '>'
+	if (!peek_token().has_value() || peek_token()->value() != ">") {
+		return ParseResult::error("Expected '>' after template parameter list", *current_token_);
+	}
+	consume_token(); // consume '>'
+	
+	// Temporarily add template parameters to type system using RAII scope guard
+	FlashCpp::TemplateParameterScope template_scope;
+	for (const auto& param : template_params) {
+		if (param.is<TemplateParameterNode>()) {
+			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			if (tparam.kind() == TemplateParameterKind::Type) {
+				auto& type_info = gTypeInfo.emplace_back(StringTable::getOrInternStringHandle(tparam.name()), Type::UserDefined, gTypeInfo.size());
+				gTypesByName.emplace(type_info.name(), &type_info);
+				template_scope.addParameter(&type_info);
+			}
+		}
+	}
+	
+	// Parse storage class specifiers (static, constexpr, inline, etc.)
+	bool is_constexpr = false;
+	StorageClass storage_class = StorageClass::None;
+	
+	while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+		std::string_view kw = peek_token()->value();
+		if (kw == "constexpr") {
+			is_constexpr = true;
+			consume_token();
+		} else if (kw == "inline") {
+			consume_token(); // consume but don't store for now
+		} else if (kw == "static") {
+			storage_class = StorageClass::Static;
+			consume_token();
+		} else {
+			break; // Not a storage class specifier
+		}
+	}
+	
+	// Parse the type
+	auto type_result = parse_type_specifier();
+	if (type_result.is_error()) {
+		return type_result;
+	}
+	
+	// Parse variable name
+	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+		return ParseResult::error("Expected variable name in member variable template", *current_token_);
+	}
+	Token var_name_token = *peek_token();
+	std::string_view var_name = var_name_token.value();
+	consume_token();
+	
+	// Create DeclarationNode
+	auto decl_node = emplace_node<DeclarationNode>(
+		type_result.node().value(),
+		var_name_token
+	);
+	
+	// Parse initializer (required for member variable templates)
+	std::optional<ASTNode> init_expr;
+	if (peek_token().has_value() && peek_token()->value() == "=") {
+		consume_token(); // consume '='
+		
+		// Parse the initializer expression
+		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		init_expr = init_result.node();
+	}
+	
+	// Expect semicolon
+	if (!consume_punctuator(";")) {
+		return ParseResult::error("Expected ';' after member variable template declaration", *current_token_);
+	}
+	
+	// Create VariableDeclarationNode
+	auto var_decl_node = emplace_node<VariableDeclarationNode>(
+		decl_node,
+		init_expr,
+		storage_class
+	);
+	
+	// Set constexpr flag if present
+	var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(is_constexpr);
+	
+	// Create TemplateVariableDeclarationNode
+	auto template_var_node = emplace_node<TemplateVariableDeclarationNode>(
+		std::move(template_params),
+		var_decl_node
+	);
+	
+	// Build qualified name for registration
+	std::string_view parent_name = StringTable::getStringView(struct_node.name());
+	std::string_view qualified_name = StringBuilder()
+		.append(parent_name)
+		.append("::"sv)
+		.append(var_name)
+		.commit();
+	
+	// Register in template registry
+	gTemplateRegistry.registerTemplate(var_name, template_var_node);
+	gTemplateRegistry.registerTemplate(qualified_name, template_var_node);
+	
+	FLASH_LOG_FORMAT(Parser, Info, "Registered member variable template: {}", qualified_name);
+	
+	return saved_position.success();
+}
+
 // Helper: Parse member template keyword - performs lookahead to detect whether 'template' introduces
 // a member template alias or member function template, then dispatches to the appropriate parser.
 // This eliminates code duplication across regular struct, full specialization, and partial specialization parsing.
@@ -31808,6 +31981,7 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 	bool is_template_alias = false;
 	bool is_struct_or_class_template = false;
 	bool is_template_friend = false;
+	bool is_variable_template = false;
 	if (peek_token().has_value() && peek_token()->value() == "<") {
 		consume_token(); // consume '<'
 		
@@ -31899,6 +32073,60 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 			} else if (next_keyword == "friend") {
 				is_template_friend = true;
 				FLASH_LOG(Parser, Debug, "parse_member_template_or_function: is_template_friend = true");
+			} else if (next_keyword == "static" || next_keyword == "constexpr" || next_keyword == "inline") {
+				// Could be a member variable template: template<...> static constexpr bool name = ...;
+				// Need to look ahead further to see if it has '=' before '(' 
+				// Skip specifiers and type, find if name is followed by '=' (variable) or '(' (function)
+				// NOTE: Must not confuse operator= with variable initialization
+				SaveHandle var_check_pos = save_token_position();
+				int angle_depth_inner = 0;
+				bool found_equals = false;
+				bool found_paren = false;
+				bool found_operator_keyword = false;
+				
+				// Skip up to 20 tokens looking for '=' or '(' at depth 0
+				for (int i = 0; i < 20 && peek_token().has_value() && !found_equals && !found_paren; ++i) {
+					std::string_view tok = peek_token()->value();
+					
+					// Check for 'operator' keyword - next '=' would be part of operator name, not initializer
+					if (tok == "operator") {
+						found_operator_keyword = true;
+						// Skip past operator and the operator symbol
+						consume_token(); // consume 'operator'
+						// The next token(s) are the operator name (=, ==, +=, etc.)
+						// For operator=, we'll see '=' next but it's not an initializer
+						if (peek_token().has_value()) {
+							consume_token(); // consume operator symbol
+							// If it was '==', '<<=', etc., we consumed two parts already
+							// Now continue looking for the opening paren
+							continue;
+						}
+					}
+					
+					if (tok == "<") angle_depth_inner++;
+					else if (tok == ">") angle_depth_inner--;
+					else if (tok == ">>") angle_depth_inner -= 2;
+					
+					if (angle_depth_inner == 0) {
+						if (tok == "=" && !found_operator_keyword) {
+							// Only treat as variable initializer if we haven't seen 'operator'
+							found_equals = true;
+						} else if (tok == "(") {
+							found_paren = true;
+						} else if (tok == ";") {
+							// End of declaration without finding either - could be forward decl
+							break;
+						}
+					}
+					consume_token();
+				}
+				
+				restore_token_position(var_check_pos);
+				
+				if (found_equals && !found_paren && !found_operator_keyword) {
+					is_variable_template = true;
+					FLASH_LOG(Parser, Debug, "parse_member_template_or_function: Detected member variable template");
+				}
 			}
 		}
 	}
@@ -31915,6 +32143,9 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 	} else if (is_template_friend) {
 		// This is a template friend declaration
 		return parse_template_friend_declaration(struct_node);
+	} else if (is_variable_template) {
+		// This is a member variable template: template<...> static constexpr Type var = ...;
+		return parse_member_variable_template(struct_node, access);
 	} else {
 		// This is a member function template
 		return parse_member_function_template(struct_node, access);
