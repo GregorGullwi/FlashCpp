@@ -551,7 +551,7 @@ requires requires {
 - Added handling for partial specialization forward declarations (`template<typename T> struct X<T*>;`)
 - Added qualified concept lookup for namespaced concepts (`std::same_as<T, U>`)
 
-### 7.1 Parenthesized Concept Expressions in Constraints (**ACTIVE BLOCKER** - 2026-01-23)
+### 8. Parenthesized Concept Expressions in Constraints (**ACTIVE BLOCKER** - 2026-01-23)
 
 **Issue:** Concept expressions used as parenthesized operands in constraint conjunctions are not parsed correctly.
 
@@ -572,7 +572,7 @@ The parser incorrectly treats the parenthesized concept `(std::__detail::__class
 
 **Affected Headers:** `<optional>`, `<iterator_concepts.h>`, and other headers using this pattern.
 
-### 8. Template Instantiation Performance (NO LONGER A BLOCKER)
+### 9. Template Instantiation Performance (NO LONGER A BLOCKER)
 
 **Status:** The timeout issues have been **FIXED**. All headers now complete in 100-200ms.
 
@@ -590,7 +590,7 @@ Previously, headers appeared to timeout after 400-500 templates. This was actual
 - Consider lazy evaluation strategies
 - Implement lazy instantiation for static members and whole template classes (see `docs/LAZY_TEMPLATE_INSTANTIATION_PLAN.md`)
 
-### 9. std::initializer_list Compiler Magic (Known Limitation)
+### 10. std::initializer_list Compiler Magic (Known Limitation)
 
 **Issue:** `std::initializer_list<T>` requires special compiler support that is not yet implemented.
 
