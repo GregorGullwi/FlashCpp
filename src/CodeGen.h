@@ -3756,7 +3756,7 @@ private:
 			FLASH_LOG(Codegen, Debug, "Using enum '", StringTable::getStringView(enum_name), 
 				"' - added ", enum_info->enumerators.size(), " enumerators to local scope");
 		} else {
-			FLASH_LOG(Codegen, Warning, "Enum type '", StringTable::getStringView(enum_name), 
+			FLASH_LOG(General, Error, "Enum type '", StringTable::getStringView(enum_name), 
 				"' not found for 'using enum' declaration");
 		}
 	}

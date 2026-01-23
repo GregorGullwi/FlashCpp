@@ -10049,7 +10049,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			FLASH_LOG(Parser, Debug, "Using enum '", enum_type_token.value(), 
 				"' - added ", enum_info->enumerators.size(), " enumerators to parser scope");
 		} else {
-			FLASH_LOG(Parser, Warning, "Enum type '", enum_type_token.value(), 
+			FLASH_LOG(General, Error, "Enum type '", enum_type_token.value(), 
 				"' not found for 'using enum' declaration");
 		}
 		
