@@ -2281,7 +2281,8 @@ private:
 		defines_["__cpp_unicode_characters"] = DefineDirective{ "200704L", {} };  // char16_t/char32_t
 		defines_["__cpp_unicode_literals"] = DefineDirective{ "200710L", {} };  // Unicode string literals
 		defines_["__cpp_user_defined_literals"] = DefineDirective{ "200809L", {} };  // User Defined Literals
-		defines_["__cpp_using_enum"] = DefineDirective{ "201907L", {} };  // using enum
+		// NOTE: __cpp_using_enum is NOT defined because parser doesn't support "using enum" yet
+		// defines_["__cpp_using_enum"] = DefineDirective{ "201907L", {} };  // using enum
 		defines_["__cpp_variable_templates"] = DefineDirective{ "201304L", {} };  // Variable templates
 		defines_["__cpp_variadic_templates"] = DefineDirective{ "200704L", {} };  // Variadic templates
 		defines_["__cpp_variadic_using"] = DefineDirective{ "201611L", {} };  // Pack expansions in using
