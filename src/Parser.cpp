@@ -5714,7 +5714,19 @@ ParseResult Parser::parse_struct_declaration()
 					                                  peek_token()->value() == ":")) {
 						// Pattern 2: Nested struct declaration (with or without base class)
 						restore_token_position(saved_pos);
+						
+						// Save the parent's delayed function bodies before parsing nested struct
+						// This prevents the nested struct's parse_struct_declaration() from trying
+						// to parse the parent's delayed bodies
+						auto saved_delayed_bodies = std::move(delayed_function_bodies_);
+						delayed_function_bodies_.clear();
+						
 						auto nested_result = parse_struct_declaration();
+						
+						// Restore the parent's delayed function bodies after nested struct is complete
+						// Any delayed bodies from the nested struct have already been parsed
+						delayed_function_bodies_ = std::move(saved_delayed_bodies);
+						
 						if (nested_result.is_error()) {
 							return nested_result;
 						}
@@ -5978,13 +5990,7 @@ ParseResult Parser::parse_struct_declaration()
 				}
 
 				// Parse constructor body if present (and not defaulted/deleted)
-				FLASH_LOG_FORMAT(Parser, Debug, "Constructor check: is_defaulted={}, is_deleted={}, peek_has_value={}, peek_value='{}', struct_name='{}'", 
-					is_defaulted, is_deleted, peek_token().has_value(), peek_token().has_value() ? std::string(peek_token()->value()) : "N/A",
-					StringTable::getStringView(struct_name));
-				bool should_defer = !is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{";
-				FLASH_LOG_FORMAT(Parser, Debug, "Constructor defer check: should_defer={}, comparison result={}", should_defer, peek_token()->value() == "{");
-				if (should_defer) {
-					FLASH_LOG_FORMAT(Parser, Debug, "Deferring constructor body for struct '{}'", StringTable::getStringView(struct_name));
+				if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
 					// DELAYED PARSING: Save the current position (start of '{')
 					SaveHandle body_start = save_token_position();
 
