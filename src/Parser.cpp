@@ -1837,7 +1837,7 @@ ParseResult Parser::parse_type_and_name() {
                 std::string_view operator_symbol = operator_symbol_token.value();
                 consume_token(); // consume operator symbol
                 
-                // Build operator name
+                // Build operator name - use the same map as the primary operator handling
                 static std::unordered_map<std::string_view, std::string> operator_names_late = {
                     {"=", "operator="}, {"<=>", "operator<=>"},
                     {"<<", "operator<<"}, {">>", "operator>>"},
@@ -1852,7 +1852,13 @@ ParseResult Parser::parse_type_and_name() {
                     {"&&", "operator&&"}, {"||", "operator||"},
                     {"++", "operator++"}, {"--", "operator--"},
                     {"->", "operator->"}, {"->*", "operator->*"},
-                    {",", "operator,"}
+                    {"[]", "operator[]"}, {",", "operator,"},
+                    // Compound assignment operators
+                    {"+=", "operator+="}, {"-=", "operator-="},
+                    {"*=", "operator*="}, {"/=", "operator/="},
+                    {"%=", "operator%="}, {"&=", "operator&="},
+                    {"|=", "operator|="}, {"^=", "operator^="},
+                    {"<<=", "operator<<="}, {">>=", "operator>>="}
                 };
                 
                 auto it = operator_names_late.find(operator_symbol);
@@ -1871,8 +1877,63 @@ ParseResult Parser::parse_type_and_name() {
                 consume_token(); // consume ']'
                 static const std::string operator_subscript_name = "operator[]";
                 operator_name = operator_subscript_name;
-            } else {
-                return ParseResult::error("Unknown operator", operator_keyword_token);
+            }
+            // Check for operator new, delete, new[], delete[]
+            else if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+                     (peek_token()->value() == "new" || peek_token()->value() == "delete")) {
+                std::string_view keyword_value = peek_token()->value();
+                consume_token(); // consume 'new' or 'delete'
+                
+                // Check for array version: new[] or delete[]
+                bool is_array = false;
+                if (peek_token().has_value() && peek_token()->value() == "[") {
+                    consume_token(); // consume '['
+                    if (peek_token().has_value() && peek_token()->value() == "]") {
+                        consume_token(); // consume ']'
+                        is_array = true;
+                    } else {
+                        return ParseResult::error("Expected ']' after 'operator " + std::string(keyword_value) + "['", operator_keyword_token);
+                    }
+                }
+                
+                // Build operator name
+                if (keyword_value == "new") {
+                    static const std::string op_new = "operator new";
+                    static const std::string op_new_array = "operator new[]";
+                    operator_name = is_array ? op_new_array : op_new;
+                } else {
+                    static const std::string op_delete = "operator delete";
+                    static const std::string op_delete_array = "operator delete[]";
+                    operator_name = is_array ? op_delete_array : op_delete;
+                }
+            }
+            else {
+                // Try to parse conversion operator: operator type()
+                auto type_result = parse_type_specifier();
+                if (type_result.is_error()) {
+                    return type_result;
+                }
+                if (!type_result.node().has_value()) {
+                    return ParseResult::error("Expected type specifier after 'operator' keyword", operator_keyword_token);
+                }
+
+                // Now expect "("
+                if (!peek_token().has_value() || peek_token()->value() != "(") {
+                    return ParseResult::error("Expected '(' after conversion operator type", operator_keyword_token);
+                }
+                consume_token(); // consume '('
+
+                if (!peek_token().has_value() || peek_token()->value() != ")") {
+                    return ParseResult::error("Expected ')' after '(' in conversion operator", operator_keyword_token);
+                }
+                consume_token(); // consume ')'
+
+                // Create operator name like "operator int" using StringBuilder
+                const TypeSpecifierNode& conversion_type_spec = type_result.node()->as<TypeSpecifierNode>();
+                StringBuilder op_name_builder;
+                op_name_builder.append("operator ");
+                op_name_builder.append(conversion_type_spec.getReadableString());
+                operator_name = op_name_builder.commit();
             }
             
             // Create a synthetic identifier token for the operator
