@@ -606,6 +606,11 @@ void Parser::skip_member_declaration_to_semicolon() {
 		} else if (tok == "<") {
 			angle_depth++;
 			consume_token();
+		} else if (tok == ">>") {
+			// Handle >> in nested templates (e.g., vector<vector<int>>)
+			// >> is a single token but represents two closing angle brackets
+			angle_depth -= 2;
+			consume_token();
 		} else if (tok == ">") {
 			angle_depth--;
 			consume_token();
