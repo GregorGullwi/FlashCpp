@@ -2579,6 +2579,24 @@ ParseResult Parser::parse_declaration_or_function_definition()
 	attr_info.linkage = specs.linkage;
 	attr_info.calling_convention = specs.calling_convention;
 
+	// Check for inline/constexpr struct/class definition pattern:
+	// inline constexpr struct Name { ... } variable = {};
+	// This is a struct definition combined with a variable declaration
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+	    (peek_token()->value() == "struct" || peek_token()->value() == "class")) {
+		// Delegate to struct parsing which will handle the full definition
+		// and any trailing variable declarations
+		// TODO: Pass specs (is_constexpr, is_inline, etc.) to parse_struct_declaration()
+		// so they can be applied to trailing variable declarations after the struct body.
+		// Currently, these specifiers are parsed but not propagated.
+		auto result = parse_struct_declaration();
+		if (!result.is_error()) {
+			// Successfully parsed struct, propagate the result
+			return saved_position.propagate(std::move(result));
+		}
+		// If struct parsing fails, fall through to normal parsing
+	}
+
 	// Check for out-of-line constructor/destructor pattern: ClassName::ClassName(...) or ClassName::~ClassName()
 	// These have no return type, so we need to detect them before parse_type_and_name()
 	if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
@@ -6649,6 +6667,7 @@ ParseResult Parser::parse_struct_declaration()
 	}
 
 	// Check for variable declarations after struct definition: struct Point { ... } p, q;
+	// Also handles: inline constexpr struct Name { ... } variable = {};
 	std::vector<ASTNode> struct_variables;
 	if (peek_token().has_value() && 
 	    (peek_token()->type() == Token::Type::Identifier || 
@@ -6683,8 +6702,19 @@ ParseResult Parser::parse_struct_declaration()
 			// Add to symbol table so it can be referenced later in the code
 			gSymbolTable.insert(var_name_token->value(), var_decl);
 
+			// Check for initializer: struct S {} s = {};
+			std::optional<ASTNode> init_expr;
+			if (peek_token().has_value() && peek_token()->value() == "=") {
+				consume_token(); // consume '='
+				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				init_expr = init_result.node();
+			}
+
 			// Wrap in VariableDeclarationNode so it gets processed properly by code generator
-			auto var_decl_node = emplace_node<VariableDeclarationNode>(var_decl, std::nullopt);
+			auto var_decl_node = emplace_node<VariableDeclarationNode>(var_decl, init_expr);
 
 			struct_variables.push_back(var_decl_node);
 
@@ -21231,6 +21261,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											                idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 											result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
 											return ParseResult::success(*result);
+										} else {
+											// Variable template found but couldn't instantiate (likely dependent args)
+											// Create a placeholder identifier node
+											FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' (qualified as '{}') found but not instantiated (dependent args)", idenfifier_token.value(), qualified_name);
+											result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+											return ParseResult::success(*result);
 										}
 									}
 								}
@@ -21254,6 +21290,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									Token inst_token(Token::Type::Identifier, inst_name, 
 									                idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 									result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
+									return ParseResult::success(*result);
+								} else {
+									// Variable template found but couldn't instantiate (likely dependent args)
+									// Create a placeholder identifier node - will be resolved during actual template instantiation
+									FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' found but not instantiated (dependent args)", idenfifier_token.value());
+									result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
 									return ParseResult::success(*result);
 								}
 							}
@@ -30859,6 +30901,50 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 			}
 			
+			// Save position BEFORE parsing specifiers so we can restore if needed
+			// This ensures specifiers like constexpr, inline, static aren't lost for non-constructor members
+			SaveHandle member_saved_pos = save_token_position();
+			
+			// Handle specifiers before checking for constructor
+			// Use parse_declaration_specifiers for common keywords, then check explicit separately
+			[[maybe_unused]] auto member_specs = parse_declaration_specifiers();
+			
+			// Handle 'explicit' keyword separately (constructor-specific, not in parse_declaration_specifiers)
+			[[maybe_unused]] bool is_member_explicit = false;
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+			    peek_token()->value() == "explicit") {
+				is_member_explicit = true;
+				consume_token();
+			}
+			
+			// Check for constructor (identifier matching struct name followed by '(')
+			// For member struct templates, struct_name is the simple name (e.g., "_Int")
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+			    peek_token()->value() == struct_name) {
+				// Save position after specifiers for constructor lookahead
+				SaveHandle ctor_lookahead_pos = save_token_position();
+				// Look ahead to see if this is a constructor (next token is '(')
+				consume_token(); // consume struct name
+				
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					// This is a constructor - skip it for now
+					// Member struct template constructors will be instantiated when the template is used
+					discard_saved_token(ctor_lookahead_pos);
+					discard_saved_token(member_saved_pos);
+					FLASH_LOG_FORMAT(Parser, Debug, "parse_member_struct_template: Skipping constructor for {}", struct_name);
+					skip_member_declaration_to_semicolon();
+					continue;
+				} else {
+					// Not a constructor, restore position to BEFORE specifiers so they get re-parsed
+					discard_saved_token(ctor_lookahead_pos);
+					restore_token_position(member_saved_pos);
+				}
+			} else {
+				// Not starting with struct name - restore position to BEFORE specifiers
+				// so parse_type_and_name() can properly handle the specifiers
+				restore_token_position(member_saved_pos);
+			}
+			
 			// Parse member declaration (data member or function)
 			auto member_result = parse_type_and_name();
 			if (member_result.is_error()) {
@@ -31058,6 +31144,50 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				// Full instantiation will handle them properly
 				continue;
 			}
+		}
+
+		// Save position BEFORE parsing specifiers so we can restore if needed
+		// This ensures specifiers like constexpr, inline, static aren't lost for non-constructor members
+		SaveHandle member_saved_pos2 = save_token_position();
+		
+		// Handle specifiers before checking for constructor
+		// Use parse_declaration_specifiers for common keywords, then check explicit separately
+		[[maybe_unused]] auto member_specs2 = parse_declaration_specifiers();
+		
+		// Handle 'explicit' keyword separately (constructor-specific, not in parse_declaration_specifiers)
+		[[maybe_unused]] bool is_member_explicit2 = false;
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+		    peek_token()->value() == "explicit") {
+			is_member_explicit2 = true;
+			consume_token();
+		}
+		
+		// Check for constructor (identifier matching struct name followed by '(')
+		// For member struct templates, struct_name is the simple name (e.g., "_Int")
+		if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
+		    peek_token()->value() == struct_name) {
+			// Save position after specifiers for constructor lookahead
+			SaveHandle ctor_lookahead_pos2 = save_token_position();
+			// Look ahead to see if this is a constructor (next token is '(')
+			consume_token(); // consume struct name
+			
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				// This is a constructor - skip it for now
+				// Member struct template constructors will be instantiated when the template is used
+				discard_saved_token(ctor_lookahead_pos2);
+				discard_saved_token(member_saved_pos2);
+				FLASH_LOG_FORMAT(Parser, Debug, "parse_member_struct_template (primary): Skipping constructor for {}", struct_name);
+				skip_member_declaration_to_semicolon();
+				continue;
+			} else {
+				// Not a constructor, restore position to BEFORE specifiers so they get re-parsed
+				discard_saved_token(ctor_lookahead_pos2);
+				restore_token_position(member_saved_pos2);
+			}
+		} else {
+			// Not starting with struct name - restore position to BEFORE specifiers
+			// so parse_type_and_name() can properly handle the specifiers
+			restore_token_position(member_saved_pos2);
 		}
 
 		// Parse member declaration (data member or function)
