@@ -54,6 +54,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Note (2026-01-23 Latest Update):** Fixed multiple `<compare>` header blockers including variable template lookup with dependent args, constructor parsing in member struct templates, and inline constexpr struct with trailing variable initializers. The header now progresses from line 763 to line 1210, failing on `requires requires` clause in inline constexpr struct member function (`_Synth3way::operator()`).
 
+**Note (2026-01-23 Standard Headers Progress):** Fixed multiple blockers in `iterator_concepts.h` and related headers. The `<vector>` header now successfully parses past `iterator_concepts.h` (was failing at line 423, 789, 958, 974) and `stl_iterator_base_types.h` (was failing at line 126). Currently blocked at `stl_construct.h:96` due to placement new in decltype expression (`decltype(::new((void*)0) _Tp(...))`).
+
 **Note (2026-01-23 Previous Update):** Fixed block scope handling in if/else statements (fixes `<any>` variable redeclaration error). Fixed SFINAE context for requires expression bodies so function lookup failures no longer produce errors. Disabled `__cpp_using_enum` macro since parser doesn't support "using enum" yet. The `<compare>` header now progresses past line 621 but fails at line 763 due to template constructor parsing issues.
 
 **Note (2026-01-22 Evening Update):** All timeout issues have been resolved! The infinite loop bug in the parser has been fixed. Headers that were timing out now complete in 100-200ms. The remaining blockers are actual parsing/semantic issues.
@@ -69,6 +71,18 @@ This directory contains test files for C++ standard library headers to assess Fl
 2. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
 3. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
 4. **Out-of-line nested template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported yet (affects `<any>`)
+5. **Placement new in decltype** - `decltype(::new((void*)0) _Tp(...))` is not parsed correctly (affects `<vector>` via `stl_construct.h:96`)
+
+**Fixes Applied (2026-01-23 Standard Headers PR):**
+- **Fixed** Constrained partial specializations with requires clauses - Qualified names in requires clauses (e.g., `__detail::A<_Iter>`) now handled correctly
+- **Fixed** Multiple constrained partial specializations with same pattern - Added unique counter for constrained partial specializations
+- **Fixed** Constrained template parameters (concept directly on template param) - e.g., `template<weakly_incrementable _Iter, typename _Proj>`
+- **Fixed** Nested struct/class declarations in partial specialization body parsing
+- **Fixed** Friend function templates with constrained parameters and inline definitions - e.g., `template<Concept _It> friend constexpr bool operator==(...) { return false; }`
+- **Fixed** Struct definition with immediate inline constexpr variable declaration - e.g., `struct _Decay_copy final { ... } inline constexpr __decay_copy{};`
+- **Fixed** Storage class specifiers and brace initialization after struct body
+- **Fixed** Pointer types as template parameter default values - e.g., `typename _Pointer = _Tp*`
+- **Fixed** Pointer/reference types in trailing return types - e.g., `auto test() -> T*`
 
 **Fixes Applied (2026-01-23 This PR):**
 - **Fixed** Variable template lookup with dependent arguments - When a variable template is found but can't be instantiated due to dependent args, create placeholder node instead of error
