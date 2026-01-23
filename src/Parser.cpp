@@ -587,6 +587,46 @@ void Parser::skip_balanced_parens() {
 	}
 }
 
+void Parser::skip_member_declaration_to_semicolon() {
+	// Skip tokens until we reach ';' at top level, or an unmatched '}'
+	// Handles nested parentheses, angle brackets, and braces
+	int paren_depth = 0;
+	int angle_depth = 0;
+	int brace_depth = 0;
+	
+	while (peek_token().has_value()) {
+		std::string_view tok = peek_token()->value();
+		
+		if (tok == "(") {
+			paren_depth++;
+			consume_token();
+		} else if (tok == ")") {
+			paren_depth--;
+			consume_token();
+		} else if (tok == "<") {
+			angle_depth++;
+			consume_token();
+		} else if (tok == ">") {
+			angle_depth--;
+			consume_token();
+		} else if (tok == "{") {
+			brace_depth++;
+			consume_token();
+		} else if (tok == "}") {
+			if (brace_depth == 0) {
+				break;  // Don't consume - this is end of struct
+			}
+			brace_depth--;
+			consume_token();
+		} else if (tok == ";" && paren_depth == 0 && angle_depth == 0 && brace_depth == 0) {
+			consume_token();
+			break;
+		} else {
+			consume_token();
+		}
+	}
+}
+
 // Helper function to parse the contents of pack(...) after the opening '('
 // Returns success and consumes the closing ')' on success
 ParseResult Parser::parse_pragma_pack_inner()
@@ -30692,32 +30732,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					// Static member functions in member template structs should be skipped for now
 					// (they will be instantiated when the template is used)
 					if (peek_token().has_value() && peek_token()->value() == "(") {
-						// This is a static member function - skip until ';' or '}'
-						int paren_depth = 0;
-						int brace_depth = 0;
-						while (peek_token().has_value()) {
-							if (peek_token()->value() == "(") {
-								paren_depth++;
-								consume_token();
-							} else if (peek_token()->value() == ")") {
-								paren_depth--;
-								consume_token();
-							} else if (peek_token()->value() == "{") {
-								brace_depth++;
-								consume_token();
-							} else if (peek_token()->value() == "}") {
-								if (brace_depth == 0) {
-									break;  // Don't consume - this is end of struct
-								}
-								brace_depth--;
-								consume_token();
-							} else if (peek_token()->value() == ";" && paren_depth == 0 && brace_depth == 0) {
-								consume_token();
-								break;
-							} else {
-								consume_token();
-							}
-						}
+						skip_member_declaration_to_semicolon();
 						continue;
 					}
 					
@@ -30886,7 +30901,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Check for access specifiers
 		if (peek_token()->type() == Token::Type::Keyword) {
 			std::string_view keyword = peek_token()->value();
-				if (keyword == "public" || keyword == "private" || keyword == "protected") {
+			if (keyword == "public" || keyword == "private" || keyword == "protected") {
 				consume_token(); // consume access specifier
 				if (!consume_punctuator(":")) {
 					return ParseResult::error("Expected ':' after access specifier", *current_token_);
@@ -30899,37 +30914,11 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			// Handle member function templates - skip them for now
 			// They will be properly instantiated when the member template struct is used
 			if (keyword == "template") {
-				// Skip the entire template declaration (could be function, type alias, etc.)
-				int angle_depth = 0;
-				int brace_depth = 0;
 				consume_token(); // consume 'template'
-				
-				while (peek_token().has_value()) {
-					if (peek_token()->value() == "<") {
-						angle_depth++;
-						consume_token();
-					} else if (peek_token()->value() == ">") {
-						angle_depth--;
-						consume_token();
-					} else if (peek_token()->value() == "{") {
-						brace_depth++;
-						consume_token();
-					} else if (peek_token()->value() == "}") {
-						if (brace_depth == 0) {
-							break;  // Don't consume - this is end of struct
-						}
-						brace_depth--;
-						consume_token();
-					} else if (peek_token()->value() == ";" && angle_depth == 0 && brace_depth == 0) {
-						consume_token();
-						break;
-					} else {
-						consume_token();
-					}
-				}
+				skip_member_declaration_to_semicolon();
 				continue;
 			}
-				// Handle static members (including static constexpr with initializers)
+			// Handle static members (including static constexpr with initializers)
 			if (keyword == "static") {
 				consume_token(); // consume 'static'
 				
@@ -30952,32 +30941,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				// Check if this is a static member function (has '(')
 				// Static member functions in member template structs should be skipped for now
 				if (peek_token().has_value() && peek_token()->value() == "(") {
-					// This is a static member function - skip until ';' or '}'
-					int paren_depth = 0;
-					int brace_depth = 0;
-					while (peek_token().has_value()) {
-						if (peek_token()->value() == "(") {
-							paren_depth++;
-							consume_token();
-						} else if (peek_token()->value() == ")") {
-							paren_depth--;
-							consume_token();
-						} else if (peek_token()->value() == "{") {
-							brace_depth++;
-							consume_token();
-						} else if (peek_token()->value() == "}") {
-							if (brace_depth == 0) {
-								break;  // Don't consume - this is end of struct
-							}
-							brace_depth--;
-							consume_token();
-						} else if (peek_token()->value() == ";" && paren_depth == 0 && brace_depth == 0) {
-							consume_token();
-							break;
-						} else {
-							consume_token();
-						}
-					}
+					skip_member_declaration_to_semicolon();
 					continue;
 				}
 				

@@ -923,6 +923,7 @@ public:  // Public methods for template instantiation
         // Helper for delayed parsing
         void skip_balanced_braces();  // Skip over a balanced brace block
         void skip_balanced_parens();  // Skip over a balanced parentheses block
+        void skip_member_declaration_to_semicolon();  // Skip member declaration until ';' or end of struct
 };
 
 struct TypedNumeric {
