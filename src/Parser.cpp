@@ -10771,6 +10771,15 @@ ParseResult Parser::parse_type_specifier()
 		while (peek_token().has_value() && peek_token()->value() == "::") {
 			consume_token();  // consume '::'
 			auto next_token = peek_token();
+			
+			// Handle ::template for dependent member templates
+			// Example: typename _Tp::template rebind<_Up>
+			if (next_token.has_value() && next_token->type() == Token::Type::Keyword &&
+			    next_token->value() == "template") {
+				consume_token();  // consume 'template'
+				next_token = peek_token();
+			}
+			
 			if (!next_token.has_value() || next_token->type() != Token::Type::Identifier) {
 				type_name_builder.reset();  // Discard the builder
 				return ParseResult::error("Expected identifier after '::'",
@@ -10828,10 +10837,23 @@ ParseResult Parser::parse_type_specifier()
 		consume_token();
 
 		// Check for qualified name (e.g., Outer::Inner for nested classes)
+		// Also track if ::template was used (indicates dependent member template access)
+		bool has_explicit_template_keyword = false;
 		while (peek_token().has_value() && peek_token()->value() == "::") {
 			consume_token();  // consume '::'
 
 			auto next_token = peek_token();
+			
+			// Handle ::template for dependent member templates
+			// Example: typename _Tp::template rebind<_Up>
+			// The 'template' keyword is a disambiguator for dependent contexts
+			if (next_token.has_value() && next_token->type() == Token::Type::Keyword &&
+			    next_token->value() == "template") {
+				consume_token();  // consume 'template'
+				next_token = peek_token();  // now get the actual template name
+				has_explicit_template_keyword = true;  // Remember that ::template was used
+			}
+			
 			if (!next_token.has_value() || next_token->type() != Token::Type::Identifier) {
 				type_name_builder.reset();  // Discard the builder
 				return ParseResult::error("Expected identifier after '::'", next_token.value_or(Token()));
@@ -10852,48 +10874,54 @@ ParseResult Parser::parse_type_specifier()
 			// This prevents misinterpreting patterns like _R1::num < _R2::num> where < is comparison
 			bool should_parse_as_template = true;
 			
-			// Check if this is a qualified name (contains ::)
-			size_t last_colon_pos = type_name.rfind("::");
-			if (last_colon_pos != std::string_view::npos) {
-				// Extract the member name (part after the last ::)
-				std::string_view member_name = type_name.substr(last_colon_pos + 2);
-				
-				// Check if the member is a known template
-				auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
-				auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
-				
-				// Also check with the full qualified name
-				auto full_template_opt = gTemplateRegistry.lookupTemplate(type_name);
-				auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(type_name);
-				
-				bool member_is_template = member_template_opt.has_value() || 
-				                          member_var_template_opt.has_value() ||
-				                          full_template_opt.has_value() ||
-				                          full_var_template_opt.has_value();
-				
-				if (!member_is_template) {
-					// Member is NOT a known template
-					// Check if the base (before ::) is a template parameter - if so, this is dependent
-					// and we should NOT parse < as template arguments
-					std::string_view base_name = type_name.substr(0, last_colon_pos);
+			// If ::template was used, always parse < as template arguments
+			// This is the explicit template disambiguator for dependent contexts
+			if (has_explicit_template_keyword) {
+				should_parse_as_template = true;
+			} else {
+				// Check if this is a qualified name (contains ::)
+				size_t last_colon_pos = type_name.rfind("::");
+				if (last_colon_pos != std::string_view::npos) {
+					// Extract the member name (part after the last ::)
+					std::string_view member_name = type_name.substr(last_colon_pos + 2);
 					
-					// Check if base is a template parameter
-					bool base_is_template_param = false;
-					for (const auto& param_name : current_template_param_names_) {
-						if (StringTable::getStringView(param_name) == base_name) {
-							base_is_template_param = true;
-							break;
+					// Check if the member is a known template
+					auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
+					auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
+					
+					// Also check with the full qualified name
+					auto full_template_opt = gTemplateRegistry.lookupTemplate(type_name);
+					auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(type_name);
+					
+					bool member_is_template = member_template_opt.has_value() || 
+					                          member_var_template_opt.has_value() ||
+					                          full_template_opt.has_value() ||
+					                          full_var_template_opt.has_value();
+					
+					if (!member_is_template) {
+						// Member is NOT a known template
+						// Check if the base (before ::) is a template parameter - if so, this is dependent
+						// and we should NOT parse < as template arguments
+						std::string_view base_name = type_name.substr(0, last_colon_pos);
+						
+						// Check if base is a template parameter
+						bool base_is_template_param = false;
+						for (const auto& param_name : current_template_param_names_) {
+							if (StringTable::getStringView(param_name) == base_name) {
+								base_is_template_param = true;
+								break;
+							}
 						}
-					}
-					
-					if (base_is_template_param) {
-						// Pattern like _R1::num where _R1 is a template parameter
-						// The member 'num' is likely a static data member, not a template
-						// Treat < as comparison operator
-						FLASH_LOG_FORMAT(Templates, Debug, 
-						    "Qualified name '{}' has template param base and non-template member - treating '<' as comparison operator",
-						    type_name);
-						should_parse_as_template = false;
+						
+						if (base_is_template_param) {
+							// Pattern like _R1::num where _R1 is a template parameter
+							// The member 'num' is likely a static data member, not a template
+							// Treat < as comparison operator
+							FLASH_LOG_FORMAT(Templates, Debug, 
+							    "Qualified name '{}' has template param base and non-template member - treating '<' as comparison operator",
+							    type_name);
+							should_parse_as_template = false;
+						}
 					}
 				}
 			}
@@ -16593,6 +16621,39 @@ bool Parser::parse_static_member_function(
 
 	// Skip any trailing specifiers (const, volatile, noexcept, etc.) after parameter list
 	skip_function_trailing_specifiers();
+
+	// Check for trailing requires clause: static int func(int x) requires constraint { ... }
+	// This is common in C++20 code, e.g., requires requires { expr; } 
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+		peek_token()->value() == "requires") {
+		consume_token(); // consume 'requires'
+		
+		// Enter a temporary scope and add function parameters so they're visible in the requires clause
+		// Example: static pointer pointer_to(element_type& __r) requires requires { __r; }
+		gSymbolTable.enter_scope(ScopeType::Function);
+		for (const auto& param : member_func_ref.parameter_nodes()) {
+			if (param.is<DeclarationNode>()) {
+				const auto& param_decl = param.as<DeclarationNode>();
+				gSymbolTable.insert(param_decl.identifier_token().value(), param);
+			}
+		}
+		
+		// Parse the constraint expression (can be a requires expression: requires { ... })
+		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		
+		// Exit the temporary scope
+		gSymbolTable.exit_scope();
+		
+		if (constraint_result.is_error()) {
+			type_and_name_result = constraint_result;
+			return true;
+		}
+		
+		// Note: For now, we store the requires clause but don't enforce it at compile time.
+		// This allows us to parse the code correctly; constraint checking would be done during
+		// template instantiation or in the type system.
+		FLASH_LOG(Parser, Debug, "Parsed trailing requires clause for static member function");
+	}
 
 	// Parse function body if present
 	if (peek_token().has_value() && peek_token()->value() == "{") {
@@ -29809,12 +29870,15 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 				Token ctor_name_token = *peek_token();
 				consume_token();
 				
+				// Cache struct name handle for use throughout this scope
+				StringHandle struct_name_handle = struct_node.name();
+				
 				FLASH_LOG_FORMAT(Parser, Debug, "parse_member_function_template: Detected template constructor {}()", 
-				                 StringTable::getStringView(struct_node.name()));
+				                 StringTable::getStringView(struct_name_handle));
 				
 				// Create constructor declaration
 				auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-					struct_node.name(), StringTable::getOrInternStringHandle(ctor_name_token.value()));
+					struct_name_handle, StringTable::getOrInternStringHandle(ctor_name_token.value()));
 				
 				// Apply specifiers to constructor
 				ctor_ref.set_explicit(is_explicit);
@@ -29904,15 +29968,46 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						return ParseResult::error("Expected ';' after '= default' or '= delete'", *peek_token());
 					}
 				} else if (peek_token().has_value() && peek_token()->value() == "{") {
-					// Parse constructor body
-					auto block_result = parse_block();
-					if (block_result.is_error()) {
-						current_template_param_names_ = std::move(saved_template_param_names);
-						return block_result;
+					// DELAYED PARSING: Save the current position (start of '{')
+					// This allows member variables declared later in the class to be visible
+					SaveHandle body_start = save_token_position();
+					
+					// Look up the struct type
+					auto type_it = gTypesByName.find(struct_name_handle);
+					size_t struct_type_index = 0;
+					if (type_it != gTypesByName.end()) {
+						struct_type_index = type_it->second->type_index_;
 					}
-					if (auto block = block_result.node()) {
-						ctor_ref.set_definition(*block);
+					
+					// Skip over the constructor body by counting braces
+					skip_balanced_braces();
+					
+					// Extract template parameter names for use during delayed body parsing
+					std::vector<StringHandle> template_param_name_handles;
+					for (const auto& param : template_params) {
+						if (param.is<TemplateParameterNode>()) {
+							template_param_name_handles.push_back(param.as<TemplateParameterNode>().nameHandle());
+						}
 					}
+					
+					FLASH_LOG_FORMAT(Parser, Debug, "Deferring template constructor body parsing for struct='{}', param_count={}", 
+						StringTable::getStringView(struct_name_handle), template_param_name_handles.size());
+					
+					// Record this for delayed parsing (with template parameters)
+					delayed_function_bodies_.push_back({
+						nullptr,  // func_node (not used for constructors)
+						body_start,
+						SaveHandle{},  // No initializer list position saved (already parsed)
+						struct_name_handle,
+						struct_type_index,
+						&struct_node,
+						false,     // has_initializer_list - already handled above  
+						true,  // is_constructor
+						false,  // is_destructor
+						&ctor_ref,  // ctor_node
+						nullptr,   // dtor_node
+						template_param_name_handles  // template_param_names for template constructors
+					});
 				} else if (!consume_punctuator(";")) {
 					current_template_param_names_ = std::move(saved_template_param_names);
 					return ParseResult::error("Expected '{', ';', '= default', or '= delete' after constructor declaration", *peek_token());

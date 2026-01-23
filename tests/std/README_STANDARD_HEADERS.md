@@ -18,7 +18,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | `requires requires` nested constraint not supported (~174ms) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~161ms) |
-| `<any>` | `test_std_any.cpp` | ❌ Parse Error | std::forward template syntax in function body (~128ms, was: template alias `>>` handling fixed) |
+| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Non-template inline constructor forward reference issue (~128ms) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<bit>` | N/A | ❌ Semantic Error | `<compare>` strong_order lookup failure |
@@ -56,12 +56,21 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Note (2026-01-22 Later Update):** Major `<compare>` header parsing fixes applied! The `<compare>` header now parses successfully. Many headers that were blocked by `<compare>` parse errors now progress to semantic errors (function lookup failures).
 
+**Note (2026-01-23 Update):** Implemented deferred body parsing for member template constructors. This allows template constructors to access member variables that are declared later in the class definition (complete-class context). However, non-template inline member functions inside class bodies still have issues accessing forward-declared members.
+
 **Primary Remaining Blockers:**
-1. **`<compare>` header strong_order lookup** - The header now parses but fails at line 621 looking up `strong_order` function (semantic error, not parse error)
-2. **`requires requires` nested constraints** - C++20 nested requires expressions like `requires requires { ... }` are not supported (affects `<optional>`, `<ptr_traits.h>`)
+1. **`<compare>` header strong_order lookup** - The header now parses but fails at line 621 looking up `strong_order` function (semantic error, not parse error). In requires expressions, function lookup failures should not cause errors - they indicate the constraint is not satisfied.
+2. **Type requirements in requires expressions** - `typename T` syntax inside requires expressions for checking type validity is not fully supported (affects `<iterator_concepts.h>`)
 3. **Complex partial specialization patterns** - Patterns with `__void_t<decltype(...)>>` in partial specializations (affects `<functional>`)
 4. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
 5. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
+6. **Non-template inline member function forward references** - Non-template constructors and member functions defined inline within the class body cannot access member variables declared later in the class. Out-of-line definitions work correctly. (affects `<any>` copy/move constructors)
+
+**Fixes Applied (2026-01-23 This PR):**
+- **Fixed** Member template constructor deferred body parsing - Template constructor bodies are now deferred until after the full class is parsed, enabling access to forward-declared member variables (complete-class context)
+- **Fixed** Trailing `requires` clause support for static member functions - patterns like `static int f(int& r) requires requires { r; } { ... }` now parse correctly
+- **Fixed** Function parameter scope in trailing requires clauses - parameters are now visible inside the requires expression
+- **Fixed** Dependent member template access syntax `::template` - patterns like `typename _Tp::template rebind<_Up>` now parse correctly
 
 **Fixes Applied (2026-01-22 This PR):**
 - **Fixed** Out-of-line static constexpr member variable definition with parenthesized initializer (`partial_ordering::less(__cmp_cat::_Ord::less)`)
