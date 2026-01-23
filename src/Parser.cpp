@@ -15186,6 +15186,33 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		SaveHandle saved_pos = save_token_position();
 		consume_token(); // consume '('
 
+		// Save the position and build the qualified type name for concept checking
+		// This is needed because parse_type_specifier() may parse a qualified name
+		// like std::__detail::__class_or_enum but only return the last component in the token
+		SaveHandle pre_type_pos = save_token_position();
+		StringBuilder qualified_type_name;
+		
+		// Build qualified name by collecting identifiers and :: tokens
+		while (peek_token().has_value()) {
+			if (peek_token()->type() == Token::Type::Identifier) {
+				qualified_type_name.append(peek_token()->value());
+				consume_token();
+				// Check for :: to continue qualified name
+				if (peek_token().has_value() && peek_token()->value() == "::") {
+					qualified_type_name.append("::");
+					consume_token();
+				} else {
+					break;
+				}
+			} else {
+				break;
+			}
+		}
+		std::string_view qualified_name_view = qualified_type_name.commit();
+		
+		// Restore position to parse the type properly
+		restore_token_position(pre_type_pos);
+
 		// Try to parse as type
 		ParseResult type_result = parse_type_specifier();
 
@@ -15225,6 +15252,25 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					if (!parsing_template_body_) {
 						// Not in a template body, so this is likely a variable, not a type
 						is_valid_type = false;
+					}
+				}
+				
+				// Check if this "type" is actually a concept - concepts evaluate to boolean
+				// and should not be treated as C-style casts.
+				// Example: (std::same_as<T, int>) && other_constraint
+				// Here, same_as<T, int> is a concept, not a type to cast to.
+				if (is_valid_type && type_spec.token().type() == Token::Type::Identifier) {
+					std::string_view type_name = type_spec.token().value();
+					auto concept_opt = gConceptRegistry.lookupConcept(type_name);
+					if (!concept_opt.has_value() && !qualified_name_view.empty()) {
+						// Try looking up by the full qualified name
+						concept_opt = gConceptRegistry.lookupConcept(qualified_name_view);
+					}
+					if (concept_opt.has_value()) {
+						// This is a concept, not a type - don't treat as C-style cast
+						is_valid_type = false;
+						FLASH_LOG_FORMAT(Parser, Debug, "Parenthesized expression is a concept '{}', not a C-style cast", 
+						                 qualified_name_view.empty() ? type_name : qualified_name_view);
 					}
 				}
 				
