@@ -5978,7 +5978,13 @@ ParseResult Parser::parse_struct_declaration()
 				}
 
 				// Parse constructor body if present (and not defaulted/deleted)
-				if (!is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{") {
+				FLASH_LOG_FORMAT(Parser, Debug, "Constructor check: is_defaulted={}, is_deleted={}, peek_has_value={}, peek_value='{}', struct_name='{}'", 
+					is_defaulted, is_deleted, peek_token().has_value(), peek_token().has_value() ? std::string(peek_token()->value()) : "N/A",
+					StringTable::getStringView(struct_name));
+				bool should_defer = !is_defaulted && !is_deleted && peek_token().has_value() && peek_token()->value() == "{";
+				FLASH_LOG_FORMAT(Parser, Debug, "Constructor defer check: should_defer={}, comparison result={}", should_defer, peek_token()->value() == "{");
+				if (should_defer) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Deferring constructor body for struct '{}'", StringTable::getStringView(struct_name));
 					// DELAYED PARSING: Save the current position (start of '{')
 					SaveHandle body_start = save_token_position();
 
