@@ -13000,23 +13000,51 @@ ParseResult Parser::parse_function_trailing_specifiers(
 
 		// Parse requires clause - skip the constraint expression
 		// Pattern: func() noexcept requires constraint { }
+		// Also handles: requires requires { expr } (nested requires expression)
 		if (token->type() == Token::Type::Keyword && token->value() == "requires") {
 			consume_token(); // consume 'requires'
 			
 			// Skip the constraint expression by counting balanced brackets/parens
 			// The constraint expression ends before '{', ';', '= default', '= delete', or '= 0'
+			// BUT: If the constraint is a requires-expression, its body uses { } which shouldn't end the clause
 			int paren_depth = 0;
 			int angle_depth = 0;
+			int brace_depth = 0;
 			while (peek_token().has_value()) {
 				std::string_view tok_val = peek_token()->value();
+				
+				// Special handling for 'requires' keyword inside the constraint
+				// This indicates a requires-expression like: requires requires { ... }
+				// The { } after a nested 'requires' is the requires-expression body, not the function body
+				if (tok_val == "requires") {
+					consume_token(); // consume nested 'requires'
+					// Skip optional parameter list: requires(const T t) { ... }
+					if (peek_token().has_value() && peek_token()->value() == "(") {
+						consume_token(); // consume '('
+						int param_paren_depth = 1;
+						while (peek_token().has_value() && param_paren_depth > 0) {
+							if (peek_token()->value() == "(") param_paren_depth++;
+							else if (peek_token()->value() == ")") param_paren_depth--;
+							consume_token();
+						}
+					}
+					// Expect the requires-expression body
+					if (peek_token().has_value() && peek_token()->value() == "{") {
+						consume_token(); // consume '{'
+						brace_depth++;
+					}
+					continue;
+				}
 				
 				// Track nested brackets
 				if (tok_val == "(") paren_depth++;
 				else if (tok_val == ")") paren_depth--;
+				else if (tok_val == "{") brace_depth++;
+				else if (tok_val == "}") brace_depth--;
 				else update_angle_depth(tok_val, angle_depth);
 				
 				// At top level, check for end of constraint
-				if (paren_depth == 0 && angle_depth == 0) {
+				if (paren_depth == 0 && angle_depth == 0 && brace_depth == 0) {
 					// Body start or end of declaration
 					if (tok_val == "{" || tok_val == ";") {
 						break;
