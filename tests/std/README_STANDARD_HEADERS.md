@@ -59,8 +59,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Note (2026-01-23 Update):** Implemented deferred body parsing for member template constructors. This allows template constructors to access member variables that are declared later in the class definition (complete-class context). However, non-template inline member functions inside class bodies still have issues accessing forward-declared members.
 
 **Primary Remaining Blockers:**
-1. **`<compare>` header strong_order lookup** - The header now parses but fails at line 621 looking up `strong_order` function (semantic error, not parse error)
-2. **`requires requires` nested constraints** - C++20 nested requires expressions like `requires requires { ... }` are not supported (affects `<optional>`, `<ptr_traits.h>`)
+1. **`<compare>` header strong_order lookup** - The header now parses but fails at line 621 looking up `strong_order` function (semantic error, not parse error). In requires expressions, function lookup failures should not cause errors - they indicate the constraint is not satisfied.
+2. **Type requirements in requires expressions** - `typename T` syntax inside requires expressions for checking type validity is not fully supported (affects `<iterator_concepts.h>`)
 3. **Complex partial specialization patterns** - Patterns with `__void_t<decltype(...)>>` in partial specializations (affects `<functional>`)
 4. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
 5. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
@@ -68,6 +68,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Fixes Applied (2026-01-23 This PR):**
 - **Fixed** Member template constructor deferred body parsing - Template constructor bodies are now deferred until after the full class is parsed, enabling access to forward-declared member variables (complete-class context)
+- **Fixed** Trailing `requires` clause support for static member functions - patterns like `static int f(int& r) requires requires { r; } { ... }` now parse correctly
+- **Fixed** Function parameter scope in trailing requires clauses - parameters are now visible inside the requires expression
+- **Fixed** Dependent member template access syntax `::template` - patterns like `typename _Tp::template rebind<_Up>` now parse correctly
 
 **Fixes Applied (2026-01-22 This PR):**
 - **Fixed** Out-of-line static constexpr member variable definition with parenthesized initializer (`partial_ordering::less(__cmp_cat::_Ord::less)`)
