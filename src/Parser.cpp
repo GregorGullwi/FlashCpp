@@ -587,6 +587,46 @@ void Parser::skip_balanced_parens() {
 	}
 }
 
+void Parser::skip_member_declaration_to_semicolon() {
+	// Skip tokens until we reach ';' at top level, or an unmatched '}'
+	// Handles nested parentheses, angle brackets, and braces
+	int paren_depth = 0;
+	int angle_depth = 0;
+	int brace_depth = 0;
+	
+	while (peek_token().has_value()) {
+		std::string_view tok = peek_token()->value();
+		
+		if (tok == "(") {
+			paren_depth++;
+			consume_token();
+		} else if (tok == ")") {
+			paren_depth--;
+			consume_token();
+		} else if (tok == "<") {
+			angle_depth++;
+			consume_token();
+		} else if (tok == ">") {
+			angle_depth--;
+			consume_token();
+		} else if (tok == "{") {
+			brace_depth++;
+			consume_token();
+		} else if (tok == "}") {
+			if (brace_depth == 0) {
+				break;  // Don't consume - this is end of struct
+			}
+			brace_depth--;
+			consume_token();
+		} else if (tok == ";" && paren_depth == 0 && angle_depth == 0 && brace_depth == 0) {
+			consume_token();
+			break;
+		} else {
+			consume_token();
+		}
+	}
+}
+
 // Helper function to parse the contents of pack(...) after the opening '('
 // Returns success and consumes the closing ')' on success
 ParseResult Parser::parse_pragma_pack_inner()
@@ -5714,7 +5754,19 @@ ParseResult Parser::parse_struct_declaration()
 					                                  peek_token()->value() == ":")) {
 						// Pattern 2: Nested struct declaration (with or without base class)
 						restore_token_position(saved_pos);
+						
+						// Save the parent's delayed function bodies before parsing nested struct
+						// This prevents the nested struct's parse_struct_declaration() from trying
+						// to parse the parent's delayed bodies
+						auto saved_delayed_bodies = std::move(delayed_function_bodies_);
+						delayed_function_bodies_.clear();
+						
 						auto nested_result = parse_struct_declaration();
+						
+						// Restore the parent's delayed function bodies after nested struct is complete
+						// Any delayed bodies from the nested struct have already been parsed
+						delayed_function_bodies_ = std::move(saved_delayed_bodies);
+						
 						if (nested_result.is_error()) {
 							return nested_result;
 						}
@@ -23802,6 +23854,8 @@ ParseResult Parser::parse_if_statement() {
         then_stmt = parse_block();
     } else {
         then_stmt = parse_statement_or_declaration();
+        // Consume trailing semicolon if present (expression statements don't consume their ';')
+        consume_punctuator(";");
     }
 
     if (then_stmt.is_error()) {
@@ -23824,6 +23878,8 @@ ParseResult Parser::parse_if_statement() {
             else_result = parse_if_statement();
         } else {
             else_result = parse_statement_or_declaration();
+            // Consume trailing semicolon if present
+            consume_punctuator(";");
         }
 
         if (else_result.is_error()) {
@@ -30672,7 +30728,15 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						}
 					}
 					
-					// Expect semicolon
+					// Check if this is a static member function (has '(')
+					// Static member functions in member template structs should be skipped for now
+					// (they will be instantiated when the template is used)
+					if (peek_token().has_value() && peek_token()->value() == "(") {
+						skip_member_declaration_to_semicolon();
+						continue;
+					}
+					
+					// Expect semicolon (for static data member)
 					if (!consume_punctuator(";")) {
 						return ParseResult::error("Expected ';' after static member declaration", *current_token_);
 					}
@@ -30847,6 +30911,13 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				else if (keyword == "protected") current_access = AccessSpecifier::Protected;
 				continue;
 			}
+			// Handle member function templates - skip them for now
+			// They will be properly instantiated when the member template struct is used
+			if (keyword == "template") {
+				consume_token(); // consume 'template'
+				skip_member_declaration_to_semicolon();
+				continue;
+			}
 			// Handle static members (including static constexpr with initializers)
 			if (keyword == "static") {
 				consume_token(); // consume 'static'
@@ -30867,6 +30938,13 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					return type_and_name_result;
 				}
 				
+				// Check if this is a static member function (has '(')
+				// Static member functions in member template structs should be skipped for now
+				if (peek_token().has_value() && peek_token()->value() == "(") {
+					skip_member_declaration_to_semicolon();
+					continue;
+				}
+				
 				// Check for initialization (e.g., = sizeof(T))
 				if (peek_token().has_value() && peek_token()->value() == "=") {
 					consume_token(); // consume '='
@@ -30879,7 +30957,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					// We parse but don't store the initializer for member templates
 				}
 				
-				// Expect semicolon
+				// Expect semicolon (for static data member)
 				if (!consume_punctuator(";")) {
 					return ParseResult::error("Expected ';' after static member declaration", *current_token_);
 				}
