@@ -3159,6 +3159,23 @@ ParseResult Parser::parse_declaration_or_function_definition()
 				if (trailing_type_specifier.is_error())
 					return trailing_type_specifier;
 
+				// Apply pointer and reference qualifiers (e.g., T*, T&, T&&)
+				if (trailing_type_specifier.node().has_value() && 
+				    trailing_type_specifier.node()->is<TypeSpecifierNode>()) {
+					TypeSpecifierNode& trailing_ts = trailing_type_specifier.node()->as<TypeSpecifierNode>();
+					
+					// Apply pointer qualifiers if present (e.g., T*, T**)
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+					       peek_token()->value() == "*") {
+						consume_token(); // consume '*'
+						CVQualifier ptr_cv = parse_cv_qualifiers();
+						trailing_ts.add_pointer_level(ptr_cv);
+					}
+					
+					// Apply reference qualifiers if present (e.g., T& or T&&)
+					apply_trailing_reference_qualifiers(trailing_ts);
+				}
+
 				type_specifier = as<TypeSpecifierNode>(trailing_type_specifier);
 			}
 		}
@@ -13183,6 +13200,23 @@ ParseResult Parser::parse_function_header(
 		if (trailing_result.is_error()) {
 			return trailing_result;
 		}
+		
+		// Apply pointer and reference qualifiers (e.g., T*, T&, T&&)
+		if (trailing_result.node().has_value() && trailing_result.node()->is<TypeSpecifierNode>()) {
+			TypeSpecifierNode& type_spec = trailing_result.node()->as<TypeSpecifierNode>();
+			
+			// Apply pointer qualifiers if present (e.g., T*, T**)
+			while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+			       peek_token()->value() == "*") {
+				consume_token(); // consume '*'
+				CVQualifier ptr_cv = parse_cv_qualifiers();
+				type_spec.add_pointer_level(ptr_cv);
+			}
+			
+			// Apply reference qualifiers if present (e.g., T& or T&&)
+			apply_trailing_reference_qualifiers(type_spec);
+		}
+		
 		out_header.trailing_return_type = trailing_result.node();
 	}
 
@@ -30332,7 +30366,21 @@ ParseResult Parser::parse_template_function_declaration_body(
 		if (!trailing_type_specifier.node().has_value() || !trailing_type_specifier.node()->is<TypeSpecifierNode>()) {
 			return ParseResult::error("Expected type specifier for trailing return type", *current_token_);
 		}
-		const auto& trailing_ts = trailing_type_specifier.node()->as<TypeSpecifierNode>();
+		
+		// Apply pointer and reference qualifiers to the trailing return type (e.g., T*, T&, T&&)
+		TypeSpecifierNode& trailing_ts = trailing_type_specifier.node()->as<TypeSpecifierNode>();
+		
+		// Apply pointer qualifiers if present (e.g., T*, T**, const T*)
+		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+		       peek_token()->value() == "*") {
+			consume_token(); // consume '*'
+			CVQualifier ptr_cv = parse_cv_qualifiers();
+			trailing_ts.add_pointer_level(ptr_cv);
+		}
+		
+		// Apply reference qualifiers if present (e.g., T& or T&&)
+		apply_trailing_reference_qualifiers(trailing_ts);
+		
 		FLASH_LOG(Templates, Debug, "Template instantiation: parsed trailing return type: type=", static_cast<int>(trailing_ts.type()),
 		          ", index=", trailing_ts.type_index(), ", token='", trailing_ts.token().value(), "'");
 		if (trailing_ts.type_index() < gTypeInfo.size()) {
