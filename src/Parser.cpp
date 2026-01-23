@@ -6089,6 +6089,7 @@ ParseResult Parser::parse_struct_declaration()
 						if (tok_val == "(") paren_depth++;
 						else if (tok_val == ")") paren_depth--;
 						else if (tok_val == "<") angle_depth++;
+						else if (tok_val == ">>") angle_depth -= 2;  // Handle nested templates
 						else if (tok_val == ">") angle_depth--;
 						
 						// At top level, check for end of constraint
@@ -12912,6 +12913,7 @@ ParseResult Parser::parse_function_trailing_specifiers(
 				if (tok_val == "(") paren_depth++;
 				else if (tok_val == ")") paren_depth--;
 				else if (tok_val == "<") angle_depth++;
+				else if (tok_val == ">>") angle_depth -= 2;  // Handle nested templates
 				else if (tok_val == ">") angle_depth--;
 				
 				// At top level, check for end of constraint
@@ -29833,6 +29835,7 @@ ParseResult Parser::parse_template_parameter() {
 				do {
 					if (peek_token()->value() == "<") angle_depth++;
 					if (peek_token()->value() == ">") angle_depth--;
+					if (peek_token()->value() == ">>") angle_depth -= 2;  // Handle nested templates
 					consume_token();
 				} while (angle_depth > 0 && peek_token().has_value());
 			}
@@ -31591,6 +31594,7 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 				if (tok_val == "(") paren_depth++;
 				else if (tok_val == ")") paren_depth--;
 				else if (tok_val == "<") angle_depth++;
+				else if (tok_val == ">>") angle_depth -= 2;  // Handle nested templates
 				else if (tok_val == ">") angle_depth--;
 				else if (tok_val == "{") brace_depth++;
 				else if (tok_val == "}") brace_depth--;
