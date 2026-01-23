@@ -2706,6 +2706,21 @@ private:
 	Token using_token_;  // For error reporting
 };
 
+// C++20 using enum declaration: using enum EnumType;
+// Brings all enumerators of a scoped enum into the current scope
+class UsingEnumNode {
+public:
+	explicit UsingEnumNode(StringHandle enum_type_name, Token using_token)
+		: enum_type_name_(enum_type_name), using_token_(using_token) {}
+
+	StringHandle enum_type_name() const { return enum_type_name_; }
+	const Token& using_token() const { return using_token_; }
+
+private:
+	StringHandle enum_type_name_;  // Name of the enum type (e.g., "Color")
+	Token using_token_;  // For error reporting
+};
+
 // Namespace alias node: namespace fs = std::filesystem;
 class NamespaceAliasNode {
 public:

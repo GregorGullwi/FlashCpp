@@ -9990,6 +9990,72 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		return saved_position.success(directive_node);
 	}
 
+	// Check if this is C++20 "using enum" declaration
+	if (peek_token().has_value() && peek_token()->value() == "enum") {
+		consume_token(); // consume 'enum'
+
+		// Parse enum type name (can be qualified: namespace::EnumType or just EnumType)
+		std::vector<StringType<>> namespace_path;
+		Token enum_type_token;
+
+		while (true) {
+			auto token = consume_token();
+			if (!token.has_value() || token->type() != Token::Type::Identifier) {
+				return ParseResult::error("Expected enum type name after 'using enum'", token.value_or(Token()));
+			}
+
+			// Check if followed by ::
+			if (peek_token().has_value() && peek_token()->value() == "::") {
+				// This is a namespace part
+				namespace_path.emplace_back(StringType<>(token->value()));
+				consume_token(); // consume ::
+			} else {
+				// This is the final enum type name
+				enum_type_token = *token;
+				break;
+			}
+		}
+
+		// Expect semicolon
+		if (!consume_punctuator(";")) {
+			return ParseResult::error("Expected ';' after 'using enum' declaration", *current_token_);
+		}
+
+		// Create the using enum node - CodeGen will also handle this for its local scope
+		StringHandle enum_name_handle = StringTable::getOrInternStringHandle(enum_type_token.value());
+		auto using_enum_node = emplace_node<UsingEnumNode>(enum_name_handle, using_token);
+		
+		// Add enumerators to gSymbolTable NOW so they're available during parsing
+		// This is needed because the parser needs to resolve identifiers like 'Red' when
+		// parsing subsequent expressions (e.g., static_cast<int>(Red))
+		auto type_it = gTypesByName.find(enum_name_handle);
+		if (type_it != gTypesByName.end() && type_it->second->getEnumInfo()) {
+			const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
+			
+			for (const auto& enumerator : enum_info->enumerators) {
+				// Create a type node for the enum type
+				auto enum_type_node = emplace_node<TypeSpecifierNode>(
+					Type::Enum, type_it->second->type_index_, enum_info->underlying_size, enum_type_token);
+				
+				// Create a declaration node for the enumerator
+				Token enumerator_token(Token::Type::Identifier, 
+					StringTable::getStringView(enumerator.getName()), 0, 0, 0);
+				auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_token);
+				
+				// Insert into gSymbolTable so it's available during parsing
+				gSymbolTable.insert(StringTable::getStringView(enumerator.getName()), enumerator_decl);
+			}
+			
+			FLASH_LOG(Parser, Debug, "Using enum '", enum_type_token.value(), 
+				"' - added ", enum_info->enumerators.size(), " enumerators to parser scope");
+		} else {
+			FLASH_LOG(General, Error, "Enum type '", enum_type_token.value(), 
+				"' not found for 'using enum' declaration");
+		}
+		
+		return saved_position.success(using_enum_node);
+	}
+
 	// Otherwise, this is a using declaration: using std::vector; or using ::name;
 	std::vector<StringType<>> namespace_path;
 	Token identifier_token;
@@ -13426,6 +13492,9 @@ ParseResult Parser::parse_block()
 		return ParseResult::error("Expected '{' for block", *current_token_);
 	}
 
+	// Enter a new scope for this block (C++ standard: each block creates a scope)
+	FlashCpp::SymbolTableScope block_scope(ScopeType::Block);
+
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_block: Entered block. current_token={}, peek={}", 
 		current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
 		peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
@@ -13480,8 +13549,7 @@ ParseResult Parser::parse_statement_or_declaration()
 
 	// Handle nested blocks
 	if (current_token.type() == Token::Type::Punctuator && current_token.value() == "{") {
-		// Create a new scope for the nested block
-		FlashCpp::SymbolTableScope nested_scope(ScopeType::Block);
+		// parse_block() creates its own scope, so no need to create one here
 		return parse_block();
 	}
 
@@ -22148,7 +22216,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												}
 											}
 										} else {
-											return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+											// In SFINAE context (e.g., requires expression), function lookup failure
+											// means the constraint is not satisfied - not an error
+											if (in_sfinae_context_) {
+												// Create a placeholder node to indicate failed lookup
+												// The requires expression will treat this as "constraint not satisfied"
+												result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+											} else {
+												return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+											}
 										}
 									} else {
 										// Have overloads - do overload resolution
@@ -22180,7 +22256,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 													}
 												}
 											} else {
-												return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+												// In SFINAE context (e.g., requires expression), function lookup failure
+												// means the constraint is not satisfied - not an error
+												if (in_sfinae_context_) {
+													// Create a placeholder node to indicate failed lookup
+													result = emplace_node<ExpressionNode>(IdentifierNode(idenfifier_token));
+												} else {
+													return ParseResult::error("No matching function for call to '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
+												}
 											}
 										} else {
 											// Get the selected overload
@@ -29150,6 +29233,15 @@ ParseResult Parser::parse_requires_expression() {
 	if (!consume_punctuator("{")) {
 		return ParseResult::error("Expected '{' to begin requires expression body", *current_token_);
 	}
+
+	// Enable SFINAE context for the requires expression body
+	// In requires expressions, function lookup failures and type errors should not produce errors -
+	// they indicate that the constraint is not satisfied (the expression is invalid)
+	bool prev_sfinae_context = in_sfinae_context_;
+	in_sfinae_context_ = true;
+	
+	// RAII guard to restore SFINAE context on all code paths
+	ScopeGuard sfinae_guard([&]() { in_sfinae_context_ = prev_sfinae_context; });
 
 	// Parse requirements (expressions that must be valid)
 	std::vector<ASTNode> requirements;
