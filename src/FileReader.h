@@ -2375,7 +2375,7 @@ private:
 			defines_["__INT_FAST32_TYPE__"] = DefineDirective{ "long int", {} };
 			defines_["__INT_FAST64_TYPE__"] = DefineDirective{ "long int", {} };
 			defines_["__UINT_FAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
-			defines_["__UINT_FAST16_TYPE__"] = DefineDirective{ "unsigned long int", {} };
+			defines_["__UINT_FAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
 			defines_["__UINT_FAST32_TYPE__"] = DefineDirective{ "unsigned long int", {} };
 			defines_["__UINT_FAST64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
 			defines_["__SIG_ATOMIC_TYPE__"] = DefineDirective{ "int", {} };
