@@ -16,7 +16,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | static_assert constexpr evaluation (~155ms) |
 | `<vector>` | `test_std_vector.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Semantic Error | `<compare>` strong_order lookup failure |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | `requires requires` nested constraint not supported (~174ms) |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Parenthesized concept expression in constraint (~174ms) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~161ms) |
 | `<any>` | `test_std_any.cpp` | ❌ Parse Error | Non-template inline constructor forward reference issue (~128ms) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
@@ -58,9 +58,11 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Note (2026-01-23 Update):** Implemented deferred body parsing for member template constructors. This allows template constructors to access member variables that are declared later in the class definition (complete-class context). However, non-template inline member functions inside class bodies still have issues accessing forward-declared members.
 
+**Note (2026-01-23 Later Update):** Fixed partial specialization forward declarations (`template<typename T> struct X<T*>;`) which were causing the parser to incorrectly enter struct body mode. Also fixed qualified concept lookup so namespaced concepts like `std::same_as<T>` work correctly. The `<optional>` header now progresses past `requires requires` but fails on parenthesized concept expressions.
+
 **Primary Remaining Blockers:**
-1. **`<compare>` header strong_order lookup** - The header now parses but fails at line 621 looking up `strong_order` function (semantic error, not parse error). In requires expressions, function lookup failures should not cause errors - they indicate the constraint is not satisfied.
-2. **Type requirements in requires expressions** - `typename T` syntax inside requires expressions for checking type validity is not fully supported (affects `<iterator_concepts.h>`)
+1. **Parenthesized concept expressions in constraints** - Expressions like `(std::__detail::__class_or_enum<T>)` in concept constraints are parsed as C-style casts instead of concept applications (affects `<iterator_concepts.h>`, `<optional>`)
+2. **`<compare>` header strong_order lookup** - The header now parses but fails at line 621 looking up `strong_order` function (semantic error, not parse error). In requires expressions, function lookup failures should not cause errors - they indicate the constraint is not satisfied.
 3. **Complex partial specialization patterns** - Patterns with `__void_t<decltype(...)>>` in partial specializations (affects `<functional>`)
 4. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
 5. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
@@ -71,6 +73,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 - **Fixed** Trailing `requires` clause support for static member functions - patterns like `static int f(int& r) requires requires { r; } { ... }` now parse correctly
 - **Fixed** Function parameter scope in trailing requires clauses - parameters are now visible inside the requires expression
 - **Fixed** Dependent member template access syntax `::template` - patterns like `typename _Tp::template rebind<_Up>` now parse correctly
+- **Fixed** Partial specialization forward declarations - `template<typename T> struct X<T*>;` forward declarations now parse correctly
+- **Fixed** Qualified concept lookup - Concepts in namespaces (like `std::same_as<T>`) are now looked up correctly in expressions
 
 **Fixes Applied (2026-01-22 This PR):**
 - **Fixed** Out-of-line static constexpr member variable definition with parenthesized initializer (`partial_ordering::less(__cmp_cat::_Ord::less)`)
@@ -528,18 +532,13 @@ extern int pthread_create (pthread_t * __newthread, ...
 - `<map>`, `<set>`, `<span>`, `<ranges>`, `<iostream>`
 - `<utility>`, `<bit>`, `<typeindex>`, `<coroutine>`
 
-### 7. Nested `requires requires` Constraints (**ACTIVE BLOCKER** - 2026-01-22)
+### 7. Nested `requires requires` Constraints (**FIXED** - 2026-01-23)
 
-**Issue:** C++20 nested requires expressions (requires-expression inside a requires-clause) are not supported.
+**Status:** **FIXED** in this PR
 
-**Error Message:**
-```
-/usr/include/c++/14/bits/ptr_traits.h:109:15: error: Expected '{' or ';' after static member function declaration
-        requires requires {
-                ^
-```
+The `requires requires` syntax now works correctly. The previous issue was actually caused by partial specialization forward declarations not being handled properly, which caused the parser to think it was inside a struct body when it wasn't.
 
-**Problematic Code Pattern:**
+**Problematic Code Pattern (now works):**
 ```cpp
 static pointer pointer_to(element_type& __r)
 requires requires {
@@ -548,7 +547,30 @@ requires requires {
 { return pointer::pointer_to(__r); }
 ```
 
-**Affected Headers:** `<optional>`, `<ptr_traits.h>`, and other headers using this C++20 syntax.
+**Fixes Applied:**
+- Added handling for partial specialization forward declarations (`template<typename T> struct X<T*>;`)
+- Added qualified concept lookup for namespaced concepts (`std::same_as<T, U>`)
+
+### 7.1 Parenthesized Concept Expressions in Constraints (**ACTIVE BLOCKER** - 2026-01-23)
+
+**Issue:** Concept expressions used as parenthesized operands in constraint conjunctions are not parsed correctly.
+
+**Error Message:**
+```
+/usr/include/c++/14/bits/iterator_concepts.h:108:5: error: Expected expression after C-style cast
+```
+
+**Problematic Code Pattern:**
+```cpp
+template<typename _Tp>
+concept __adl_imove
+  = (std::__detail::__class_or_enum<remove_reference_t<_Tp>>)  // <-- parenthesized concept
+  && requires(_Tp&& __t) { iter_move(static_cast<_Tp&&>(__t)); };
+```
+
+The parser incorrectly treats the parenthesized concept `(std::__detail::__class_or_enum<...>)` as a C-style cast attempt.
+
+**Affected Headers:** `<optional>`, `<iterator_concepts.h>`, and other headers using this pattern.
 
 ### 8. Template Instantiation Performance (NO LONGER A BLOCKER)
 
