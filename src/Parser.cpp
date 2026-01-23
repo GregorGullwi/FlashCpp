@@ -4605,6 +4605,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	auto alias_name = StringTable::getOrInternStringHandle(alias_token->value());
 	consume_token(); // consume alias name
 	
+	// Skip C++11 attributes that may follow the alias name (e.g., typedef T name [[__deprecated__]];)
+	// This is a GNU extension where attributes can appear on the declarator in a typedef
+	skip_cpp_attributes();
+	
 	// Consume semicolon
 	if (!consume_punctuator(";")) {
 		return ParseResult::error("Expected ';' after typedef", *current_token_);
@@ -4649,6 +4653,11 @@ ParseResult Parser::parse_struct_declaration()
 	if (!custom_alignment.has_value()) {
 		custom_alignment = parse_alignas_specifier();
 	}
+
+	// Skip C++11 attributes like [[deprecated]], [[nodiscard]], etc.
+	// These can appear between struct/class keyword and the name
+	// e.g., struct [[__deprecated__]] is_literal_type
+	skip_cpp_attributes();
 
 	// Parse struct name
 	auto name_token = consume_token();
@@ -26780,6 +26789,9 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Try to consume struct/class keyword
 			if (consume_keyword("struct") || consume_keyword("class")) {
+				// Skip C++11 attributes between struct/class and name (e.g., [[__deprecated__]])
+				skip_cpp_attributes();
+				
 				// Try to get class name
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 					consume_token();
@@ -26809,6 +26821,9 @@ ParseResult Parser::parse_template_declaration() {
 			if (!is_class) {
 				consume_keyword("struct");  // Try struct instead
 			}
+
+			// Skip C++11 attributes between struct/class and name (e.g., [[__deprecated__]])
+			skip_cpp_attributes();
 
 			// Parse class name
 			if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
@@ -30845,6 +30860,27 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		}
 	}
 
+	// Skip requires clause if present (for partial specializations with constraints)
+	// e.g., template<typename T> requires Constraint<T> struct Name<T> { ... };
+	std::optional<ASTNode> requires_clause;
+	if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword && 
+	    peek_token()->value() == "requires") {
+		Token requires_token = *peek_token();
+		consume_token(); // consume 'requires'
+		
+		// Parse the constraint expression
+		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (constraint_result.is_error()) {
+			return constraint_result;
+		}
+		
+		// Create RequiresClauseNode (but we just skip it for member struct templates)
+		requires_clause = emplace_node<RequiresClauseNode>(
+			*constraint_result.node(),
+			requires_token
+		);
+	}
+
 	// Expect 'struct' or 'class' keyword
 	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Keyword ||
 	    (peek_token()->value() != "struct" && peek_token()->value() != "class")) {
@@ -30854,6 +30890,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	bool is_class = (peek_token()->value() == "class");
 	[[maybe_unused]] Token struct_keyword_token = *peek_token();
 	consume_token(); // consume 'struct' or 'class'
+
+	// Skip C++11 attributes between struct/class and name (e.g., [[__deprecated__]])
+	skip_cpp_attributes();
 
 	// Parse the struct name
 	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
@@ -31377,6 +31416,22 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				
 				// For member templates, we just skip static members
 				// Full instantiation will handle them properly
+				continue;
+			}
+			// Handle 'using' type aliases: using type = T;
+			if (keyword == "using") {
+				auto alias_result = parse_member_type_alias("using", &member_struct_ref, current_access);
+				if (alias_result.is_error()) {
+					return alias_result;
+				}
+				continue;
+			}
+			// Handle 'typedef' type aliases: typedef T type;
+			if (keyword == "typedef") {
+				auto alias_result = parse_member_type_alias("typedef", &member_struct_ref, current_access);
+				if (alias_result.is_error()) {
+					return alias_result;
+				}
 				continue;
 			}
 		}
