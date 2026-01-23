@@ -31236,12 +31236,17 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			
 			// Handle function body or semicolon
 			if (peek_token().has_value() && peek_token()->value() == "{") {
-				// For member struct templates, skip the function body
-				// It will be properly parsed when the template is instantiated
-				// This avoids issues with member variables not being in scope during template parsing
-				FLASH_LOG_FORMAT(Parser, Debug, "parse_member_struct_template: Skipping member function body for {}", 
-					decl_node.identifier_token().value());
-				skip_balanced_braces();
+				// Parse function body
+				auto body_result = parse_block();
+				if (body_result.is_error()) {
+					return body_result;
+				}
+				
+				if (body_result.node().has_value()) {
+					// Generate mangled name and set definition
+					compute_and_set_mangled_name(member_func_ref);
+					member_func_ref.set_definition(*body_result.node());
+				}
 			} else if (peek_token().has_value() && peek_token()->value() == ";") {
 				consume_token(); // consume ';'
 			}
