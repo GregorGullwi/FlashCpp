@@ -23814,6 +23814,8 @@ ParseResult Parser::parse_if_statement() {
         then_stmt = parse_block();
     } else {
         then_stmt = parse_statement_or_declaration();
+        // Consume trailing semicolon if present (expression statements don't consume their ';')
+        consume_punctuator(";");
     }
 
     if (then_stmt.is_error()) {
@@ -23836,6 +23838,8 @@ ParseResult Parser::parse_if_statement() {
             else_result = parse_if_statement();
         } else {
             else_result = parse_statement_or_declaration();
+            // Consume trailing semicolon if present
+            consume_punctuator(";");
         }
 
         if (else_result.is_error()) {
