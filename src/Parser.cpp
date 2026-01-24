@@ -16036,9 +16036,14 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				}
 			}
 
-			// Pass array initializers to code generator - currently skipped to avoid crash
-			// TODO: Fix array initializer code generation
-			// They will be handled during IR conversion for placement new arrays
+			// Array initializers are parsed successfully but currently disabled in codegen
+			// due to a bad_any_cast crash when combined with placement new
+			// TODO: Debug and fix the crash - likely related to how ASTNodes are stored/moved
+			// NOTE: Heap array new with initializers works (new Type[n]{...})
+			// NOTE: Placement array new without initializers works (new (addr) Type[n])
+			// BUG: Placement array new WITH initializers crashes (new (addr) Type[n]{...})
+			(void)array_initializers;  // Suppress unused warning
+			
 			auto new_expr = emplace_node<ExpressionNode>(
 				NewExpressionNode(*type_node, true, size_result.node(), {}, placement_address));
 			return ParseResult::success(new_expr);

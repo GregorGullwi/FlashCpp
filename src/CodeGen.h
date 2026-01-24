@@ -17875,6 +17875,11 @@ private:
 	}
 
 	std::vector<IrOperand> generateNewExpressionIr(const NewExpressionNode& newExpr) {
+		if (!newExpr.type_node().is<TypeSpecifierNode>()) {
+			FLASH_LOG(Codegen, Error, "New expression type node is not a TypeSpecifierNode");
+			return {};
+		}
+		
 		const TypeSpecifierNode& type_spec = newExpr.type_node().as<TypeSpecifierNode>();
 		Type type = type_spec.type();
 		int size_in_bits = static_cast<int>(type_spec.size_in_bits());
@@ -17967,11 +17972,26 @@ private:
 		} else if (newExpr.is_array()) {
 			// Array allocation: new Type[size] or placement array: new (addr) Type[size]
 			// Evaluate the size expression
+			if (!newExpr.size_expr().has_value()) {
+				FLASH_LOG(Codegen, Error, "Array new without size expression");
+				return {};
+			}
+			if (!newExpr.size_expr()->is<ExpressionNode>()) {
+				FLASH_LOG(Codegen, Error, "Array size is not an ExpressionNode");
+				return {};
+			}
+			
 			auto size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());
 
 			// Check if this is placement array new
 			if (newExpr.placement_address().has_value()) {
 				// Placement array new: new (address) Type[size]
+				// Check that placement_address is an ExpressionNode
+				if (!newExpr.placement_address()->is<ExpressionNode>()) {
+					FLASH_LOG(Codegen, Error, "Placement address is not an ExpressionNode");
+					return {};
+				}
+				
 				auto address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
 
 				// Create PlacementNewOp for array
@@ -18040,17 +18060,26 @@ private:
 											
 											// Add each initializer as a constructor argument
 											for (const auto& elem_init : init_list.initializers()) {
-												if (elem_init.is<ExpressionNode>()) {
-													auto arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
-													if (arg_operands.size() >= 3) {
-														TypedValue tv = toTypedValue(arg_operands);
-														ctor_op.arguments.push_back(std::move(tv));
-													}
+												// Safety check: ensure elem_init is an ExpressionNode
+												if (!elem_init.is<ExpressionNode>()) {
+													FLASH_LOG(Codegen, Warning, "Element initializer is not an ExpressionNode, skipping");
+													continue;
+												}
+												
+												auto arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
+												if (arg_operands.size() >= 3) {
+													TypedValue tv = toTypedValue(arg_operands);
+													ctor_op.arguments.push_back(std::move(tv));
 												}
 											}
 											
 											ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 										}
+									} else if (init.is<ExpressionNode>()) {
+										// Handle direct expression initializer
+										FLASH_LOG(Codegen, Warning, "Array element initialized with expression, not initializer list");
+									} else {
+										FLASH_LOG(Codegen, Warning, "Unexpected array initializer type");
 									}
 								}
 							}
@@ -18142,12 +18171,16 @@ private:
 										ctor_op.is_heap_allocated = true;
 										
 										for (const auto& elem_init : init_list.initializers()) {
-											if (elem_init.is<ExpressionNode>()) {
-												auto arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
-												if (arg_operands.size() >= 3) {
-													TypedValue tv = toTypedValue(arg_operands);
-													ctor_op.arguments.push_back(std::move(tv));
-												}
+											// Safety check: ensure elem_init is an ExpressionNode
+											if (!elem_init.is<ExpressionNode>()) {
+												FLASH_LOG(Codegen, Warning, "Element initializer in heap array is not an ExpressionNode, skipping");
+												continue;
+											}
+											
+											auto arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
+											if (arg_operands.size() >= 3) {
+												TypedValue tv = toTypedValue(arg_operands);
+												ctor_op.arguments.push_back(std::move(tv));
 											}
 										}
 										
