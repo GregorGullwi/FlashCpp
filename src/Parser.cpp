@@ -11717,11 +11717,62 @@ ParseResult Parser::parse_type_specifier()
 				}
 				
 				if (is_dependent_template_param) {
-					// This is a template parameter being used with template arguments
-					// Create a dependent type reference - don't try to instantiate
-					// This will be resolved during instantiation of the containing template
+					// This is a template parameter being used with template arguments (e.g., Op<Args...>)
+					// Check for nested type access (e.g., Op<Args...>::type) before returning early
+					if (peek_token().has_value() && peek_token()->value() == "::") {
+						// Parse the nested type/member access
+						consume_token(); // consume '::'
+						
+						// Handle optional 'template' keyword for dependent contexts
+						if (peek_token().has_value() && peek_token()->value() == "template") {
+							consume_token(); // consume 'template'
+						}
+						
+						// Get the nested identifier
+						if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected identifier after '::'", peek_token().value_or(Token()));
+						}
+						Token nested_token = *peek_token();
+						consume_token(); // consume the identifier
+						
+						// Build a dependent type name: Op<Args...>::type
+						// For dependent types, we create a placeholder type that will be resolved during instantiation
+						StringBuilder dependent_type_builder;
+						dependent_type_builder.append(type_name);
+						dependent_type_builder.append("<...>::");
+						dependent_type_builder.append(nested_token.value());
+						std::string_view dependent_type_name = dependent_type_builder.commit();
+						
+						// Create or look up a placeholder type for this dependent type
+						auto type_handle = StringTable::getOrInternStringHandle(dependent_type_name);
+						auto type_it = gTypesByName.find(type_handle);
+						TypeIndex type_idx;
+						if (type_it == gTypesByName.end()) {
+							// Create a new placeholder type
+							auto& placeholder_type = gTypeInfo.emplace_back();
+							placeholder_type.type_ = Type::UserDefined;
+							placeholder_type.type_index_ = gTypeInfo.size() - 1;
+							placeholder_type.type_size_ = 0;
+							placeholder_type.name_ = type_handle;
+							gTypesByName[type_handle] = &placeholder_type;
+							type_idx = placeholder_type.type_index_;
+							FLASH_LOG(Templates, Debug, "Created placeholder for dependent nested type: ", dependent_type_name);
+						} else {
+							type_idx = type_it->second->type_index_;
+						}
+						
+						auto type_spec_node = emplace_node<TypeSpecifierNode>(
+							Type::UserDefined,
+							type_idx,
+							0,  // Size unknown for dependent type
+							nested_token,
+							cv_qualifier
+						);
+						return ParseResult::success(type_spec_node);
+					}
 					
-					// Look up the TypeInfo for the template parameter
+					// No nested type access - create a dependent type reference
+					// This will be resolved during instantiation of the containing template
 					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 					if (type_it != gTypesByName.end()) {
 						TypeIndex type_idx = type_it->second - &gTypeInfo[0];
