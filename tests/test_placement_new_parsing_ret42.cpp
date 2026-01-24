@@ -50,12 +50,16 @@ int main() {
     Point* p = new ((void*)buffer, tag) Point(10, 32);
     
     // Test 2: Array placement new with multiple arguments
-    // This tests parser's ability to handle placement new with arrays
+    // This line tests parser's ability to handle array placement new
+    // Note: Both tests fail in FlashCpp (alignas not supported, multi-arg placement new not supported)
     alignas(Point) char array_buffer[32];
     Point* arr = new ((void*)array_buffer, tag) Point[2]{{5, 10}, {15, 2}};
     
-    // Use both to verify they work correctly
-    // Return: p->x + p->y + arr[0].x + arr[1].x = 10 + 32 + 5 + 15 = 62
-    // But we need 42, so adjust: let's use just p
-    return p->x + p->y;
+    // Return value from first placement new (arr would add 5+15 but we need ret code 42)
+    int result = p->x + p->y;  // 10 + 32 = 42
+    
+    // Suppress unused warning (arr tests parser, not runtime behavior)
+    (void)arr;
+    
+    return result;
 }
