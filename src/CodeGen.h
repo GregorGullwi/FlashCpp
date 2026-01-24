@@ -17965,28 +17965,66 @@ private:
 
 			emit_scalar_new_initializer(result_var);
 		} else if (newExpr.is_array()) {
-			// Array allocation: new Type[size]
+			// Array allocation: new Type[size] or placement array: new (addr) Type[size]
 			// Evaluate the size expression
 			auto size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());
 
-			// Create HeapAllocArrayOp
-			HeapAllocArrayOp op;
-			op.result = result_var;
-			op.type = type;
-			op.size_in_bytes = size_in_bits / 8;
-			op.pointer_depth = pointer_depth;
-			// Convert IrOperand to IrValue for count
-			if (std::holds_alternative<unsigned long long>(size_operands[2])) {
-				op.count = std::get<unsigned long long>(size_operands[2]);
-			} else if (std::holds_alternative<TempVar>(size_operands[2])) {
-				op.count = std::get<TempVar>(size_operands[2]);
-			} else if (std::holds_alternative<StringHandle>(size_operands[2])) {
-				op.count = std::get<StringHandle>(size_operands[2]);
-			} else if (std::holds_alternative<double>(size_operands[2])) {
-				op.count = std::get<double>(size_operands[2]);
-			}
+			// Check if this is placement array new
+			if (newExpr.placement_address().has_value()) {
+				// Placement array new: new (address) Type[size]
+				auto address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
 
-			ir_.addInstruction(IrInstruction(IrOpcode::HeapAllocArray, std::move(op), Token()));
+				// Create PlacementNewOp for array
+				PlacementNewOp op;
+				op.result = result_var;
+				op.type = type;
+				op.size_in_bytes = size_in_bits / 8;
+				op.pointer_depth = pointer_depth;
+				// Convert IrOperand to IrValue
+				if (std::holds_alternative<unsigned long long>(address_operands[2])) {
+					op.address = std::get<unsigned long long>(address_operands[2]);
+				} else if (std::holds_alternative<TempVar>(address_operands[2])) {
+					op.address = std::get<TempVar>(address_operands[2]);
+				} else if (std::holds_alternative<StringHandle>(address_operands[2])) {
+					op.address = std::get<StringHandle>(address_operands[2]);
+				} else if (std::holds_alternative<double>(address_operands[2])) {
+					op.address = std::get<double>(address_operands[2]);
+				}
+
+				ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
+				
+				// NOTE: Array initializers in constructor_args are not yet supported
+				// They are parsed but code generation for them is not implemented
+				// This will result in uninitialized array elements at runtime
+				if (newExpr.constructor_args().size() > 0) {
+					FLASH_LOG(Codegen, Warning, "Array new with initializers not yet supported in code generation");
+				}
+			} else {
+				// Regular heap-allocated array: new Type[size]
+				// Create HeapAllocArrayOp
+				HeapAllocArrayOp op;
+				op.result = result_var;
+				op.type = type;
+				op.size_in_bytes = size_in_bits / 8;
+				op.pointer_depth = pointer_depth;
+				// Convert IrOperand to IrValue for count
+				if (std::holds_alternative<unsigned long long>(size_operands[2])) {
+					op.count = std::get<unsigned long long>(size_operands[2]);
+				} else if (std::holds_alternative<TempVar>(size_operands[2])) {
+					op.count = std::get<TempVar>(size_operands[2]);
+				} else if (std::holds_alternative<StringHandle>(size_operands[2])) {
+					op.count = std::get<StringHandle>(size_operands[2]);
+				} else if (std::holds_alternative<double>(size_operands[2])) {
+					op.count = std::get<double>(size_operands[2]);
+				}
+
+				ir_.addInstruction(IrInstruction(IrOpcode::HeapAllocArray, std::move(op), Token()));
+				
+				// NOTE: Array initializers in constructor_args are not yet supported
+				if (newExpr.constructor_args().size() > 0) {
+					FLASH_LOG(Codegen, Warning, "Array new with initializers not yet supported in code generation");
+				}
+			}
 		} else {
 			// Single object allocation: new Type or new Type(args)
 			HeapAllocOp op;

@@ -29,7 +29,7 @@ EXPECTED_FAIL=(
     
     # Tests restored from workarounds - expose known FlashCpp limitations
     # Note: test_member_var_template_ret42.cpp now compiles successfully (member variable template support added)
-    "test_placement_new_parsing_ret42.cpp"      # Placement new with multiple arguments not supported by parser
+    # Note: test_placement_new_parsing_ret42.cpp now parses and compiles successfully (placement new with multiple args and alignas(type-id) added)
 )
 
 # Expected link failures - files that compile but require external C helper files
@@ -38,6 +38,7 @@ EXPECTED_FAIL=(
 EXPECTED_LINK_FAIL=(
     "test_external_abi.cpp"               # Needs external C helper functions from test_external_abi_helper.c
     "test_external_abi_simple.cpp"        # Needs external C helper functions from test_external_abi_helper.c
+    "test_placement_new_parsing_ret42.cpp" # Array initializer code generation not yet implemented
 )
 
 # Results
