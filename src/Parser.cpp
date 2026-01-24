@@ -15138,21 +15138,90 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
 		}
 		
-		// Check if there's a constructor that matches the argument count
+		// Check if there's a constructor that matches the argument count and types
 		bool found_matching_ctor = false;
 		for (const auto& member_func : struct_info.member_functions) {
 			if (!member_func.is_constructor) continue;
 			if (!member_func.function_decl.has_value()) continue;
 			
-			// Get parameter count from constructor
-			size_t param_count = 0;
+			// Get parameters from constructor
+			const std::vector<ASTNode>* params = nullptr;
 			if (member_func.function_decl.is<ConstructorDeclarationNode>()) {
-				param_count = member_func.function_decl.as<ConstructorDeclarationNode>().parameter_nodes().size();
+				params = &member_func.function_decl.as<ConstructorDeclarationNode>().parameter_nodes();
 			} else if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-				param_count = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes().size();
+				params = &member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
 			}
 			
-			if (param_count == elements.size()) {
+			if (!params || params->size() != elements.size()) {
+				continue;
+			}
+			
+			// Match parameter types with argument types
+			bool types_match = true;
+			for (size_t i = 0; i < params->size() && types_match; ++i) {
+				const ASTNode& param_node = (*params)[i];
+				const ASTNode& arg_node = elements[i];
+				
+				// Get parameter type
+				const TypeSpecifierNode* param_type = nullptr;
+				if (param_node.is<VariableDeclarationNode>()) {
+					const VariableDeclarationNode& var = param_node.as<VariableDeclarationNode>();
+					if (var.declaration().type_node().is<TypeSpecifierNode>()) {
+						param_type = &var.declaration().type_node().as<TypeSpecifierNode>();
+					}
+				} else if (param_node.is<DeclarationNode>()) {
+					const DeclarationNode& decl = param_node.as<DeclarationNode>();
+					if (decl.type_node().is<TypeSpecifierNode>()) {
+						param_type = &decl.type_node().as<TypeSpecifierNode>();
+					}
+				}
+				
+				if (!param_type) {
+					// Can't determine parameter type - skip type checking for this param
+					continue;
+				}
+				
+				// Get argument type
+				auto arg_type_opt = get_expression_type(arg_node);
+				if (!arg_type_opt.has_value()) {
+					// Can't determine argument type - skip type checking for this param
+					// This handles dependent expressions and complex cases
+					continue;
+				}
+				
+				const TypeSpecifierNode& arg_type = *arg_type_opt;
+				
+				// Compare types (allowing for implicit conversions in some cases)
+				// For enum class types, we need exact match (no implicit conversions)
+				if (param_type->type() == Type::Enum && arg_type.type() == Type::Enum) {
+					// Enum types must match exactly by type_index
+					if (param_type->type_index() != arg_type.type_index()) {
+						types_match = false;
+					}
+				} else if (param_type->type() != arg_type.type()) {
+					// Different base types - check for compatible integer/enum types
+					// Allow enum -> int conversions for scoped enums passed as their underlying type
+					bool compatible = false;
+					if (arg_type.type() == Type::Enum && 
+					    (param_type->type() == Type::Int || param_type->type() == Type::UnsignedInt ||
+					     param_type->type() == Type::Long || param_type->type() == Type::UnsignedLong)) {
+						// Enum to integer conversion (for scoped enum underlying type)
+						compatible = true;
+					}
+					if (!compatible) {
+						types_match = false;
+					}
+				} else if (param_type->type() == Type::UserDefined || param_type->type() == Type::Struct) {
+					// For user-defined/struct types, check type_index
+					if (param_type->type_index() != arg_type.type_index()) {
+						types_match = false;
+					}
+				}
+				// Note: We don't check pointer_depth and reference here because
+				// brace initialization typically doesn't involve pointer/reference args
+			}
+			
+			if (types_match) {
 				found_matching_ctor = true;
 				break;
 			}
