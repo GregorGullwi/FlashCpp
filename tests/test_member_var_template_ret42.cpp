@@ -25,8 +25,13 @@ struct container {
 };
 
 int main() {
-    // Test passes if the declarations compile
-    // The fix was about parsing these member variable templates
-    // Usage/codegen may not be fully implemented yet
-    return 42;
+    // Test actual usage of member variable templates
+    // This tests both parsing AND codegen/instantiation
+    constexpr bool b = type_traits::is_integral_v<int>;
+    constexpr int s = type_traits::size_of_v<int>;
+    constexpr int t = type_traits::times_two<19>;  // 38
+    
+    // Should return: 0 + 4 + 38 = 42
+    // But test expects this may fail in FlashCpp due to incomplete codegen
+    return (b ? 1 : 0) + s + t;
 }
