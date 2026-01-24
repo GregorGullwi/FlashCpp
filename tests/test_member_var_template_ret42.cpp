@@ -27,11 +27,12 @@ struct container {
 int main() {
     // Test actual usage of member variable templates
     // This tests both parsing AND codegen/instantiation
-    constexpr bool b = type_traits::is_integral_v<int>;
-    constexpr int s = type_traits::size_of_v<int>;
-    constexpr int t = type_traits::times_two<19>;  // 38
+    // Note: is_integral_v is intentionally hardcoded to false to test the template mechanism
+    constexpr bool b = type_traits::is_integral_v<int>;  // Returns false (not a complete type trait impl)
+    constexpr int s = type_traits::size_of_v<int>;       // Returns 4
+    constexpr int t = type_traits::times_two<19>;        // Returns 38
     
     // Should return: 0 + 4 + 38 = 42
-    // But test expects this may fail in FlashCpp due to incomplete codegen
+    // The test is about template instantiation, not accurate type traits
     return (b ? 1 : 0) + s + t;
 }

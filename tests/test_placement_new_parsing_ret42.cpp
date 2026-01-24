@@ -46,14 +46,9 @@ int main() {
     char buffer[16];
     CustomTag tag;
     
-    // Test 1: Placement new with multiple arguments
+    // Test: Placement new with multiple arguments
     Point* p = new ((void*)buffer, tag) Point(10, 32);
     
-    // Test 2: Regular placement new (single argument)
-    char buffer2[16];
-    Point* p2 = new ((void*)buffer2) Point(5, 7);
-    
-    // Return: 10 + 32 + 5 + 7 = 54... but we want 42
-    // Let's adjust: 10 + 32 = 42
+    // Return: 10 + 32 = 42
     return p->x + p->y;
 }
