@@ -33516,6 +33516,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// Also check Struct types - if this is a template class that was parsed with dependent arguments,
 		// the instantiation was skipped and we got back the primary template type
 		// In a template body, if the struct is a registered template and we're using template params, it's dependent
+		// BUT: If this is a template template argument (passing a template class as an argument), it's NOT dependent
+		// even if we're in a template body. A template class like HasType used as a template argument is concrete.
 		if (!arg.is_dependent && type_node.type() == Type::Struct && parsing_template_body_ && !in_sfinae_context_) {
 			TypeIndex idx = type_node.type_index();
 			if (idx < gTypeInfo.size()) {
@@ -33523,11 +33525,26 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// Check if this is a template primary (not an instantiation which would have underscores)
 				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-					// This struct type is a template primary - if we're in a template body,
-					// it likely has dependent template arguments
-					FLASH_LOG_FORMAT(Templates, Debug, "Template argument {} is primary template in template body - marking as dependent", type_name);
-					arg.is_dependent = true;
-					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
+					// This struct type is a template primary
+					// Check if type_name contains any current template parameters
+					// If not, it's a concrete template class being used as a template template argument
+					bool contains_template_param = false;
+					for (const auto& param_name : current_template_param_names_) {
+						if (type_name == param_name) {
+							contains_template_param = true;
+							break;
+						}
+					}
+					
+					// Only mark as dependent if the type name itself is a template parameter
+					// A template class like HasType being used as an argument is NOT dependent
+					if (contains_template_param) {
+						FLASH_LOG_FORMAT(Templates, Debug, "Template argument {} is primary template matching template param - marking as dependent", type_name);
+						arg.is_dependent = true;
+						arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
+					} else {
+						FLASH_LOG_FORMAT(Templates, Debug, "Template argument {} is a concrete template class (used as template template arg) - NOT dependent", type_name);
+					}
 				}
 			}
 		}
