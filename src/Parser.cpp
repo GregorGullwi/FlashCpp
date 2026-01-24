@@ -15217,8 +15217,16 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 						types_match = false;
 					}
 				}
-				// Note: We don't check pointer_depth and reference here because
-				// brace initialization typically doesn't involve pointer/reference args
+				
+				// Check pointer depth - must match exactly
+				if (types_match && param_type->pointer_depth() != arg_type.pointer_depth()) {
+					types_match = false;
+				}
+				
+				// Check reference qualifiers - must match exactly
+				if (types_match && param_type->is_reference() != arg_type.is_reference()) {
+					types_match = false;
+				}
 			}
 			
 			if (types_match) {
