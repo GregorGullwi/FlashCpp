@@ -8,15 +8,15 @@ This directory contains test files for C++ standard library headers to assess Fl
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~29ms |
 | `<type_traits>` | `test_std_type_traits.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~113ms) |
-| `<compare>` | N/A | ❌ Parse Error | Fails at line 1210 - requires-requires clause in inline constexpr struct |
+| `<compare>` | N/A | ✅ Compiled | ~258ms (2026-01-24: Fixed with operator[], brace-init, and throw expression fixes) |
 | `<version>` | N/A | ✅ Compiled | ~17ms |
 | `<source_location>` | N/A | ✅ Compiled | ~17ms |
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | static_assert constexpr evaluation (~155ms) |
-| `<vector>` | `test_std_vector.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
-| `<optional>` | `test_std_optional.cpp` | ❌ Semantic Error | iter_move function lookup (~174ms) |
+| `<vector>` | `test_std_vector.cpp` | ❌ Timeout/Parse Error | Hangs or takes very long - likely placement new in decltype issue |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Needs investigation with <compare> fix |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Fails at line 204 - union member template parsing (~266ms) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~161ms) |
 | `<any>` | `test_std_any.cpp` | ❌ Parse Error | Out-of-line nested template member function definition (~128ms) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
@@ -66,12 +66,19 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Note (2026-01-23 Later Update):** Fixed partial specialization forward declarations (`template<typename T> struct X<T*>;`) which were causing the parser to incorrectly enter struct body mode. Also fixed qualified concept lookup so namespaced concepts like `std::same_as<T>` work correctly. Fixed parenthesized concept expressions in constraints (e.g., `(concept<T>) && ...`). The `<optional>` header now progresses to semantic errors (function lookup).
 
+**Note (2026-01-24 Latest Update):** Fixed `operator[]` parsing in template class bodies, brace initialization of structs with constructors but no data members, and throw expressions as unary operators. The `<compare>` header now fully compiles. The `<optional>` header now progresses past line 107 but fails at line 204 due to union member template parsing.
+
 **Primary Remaining Blockers:**
-1. **`<compare>` header requires-requires clause** - The header fails at line 1210 parsing a `requires requires { __t < __u }` clause in an inline constexpr struct member function. Function parameters aren't properly scoped within the nested requires expression.
+1. **Union member templates in `<optional>`** - The header fails at line 204 parsing a union with template members
 2. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
 3. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
 4. **Out-of-line nested template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported yet (affects `<any>`)
 5. **Placement new in decltype** - `decltype(::new((void*)0) _Tp(...))` is not parsed correctly (affects `<vector>` via `stl_construct.h:96`)
+
+**Fixes Applied (2026-01-24 This PR):**
+- **Fixed** `operator[]` parsing in template class bodies - The `[` token is a Punctuator not an Operator, so it was falling through to the conversion operator fallback path. Patterns like `reference operator[](difference_type n) const` now parse correctly.
+- **Fixed** Brace initialization for structs with constructors but no data members - Patterns like `inline constexpr nullopt_t nullopt { nullopt_t::_Construct::_Token };` now use constructor initialization instead of aggregate initialization.
+- **Fixed** Throw expressions as unary operators - Added `ThrowExpressionNode` to handle `throw` in expression context. Patterns like `(throw bad_optional_access())` now parse correctly.
 
 **Fixes Applied (2026-01-23 Standard Headers PR):**
 - **Fixed** Constrained partial specializations with requires clauses - Qualified names in requires clauses (e.g., `__detail::A<_Iter>`) now handled correctly
