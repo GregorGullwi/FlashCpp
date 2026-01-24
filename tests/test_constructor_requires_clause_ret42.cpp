@@ -3,10 +3,10 @@
 // Pattern: Constructor(params) requires constraint : member_init { body }
 
 template<typename T>
-concept Integral = requires { requires sizeof(T) <= 8; };
+concept Integral = sizeof(T) <= 8;
 
 template<typename T>
-concept Arithmetic = Integral<T> || requires { requires sizeof(T) == 4 || sizeof(T) == 8; };
+concept Arithmetic = Integral<T>;
 
 // Test 1: Requires clause on constructor before member initializer
 template<typename T>

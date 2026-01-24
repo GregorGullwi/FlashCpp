@@ -232,7 +232,7 @@ Existing tests that work:
 template<typename T>
 class Container {
     T value;
-    int process() requires HasSize<T> const { return sizeof(T); }
+    int process() const requires HasSize<T> { return sizeof(T); }
 };
 ```
 
@@ -260,7 +260,7 @@ error: Expected type specifier
 
 **Workaround:** Place requires clause before const:
 ```cpp
-int getSize() requires HasSize<T> const { return sizeof(T); }
+int getSize() const requires HasSize<T> { return sizeof(T); }
 ```
 
 ### 6. void constexpr operator= Pattern ⚠️ Hangs
