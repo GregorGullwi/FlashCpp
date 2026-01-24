@@ -1,24 +1,38 @@
 // Test: requires requires pattern should fail when constraint is explicitly false
 // This test should FAIL to compile
-// 
-// NOTE: FlashCpp's constraint evaluation doesn't fully support 'requires false'
-// at compile time yet. The parsing of requires requires patterns IS tested by
-// the concept definition below. To ensure this _fail test actually fails, we
-// use a duplicate variable error. When constraint evaluation is implemented,
-// this test should be updated to rely on 'requires AlwaysFalse<int>' instead.
-// Tracked in: docs/TESTING_LIMITATIONS_2026_01_24.md
+// Pattern: Using requires false to intentionally fail a constraint
 
 template<typename T>
-concept AlwaysFalse = requires {
-    requires false;  // This syntax is now parsed correctly
+struct HasType {
+    using type = T;
 };
 
+// Concept that will always fail
+template<template<typename...> class Op, typename... Args>
+concept AlwaysFails = requires {
+    requires false;  // Explicitly fails
+};
+
+// Concept that checks if Op<Args...> is valid AND some condition
+template<template<typename...> class Op, typename... Args>
+concept MustHaveSmallSize = requires {
+    typename Op<Args...>;
+    requires sizeof(typename Op<Args...>::type) < 1;  // Impossible: no type has size < 1
+};
+
+// Function that requires the MustHaveSmallSize concept
+template<template<typename...> class Op, typename... Args>
+    requires MustHaveSmallSize<Op, Args...>
+int use_constrained() {
+    return 42;
+}
+
 int main() {
-    // Duplicate variable to ensure test fails compilation
-    // TODO: Replace with constraint failure when constraint evaluation is implemented
-    int x = 0;
-    int x = 1;  // Error: redefinition of 'x'
-    return x;
+    // This SHOULD fail because sizeof(int) is 4, not < 1
+    // The requires clause will evaluate to false
+    int result = use_constrained<HasType, int>();
+    
+    return result;
 }
 
 
