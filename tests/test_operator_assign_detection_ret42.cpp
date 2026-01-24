@@ -43,6 +43,6 @@ int main() {
     ConstExprAssign c2{41};
     c1 = c2;
     
-    // Return: s1.value + c1.value = 32 + 41 - 31 = 42
+    // Return: s1.value + c1.value - 31 = 32 + 41 - 31 = 42
     return s1.value + c1.value - 31;
 }
