@@ -2368,6 +2368,94 @@ inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<Tem
 	return true;
 }
 
+// Helper function to evaluate a constraint expression to a numeric value
+// Used for evaluating comparisons in requires clauses like: requires sizeof(T) < 8
+inline std::optional<long long> evaluateConstraintExpression(
+	const ASTNode& expr,
+	const std::vector<TemplateTypeArg>& template_args,
+	const std::vector<std::string_view>& template_param_names) {
+	
+	// Handle ExpressionNode wrapper
+	if (expr.is<ExpressionNode>()) {
+		const ExpressionNode& expr_variant = expr.as<ExpressionNode>();
+		return std::visit([&](const auto& inner) -> std::optional<long long> {
+			using T = std::decay_t<decltype(inner)>;
+			ASTNode inner_ast_node(const_cast<T*>(&inner));
+			return evaluateConstraintExpression(inner_ast_node, template_args, template_param_names);
+		}, expr_variant);
+	}
+	
+	// Handle numeric literals
+	if (expr.is<NumericLiteralNode>()) {
+		const auto& literal = expr.as<NumericLiteralNode>();
+		if (std::holds_alternative<unsigned long long>(literal.value())) {
+			return static_cast<long long>(std::get<unsigned long long>(literal.value()));
+		} else if (std::holds_alternative<double>(literal.value())) {
+			return static_cast<long long>(std::get<double>(literal.value()));
+		}
+	}
+	
+	// Handle sizeof expression
+	if (expr.is<SizeofExprNode>()) {
+		const auto& sizeof_expr = expr.as<SizeofExprNode>();
+		const ASTNode& type_or_expr = sizeof_expr.type_or_expr();
+		
+		// If it's a type specifier, get the size
+		if (type_or_expr.is<TypeSpecifierNode>()) {
+			const auto& type_spec = type_or_expr.as<TypeSpecifierNode>();
+			
+			// Check if it's a template parameter that needs substitution
+			if (type_spec.type() == Type::UserDefined) {
+				// Get the type name from the token
+				std::string_view type_name = type_spec.token().value();
+				
+				// Look for matching template parameter
+				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
+					if (template_param_names[i] == type_name) {
+						// Found the template parameter - use the substituted type's size
+						const auto& arg = template_args[i];
+						if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+							// type_size_ is in bits, convert to bytes
+							return static_cast<long long>((gTypeInfo[arg.type_index].type_size_ + 7) / 8);
+						}
+					}
+				}
+				
+				// Try to look up the type directly
+				auto type_handle = StringTable::getOrInternStringHandle(type_name);
+				auto type_it = gTypesByName.find(type_handle);
+				if (type_it != gTypesByName.end()) {
+					// type_size_ is in bits, convert to bytes
+					return static_cast<long long>((type_it->second->type_size_ + 7) / 8);
+				}
+			} else {
+				// Built-in type - get size from type info
+				size_t size_bits = type_spec.size_in_bits();
+				if (size_bits > 0) {
+					return static_cast<long long>((size_bits + 7) / 8);
+				}
+			}
+		}
+		
+		// Handle nested type access like typename Op<Args...>::type
+		if (type_or_expr.is<QualifiedIdentifierNode>()) {
+			// This is a dependent type - try to resolve it
+			// For now, if we can't resolve, return nullopt
+			return std::nullopt;
+		}
+	}
+	
+	// Handle qualified identifier (nested type access)
+	if (expr.is<QualifiedIdentifierNode>()) {
+		// This is a dependent type - try to resolve the qualified name
+		// For now, can't evaluate complex qualified identifiers
+		return std::nullopt;
+	}
+	
+	// Can't evaluate this expression
+	return std::nullopt;
+}
+
 // Enhanced constraint evaluator for C++20 concepts
 // Evaluates constraints and provides detailed error messages when they fail
 inline ConstraintEvaluationResult evaluateConstraint(
@@ -2538,6 +2626,41 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				left_result.failed_requirement + " || " + right_result.failed_requirement,
 				"ensure at least one of the constraints is met"
 			);
+		}
+		// Handle comparison operators for constraint evaluation (<, >, <=, >=, ==, !=)
+		else if (op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=") {
+			// Try to evaluate both sides as constant expressions
+			auto lhs_value = evaluateConstraintExpression(binop.get_lhs(), template_args, template_param_names);
+			auto rhs_value = evaluateConstraintExpression(binop.get_rhs(), template_args, template_param_names);
+			
+			if (!lhs_value.has_value() || !rhs_value.has_value()) {
+				// Can't evaluate as constants - assume satisfied for unknown expressions
+				return ConstraintEvaluationResult::success();
+			}
+			
+			bool result = false;
+			if (op == "<") {
+				result = *lhs_value < *rhs_value;
+			} else if (op == ">") {
+				result = *lhs_value > *rhs_value;
+			} else if (op == "<=") {
+				result = *lhs_value <= *rhs_value;
+			} else if (op == ">=") {
+				result = *lhs_value >= *rhs_value;
+			} else if (op == "==") {
+				result = *lhs_value == *rhs_value;
+			} else if (op == "!=") {
+				result = *lhs_value != *rhs_value;
+			}
+			
+			if (!result) {
+				return ConstraintEvaluationResult::failure(
+					"constraint not satisfied: comparison evaluated to false",
+					std::to_string(*lhs_value) + " " + std::string(op) + " " + std::to_string(*rhs_value),
+					"check the constraint expression"
+				);
+			}
+			return ConstraintEvaluationResult::success();
 		}
 	}
 	
