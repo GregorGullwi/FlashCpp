@@ -136,6 +136,10 @@ struct TemplateTypeArg {
 	bool is_dependent;  // true if this type depends on uninstantiated template parameters
 	StringHandle dependent_name;  // name of the dependent template parameter or type name (set when is_dependent is true)
 	
+	// For template template parameters (e.g., template<typename...> class Op)
+	bool is_template_template_arg;  // true if this is a template template argument
+	StringHandle template_name_handle;  // name of the template (e.g., "HasType")
+	
 	TemplateTypeArg()
 		: base_type(Type::Invalid)
 		, type_index(0)
@@ -150,7 +154,9 @@ struct TemplateTypeArg {
 		, value(0)
 		, is_pack(false)
 		, is_dependent(false)
-		, dependent_name() {}
+		, dependent_name()
+		, is_template_template_arg(false)
+		, template_name_handle() {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
 		: base_type(type_spec.type())
@@ -165,7 +171,9 @@ struct TemplateTypeArg {
 		, is_value(false)
 		, value(0)
 		, is_pack(false)
-		, is_dependent(false) {}
+		, is_dependent(false)
+		, is_template_template_arg(false)
+		, template_name_handle() {}
 
 	// Constructor for non-type template parameters
 	explicit TemplateTypeArg(int64_t val)
@@ -181,7 +189,9 @@ struct TemplateTypeArg {
 		, is_value(true)
 		, value(val)
 		, is_pack(false)
-		, is_dependent(false) {}
+		, is_dependent(false)
+		, is_template_template_arg(false)
+		, template_name_handle() {}
 	
 	// Constructor for non-type template parameters with explicit type
 	TemplateTypeArg(int64_t val, Type type)
@@ -197,7 +207,9 @@ struct TemplateTypeArg {
 		, is_value(true)
 		, value(val)
 		, is_pack(false)
-		, is_dependent(false) {}
+		, is_dependent(false)
+		, is_template_template_arg(false)
+		, template_name_handle() {}
 	
 	bool operator==(const TemplateTypeArg& other) const {
 		// Only compare type_index for user-defined types (Struct, Enum, UserDefined)
@@ -2582,11 +2594,86 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		
 		// Get the concept's constraint expression and evaluate it
 		const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
+		const auto& concept_params = concept_node.template_params();
 		
-		// The template arguments in the function call should be used to substitute
-		// into the concept's constraint expression
-		// For now, pass through the original template_args
-		return evaluateConstraint(concept_node.constraint_expr(), template_args, template_param_names);
+		// Build the template arguments for the concept from the function call's template arguments
+		// Map the concept's template parameters to the actual template arguments
+		std::vector<TemplateTypeArg> concept_args;
+		std::vector<std::string_view> concept_param_names;
+		
+		// Get the explicit template arguments from the function call
+		const auto& explicit_args = func_call.template_arguments();
+		
+		// Map concept parameters to the arguments
+		for (size_t i = 0; i < concept_params.size(); ++i) {
+			concept_param_names.push_back(concept_params[i].name());
+			
+			if (i < explicit_args.size()) {
+				const ASTNode& arg_node = explicit_args[i];
+				
+				// The argument might be a reference to a template parameter from the enclosing context
+				// We need to resolve it using the original template_args
+				if (arg_node.is<ExpressionNode>()) {
+					const ExpressionNode& expr = arg_node.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						const IdentifierNode& ident = std::get<IdentifierNode>(expr);
+						std::string_view arg_name = ident.name();
+						
+						// Look for this name in the enclosing template parameters
+						for (size_t j = 0; j < template_param_names.size() && j < template_args.size(); ++j) {
+							if (template_param_names[j] == arg_name) {
+								// Found the template parameter - use its substituted value
+								concept_args.push_back(template_args[j]);
+								break;
+							}
+						}
+						
+						// If we haven't added an argument yet, try to look up as a type
+						if (concept_args.size() == i) {
+							auto type_handle = StringTable::getOrInternStringHandle(arg_name);
+							auto type_it = gTypesByName.find(type_handle);
+							if (type_it != gTypesByName.end()) {
+								TemplateTypeArg type_arg;
+								type_arg.base_type = type_it->second->type_;
+								type_arg.type_index = type_it->second->type_index_;
+								concept_args.push_back(type_arg);
+							}
+						}
+					} else if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+						std::string_view arg_name = tparam_ref.param_name().view();
+						
+						// Look for this name in the enclosing template parameters
+						for (size_t j = 0; j < template_param_names.size() && j < template_args.size(); ++j) {
+							if (template_param_names[j] == arg_name) {
+								concept_args.push_back(template_args[j]);
+								break;
+							}
+						}
+					}
+				} else if (arg_node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
+					TemplateTypeArg type_arg;
+					type_arg.base_type = type_spec.type();
+					type_arg.type_index = type_spec.type_index();
+					type_arg.is_reference = type_spec.is_lvalue_reference();
+					type_arg.is_rvalue_reference = type_spec.is_rvalue_reference();
+					type_arg.pointer_depth = type_spec.pointer_depth();
+					type_arg.cv_qualifier = type_spec.cv_qualifier();
+					concept_args.push_back(type_arg);
+				}
+			}
+			
+			// If we still haven't resolved the argument, use a placeholder
+			if (concept_args.size() == i) {
+				TemplateTypeArg placeholder;
+				placeholder.is_dependent = true;
+				concept_args.push_back(placeholder);
+			}
+		}
+		
+		// Evaluate the concept's constraint with the resolved arguments
+		return evaluateConstraint(concept_node.constraint_expr(), concept_args, concept_param_names);
 	}
 	
 	// For binary operators (&&, ||)

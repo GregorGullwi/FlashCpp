@@ -33710,6 +33710,51 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		}
 	}
 
+	// CHECK REQUIRES CLAUSE CONSTRAINT BEFORE INSTANTIATION
+	FLASH_LOG(Templates, Debug, "try_instantiate_template_explicit: Checking requires clause for '", template_name, "', has_requires_clause=", template_func.has_requires_clause());
+	if (template_func.has_requires_clause()) {
+		const RequiresClauseNode& requires_clause = 
+			template_func.requires_clause()->as<RequiresClauseNode>();
+		
+		// Get template parameter names for evaluation
+		std::vector<std::string_view> eval_param_names;
+		for (const auto& tparam_node : template_params) {
+			if (tparam_node.is<TemplateParameterNode>()) {
+				eval_param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+			}
+		}
+		
+		FLASH_LOG(Templates, Debug, "  Evaluating constraint with ", explicit_types.size(), " template args and ", eval_param_names.size(), " param names");
+		
+		// Evaluate the constraint with the template arguments
+		auto constraint_result = evaluateConstraint(
+			requires_clause.constraint_expr(), explicit_types, eval_param_names);
+		
+		FLASH_LOG(Templates, Debug, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
+		
+		if (!constraint_result.satisfied) {
+			// Constraint not satisfied - report detailed error
+			std::string args_str;
+			for (size_t j = 0; j < explicit_types.size(); ++j) {
+				if (j > 0) args_str += ", ";
+				args_str += explicit_types[j].toString();
+			}
+			
+			FLASH_LOG(Parser, Error, "constraint not satisfied for template function '", template_name, "'");
+			FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
+			if (!constraint_result.failed_requirement.empty()) {
+				FLASH_LOG(Parser, Error, "  failed requirement: ", constraint_result.failed_requirement);
+			}
+			if (!constraint_result.suggestion.empty()) {
+				FLASH_LOG(Parser, Error, "  suggestion: ", constraint_result.suggestion);
+			}
+			FLASH_LOG(Parser, Error, "  template arguments: ", args_str);
+			
+			// Don't create instantiation - constraint failed
+			return std::nullopt;
+		}
+	}
+
 	// Instantiate the template (same logic as try_instantiate_template)
 	// Generate mangled name first - it now includes reference qualifiers
 	std::string_view mangled_name = TemplateRegistry::mangleTemplateName(template_name, template_args);
@@ -34297,11 +34342,29 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 			
 			template_args_as_type_args.push_back(type_arg);
+		} else if (arg.kind == TemplateArgument::Kind::Template) {
+			// Handle template template parameters (e.g., Op in template<template<...> class Op>)
+			// Store the template name so constraint evaluation can resolve Op<Args...>
+			TemplateTypeArg type_arg;
+			type_arg.is_template_template_arg = true;
+			type_arg.template_name_handle = StringTable::getOrInternStringHandle(arg.template_name);
+			// Try to find the template in the registry to get its type_index
+			auto template_opt = gTemplateRegistry.lookupTemplate(arg.template_name);
+			if (template_opt.has_value()) {
+				// Found the template - store a reference to it
+				auto type_handle = StringTable::getOrInternStringHandle(arg.template_name);
+				auto type_it = gTypesByName.find(type_handle);
+				if (type_it != gTypesByName.end()) {
+					type_arg.type_index = type_it->second->type_index_;
+				}
+			}
+			template_args_as_type_args.push_back(type_arg);
 		}
-		// Note: Template and value arguments aren't used in type substitution
+		// Note: Value arguments aren't used in type substitution
 	}
 
 	// CHECK REQUIRES CLAUSE CONSTRAINT BEFORE INSTANTIATION
+	FLASH_LOG(Templates, Debug, "Checking requires clause for template function '", template_name, "', has_requires_clause=", template_func.has_requires_clause());
 	if (template_func.has_requires_clause()) {
 		const RequiresClauseNode& requires_clause = 
 			template_func.requires_clause()->as<RequiresClauseNode>();
@@ -34314,9 +34377,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 		
+		FLASH_LOG(Templates, Debug, "  Evaluating constraint with ", template_args_as_type_args.size(), " template args and ", eval_param_names.size(), " param names");
+		
 		// Evaluate the constraint with the template arguments
 		auto constraint_result = evaluateConstraint(
 			requires_clause.constraint_expr(), template_args_as_type_args, eval_param_names);
+		
+		FLASH_LOG(Templates, Debug, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
 		
 		if (!constraint_result.satisfied) {
 			// Constraint not satisfied - report detailed error
