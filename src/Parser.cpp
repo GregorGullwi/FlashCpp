@@ -21733,7 +21733,59 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Concepts evaluate to boolean values at compile time
 							auto concept_opt = gConceptRegistry.lookupConcept(idenfifier_token.value());
 							if (concept_opt.has_value() && explicit_template_args.has_value()) {
-								FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with template arguments", idenfifier_token.value());
+								// Check if any template arguments are dependent (referencing template parameters)
+								// If so, we can't evaluate the concept yet - defer to instantiation time
+								bool has_dependent_args = false;
+								for (const auto& arg : *explicit_template_args) {
+									if (arg.is_dependent) {
+										has_dependent_args = true;
+										break;
+									}
+								}
+								
+								if (has_dependent_args) {
+									// Defer evaluation - create a FunctionCallNode to preserve the concept application
+									FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with DEPENDENT template arguments - deferring evaluation", idenfifier_token.value());
+									
+									// Create a FunctionCallNode that will be evaluated during instantiation
+									// The concept name is stored in the token, template args are already parsed
+									Token concept_token = idenfifier_token;
+									
+									// Create a dummy declaration for the concept call
+									Token void_token(Token::Type::Keyword, "void", concept_token.line(), concept_token.column(), concept_token.file_index());
+									auto void_type = emplace_node<TypeSpecifierNode>(
+										Type::Void, 0, 0, void_token, CVQualifier::None);
+									auto concept_decl = emplace_node<DeclarationNode>(void_type, concept_token);
+									
+									auto [func_call_node, func_call_ref] = emplace_node_ref<FunctionCallNode>(
+										concept_decl.as<DeclarationNode>(), 
+										ChunkedVector<ASTNode>(),
+										concept_token);
+									
+									// Store the template arguments for later evaluation
+									std::vector<ASTNode> template_arg_nodes;
+									for (const auto& arg : *explicit_template_args) {
+										// Convert TemplateTypeArg to an appropriate expression node
+										if (arg.is_dependent && arg.dependent_name.isValid()) {
+											Token dep_token(Token::Type::Identifier, arg.dependent_name.view(),
+											               concept_token.line(), concept_token.column(), concept_token.file_index());
+											auto dep_node = emplace_node<ExpressionNode>(IdentifierNode(dep_token));
+											template_arg_nodes.push_back(dep_node);
+										} else if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+											std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name_);
+											Token type_token(Token::Type::Identifier, type_name,
+											                concept_token.line(), concept_token.column(), concept_token.file_index());
+											auto type_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
+											template_arg_nodes.push_back(type_node);
+										}
+									}
+									func_call_ref.set_template_arguments(std::move(template_arg_nodes));
+									
+									result = emplace_node<ExpressionNode>(func_call_node.as<FunctionCallNode>());
+									return ParseResult::success(*result);
+								}
+								
+								FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with concrete template arguments", idenfifier_token.value());
 								
 								// Evaluate the concept constraint with the provided template arguments
 								auto constraint_result = evaluateConstraint(
@@ -33724,20 +33776,50 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			}
 		}
 		
-		FLASH_LOG(Templates, Debug, "  Evaluating constraint with ", explicit_types.size(), " template args and ", eval_param_names.size(), " param names");
+		// Create a copy of explicit_types with template template arg flags properly set
+		std::vector<TemplateTypeArg> constraint_eval_args;
+		size_t constraint_idx = 0;
+		for (size_t i = 0; i < template_params.size() && constraint_idx < explicit_types.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) continue;
+			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			
+			if (param.kind() == TemplateParameterKind::Template) {
+				// Template template parameter - mark the arg accordingly
+				TemplateTypeArg arg = explicit_types[constraint_idx];
+				arg.is_template_template_arg = true;
+				// Get the template name from the TypeInfo
+				if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+					arg.template_name_handle = gTypeInfo[arg.type_index].name();
+				}
+				constraint_eval_args.push_back(arg);
+				++constraint_idx;
+			} else if (param.is_variadic()) {
+				// Variadic parameter pack - consume all remaining
+				for (size_t j = constraint_idx; j < explicit_types.size(); ++j) {
+					constraint_eval_args.push_back(explicit_types[j]);
+				}
+				constraint_idx = explicit_types.size();
+			} else {
+				// Regular type parameter
+				constraint_eval_args.push_back(explicit_types[constraint_idx]);
+				++constraint_idx;
+			}
+		}
+		
+		FLASH_LOG(Templates, Debug, "  Evaluating constraint with ", constraint_eval_args.size(), " template args and ", eval_param_names.size(), " param names");
 		
 		// Evaluate the constraint with the template arguments
 		auto constraint_result = evaluateConstraint(
-			requires_clause.constraint_expr(), explicit_types, eval_param_names);
+			requires_clause.constraint_expr(), constraint_eval_args, eval_param_names);
 		
 		FLASH_LOG(Templates, Debug, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
 		
 		if (!constraint_result.satisfied) {
 			// Constraint not satisfied - report detailed error
 			std::string args_str;
-			for (size_t j = 0; j < explicit_types.size(); ++j) {
+			for (size_t j = 0; j < constraint_eval_args.size(); ++j) {
 				if (j > 0) args_str += ", ";
-				args_str += explicit_types[j].toString();
+				args_str += constraint_eval_args[j].toString();
 			}
 			
 			FLASH_LOG(Parser, Error, "constraint not satisfied for template function '", template_name, "'");

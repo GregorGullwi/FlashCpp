@@ -2421,6 +2421,90 @@ inline std::optional<long long> evaluateConstraintExpression(
 				// Get the type name from the token
 				std::string_view type_name = type_spec.token().value();
 				
+				// Also check the actual type name from gTypeInfo using the type_index
+				// This is important for placeholder types like "Op<...>::type"
+				std::string_view full_type_name = type_name;
+				TypeIndex type_idx = type_spec.type_index();
+				if (type_idx > 0 && type_idx < gTypeInfo.size()) {
+					full_type_name = StringTable::getStringView(gTypeInfo[type_idx].name_);
+				}
+				
+				FLASH_LOG(Templates, Debug, "evaluateConstraintExpression: sizeof(", type_name, "), full_type_name='", full_type_name, "', type_index=", type_idx);
+				
+				// Check if this is a placeholder for a dependent nested type like "Op<...>::type"
+				// These are created during parsing as placeholders for template-dependent types
+				if (full_type_name.find("::") != std::string_view::npos) {
+					// This looks like a nested type access - try to resolve it
+					// Format: "Op<...>::type" or similar
+					size_t scope_pos = full_type_name.find("::");
+					std::string_view base_part = full_type_name.substr(0, scope_pos);
+					std::string_view member_part = full_type_name.substr(scope_pos + 2);
+					
+					FLASH_LOG(Templates, Debug, "  Nested type access: base='", base_part, "', member='", member_part, "'");
+					
+					// Check if base_part references a template template parameter like "Op<...>"
+					std::string_view template_param_name;
+					if (base_part.find("<") != std::string_view::npos) {
+						// Extract the template parameter name (e.g., "Op" from "Op<...>")
+						template_param_name = base_part.substr(0, base_part.find("<"));
+					} else {
+						template_param_name = base_part;
+					}
+					
+					FLASH_LOG(Templates, Debug, "  Template param name: '", template_param_name, "', template_param_names.size()=", template_param_names.size());
+					for (size_t dbg_i = 0; dbg_i < template_param_names.size(); ++dbg_i) {
+						FLASH_LOG(Templates, Debug, "    template_param_names[", dbg_i, "] = '", template_param_names[dbg_i], "'");
+					}
+					
+					// Look for the template template parameter in our substitutions
+					for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
+						if (template_param_names[i] == template_param_name) {
+							const auto& arg = template_args[i];
+							
+							FLASH_LOG(Templates, Debug, "  Found template param at index ", i, ", is_template_template_arg=", arg.is_template_template_arg);
+							
+							// Check if this is a template template argument
+							if (arg.is_template_template_arg && arg.template_name_handle.isValid()) {
+								// We have a template template argument like HasType
+								std::string_view template_name = arg.template_name_handle.view();
+								FLASH_LOG(Templates, Debug, "  Found template template arg: '", template_name, "'");
+								
+								// Now we need to get the instantiated type's member
+								// For HasType<int>::type, we need to get the type alias from HasType<int>
+								
+								// Look for the pack argument to get the template argument
+								for (size_t j = i + 1; j < template_args.size(); ++j) {
+									const auto& pack_arg = template_args[j];
+									if (!pack_arg.is_template_template_arg && !pack_arg.is_value) {
+										// Found a type argument - this is what we instantiate the template with
+										FLASH_LOG(Templates, Debug, "  Pack arg type_index=", pack_arg.type_index, ", base_type=", static_cast<int>(pack_arg.base_type));
+										
+										// For member "type", we need to look up HasType<T>::type which equals T
+										// For HasType, the using type = T; means ::type is the template argument
+										if (member_part == "type") {
+											// For a simple type alias like HasType<T>::type = T,
+											// return the size of the template argument
+											if (pack_arg.type_index > 0 && pack_arg.type_index < gTypeInfo.size()) {
+												long long size = static_cast<long long>((gTypeInfo[pack_arg.type_index].type_size_ + 7) / 8);
+												FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::type) = ", size);
+												return size;
+											}
+											// For built-in types without type_index
+											long long size = static_cast<long long>(get_type_size_bits(pack_arg.base_type) / 8);
+											if (size > 0) {
+												FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::type) = ", size, " (from base_type)");
+												return size;
+											}
+										}
+										break;
+									}
+								}
+							}
+							break;
+						}
+					}
+				}
+				
 				// Look for matching template parameter
 				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
 					if (template_param_names[i] == type_name) {
@@ -2474,6 +2558,15 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	const ASTNode& constraint_expr, 
 	const std::vector<TemplateTypeArg>& template_args,
 	const std::vector<std::string_view>& template_param_names = {}) {
+	
+	FLASH_LOG(Templates, Debug, "evaluateConstraint: constraint type=", constraint_expr.type_name(), ", template_args.size()=", template_args.size());
+	for (size_t i = 0; i < template_param_names.size(); ++i) {
+		if (i < template_args.size()) {
+			const auto& arg = template_args[i];
+			FLASH_LOG(Templates, Debug, "  param '", template_param_names[i], "' -> is_template_template_arg=", arg.is_template_template_arg, 
+				", base_type=", static_cast<int>(arg.base_type), ", type_index=", arg.type_index);
+		}
+	}
 	
 	// Handle ExpressionNode wrapper - unwrap it and evaluate the inner node
 	if (constraint_expr.is<ExpressionNode>()) {
@@ -2669,6 +2762,13 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				TemplateTypeArg placeholder;
 				placeholder.is_dependent = true;
 				concept_args.push_back(placeholder);
+			}
+		}
+		
+		FLASH_LOG(Templates, Debug, "FunctionCallNode concept evaluation: concept='", concept_name, "', concept_args.size()=", concept_args.size(), ", concept_param_names.size()=", concept_param_names.size());
+		for (size_t i = 0; i < concept_param_names.size(); ++i) {
+			if (i < concept_args.size()) {
+				FLASH_LOG(Templates, Debug, "  param[", i, "] name='", concept_param_names[i], "', is_template_template_arg=", concept_args[i].is_template_template_arg, ", base_type=", static_cast<int>(concept_args[i].base_type));
 			}
 		}
 		
