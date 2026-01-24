@@ -28,7 +28,6 @@ EXPECTED_FAIL=(
     # See tests/std/STANDARD_HEADERS_MISSING_FEATURES.md for detailed analysis
     
     # Tests restored from workarounds - expose known FlashCpp limitations
-    "test_member_var_template_ret42.cpp"        # Member variable template instantiation not implemented in codegen
     "test_placement_new_parsing_ret42.cpp"      # Placement new with multiple arguments not supported by parser
 )
 
