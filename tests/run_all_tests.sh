@@ -26,6 +26,10 @@ EXPECTED_FAIL=(
     # Standard header tests have been moved to tests/std/
     # They are no longer run by this script to avoid timeouts and failures
     # See tests/std/STANDARD_HEADERS_MISSING_FEATURES.md for detailed analysis
+    
+    # Tests restored from workarounds - expose known FlashCpp limitations
+    "test_member_var_template_ret42.cpp"        # Member variable template instantiation not implemented in codegen
+    "test_placement_new_parsing_ret42.cpp"      # Placement new with multiple arguments not supported by parser
 )
 
 # Expected link failures - files that compile but require external C helper files
