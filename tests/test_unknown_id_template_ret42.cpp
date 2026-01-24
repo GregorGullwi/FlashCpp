@@ -6,20 +6,20 @@ template<typename T>
 struct HasMember {
     T value;
     
-    // Test: reference to 'nested_type' which doesn't exist yet in template context
-    // Should be treated as dependent and resolved at instantiation
+    // Test: Parser handles templates with potentially unknown member references
+    // These references are treated as dependent and resolved at instantiation
     void set_value(T v) {
         value = v;
     }
 };
 
-// Test 2: Template with potential member reference
+// Test 2: Template with operations on dependent type
 template<typename T>
 struct Container {
     T data;
     
-    // This might reference T::size_type which may not exist
-    // Parser should treat unknown identifiers as potentially dependent
+    // Parser treats T as potentially having unknown members/properties
+    // Handles the template definition without needing full type information
     int get_size() {
         return sizeof(T);
     }

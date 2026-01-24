@@ -29,5 +29,3 @@ int main() {
     // Return predictable value
     return 42;
 }
-
-

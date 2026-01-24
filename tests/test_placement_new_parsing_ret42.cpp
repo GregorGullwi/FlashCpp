@@ -34,4 +34,3 @@ int main() {
     // The fix was about parsing operator new/delete syntax correctly
     return 42;
 }
-
