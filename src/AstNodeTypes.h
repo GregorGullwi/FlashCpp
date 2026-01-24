@@ -3406,10 +3406,33 @@ private:
 	Token called_from_;              // For error reporting
 };
 
+// Throw expression node: throw or throw expr
+// Unlike ThrowStatementNode which is used as a statement, ThrowExpressionNode is used
+// when throw is part of an expression (e.g., inside parentheses: (throw bad_access()))
+class ThrowExpressionNode {
+public:
+	// throw expression
+	explicit ThrowExpressionNode(ASTNode expression, Token throw_token)
+		: expression_(expression), throw_token_(throw_token), is_rethrow_(false) {}
+
+	// throw (rethrow)
+	explicit ThrowExpressionNode(Token throw_token)
+		: expression_(), throw_token_(throw_token), is_rethrow_(true) {}
+
+	const std::optional<ASTNode>& expression() const { return expression_; }
+	bool is_rethrow() const { return is_rethrow_; }
+	const Token& throw_token() const { return throw_token_; }
+
+private:
+	std::optional<ASTNode> expression_;  // The expression to throw (nullopt for rethrow)
+	Token throw_token_;                   // For error reporting
+	bool is_rethrow_;                     // True if this is a rethrow (throw)
+};
+
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
 	BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode, MemberFunctionCallNode,
 	ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
-	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode, InitializerListConstructionNode>;
+	DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode, InitializerListConstructionNode, ThrowExpressionNode>;
 
 /*class FunctionDefinitionNode {
 public:

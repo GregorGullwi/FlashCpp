@@ -15093,6 +15093,95 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		return ParseResult::error("Could not determine initializer_list element type", brace_token);
 	}
 
+	// Check if this struct has constructors and no data members (or not enough for aggregate init)
+	// In this case, we should use constructor initialization rather than aggregate initialization
+	// This handles patterns like: inline constexpr nullopt_t nullopt { nullopt_t::_Construct::_Token };
+	if (struct_info.members.empty()) {
+		// No data members - must use constructor initialization
+		// Parse all the brace elements first
+		std::vector<ASTNode> elements;
+		Token brace_token = *current_token_;  // Save location for error reporting
+		
+		while (true) {
+			// Check if we've reached the end of the initializer list
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+				break;
+			}
+			
+			// Parse the initializer expression
+			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
+			if (init_expr_result.is_error()) {
+				return init_expr_result;
+			}
+			
+			if (init_expr_result.node().has_value()) {
+				elements.push_back(*init_expr_result.node());
+			} else {
+				return ParseResult::error("Expected initializer expression", *current_token_);
+			}
+			
+			// Check for comma or end of list
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+				consume_token(); // consume the comma
+				
+				// Allow trailing comma before '}'
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+					break;
+				}
+			} else {
+				// No comma, so we should be at the end
+				break;
+			}
+		}
+		
+		if (!consume_punctuator("}")) {
+			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+		}
+		
+		// Check if there's a constructor that matches the argument count
+		bool found_matching_ctor = false;
+		for (const auto& member_func : struct_info.member_functions) {
+			if (!member_func.is_constructor) continue;
+			if (!member_func.function_decl.has_value()) continue;
+			
+			// Get parameter count from constructor
+			size_t param_count = 0;
+			if (member_func.function_decl.is<ConstructorDeclarationNode>()) {
+				param_count = member_func.function_decl.as<ConstructorDeclarationNode>().parameter_nodes().size();
+			} else if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+				param_count = member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes().size();
+			}
+			
+			if (param_count == elements.size()) {
+				found_matching_ctor = true;
+				break;
+			}
+		}
+		
+		if (found_matching_ctor) {
+			// Create a ConstructorCallNode
+			auto type_spec_node = emplace_node<TypeSpecifierNode>(
+				Type::Struct, type_index, 
+				static_cast<unsigned char>(struct_info.total_size * 8),
+				brace_token
+			);
+			
+			ChunkedVector<ASTNode> ctor_args;
+			for (auto& elem : elements) {
+				ctor_args.push_back(std::move(elem));
+			}
+			
+			return ParseResult::success(
+				emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)
+				)
+			);
+		}
+		
+		// No matching constructor and no members - this is an error
+		return ParseResult::error("No matching constructor for brace initialization", brace_token);
+	}
+
 	// Parse comma-separated initializer expressions (positional or designated)
 	size_t member_index = 0;
 	bool has_designated = false;  // Track if we've seen any designated initializers
@@ -15892,6 +15981,34 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			is_global_scope_qualified = true;
 			// Fall through to handle 'new' or 'delete' below
 		}
+	}
+
+	// Check for 'throw' keyword - throw expressions are valid unary expressions
+	// Handles patterns like: (throw bad_optional_access()) or expr ? throw : value
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "throw") {
+		Token throw_token = *current_token_;
+		consume_token(); // consume 'throw'
+		
+		// Check if this is a rethrow (throw followed by non-expression punctuator)
+		// Rethrow: throw; or throw ) or throw : etc.
+		auto next = peek_token();
+		if (!next.has_value() || 
+		    (next->type() == Token::Type::Punctuator && 
+		     (next->value() == ";" || next->value() == ")" || next->value() == ":" || next->value() == ","))) {
+			// Rethrow expression - no operand
+			return ParseResult::success(emplace_node<ExpressionNode>(
+				ThrowExpressionNode(throw_token)));
+		}
+		
+		// Parse the expression to throw
+		// Use assignment precedence (2) since throw is a unary operator
+		ParseResult expr_result = parse_expression(2, ExpressionContext::Normal);
+		if (expr_result.is_error()) {
+			return expr_result;
+		}
+		
+		return ParseResult::success(emplace_node<ExpressionNode>(
+			ThrowExpressionNode(*expr_result.node(), throw_token)));
 	}
 
 	// Check for 'new' keyword (handles both 'new' and '::new')
