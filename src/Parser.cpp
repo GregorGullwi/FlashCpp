@@ -11717,11 +11717,62 @@ ParseResult Parser::parse_type_specifier()
 				}
 				
 				if (is_dependent_template_param) {
-					// This is a template parameter being used with template arguments
-					// Create a dependent type reference - don't try to instantiate
-					// This will be resolved during instantiation of the containing template
+					// This is a template parameter being used with template arguments (e.g., Op<Args...>)
+					// Check for nested type access (e.g., Op<Args...>::type) before returning early
+					if (peek_token().has_value() && peek_token()->value() == "::") {
+						// Parse the nested type/member access
+						consume_token(); // consume '::'
+						
+						// Handle optional 'template' keyword for dependent contexts
+						if (peek_token().has_value() && peek_token()->value() == "template") {
+							consume_token(); // consume 'template'
+						}
+						
+						// Get the nested identifier
+						if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
+							return ParseResult::error("Expected identifier after '::'", peek_token().value_or(Token()));
+						}
+						Token nested_token = *peek_token();
+						consume_token(); // consume the identifier
+						
+						// Build a dependent type name: Op<Args...>::type
+						// For dependent types, we create a placeholder type that will be resolved during instantiation
+						StringBuilder dependent_type_builder;
+						dependent_type_builder.append(type_name);
+						dependent_type_builder.append("<...>::");
+						dependent_type_builder.append(nested_token.value());
+						std::string_view dependent_type_name = dependent_type_builder.commit();
+						
+						// Create or look up a placeholder type for this dependent type
+						auto type_handle = StringTable::getOrInternStringHandle(dependent_type_name);
+						auto type_it = gTypesByName.find(type_handle);
+						TypeIndex type_idx;
+						if (type_it == gTypesByName.end()) {
+							// Create a new placeholder type
+							auto& placeholder_type = gTypeInfo.emplace_back();
+							placeholder_type.type_ = Type::UserDefined;
+							placeholder_type.type_index_ = gTypeInfo.size() - 1;
+							placeholder_type.type_size_ = 0;
+							placeholder_type.name_ = type_handle;
+							gTypesByName[type_handle] = &placeholder_type;
+							type_idx = placeholder_type.type_index_;
+							FLASH_LOG(Templates, Debug, "Created placeholder for dependent nested type: ", dependent_type_name);
+						} else {
+							type_idx = type_it->second->type_index_;
+						}
+						
+						auto type_spec_node = emplace_node<TypeSpecifierNode>(
+							Type::UserDefined,
+							type_idx,
+							0,  // Size unknown for dependent type
+							nested_token,
+							cv_qualifier
+						);
+						return ParseResult::success(type_spec_node);
+					}
 					
-					// Look up the TypeInfo for the template parameter
+					// No nested type access - create a dependent type reference
+					// This will be resolved during instantiation of the containing template
 					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 					if (type_it != gTypesByName.end()) {
 						TypeIndex type_idx = type_it->second - &gTypeInfo[0];
@@ -13036,14 +13087,8 @@ ParseResult Parser::parse_function_trailing_specifiers(
 					continue;
 				}
 				
-				// Track nested brackets
-				if (tok_val == "(") paren_depth++;
-				else if (tok_val == ")") paren_depth--;
-				else if (tok_val == "{") brace_depth++;
-				else if (tok_val == "}") brace_depth--;
-				else update_angle_depth(tok_val, angle_depth);
-				
-				// At top level, check for end of constraint
+				// At top level, check for end of constraint BEFORE updating depth tracking
+				// This ensures we break on the function body '{' instead of consuming it
 				if (paren_depth == 0 && angle_depth == 0 && brace_depth == 0) {
 					// Body start or end of declaration
 					if (tok_val == "{" || tok_val == ";") {
@@ -13054,6 +13099,13 @@ ParseResult Parser::parse_function_trailing_specifiers(
 						break;
 					}
 				}
+				
+				// Track nested brackets (after checking for end of constraint)
+				if (tok_val == "(") paren_depth++;
+				else if (tok_val == ")") paren_depth--;
+				else if (tok_val == "{") brace_depth++;
+				else if (tok_val == "}") brace_depth--;
+				else update_angle_depth(tok_val, angle_depth);
 				
 				consume_token();
 			}
@@ -21681,7 +21733,59 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Concepts evaluate to boolean values at compile time
 							auto concept_opt = gConceptRegistry.lookupConcept(idenfifier_token.value());
 							if (concept_opt.has_value() && explicit_template_args.has_value()) {
-								FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with template arguments", idenfifier_token.value());
+								// Check if any template arguments are dependent (referencing template parameters)
+								// If so, we can't evaluate the concept yet - defer to instantiation time
+								bool has_dependent_args = false;
+								for (const auto& arg : *explicit_template_args) {
+									if (arg.is_dependent) {
+										has_dependent_args = true;
+										break;
+									}
+								}
+								
+								if (has_dependent_args) {
+									// Defer evaluation - create a FunctionCallNode to preserve the concept application
+									FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with DEPENDENT template arguments - deferring evaluation", idenfifier_token.value());
+									
+									// Create a FunctionCallNode that will be evaluated during instantiation
+									// The concept name is stored in the token, template args are already parsed
+									Token concept_token = idenfifier_token;
+									
+									// Create a dummy declaration for the concept call
+									Token void_token(Token::Type::Keyword, "void", concept_token.line(), concept_token.column(), concept_token.file_index());
+									auto void_type = emplace_node<TypeSpecifierNode>(
+										Type::Void, 0, 0, void_token, CVQualifier::None);
+									auto concept_decl = emplace_node<DeclarationNode>(void_type, concept_token);
+									
+									auto [func_call_node, func_call_ref] = emplace_node_ref<FunctionCallNode>(
+										concept_decl.as<DeclarationNode>(), 
+										ChunkedVector<ASTNode>(),
+										concept_token);
+									
+									// Store the template arguments for later evaluation
+									std::vector<ASTNode> template_arg_nodes;
+									for (const auto& arg : *explicit_template_args) {
+										// Convert TemplateTypeArg to an appropriate expression node
+										if (arg.is_dependent && arg.dependent_name.isValid()) {
+											Token dep_token(Token::Type::Identifier, arg.dependent_name.view(),
+											               concept_token.line(), concept_token.column(), concept_token.file_index());
+											auto dep_node = emplace_node<ExpressionNode>(IdentifierNode(dep_token));
+											template_arg_nodes.push_back(dep_node);
+										} else if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+											std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name_);
+											Token type_token(Token::Type::Identifier, type_name,
+											                concept_token.line(), concept_token.column(), concept_token.file_index());
+											auto type_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
+											template_arg_nodes.push_back(type_node);
+										}
+									}
+									func_call_ref.set_template_arguments(std::move(template_arg_nodes));
+									
+									result = emplace_node<ExpressionNode>(func_call_node.as<FunctionCallNode>());
+									return ParseResult::success(*result);
+								}
+								
+								FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with concrete template arguments", idenfifier_token.value());
 								
 								// Evaluate the concept constraint with the provided template arguments
 								auto constraint_result = evaluateConstraint(
@@ -33412,6 +33516,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// Also check Struct types - if this is a template class that was parsed with dependent arguments,
 		// the instantiation was skipped and we got back the primary template type
 		// In a template body, if the struct is a registered template and we're using template params, it's dependent
+		// BUT: If this is a template template argument (passing a template class as an argument), it's NOT dependent
+		// even if we're in a template body. A template class like HasType used as a template argument is concrete.
 		if (!arg.is_dependent && type_node.type() == Type::Struct && parsing_template_body_ && !in_sfinae_context_) {
 			TypeIndex idx = type_node.type_index();
 			if (idx < gTypeInfo.size()) {
@@ -33419,11 +33525,26 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// Check if this is a template primary (not an instantiation which would have underscores)
 				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-					// This struct type is a template primary - if we're in a template body,
-					// it likely has dependent template arguments
-					FLASH_LOG_FORMAT(Templates, Debug, "Template argument {} is primary template in template body - marking as dependent", type_name);
-					arg.is_dependent = true;
-					arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
+					// This struct type is a template primary
+					// Check if type_name contains any current template parameters
+					// If not, it's a concrete template class being used as a template template argument
+					bool contains_template_param = false;
+					for (const auto& param_name : current_template_param_names_) {
+						if (type_name == param_name) {
+							contains_template_param = true;
+							break;
+						}
+					}
+					
+					// Only mark as dependent if the type name itself is a template parameter
+					// A template class like HasType being used as an argument is NOT dependent
+					if (contains_template_param) {
+						FLASH_LOG_FORMAT(Templates, Debug, "Template argument {} is primary template matching template param - marking as dependent", type_name);
+						arg.is_dependent = true;
+						arg.dependent_name = StringTable::getOrInternStringHandle(type_name);
+					} else {
+						FLASH_LOG_FORMAT(Templates, Debug, "Template argument {} is a concrete template class (used as template template arg) - NOT dependent", type_name);
+					}
 				}
 			}
 		}
@@ -33655,6 +33776,81 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			// Use toTemplateArgument() to preserve full type info including references
 			template_args.push_back(toTemplateArgument(explicit_types[explicit_idx]));
 			++explicit_idx;
+		}
+	}
+
+	// CHECK REQUIRES CLAUSE CONSTRAINT BEFORE INSTANTIATION
+	FLASH_LOG(Templates, Debug, "try_instantiate_template_explicit: Checking requires clause for '", template_name, "', has_requires_clause=", template_func.has_requires_clause());
+	if (template_func.has_requires_clause()) {
+		const RequiresClauseNode& requires_clause = 
+			template_func.requires_clause()->as<RequiresClauseNode>();
+		
+		// Get template parameter names for evaluation
+		std::vector<std::string_view> eval_param_names;
+		for (const auto& tparam_node : template_params) {
+			if (tparam_node.is<TemplateParameterNode>()) {
+				eval_param_names.push_back(tparam_node.as<TemplateParameterNode>().name());
+			}
+		}
+		
+		// Create a copy of explicit_types with template template arg flags properly set
+		std::vector<TemplateTypeArg> constraint_eval_args;
+		size_t constraint_idx = 0;
+		for (size_t i = 0; i < template_params.size() && constraint_idx < explicit_types.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) continue;
+			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			
+			if (param.kind() == TemplateParameterKind::Template) {
+				// Template template parameter - mark the arg accordingly
+				TemplateTypeArg arg = explicit_types[constraint_idx];
+				arg.is_template_template_arg = true;
+				// Get the template name from the TypeInfo
+				if (arg.type_index > 0 && arg.type_index < gTypeInfo.size()) {
+					arg.template_name_handle = gTypeInfo[arg.type_index].name();
+				}
+				constraint_eval_args.push_back(arg);
+				++constraint_idx;
+			} else if (param.is_variadic()) {
+				// Variadic parameter pack - consume all remaining
+				for (size_t j = constraint_idx; j < explicit_types.size(); ++j) {
+					constraint_eval_args.push_back(explicit_types[j]);
+				}
+				constraint_idx = explicit_types.size();
+			} else {
+				// Regular type parameter
+				constraint_eval_args.push_back(explicit_types[constraint_idx]);
+				++constraint_idx;
+			}
+		}
+		
+		FLASH_LOG(Templates, Debug, "  Evaluating constraint with ", constraint_eval_args.size(), " template args and ", eval_param_names.size(), " param names");
+		
+		// Evaluate the constraint with the template arguments
+		auto constraint_result = evaluateConstraint(
+			requires_clause.constraint_expr(), constraint_eval_args, eval_param_names);
+		
+		FLASH_LOG(Templates, Debug, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
+		
+		if (!constraint_result.satisfied) {
+			// Constraint not satisfied - report detailed error
+			std::string args_str;
+			for (size_t j = 0; j < constraint_eval_args.size(); ++j) {
+				if (j > 0) args_str += ", ";
+				args_str += constraint_eval_args[j].toString();
+			}
+			
+			FLASH_LOG(Parser, Error, "constraint not satisfied for template function '", template_name, "'");
+			FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
+			if (!constraint_result.failed_requirement.empty()) {
+				FLASH_LOG(Parser, Error, "  failed requirement: ", constraint_result.failed_requirement);
+			}
+			if (!constraint_result.suggestion.empty()) {
+				FLASH_LOG(Parser, Error, "  suggestion: ", constraint_result.suggestion);
+			}
+			FLASH_LOG(Parser, Error, "  template arguments: ", args_str);
+			
+			// Don't create instantiation - constraint failed
+			return std::nullopt;
 		}
 	}
 
@@ -34245,11 +34441,29 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 			
 			template_args_as_type_args.push_back(type_arg);
+		} else if (arg.kind == TemplateArgument::Kind::Template) {
+			// Handle template template parameters (e.g., Op in template<template<...> class Op>)
+			// Store the template name so constraint evaluation can resolve Op<Args...>
+			TemplateTypeArg type_arg;
+			type_arg.is_template_template_arg = true;
+			type_arg.template_name_handle = StringTable::getOrInternStringHandle(arg.template_name);
+			// Try to find the template in the registry to get its type_index
+			auto template_opt = gTemplateRegistry.lookupTemplate(arg.template_name);
+			if (template_opt.has_value()) {
+				// Found the template - store a reference to it
+				auto type_handle = StringTable::getOrInternStringHandle(arg.template_name);
+				auto type_it = gTypesByName.find(type_handle);
+				if (type_it != gTypesByName.end()) {
+					type_arg.type_index = type_it->second->type_index_;
+				}
+			}
+			template_args_as_type_args.push_back(type_arg);
 		}
-		// Note: Template and value arguments aren't used in type substitution
+		// Note: Value arguments aren't used in type substitution
 	}
 
 	// CHECK REQUIRES CLAUSE CONSTRAINT BEFORE INSTANTIATION
+	FLASH_LOG(Templates, Debug, "Checking requires clause for template function '", template_name, "', has_requires_clause=", template_func.has_requires_clause());
 	if (template_func.has_requires_clause()) {
 		const RequiresClauseNode& requires_clause = 
 			template_func.requires_clause()->as<RequiresClauseNode>();
@@ -34262,9 +34476,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 		
+		FLASH_LOG(Templates, Debug, "  Evaluating constraint with ", template_args_as_type_args.size(), " template args and ", eval_param_names.size(), " param names");
+		
 		// Evaluate the constraint with the template arguments
 		auto constraint_result = evaluateConstraint(
 			requires_clause.constraint_expr(), template_args_as_type_args, eval_param_names);
+		
+		FLASH_LOG(Templates, Debug, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
 		
 		if (!constraint_result.satisfied) {
 			// Constraint not satisfied - report detailed error
