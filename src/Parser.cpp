@@ -1732,6 +1732,17 @@ ParseResult Parser::parse_type_and_name() {
                 return ParseResult::error("Unsupported operator overload: operator" + std::string(operator_symbol), operator_symbol_token);
             }
         }
+        // Check for subscript operator: operator[]
+        // Note: '[' is a Punctuator, not an Operator, so it needs separate handling
+        else if (peek_token().has_value() && peek_token()->value() == "[") {
+            consume_token(); // consume '['
+            if (!peek_token().has_value() || peek_token()->value() != "]") {
+                return ParseResult::error("Expected ']' after 'operator['", operator_keyword_token);
+            }
+            consume_token(); // consume ']'
+            static const std::string operator_subscript_name = "operator[]";
+            operator_name = operator_subscript_name;
+        }
         // Check for operator new, delete, new[], delete[]
         else if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
                  (peek_token()->value() == "new" || peek_token()->value() == "delete")) {
@@ -15082,6 +15093,172 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		return ParseResult::error("Could not determine initializer_list element type", brace_token);
 	}
 
+	// Check if this struct has constructors and no data members (or not enough for aggregate init)
+	// In this case, we should use constructor initialization rather than aggregate initialization
+	// This handles patterns like: inline constexpr nullopt_t nullopt { nullopt_t::_Construct::_Token };
+	if (struct_info.members.empty()) {
+		// No data members - must use constructor initialization
+		// Parse all the brace elements first
+		std::vector<ASTNode> elements;
+		Token brace_token = *current_token_;  // Save location for error reporting
+		
+		while (true) {
+			// Check if we've reached the end of the initializer list
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+				break;
+			}
+			
+			// Parse the initializer expression
+			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
+			if (init_expr_result.is_error()) {
+				return init_expr_result;
+			}
+			
+			if (init_expr_result.node().has_value()) {
+				elements.push_back(*init_expr_result.node());
+			} else {
+				return ParseResult::error("Expected initializer expression", *current_token_);
+			}
+			
+			// Check for comma or end of list
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == ",") {
+				consume_token(); // consume the comma
+				
+				// Allow trailing comma before '}'
+				if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "}") {
+					break;
+				}
+			} else {
+				// No comma, so we should be at the end
+				break;
+			}
+		}
+		
+		if (!consume_punctuator("}")) {
+			return ParseResult::error("Expected '}' to close brace initializer", *current_token_);
+		}
+		
+		// Check if there's a constructor that matches the argument count and types
+		bool found_matching_ctor = false;
+		for (const auto& member_func : struct_info.member_functions) {
+			if (!member_func.is_constructor) continue;
+			if (!member_func.function_decl.has_value()) continue;
+			
+			// Get parameters from constructor
+			const std::vector<ASTNode>* params = nullptr;
+			if (member_func.function_decl.is<ConstructorDeclarationNode>()) {
+				params = &member_func.function_decl.as<ConstructorDeclarationNode>().parameter_nodes();
+			} else if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+				params = &member_func.function_decl.as<FunctionDeclarationNode>().parameter_nodes();
+			}
+			
+			if (!params || params->size() != elements.size()) {
+				continue;
+			}
+			
+			// Match parameter types with argument types
+			bool types_match = true;
+			for (size_t i = 0; i < params->size() && types_match; ++i) {
+				const ASTNode& param_node = (*params)[i];
+				const ASTNode& arg_node = elements[i];
+				
+				// Get parameter type
+				const TypeSpecifierNode* param_type = nullptr;
+				if (param_node.is<VariableDeclarationNode>()) {
+					const VariableDeclarationNode& var = param_node.as<VariableDeclarationNode>();
+					if (var.declaration().type_node().is<TypeSpecifierNode>()) {
+						param_type = &var.declaration().type_node().as<TypeSpecifierNode>();
+					}
+				} else if (param_node.is<DeclarationNode>()) {
+					const DeclarationNode& decl = param_node.as<DeclarationNode>();
+					if (decl.type_node().is<TypeSpecifierNode>()) {
+						param_type = &decl.type_node().as<TypeSpecifierNode>();
+					}
+				}
+				
+				if (!param_type) {
+					// Can't determine parameter type - skip type checking for this param
+					continue;
+				}
+				
+				// Get argument type
+				auto arg_type_opt = get_expression_type(arg_node);
+				if (!arg_type_opt.has_value()) {
+					// Can't determine argument type - skip type checking for this param
+					// This handles dependent expressions and complex cases
+					continue;
+				}
+				
+				const TypeSpecifierNode& arg_type = *arg_type_opt;
+				
+				// Compare types (allowing for implicit conversions in some cases)
+				// For enum class types, we need exact match (no implicit conversions)
+				if (param_type->type() == Type::Enum && arg_type.type() == Type::Enum) {
+					// Enum types must match exactly by type_index
+					if (param_type->type_index() != arg_type.type_index()) {
+						types_match = false;
+					}
+				} else if (param_type->type() != arg_type.type()) {
+					// Different base types - check for compatible integer/enum types
+					// Allow enum -> int conversions for scoped enums passed as their underlying type
+					bool compatible = false;
+					if (arg_type.type() == Type::Enum && 
+					    (param_type->type() == Type::Int || param_type->type() == Type::UnsignedInt ||
+					     param_type->type() == Type::Long || param_type->type() == Type::UnsignedLong)) {
+						// Enum to integer conversion (for scoped enum underlying type)
+						compatible = true;
+					}
+					if (!compatible) {
+						types_match = false;
+					}
+				} else if (param_type->type() == Type::UserDefined || param_type->type() == Type::Struct) {
+					// For user-defined/struct types, check type_index
+					if (param_type->type_index() != arg_type.type_index()) {
+						types_match = false;
+					}
+				}
+				
+				// Check pointer depth - must match exactly
+				if (types_match && param_type->pointer_depth() != arg_type.pointer_depth()) {
+					types_match = false;
+				}
+				
+				// Check reference qualifiers - must match exactly
+				if (types_match && param_type->is_reference() != arg_type.is_reference()) {
+					types_match = false;
+				}
+			}
+			
+			if (types_match) {
+				found_matching_ctor = true;
+				break;
+			}
+		}
+		
+		if (found_matching_ctor) {
+			// Create a ConstructorCallNode
+			auto type_spec_node = emplace_node<TypeSpecifierNode>(
+				Type::Struct, type_index, 
+				static_cast<unsigned char>(struct_info.total_size * 8),
+				brace_token
+			);
+			
+			ChunkedVector<ASTNode> ctor_args;
+			for (auto& elem : elements) {
+				ctor_args.push_back(std::move(elem));
+			}
+			
+			return ParseResult::success(
+				emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)
+				)
+			);
+		}
+		
+		// No matching constructor and no members - this is an error
+		return ParseResult::error("No matching constructor for brace initialization", brace_token);
+	}
+
 	// Parse comma-separated initializer expressions (positional or designated)
 	size_t member_index = 0;
 	bool has_designated = false;  // Track if we've seen any designated initializers
@@ -15881,6 +16058,34 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			is_global_scope_qualified = true;
 			// Fall through to handle 'new' or 'delete' below
 		}
+	}
+
+	// Check for 'throw' keyword - throw expressions are valid unary expressions
+	// Handles patterns like: (throw bad_optional_access()) or expr ? throw : value
+	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "throw") {
+		Token throw_token = *current_token_;
+		consume_token(); // consume 'throw'
+		
+		// Check if this is a rethrow (throw followed by non-expression punctuator)
+		// Rethrow: throw; or throw ) or throw : etc.
+		auto next = peek_token();
+		if (!next.has_value() || 
+		    (next->type() == Token::Type::Punctuator && 
+		     (next->value() == ";" || next->value() == ")" || next->value() == ":" || next->value() == ","))) {
+			// Rethrow expression - no operand
+			return ParseResult::success(emplace_node<ExpressionNode>(
+				ThrowExpressionNode(throw_token)));
+		}
+		
+		// Parse the expression to throw
+		// Use assignment precedence (2) since throw is a unary operator
+		ParseResult expr_result = parse_expression(2, ExpressionContext::Normal);
+		if (expr_result.is_error()) {
+			return expr_result;
+		}
+		
+		return ParseResult::success(emplace_node<ExpressionNode>(
+			ThrowExpressionNode(*expr_result.node(), throw_token)));
 	}
 
 	// Check for 'new' keyword (handles both 'new' and '::new')

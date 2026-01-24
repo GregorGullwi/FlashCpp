@@ -7637,6 +7637,13 @@ private:
 			const auto& init_list = std::get<InitializerListConstructionNode>(exprNode);
 			return generateInitializerListConstructionIr(init_list);
 		}
+		else if (std::holds_alternative<ThrowExpressionNode>(exprNode)) {
+			// Throw expression - like ThrowStatementNode but appears in expression context
+			// For now, just skip code generation since throw expressions have type void
+			// and their main effect is control flow which isn't compiled yet
+			FLASH_LOG(Codegen, Debug, "ThrowExpressionNode encountered in expression context - skipping codegen");
+			return {};
+		}
 		else {
 			assert(false && "Not implemented yet");
 		}
