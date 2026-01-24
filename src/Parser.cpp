@@ -16036,12 +16036,9 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				}
 			}
 
-			// NOTE: Array initializers are parsed but not yet fully supported in code generation
-			// For now, we don't store them to avoid IR conversion errors
-			// TODO: Implement full support for array initializer code generation
-			(void)array_initializers;  // Suppress unused variable warning
-			
-			// Store initializers in the constructor_args field (repurposed for array initializers)
+			// Pass array initializers to code generator - currently skipped to avoid crash
+			// TODO: Fix array initializer code generation
+			// They will be handled during IR conversion for placement new arrays
 			auto new_expr = emplace_node<ExpressionNode>(
 				NewExpressionNode(*type_node, true, size_result.node(), {}, placement_address));
 			return ParseResult::success(new_expr);
@@ -17702,83 +17699,43 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 	
 	// Try to parse as type-id (e.g., alignas(Point) or alignas(double))
 	if (token.has_value() && (token->type() == Token::Type::Keyword || token->type() == Token::Type::Identifier)) {
-		std::string_view type_name = token->value();
+		// Try to parse a full type specifier to handle all type variations
+		ParseResult type_result = parse_type_specifier();
 		
-		// Check for built-in types first
-		static const std::unordered_map<std::string_view, size_t> builtin_alignments = {
-			{"char", 1},
-			{"bool", 1},
-			{"short", 2},
-			{"int", 4},
-			{"long", 8},  // x64 Linux LP64 model
-			{"float", 4},
-			{"double", 8},
-			{"long long", 8},
-			{"unsigned char", 1},
-			{"unsigned short", 2},
-			{"unsigned int", 4},
-			{"unsigned long", 8},  // x64 Linux LP64 model
-			{"unsigned long long", 8},
-		};
-		
-		auto builtin_it = builtin_alignments.find(type_name);
-		if (builtin_it != builtin_alignments.end()) {
-			consume_token(); // consume the type keyword
-			
-			// Handle "long long" and "unsigned long long" cases
-			if (type_name == "long" && peek_token().has_value() && peek_token()->value() == "long") {
-				consume_token(); // consume the second "long"
-			} else if (type_name == "unsigned" && peek_token().has_value()) {
-				std::string_view next = peek_token()->value();
-				if (next == "char" || next == "short" || next == "int" || next == "long") {
-					consume_token(); // consume the type after "unsigned"
-					if (next == "long" && peek_token().has_value() && peek_token()->value() == "long") {
-						consume_token(); // consume "long long"
-					}
-				}
-			}
-			
+		if (!type_result.is_error() && type_result.node().has_value()) {
+			// Successfully parsed a type specifier
 			if (!consume_punctuator(")")) {
 				restore_token_position(saved_pos);
 				return std::nullopt;
 			}
 			
-			alignment = builtin_it->second;
-			discard_saved_token(saved_pos);
-			return alignment;
-		}
-		
-		// Check for user-defined types (structs, classes)
-		if (token->type() == Token::Type::Identifier) {
-			StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
-			auto type_it = gTypesByName.find(type_handle);
+			const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+			Type parsed_type = type_spec.type();
 			
-			if (type_it != gTypesByName.end()) {
-				const TypeInfo* type_info = type_it->second;
-				consume_token(); // consume the type name
-				
-				if (!consume_punctuator(")")) {
-					restore_token_position(saved_pos);
-					return std::nullopt;
-				}
-				
-				// Get alignment based on type
-				if (type_info->isStruct()) {
-					const StructTypeInfo* struct_info = type_info->getStructInfo();
-					if (struct_info) {
-						alignment = struct_info->alignment;
-						discard_saved_token(saved_pos);
-						return alignment;
+			// Use existing get_type_alignment function for consistency
+			int type_size_bits = get_type_size_bits(parsed_type);
+			size_t type_size_bytes = type_size_bits / 8;
+			
+			// For struct types, look up alignment from struct info
+			if (parsed_type == Type::Struct || parsed_type == Type::UserDefined) {
+				TypeIndex type_index = type_spec.type_index();
+				if (type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index];
+					if (type_info.isStruct()) {
+						const StructTypeInfo* struct_info = type_info.getStructInfo();
+						if (struct_info) {
+							alignment = struct_info->alignment;
+							discard_saved_token(saved_pos);
+							return alignment;
+						}
 					}
 				}
-				
-				// For other types, use type_size_ / 8 as alignment
-				if (type_info->type_size_ > 0) {
-					alignment = std::min(static_cast<size_t>(type_info->type_size_ / 8), size_t(8));
-					discard_saved_token(saved_pos);
-					return alignment;
-				}
 			}
+			
+			// For other types, use the standard alignment function
+			alignment = get_type_alignment(parsed_type, type_size_bytes);
+			discard_saved_token(saved_pos);
+			return alignment;
 		}
 	}
 

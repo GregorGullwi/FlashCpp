@@ -17969,8 +17969,7 @@ private:
 			// Evaluate the size expression
 			auto size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());
 
-			// Check if this is placement array new: new (placement_args...) Type[size]
-			// Placement new can have multiple arguments but only first is currently used
+			// Check if this is placement array new
 			if (newExpr.placement_address().has_value()) {
 				// Placement array new: new (address) Type[size]
 				auto address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
@@ -17994,11 +17993,96 @@ private:
 
 				ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
 				
-				// NOTE: Array initializers (e.g., {{a, b}, {c, d}}) are parsed but not yet
-				// supported in code generation. They are NOT constructor arguments.
-				// This will result in uninitialized array elements at runtime.
-				if (newExpr.constructor_args().size() > 0) {
-					FLASH_LOG(Codegen, Warning, "Array new with initializers not yet supported in code generation");
+				// Handle array initializers for placement new arrays
+				// Initialize each array element with the provided initializers
+				const auto& array_inits = newExpr.constructor_args();
+				if (array_inits.size() > 0) {
+					// For struct types, call constructor for each element
+					if (type == Type::Struct) {
+						TypeIndex type_index = type_spec.type_index();
+						if (type_index < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index];
+							if (type_info.struct_info_) {
+								const StructTypeInfo* struct_info = type_info.struct_info_.get();
+								size_t element_size = struct_info->total_size;
+								
+								// Generate initialization for each element
+								for (size_t i = 0; i < array_inits.size(); ++i) {
+									const ASTNode& init = array_inits[i];
+									
+									// Skip if the initializer is not supported
+									if (!init.is<InitializerListNode>() && !init.is<ExpressionNode>()) {
+										FLASH_LOG(Codegen, Warning, "Unsupported array initializer type, skipping element ", i);
+										continue;
+									}
+									
+									// Calculate offset for this element: base_pointer + i * element_size
+									TempVar element_ptr = var_counter.next();
+									
+									// Generate: element_ptr = result_var + (i * element_size)
+									BinaryOp offset_op{
+										.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = result_var},
+										.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = static_cast<unsigned long long>(i * element_size)},
+										.result = element_ptr,
+									};
+									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
+									
+									// Check if initializer is a brace initializer list
+									if (init.is<InitializerListNode>()) {
+										const InitializerListNode& init_list = init.as<InitializerListNode>();
+										
+										// If struct has a constructor, call it with initializer list elements
+										if (struct_info->hasAnyConstructor()) {
+											ConstructorCallOp ctor_op;
+											ctor_op.struct_name = type_info.name();
+											ctor_op.object = element_ptr;
+											ctor_op.is_heap_allocated = true;
+											
+											// Add each initializer as a constructor argument
+											for (const auto& elem_init : init_list.initializers()) {
+												if (elem_init.is<ExpressionNode>()) {
+													auto arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
+													if (arg_operands.size() >= 3) {
+														TypedValue tv = toTypedValue(arg_operands);
+														ctor_op.arguments.push_back(std::move(tv));
+													}
+												}
+											}
+											
+											ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+										}
+									}
+								}
+							}
+						}
+					} else {
+						// For primitive types, initialize each element
+						size_t element_size = size_in_bits / 8;
+						
+						for (size_t i = 0; i < array_inits.size(); ++i) {
+							const ASTNode& init = array_inits[i];
+							
+							if (init.is<ExpressionNode>()) {
+								// Calculate offset for this element
+								TempVar element_ptr = var_counter.next();
+								
+								// Generate: element_ptr = result_var + (i * element_size)
+								BinaryOp offset_op{
+									.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = result_var},
+									.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = static_cast<unsigned long long>(i * element_size)},
+									.result = element_ptr,
+								};
+								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
+								
+								// Evaluate the initializer expression
+								auto init_operands = visitExpressionNode(init.as<ExpressionNode>());
+								if (init_operands.size() >= 3) {
+									TypedValue init_value = toTypedValue(init_operands);
+									emitDereferenceStore(init_value, type, size_in_bits, element_ptr, Token());
+								}
+							}
+						}
+					}
 				}
 			} else {
 				// Regular heap-allocated array: new Type[size]
@@ -18021,9 +18105,79 @@ private:
 
 				ir_.addInstruction(IrInstruction(IrOpcode::HeapAllocArray, std::move(op), Token()));
 				
-				// NOTE: Array initializers are not yet supported (same as placement array new above)
-				if (newExpr.constructor_args().size() > 0) {
-					FLASH_LOG(Codegen, Warning, "Array new with initializers not yet supported in code generation");
+				// Handle array initializers for heap-allocated arrays
+				const auto& array_inits = newExpr.constructor_args();
+				if (array_inits.size() > 0) {
+					// For struct types, call constructor for each element
+					if (type == Type::Struct) {
+						TypeIndex type_index = type_spec.type_index();
+						if (type_index < gTypeInfo.size()) {
+							const TypeInfo& type_info = gTypeInfo[type_index];
+							if (type_info.struct_info_) {
+								const StructTypeInfo* struct_info = type_info.struct_info_.get();
+								size_t element_size = struct_info->total_size;
+								
+								for (size_t i = 0; i < array_inits.size(); ++i) {
+									const ASTNode& init = array_inits[i];
+									
+									// Skip if the initializer is not supported
+									if (!init.is<InitializerListNode>() && !init.is<ExpressionNode>()) {
+										FLASH_LOG(Codegen, Warning, "Unsupported array initializer type in heap array, skipping element ", i);
+										continue;
+									}
+									
+									TempVar element_ptr = var_counter.next();
+									BinaryOp offset_op{
+										.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = result_var},
+										.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = static_cast<unsigned long long>(i * element_size)},
+										.result = element_ptr,
+									};
+									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
+									
+									if (init.is<InitializerListNode>() && struct_info->hasAnyConstructor()) {
+										const InitializerListNode& init_list = init.as<InitializerListNode>();
+										ConstructorCallOp ctor_op;
+										ctor_op.struct_name = type_info.name();
+										ctor_op.object = element_ptr;
+										ctor_op.is_heap_allocated = true;
+										
+										for (const auto& elem_init : init_list.initializers()) {
+											if (elem_init.is<ExpressionNode>()) {
+												auto arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
+												if (arg_operands.size() >= 3) {
+													TypedValue tv = toTypedValue(arg_operands);
+													ctor_op.arguments.push_back(std::move(tv));
+												}
+											}
+										}
+										
+										ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+									}
+								}
+							}
+						}
+					} else {
+						// For primitive types, initialize each element
+						size_t element_size = size_in_bits / 8;
+						for (size_t i = 0; i < array_inits.size(); ++i) {
+							const ASTNode& init = array_inits[i];
+							if (init.is<ExpressionNode>()) {
+								TempVar element_ptr = var_counter.next();
+								BinaryOp offset_op{
+									.lhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = result_var},
+									.rhs = TypedValue{.type = Type::UnsignedLongLong, .size_in_bits = 64, .value = static_cast<unsigned long long>(i * element_size)},
+									.result = element_ptr,
+								};
+								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
+								
+								auto init_operands = visitExpressionNode(init.as<ExpressionNode>());
+								if (init_operands.size() >= 3) {
+									TypedValue init_value = toTypedValue(init_operands);
+									emitDereferenceStore(init_value, type, size_in_bits, element_ptr, Token());
+								}
+							}
+						}
+					}
 				}
 			}
 		} else {
