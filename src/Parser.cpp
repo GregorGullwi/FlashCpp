@@ -32130,10 +32130,8 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 							continue;
 						}
 					}
-					
-					if (tok == "<") angle_depth_inner++;
-					else if (tok == ">") angle_depth_inner--;
-					else if (tok == ">>") angle_depth_inner -= 2;
+
+					update_angle_depth(tok, angle_depth_inner);
 					
 					if (angle_depth_inner == 0) {
 						if (tok == "=" && !found_operator_keyword) {
