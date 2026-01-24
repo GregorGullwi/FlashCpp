@@ -2514,6 +2514,12 @@ inline std::optional<long long> evaluateConstraintExpression(
 							// type_size_ is in bits, convert to bytes
 							return static_cast<long long>((gTypeInfo[arg.type_index].type_size_ + 7) / 8);
 						}
+						// Fallback for primitive types without type_index (e.g., int, char, etc.)
+						// This handles cases where type_index is 0 but base_type is valid
+						long long size = static_cast<long long>(get_type_size_bits(arg.base_type) / 8);
+						if (size > 0) {
+							return size;
+						}
 					}
 				}
 				
