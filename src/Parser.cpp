@@ -13036,14 +13036,8 @@ ParseResult Parser::parse_function_trailing_specifiers(
 					continue;
 				}
 				
-				// Track nested brackets
-				if (tok_val == "(") paren_depth++;
-				else if (tok_val == ")") paren_depth--;
-				else if (tok_val == "{") brace_depth++;
-				else if (tok_val == "}") brace_depth--;
-				else update_angle_depth(tok_val, angle_depth);
-				
-				// At top level, check for end of constraint
+				// At top level, check for end of constraint BEFORE updating depth tracking
+				// This ensures we break on the function body '{' instead of consuming it
 				if (paren_depth == 0 && angle_depth == 0 && brace_depth == 0) {
 					// Body start or end of declaration
 					if (tok_val == "{" || tok_val == ";") {
@@ -13054,6 +13048,13 @@ ParseResult Parser::parse_function_trailing_specifiers(
 						break;
 					}
 				}
+				
+				// Track nested brackets (after checking for end of constraint)
+				if (tok_val == "(") paren_depth++;
+				else if (tok_val == ")") paren_depth--;
+				else if (tok_val == "{") brace_depth++;
+				else if (tok_val == "}") brace_depth--;
+				else update_angle_depth(tok_val, angle_depth);
 				
 				consume_token();
 			}
