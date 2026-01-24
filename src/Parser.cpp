@@ -16036,16 +16036,9 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				}
 			}
 
-			// Array initializers are parsed successfully but currently disabled in codegen
-			// due to a bad_any_cast crash when combined with placement new
-			// TODO: Debug and fix the crash - likely related to how ASTNodes are stored/moved
-			// NOTE: Heap array new with initializers works (new Type[n]{...})
-			// NOTE: Placement array new without initializers works (new (addr) Type[n])
-			// BUG: Placement array new WITH initializers crashes (new (addr) Type[n]{...})
-			(void)array_initializers;  // Suppress unused warning
-			
+			// Pass array initializers to code generator
 			auto new_expr = emplace_node<ExpressionNode>(
-				NewExpressionNode(*type_node, true, size_result.node(), {}, placement_address));
+				NewExpressionNode(*type_node, true, size_result.node(), std::move(array_initializers), placement_address));
 			return ParseResult::success(new_expr);
 		}
 		// Check for constructor call: new Type(args)

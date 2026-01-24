@@ -17907,69 +17907,8 @@ private:
 			}
 		};
 
-		// Check if this is placement new
-		if (newExpr.placement_address().has_value()) {
-			// Placement new: new (address) Type or new (address) Type(args)
-			// Evaluate the placement address expression
-			auto address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
-
-			// Create PlacementNewOp
-			PlacementNewOp op;
-			op.result = result_var;
-			op.type = type;
-			op.size_in_bytes = size_in_bits / 8;
-			op.pointer_depth = pointer_depth;
-			// Convert IrOperand to IrValue
-			if (std::holds_alternative<unsigned long long>(address_operands[2])) {
-				op.address = std::get<unsigned long long>(address_operands[2]);
-			} else if (std::holds_alternative<TempVar>(address_operands[2])) {
-				op.address = std::get<TempVar>(address_operands[2]);
-			} else if (std::holds_alternative<StringHandle>(address_operands[2])) {
-				op.address = std::get<StringHandle>(address_operands[2]);
-			} else if (std::holds_alternative<double>(address_operands[2])) {
-				op.address = std::get<double>(address_operands[2]);
-			}
-
-			ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
-
-			// If this is a struct type with a constructor, generate constructor call
-			if (type == Type::Struct) {
-				TypeIndex type_index = type_spec.type_index();
-				if (type_index < gTypeInfo.size()) {
-					const TypeInfo& type_info = gTypeInfo[type_index];
-					if (type_info.struct_info_) {
-						// Check if this is an abstract class
-						if (type_info.struct_info_->is_abstract) {
-							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name() << "'\n";
-							assert(false && "Cannot instantiate abstract class");
-						}
-
-						if (type_info.struct_info_->hasAnyConstructor()) {
-							// Generate constructor call on the placement address
-							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = type_info.name();
-							ctor_op.object = result_var;
-							ctor_op.is_heap_allocated = true;  // Object is at pointer location (placement new provides address)
-							
-							// Add constructor arguments
-							const auto& ctor_args = newExpr.constructor_args();
-							for (size_t i = 0; i < ctor_args.size(); ++i) {
-								auto arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
-								// arg_operands = [type, size, value]
-								if (arg_operands.size() >= 3) {
-									TypedValue tv = toTypedValue(arg_operands);
-									ctor_op.arguments.push_back(std::move(tv));
-								}
-							}
-							
-							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
-						}
-					}
-				}
-			}
-
-			emit_scalar_new_initializer(result_var);
-		} else if (newExpr.is_array()) {
+		// Check if this is an array allocation (with or without placement)
+		if (newExpr.is_array()) {
 			// Array allocation: new Type[size] or placement array: new (addr) Type[size]
 			// Evaluate the size expression
 			if (!newExpr.size_expr().has_value()) {
@@ -18213,6 +18152,67 @@ private:
 					}
 				}
 			}
+		} else if (newExpr.placement_address().has_value()) {
+			// Single object placement new: new (address) Type or new (address) Type(args)
+			// Evaluate the placement address expression
+			auto address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
+
+			// Create PlacementNewOp
+			PlacementNewOp op;
+			op.result = result_var;
+			op.type = type;
+			op.size_in_bytes = size_in_bits / 8;
+			op.pointer_depth = pointer_depth;
+			// Convert IrOperand to IrValue
+			if (std::holds_alternative<unsigned long long>(address_operands[2])) {
+				op.address = std::get<unsigned long long>(address_operands[2]);
+			} else if (std::holds_alternative<TempVar>(address_operands[2])) {
+				op.address = std::get<TempVar>(address_operands[2]);
+			} else if (std::holds_alternative<StringHandle>(address_operands[2])) {
+				op.address = std::get<StringHandle>(address_operands[2]);
+			} else if (std::holds_alternative<double>(address_operands[2])) {
+				op.address = std::get<double>(address_operands[2]);
+			}
+
+			ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
+
+			// If this is a struct type with a constructor, generate constructor call
+			if (type == Type::Struct) {
+				TypeIndex type_index = type_spec.type_index();
+				if (type_index < gTypeInfo.size()) {
+					const TypeInfo& type_info = gTypeInfo[type_index];
+					if (type_info.struct_info_) {
+						// Check if this is an abstract class
+						if (type_info.struct_info_->is_abstract) {
+							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name() << "'\n";
+							assert(false && "Cannot instantiate abstract class");
+						}
+
+						if (type_info.struct_info_->hasAnyConstructor()) {
+							// Generate constructor call on the placement address
+							ConstructorCallOp ctor_op;
+							ctor_op.struct_name = type_info.name();
+							ctor_op.object = result_var;
+							ctor_op.is_heap_allocated = true;  // Object is at pointer location (placement new provides address)
+							
+							// Add constructor arguments
+							const auto& ctor_args = newExpr.constructor_args();
+							for (size_t i = 0; i < ctor_args.size(); ++i) {
+								auto arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
+								// arg_operands = [type, size, value]
+								if (arg_operands.size() >= 3) {
+									TypedValue tv = toTypedValue(arg_operands);
+									ctor_op.arguments.push_back(std::move(tv));
+								}
+							}
+							
+							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
+						}
+					}
+				}
+			}
+
+			emit_scalar_new_initializer(result_var);
 		} else {
 			// Single object allocation: new Type or new Type(args)
 			HeapAllocOp op;
