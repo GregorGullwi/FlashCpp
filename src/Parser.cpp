@@ -1732,6 +1732,17 @@ ParseResult Parser::parse_type_and_name() {
                 return ParseResult::error("Unsupported operator overload: operator" + std::string(operator_symbol), operator_symbol_token);
             }
         }
+        // Check for subscript operator: operator[]
+        // Note: '[' is a Punctuator, not an Operator, so it needs separate handling
+        else if (peek_token().has_value() && peek_token()->value() == "[") {
+            consume_token(); // consume '['
+            if (!peek_token().has_value() || peek_token()->value() != "]") {
+                return ParseResult::error("Expected ']' after 'operator['", operator_keyword_token);
+            }
+            consume_token(); // consume ']'
+            static const std::string operator_subscript_name = "operator[]";
+            operator_name = operator_subscript_name;
+        }
         // Check for operator new, delete, new[], delete[]
         else if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
                  (peek_token()->value() == "new" || peek_token()->value() == "delete")) {
