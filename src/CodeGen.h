@@ -17940,6 +17940,10 @@ private:
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = pointer_depth;
 				// Convert IrOperand to IrValue
+				if (address_operands.size() < 3) {
+					FLASH_LOG(Codegen, Error, "Placement address operands insufficient (expected 3, got ", address_operands.size(), ")");
+					return {};
+				}
 				if (std::holds_alternative<unsigned long long>(address_operands[2])) {
 					op.address = std::get<unsigned long long>(address_operands[2]);
 				} else if (std::holds_alternative<TempVar>(address_operands[2])) {
@@ -18061,6 +18065,10 @@ private:
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = pointer_depth;
 				// Convert IrOperand to IrValue for count
+				if (size_operands.size() < 3) {
+					FLASH_LOG(Codegen, Error, "Array size operands insufficient (expected 3, got ", size_operands.size(), ")");
+					return {};
+				}
 				if (std::holds_alternative<unsigned long long>(size_operands[2])) {
 					op.count = std::get<unsigned long long>(size_operands[2]);
 				} else if (std::holds_alternative<TempVar>(size_operands[2])) {
@@ -18164,6 +18172,10 @@ private:
 			op.size_in_bytes = size_in_bits / 8;
 			op.pointer_depth = pointer_depth;
 			// Convert IrOperand to IrValue
+			if (address_operands.size() < 3) {
+				FLASH_LOG(Codegen, Error, "Placement address operands insufficient for single object (expected 3, got ", address_operands.size(), ")");
+				return {};
+			}
 			if (std::holds_alternative<unsigned long long>(address_operands[2])) {
 				op.address = std::get<unsigned long long>(address_operands[2]);
 			} else if (std::holds_alternative<TempVar>(address_operands[2])) {
