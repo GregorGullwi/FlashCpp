@@ -19673,10 +19673,32 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					var_template_opt = gTemplateRegistry.lookupVariableTemplate(qual_id.name());
 				}
 				
+				// If still not found, check if the base is a struct/class name (not a namespace)
+				// For patterns like StructName::member_template<Args>, we need to build the qualified name manually
+				std::string_view struct_qualified_name;
+				if (!var_template_opt.has_value() && !namespaces.empty()) {
+					// Build struct-qualified name: "StructName::member"
+					struct_qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
+					
+					FLASH_LOG_FORMAT(Templates, Debug, "Trying struct-qualified variable template lookup: '{}'", struct_qualified_name);
+					var_template_opt = gTemplateRegistry.lookupVariableTemplate(struct_qualified_name);
+					if (var_template_opt.has_value()) {
+						FLASH_LOG(Templates, Debug, "Found variable template with struct-qualified name!");
+					} else {
+						FLASH_LOG(Templates, Debug, "Variable template NOT found with struct-qualified name");
+					}
+				}
+				
 				if (var_template_opt.has_value()) {
-					FLASH_LOG(Templates, Debug, "Found variable template, instantiating: ", qualified_name);
-					// Try instantiation with qualified name first, fall back to simple name
-					auto instantiated_var = try_instantiate_variable_template(qualified_name, *template_args);
+					// Determine which name to use for instantiation
+					std::string_view template_name_for_instantiation = qualified_name;
+					if (!struct_qualified_name.empty()) {
+						template_name_for_instantiation = struct_qualified_name;
+					}
+					
+					FLASH_LOG(Templates, Debug, "Found variable template, instantiating: ", template_name_for_instantiation);
+					// Try instantiation with determined name first, fall back to simple name
+					auto instantiated_var = try_instantiate_variable_template(template_name_for_instantiation, *template_args);
 					if (!instantiated_var.has_value()) {
 						instantiated_var = try_instantiate_variable_template(qual_id.name(), *template_args);
 					}
@@ -32092,8 +32114,8 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 		.commit();
 	
 	// Register in template registry
-	gTemplateRegistry.registerTemplate(var_name, template_var_node);
-	gTemplateRegistry.registerTemplate(qualified_name, template_var_node);
+	gTemplateRegistry.registerVariableTemplate(var_name, template_var_node);
+	gTemplateRegistry.registerVariableTemplate(qualified_name, template_var_node);
 	
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member variable template: {}", qualified_name);
 	
