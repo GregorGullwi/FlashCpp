@@ -215,6 +215,78 @@ Existing tests that work:
 | Placement new expressions | Parse fails | Test only decls | Medium |
 | Nested type in requires | Parse fails | Documented plan | High |
 | Some fold expr patterns | Runtime crash | Use existing tests | Low |
+| Member func trailing requires | Parse fails | Use leading requires | Medium |
+| Void constexpr operator= | Hangs/timeout | Use standard order | Medium |
+
+## New Limitations from PR #556 Tests (2026-01-24)
+
+### 5. Member Function Trailing Requires Clause ❌ Parse Issue
+
+**Status:** Parser error  
+**Test:** `test_member_func_trailing_requires_ret42.cpp` (clang works, FlashCpp fails)
+
+#### What Works
+
+```cpp
+// Requires clause before const works fine
+template<typename T>
+class Container {
+    T value;
+    int process() requires HasSize<T> const { return sizeof(T); }
+};
+```
+
+#### What Fails
+
+```cpp
+// Requires clause after const fails
+template<typename T>
+class Container {
+    T value;
+    int getSize() const requires HasSize<T> {  // ❌ Parser error
+        return sizeof(T);
+    }
+};
+```
+
+**Error:**
+```
+error: Expected type specifier
+  };
+    ^
+```
+
+**Root Cause:** The parser expects requires clauses before const/noexcept, not after. C++20 allows requires clauses in the trailing position (after const/noexcept).
+
+**Workaround:** Place requires clause before const:
+```cpp
+int getSize() requires HasSize<T> const { return sizeof(T); }
+```
+
+### 6. void constexpr operator= Pattern ⚠️ Hangs
+
+**Status:** Parser hangs/timeouts  
+**Test:** `test_void_constexpr_operator_assign_ret42.cpp` (clang works, FlashCpp hangs)
+
+#### Pattern
+
+```cpp
+struct Value {
+    int data;
+    void constexpr operator=(const Value& other) {  // ⚠️ FlashCpp hangs
+        data = other.data;
+    }
+};
+```
+
+**Issue:** Parser hangs when parsing `void constexpr operator=()` with specifier after return type.
+
+**Standard Pattern:** `constexpr void operator=()`
+
+**Workaround:** Use standard specifier order:
+```cpp
+constexpr void operator=(const Value& other) { ... }
+```
 
 ## Testing Strategy
 
