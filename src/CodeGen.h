@@ -17969,7 +17969,8 @@ private:
 			// Evaluate the size expression
 			auto size_operands = visitExpressionNode(newExpr.size_expr()->as<ExpressionNode>());
 
-			// Check if this is placement array new
+			// Check if this is placement array new: new (placement_args...) Type[size]
+			// Placement new can have multiple arguments but only first is currently used
 			if (newExpr.placement_address().has_value()) {
 				// Placement array new: new (address) Type[size]
 				auto address_operands = visitExpressionNode(newExpr.placement_address()->as<ExpressionNode>());
@@ -17993,9 +17994,9 @@ private:
 
 				ir_.addInstruction(IrInstruction(IrOpcode::PlacementNew, std::move(op), Token()));
 				
-				// NOTE: Array initializers in constructor_args are not yet supported
-				// They are parsed but code generation for them is not implemented
-				// This will result in uninitialized array elements at runtime
+				// NOTE: Array initializers (e.g., {{a, b}, {c, d}}) are parsed but not yet
+				// supported in code generation. They are NOT constructor arguments.
+				// This will result in uninitialized array elements at runtime.
 				if (newExpr.constructor_args().size() > 0) {
 					FLASH_LOG(Codegen, Warning, "Array new with initializers not yet supported in code generation");
 				}
@@ -18020,7 +18021,7 @@ private:
 
 				ir_.addInstruction(IrInstruction(IrOpcode::HeapAllocArray, std::move(op), Token()));
 				
-				// NOTE: Array initializers in constructor_args are not yet supported
+				// NOTE: Array initializers are not yet supported (same as placement array new above)
 				if (newExpr.constructor_args().size() > 0) {
 					FLASH_LOG(Codegen, Warning, "Array new with initializers not yet supported in code generation");
 				}
