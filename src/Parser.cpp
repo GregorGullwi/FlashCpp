@@ -27479,7 +27479,8 @@ ParseResult Parser::parse_template_declaration() {
 				// Create a minimal struct node
 				auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
 					instantiated_name,
-					is_class
+					is_class,
+					is_union
 				);
 				
 				// Register the type so it can be referenced later
@@ -31602,7 +31603,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		
 		auto forward_struct_node = emplace_node<StructDeclarationNode>(
 			qualified_name,
-			is_class
+			is_class,
+			is_union
 		);
 		
 		// Create template struct node for the forward declaration
