@@ -69,10 +69,34 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Note (2026-01-24 Latest Update):** Fixed `operator[]` parsing in template class bodies, brace initialization of structs with constructors but no data members, and throw expressions as unary operators. The `<compare>` header now fully compiles. Fixed union template parsing - union keyword now recognized in all template declaration paths. The `<optional>` header now progresses past line 204 and fails at line 141 with a different constexpr evaluation error.
 
 **Primary Remaining Blockers:**
-1. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias), and template parameter substitution in static member initializers
+1. **Base class template parameter substitution** - Non-type template parameters from base classes (e.g., `integral_constant<bool, __v>`) need to be substituted into derived class static members. This affects `<type_traits>` where `is_integral<int>` inherits through multiple levels: `is_integral` → `__is_integral_helper` → `true_type` → `integral_constant<bool, true>`. The static member `value = __v` in `integral_constant` needs `__v` substituted with the concrete value `true`.
 2. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
 3. **Out-of-line nested template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported yet (affects `<any>`)
-4. **Placement new in decltype** - `decltype(::new((void*)0) _Tp(...))` is not parsed correctly (affects `<vector>` via `stl_construct.h:96`)
+4. **Vector header performance** - The `<vector>` header times out during template instantiation, likely due to template complexity. Note: The placement new syntax (`decltype(::new((void*)0) _Tp(...))`) itself parses correctly - the issue is elsewhere in vector's dependencies.
+
+**Fixes Applied (2026-01-25 This PR - Template Parameter Substitution in Static Members):**
+- **Added** ExpressionSubstitutor support for static member initializers during template instantiation
+  - Modified `try_instantiate_class_template` to use ExpressionSubstitutor for pattern AST static members (Parser.cpp:~37780)
+  - Modified `instantiateLazyStaticMember` to use ExpressionSubstitutor as fallback for template-dependent expressions (Parser.cpp:~42465)
+  - Added variable template instantiation support to ExpressionSubstitutor (ExpressionSubstitutor.cpp:~291)
+- **Fixed** Non-type template parameter substitution in `substituteIdentifier`:
+  - BoolLiteralNode created for bool non-type parameters (e.g., `integral_constant<bool, true>`)
+  - NumericLiteralNode created for numeric non-type parameters (e.g., `integral_constant<int, 42>`)
+  - This fixes bad_any_cast errors that were breaking `test_integral_constant_pattern_ret42.cpp`
+- **Added** Base class static member support in constexpr evaluation:
+  - Modified `try_evaluate_constant_expression` to use `findStaticMemberRecursive` instead of `findStaticMember` (Parser.cpp:~32732)
+  - Added lazy instantiation trigger for base class static members when accessed through derived classes
+- **Added** Lazy static member instantiation trigger during qualified identifier parsing (Parser.cpp:~18493):
+  - Triggers instantiation when parsing `Type::member` patterns
+  - Handles type alias resolution to find actual instantiated template types
+  - Resolves aliases like `true_type` to `integral_constant<bool, true>` before triggering instantiation
+- **Impact:** 
+  - Successfully handles simple template parameter substitutions like `sizeof(T)` and direct template parameter references
+  - Non-type template parameters now correctly substituted with literal values
+  - Test `test_integral_constant_pattern_ret42.cpp` now compiles and returns 42 correctly (was crashing with bad_any_cast)
+  - Test `test_integral_constant_comprehensive_ret100.cpp` returns 100 correctly
+- **Remaining Limitation:** Constexpr variable initialization (e.g., `constexpr bool t = Type::value;`) uses a code path that doesn't trigger lazy instantiation. This affects `test_integral_constant_simple_ret30.cpp` which returns 20 instead of 30. Full solution requires identifying all code paths where constexpr variables are initialized and ensuring lazy instantiation is triggered.
+- **Verified:** Placement new in decltype (`decltype(::new((void*)0) T())`) compiles successfully - not a blocker for `<vector>`
 
 **Fixes Applied (2026-01-24 This PR - Union Templates):**
 - **Fixed** Union template parsing - Added union keyword support to template declaration recognition paths:
