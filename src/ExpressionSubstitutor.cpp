@@ -512,8 +512,35 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 	if (it != param_map_.end()) {
 		const TemplateTypeArg& arg = it->second;
 		FLASH_LOG(Templates, Debug, "  Found template parameter substitution: ", id.name(), 
-			" -> type=", (int)arg.base_type, ", type_index=", arg.type_index);
+			" -> type=", (int)arg.base_type, ", type_index=", arg.type_index, ", is_value=", arg.is_value);
 		
+		// Handle non-type template parameters (values)
+		if (arg.is_value) {
+			FLASH_LOG(Templates, Debug, "  Non-type template parameter, creating literal with value: ", arg.value);
+			// Create a numeric literal from the value
+			std::string_view value_str = StringBuilder().append(static_cast<uint64_t>(arg.value)).commit();
+			Token num_token(Token::Type::Literal, value_str, 0, 0, 0);
+			
+			// Determine the type based on the template argument's base_type
+			Type literal_type = arg.base_type;
+			if (literal_type == Type::Template || literal_type == Type::UserDefined) {
+				// For template parameters, default to int
+				literal_type = Type::Int;
+			}
+			
+			NumericLiteralNode& literal = gChunkedAnyStorage.emplace_back<NumericLiteralNode>(
+				num_token, 
+				static_cast<unsigned long long>(arg.value), 
+				literal_type, 
+				TypeQualifier::None, 
+				64
+			);
+			
+			ExpressionNode& expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(literal);
+			return ASTNode(&expr);
+		}
+		
+		// Handle type template parameters
 		// Create a TypeSpecifierNode from the template argument
 		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
 			arg.base_type,
