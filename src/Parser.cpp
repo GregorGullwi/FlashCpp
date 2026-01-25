@@ -32729,10 +32729,25 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		const_cast<Parser*>(this)->instantiateLazyStaticMember(type_name_handle, member_name_handle);
 		
 		// Look for the static member with the given name (may have just been lazily instantiated)
-		const StructStaticMember* static_member = struct_info->findStaticMember(member_name_handle);
+		// Use findStaticMemberRecursive to also search base classes
+		auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 		if (!static_member) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
 			return std::nullopt;
+		}
+		
+		// If the static member was found in a base class, trigger lazy instantiation for that base class too
+		if (owner_struct != struct_info) {
+			FLASH_LOG(Templates, Debug, "Static member '", member_name, "' found in base class '", 
+			          StringTable::getStringView(owner_struct->name), "', triggering lazy instantiation");
+			const_cast<Parser*>(this)->instantiateLazyStaticMember(owner_struct->name, member_name_handle);
+			// Re-fetch the static member after lazy instantiation
+			auto [updated_static_member, updated_owner] = owner_struct->findStaticMemberRecursive(member_name_handle);
+			static_member = updated_static_member;
+			if (!static_member) {
+				FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found after lazy instantiation", member_name);
+				return std::nullopt;
+			}
 		}
 		
 		// Check if it has an initializer
