@@ -289,6 +289,22 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				}
 			}
 			
+			// Try variable template instantiation before class template
+			auto var_template_node = parser_.try_instantiate_variable_template(func_name, substituted_template_args);
+			if (var_template_node.has_value()) {
+				FLASH_LOG(Templates, Debug, "  Successfully instantiated variable template: ", func_name);
+				// Variable template instantiation returns the variable declaration node
+				// We want to return the initializer expression
+				if (var_template_node->is<VariableDeclarationNode>()) {
+					const VariableDeclarationNode& var_decl = var_template_node->as<VariableDeclarationNode>();
+					if (var_decl.initializer().has_value()) {
+						return var_decl.initializer().value();
+					}
+				}
+				// If not a variable declaration or no initializer, return as-is
+				return *var_template_node;
+			}
+			
 			auto instantiated_node = parser_.try_instantiate_class_template(func_name, substituted_template_args, true);
 			if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
 				const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();

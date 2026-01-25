@@ -37776,36 +37776,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				size_t substituted_size = get_type_size_bits(substituted_type) / 8;
 				
-				// Handle sizeof(T) in initializers using proper template parameter matching
+				// Substitute template parameters in the static member initializer
+				// Use ExpressionSubstitutor to handle all types of template-dependent expressions
 				std::optional<ASTNode> substituted_initializer = static_member.initializer;
-				if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
-					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
-					
-					// Handle SizeofExprNode (sizeof(T))
-					if (std::holds_alternative<SizeofExprNode>(expr)) {
-						const SizeofExprNode& sizeof_expr = std::get<SizeofExprNode>(expr);
-						
-						// Check if sizeof operand is a type (sizeof(T)) vs expression
-						if (sizeof_expr.is_type() && sizeof_expr.type_or_expr().is<TypeSpecifierNode>()) {
-							const TypeSpecifierNode& sizeof_type_spec = sizeof_expr.type_or_expr().as<TypeSpecifierNode>();
-							
-							// Use substitute_template_parameter for proper parameter matching
-							auto [concrete_type, concrete_type_index] = substitute_template_parameter(
-								sizeof_type_spec, template_params, template_args);
-							
-							// Only substitute if the type was actually a template parameter
-							if (concrete_type != sizeof_type_spec.type() || concrete_type_index != sizeof_type_spec.type_index()) {
-								size_t concrete_size = get_type_size_bits(concrete_type) / 8;
-								
-								// Create a numeric literal with the sizeof value
-								std::string_view size_str = StringBuilder().append(static_cast<uint64_t>(concrete_size)).commit();
-								Token num_token(Token::Type::Literal, size_str, 0, 0, 0);
-								substituted_initializer = emplace_node<ExpressionNode>(
-									NumericLiteralNode(num_token, static_cast<unsigned long long>(concrete_size), Type::Int, TypeQualifier::None, 32)
-								);
-								FLASH_LOG(Templates, Debug, "Substituted sizeof(T) with ", concrete_size);
-							}
+				if (static_member.initializer.has_value()) {
+					// Build parameter substitution map
+					std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+					for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+						if (template_params[i].is<TemplateParameterNode>()) {
+							const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+							param_map[param.name()] = template_args[i];
 						}
+					}
+					
+					// Use ExpressionSubstitutor to substitute template parameters in the initializer
+					if (!param_map.empty()) {
+						ExpressionSubstitutor substitutor(param_map, *this);
+						substituted_initializer = substitutor.substitute(static_member.initializer.value());
+						FLASH_LOG(Templates, Debug, "Substituted template parameters in static member initializer");
 					}
 				}
 				
@@ -42472,6 +42460,32 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			if (auto subst = substitute_nontype_template_param(
 			        id_node.name(), template_args, template_params)) {
 				substituted_initializer = subst;
+			}
+		}
+		
+		// General fallback: Use ExpressionSubstitutor for any remaining template-dependent expressions
+		// This handles expressions like __v<T> (variable template invocations with template parameters)
+		// Check if we still have the original initializer (i.e., no specific handler above modified it)
+		bool was_substituted = false;
+		if (std::holds_alternative<FoldExpressionNode>(expr)) was_substituted = true;
+		if (std::holds_alternative<SizeofPackNode>(expr)) was_substituted = true;
+		if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) was_substituted = true;
+		// IdentifierNode only gets substituted if it matches a template parameter
+		
+		if (!was_substituted) {
+			// Use ExpressionSubstitutor for general template parameter substitution
+			std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				if (template_params[i].is<TemplateParameterNode>()) {
+					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+					param_map[param.name()] = template_args[i];
+				}
+			}
+			
+			if (!param_map.empty()) {
+				ExpressionSubstitutor substitutor(param_map, *this);
+				substituted_initializer = substitutor.substitute(lazy_info.initializer.value());
+				FLASH_LOG(Templates, Debug, "Applied general template parameter substitution to lazy static member initializer");
 			}
 		}
 	}
