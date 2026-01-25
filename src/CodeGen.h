@@ -383,6 +383,7 @@ public:
 		auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value) -> bool {
 			ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 			ctx.storage_duration = ConstExpr::StorageDuration::Static;
+			ctx.parser = parser_;  // Enable lazy instantiation for template static members
 			
 			auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 			if (!eval_result.success()) {
