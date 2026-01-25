@@ -69,10 +69,18 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Note (2026-01-24 Latest Update):** Fixed `operator[]` parsing in template class bodies, brace initialization of structs with constructors but no data members, and throw expressions as unary operators. The `<compare>` header now fully compiles. Fixed union template parsing - union keyword now recognized in all template declaration paths. The `<optional>` header now progresses past line 204 and fails at line 141 with a different constexpr evaluation error.
 
 **Primary Remaining Blockers:**
-1. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias), and template parameter substitution in static member initializers
+1. **Base class template parameter substitution** - Non-type template parameters from base classes (e.g., `integral_constant<bool, __v>`) need to be substituted into derived class static members. This affects `<type_traits>` where `is_integral<int>` inherits through multiple levels: `is_integral` → `__is_integral_helper` → `true_type` → `integral_constant<bool, true>`. The static member `value = __v` in `integral_constant` needs `__v` substituted with the concrete value `true`.
 2. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
 3. **Out-of-line nested template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported yet (affects `<any>`)
-4. **Placement new in decltype** - `decltype(::new((void*)0) _Tp(...))` is not parsed correctly (affects `<vector>` via `stl_construct.h:96`)
+4. **Vector header performance** - The `<vector>` header times out during template instantiation, likely due to template complexity. Note: The placement new syntax (`decltype(::new((void*)0) _Tp(...))`) itself parses correctly - the issue is elsewhere in vector's dependencies.
+
+**Fixes Applied (2026-01-25 This PR - Template Parameter Substitution in Static Members):**
+- **Added** ExpressionSubstitutor support for static member initializers during template instantiation
+  - Modified `try_instantiate_class_template` to use ExpressionSubstitutor for pattern AST static members (line ~37780)
+  - Modified `instantiateLazyStaticMember` to use ExpressionSubstitutor as fallback for template-dependent expressions (line ~42465)
+  - Added variable template instantiation support to ExpressionSubstitutor (line ~291)
+- **Impact:** Infrastructure in place for template parameter substitution in static member initializers. Handles simple cases like `sizeof(T)` and direct template parameter references. Base class template parameter propagation still needed for `<type_traits>`.
+- **Verified:** Placement new in decltype (`decltype(::new((void*)0) T())`) compiles successfully - not a blocker for `<vector>`
 
 **Fixes Applied (2026-01-24 This PR - Union Templates):**
 - **Fixed** Union template parsing - Added union keyword support to template declaration recognition paths:
