@@ -16,7 +16,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | static_assert constexpr evaluation (~155ms) |
 | `<vector>` | `test_std_vector.cpp` | ❌ Timeout/Parse Error | Hangs or takes very long - likely placement new in decltype issue |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Needs investigation with <compare> fix |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Fails at line 204 - union member template parsing (~266ms) |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Fails at line 141 - constexpr evaluation issue after union fix (~263ms) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~161ms) |
 | `<any>` | `test_std_any.cpp` | ❌ Parse Error | Out-of-line nested template member function definition (~128ms) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
@@ -66,16 +66,23 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Note (2026-01-23 Later Update):** Fixed partial specialization forward declarations (`template<typename T> struct X<T*>;`) which were causing the parser to incorrectly enter struct body mode. Also fixed qualified concept lookup so namespaced concepts like `std::same_as<T>` work correctly. Fixed parenthesized concept expressions in constraints (e.g., `(concept<T>) && ...`). The `<optional>` header now progresses to semantic errors (function lookup).
 
-**Note (2026-01-24 Latest Update):** Fixed `operator[]` parsing in template class bodies, brace initialization of structs with constructors but no data members, and throw expressions as unary operators. The `<compare>` header now fully compiles. The `<optional>` header now progresses past line 107 but fails at line 204 due to union member template parsing.
+**Note (2026-01-24 Latest Update):** Fixed `operator[]` parsing in template class bodies, brace initialization of structs with constructors but no data members, and throw expressions as unary operators. The `<compare>` header now fully compiles. Fixed union template parsing - union keyword now recognized in all template declaration paths. The `<optional>` header now progresses past line 204 and fails at line 141 with a different constexpr evaluation error.
 
 **Primary Remaining Blockers:**
-1. **Union member templates in `<optional>`** - The header fails at line 204 parsing a union with template members
-2. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias)
-3. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
-4. **Out-of-line nested template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported yet (affects `<any>`)
-5. **Placement new in decltype** - `decltype(::new((void*)0) _Tp(...))` is not parsed correctly (affects `<vector>` via `stl_construct.h:96`)
+1. **Constexpr evaluation issues** - Type alias static member lookup in constexpr (e.g., `type::value` where `type` is a template alias), and template parameter substitution in static member initializers
+2. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
+3. **Out-of-line nested template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported yet (affects `<any>`)
+4. **Placement new in decltype** - `decltype(::new((void*)0) _Tp(...))` is not parsed correctly (affects `<vector>` via `stl_construct.h:96`)
 
-**Fixes Applied (2026-01-24 This PR):**
+**Fixes Applied (2026-01-24 This PR - Union Templates):**
+- **Fixed** Union template parsing - Added union keyword support to template declaration recognition paths:
+  - `parse_template_declaration()` now recognizes `template<...> union Name` patterns
+  - Member union templates (`template<...> union` inside struct/class bodies) now parse correctly
+  - Partial specialization and full specialization paths support union templates
+  - Both top-level and nested union templates work
+- **Impact:** `<optional>` header progresses from line 204 (union template error) to line 141 (constexpr evaluation error). Union templates with default template arguments and member templates now compile successfully.
+
+**Fixes Applied (2026-01-24 Previous Updates):**
 - **Fixed** `operator[]` parsing in template class bodies - The `[` token is a Punctuator not an Operator, so it was falling through to the conversion operator fallback path. Patterns like `reference operator[](difference_type n) const` now parse correctly.
 - **Fixed** Brace initialization for structs with constructors but no data members - Patterns like `inline constexpr nullopt_t nullopt { nullopt_t::_Construct::_Token };` now use constructor initialization instead of aggregate initialization.
 - **Fixed** Throw expressions as unary operators - Added `ThrowExpressionNode` to handle `throw` in expression context. Patterns like `(throw bad_optional_access())` now parse correctly.

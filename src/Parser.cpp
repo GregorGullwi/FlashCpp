@@ -26702,10 +26702,10 @@ ParseResult Parser::parse_template_declaration() {
 	                         peek_token()->type() == Token::Type::Keyword &&
 	                         peek_token()->value() == "using";
 
-	// Check if it's a class/struct template
+	// Check if it's a class/struct/union template
 	bool is_class_template = peek_token().has_value() &&
 	                         peek_token()->type() == Token::Type::Keyword &&
-	                         (peek_token()->value() == "class" || peek_token()->value() == "struct");
+	                         (peek_token()->value() == "class" || peek_token()->value() == "struct" || peek_token()->value() == "union");
 
 	// Check if it's a variable template (constexpr, inline, etc. + type + identifier)
 	bool is_variable_template = false;
@@ -26799,12 +26799,12 @@ ParseResult Parser::parse_template_declaration() {
 			requires_token
 		);
 		
-		// After parsing requires clause, re-check if this is a class/struct template
+		// After parsing requires clause, re-check if this is a class/struct/union template
 		// The original check (before requires clause) would have seen 'requires' keyword
 		// and set is_class_template to false, but now we can see the actual keyword
 		if (!is_class_template && peek_token().has_value() &&
 		    peek_token()->type() == Token::Type::Keyword &&
-		    (peek_token()->value() == "class" || peek_token()->value() == "struct")) {
+		    (peek_token()->value() == "class" || peek_token()->value() == "struct" || peek_token()->value() == "union")) {
 			is_class_template = true;
 			FLASH_LOG(Parser, Debug, "Re-detected class template after requires clause");
 		}
@@ -27411,7 +27411,7 @@ ParseResult Parser::parse_template_declaration() {
 			auto peek_pos = save_token_position();
 			
 			// Try to consume struct/class keyword
-			if (consume_keyword("struct") || consume_keyword("class")) {
+			if (consume_keyword("struct") || consume_keyword("class") || consume_keyword("union")) {
 				// Skip C++11 attributes between struct/class and name (e.g., [[__deprecated__]])
 				skip_cpp_attributes();
 				
@@ -27441,8 +27441,11 @@ ParseResult Parser::parse_template_declaration() {
 			parsing_template_body_ = true;
 
 			bool is_class = consume_keyword("class");
+			bool is_union = false;
 			if (!is_class) {
-				consume_keyword("struct");  // Try struct instead
+				if (!consume_keyword("struct")) {
+					is_union = consume_keyword("union");  // Try union last
+				}
 			}
 
 			// Skip C++11 attributes between struct/class and name (e.g., [[__deprecated__]])
@@ -27476,7 +27479,8 @@ ParseResult Parser::parse_template_declaration() {
 				// Create a minimal struct node
 				auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
 					instantiated_name,
-					is_class
+					is_class,
+					is_union
 				);
 				
 				// Register the type so it can be referenced later
@@ -27506,7 +27510,8 @@ ParseResult Parser::parse_template_declaration() {
 			// Create a struct node with the instantiated name
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
 				instantiated_name,
-				is_class
+				is_class,
+				is_union
 			);
 
 			// Create struct type info first so we can reference it
@@ -27514,6 +27519,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Create struct info for tracking members - required before parsing static members
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
+			struct_info->is_union = is_union;
 			
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek_token().has_value() && peek_token()->value() == ":") {
@@ -28357,10 +28363,13 @@ ParseResult Parser::parse_template_declaration() {
 		
 		// Handle partial specialization (template<typename T> struct X<T&>)
 		if (is_partial_specialization) {
-			// Parse the struct/class keyword
+			// Parse the struct/class/union keyword
 			bool is_class = consume_keyword("class");
+			bool is_union = false;
 			if (!is_class) {
-				consume_keyword("struct");
+				if (!consume_keyword("struct")) {
+					is_union = consume_keyword("union");
+				}
 			}
 			
 			// Parse class name
@@ -28424,7 +28433,8 @@ ParseResult Parser::parse_template_declaration() {
 			// Create a struct node for this specialization
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
 				instantiated_name,
-				is_class
+				is_class,
+				is_union
 			);
 			
 			// Create struct type info early so we can add base classes
@@ -28432,6 +28442,7 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Create StructTypeInfo for this specialization
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
+			struct_info->is_union = is_union;
 			
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek_token().has_value() && peek_token()->value() == ":") {
@@ -31560,15 +31571,16 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		);
 	}
 
-	// Expect 'struct' or 'class' keyword
+	// Expect 'struct' or 'class' or 'union' keyword
 	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Keyword ||
-	    (peek_token()->value() != "struct" && peek_token()->value() != "class")) {
-		return ParseResult::error("Expected 'struct' or 'class' after template parameter list", *current_token_);
+	    (peek_token()->value() != "struct" && peek_token()->value() != "class" && peek_token()->value() != "union")) {
+		return ParseResult::error("Expected 'struct' or 'class' or 'union' after template parameter list", *current_token_);
 	}
 	
 	bool is_class = (peek_token()->value() == "class");
+	bool is_union = (peek_token()->value() == "union");
 	[[maybe_unused]] Token struct_keyword_token = *peek_token();
-	consume_token(); // consume 'struct' or 'class'
+	consume_token(); // consume 'struct' or 'class' or 'union'
 
 	// Skip C++11 attributes between struct/class and name (e.g., [[__deprecated__]])
 	skip_cpp_attributes();
@@ -31591,7 +31603,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		
 		auto forward_struct_node = emplace_node<StructDeclarationNode>(
 			qualified_name,
-			is_class
+			is_class,
+			is_union
 		);
 		
 		// Create template struct node for the forward declaration
@@ -31702,7 +31715,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Create a struct node for this partial specialization
 		auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
 			qualified_pattern_name,
-			is_class
+			is_class,
+			is_union
 		);
 		
 		// Parse base class list if present (e.g., : List<Rest...>)
@@ -32053,7 +32067,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	
 	auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
 		qualified_name, 
-		is_class
+		is_class,
+		is_union
 	);
 
 	// Handle base class list if present (e.g., : true_type<T>)
@@ -32553,7 +32568,7 @@ ParseResult Parser::parse_member_template_or_function(StructDeclarationNode& str
 			FLASH_LOG_FORMAT(Parser, Debug, "parse_member_template_or_function: Detected keyword '{}'", next_keyword);
 			if (next_keyword == "using") {
 				is_template_alias = true;
-			} else if (next_keyword == "struct" || next_keyword == "class") {
+			} else if (next_keyword == "struct" || next_keyword == "class" || next_keyword == "union") {
 				is_struct_or_class_template = true;
 			} else if (next_keyword == "friend") {
 				is_template_friend = true;
@@ -36327,6 +36342,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// Create TypeInfo for the specialization
 	TypeInfo& struct_type_info = add_struct_type(StringTable::getOrInternStringHandle(instantiated_name));
 	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access());
+	struct_info->is_union = spec_struct.is_union();
 	
 	// Copy members from the specialization
 	for (const auto& member_decl : spec_struct.members()) {
@@ -37103,6 +37119,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Create struct type info first
 		TypeInfo& struct_type_info = add_struct_type(instantiated_name);
 		auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, pattern_struct.default_access());
+		struct_info->is_union = pattern_struct.is_union();
 		
 		// Handle base classes from the pattern
 		// Base classes need to be instantiated with concrete template arguments
@@ -38491,6 +38508,7 @@ if (struct_type_info.getStructInfo()) {
 	
 	// Create StructTypeInfo
 	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public);
+	struct_info->is_union = class_decl.is_union();
 
 	// Handle base classes from the primary template
 	// Base classes need to be instantiated with concrete template arguments

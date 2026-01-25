@@ -2431,8 +2431,8 @@ struct StaticMemberDecl {
 
 class StructDeclarationNode {
 public:
-	explicit StructDeclarationNode(StringHandle name, bool is_class = false)
-		: name_(name), is_class_(is_class) {}
+	explicit StructDeclarationNode(StringHandle name, bool is_class = false, bool is_union = false)
+		: name_(name), is_class_(is_class), is_union_(is_union) {}
 
 	StringHandle name() const { return name_; }
 	const std::vector<StructMemberDecl>& members() const { return members_; }
@@ -2443,6 +2443,7 @@ public:
 	std::vector<DeferredBaseClassSpecifier>& deferred_base_classes() { return deferred_base_classes_; }
 	const std::vector<DeferredTemplateBaseClassSpecifier>& deferred_template_base_classes() const { return deferred_template_base_classes_; }
 	bool is_class() const { return is_class_; }
+	bool is_union() const { return is_union_; }
 	bool is_final() const { return is_final_; }
 	void set_is_final(bool final) { is_final_ = final; }
 	AccessSpecifier default_access() const {
@@ -2611,6 +2612,7 @@ private:
 	std::vector<AnonymousUnionInfo> anonymous_unions_;  // Anonymous union tracking info
 	StructDeclarationNode* enclosing_class_ = nullptr;  // Enclosing class (if nested)
 	bool is_class_;  // true for class, false for struct
+	bool is_union_;  // true for union, false for struct/class
 	bool is_final_ = false;  // true if declared with 'final' keyword
 	std::vector<DeferredStaticAssert> deferred_static_asserts_;  // Static_asserts deferred during template definition
 };
