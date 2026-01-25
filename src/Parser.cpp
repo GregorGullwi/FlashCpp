@@ -14075,6 +14075,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"__int64", &Parser::parse_variable_declaration},
 			{"new", &Parser::parse_expression_statement},
 			{"delete", &Parser::parse_expression_statement},
+			{"this", &Parser::parse_expression_statement},
 			{"static_cast", &Parser::parse_expression_statement},
 			{"dynamic_cast", &Parser::parse_expression_statement},
 			{"const_cast", &Parser::parse_expression_statement},
