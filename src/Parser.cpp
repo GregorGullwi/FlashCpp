@@ -39006,9 +39006,32 @@ if (struct_type_info.getStructInfo()) {
 						          " (this may be expected for SFINAE/dependent template arguments)");
 						continue;
 					}
-					// Use the inherited type alias
-					final_base_name = StringTable::getStringView(inherited_alias->name());
-					struct_info->addBaseClass(final_base_name, inherited_alias->type_index_, deferred_base.access, deferred_base.is_virtual);
+					// The inherited_alias is a type alias - we need to resolve it to the underlying type
+					// Type aliases may have invalid type_index_ due to vector resizing during template instantiation
+					// Instead, follow the type_index_ if valid, otherwise look up by name to find the real struct
+					FLASH_LOG_FORMAT(Templates, Debug, "inherited_alias->name_='{}', type_index_={}, gTypeInfo.size()={}", 
+					                 StringTable::getStringView(inherited_alias->name()), inherited_alias->type_index_, gTypeInfo.size());
+					
+					// Try to get the actual struct that this alias points to
+					const TypeInfo* actual_type = inherited_alias;
+					TypeIndex resolved_type_index = inherited_alias->type_index_;
+					
+					// The alias TypeInfo itself should have a valid pointer to gTypeInfo if it was registered properly
+					// Calculate the actual index by pointer arithmetic
+					if (inherited_alias >= &gTypeInfo[0] && inherited_alias < &gTypeInfo[0] + gTypeInfo.size()) {
+						TypeIndex alias_index = static_cast<TypeIndex>(inherited_alias - &gTypeInfo[0]);
+						actual_type = &gTypeInfo[alias_index];
+						// If this type is an alias (no struct_info but has a type_index), follow it
+						if (!actual_type->struct_info_ && actual_type->type_index_ < gTypeInfo.size()) {
+							resolved_type_index = actual_type->type_index_;
+							actual_type = &gTypeInfo[resolved_type_index];
+						}
+					}
+					
+					final_base_name = StringTable::getStringView(actual_type->name());
+					FLASH_LOG_FORMAT(Templates, Debug, "Resolved alias to underlying type: {} (index {})", final_base_name, resolved_type_index);
+					
+					struct_info->addBaseClass(final_base_name, resolved_type_index, deferred_base.access, deferred_base.is_virtual);
 					FLASH_LOG_FORMAT(Templates, Debug, "Resolved deferred inherited member alias base to {}", final_base_name);
 					continue;
 				}
