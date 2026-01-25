@@ -383,6 +383,9 @@ public:
 		auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value) -> bool {
 			ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 			ctx.storage_duration = ConstExpr::StorageDuration::Static;
+			// Enable on-demand template instantiation when static member initializers
+			// reference uninstantiated template members during constexpr evaluation
+			ctx.parser = parser_;
 			
 			auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 			if (!eval_result.success()) {

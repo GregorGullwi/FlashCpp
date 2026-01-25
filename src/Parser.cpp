@@ -41184,16 +41184,29 @@ if (struct_type_info.getStructInfo()) {
 				// Use struct_info_ptr instead of struct_info (which was moved)
 				// Phase 7B: Intern static member name and use StringHandle overload
 				StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(static_member.getName()));
-				struct_info_ptr->addStaticMember(
-					static_member_name_handle,
-					static_member.type,
-					static_member.type_index,
-					static_member.size,
-					static_member.alignment,
-					static_member.access,
-					substituted_initializer,  // Use substituted initializer if sizeof... was replaced
-					static_member.is_const
-				);
+				
+				// Check if this static member was already added (e.g., by lazy instantiation path)
+				// If it exists but has no initializer, update it with the substituted initializer
+				// This ensures lazy instantiation registrations get their initializers filled in
+				const StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
+				if (existing_member != nullptr) {
+					// Member already exists - update the initializer if we have a substituted one
+					if (substituted_initializer.has_value()) {
+						struct_info_ptr->updateStaticMemberInitializer(static_member_name_handle, substituted_initializer);
+					}
+					// Skip adding duplicate
+				} else {
+					struct_info_ptr->addStaticMember(
+						static_member_name_handle,
+						static_member.type,
+						static_member.type_index,
+						static_member.size,
+						static_member.alignment,
+						static_member.access,
+						substituted_initializer,  // Use substituted initializer if sizeof... was replaced
+						static_member.is_const
+					);
+				}
 			}
 		}
 	}
