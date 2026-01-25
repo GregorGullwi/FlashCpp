@@ -18490,8 +18490,47 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				// Fall through to handle as regular qualified identifier if not a variable template
 			}
 			
+			// Check if this might be accessing a static member (e.g., MyClass::value)
+			// Try this before checking qualified_symbol, as static member access might not be in symbol table
+			std::string_view type_name = namespaces.empty() ? std::string_view() : std::string_view(namespaces.back());
+			std::string_view member_name = final_identifier.value();
+			
+			// Try to resolve the type and trigger lazy static member instantiation if needed
+			if (!type_name.empty()) {
+				auto type_handle = StringTable::getOrInternStringHandle(type_name);
+				auto type_it = gTypesByName.find(type_handle);
+				if (type_it != gTypesByName.end()) {
+					const TypeInfo* type_info = type_it->second;
+					FLASH_LOG(Parser, Debug, "Found type '", type_name, "' with type=", (int)type_info->type_, 
+					          " type_index=", type_info->type_index_);
+					
+					// For type aliases, resolve to the actual type
+					if (type_info->type_ == Type::Struct && type_info->type_index_ < gTypeInfo.size()) {
+						const TypeInfo& actual_type = gTypeInfo[type_info->type_index_];
+						const StructTypeInfo* struct_info = actual_type.getStructInfo();
+						if (struct_info) {
+							StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+							FLASH_LOG(Parser, Debug, "Triggering lazy instantiation for ", 
+							          StringTable::getStringView(struct_info->name), "::", member_name);
+							// Trigger lazy static member instantiation if needed
+							instantiateLazyStaticMember(struct_info->name, member_handle);
+						}
+					} else if (type_info->isStruct()) {
+						// Direct struct type (not an alias)
+						const StructTypeInfo* struct_info = type_info->getStructInfo();
+						if (struct_info) {
+							StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
+							FLASH_LOG(Parser, Debug, "Triggering lazy instantiation for ", 
+							          StringTable::getStringView(struct_info->name), "::", member_name);
+							// Trigger lazy static member instantiation if needed
+							instantiateLazyStaticMember(struct_info->name, member_handle);
+						}
+					}
+				}
+			}
+			
 			if (qualified_symbol.has_value()) {
-				// Just a qualified identifier reference (e.g., Namespace::globalValue)
+				// Just a qualified identifier reference (e.g., Namespace::globalValue or Class::staticMember)
 				NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
 				auto qualified_node_ast = emplace_node<QualifiedIdentifierNode>(ns_handle, final_identifier);
 				result = emplace_node<ExpressionNode>(qualified_node_ast.as<QualifiedIdentifierNode>());
