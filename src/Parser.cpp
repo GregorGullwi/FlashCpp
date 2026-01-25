@@ -27441,9 +27441,10 @@ ParseResult Parser::parse_template_declaration() {
 			parsing_template_body_ = true;
 
 			bool is_class = consume_keyword("class");
+			bool is_union = false;
 			if (!is_class) {
 				if (!consume_keyword("struct")) {
-					consume_keyword("union");  // Try union last
+					is_union = consume_keyword("union");  // Try union last
 				}
 			}
 
@@ -27508,7 +27509,8 @@ ParseResult Parser::parse_template_declaration() {
 			// Create a struct node with the instantiated name
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
 				instantiated_name,
-				is_class
+				is_class,
+				is_union
 			);
 
 			// Create struct type info first so we can reference it
@@ -27516,6 +27518,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Create struct info for tracking members - required before parsing static members
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
+			struct_info->is_union = is_union;
 			
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek_token().has_value() && peek_token()->value() == ":") {
@@ -28361,9 +28364,10 @@ ParseResult Parser::parse_template_declaration() {
 		if (is_partial_specialization) {
 			// Parse the struct/class/union keyword
 			bool is_class = consume_keyword("class");
+			bool is_union = false;
 			if (!is_class) {
 				if (!consume_keyword("struct")) {
-					consume_keyword("union");
+					is_union = consume_keyword("union");
 				}
 			}
 			
@@ -28428,7 +28432,8 @@ ParseResult Parser::parse_template_declaration() {
 			// Create a struct node for this specialization
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
 				instantiated_name,
-				is_class
+				is_class,
+				is_union
 			);
 			
 			// Create struct type info early so we can add base classes
@@ -28436,6 +28441,7 @@ ParseResult Parser::parse_template_declaration() {
 			
 			// Create StructTypeInfo for this specialization
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
+			struct_info->is_union = is_union;
 			
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek_token().has_value() && peek_token()->value() == ":") {
@@ -31571,6 +31577,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	}
 	
 	bool is_class = (peek_token()->value() == "class");
+	bool is_union = (peek_token()->value() == "union");
 	[[maybe_unused]] Token struct_keyword_token = *peek_token();
 	consume_token(); // consume 'struct' or 'class' or 'union'
 
@@ -31706,7 +31713,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Create a struct node for this partial specialization
 		auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
 			qualified_pattern_name,
-			is_class
+			is_class,
+			is_union
 		);
 		
 		// Parse base class list if present (e.g., : List<Rest...>)
@@ -32057,7 +32065,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	
 	auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
 		qualified_name, 
-		is_class
+		is_class,
+		is_union
 	);
 
 	// Handle base class list if present (e.g., : true_type<T>)
@@ -36331,6 +36340,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// Create TypeInfo for the specialization
 	TypeInfo& struct_type_info = add_struct_type(StringTable::getOrInternStringHandle(instantiated_name));
 	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access());
+	struct_info->is_union = spec_struct.is_union();
 	
 	// Copy members from the specialization
 	for (const auto& member_decl : spec_struct.members()) {
@@ -37107,6 +37117,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Create struct type info first
 		TypeInfo& struct_type_info = add_struct_type(instantiated_name);
 		auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, pattern_struct.default_access());
+		struct_info->is_union = pattern_struct.is_union();
 		
 		// Handle base classes from the pattern
 		// Base classes need to be instantiated with concrete template arguments
@@ -38495,6 +38506,7 @@ if (struct_type_info.getStructInfo()) {
 	
 	// Create StructTypeInfo
 	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public);
+	struct_info->is_union = class_decl.is_union();
 
 	// Handle base classes from the primary template
 	// Base classes need to be instantiated with concrete template arguments
