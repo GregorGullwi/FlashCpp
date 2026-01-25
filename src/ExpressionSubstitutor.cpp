@@ -517,9 +517,6 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 		// Handle non-type template parameters (values)
 		if (arg.is_value) {
 			FLASH_LOG(Templates, Debug, "  Non-type template parameter, creating literal with value: ", arg.value);
-			// Create a numeric literal from the value
-			std::string_view value_str = StringBuilder().append(static_cast<uint64_t>(arg.value)).commit();
-			Token num_token(Token::Type::Literal, value_str, 0, 0, 0);
 			
 			// Determine the type based on the template argument's base_type
 			Type literal_type = arg.base_type;
@@ -527,6 +524,22 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 				// For template parameters, default to int
 				literal_type = Type::Int;
 			}
+			
+			// Handle bool types specially with BoolLiteralNode
+			if (literal_type == Type::Bool) {
+				std::string_view bool_str = (arg.value != 0) ? "true" : "false";
+				Token bool_token(Token::Type::Keyword, bool_str, 0, 0, 0);
+				BoolLiteralNode& bool_literal = gChunkedAnyStorage.emplace_back<BoolLiteralNode>(
+					bool_token,
+					arg.value != 0
+				);
+				ExpressionNode& expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(bool_literal);
+				return ASTNode(&expr);
+			}
+			
+			// Create a numeric literal from the value
+			std::string_view value_str = StringBuilder().append(static_cast<uint64_t>(arg.value)).commit();
+			Token num_token(Token::Type::Literal, value_str, 0, 0, 0);
 			
 			NumericLiteralNode& literal = gChunkedAnyStorage.emplace_back<NumericLiteralNode>(
 				num_token, 
