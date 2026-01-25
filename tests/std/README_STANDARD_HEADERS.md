@@ -76,10 +76,26 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Fixes Applied (2026-01-25 This PR - Template Parameter Substitution in Static Members):**
 - **Added** ExpressionSubstitutor support for static member initializers during template instantiation
-  - Modified `try_instantiate_class_template` to use ExpressionSubstitutor for pattern AST static members (line ~37780)
-  - Modified `instantiateLazyStaticMember` to use ExpressionSubstitutor as fallback for template-dependent expressions (line ~42465)
-  - Added variable template instantiation support to ExpressionSubstitutor (line ~291)
-- **Impact:** Infrastructure in place for template parameter substitution in static member initializers. Handles simple cases like `sizeof(T)` and direct template parameter references. Base class template parameter propagation still needed for `<type_traits>`.
+  - Modified `try_instantiate_class_template` to use ExpressionSubstitutor for pattern AST static members (Parser.cpp:~37780)
+  - Modified `instantiateLazyStaticMember` to use ExpressionSubstitutor as fallback for template-dependent expressions (Parser.cpp:~42465)
+  - Added variable template instantiation support to ExpressionSubstitutor (ExpressionSubstitutor.cpp:~291)
+- **Fixed** Non-type template parameter substitution in `substituteIdentifier`:
+  - BoolLiteralNode created for bool non-type parameters (e.g., `integral_constant<bool, true>`)
+  - NumericLiteralNode created for numeric non-type parameters (e.g., `integral_constant<int, 42>`)
+  - This fixes bad_any_cast errors that were breaking `test_integral_constant_pattern_ret42.cpp`
+- **Added** Base class static member support in constexpr evaluation:
+  - Modified `try_evaluate_constant_expression` to use `findStaticMemberRecursive` instead of `findStaticMember` (Parser.cpp:~32732)
+  - Added lazy instantiation trigger for base class static members when accessed through derived classes
+- **Added** Lazy static member instantiation trigger during qualified identifier parsing (Parser.cpp:~18493):
+  - Triggers instantiation when parsing `Type::member` patterns
+  - Handles type alias resolution to find actual instantiated template types
+  - Resolves aliases like `true_type` to `integral_constant<bool, true>` before triggering instantiation
+- **Impact:** 
+  - Successfully handles simple template parameter substitutions like `sizeof(T)` and direct template parameter references
+  - Non-type template parameters now correctly substituted with literal values
+  - Test `test_integral_constant_pattern_ret42.cpp` now compiles and returns 42 correctly (was crashing with bad_any_cast)
+  - Test `test_integral_constant_comprehensive_ret100.cpp` returns 100 correctly
+- **Remaining Limitation:** Constexpr variable initialization (e.g., `constexpr bool t = Type::value;`) uses a code path that doesn't trigger lazy instantiation. This affects `test_integral_constant_simple_ret30.cpp` which returns 20 instead of 30. Full solution requires identifying all code paths where constexpr variables are initialized and ensuring lazy instantiation is triggered.
 - **Verified:** Placement new in decltype (`decltype(::new((void*)0) T())`) compiles successfully - not a blocker for `<vector>`
 
 **Fixes Applied (2026-01-24 This PR - Union Templates):**
