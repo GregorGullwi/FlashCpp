@@ -998,19 +998,28 @@ private:
 					if (result.ec == std::errc{} && array_count > 0) {
 						// Get base type size
 						size_t base_size = 0;
-						if (base_type == "int") base_size = 4;
-						else if (base_type == "char") base_size = 1;
-						else if (base_type == "short") base_size = 2;
-						else if (base_type == "long") base_size = get_long_size_bits() / 8;
-						else if (base_type == "float") base_size = 4;
-						else if (base_type == "double") base_size = 8;
-						else if (base_type == "bool") base_size = 1;
-						else if (base_type == "uint") base_size = 4;
-						else if (base_type == "uchar") base_size = 1;
-						else if (base_type == "ushort") base_size = 2;
-						else if (base_type == "ulong") base_size = get_long_size_bits() / 8;
-						else if (base_type == "ulonglong") base_size = 8;
-						else if (base_type == "longlong") base_size = 8;
+						
+						// Check if base_type is a pointer (ends with 'P')
+						// e.g., "intP" for int*, "charPP" for char**, etc.
+						if (!base_type.empty() && base_type.back() == 'P') {
+							// All pointers are 8 bytes on x64
+							base_size = 8;
+						} else {
+							// Look up non-pointer base type size
+							if (base_type == "int") base_size = 4;
+							else if (base_type == "char") base_size = 1;
+							else if (base_type == "short") base_size = 2;
+							else if (base_type == "long") base_size = get_long_size_bits() / 8;
+							else if (base_type == "float") base_size = 4;
+							else if (base_type == "double") base_size = 8;
+							else if (base_type == "bool") base_size = 1;
+							else if (base_type == "uint") base_size = 4;
+							else if (base_type == "uchar") base_size = 1;
+							else if (base_type == "ushort") base_size = 2;
+							else if (base_type == "ulong") base_size = get_long_size_bits() / 8;
+							else if (base_type == "ulonglong") base_size = 8;
+							else if (base_type == "longlong") base_size = 8;
+						}
 						
 						if (base_size > 0) {
 							return base_size * array_count;
