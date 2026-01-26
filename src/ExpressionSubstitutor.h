@@ -84,6 +84,8 @@ private:
 	ASTNode substituteBinaryOp(const BinaryOperatorNode& binop);
 	ASTNode substituteUnaryOp(const UnaryOperatorNode& unop);
 	ASTNode substituteIdentifier(const IdentifierNode& id);
+	ASTNode substituteQualifiedIdentifier(const QualifiedIdentifierNode& qual_id);
+	ASTNode substituteMemberAccess(const MemberAccessNode& member_access);
 	ASTNode substituteLiteral(const ASTNode& literal);
 
 	// Helper: substitute in a type specifier with template args
