@@ -260,6 +260,12 @@ constexpr bool isLogEnabled() {
 #define FLASH_LEVEL_Debug 3
 #define FLASH_LEVEL_Trace 4
 
+// Macro to check if a specific log level is enabled for a category at runtime
+// Usage: if (IS_FLASH_LOG_ENABLED(Codegen, Debug)) { /* expensive logging code */ }
+#define IS_FLASH_LOG_ENABLED(Category, Level) \
+    (static_cast<uint8_t>(::FlashCpp::LogLevel::Level) <= static_cast<uint8_t>(::FlashCpp::LogConfig::getLevelForCategory(::FlashCpp::LogCategory::Category)) && \
+     (static_cast<uint32_t>(::FlashCpp::LogCategory::Category) & static_cast<uint32_t>(::FlashCpp::LogConfig::runtimeCategories)) != 0)
+
 // Helper function to suppress unused variable warnings when logging is disabled
 // Takes any arguments and does nothing - compiler will optimize this away
 template<typename... Args>
