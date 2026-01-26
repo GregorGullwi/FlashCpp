@@ -8,58 +8,42 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-17 (validate_return_values.sh)
+**Last Run:** 2026-01-26 (validate_return_values.sh)
 
-**Total files tested:** 934
-**Valid returns:** 931
-**Regressions (mismatches):** 0
-**Runtime crashes:** 1
+**Total files tested:** 959
+**Valid returns:** 955
+**Regressions (mismatches):** 7
+**Runtime crashes:** 2
 **Compile failures:** 0
-**Link failures:** 2 (expected)
+**Link failures:** 0
 
-## Fixed Regressions
+## Current Regressions
 
-The following regressions have been FIXED:
+The following tests are returning incorrect values:
 
-| Test File | Expected | Was Returning | Fixed By | Notes |
-|-----------|----------|---------------|----------|-------|
-| test_all_mix_ret123.cpp | 123 | 125 | Modulo fix | Was returning 125 due to modulo returning 2 instead of 0 |
-| test_comma_init_ret197.cpp | 197 | 200 | Assignment fix | Char variables were being sign-extended during assignment |
-| test_template_param_typename_default_ret42.cpp | 42 | 16 | Assignment fix (side effect) | Fixed as side effect of assignment operator fix |
-| test_auto_trailing_return_ret42.cpp | 42 | 192 | Template parameter substitution | Function parameters were incorrectly substituted with first template argument |
-| test_structured_binding_lvalue_ref_ret52.cpp | 52 | 20 | (Already fixed) | Likely fixed by previous commit |
-| test_simple_range_ret6.cpp | 6 | 169 | (Already fixed) | Was incorrectly using 64-bit registers for 32-bit int ops |
-| test_container_out_of_line_ret60.cpp | 60 | 232 | (Already fixed) | Was incorrectly using 64-bit registers for 32-bit int ops |
-| test_static_constexpr_pack_value_ret42.cpp | 42 | 0 | sizeof... pack expansion | Nested binary expressions with static_cast<int>(sizeof...(Ts)) were not handled |
-| test_inherited_type_alias_ret42.cpp | 42 | 0 | Self-referential type alias | Type alias `using type = bool_constant;` inside `bool_constant` now correctly points to instantiated type |
-| test_void_t_positive_ret0.cpp | 0 | 42 | void_t SFINAE fix | Template aliases like void_t that resolve to concrete types now correctly detected during pattern matching |
-| test_template_disambiguation_pack_ret40.cpp | 40 | 20→30→40 | Type template arg mangling | Function template specializations now include type template args in mangled names (sum<int> → `_ZN2ns3sumIiEEv`, sum<int,int> → `_ZN2ns3sumIiiEEv`) |
-| test_qualified_base_class_ret42.cpp | 42 | 0 | Global namespace fix | Fixed by global namespace symbol lookup improvements |
-| test_sizeof_template_param_default_ret4.cpp | 4 | 1 | Global namespace fix | Fixed as side effect of namespace lookup improvements |
-| test_std_header_features_ret0.cpp | 0 | 8 | Global namespace fix | Fixed as side effect of namespace lookup improvements |
-| test_global_namespace_scope_ret1.cpp | 1 (1025%256) | 145 | Using declaration fix | Fixed by tracking qualified names when resolving using declarations in CodeGen |
-| test_global_scope_new_ret0.cpp | 0 | 1 | Scalar new initialization | Store scalar initializer values for `new T(args)` |
-| test_spec_nullptr_init_ret0.cpp | 0 | 214 | Template default constructor | Generate implicit default constructor for partial specializations so member initializers run |
-| test_covariant_return_ret180.cpp | 180 | 205 | Virtual 'this' return fix | Functions returning 'this' pointer were dereferencing it instead of returning the pointer |
-| test_diamond_inheritance_ret120.cpp | 120 | 158 | Constructor parameter limit | Constructors with >3 params were missing R8/R9 arguments on Linux |
-| test_virtual_base_classes_ret160.cpp | 160 | 130 | Constructor parameter limit | Same as above - Diamond constructor with 5 params |
-| test_inheritance_basic_ret217.cpp | 217 | (was ret214) | Test filename fix | Filename incorrectly said ret214 but code correctly returns 217 |
-
-## Regressions Found
-
-No regressions found in the latest validation run.
-
-## Root Cause Summary
-
-No open regressions in the current validation run.
+| Test File | Expected | Currently Returning | Notes |
+|-----------|----------|---------------------|-------|
+| test_less_in_base_class_ret0.cpp | 0 | 1 | Test expects 0 but returns 1 |
+| test_member_func_trailing_requires_ret42.cpp | 42 | 28 | Member function with trailing requires clause |
+| test_member_partial_spec_inherit_ret4.cpp | 4 | 0 | Partial specialization inheritance issue |
+| test_member_var_template_ret42.cpp | 42 | 0 | Variable template member access |
+| test_out_of_line_ctor_ret0.cpp | 0 | 3 | Out-of-line constructor definition |
+| test_qualified_base_class_ret42.cpp | 42 | 0 | Qualified base class access |
+| test_template_disambiguation_pack_ret40.cpp | 40 | 30 | Template disambiguation with parameter pack |
 
 ## Runtime Crashes
 
 The following test files crash at runtime:
 
-1. test_exceptions_nested.cpp (signal 6 - Abort)
+1. **test_exceptions_nested.cpp** - Signal 6 (Abort)
+   - Nested exception handling test
+   - Crashes during exception throwing/catching
+   - Represents missing or incomplete exception handling in the compiler
 
-Note: This crash is a pre-existing issue not related to return value regressions. It represents missing or incomplete exception handling in the compiler.
+2. **test_placement_new_parsing_ret42.cpp** - Signal 11 (Segmentation fault)
+   - Tests placement new with multiple arguments
+   - Uses alignas and array placement new features
+   - Crash likely related to unsupported placement new syntax or alignas
 
 ## Notes
 
