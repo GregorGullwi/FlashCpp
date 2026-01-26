@@ -35871,14 +35871,86 @@ std::string_view Parser::instantiate_and_register_base_template(
 // This recursively traverses the expression tree and replaces constructor calls with template parameter types
 ASTNode Parser::substitute_template_params_in_expression(
 	const ASTNode& expr,
-	const std::unordered_map<TypeIndex, TemplateTypeArg>& type_substitution_map) {
+	const std::unordered_map<TypeIndex, TemplateTypeArg>& type_substitution_map,
+	const std::unordered_map<std::string_view, int64_t>& nontype_substitution_map) {
 	
 	// ASTNode wraps types via std::any, check if it contains an ExpressionNode
 	if (!expr.is<ExpressionNode>()) {
+		FLASH_LOG(Templates, Debug, "substitute_template_params_in_expression: not an ExpressionNode");
 		return expr; // Return as-is if not an expression
 	}
 	
 	const ExpressionNode& expr_variant = expr.as<ExpressionNode>();
+	FLASH_LOG(Templates, Debug, "substitute_template_params_in_expression: processing expression, variant index=", expr_variant.index());
+	
+	// Handle sizeof expressions
+	if (std::holds_alternative<SizeofExprNode>(expr_variant)) {
+		const SizeofExprNode& sizeof_node = std::get<SizeofExprNode>(expr_variant);
+		
+		// If sizeof has a type operand, check if it needs substitution
+		if (sizeof_node.is_type() && sizeof_node.type_or_expr().is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_node = sizeof_node.type_or_expr().as<TypeSpecifierNode>();
+			
+			FLASH_LOG(Templates, Debug, "sizeof substitution: checking type_index=", type_node.type_index(), 
+			          " type=", static_cast<int>(type_node.type()));
+			
+			// Check if this type needs substitution
+			auto it = type_substitution_map.find(type_node.type_index());
+			if (it != type_substitution_map.end()) {
+				FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match, substituting with ", it->second.toString());
+				
+				// Create a new type node with the substituted type
+				const TemplateTypeArg& arg = it->second;
+				TypeSpecifierNode new_type(
+					arg.base_type,
+					TypeQualifier::None,
+					get_type_size_bits(arg.base_type),
+					sizeof_node.sizeof_token()
+				);
+				new_type.set_type_index(arg.type_index);
+				
+				// Apply cv-qualifiers, references, and pointers from template argument
+				if (arg.is_rvalue_reference) {
+					new_type.set_reference(true);
+				} else if (arg.is_reference) {
+					new_type.set_lvalue_reference(true);
+				}
+				for (size_t p = 0; p < arg.pointer_depth; ++p) {
+					new_type.add_pointer_level(CVQualifier::None);
+				}
+				
+				// Create new sizeof with substituted type
+				auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
+				SizeofExprNode new_sizeof(new_type_node, sizeof_node.sizeof_token());
+				return emplace_node<ExpressionNode>(new_sizeof);
+			} else {
+				FLASH_LOG(Templates, Debug, "sizeof substitution: NO match found in map");
+			}
+		} else if (!sizeof_node.is_type()) {
+			// If sizeof has an expression operand, recursively substitute
+			auto new_operand = substitute_template_params_in_expression(
+				sizeof_node.type_or_expr(), type_substitution_map, nontype_substitution_map);
+			SizeofExprNode new_sizeof = SizeofExprNode::from_expression(new_operand, sizeof_node.sizeof_token());
+			return emplace_node<ExpressionNode>(new_sizeof);
+		}
+	}
+	
+	// Handle identifiers that might be non-type template parameters
+	if (std::holds_alternative<IdentifierNode>(expr_variant)) {
+		const IdentifierNode& id_node = std::get<IdentifierNode>(expr_variant);
+		std::string_view id_name = id_node.name();
+		
+		// Check if this identifier is a non-type template parameter
+		auto it = nontype_substitution_map.find(id_name);
+		if (it != nontype_substitution_map.end()) {
+			// Replace the identifier with a numeric literal
+			int64_t value = it->second;
+			// Create a token for the numeric literal (we don't have line/column info from IdentifierNode, use defaults)
+			Token value_token(Token::Type::Literal, std::to_string(value), 0, 0, 0);
+			return emplace_node<ExpressionNode>(
+				NumericLiteralNode(value_token, static_cast<unsigned long long>(value), Type::Int, TypeQualifier::None, 32));
+		}
+	}
 	
 	// Handle constructor call: T(value) -> ConcreteType(value)
 	if (std::holds_alternative<ConstructorCallNode>(expr_variant)) {
@@ -35906,7 +35978,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 				// Recursively substitute in arguments
 				ChunkedVector<ASTNode> new_args;
 				for (size_t i = 0; i < ctor.arguments().size(); ++i) {
-					new_args.push_back(substitute_template_params_in_expression(ctor.arguments()[i], type_substitution_map));
+					new_args.push_back(substitute_template_params_in_expression(ctor.arguments()[i], type_substitution_map, nontype_substitution_map));
 				}
 				
 				// Create new constructor call with substituted type
@@ -35919,7 +35991,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 		// Not a template parameter constructor - recursively substitute in arguments
 		ChunkedVector<ASTNode> new_args;
 		for (size_t i = 0; i < ctor.arguments().size(); ++i) {
-			new_args.push_back(substitute_template_params_in_expression(ctor.arguments()[i], type_substitution_map));
+			new_args.push_back(substitute_template_params_in_expression(ctor.arguments()[i], type_substitution_map, nontype_substitution_map));
 		}
 		ConstructorCallNode new_ctor(ctor.type_node(), std::move(new_args), ctor.called_from());
 		return emplace_node<ExpressionNode>(new_ctor);
@@ -35929,9 +36001,9 @@ ASTNode Parser::substitute_template_params_in_expression(
 	if (std::holds_alternative<BinaryOperatorNode>(expr_variant)) {
 		const BinaryOperatorNode& binop = std::get<BinaryOperatorNode>(expr_variant);
 		auto new_left = substitute_template_params_in_expression(
-			binop.get_lhs(), type_substitution_map);
+			binop.get_lhs(), type_substitution_map, nontype_substitution_map);
 		auto new_right = substitute_template_params_in_expression(
-			binop.get_rhs(), type_substitution_map);
+			binop.get_rhs(), type_substitution_map, nontype_substitution_map);
 		
 		BinaryOperatorNode new_binop(
 			binop.get_token(),
@@ -35944,8 +36016,54 @@ ASTNode Parser::substitute_template_params_in_expression(
 	// Handle unary operators - recursively substitute in operand
 	if (std::holds_alternative<UnaryOperatorNode>(expr_variant)) {
 		const UnaryOperatorNode& unop = std::get<UnaryOperatorNode>(expr_variant);
+		
+		// Special case: sizeof with a type operand that needs substitution
+		// For example: sizeof(T) where T is a template parameter
+		if (unop.op() == "sizeof" && unop.get_operand().is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& type_node = unop.get_operand().as<TypeSpecifierNode>();
+			
+			FLASH_LOG(Templates, Debug, "sizeof substitution: checking type_index=", type_node.type_index(), 
+			          " type=", static_cast<int>(type_node.type()));
+			
+			// Check if this type needs substitution
+			auto it = type_substitution_map.find(type_node.type_index());
+			if (it != type_substitution_map.end()) {
+				FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match, substituting with ", it->second.toString());
+				
+				// Create a new type node with the substituted type
+				const TemplateTypeArg& arg = it->second;
+				TypeSpecifierNode new_type(
+					arg.base_type,
+					TypeQualifier::None,
+					get_type_size_bits(arg.base_type),
+					unop.get_token()
+				);
+				// Apply cv-qualifiers, references, and pointers from template argument
+				if (arg.is_rvalue_reference) {
+					new_type.set_reference(true);
+				} else if (arg.is_reference) {
+					new_type.set_lvalue_reference(true);
+				}
+				for (size_t p = 0; p < arg.pointer_depth; ++p) {
+					new_type.add_pointer_level(CVQualifier::None);
+				}
+				
+				// Create new sizeof with substituted type
+				auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
+				UnaryOperatorNode new_unop(
+					unop.get_token(),
+					new_type_node,
+					unop.is_prefix()
+				);
+				return emplace_node<ExpressionNode>(new_unop);
+			} else {
+				FLASH_LOG(Templates, Debug, "sizeof substitution: NO match found in map");
+			}
+		}
+		
+		// General case: recursively substitute in operand
 		auto new_operand = substitute_template_params_in_expression(
-			unop.get_operand(), type_substitution_map);
+			unop.get_operand(), type_substitution_map, nontype_substitution_map);
 		
 		UnaryOperatorNode new_unop(
 			unop.get_token(),
@@ -36210,45 +36328,79 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	
 	// Build a map from template parameter type_index to concrete type for substitution
 	std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;
+	// Build a map from non-type template parameter name to value for substitution
+	std::unordered_map<std::string_view, int64_t> nontype_substitution_map;
 	
 	// Substitute template parameter with concrete type
 	// For now, assume simple case where the type is just the template parameter
 	TypeSpecifierNode substituted_type = orig_type;
 	
-	// Check if the type is a template parameter
+	// Build substitution maps for all template parameters
 	for (size_t i = 0; i < template_params.size(); ++i) {
 		if (!template_params[i].is<TemplateParameterNode>()) continue;
 		
 		const auto& tparam = template_params[i].as<TemplateParameterNode>();
-		if (tparam.kind() != TemplateParameterKind::Type) continue;
 		
-		// For variable templates, if the variable type is UserDefined, it's likely the template parameter
-		// We can't look it up in gTypesByName because it was cleaned up after parsing
-		// So we'll assume the orig_type IS the template parameter and add it to the map
-		if (orig_type.type() == Type::UserDefined) {
+		if (tparam.kind() == TemplateParameterKind::Type) {
+			// For type template parameters, look up the type_index in gTypeInfo
+			// The template parameter name was registered as a type during parsing
 			const TemplateTypeArg& arg = template_args[i];
 			
-			// Add to substitution map
-			type_substitution_map[orig_type.type_index()] = arg;
+			// Find the type_index for this template parameter by name
+			// During template parsing, template parameters are added to gTypeInfo
+			// We need to find the type_index that corresponds to this template parameter name
+			std::string_view param_name = tparam.name();
+			TypeIndex param_type_index = 0;
+			bool found_param = false;
 			
-			// Use original token info for better diagnostics
-			const Token& orig_token = orig_decl.identifier_token();
-			substituted_type = TypeSpecifierNode(
-				arg.base_type,
-				TypeQualifier::None,
-				get_type_size_bits(arg.base_type),
-				orig_token
-			);
-			// Apply cv-qualifiers, references, and pointers from template argument
-			if (arg.is_rvalue_reference) {
-				substituted_type.set_reference(true);
-			} else if (arg.is_reference) {
-				substituted_type.set_lvalue_reference(true);
+			// Search for the template parameter in gTypeInfo
+			// Template parameters have Type::UserDefined
+			for (TypeIndex ti = 0; ti < gTypeInfo.size(); ++ti) {
+				if (gTypeInfo[ti].type_ == Type::UserDefined || gTypeInfo[ti].type_ == Type::Template) {
+					if (StringTable::getStringView(gTypeInfo[ti].name()) == param_name) {
+						param_type_index = ti;
+						found_param = true;
+						break;
+					}
+				}
 			}
-			for (size_t p = 0; p < arg.pointer_depth; ++p) {
-				substituted_type.add_pointer_level(CVQualifier::None);
+			
+			// Add to substitution map if we found the type_index
+			if (found_param) {
+				type_substitution_map[param_type_index] = arg;
+				FLASH_LOG(Templates, Debug, "Added type parameter substitution: ", param_name, 
+				          " (type_index=", param_type_index, ") -> ", arg.toString());
 			}
-			break;
+			
+			// Also check if the variable's return type itself is the template parameter
+			// (for cases like template<typename T> T value = T();)
+			if (orig_type.type() == Type::UserDefined && orig_type.type_index() == param_type_index) {
+				// Use original token info for better diagnostics
+				const Token& orig_token = orig_decl.identifier_token();
+				substituted_type = TypeSpecifierNode(
+					arg.base_type,
+					TypeQualifier::None,
+					get_type_size_bits(arg.base_type),
+					orig_token
+				);
+				// Apply cv-qualifiers, references, and pointers from template argument
+				if (arg.is_rvalue_reference) {
+					substituted_type.set_reference(true);
+				} else if (arg.is_reference) {
+					substituted_type.set_lvalue_reference(true);
+				}
+				for (size_t p = 0; p < arg.pointer_depth; ++p) {
+					substituted_type.add_pointer_level(CVQualifier::None);
+				}
+			}
+		} else if (tparam.kind() == TemplateParameterKind::NonType) {
+			// Handle non-type template parameters
+			const TemplateTypeArg& arg = template_args[i];
+			if (arg.is_value) {
+				// Add to non-type substitution map
+				nontype_substitution_map[tparam.name()] = arg.value;
+				FLASH_LOG(Templates, Debug, "Added non-type parameter substitution: ", tparam.name(), " -> ", arg.value);
+			}
 		}
 	}
 	
@@ -36262,10 +36414,13 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	// Substitute template parameters in initializer expression
 	std::optional<ASTNode> new_initializer = std::nullopt;
 	if (orig_var_decl.initializer().has_value()) {
+		FLASH_LOG(Templates, Debug, "Substituting initializer expression for variable template");
 		new_initializer = substitute_template_params_in_expression(
 			orig_var_decl.initializer().value(),
-			type_substitution_map
+			type_substitution_map,
+			nontype_substitution_map
 		);
+		FLASH_LOG(Templates, Debug, "Initializer substitution complete");
 		
 		// PHASE 3 FIX: After substitution, trigger instantiation of any class templates 
 		// referenced in the initializer expression. This ensures specialization pattern 
