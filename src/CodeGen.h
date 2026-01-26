@@ -949,6 +949,13 @@ private:
 		
 		std::string_view type_suffix = struct_name.substr(underscore_pos + 1);
 		
+		// Strip CV qualifier prefixes ('C' for const, 'V' for volatile)
+		// TemplateTypeArg::toString() adds CV qualifiers as prefixes (e.g., "Cint" for const int)
+		// sizeof(const T) and sizeof(volatile T) return the same size as sizeof(T)
+		while (!type_suffix.empty() && (type_suffix.front() == 'C' || type_suffix.front() == 'V')) {
+			type_suffix = type_suffix.substr(1);
+		}
+		
 		// Check for reference types (suffix ends with 'R' or 'RR')
 		// TemplateTypeArg::toString() appends "R" for lvalue reference, "RR" for rvalue reference
 		// sizeof(T&) and sizeof(T&&) return the size of T, not the size of the reference itself
@@ -975,6 +982,11 @@ private:
 			// Extract base type and array dimensions
 			std::string_view base_type = type_suffix.substr(0, array_pos);
 			std::string_view array_part = type_suffix.substr(array_pos + 1); // Skip 'A'
+			
+			// Strip CV qualifiers from base_type (already stripped from type_suffix earlier, but double-check)
+			while (!base_type.empty() && (base_type.front() == 'C' || base_type.front() == 'V')) {
+				base_type = base_type.substr(1);
+			}
 			
 			// Parse array dimensions like "[10]" or "[]"
 			if (array_part.starts_with('[') && array_part.ends_with(']')) {
