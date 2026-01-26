@@ -8,10 +8,10 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-26 (validate_return_values.sh)
+**Last Run:** 2026-01-26 (validate_return_values.sh - after reference parameter fixes)
 
-**Total files tested:** 959
-**Valid returns:** 955
+**Total files tested:** 960
+**Valid returns:** 956
 **Return mismatches:** 0
 **Runtime crashes:** 2
 **Compile failures:** 0
