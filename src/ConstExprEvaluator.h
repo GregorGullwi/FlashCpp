@@ -8,6 +8,7 @@
 #include <string>
 #include <variant>
 #include <climits>  // For LLONG_MAX, LLONG_MIN
+#include <charconv>  // For std::from_chars
 
 // Forward declarations
 class SymbolTable;
@@ -484,9 +485,21 @@ private:
 						// Parse the struct name to extract template arguments
 						// e.g., "Container_int" -> T = int (4 bytes), "Processor_char" -> T = char (1 byte)
 						// Pointer types have "P" suffix: "Container_intP" -> T = int* (8 bytes)
+						// Reference types have "R" or "RR" suffix: "Container_intR" -> T = int& (sizeof returns size of int)
 						size_t underscore_pos = struct_name.rfind('_');
 						if (underscore_pos != std::string_view::npos && underscore_pos + 1 < struct_name.size()) {
 							std::string_view type_suffix = struct_name.substr(underscore_pos + 1);
+							
+							// Check for reference types (suffix ends with 'R' or 'RR')
+							// TemplateTypeArg::toString() appends "R" for lvalue reference, "RR" for rvalue reference
+							// sizeof(T&) and sizeof(T&&) return the size of T, not the size of the reference itself
+							if (type_suffix.size() >= 2 && type_suffix.ends_with("RR")) {
+								// Rvalue reference - strip "RR" and get base type size
+								type_suffix = type_suffix.substr(0, type_suffix.size() - 2);
+							} else if (!type_suffix.empty() && type_suffix.back() == 'R') {
+								// Lvalue reference - strip "R" and get base type size
+								type_suffix = type_suffix.substr(0, type_suffix.size() - 1);
+							}
 							
 							// Check for pointer types (suffix ends with 'P')
 							// TemplateTypeArg::toString() appends 'P' for each pointer level
@@ -497,11 +510,44 @@ private:
 							}
 							
 							// Check for array types (suffix contains 'A')
-							// Arrays would be like "intA[10]" - but sizeof(array) depends on element count
-							// For now, we don't handle array template parameters (rare case)
-							if (type_suffix.find('A') != std::string_view::npos) {
-								// Unsupported - would need to parse array dimensions
-								// Fall through to return 0
+							// Arrays are like "intA[10]" - sizeof(array) = element_size * element_count
+							size_t array_pos = type_suffix.find('A');
+							if (array_pos != std::string_view::npos) {
+								// Extract base type and array dimensions
+								std::string_view base_type = type_suffix.substr(0, array_pos);
+								std::string_view array_part = type_suffix.substr(array_pos + 1); // Skip 'A'
+								
+								// Parse array dimensions like "[10]" or "[]"
+								if (array_part.starts_with('[') && array_part.ends_with(']')) {
+									std::string_view dimensions = array_part.substr(1, array_part.size() - 2);
+									if (!dimensions.empty()) {
+										// Parse the dimension as a number
+										size_t array_count = 0;
+										auto result = std::from_chars(dimensions.data(), dimensions.data() + dimensions.size(), array_count);
+										if (result.ec == std::errc{} && array_count > 0) {
+											// Get base type size
+											size_t base_size = 0;
+											if (base_type == "int") base_size = 4;
+											else if (base_type == "char") base_size = 1;
+											else if (base_type == "short") base_size = 2;
+											else if (base_type == "long") base_size = get_long_size_bits() / 8;
+											else if (base_type == "float") base_size = 4;
+											else if (base_type == "double") base_size = 8;
+											else if (base_type == "bool") base_size = 1;
+											else if (base_type == "uint") base_size = 4;
+											else if (base_type == "uchar") base_size = 1;
+											else if (base_type == "ushort") base_size = 2;
+											else if (base_type == "ulong") base_size = get_long_size_bits() / 8;
+											else if (base_type == "ulonglong") base_size = 8;
+											else if (base_type == "longlong") base_size = 8;
+											
+											if (base_size > 0) {
+												return EvalResult::from_int(static_cast<long long>(base_size * array_count));
+											}
+										}
+									}
+								}
+								// Failed to parse array dimensions - fall through
 							} else {
 								// Map common type suffixes to their sizes
 								// Note: Must match the output of TemplateTypeArg::toString() in TemplateRegistry.h
@@ -510,14 +556,14 @@ private:
 								if (type_suffix == "int") param_size_bytes = 4;
 								else if (type_suffix == "char") param_size_bytes = 1;
 								else if (type_suffix == "short") param_size_bytes = 2;
-								else if (type_suffix == "long") param_size_bytes = 8;
+								else if (type_suffix == "long") param_size_bytes = get_long_size_bits() / 8;
 								else if (type_suffix == "float") param_size_bytes = 4;
 								else if (type_suffix == "double") param_size_bytes = 8;
 								else if (type_suffix == "bool") param_size_bytes = 1;
 								else if (type_suffix == "uint") param_size_bytes = 4;
 								else if (type_suffix == "uchar") param_size_bytes = 1;
 								else if (type_suffix == "ushort") param_size_bytes = 2;
-								else if (type_suffix == "ulong") param_size_bytes = 8;
+								else if (type_suffix == "ulong") param_size_bytes = get_long_size_bits() / 8;
 								else if (type_suffix == "ulonglong") param_size_bytes = 8;
 								else if (type_suffix == "longlong") param_size_bytes = 8;
 								
