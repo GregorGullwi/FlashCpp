@@ -6351,13 +6351,42 @@ private:
 							direct_ctor->arguments().visit([&](ASTNode) { num_args++; });
 							
 							if (type_info.struct_info_) {
-								// Special case: If we have exactly one argument, try copy constructor first
+								// Special case: If we have exactly one argument of the same struct type, try copy constructor first
 								// This ensures copy constructors are preferred over converting constructors
+								// But only when the argument is actually of the same struct type
 								if (num_args == 1) {
-									const StructMemberFunction* copy_ctor_func = type_info.struct_info_->findCopyConstructor();
-									if (copy_ctor_func && copy_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
-										matching_ctor = &copy_ctor_func->function_decl.as<ConstructorDeclarationNode>();
-										FLASH_LOG(Codegen, Debug, "Matched copy constructor for ", type_info.name());
+									// Check if the argument is an identifier of the same struct type
+									ASTNode first_arg;
+									direct_ctor->arguments().visit([&](ASTNode arg) { 
+										if (!first_arg.has_value()) first_arg = arg;
+									});
+									
+									bool arg_is_same_struct_type = false;
+									if (first_arg.has_value() && first_arg.is<ExpressionNode>()) {
+										const auto& expr = first_arg.as<ExpressionNode>();
+										if (std::holds_alternative<IdentifierNode>(expr)) {
+											const auto& ident = std::get<IdentifierNode>(expr);
+											std::optional<ASTNode> arg_symbol = symbol_table.lookup(ident.name());
+											if (arg_symbol.has_value()) {
+												if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
+													const TypeSpecifierNode& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
+													// Check if argument is of the same struct type
+													if (arg_type.type() == Type::Struct && 
+														arg_type.type_index() == type_node.type_index()) {
+														arg_is_same_struct_type = true;
+													}
+												}
+											}
+										}
+									}
+									
+									// Only select copy constructor if argument is of the same struct type
+									if (arg_is_same_struct_type) {
+										const StructMemberFunction* copy_ctor_func = type_info.struct_info_->findCopyConstructor();
+										if (copy_ctor_func && copy_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
+											matching_ctor = &copy_ctor_func->function_decl.as<ConstructorDeclarationNode>();
+											FLASH_LOG(Codegen, Debug, "Matched copy constructor for ", type_info.name());
+										}
 									}
 								}
 								
