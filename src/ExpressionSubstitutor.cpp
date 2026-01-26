@@ -591,13 +591,98 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIdentifierNode& qual_id) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing qualified identifier: ", qual_id.full_name());
 	
-	// Qualified identifiers like R1<T>::num need template parameter substitution in the namespace part
-	// The namespace part contains the template name and arguments, e.g., "R1<T>"
-	// We need to substitute T with its concrete type to get "R1<long>"
+	// Qualified identifiers like R1_T::num need template parameter substitution in the namespace part
+	// The namespace is stored as a mangled template name like "R1_T" (template R1 with parameter T)
+	// We need to substitute T with its concrete type to get "R1_long"
 	
-	// For now, we'll return as-is and let the evaluator handle it
-	// TODO: Implement full substitution of qualified identifiers with template parameters
-	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+	// Get the namespace name (e.g., "R1_T")
+	std::string_view ns_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
+	
+	// Check if the namespace name contains template parameters (has underscore)
+	size_t underscore_pos = ns_name.find('_');
+	if (underscore_pos == std::string_view::npos) {
+		// No template parameters, return as-is
+		FLASH_LOG(Templates, Debug, "  No template parameters in namespace, returning as-is");
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+		return ASTNode(&new_expr);
+	}
+	
+	// Extract the base template name (e.g., "R1") and parameter part (e.g., "T")
+	std::string_view base_template_name = ns_name.substr(0, underscore_pos);
+	std::string_view param_part = ns_name.substr(underscore_pos + 1);
+	
+	FLASH_LOG(Templates, Debug, "  Base template: ", base_template_name, ", param part: ", param_part);
+	
+	// Check if the parameter is in our substitution map
+	auto param_it = param_map_.find(param_part);
+	if (param_it == param_map_.end()) {
+		// Parameter not found in substitution map, return as-is
+		FLASH_LOG(Templates, Debug, "  Parameter not found in substitution map");
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+		return ASTNode(&new_expr);
+	}
+	
+	const TemplateTypeArg& substitution = param_it->second;
+	
+	FLASH_LOG(Templates, Debug, "  Found substitution: base_type=", (int)substitution.base_type, 
+	          ", type_index=", substitution.type_index);
+	
+	// Get the type name for the substitution
+	std::string_view subst_type_name;
+	if (substitution.type_index < gTypeInfo.size() && substitution.type_index > 0) {
+		subst_type_name = StringTable::getStringView(gTypeInfo[substitution.type_index].name());
+	} else if (substitution.base_type != Type::UserDefined && substitution.base_type != Type::Struct) {
+		// For primitive types, use the base_type name
+		switch (substitution.base_type) {
+			case Type::Int: subst_type_name = "int"; break;
+			case Type::Long: subst_type_name = "long"; break;
+			case Type::Short: subst_type_name = "short"; break;
+			case Type::Char: subst_type_name = "char"; break;
+			case Type::Bool: subst_type_name = "bool"; break;
+			case Type::Float: subst_type_name = "float"; break;
+			case Type::Double: subst_type_name = "double"; break;
+			case Type::Void: subst_type_name = "void"; break;
+			case Type::UnsignedInt: subst_type_name = "unsigned int"; break;
+			case Type::UnsignedLong: subst_type_name = "unsigned long"; break;
+			case Type::UnsignedShort: subst_type_name = "unsigned short"; break;
+			case Type::UnsignedChar: subst_type_name = "unsigned char"; break;
+			case Type::LongLong: subst_type_name = "long long"; break;
+			case Type::UnsignedLongLong: subst_type_name = "unsigned long long"; break;
+			default:
+				// Can't substitute, return as-is
+				FLASH_LOG(Templates, Debug, "  Unknown type, cannot substitute");
+				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+				return ASTNode(&new_expr);
+		}
+	} else {
+		// Can't substitute, return as-is
+		FLASH_LOG(Templates, Debug, "  Substitution type not found");
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+		return ASTNode(&new_expr);
+	}
+	
+	// Construct the instantiated name: base_template + "_" + subst_type_name
+	// e.g., "R1" + "_" + "long" = "R1_long"
+	StringBuilder instantiated_name_builder;
+	instantiated_name_builder.append(base_template_name);
+	instantiated_name_builder.append("_"sv);
+	instantiated_name_builder.append(subst_type_name);
+	std::string_view instantiated_name = instantiated_name_builder.commit();
+	
+	FLASH_LOG(Templates, Debug, "  Substituted namespace: ", ns_name, " -> ", instantiated_name);
+	
+	// Look up or register the instantiated namespace
+	StringHandle instantiated_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+	NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+		NamespaceRegistry::GLOBAL_NAMESPACE, 
+		instantiated_name_handle
+	);
+	
+	// Create a new QualifiedIdentifierNode with the substituted namespace
+	QualifiedIdentifierNode new_qual_id(new_ns_handle, qual_id.identifier_token());
+	
+	// Wrap in ExpressionNode
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
 	return ASTNode(&new_expr);
 }
 
