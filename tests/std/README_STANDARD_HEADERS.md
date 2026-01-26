@@ -16,7 +16,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | static_assert constexpr evaluation (~155ms) |
 | `<vector>` | `test_std_vector.cpp` | ❌ Timeout/Parse Error | Hangs or takes very long - likely placement new in decltype issue |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Needs investigation with <compare> fix |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Fails at line 141 - constexpr evaluation issue after union fix (~263ms) |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Fails at line 337 - inheriting constructors not supported (~263ms) |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~161ms) |
 | `<any>` | `test_std_any.cpp` | ❌ Parse Error | Out-of-line nested template member function definition (~128ms) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
@@ -69,12 +69,31 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Note (2026-01-24 Latest Update):** Fixed `operator[]` parsing in template class bodies, brace initialization of structs with constructors but no data members, and throw expressions as unary operators. The `<compare>` header now fully compiles. Fixed union template parsing - union keyword now recognized in all template declaration paths. The `<optional>` header now progresses past line 204 and fails at line 141 with a different constexpr evaluation error.
 
 **Primary Remaining Blockers:**
-1. **Base class template parameter substitution** - Non-type template parameters from base classes (e.g., `integral_constant<bool, __v>`) need to be substituted into derived class static members. This affects `<type_traits>` where `is_integral<int>` inherits through multiple levels: `is_integral` → `__is_integral_helper` → `true_type` → `integral_constant<bool, true>`. The static member `value = __v` in `integral_constant` needs `__v` substituted with the concrete value `true`.
+1. **Type alias resolution in inherited base classes** - When a template inherits from `Base<T>::type`, the type alias needs to be resolved to the underlying struct type. Currently, type alias TypeInfo objects created during template instantiation have invalid `type_index_` values (likely due to `gTypeInfo` vector reallocation), preventing proper base class resolution. This affects `<type_traits>` where `is_integral<int>` inherits from `__is_integral_helper<int>::type` which should resolve to `integral_constant<bool, true>`. See investigation notes below for details.
 2. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
 3. **Out-of-line nested template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported yet (affects `<any>`)
 4. **Vector header performance** - The `<vector>` header times out during template instantiation, likely due to template complexity. Note: The placement new syntax (`decltype(::new((void*)0) _Tp(...))`) itself parses correctly - the issue is elsewhere in vector's dependencies.
+5. **Inheriting constructors** - The `using BaseClass::Constructor;` syntax is not supported yet (affects `<optional>`)
 
-**Fixes Applied (2026-01-25 This PR - Template Parameter Substitution in Static Members):**
+**Fixes Applied (2026-01-25 This PR - `this` keyword support):**
+- **Fixed** `this` keyword in statement context - Added `{"this", &Parser::parse_expression_statement}` to keyword_parsing_functions map (Parser.cpp:~14078)
+  - The `this` keyword was already supported in expression context but not recognized when starting a statement
+  - Patterns like `this->member = value;` and `return this->member;` now work correctly
+  - Test case: `test_this_keyword.cpp` compiles and returns 42
+- **Impact:** `<optional>` header progresses past line 141 (unknown keyword `this`) to line 337 (inheriting constructors). Many other headers that use `this->` syntax will also benefit.
+
+**Investigation: Type Alias Resolution Issue (2026-01-25):**
+- **Problem**: Templates that inherit from a base class via type alias (e.g., `struct Derived : Base<T>::type {}`) fail to find static members through inheritance
+- **Root Cause**: When `lookup_inherited_type_alias` returns a TypeInfo* for the alias, the `type_index_` field is invalid (out of bounds). This appears to be a stale pointer from before `gTypeInfo` vector was resized during template instantiation.
+- **Test Case**: `is_integral<int>` → `__is_integral_helper<int>::type` → `integral_constant<bool, true>` 
+  - The `::type` alias is found successfully
+  - But the alias TypeInfo has `type_index_=93` when `gTypeInfo.size()=33`
+  - This prevents the base class from being added with the correct underlying type name
+  - As a result, `is_integral<int>::value` cannot be found through the inheritance chain
+- **Impact**: Blocks `<type_traits>`, `<ratio>`, and transitively most of the standard library
+- **Next Steps**: Need to either (1) fix type alias `type_index_` updates when `gTypeInfo` is resized, (2) store type aliases separately from `gTypeInfo`, or (3) look up underlying types by name (slower but more reliable)
+
+**Fixes Applied (2026-01-25 Previous - Template Parameter Substitution in Static Members):**
 - **Added** ExpressionSubstitutor support for static member initializers during template instantiation
   - Modified `try_instantiate_class_template` to use ExpressionSubstitutor for pattern AST static members (Parser.cpp:~37780)
   - Modified `instantiateLazyStaticMember` to use ExpressionSubstitutor as fallback for template-dependent expressions (Parser.cpp:~42465)

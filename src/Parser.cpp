@@ -14075,6 +14075,7 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"__int64", &Parser::parse_variable_declaration},
 			{"new", &Parser::parse_expression_statement},
 			{"delete", &Parser::parse_expression_statement},
+			{"this", &Parser::parse_expression_statement},
 			{"static_cast", &Parser::parse_expression_statement},
 			{"dynamic_cast", &Parser::parse_expression_statement},
 			{"const_cast", &Parser::parse_expression_statement},
@@ -25448,11 +25449,12 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 	if (!struct_type_info->struct_info_) {
 		// This might be a type alias - try to find the actual struct type
 		// Type aliases have a type_index that points to the underlying type
-		if (struct_type_info->type_index_ < gTypeInfo.size() && 
-		    struct_type_info->type_index_ != static_cast<TypeIndex>(struct_it->second - &gTypeInfo[0])) {
-			// The type_index points to a different type - follow the alias
+		// Check if type_index_ is valid and points to a different TypeInfo entry
+		if (struct_type_info->type_index_ < gTypeInfo.size()) {
 			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_];
-			if (underlying_type.struct_info_) {
+			// Check if this is actually an alias (points to a different TypeInfo)
+			// by comparing the pointer addresses
+			if (&underlying_type != struct_type_info && underlying_type.struct_info_) {
 				StringHandle underlying_name = underlying_type.name();
 				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias", 
 				                 StringTable::getStringView(struct_name), StringTable::getStringView(underlying_name));
@@ -25526,11 +25528,12 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 	if (!struct_type_info->struct_info_) {
 		// This might be a type alias - try to find the actual struct type
 		// Type aliases have a type_index that points to the underlying type
-		if (struct_type_info->type_index_ < gTypeInfo.size() && 
-		    struct_type_info->type_index_ != static_cast<TypeIndex>(struct_it->second - &gTypeInfo[0])) {
-			// The type_index points to a different type - follow the alias
+		// Check if type_index_ is valid and points to a different TypeInfo entry
+		if (struct_type_info->type_index_ < gTypeInfo.size()) {
 			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_];
-			if (underlying_type.struct_info_) {
+			// Check if this is actually an alias (points to a different TypeInfo)
+			// by comparing the pointer addresses
+			if (&underlying_type != struct_type_info && underlying_type.struct_info_) {
 				StringHandle underlying_name = underlying_type.name();
 				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias", 
 				                 StringTable::getStringView(struct_name), StringTable::getStringView(underlying_name));
@@ -39005,8 +39008,15 @@ if (struct_type_info.getStructInfo()) {
 						          " (this may be expected for SFINAE/dependent template arguments)");
 						continue;
 					}
-					// Use the inherited type alias
-					final_base_name = StringTable::getStringView(inherited_alias->name());
+					// The inherited_alias is a type alias - resolve it to the underlying type
+					// If type_index_ is valid, use it to get the actual type name
+					if (inherited_alias->type_index_ < gTypeInfo.size()) {
+						const TypeInfo& underlying_type = gTypeInfo[inherited_alias->type_index_];
+						final_base_name = StringTable::getStringView(underlying_type.name());
+					} else {
+						// Fallback: use the alias name if type_index is invalid
+						final_base_name = StringTable::getStringView(inherited_alias->name());
+					}
 					struct_info->addBaseClass(final_base_name, inherited_alias->type_index_, deferred_base.access, deferred_base.is_virtual);
 					FLASH_LOG_FORMAT(Templates, Debug, "Resolved deferred inherited member alias base to {}", final_base_name);
 					continue;
@@ -39966,7 +39976,9 @@ if (struct_type_info.getStructInfo()) {
 					// Self-referential type alias - point to the instantiated type
 					auto inst_it = gTypesByName.find(instantiated_name);
 					if (inst_it != gTypesByName.end()) {
-						TypeIndex inst_idx = static_cast<TypeIndex>(inst_it->second - &gTypeInfo[0]);
+						// Use the type_index_ field directly instead of pointer arithmetic
+						// Pointer arithmetic on deque elements is undefined behavior
+						TypeIndex inst_idx = inst_it->second->type_index_;
 						substituted_type_index = inst_idx;
 						FLASH_LOG(Templates, Debug, "Self-referential type alias '", StringTable::getStringView(type_alias.alias_name), 
 						          "' now points to instantiated type '", instantiated_name, "' (index ", inst_idx, ")");
