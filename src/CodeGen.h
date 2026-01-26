@@ -947,6 +947,7 @@ private:
 		std::string_view type_suffix = struct_name.substr(underscore_pos + 1);
 		
 		// Map common type suffixes to their sizes
+		// Note: Must match the output of TemplateTypeArg::toString() in TemplateRegistry.h
 		if (type_suffix == "int") return 4;
 		else if (type_suffix == "char") return 1;
 		else if (type_suffix == "short") return 2;
@@ -954,11 +955,12 @@ private:
 		else if (type_suffix == "float") return 4;
 		else if (type_suffix == "double") return 8;
 		else if (type_suffix == "bool") return 1;
-		else if (type_suffix == "unsigned_int") return 4;
-		else if (type_suffix == "unsigned_char") return 1;
-		else if (type_suffix == "unsigned_short") return 2;
-		else if (type_suffix == "unsigned_long") return 8;
-		else if (type_suffix.starts_with("long_long")) return 8;
+		else if (type_suffix == "uint") return 4;
+		else if (type_suffix == "uchar") return 1;
+		else if (type_suffix == "ushort") return 2;
+		else if (type_suffix == "ulong") return 8;
+		else if (type_suffix == "ulonglong") return 8;
+		else if (type_suffix == "longlong") return 8;
 		
 		return 0;  // Unknown type
 	}
