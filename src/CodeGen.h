@@ -933,6 +933,36 @@ public:
 	}
 
 private:
+	// Helper function to resolve template parameter size from struct name
+	// This is used by both ConstExpr evaluator and IR generation for sizeof(T)
+	// where T is a template parameter in a template class member function
+	static size_t resolveTemplateSizeFromStructName(std::string_view struct_name) {
+		// Parse the struct name to extract template arguments
+		// e.g., "Container_int" -> T = int (4 bytes), "Processor_char" -> T = char (1 byte)
+		size_t underscore_pos = struct_name.rfind('_');
+		if (underscore_pos == std::string_view::npos || underscore_pos + 1 >= struct_name.size()) {
+			return 0;
+		}
+		
+		std::string_view type_suffix = struct_name.substr(underscore_pos + 1);
+		
+		// Map common type suffixes to their sizes
+		if (type_suffix == "int") return 4;
+		else if (type_suffix == "char") return 1;
+		else if (type_suffix == "short") return 2;
+		else if (type_suffix == "long") return 8;
+		else if (type_suffix == "float") return 4;
+		else if (type_suffix == "double") return 8;
+		else if (type_suffix == "bool") return 1;
+		else if (type_suffix == "unsigned_int") return 4;
+		else if (type_suffix == "unsigned_char") return 1;
+		else if (type_suffix == "unsigned_short") return 2;
+		else if (type_suffix == "unsigned_long") return 8;
+		else if (type_suffix.starts_with("long_long")) return 8;
+		
+		return 0;  // Unknown type
+	}
+
 	// Helper function to try evaluating sizeof/alignof using ConstExprEvaluator
 	// Returns the evaluated operands if successful, empty vector otherwise
 	template<typename NodeType>
@@ -16727,17 +16757,12 @@ private:
 
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
 			Type type = type_spec.type();
-			
-			FLASH_LOG(Codegen, Debug, "generateSizeofIr: type=", static_cast<int>(type), ", size_in_bits=", type_spec.size_in_bits(), 
-			          ", token='", type_spec.token().value(), "', token_type=", static_cast<int>(type_spec.token().type()));
 
 			// Workaround for parser limitation: when sizeof(arr) is parsed where arr is an
 			// array variable, the parser may incorrectly parse it as a type.
 			// If size_in_bits is 0, try looking up the identifier in the symbol table.
 			if (type_spec.size_in_bits() == 0 && type_spec.token().type() == Token::Type::Identifier) {
 				std::string_view identifier = type_spec.token().value();
-				
-				FLASH_LOG(Codegen, Debug, "sizeof with size_in_bits=0, identifier='", identifier, "'");
 				
 				// Look up the identifier in the symbol table
 				std::optional<ASTNode> symbol = symbol_table.lookup(identifier);
@@ -16756,53 +16781,16 @@ private:
 					}
 				}
 				
-				FLASH_LOG(Codegen, Debug, "Symbol not found, checking for template parameter. current_struct_name_.isValid()=", current_struct_name_.isValid());
-				
 				// Handle template parameters in member functions with trailing requires clauses
 				// When sizeof(T) is used in a template class member function, T is a template parameter
 				// that should be resolved from the instantiated class's template arguments
 				if (!symbol.has_value() && current_struct_name_.isValid()) {
 					// We're in a member function - try to resolve the template parameter
 					std::string_view struct_name = StringTable::getStringView(current_struct_name_);
+					size_t param_size_bytes = resolveTemplateSizeFromStructName(struct_name);
 					
-					FLASH_LOG(Codegen, Debug, "In member function of struct='", struct_name, "', looking for template param");
-					
-					// Parse the struct name to extract template arguments
-					// e.g., "Container_int" -> T = int, "Processor_char" -> T = char
-					size_t underscore_pos = struct_name.rfind('_');
-					if (underscore_pos != std::string_view::npos && underscore_pos + 1 < struct_name.size()) {
-						std::string_view type_suffix = struct_name.substr(underscore_pos + 1);
-						
-						FLASH_LOG(Codegen, Debug, "Found type_suffix='", type_suffix, "'");
-						
-						// Map common type suffixes to their sizes
-						size_t param_size_bytes = 0;
-						if (type_suffix == "int") param_size_bytes = 4;
-						else if (type_suffix == "char") param_size_bytes = 1;
-						else if (type_suffix == "short") param_size_bytes = 2;
-						else if (type_suffix == "long") param_size_bytes = 8;
-						else if (type_suffix == "float") param_size_bytes = 4;
-						else if (type_suffix == "double") param_size_bytes = 8;
-						else if (type_suffix == "bool") param_size_bytes = 1;
-						else if (type_suffix.starts_with("unsigned")) {
-							// Handle unsigned_int, unsigned_long, etc.
-							if (type_suffix == "unsigned_int") param_size_bytes = 4;
-							else if (type_suffix == "unsigned_char") param_size_bytes = 1;
-							else if (type_suffix == "unsigned_short") param_size_bytes = 2;
-							else if (type_suffix == "unsigned_long") param_size_bytes = 8;
-						} else if (type_suffix.starts_with("long_long")) {
-							param_size_bytes = 8;
-						}
-						
-						if (param_size_bytes > 0) {
-							FLASH_LOG(Codegen, Debug, "Resolved sizeof(", identifier, ") in template class ", 
-							          struct_name, " to ", param_size_bytes, " bytes");
-							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(param_size_bytes) };
-						} else {
-							FLASH_LOG(Codegen, Debug, "No matching type suffix found for '", type_suffix, "'");
-						}
-					} else {
-						FLASH_LOG(Codegen, Debug, "No underscore found in struct name");
+					if (param_size_bytes > 0) {
+						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(param_size_bytes) };
 					}
 				}
 			}
