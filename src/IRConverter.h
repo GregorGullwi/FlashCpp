@@ -3914,9 +3914,23 @@ private:
 			FLASH_LOG(Codegen, Debug, "  Using unique suffix match: '", StringTable::getStringView(global_info->name), "'");
 		} else if (!global_info && suffix_matches.size() > 1) {
 			FLASH_LOG(Codegen, Warning, "  Ambiguous: ", suffix_matches.size(), " globals match suffix '", var_name, "'");
-			// For now, use the first match as a heuristic
-			// TODO: Use better context (like the struct being accessed) to disambiguate
-			global_info = suffix_matches[0];
+			
+			// Try to disambiguate by preferring the shortest qualified name (most specific match)
+			// This heuristic assumes that the most specific match (e.g., "Foo::value" over "ns::Foo::value")
+			// is more likely to be the intended target in the current context
+			const GlobalVariableInfo* best_match = suffix_matches[0];
+			size_t shortest_length = StringTable::getStringView(best_match->name).size();
+			
+			for (const auto* candidate : suffix_matches) {
+				size_t candidate_length = StringTable::getStringView(candidate->name).size();
+				if (candidate_length < shortest_length) {
+					best_match = candidate;
+					shortest_length = candidate_length;
+				}
+			}
+			
+			global_info = best_match;
+			FLASH_LOG(Codegen, Debug, "  Disambiguated to shortest match: '", StringTable::getStringView(global_info->name), "'");
 		}
 		
 		if (!global_info) {
@@ -5773,7 +5787,14 @@ private:
 	uint32_t emitFloatMovRipRelative(X64Register xmm_dest, bool is_float) {
 		// MOVSD XMM0, [RIP + disp32]: F2 0F 10 05 [disp32]
 		// MOVSS XMM0, [RIP + disp32]: F3 0F 10 05 [disp32]
+		// For XMM8-XMM15: F2 44 0F 10 05 [disp32] (REX.R prefix needed)
 		textSectionData.push_back(is_float ? 0xF3 : 0xF2);
+		
+		// REX prefix if XMM8-XMM15
+		if (xmm_needs_rex(xmm_dest)) {
+			textSectionData.push_back(0x44); // REX.R for XMM8-XMM15
+		}
+		
 		textSectionData.push_back(0x0F);
 		textSectionData.push_back(0x10); // MOVSD/MOVSS xmm, m (load variant)
 		uint8_t xmm_bits = static_cast<uint8_t>(xmm_dest) & 0x07;
