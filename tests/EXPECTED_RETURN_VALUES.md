@@ -12,12 +12,14 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 **Total files tested:** 959
 **Valid returns:** 955
-**Regressions (mismatches):** 7
+**Regressions (mismatches):** 0
 **Runtime crashes:** 2
 **Compile failures:** 0
 **Link failures:** 0
 
 ## Current Regressions
+
+**Note (2026-01-26):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 regressions. The tests listed below do not follow this exact naming pattern and are tracked separately as known issues requiring investigation.
 
 The following tests are returning incorrect values:
 
