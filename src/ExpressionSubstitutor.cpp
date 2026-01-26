@@ -671,6 +671,13 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	
 	FLASH_LOG(Templates, Debug, "  Substituted namespace: ", ns_name, " -> ", instantiated_name);
 	
+	// Ensure the template is instantiated with the concrete type argument
+	// This is necessary so the evaluator can find the type in gTypesByName
+	std::vector<TemplateTypeArg> inst_args;
+	inst_args.push_back(substitution);
+	FLASH_LOG(Templates, Debug, "  Triggering instantiation of template '", base_template_name, "'");
+	parser_.try_instantiate_class_template(base_template_name, inst_args, true);
+	
 	// Look up or register the instantiated namespace
 	StringHandle instantiated_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
 	NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(

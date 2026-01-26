@@ -19,13 +19,15 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Known Return Mismatches
 
-**Note (2026-01-26):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 return mismatches out of 959 tests. The tests listed below do not follow the exact naming pattern and are tracked separately as known issues that require investigation. These failures are unrelated to the member access size bug that was fixed in this PR.
+**Note (2026-01-26):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 return mismatches out of 959 tests. The tests listed below do not follow the exact naming pattern and are tracked separately as known issues that require investigation.
 
-The following tests are returning incorrect values (unchanged from previous documentation):
+**Fixed in this PR:**
+- ~~test_less_in_base_class_ret0.cpp~~ - **FIXED**: Template base class with comparison expressions in template arguments now correctly evaluated
+
+The following tests are still returning incorrect values:
 
 | Test File | Expected | Currently Returning | Notes |
 |-----------|----------|---------------------|-------|
-| test_less_in_base_class_ret0.cpp | 0 | 1 | Test expects 0 but returns 1 |
 | test_member_func_trailing_requires_ret42.cpp | 42 | 28 | Member function with trailing requires clause |
 | test_member_partial_spec_inherit_ret4.cpp | 4 | 0 | Partial specialization inheritance issue |
 | test_member_var_template_ret42.cpp | 42 | 0 | Variable template member access |
