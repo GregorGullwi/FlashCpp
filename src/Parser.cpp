@@ -25449,8 +25449,9 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 	if (!struct_type_info->struct_info_) {
 		// This might be a type alias - try to find the actual struct type
 		// Type aliases have a type_index that points to the underlying type
+		// Use type_index_ field directly, not pointer arithmetic on deque
 		if (struct_type_info->type_index_ < gTypeInfo.size() && 
-		    struct_type_info->type_index_ != static_cast<TypeIndex>(struct_it->second - &gTypeInfo[0])) {
+		    struct_type_info->type_index_ != struct_it->second->type_index_) {
 			// The type_index points to a different type - follow the alias
 			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_];
 			if (underlying_type.struct_info_) {
@@ -25527,8 +25528,9 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 	if (!struct_type_info->struct_info_) {
 		// This might be a type alias - try to find the actual struct type
 		// Type aliases have a type_index that points to the underlying type
+		// Use type_index_ field directly, not pointer arithmetic on deque
 		if (struct_type_info->type_index_ < gTypeInfo.size() && 
-		    struct_type_info->type_index_ != static_cast<TypeIndex>(struct_it->second - &gTypeInfo[0])) {
+		    struct_type_info->type_index_ != struct_it->second->type_index_) {
 			// The type_index points to a different type - follow the alias
 			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_];
 			if (underlying_type.struct_info_) {
@@ -39974,7 +39976,9 @@ if (struct_type_info.getStructInfo()) {
 					// Self-referential type alias - point to the instantiated type
 					auto inst_it = gTypesByName.find(instantiated_name);
 					if (inst_it != gTypesByName.end()) {
-						TypeIndex inst_idx = static_cast<TypeIndex>(inst_it->second - &gTypeInfo[0]);
+						// Use the type_index_ field directly instead of pointer arithmetic
+						// Pointer arithmetic on deque elements is undefined behavior
+						TypeIndex inst_idx = inst_it->second->type_index_;
 						substituted_type_index = inst_idx;
 						FLASH_LOG(Templates, Debug, "Self-referential type alias '", StringTable::getStringView(type_alias.alias_name), 
 						          "' now points to instantiated type '", instantiated_name, "' (index ", inst_idx, ")");
