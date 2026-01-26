@@ -6373,9 +6373,17 @@ private:
 									    std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 										const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 										std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+										
+										// Handle both DeclarationNode and VariableDeclarationNode
+										const DeclarationNode* arg_decl = nullptr;
 										if (symbol.has_value() && symbol->is<DeclarationNode>()) {
-											const auto& arg_decl = symbol->as<DeclarationNode>();
-											const auto& arg_type = arg_decl.type_node().as<TypeSpecifierNode>();
+											arg_decl = &symbol->as<DeclarationNode>();
+										} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
+											arg_decl = &symbol->as<VariableDeclarationNode>().declaration();
+										}
+										
+										if (arg_decl) {
+											const auto& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
 											
 											if (arg_type.is_reference() || arg_type.is_rvalue_reference()) {
 												// Argument is already a reference - just pass it through
@@ -15888,9 +15896,10 @@ private:
 		base_type = object_type.type();
 		base_type_index = object_type.type_index();
 		
-		// Check if this is a pointer to struct (e.g., P* pp)
-		// In this case, member access like pp->member should be treated as pointer dereference
-		if (object_type.pointer_depth() > 0) {
+		// Check if this is a pointer to struct (e.g., P* pp) or a reference to struct (e.g., P& pr)
+		// In this case, member access like pp->member or pr.member should be treated as pointer dereference
+		// References are implemented as pointers internally, so they need the same treatment
+		if (object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference()) {
 			is_pointer_dereference = true;
 		}
 		
