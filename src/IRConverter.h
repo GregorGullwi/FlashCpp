@@ -3873,6 +3873,104 @@ private:
 		storeArithmeticResult(ctx);
 	}
 
+	// Helper function to load a global variable into a register
+	// Handles both integer/pointer and floating-point types
+	// Returns the allocated register, or X64Register::Count on error
+	X64Register loadGlobalVariable(StringHandle var_handle, std::string_view var_name, 
+	                                Type operand_type, int operand_size_in_bits, 
+	                                std::optional<X64Register> exclude_reg = std::nullopt) {
+		FLASH_LOG(Codegen, Debug, "StringHandle not found in local vars: '", var_name, "', checking global variables");
+		
+		const GlobalVariableInfo* global_info = nullptr;
+		std::vector<const GlobalVariableInfo*> suffix_matches;
+		
+		for (const auto& global : global_variables_) {
+			std::string_view global_name = StringTable::getStringView(global.name);
+			
+			// Match either exact name or qualified name ending with ::member_name
+			// This handles cases like "value" matching "int_constant<-5>::value"
+			if (global.name == var_handle) {
+				global_info = &global;
+				break;
+			}
+			
+			// Check if global name ends with "::" + var_name using StringBuilder
+			StringBuilder suffix_builder;
+			suffix_builder.append("::"sv).append(var_name);
+			std::string_view suffix = suffix_builder.preview();
+			
+			if (global_name.size() > suffix.size() &&
+			    global_name.substr(global_name.size() - suffix.size()) == suffix) {
+				suffix_matches.push_back(&global);
+				FLASH_LOG(Codegen, Debug, "  Potential suffix match: '", global_name, "' ends with '", suffix, "'");
+			}
+			
+			suffix_builder.reset();
+		}
+		
+		// If no exact match but exactly one suffix match, use it
+		if (!global_info && suffix_matches.size() == 1) {
+			global_info = suffix_matches[0];
+			FLASH_LOG(Codegen, Debug, "  Using unique suffix match: '", StringTable::getStringView(global_info->name), "'");
+		} else if (!global_info && suffix_matches.size() > 1) {
+			FLASH_LOG(Codegen, Warning, "  Ambiguous: ", suffix_matches.size(), " globals match suffix '", var_name, "'");
+			
+			// Try to disambiguate by preferring the shortest qualified name (most specific match)
+			// This heuristic assumes that the most specific match (e.g., "Foo::value" over "ns::Foo::value")
+			// is more likely to be the intended target in the current context
+			const GlobalVariableInfo* best_match = suffix_matches[0];
+			size_t shortest_length = StringTable::getStringView(best_match->name).size();
+			
+			for (const auto* candidate : suffix_matches) {
+				size_t candidate_length = StringTable::getStringView(candidate->name).size();
+				if (candidate_length < shortest_length) {
+					best_match = candidate;
+					shortest_length = candidate_length;
+				}
+			}
+			
+			global_info = best_match;
+			FLASH_LOG(Codegen, Debug, "  Disambiguated to shortest match: '", StringTable::getStringView(global_info->name), "'");
+		}
+		
+		if (!global_info) {
+			FLASH_LOG(Codegen, Error, "Missing variable name: '", var_name, "', not in local or global scope");
+			return X64Register::Count;
+		}
+		
+		FLASH_LOG(Codegen, Debug, "Found global variable: '", StringTable::getStringView(global_info->name), "'");
+		
+		X64Register result_reg;
+		
+		// Handle floating-point vs integer/pointer types
+		if (is_floating_point_type(operand_type)) {
+			// For float/double, allocate an XMM register
+			result_reg = allocateXMMRegisterWithSpilling();
+			bool is_float = (operand_type == Type::Float);
+			uint32_t reloc_offset = emitFloatMovRipRelative(result_reg, is_float);
+			
+			// Add pending relocation for this global variable reference
+			pending_global_relocations_.push_back({reloc_offset, global_info->name, IMAGE_REL_AMD64_REL32});
+		} else {
+			// For integers/pointers, allocate a general-purpose register
+			if (exclude_reg.has_value()) {
+				result_reg = allocateRegisterWithSpilling(exclude_reg.value());
+			} else {
+				result_reg = allocateRegisterWithSpilling();
+			}
+			
+			// Emit MOV instruction with RIP-relative addressing
+			uint32_t reloc_offset = emitMovRipRelative(result_reg, operand_size_in_bits);
+			
+			// Add pending relocation for this global variable reference
+			pending_global_relocations_.push_back({reloc_offset, global_info->name, IMAGE_REL_AMD64_REL32});
+			
+			regAlloc.flushSingleDirtyRegister(result_reg);
+		}
+		
+		return result_reg;
+	}
+
 	ArithmeticOperationContext setupAndLoadArithmeticOperation(const IrInstruction& instruction, const char* operation_name) {
 		const BinaryOp& bin_op = *getTypedPayload<BinaryOp>(instruction);
 		
@@ -3958,7 +4056,13 @@ private:
 				}
 			}
 			else {
-				assert(false && "Missing variable name"); // TODO: Error handling
+				// Not found in local variables - check if it's a global variable
+				std::string_view lhs_var_name = StringTable::getStringView(lhs_var_op);
+				ctx.result_physical_reg = loadGlobalVariable(lhs_var_op, lhs_var_name, operand_type, ctx.operand_size_in_bits);
+				
+				if (ctx.result_physical_reg == X64Register::Count) {
+					assert(false && "Missing variable name"); // TODO: Error handling
+				}
 			}
 		}
 		else if (std::holds_alternative<TempVar>(bin_op.lhs.value)) {
@@ -4174,7 +4278,13 @@ private:
 				}
 			}
 			else {
-				assert(false && "Missing variable name"); // TODO: Error handling
+				// Not found in local variables - check if it's a global variable
+				std::string_view rhs_var_name = StringTable::getStringView(rhs_var_op);
+				ctx.rhs_physical_reg = loadGlobalVariable(rhs_var_op, rhs_var_name, operand_type, bin_op.rhs.size_in_bits, ctx.result_physical_reg);
+				
+				if (ctx.rhs_physical_reg == X64Register::Count) {
+					assert(false && "Missing variable name"); // TODO: Error handling
+				}
 			}
 		}
 		else if (std::holds_alternative<TempVar>(bin_op.rhs.value)) {
@@ -5677,7 +5787,14 @@ private:
 	uint32_t emitFloatMovRipRelative(X64Register xmm_dest, bool is_float) {
 		// MOVSD XMM0, [RIP + disp32]: F2 0F 10 05 [disp32]
 		// MOVSS XMM0, [RIP + disp32]: F3 0F 10 05 [disp32]
+		// For XMM8-XMM15: F2 44 0F 10 05 [disp32] (REX.R prefix needed)
 		textSectionData.push_back(is_float ? 0xF3 : 0xF2);
+		
+		// REX prefix if XMM8-XMM15
+		if (xmm_needs_rex(xmm_dest)) {
+			textSectionData.push_back(0x44); // REX.R for XMM8-XMM15
+		}
+		
 		textSectionData.push_back(0x0F);
 		textSectionData.push_back(0x10); // MOVSD/MOVSS xmm, m (load variant)
 		uint8_t xmm_bits = static_cast<uint8_t>(xmm_dest) & 0x07;

@@ -32749,7 +32749,26 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		// Look up the type - it should be an instantiated template class
 		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 		if (type_it == gTypesByName.end()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Type {} not found in type system", type_name);
+			FLASH_LOG_FORMAT(Templates, Debug, "Type {} not found in type system, attempting to instantiate as template", type_name);
+			
+			// Try to parse the type name as a template instantiation (e.g., "Num<int>")
+			// Extract template name and arguments
+			size_t template_start = type_name.find('<');
+			if (template_start != std::string_view::npos && type_name.back() == '>') {
+				std::string_view template_name = type_name.substr(0, template_start);
+				// For now, we'll try to instantiate with the args as a string
+				// This is a simplified approach - proper parsing would be better
+				// but since we're in constant evaluation, the template should have been
+				// instantiated already if it's used correctly
+				
+				// Check if this is a known template
+				auto template_entry = gTemplateRegistry.lookupTemplate(template_name);
+				if (template_entry.has_value()) {
+					FLASH_LOG_FORMAT(Templates, Debug, "Found template '{}', but instantiation failed or incomplete", template_name);
+				}
+			}
+			
+			FLASH_LOG_FORMAT(Templates, Debug, "Type {} not found even after instantiation attempt", type_name);
 			return std::nullopt;
 		}
 		
@@ -32944,6 +32963,27 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			return ConstantValue{eval_result.as_int(), Type::Int};
 		}
 		FLASH_LOG(Templates, Debug, "Failed to evaluate binary operator");
+		return std::nullopt;
+	}
+	
+	// Handle unary operator expressions (e.g., -5, ~0, !true)
+	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+		FLASH_LOG(Templates, Debug, "Evaluating unary operator expression");
+		ConstExpr::EvaluationContext ctx(gSymbolTable);
+		// Set struct context for static member lookup
+		if (!struct_parsing_context_stack_.empty()) {
+			const auto& struct_ctx = struct_parsing_context_stack_.back();
+			ctx.struct_node = struct_ctx.struct_node;
+			ctx.struct_info = struct_ctx.local_struct_info;
+		}
+		// Enable on-demand template instantiation for expressions like -Num<T>::num
+		ctx.parser = this;
+		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
+		if (eval_result.success()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Unary op evaluated to: {}", eval_result.as_int());
+			return ConstantValue{eval_result.as_int(), Type::Int};
+		}
+		FLASH_LOG(Templates, Debug, "Failed to evaluate unary operator");
 		return std::nullopt;
 	}
 	
@@ -38969,6 +39009,25 @@ if (struct_type_info.getStructInfo()) {
 							continue;
 						} else {
 							FLASH_LOG(Templates, Debug, "Failed to evaluate substituted binary/ternary operator");
+						}
+					} else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+						// Handle unary operator expressions like: -Num<T>::num
+						// These need template parameter substitution before evaluation
+						FLASH_LOG(Templates, Debug, "Processing UnaryOperatorNode in deferred base argument");
+						
+						// Use ExpressionSubstitutor to substitute template parameters
+						ExpressionSubstitutor substitutor(name_substitution_map, *this);
+						ASTNode substituted_node = substitutor.substitute(arg_info.node);
+						
+						// Now try to evaluate the substituted expression
+						if (auto value = try_evaluate_constant_expression(substituted_node)) {
+							FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted unary operator to value {}", value->value);
+							TemplateTypeArg val_arg(value->value, value->type);
+							val_arg.is_pack = arg_info.is_pack;
+							resolved_args.push_back(val_arg);
+							continue;
+						} else {
+							FLASH_LOG(Templates, Debug, "Failed to evaluate substituted unary operator");
 						}
 					} else {
 						// Try to evaluate non-type template argument after substitution
