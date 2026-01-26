@@ -5197,25 +5197,19 @@ private:
 		return relocation_offset;
 	}
 
-	// Helper to generate and emit MOV to frame (64-bit pointers/references)
-	void emitMovToFrame(X64Register sourceRegister, int32_t offset) {
-		auto opcodes = generateMovToFrameBySize(sourceRegister, offset, 64);
-		std::string bytes_str;
-		for (size_t i = 0; i < static_cast<size_t>(opcodes.size_in_bytes); i++) {
-			bytes_str += std::format("{:02x} ", static_cast<uint8_t>(opcodes.op_codes[i]));
-		}
-		FLASH_LOG_FORMAT(Codegen, Debug, "emitMovToFrame: reg={} offset={} bytes={}", static_cast<int>(sourceRegister), offset, bytes_str);
-		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
-	}
-
 	// Helper to generate and emit MOV to frame with explicit size
 	void emitMovToFrame(X64Register sourceRegister, int32_t offset, int size_in_bits) {
 		auto opcodes = generateMovToFrameBySize(sourceRegister, offset, size_in_bits);
-		std::string bytes_str;
-		for (size_t i = 0; i < static_cast<size_t>(opcodes.size_in_bytes); i++) {
-			bytes_str += std::format("{:02x} ", static_cast<uint8_t>(opcodes.op_codes[i]));
+		
+		// Only build debug string and log if Codegen is set to Debug or higher
+		if (static_cast<uint8_t>(FlashCpp::LogConfig::getLevelForCategory(FlashCpp::LogCategory::Codegen)) >= static_cast<uint8_t>(FlashCpp::LogLevel::Debug)) {
+			std::string bytes_str;
+			for (size_t i = 0; i < static_cast<size_t>(opcodes.size_in_bytes); i++) {
+				bytes_str += std::format("{:02x} ", static_cast<uint8_t>(opcodes.op_codes[i]));
+			}
+			FLASH_LOG_FORMAT(Codegen, Debug, "emitMovToFrame: reg={} offset={} size_bits={} bytes={}", static_cast<int>(sourceRegister), offset, size_in_bits, bytes_str);
 		}
-		FLASH_LOG_FORMAT(Codegen, Debug, "emitMovToFrame: reg={} offset={} size_bits={} bytes={}", static_cast<int>(sourceRegister), offset, size_in_bits, bytes_str);
+		
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
@@ -13086,8 +13080,8 @@ private:
 		uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
 		writer.add_relocation(reloc_offset, symbol_name);
 
-		// Store address to stack
-		emitMovToFrame(X64Register::RAX, stack_offset);
+		// Store address to stack (64-bit pointer)
+		emitMovToFrame(X64Register::RAX, stack_offset, 64);
 	}
 
 	void handleMemberAccess(const IrInstruction& instruction) {
@@ -13327,7 +13321,7 @@ private:
 		}
 
 		if (op.is_reference) {
-			emitMovToFrame(temp_reg, result_offset);
+			emitMovToFrame(temp_reg, result_offset, 64);
 			regAlloc.release(temp_reg);
 			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits, op.is_rvalue_reference, result_var);
 			return;
@@ -14686,11 +14680,11 @@ private:
 				// For POD types, dereference and copy the value
 				// For references, store the pointer itself
 				if (catch_op.is_reference || catch_op.is_rvalue_reference) {
-					// Store the pointer (RAX) directly
+					// Store the pointer (RAX) directly (64-bit pointer)
 					if (g_enable_debug_output) {
 						std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (reference type)" << std::endl;
 					}
-					emitMovToFrame(X64Register::RAX, stack_offset);
+					emitMovToFrame(X64Register::RAX, stack_offset, 64);
 				} else {
 					// Get type size for dereferencing
 					// For built-in types, use get_type_size_bits directly
@@ -14752,11 +14746,11 @@ private:
 						emitMovFromMemory(X64Register::RCX, X64Register::RAX, 0, type_size);
 						emitMovToFrameBySize(X64Register::RCX, stack_offset, type_size_bits);
 					} else {
-						// Large type or unknown size: just store pointer
+						// Large type or unknown size: just store pointer (64-bit pointer)
 						if (g_enable_debug_output) {
 							std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (large or unknown type)" << std::endl;
 						}
-						emitMovToFrame(X64Register::RAX, stack_offset);
+						emitMovToFrame(X64Register::RAX, stack_offset, 64);
 					}
 				}
 			}

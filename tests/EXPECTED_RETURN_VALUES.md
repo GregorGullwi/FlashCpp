@@ -19,9 +19,9 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Current Regressions
 
-**Note (2026-01-26):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 regressions. The tests listed below do not follow this exact naming pattern and are tracked separately as known issues requiring investigation.
+**Note (2026-01-26):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 regressions out of 959 tests. The tests listed below do not follow the exact naming pattern and are tracked separately as known issues that require investigation. These failures are unrelated to the member access size bug that was fixed in this PR.
 
-The following tests are returning incorrect values:
+The following tests are returning incorrect values (unchanged from previous documentation):
 
 | Test File | Expected | Currently Returning | Notes |
 |-----------|----------|---------------------|-------|
