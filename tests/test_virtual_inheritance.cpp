@@ -124,12 +124,12 @@ int test_multi_virtual() {
 int main() {
     int result = 0;
     result += test_simple_inheritance();      // 30
-    result += test_implicit_base_ctor();      // 52
+    result += test_implicit_base_ctor();      // 
     result += test_member_access();           // 60
     result += test_multi_level();             // 60
     result += test_virtual_basic();           // 20
     result += test_virtual_pointer();         // 20
     result += test_multi_virtual();           // 60
-    return result;  // Expected: 302
+    return 302 - result;  // Expected: 0
 }
 

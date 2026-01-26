@@ -19,5 +19,5 @@ int main() {
     
     // Should return 100 + 200 = 300
     int sum = val_true + val_false;
-    return sum;
+    return 300 - sum;
 }

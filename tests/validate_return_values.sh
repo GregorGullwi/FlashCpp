@@ -34,17 +34,11 @@ EXPECTED_FAIL=(
 EXPECTED_LINK_FAIL=(
     "test_external_abi.cpp"
     "test_external_abi_simple.cpp"
-    "test_dynamic_cast_debug.cpp"
-    "test_virtual_inheritance.cpp"
-    "test_varargs.cpp"
-    "test_cstdlib.cpp"
 )
 
 # Known test files with valid out-of-range return values
 # These tests intentionally return values > 255 to test arithmetic/features
 KNOWN_OUT_OF_RANGE=(
-    "test_conditional_sum.cpp"
-    "test_designated_init.cpp"
     "test_enum.cpp"
 )
 

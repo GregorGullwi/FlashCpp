@@ -109,6 +109,6 @@ int main() {
     result += test_enum_variable();           // 1
     result += test_enum_flags();              // 7
     
-    return result;  // Should return 284
+    return 284 - result;  // Should return 284
 }
 
