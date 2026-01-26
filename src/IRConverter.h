@@ -5202,7 +5202,7 @@ private:
 		auto opcodes = generateMovToFrameBySize(sourceRegister, offset, size_in_bits);
 		
 		// Only build debug string and log if Codegen is set to Debug or higher
-		if (static_cast<uint8_t>(FlashCpp::LogConfig::getLevelForCategory(FlashCpp::LogCategory::Codegen)) >= static_cast<uint8_t>(FlashCpp::LogLevel::Debug)) {
+		if (IS_FLASH_LOG_ENABLED(Codegen, Debug)) {
 			std::string bytes_str;
 			for (size_t i = 0; i < static_cast<size_t>(opcodes.size_in_bytes); i++) {
 				bytes_str += std::format("{:02x} ", static_cast<uint8_t>(opcodes.op_codes[i]));

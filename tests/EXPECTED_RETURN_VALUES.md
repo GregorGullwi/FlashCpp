@@ -1,6 +1,6 @@
 # Expected Return Values for FlashCpp Tests
 
-This document tracks the expected return values for test files and documents any regressions found during validation.
+This document tracks the expected return values for test files and documents any return mismatches found during validation.
 
 ## Overview
 
@@ -12,14 +12,14 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 **Total files tested:** 959
 **Valid returns:** 955
-**Regressions (mismatches):** 0
+**Return mismatches:** 0
 **Runtime crashes:** 2
 **Compile failures:** 0
 **Link failures:** 0
 
-## Current Regressions
+## Known Return Mismatches
 
-**Note (2026-01-26):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 regressions out of 959 tests. The tests listed below do not follow the exact naming pattern and are tracked separately as known issues that require investigation. These failures are unrelated to the member access size bug that was fixed in this PR.
+**Note (2026-01-26):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 return mismatches out of 959 tests. The tests listed below do not follow the exact naming pattern and are tracked separately as known issues that require investigation. These failures are unrelated to the member access size bug that was fixed in this PR.
 
 The following tests are returning incorrect values (unchanged from previous documentation):
 
