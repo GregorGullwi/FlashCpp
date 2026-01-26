@@ -4988,6 +4988,7 @@ ParseResult Parser::parse_struct_declaration()
 					
 					// Check for member type access (e.g., ::type) BEFORE deciding to defer
 					// We need to consume this even if deferring
+					std::optional<StringHandle> member_type_name;
 					if (current_token_.has_value() && current_token_->value() == "::") {
 						consume_token(); // consume ::
 						if (!current_token_.has_value() || current_token_->type() != Token::Type::Identifier) {
@@ -4996,14 +4997,16 @@ ParseResult Parser::parse_struct_declaration()
 						StringHandle member_name = StringTable::getOrInternStringHandle(current_token_->value());
 						consume_token(); // consume member name
 						
-						// Build the fully qualified member type name
+						member_type_name = member_name;
+						
+						// Build the fully qualified member type name for logging
 						StringBuilder qualified_builder;
 						qualified_builder += full_name;
 						qualified_builder += "::";
 						qualified_builder.append(member_name);
-						full_name = qualified_builder.commit();
+						std::string_view full_member_name = qualified_builder.commit();
 						
-						FLASH_LOG_FORMAT(Templates, Debug, "Found member type access: {}", full_name);
+						FLASH_LOG_FORMAT(Templates, Debug, "Found member type access: {}", full_member_name);
 					}
 					
 					// If template arguments are dependent, defer resolution
@@ -5058,7 +5061,7 @@ ParseResult Parser::parse_struct_declaration()
 						}
 						
 						StringHandle template_name_handle = StringTable::getOrInternStringHandle(full_name);
-						struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::nullopt, base_access, is_virtual_base);
+						struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), member_type_name, base_access, is_virtual_base);
 						
 						continue;  // Skip to next base class or exit loop
 					}
@@ -38821,6 +38824,26 @@ if (struct_type_info.getStructInfo()) {
 				
 				if (arg_info.node.is<ExpressionNode>()) {
 					const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
+					
+					// Handle TemplateParameterReferenceNode - substitute template parameter with actual type
+					if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+						const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
+						std::string_view param_name = tparam_ref.param_name().view();
+						auto subst_it = name_substitution_map.find(param_name);
+						if (subst_it != name_substitution_map.end()) {
+							TemplateTypeArg subst_arg = subst_it->second;
+							subst_arg.is_pack = arg_info.is_pack;
+							resolved_args.push_back(subst_arg);
+							FLASH_LOG_FORMAT(Templates, Debug, "Substituted template parameter '{}' with type_index {} in deferred base",
+							                 param_name, subst_it->second.type_index);
+							continue;
+						} else {
+							FLASH_LOG_FORMAT(Templates, Debug, "Template parameter '{}' not found in substitution map", param_name);
+							// Template parameter not found in substitution - this is an unresolved dependency
+							unresolved_arg = true;
+							break;
+						}
+					}
 					
 					// Special handling for TypeTraitExprNode - need to substitute template parameters
 					if (std::holds_alternative<TypeTraitExprNode>(expr)) {

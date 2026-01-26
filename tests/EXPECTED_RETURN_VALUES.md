@@ -8,7 +8,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-26 (validate_return_values.sh - after template member function sizeof fix)
+**Last Run:** 2026-01-26 (validate_return_values.sh - after qualified base class member lookup fix)
 
 **Total files tested:** 960
 **Valid returns:** 956
@@ -25,6 +25,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 - ~~test_less_in_base_class_ret0.cpp~~ - **FIXED**: Template base class with comparison expressions in template arguments now correctly evaluated
 - ~~test_out_of_line_ctor_ret0.cpp~~ - **FIXED**: Copy constructor now correctly preferred over converting constructors for direct initialization
 - ~~test_member_func_trailing_requires_ret42.cpp~~ - **FIXED**: sizeof(T) in template member functions with trailing requires clauses now correctly evaluates template parameter
+- ~~test_qualified_base_class_ret42.cpp~~ - **FIXED**: Template base classes with qualified member type access (e.g., Base<T>::type) now correctly resolved during instantiation
 
 The following tests are still returning incorrect values:
 
@@ -32,7 +33,6 @@ The following tests are still returning incorrect values:
 |-----------|----------|---------------------|-------|
 | test_member_partial_spec_inherit_ret4.cpp | 4 | 0 | Partial specialization inheritance issue |
 | test_member_var_template_ret42.cpp | 42 | 0 | Variable template member access |
-| test_qualified_base_class_ret42.cpp | 42 | 0 | Qualified base class access |
 | test_template_disambiguation_pack_ret40.cpp | 40 | 30 | Template disambiguation with parameter pack |
 
 ## Runtime Crashes
