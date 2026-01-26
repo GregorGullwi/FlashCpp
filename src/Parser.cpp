@@ -25449,12 +25449,12 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 	if (!struct_type_info->struct_info_) {
 		// This might be a type alias - try to find the actual struct type
 		// Type aliases have a type_index that points to the underlying type
-		// Use type_index_ field directly, not pointer arithmetic on deque
-		if (struct_type_info->type_index_ < gTypeInfo.size() && 
-		    struct_type_info->type_index_ != struct_it->second->type_index_) {
-			// The type_index points to a different type - follow the alias
+		// Check if type_index_ is valid and points to a different TypeInfo entry
+		if (struct_type_info->type_index_ < gTypeInfo.size()) {
 			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_];
-			if (underlying_type.struct_info_) {
+			// Check if this is actually an alias (points to a different TypeInfo)
+			// by comparing the pointer addresses
+			if (&underlying_type != struct_type_info && underlying_type.struct_info_) {
 				StringHandle underlying_name = underlying_type.name();
 				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias", 
 				                 StringTable::getStringView(struct_name), StringTable::getStringView(underlying_name));
@@ -25528,12 +25528,12 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 	if (!struct_type_info->struct_info_) {
 		// This might be a type alias - try to find the actual struct type
 		// Type aliases have a type_index that points to the underlying type
-		// Use type_index_ field directly, not pointer arithmetic on deque
-		if (struct_type_info->type_index_ < gTypeInfo.size() && 
-		    struct_type_info->type_index_ != struct_it->second->type_index_) {
-			// The type_index points to a different type - follow the alias
+		// Check if type_index_ is valid and points to a different TypeInfo entry
+		if (struct_type_info->type_index_ < gTypeInfo.size()) {
 			const TypeInfo& underlying_type = gTypeInfo[struct_type_info->type_index_];
-			if (underlying_type.struct_info_) {
+			// Check if this is actually an alias (points to a different TypeInfo)
+			// by comparing the pointer addresses
+			if (&underlying_type != struct_type_info && underlying_type.struct_info_) {
 				StringHandle underlying_name = underlying_type.name();
 				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias", 
 				                 StringTable::getStringView(struct_name), StringTable::getStringView(underlying_name));
