@@ -13301,6 +13301,7 @@ private:
 			} else {
 				// Unsupported member size (0, 3, 5, 6, 7, etc.) - skip quietly
 				FLASH_LOG_FORMAT(Codegen, Warning, "MemberAccess pointer path: Unsupported member size {} bytes, skipping", member_size_bytes);
+				regAlloc.release(temp_reg);
 				regAlloc.release(ptr_reg);
 				return;
 			}
