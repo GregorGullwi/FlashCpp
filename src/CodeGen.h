@@ -5703,6 +5703,38 @@ private:
 								const ConstructorDeclarationNode* matching_ctor = nullptr;
 								if (!use_direct_member_init && struct_info.hasAnyConstructor()) {
 								size_t num_initializers = initializers.size();
+								
+								// FIRST: Try to find copy constructor if we have exactly one initializer of the same struct type
+								// This ensures copy constructors are preferred over converting constructors
+								if (num_initializers == 1) {
+									const ASTNode& init_expr = initializers[0];
+									if (init_expr.is<ExpressionNode>()) {
+										const auto& expr = init_expr.as<ExpressionNode>();
+										if (std::holds_alternative<IdentifierNode>(expr)) {
+											const auto& ident = std::get<IdentifierNode>(expr);
+											std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
+											if (init_symbol.has_value()) {
+												if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
+													const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
+													// Check if initializer is of the same struct type
+													if (init_type.type() == Type::Struct && 
+														init_type.type_index() == type_index) {
+														// Try to find copy constructor
+														const StructMemberFunction* copy_ctor = struct_info.findCopyConstructor();
+														if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+															has_matching_constructor = true;
+															matching_ctor = &copy_ctor->function_decl.as<ConstructorDeclarationNode>();
+															FLASH_LOG(Codegen, Debug, "Matched copy constructor for ", struct_info.name);
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+								
+								// SECOND: If no copy constructor matched, look for other constructors
+								if (!has_matching_constructor) {
 								for (const auto& func : struct_info.member_functions) {
 									if (func.is_constructor) {
 										// Get parameter count from the function declaration
@@ -5807,6 +5839,7 @@ private:
 											}
 										}
 									}
+								}
 								}
 							}
 
