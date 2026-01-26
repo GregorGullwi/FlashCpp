@@ -500,14 +500,16 @@ ASTNode ExpressionSubstitutor::substituteUnaryOp(const UnaryOperatorNode& unop) 
 	ASTNode substituted_operand = substitute(unop.get_operand());
 	
 	// Create new UnaryOperatorNode with substituted operand
-	UnaryOperatorNode& new_unop = gChunkedAnyStorage.emplace_back<UnaryOperatorNode>(
+	UnaryOperatorNode new_unop_value(
 		unop.get_token(),
 		substituted_operand,
 		unop.is_prefix(),
 		unop.is_builtin_addressof()
 	);
 	
-	return ASTNode(&new_unop);
+	// Wrap in ExpressionNode so it can be evaluated by try_evaluate_constant_expression
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_unop_value);
+	return ASTNode(&new_expr);
 }
 
 ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
