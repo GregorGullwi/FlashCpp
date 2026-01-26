@@ -3873,6 +3873,90 @@ private:
 		storeArithmeticResult(ctx);
 	}
 
+	// Helper function to load a global variable into a register
+	// Handles both integer/pointer and floating-point types
+	// Returns the allocated register, or X64Register::Count on error
+	X64Register loadGlobalVariable(StringHandle var_handle, std::string_view var_name, 
+	                                Type operand_type, int operand_size_in_bits, 
+	                                std::optional<X64Register> exclude_reg = std::nullopt) {
+		FLASH_LOG(Codegen, Debug, "StringHandle not found in local vars: '", var_name, "', checking global variables");
+		
+		const GlobalVariableInfo* global_info = nullptr;
+		std::vector<const GlobalVariableInfo*> suffix_matches;
+		
+		for (const auto& global : global_variables_) {
+			std::string_view global_name = StringTable::getStringView(global.name);
+			
+			// Match either exact name or qualified name ending with ::member_name
+			// This handles cases like "value" matching "int_constant<-5>::value"
+			if (global.name == var_handle) {
+				global_info = &global;
+				break;
+			}
+			
+			// Check if global name ends with "::" + var_name using StringBuilder
+			StringBuilder suffix_builder;
+			suffix_builder.append("::"sv).append(var_name);
+			std::string_view suffix = suffix_builder.preview();
+			
+			if (global_name.size() > suffix.size() &&
+			    global_name.substr(global_name.size() - suffix.size()) == suffix) {
+				suffix_matches.push_back(&global);
+				FLASH_LOG(Codegen, Debug, "  Potential suffix match: '", global_name, "' ends with '", suffix, "'");
+			}
+			
+			suffix_builder.reset();
+		}
+		
+		// If no exact match but exactly one suffix match, use it
+		if (!global_info && suffix_matches.size() == 1) {
+			global_info = suffix_matches[0];
+			FLASH_LOG(Codegen, Debug, "  Using unique suffix match: '", StringTable::getStringView(global_info->name), "'");
+		} else if (!global_info && suffix_matches.size() > 1) {
+			FLASH_LOG(Codegen, Warning, "  Ambiguous: ", suffix_matches.size(), " globals match suffix '", var_name, "'");
+			// For now, use the first match as a heuristic
+			// TODO: Use better context (like the struct being accessed) to disambiguate
+			global_info = suffix_matches[0];
+		}
+		
+		if (!global_info) {
+			FLASH_LOG(Codegen, Error, "Missing variable name: '", var_name, "', not in local or global scope");
+			return X64Register::Count;
+		}
+		
+		FLASH_LOG(Codegen, Debug, "Found global variable: '", StringTable::getStringView(global_info->name), "'");
+		
+		X64Register result_reg;
+		
+		// Handle floating-point vs integer/pointer types
+		if (is_floating_point_type(operand_type)) {
+			// For float/double, allocate an XMM register
+			result_reg = allocateXMMRegisterWithSpilling();
+			bool is_float = (operand_type == Type::Float);
+			uint32_t reloc_offset = emitFloatMovRipRelative(result_reg, is_float);
+			
+			// Add pending relocation for this global variable reference
+			pending_global_relocations_.push_back({reloc_offset, global_info->name, IMAGE_REL_AMD64_REL32});
+		} else {
+			// For integers/pointers, allocate a general-purpose register
+			if (exclude_reg.has_value()) {
+				result_reg = allocateRegisterWithSpilling(exclude_reg.value());
+			} else {
+				result_reg = allocateRegisterWithSpilling();
+			}
+			
+			// Emit MOV instruction with RIP-relative addressing
+			uint32_t reloc_offset = emitMovRipRelative(result_reg, operand_size_in_bits);
+			
+			// Add pending relocation for this global variable reference
+			pending_global_relocations_.push_back({reloc_offset, global_info->name, IMAGE_REL_AMD64_REL32});
+			
+			regAlloc.flushSingleDirtyRegister(result_reg);
+		}
+		
+		return result_reg;
+	}
+
 	ArithmeticOperationContext setupAndLoadArithmeticOperation(const IrInstruction& instruction, const char* operation_name) {
 		const BinaryOp& bin_op = *getTypedPayload<BinaryOp>(instruction);
 		
@@ -3960,57 +4044,9 @@ private:
 			else {
 				// Not found in local variables - check if it's a global variable
 				std::string_view lhs_var_name = StringTable::getStringView(lhs_var_op);
-				FLASH_LOG(Codegen, Debug, "LHS StringHandle not found in local vars: '", lhs_var_name, "', checking global variables");
+				ctx.result_physical_reg = loadGlobalVariable(lhs_var_op, lhs_var_name, operand_type, ctx.operand_size_in_bits);
 				
-				const GlobalVariableInfo* global_info = nullptr;
-				std::vector<const GlobalVariableInfo*> suffix_matches;
-				
-				for (const auto& global : global_variables_) {
-					std::string_view global_name = StringTable::getStringView(global.name);
-					FLASH_LOG(Codegen, Debug, "  Checking global: '", global_name, "'");
-					
-					// Match either exact name or qualified name ending with ::member_name
-					// This handles cases like "value" matching "int_constant<-5>::value"
-					if (global.name == lhs_var_op) {
-						global_info = &global;
-						break;
-					}
-					
-					// Check if global name ends with "::" + lhs_var_name
-					std::string suffix = std::string("::") + std::string(lhs_var_name);
-					if (global_name.size() > suffix.size() &&
-					    global_name.substr(global_name.size() - suffix.size()) == suffix) {
-						suffix_matches.push_back(&global);
-						FLASH_LOG(Codegen, Debug, "  Potential suffix match: '", global_name, "' ends with '", suffix, "'");
-					}
-				}
-				
-				// If no exact match but exactly one suffix match, use it
-				if (!global_info && suffix_matches.size() == 1) {
-					global_info = suffix_matches[0];
-					FLASH_LOG(Codegen, Debug, "  Using unique suffix match: '", StringTable::getStringView(global_info->name), "'");
-				} else if (!global_info && suffix_matches.size() > 1) {
-					FLASH_LOG(Codegen, Warning, "  Ambiguous: ", suffix_matches.size(), " globals match suffix '", lhs_var_name, "'");
-					// For now, use the first match as a heuristic
-					// TODO: Use better context (like the struct being accessed) to disambiguate
-					global_info = suffix_matches[0];
-				}
-				
-				if (global_info) {
-					FLASH_LOG(Codegen, Debug, "Found global variable: '", StringTable::getStringView(global_info->name), "'");
-					// Load global variable using RIP-relative addressing
-					ctx.result_physical_reg = allocateRegisterWithSpilling();
-					
-					// Emit MOV instruction with RIP-relative addressing
-					// Use the actual global name for relocation, not the simplified lhs_var_op
-					uint32_t reloc_offset = emitMovRipRelative(ctx.result_physical_reg, ctx.operand_size_in_bits);
-					
-					// Add pending relocation for this global variable reference using the full qualified name
-					pending_global_relocations_.push_back({reloc_offset, global_info->name, IMAGE_REL_AMD64_REL32});
-					
-					regAlloc.flushSingleDirtyRegister(ctx.result_physical_reg);
-				} else {
-					FLASH_LOG(Codegen, Error, "Missing variable name: '", lhs_var_name, "', not in local or global scope");
+				if (ctx.result_physical_reg == X64Register::Count) {
 					assert(false && "Missing variable name"); // TODO: Error handling
 				}
 			}
@@ -4230,57 +4266,9 @@ private:
 			else {
 				// Not found in local variables - check if it's a global variable
 				std::string_view rhs_var_name = StringTable::getStringView(rhs_var_op);
-				FLASH_LOG(Codegen, Debug, "RHS StringHandle not found in local vars: '", rhs_var_name, "', checking global variables");
+				ctx.rhs_physical_reg = loadGlobalVariable(rhs_var_op, rhs_var_name, operand_type, bin_op.rhs.size_in_bits, ctx.result_physical_reg);
 				
-				const GlobalVariableInfo* global_info = nullptr;
-				std::vector<const GlobalVariableInfo*> suffix_matches;
-				
-				for (const auto& global : global_variables_) {
-					std::string_view global_name = StringTable::getStringView(global.name);
-					
-					// Match either exact name or qualified name ending with ::member_name
-					if (global.name == rhs_var_op) {
-						global_info = &global;
-						break;
-					}
-					
-					// Check if global name ends with "::" + rhs_var_name
-					std::string suffix = std::string("::") + std::string(rhs_var_name);
-					if (global_name.size() > suffix.size() &&
-					    global_name.substr(global_name.size() - suffix.size()) == suffix) {
-						suffix_matches.push_back(&global);
-					}
-				}
-				
-				// If no exact match but exactly one suffix match, use it
-				if (!global_info && suffix_matches.size() == 1) {
-					global_info = suffix_matches[0];
-					FLASH_LOG(Codegen, Debug, "  Using unique suffix match for RHS: '", StringTable::getStringView(global_info->name), "'");
-				} else if (!global_info && suffix_matches.size() > 1) {
-					FLASH_LOG(Codegen, Warning, "  Ambiguous: ", suffix_matches.size(), " globals match RHS suffix '", rhs_var_name, "'");
-					// Use the first match as a heuristic
-					global_info = suffix_matches[0];
-				}
-				
-				if (global_info) {
-					FLASH_LOG(Codegen, Debug, "Found global variable for RHS: '", StringTable::getStringView(global_info->name), "'");
-					// Load global variable using RIP-relative addressing
-					ctx.rhs_physical_reg = allocateRegisterWithSpilling();
-					
-					// If RHS register conflicts with result register, allocate a different one
-					if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-						ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
-					}
-					
-					// Emit MOV instruction with RIP-relative addressing
-					uint32_t reloc_offset = emitMovRipRelative(ctx.rhs_physical_reg, bin_op.rhs.size_in_bits);
-					
-					// Add pending relocation for this global variable reference using the full qualified name
-					pending_global_relocations_.push_back({reloc_offset, global_info->name, IMAGE_REL_AMD64_REL32});
-					
-					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
-				} else {
-					FLASH_LOG(Codegen, Error, "Missing RHS variable name: '", rhs_var_name, "', not in local or global scope");
+				if (ctx.rhs_physical_reg == X64Register::Count) {
 					assert(false && "Missing variable name"); // TODO: Error handling
 				}
 			}
