@@ -35894,10 +35894,10 @@ ASTNode Parser::substitute_template_params_in_expression(
 			FLASH_LOG(Templates, Debug, "sizeof substitution: checking type_index=", type_node.type_index(), 
 			          " type=", static_cast<int>(type_node.type()));
 			
-			// Check if this type needs substitution
+			// First, try to find by type_index
 			auto it = type_substitution_map.find(type_node.type_index());
 			if (it != type_substitution_map.end()) {
-				FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match, substituting with ", it->second.toString());
+				FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match by type_index, substituting with ", it->second.toString());
 				
 				// Create a new type node with the substituted type
 				const TemplateTypeArg& arg = it->second;
@@ -35923,9 +35923,51 @@ ASTNode Parser::substitute_template_params_in_expression(
 				auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
 				SizeofExprNode new_sizeof(new_type_node, sizeof_node.sizeof_token());
 				return emplace_node<ExpressionNode>(new_sizeof);
-			} else {
-				FLASH_LOG(Templates, Debug, "sizeof substitution: NO match found in map");
 			}
+			
+			// If not found by type_index, try to find by matching type name with any substitution value
+			// This handles the case where template parameter type_indices don't match due to
+			// multiple template parameters with the same name in different templates
+			if (type_node.type() == Type::UserDefined && type_node.type_index() < gTypeInfo.size()) {
+				std::string_view type_name = StringTable::getStringView(gTypeInfo[type_node.type_index()].name());
+				FLASH_LOG(Templates, Debug, "sizeof substitution: checking by name: ", type_name);
+				
+				// Search substitution map for any entry where the key type_index has the same name
+				for (const auto& [key_type_index, arg] : type_substitution_map) {
+					if (key_type_index < gTypeInfo.size()) {
+						std::string_view param_name = StringTable::getStringView(gTypeInfo[key_type_index].name());
+						if (param_name == type_name) {
+							FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match by name, substituting with ", arg.toString());
+							
+							// Create a new type node with the substituted type
+							TypeSpecifierNode new_type(
+								arg.base_type,
+								TypeQualifier::None,
+								get_type_size_bits(arg.base_type),
+								sizeof_node.sizeof_token()
+							);
+							new_type.set_type_index(arg.type_index);
+							
+							// Apply cv-qualifiers, references, and pointers from template argument
+							if (arg.is_rvalue_reference) {
+								new_type.set_reference(true);
+							} else if (arg.is_reference) {
+								new_type.set_lvalue_reference(true);
+							}
+							for (size_t p = 0; p < arg.pointer_depth; ++p) {
+								new_type.add_pointer_level(CVQualifier::None);
+							}
+							
+							// Create new sizeof with substituted type
+							auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
+							SizeofExprNode new_sizeof(new_type_node, sizeof_node.sizeof_token());
+							return emplace_node<ExpressionNode>(new_sizeof);
+						}
+					}
+				}
+			}
+			
+			FLASH_LOG(Templates, Debug, "sizeof substitution: NO match found");
 		} else if (!sizeof_node.is_type()) {
 			// If sizeof has an expression operand, recursively substitute
 			auto new_operand = substitute_template_params_in_expression(
