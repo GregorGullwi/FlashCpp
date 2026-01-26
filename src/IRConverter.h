@@ -5208,6 +5208,17 @@ private:
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
 
+	// Helper to generate and emit MOV to frame with explicit size
+	void emitMovToFrame(X64Register sourceRegister, int32_t offset, int size_in_bits) {
+		auto opcodes = generateMovToFrameBySize(sourceRegister, offset, size_in_bits);
+		std::string bytes_str;
+		for (size_t i = 0; i < static_cast<size_t>(opcodes.size_in_bytes); i++) {
+			bytes_str += std::format("{:02x} ", static_cast<uint8_t>(opcodes.op_codes[i]));
+		}
+		FLASH_LOG_FORMAT(Codegen, Debug, "emitMovToFrame: reg={} offset={} size_bits={} bytes={}", static_cast<int>(sourceRegister), offset, size_in_bits, bytes_str);
+		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
+	}
+
 	// Helper to emit MOVQ from XMM to GPR (for varargs: float args must be in both XMM and INT regs)
 	// movq r64, xmm: 66 REX.W 0F 7E /r
 	void emitMovqXmmToGpr(X64Register xmm_src, X64Register gpr_dest) {
@@ -13270,7 +13281,7 @@ private:
 				                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 				
 				// Store loaded value to result_offset for later use (e.g., indirect_call)
-				emitMovToFrame(temp_reg, result_offset);
+				emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 				regAlloc.release(temp_reg);
 				variable_scopes.back().variables[result_var_handle].offset = result_offset;
 				return;
@@ -13306,7 +13317,7 @@ private:
 			regAlloc.release(ptr_reg);
 			
 			// Store loaded value to result_offset for later use (e.g., indirect_call)
-			emitMovToFrame(temp_reg, result_offset);
+			emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 			regAlloc.release(temp_reg);
 			variable_scopes.back().variables[result_var_handle].offset = result_offset;
 			return;
@@ -13324,7 +13335,7 @@ private:
 
 		// Store the loaded value into the temp slot so subsequent uses read the value,
 		// avoiding aliasing the TempVar to the struct member location.
-		emitMovToFrame(temp_reg, result_offset);
+		emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 		regAlloc.release(temp_reg);
 		variable_scopes.back().variables[result_var_handle].offset = result_offset;
 		return;
