@@ -8,7 +8,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-26 (validate_return_values.sh - after reference parameter fixes)
+**Last Run:** 2026-01-26 (validate_return_values.sh - after copy constructor fix)
 
 **Total files tested:** 960
 **Valid returns:** 956
@@ -19,10 +19,11 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Known Return Mismatches
 
-**Note (2026-01-26):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 return mismatches out of 959 tests. The tests listed below do not follow the exact naming pattern and are tracked separately as known issues that require investigation.
+**Note (2026-01-26):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 return mismatches out of 960 tests. The tests listed below do not follow the exact naming pattern and were tracked separately as known issues.
 
 **Fixed in this PR:**
 - ~~test_less_in_base_class_ret0.cpp~~ - **FIXED**: Template base class with comparison expressions in template arguments now correctly evaluated
+- ~~test_out_of_line_ctor_ret0.cpp~~ - **FIXED**: Copy constructor now correctly preferred over converting constructors for direct initialization
 
 The following tests are still returning incorrect values:
 
@@ -31,7 +32,6 @@ The following tests are still returning incorrect values:
 | test_member_func_trailing_requires_ret42.cpp | 42 | 28 | Member function with trailing requires clause |
 | test_member_partial_spec_inherit_ret4.cpp | 4 | 0 | Partial specialization inheritance issue |
 | test_member_var_template_ret42.cpp | 42 | 0 | Variable template member access |
-| test_out_of_line_ctor_ret0.cpp | 0 | 3 | Out-of-line constructor definition |
 | test_qualified_base_class_ret42.cpp | 42 | 0 | Qualified base class access |
 | test_template_disambiguation_pack_ret40.cpp | 40 | 30 | Template disambiguation with parameter pack |
 

@@ -6889,6 +6889,28 @@ private:
 		if (struct_type_it != gTypesByName.end()) {
 			const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 			if (struct_info) {
+				// FIRST: If we have exactly one parameter that's a reference to the same struct type,
+				// prefer the copy constructor over other single-parameter constructors
+				if (num_params == 1 && !ctor_op.arguments.empty()) {
+					const TypedValue& arg = ctor_op.arguments[0];
+					bool arg_is_same_struct = (arg.type == Type::Struct && 
+					                           arg.type_index == struct_type_it->second->type_index_);
+					bool arg_is_ref_or_pointer = (arg.is_reference() || arg.size_in_bits == 64);
+					
+					if (arg_is_same_struct && arg_is_ref_or_pointer) {
+						// Try to find copy constructor
+						const StructMemberFunction* copy_ctor = struct_info->findCopyConstructor();
+						if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+							actual_ctor = &copy_ctor->function_decl.as<ConstructorDeclarationNode>();
+							FLASH_LOG_FORMAT(Codegen, Debug,
+								"Constructor call for {}: matched copy constructor",
+								struct_name);
+						}
+					}
+				}
+				
+				// SECOND: If no copy constructor matched, look for other constructors with matching parameter count
+				if (!actual_ctor) {
 				// Look for a constructor with matching number of parameters
 				for (const auto& func : struct_info->member_functions) {
 					if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
@@ -6899,6 +6921,7 @@ private:
 							break;
 						}
 					}
+				}
 				}
 			}
 		}

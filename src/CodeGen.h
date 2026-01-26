@@ -5703,6 +5703,38 @@ private:
 								const ConstructorDeclarationNode* matching_ctor = nullptr;
 								if (!use_direct_member_init && struct_info.hasAnyConstructor()) {
 								size_t num_initializers = initializers.size();
+								
+								// FIRST: Try to find copy constructor if we have exactly one initializer of the same struct type
+								// This ensures copy constructors are preferred over converting constructors
+								if (num_initializers == 1) {
+									const ASTNode& init_expr = initializers[0];
+									if (init_expr.is<ExpressionNode>()) {
+										const auto& expr = init_expr.as<ExpressionNode>();
+										if (std::holds_alternative<IdentifierNode>(expr)) {
+											const auto& ident = std::get<IdentifierNode>(expr);
+											std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
+											if (init_symbol.has_value()) {
+												if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
+													const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
+													// Check if initializer is of the same struct type
+													if (init_type.type() == Type::Struct && 
+														init_type.type_index() == type_index) {
+														// Try to find copy constructor
+														const StructMemberFunction* copy_ctor = struct_info.findCopyConstructor();
+														if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+															has_matching_constructor = true;
+															matching_ctor = &copy_ctor->function_decl.as<ConstructorDeclarationNode>();
+															FLASH_LOG(Codegen, Debug, "Matched copy constructor for ", struct_info.name);
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+								
+								// SECOND: If no copy constructor matched, look for other constructors
+								if (!has_matching_constructor) {
 								for (const auto& func : struct_info.member_functions) {
 									if (func.is_constructor) {
 										// Get parameter count from the function declaration
@@ -5807,6 +5839,7 @@ private:
 											}
 										}
 									}
+								}
 								}
 							}
 
@@ -6318,28 +6351,70 @@ private:
 							direct_ctor->arguments().visit([&](ASTNode) { num_args++; });
 							
 							if (type_info.struct_info_) {
-								for (const auto& func : type_info.struct_info_->member_functions) {
-									if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-										const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
-										const auto& params = ctor_node.parameter_nodes();
-										
-										// Match constructor with same number of parameters or with default parameters
-										if (params.size() == num_args) {
-											matching_ctor = &ctor_node;
-											break;
-										} else if (params.size() > num_args) {
-											// Check if remaining params have defaults
-											bool all_have_defaults = true;
-											for (size_t i = num_args; i < params.size(); ++i) {
-												if (!params[i].is<DeclarationNode>() || 
-												    !params[i].as<DeclarationNode>().has_default_value()) {
-													all_have_defaults = false;
-													break;
+								// Special case: If we have exactly one argument of the same struct type, try copy constructor first
+								// This ensures copy constructors are preferred over converting constructors
+								// But only when the argument is actually of the same struct type
+								if (num_args == 1) {
+									// Check if the argument is an identifier of the same struct type
+									ASTNode first_arg;
+									direct_ctor->arguments().visit([&](ASTNode arg) { 
+										if (!first_arg.has_value()) first_arg = arg;
+									});
+									
+									bool arg_is_same_struct_type = false;
+									if (first_arg.has_value() && first_arg.is<ExpressionNode>()) {
+										const auto& expr = first_arg.as<ExpressionNode>();
+										if (std::holds_alternative<IdentifierNode>(expr)) {
+											const auto& ident = std::get<IdentifierNode>(expr);
+											std::optional<ASTNode> arg_symbol = symbol_table.lookup(ident.name());
+											if (arg_symbol.has_value()) {
+												if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
+													const TypeSpecifierNode& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
+													// Check if argument is of the same struct type
+													if (arg_type.type() == Type::Struct && 
+														arg_type.type_index() == type_node.type_index()) {
+														arg_is_same_struct_type = true;
+													}
 												}
 											}
-											if (all_have_defaults) {
+										}
+									}
+									
+									// Only select copy constructor if argument is of the same struct type
+									if (arg_is_same_struct_type) {
+										const StructMemberFunction* copy_ctor_func = type_info.struct_info_->findCopyConstructor();
+										if (copy_ctor_func && copy_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
+											matching_ctor = &copy_ctor_func->function_decl.as<ConstructorDeclarationNode>();
+											FLASH_LOG(Codegen, Debug, "Matched copy constructor for ", type_info.name());
+										}
+									}
+								}
+								
+								// If we didn't find a copy constructor, use general matching
+								if (!matching_ctor) {
+									for (const auto& func : type_info.struct_info_->member_functions) {
+										if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+											const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+											const auto& params = ctor_node.parameter_nodes();
+											
+											// Match constructor with same number of parameters or with default parameters
+											if (params.size() == num_args) {
 												matching_ctor = &ctor_node;
 												break;
+											} else if (params.size() > num_args) {
+												// Check if remaining params have defaults
+												bool all_have_defaults = true;
+												for (size_t i = num_args; i < params.size(); ++i) {
+													if (!params[i].is<DeclarationNode>() || 
+													    !params[i].as<DeclarationNode>().has_default_value()) {
+														all_have_defaults = false;
+														break;
+													}
+												}
+												if (all_have_defaults) {
+													matching_ctor = &ctor_node;
+													break;
+												}
 											}
 										}
 									}
@@ -6449,11 +6524,59 @@ private:
 							ctor_op.object = StringTable::getOrInternStringHandle(decl.identifier_token().value());
 
 							// Add initializer as copy constructor parameter
+							// Copy constructors take const lvalue reference parameters
 							const ASTNode& init_node = *node.initializer();
 							auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
 							// init_operands = [type, size, value]
 							if (init_operands.size() >= 3) {
-								TypedValue init_arg = toTypedValue(init_operands);
+								TypedValue init_arg;
+								
+								// Check if initializer is an identifier (variable)
+								if (std::holds_alternative<IdentifierNode>(init_node.as<ExpressionNode>())) {
+									const auto& identifier = std::get<IdentifierNode>(init_node.as<ExpressionNode>());
+									std::optional<ASTNode> symbol = symbol_table.lookup(identifier.name());
+									
+									// Handle both DeclarationNode and VariableDeclarationNode
+									const DeclarationNode* init_decl = nullptr;
+									if (symbol.has_value() && symbol->is<DeclarationNode>()) {
+										init_decl = &symbol->as<DeclarationNode>();
+									} else if (symbol.has_value() && symbol->is<VariableDeclarationNode>()) {
+										init_decl = &symbol->as<VariableDeclarationNode>().declaration();
+									}
+									
+									if (init_decl) {
+										const auto& init_type = init_decl->type_node().as<TypeSpecifierNode>();
+										
+										if (init_type.is_reference() || init_type.is_rvalue_reference()) {
+											// Initializer is already a reference - just pass it through
+											init_arg = toTypedValue(init_operands);
+										} else {
+											// Initializer is a value - take its address for copy constructor
+											TempVar addr_var = var_counter.next();
+											AddressOfOp addr_op;
+											addr_op.result = addr_var;
+											addr_op.operand.type = init_type.type();
+											addr_op.operand.size_in_bits = static_cast<int>(init_type.size_in_bits());
+											addr_op.operand.pointer_depth = 0;
+											addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
+											ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
+											
+											// Create TypedValue with the address
+											init_arg.type = init_type.type();
+											init_arg.size_in_bits = 64;  // Pointer size
+											init_arg.value = addr_var;
+											init_arg.ref_qualifier = ReferenceQualifier::LValueReference;  // Mark as reference parameter
+											init_arg.type_index = init_type.type_index();  // Preserve type_index for struct references
+										}
+									} else {
+										// Symbol not found - use as-is
+										init_arg = toTypedValue(init_operands);
+									}
+								} else {
+									// Not an identifier (e.g., temporary, expression result) - use as-is
+									init_arg = toTypedValue(init_operands);
+								}
+								
 								ctor_op.arguments.push_back(std::move(init_arg));
 							}
 
