@@ -483,30 +483,47 @@ private:
 						
 						// Parse the struct name to extract template arguments
 						// e.g., "Container_int" -> T = int (4 bytes), "Processor_char" -> T = char (1 byte)
+						// Pointer types have "P" suffix: "Container_intP" -> T = int* (8 bytes)
 						size_t underscore_pos = struct_name.rfind('_');
 						if (underscore_pos != std::string_view::npos && underscore_pos + 1 < struct_name.size()) {
 							std::string_view type_suffix = struct_name.substr(underscore_pos + 1);
 							
-							// Map common type suffixes to their sizes
-							// Note: Must match the output of TemplateTypeArg::toString() in TemplateRegistry.h
-							// This logic is duplicated in CodeGen.h::resolveTemplateSizeFromStructName
-							size_t param_size_bytes = 0;
-							if (type_suffix == "int") param_size_bytes = 4;
-							else if (type_suffix == "char") param_size_bytes = 1;
-							else if (type_suffix == "short") param_size_bytes = 2;
-							else if (type_suffix == "long") param_size_bytes = 8;
-							else if (type_suffix == "float") param_size_bytes = 4;
-							else if (type_suffix == "double") param_size_bytes = 8;
-							else if (type_suffix == "bool") param_size_bytes = 1;
-							else if (type_suffix == "uint") param_size_bytes = 4;
-							else if (type_suffix == "uchar") param_size_bytes = 1;
-							else if (type_suffix == "ushort") param_size_bytes = 2;
-							else if (type_suffix == "ulong") param_size_bytes = 8;
-							else if (type_suffix == "ulonglong") param_size_bytes = 8;
-							else if (type_suffix == "longlong") param_size_bytes = 8;
+							// Check for pointer types (suffix ends with 'P')
+							// TemplateTypeArg::toString() appends 'P' for each pointer level
+							// e.g., "intP" for int*, "intPP" for int**, etc.
+							if (!type_suffix.empty() && type_suffix.back() == 'P') {
+								// All pointers are 8 bytes on x64
+								return EvalResult::from_int(8);
+							}
 							
-							if (param_size_bytes > 0) {
-								return EvalResult::from_int(static_cast<long long>(param_size_bytes));
+							// Check for array types (suffix contains 'A')
+							// Arrays would be like "intA[10]" - but sizeof(array) depends on element count
+							// For now, we don't handle array template parameters (rare case)
+							if (type_suffix.find('A') != std::string_view::npos) {
+								// Unsupported - would need to parse array dimensions
+								// Fall through to return 0
+							} else {
+								// Map common type suffixes to their sizes
+								// Note: Must match the output of TemplateTypeArg::toString() in TemplateRegistry.h
+								// This logic is duplicated in CodeGen.h::resolveTemplateSizeFromStructName
+								size_t param_size_bytes = 0;
+								if (type_suffix == "int") param_size_bytes = 4;
+								else if (type_suffix == "char") param_size_bytes = 1;
+								else if (type_suffix == "short") param_size_bytes = 2;
+								else if (type_suffix == "long") param_size_bytes = 8;
+								else if (type_suffix == "float") param_size_bytes = 4;
+								else if (type_suffix == "double") param_size_bytes = 8;
+								else if (type_suffix == "bool") param_size_bytes = 1;
+								else if (type_suffix == "uint") param_size_bytes = 4;
+								else if (type_suffix == "uchar") param_size_bytes = 1;
+								else if (type_suffix == "ushort") param_size_bytes = 2;
+								else if (type_suffix == "ulong") param_size_bytes = 8;
+								else if (type_suffix == "ulonglong") param_size_bytes = 8;
+								else if (type_suffix == "longlong") param_size_bytes = 8;
+								
+								if (param_size_bytes > 0) {
+									return EvalResult::from_int(static_cast<long long>(param_size_bytes));
+								}
 							}
 						}
 					}

@@ -939,12 +939,28 @@ private:
 	static size_t resolveTemplateSizeFromStructName(std::string_view struct_name) {
 		// Parse the struct name to extract template arguments
 		// e.g., "Container_int" -> T = int (4 bytes), "Processor_char" -> T = char (1 byte)
+		// Pointer types have "P" suffix: "Container_intP" -> T = int* (8 bytes)
 		size_t underscore_pos = struct_name.rfind('_');
 		if (underscore_pos == std::string_view::npos || underscore_pos + 1 >= struct_name.size()) {
 			return 0;
 		}
 		
 		std::string_view type_suffix = struct_name.substr(underscore_pos + 1);
+		
+		// Check for pointer types (suffix ends with 'P')
+		// TemplateTypeArg::toString() appends 'P' for each pointer level
+		// e.g., "intP" for int*, "intPP" for int**, etc.
+		if (!type_suffix.empty() && type_suffix.back() == 'P') {
+			// All pointers are 8 bytes on x64
+			return 8;
+		}
+		
+		// Check for array types (suffix contains 'A')
+		// Arrays would be like "intA[10]" - but sizeof(array) depends on element count
+		// For now, we don't handle array template parameters (rare case)
+		if (type_suffix.find('A') != std::string_view::npos) {
+			return 0;  // Unsupported - would need to parse array dimensions
+		}
 		
 		// Map common type suffixes to their sizes
 		// Note: Must match the output of TemplateTypeArg::toString() in TemplateRegistry.h
