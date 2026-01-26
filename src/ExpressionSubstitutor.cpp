@@ -33,6 +33,10 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 				return substitutor.substituteUnaryOp(node);
 			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 				return substitutor.substituteIdentifier(node);
+			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
+				return substitutor.substituteQualifiedIdentifier(node);
+			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+				return substitutor.substituteMemberAccess(node);
 			} else if constexpr (std::is_same_v<T, NumericLiteralNode> || 
 			                     std::is_same_v<T, BoolLiteralNode> || 
 			                     std::is_same_v<T, StringLiteralNode>) {
@@ -478,13 +482,15 @@ ASTNode ExpressionSubstitutor::substituteBinaryOp(const BinaryOperatorNode& bino
 	ASTNode substituted_rhs = substitute(binop.get_rhs());
 	
 	// Create new BinaryOperatorNode with substituted operands
-	BinaryOperatorNode& new_binop = gChunkedAnyStorage.emplace_back<BinaryOperatorNode>(
+	BinaryOperatorNode new_binop_value(
 		binop.get_token(),
 		substituted_lhs,
 		substituted_rhs
 	);
 	
-	return ASTNode(&new_binop);
+	// Wrap in ExpressionNode so it can be evaluated by try_evaluate_constant_expression
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_binop_value);
+	return ASTNode(&new_expr);
 }
 
 ASTNode ExpressionSubstitutor::substituteUnaryOp(const UnaryOperatorNode& unop) {
@@ -580,6 +586,38 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 	
 	// Not a template parameter, return as-is
 	return ASTNode(&const_cast<IdentifierNode&>(id));
+}
+
+ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIdentifierNode& qual_id) {
+	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing qualified identifier: ", qual_id.full_name());
+	
+	// Qualified identifiers like R1<T>::num need template parameter substitution in the namespace part
+	// The namespace part contains the template name and arguments, e.g., "R1<T>"
+	// We need to substitute T with its concrete type to get "R1<long>"
+	
+	// For now, we'll return as-is and let the evaluator handle it
+	// TODO: Implement full substitution of qualified identifiers with template parameters
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+	return ASTNode(&new_expr);
+}
+
+ASTNode ExpressionSubstitutor::substituteMemberAccess(const MemberAccessNode& member_access) {
+	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing member access on member: ", member_access.member_name());
+	
+	// Recursively substitute in the object expression
+	// For expressions like "R1<T>::num", the object might be a template instantiation
+	ASTNode substituted_object = substitute(member_access.object());
+	
+	// Create new MemberAccessNode with substituted object
+	MemberAccessNode new_member_value(
+		substituted_object,
+		member_access.member_token(),
+		member_access.is_arrow()
+	);
+	
+	// Wrap in ExpressionNode
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_member_value);
+	return ASTNode(&new_expr);
 }
 
 ASTNode ExpressionSubstitutor::substituteLiteral(const ASTNode& literal) {

@@ -38951,6 +38951,25 @@ if (struct_type_info.getStructInfo()) {
 							resolved_args.push_back(val_arg);
 							continue;
 						}
+					} else if (std::holds_alternative<BinaryOperatorNode>(expr) || std::holds_alternative<TernaryOperatorNode>(expr)) {
+						// Handle binary/ternary operator expressions like: R1<T>::num < R2<T>::num
+						// These need template parameter substitution before evaluation
+						FLASH_LOG(Templates, Debug, "Processing BinaryOperatorNode/TernaryOperatorNode in deferred base argument");
+						
+						// Use ExpressionSubstitutor to substitute template parameters
+						ExpressionSubstitutor substitutor(name_substitution_map, *this);
+						ASTNode substituted_node = substitutor.substitute(arg_info.node);
+						
+						// Now try to evaluate the substituted expression
+						if (auto value = try_evaluate_constant_expression(substituted_node)) {
+							FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted binary/ternary operator to value {}", value->value);
+							TemplateTypeArg val_arg(value->value, value->type);
+							val_arg.is_pack = arg_info.is_pack;
+							resolved_args.push_back(val_arg);
+							continue;
+						} else {
+							FLASH_LOG(Templates, Debug, "Failed to evaluate substituted binary/ternary operator");
+						}
 					} else {
 						// Try to evaluate non-type template argument after substitution
 						if (auto value = try_evaluate_constant_expression(arg_info.node)) {
