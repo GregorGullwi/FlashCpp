@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <typeinfo>
 #include <limits>
+#include <charconv>
 #include "IRConverter.h"
 #include "Log.h"
 
@@ -933,12 +934,138 @@ public:
 	}
 
 private:
+	// Helper function to resolve template parameter size from struct name
+	// This is used by both ConstExpr evaluator and IR generation for sizeof(T)
+	// where T is a template parameter in a template class member function
+	static size_t resolveTemplateSizeFromStructName(std::string_view struct_name) {
+		// Parse the struct name to extract template arguments
+		// e.g., "Container_int" -> T = int (4 bytes), "Processor_char" -> T = char (1 byte)
+		// Pointer types have "P" suffix: "Container_intP" -> T = int* (8 bytes)
+		// Reference types have "R" or "RR" suffix: "Container_intR" -> T = int& (sizeof returns size of int)
+		size_t underscore_pos = struct_name.rfind('_');
+		if (underscore_pos == std::string_view::npos || underscore_pos + 1 >= struct_name.size()) {
+			return 0;
+		}
+		
+		std::string_view type_suffix = struct_name.substr(underscore_pos + 1);
+		
+		// Strip CV qualifier prefixes ('C' for const, 'V' for volatile)
+		// TemplateTypeArg::toString() adds CV qualifiers as prefixes (e.g., "Cint" for const int)
+		// sizeof(const T) and sizeof(volatile T) return the same size as sizeof(T)
+		while (!type_suffix.empty() && (type_suffix.front() == 'C' || type_suffix.front() == 'V')) {
+			type_suffix = type_suffix.substr(1);
+		}
+		
+		// Check for reference types (suffix ends with 'R' or 'RR')
+		// TemplateTypeArg::toString() appends "R" for lvalue reference, "RR" for rvalue reference
+		// sizeof(T&) and sizeof(T&&) return the size of T, not the size of the reference itself
+		if (type_suffix.size() >= 2 && type_suffix.ends_with("RR")) {
+			// Rvalue reference - strip "RR" and get base type size
+			type_suffix = type_suffix.substr(0, type_suffix.size() - 2);
+		} else if (!type_suffix.empty() && type_suffix.back() == 'R') {
+			// Lvalue reference - strip "R" and get base type size
+			type_suffix = type_suffix.substr(0, type_suffix.size() - 1);
+		}
+		
+		// Check for pointer types (suffix ends with 'P')
+		// TemplateTypeArg::toString() appends 'P' for each pointer level
+		// e.g., "intP" for int*, "intPP" for int**, etc.
+		if (!type_suffix.empty() && type_suffix.back() == 'P') {
+			// All pointers are 8 bytes on x64
+			return 8;
+		}
+		
+		// Check for array types (suffix contains 'A')
+		// Arrays are like "intA[10]" - sizeof(array) = element_size * element_count
+		size_t array_pos = type_suffix.find('A');
+		if (array_pos != std::string_view::npos) {
+			// Extract base type and array dimensions
+			std::string_view base_type = type_suffix.substr(0, array_pos);
+			std::string_view array_part = type_suffix.substr(array_pos + 1); // Skip 'A'
+			
+			// Strip CV qualifiers from base_type (already stripped from type_suffix earlier, but double-check)
+			while (!base_type.empty() && (base_type.front() == 'C' || base_type.front() == 'V')) {
+				base_type = base_type.substr(1);
+			}
+			
+			// Parse array dimensions like "[10]" or "[]"
+			if (array_part.starts_with('[') && array_part.ends_with(']')) {
+				std::string_view dimensions = array_part.substr(1, array_part.size() - 2);
+				if (!dimensions.empty()) {
+					// Parse the dimension as a number
+					size_t array_count = 0;
+					auto result = std::from_chars(dimensions.data(), dimensions.data() + dimensions.size(), array_count);
+					if (result.ec == std::errc{} && array_count > 0) {
+						// Get base type size
+						size_t base_size = 0;
+						
+						// Check if base_type is a pointer (ends with 'P')
+						// e.g., "intP" for int*, "charPP" for char**, etc.
+						if (!base_type.empty() && base_type.back() == 'P') {
+							// All pointers are 8 bytes on x64
+							base_size = 8;
+						} else {
+							// Look up non-pointer base type size
+							if (base_type == "int") base_size = 4;
+							else if (base_type == "char") base_size = 1;
+							else if (base_type == "short") base_size = 2;
+							else if (base_type == "long") base_size = get_long_size_bits() / 8;
+							else if (base_type == "float") base_size = 4;
+							else if (base_type == "double") base_size = 8;
+							else if (base_type == "bool") base_size = 1;
+							else if (base_type == "uint") base_size = 4;
+							else if (base_type == "uchar") base_size = 1;
+							else if (base_type == "ushort") base_size = 2;
+							else if (base_type == "ulong") base_size = get_long_size_bits() / 8;
+							else if (base_type == "ulonglong") base_size = 8;
+							else if (base_type == "longlong") base_size = 8;
+						}
+						
+						if (base_size > 0) {
+							return base_size * array_count;
+						}
+					}
+				}
+			}
+			return 0;  // Failed to parse array dimensions
+		}
+		
+		// Map common type suffixes to their sizes
+		// Note: Must match the output of TemplateTypeArg::toString() in TemplateRegistry.h
+		if (type_suffix == "int") return 4;
+		else if (type_suffix == "char") return 1;
+		else if (type_suffix == "short") return 2;
+		else if (type_suffix == "long") return get_long_size_bits() / 8;
+		else if (type_suffix == "float") return 4;
+		else if (type_suffix == "double") return 8;
+		else if (type_suffix == "bool") return 1;
+		else if (type_suffix == "uint") return 4;
+		else if (type_suffix == "uchar") return 1;
+		else if (type_suffix == "ushort") return 2;
+		else if (type_suffix == "ulong") return get_long_size_bits() / 8;
+		else if (type_suffix == "ulonglong") return 8;
+		else if (type_suffix == "longlong") return 8;
+		
+		return 0;  // Unknown type
+	}
+
 	// Helper function to try evaluating sizeof/alignof using ConstExprEvaluator
 	// Returns the evaluated operands if successful, empty vector otherwise
 	template<typename NodeType>
 	std::vector<IrOperand> tryEvaluateAsConstExpr(const NodeType& node) {
 		// Try to evaluate as a constant expression first
 		ConstExpr::EvaluationContext ctx(symbol_table);
+		
+		// If we're in a member function, set the struct_info in the context
+		// This allows sizeof(T) to resolve template parameters from the struct
+		if (current_struct_name_.isValid()) {
+			auto struct_type_it = gTypesByName.find(current_struct_name_);
+			if (struct_type_it != gTypesByName.end()) {
+				const TypeInfo* struct_type_info = struct_type_it->second;
+				ctx.struct_info = struct_type_info->getStructInfo();
+			}
+		}
+		
 		auto expr_node = ASTNode::emplace_node<ExpressionNode>(node);
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		
@@ -16737,6 +16864,19 @@ private:
 							// Return sizeof result for array
 							return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(*array_size) };
 						}
+					}
+				}
+				
+				// Handle template parameters in member functions with trailing requires clauses
+				// When sizeof(T) is used in a template class member function, T is a template parameter
+				// that should be resolved from the instantiated class's template arguments
+				if (!symbol.has_value() && current_struct_name_.isValid()) {
+					// We're in a member function - try to resolve the template parameter
+					std::string_view struct_name = StringTable::getStringView(current_struct_name_);
+					size_t param_size_bytes = resolveTemplateSizeFromStructName(struct_name);
+					
+					if (param_size_bytes > 0) {
+						return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(param_size_bytes) };
 					}
 				}
 			}
