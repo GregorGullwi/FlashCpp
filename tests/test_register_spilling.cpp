@@ -29,6 +29,7 @@ float get_floats() {
     return a + b + c + d + e + f + g + h + i + j + k + l + m + n + o + p + q + r;
 }
 
+// Expected return: 125
 int main() {
     int a = 1;
     int b = 2;

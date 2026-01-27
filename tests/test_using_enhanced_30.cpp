@@ -57,6 +57,7 @@ int test_using_with_qualified() {
 }
 
 
+// Expected return: 30
 int main() {
     return test_using_directive();
 }

@@ -303,6 +303,7 @@ int test_nested_private_section() {
 }
 
 
+// Expected return: 42
 int main() {
     return test_basic_nested_class();
 }

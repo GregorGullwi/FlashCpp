@@ -12,6 +12,7 @@ struct AddressProvider {
     }
 };
 
+// Expected return: 99
 int main() {
     AddressProvider obj;
     obj.value = 42;

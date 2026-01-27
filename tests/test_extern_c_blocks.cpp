@@ -13,6 +13,7 @@ namespace std {
     }
 }
 
+// Expected return: 42
 int main() {
     puts("Hello from FlashCpp with extern C!");
     return std::test_func();

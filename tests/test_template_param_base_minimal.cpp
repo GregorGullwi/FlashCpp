@@ -35,6 +35,7 @@ struct my_or<T> : T {};
 my_or<true_type> m1;
 my_or<false_type> m2;
 
+// Expected return: 42
 int main() {
     // Just return 42 to indicate successful compilation
     return 42;

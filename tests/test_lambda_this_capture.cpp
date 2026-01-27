@@ -10,6 +10,7 @@ struct MyClass {
     }
 };
 
+// Expected return: 5
 int main() {
     MyClass obj;
     return obj.test_capture_this();  // Expected: 5

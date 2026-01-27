@@ -50,6 +50,7 @@ struct wrapper<bool> {
     using value_type = int;
 };
 
+// Expected return: 0
 int main() {
     // Test 1: Access type alias from specialization
     enable_if<true>::type x1 = 42;        // Should be int

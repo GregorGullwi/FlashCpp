@@ -25,6 +25,7 @@ struct Pair {
 template<typename T, typename U>
 int Pair<T, U>::count = 100;
 
+// Expected return: 11
 int main() {
     int result = 0;
     

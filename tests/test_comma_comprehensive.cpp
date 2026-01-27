@@ -6,6 +6,7 @@ int increment() {
     return global;
 }
 
+// Expected return: 3
 int main() {
     // Test 1: Comma operator in variable initialization
     int a = (increment(), increment(), global);  // Should be 2

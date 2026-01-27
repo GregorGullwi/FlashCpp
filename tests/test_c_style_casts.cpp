@@ -85,6 +85,7 @@ int test_multiple_casts() {
 }
 
 
+// Expected return: 42
 int main() {
     return test_int_to_int();
 }

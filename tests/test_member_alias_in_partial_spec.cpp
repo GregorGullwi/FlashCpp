@@ -14,6 +14,7 @@ struct Wrapper<T, false> {
     using Type = U*;
 };
 
+// Expected return: 1
 int main() {
     // Test primary template
     Wrapper<int, true>::Type<double> x = 3.14;

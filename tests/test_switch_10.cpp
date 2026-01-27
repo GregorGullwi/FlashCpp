@@ -169,6 +169,7 @@ int test_static_cast_enum() {
 }
 
 
+// Expected return: 10
 int main() {
     return test_basic_switch(1);
 }

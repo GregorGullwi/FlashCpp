@@ -25,6 +25,7 @@ struct TestStruct {
     static_assert(check(__type_identity<int>{}).value, "test");
 };
 
+// Expected return: 0
 int main() {
     return test_in_function();
 }

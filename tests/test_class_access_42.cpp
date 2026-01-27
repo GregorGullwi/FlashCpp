@@ -100,6 +100,7 @@ int test_protected_in_class() {
 }
 
 
+// Expected return: 42
 int main() {
     return test_class_private_default();
 }

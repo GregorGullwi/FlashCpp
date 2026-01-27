@@ -47,6 +47,7 @@ process(T) {
     return x + y;  // 200
 }
 
+// Expected return: 1
 int main() {
     // Should call the int overload
     int result1 = process(42);
