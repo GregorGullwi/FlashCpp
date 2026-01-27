@@ -211,9 +211,9 @@ private:
 					}
 				}
 
-				// Next action offset: 0 for last handler in region, otherwise 2 (two SLEB128s ahead)
-				// NOTE: Actions are contiguous; offset of 2 selects the next action entry.
-				DwarfCFI::appendSLEB128(data, (i + 1 < try_region.catch_handlers.size()) ? 2 : 0);
+				// Next action offset: 0 for last handler in region, otherwise 1 (next entry)
+				// Action table offsets are measured in number of action entries.
+				DwarfCFI::appendSLEB128(data, (i + 1 < try_region.catch_handlers.size()) ? 1 : 0);
 			}
 		}
 		if (g_enable_debug_output) {
