@@ -20352,7 +20352,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 
 			// If not found OR if it's a template (not an instantiated function), try template instantiation
-			if ((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) && 
+			// Also try if explicit template arguments were provided (to handle overload resolution)
+			if (((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) ||
+			     (template_args.has_value() && !template_args->empty())) && 
 			    current_linkage_ != Linkage::C) {
 				// Build qualified template name
 				std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
@@ -20854,6 +20856,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
 					return ParseResult::success(*result);
 				}
+				
+				// If class/variable template instantiation failed, try function template instantiation
+				// This handles cases like: ns::func<int, int>()
+				if (!identifierType.has_value()) {
+					FLASH_LOG_FORMAT(Templates, Debug, "Trying function template instantiation for '{}' with {} args", 
+					                 qualified_template_name, template_args->size());
+					auto func_template_inst = try_instantiate_template_explicit(qualified_template_name, *template_args);
+					if (func_template_inst.has_value() && func_template_inst->is<FunctionDeclarationNode>()) {
+						identifierType = *func_template_inst;
+						FLASH_LOG(Templates, Debug, "Successfully instantiated function template with explicit arguments");
+					}
+				}
 			} else {
 				// No template arguments, lookup as regular qualified identifier
 				identifierType = gSymbolTable.lookup_qualified(qual_id.namespace_handle(), qual_id.identifier_token().value());
@@ -20885,18 +20899,28 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Build qualified template name
 					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 					
-					// Apply lvalue reference for forwarding deduction on arg_types
-					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
-					
-					
-					// Try to instantiate the qualified template function
-					if (!arg_types.empty()) {
-						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+					// If explicit template arguments were provided, use them for instantiation
+					if (template_args.has_value() && !template_args->empty()) {
+						FLASH_LOG_FORMAT(Templates, Debug, "Instantiating function template '{}' with {} explicit template arguments", 
+						                 qualified_name, template_args->size());
+						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args);
 						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
 							identifierType = *template_inst;
-						} else {
+							FLASH_LOG(Templates, Debug, "Successfully instantiated function template with explicit arguments");
 						}
 					} else {
+						// Apply lvalue reference for forwarding deduction on arg_types
+						std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
+						
+						// Try to instantiate the qualified template function using argument deduction
+						if (!arg_types.empty()) {
+							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+							if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+								identifierType = *template_inst;
+							} else {
+							}
+						} else {
+						}
 					}
 				}
 				

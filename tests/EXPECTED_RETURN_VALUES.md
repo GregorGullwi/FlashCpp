@@ -8,32 +8,25 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-27 (validate_return_values.sh - after static member partial specialization fix)
+**Last Run:** 2026-01-27 (validate_return_values.sh - after template function explicit args fix + validation script enhancements)
 
 **Total files tested:** 960
-**Valid returns:** 957
-**Return mismatches:** 0
+**Valid returns:** 956
+**Return mismatches:** 2
 **Runtime crashes:** 2
 **Compile failures:** 0
 **Link failures:** 0
 
 ## Known Return Mismatches
 
-**Note (2026-01-27):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 return mismatches out of 960 tests. The tests listed below do not follow the exact naming pattern and were tracked separately as known issues.
+The following tests have return value mismatches. These are tests where the filename indicates an expected return value (e.g., `_ret42.cpp` expects 42), but the actual return value differs:
 
-**Fixed in this PR:**
-- ~~test_less_in_base_class_ret0.cpp~~ - **FIXED**: Template base class with comparison expressions in template arguments now correctly evaluated
-- ~~test_out_of_line_ctor_ret0.cpp~~ - **FIXED**: Copy constructor now correctly preferred over converting constructors for direct initialization
-- ~~test_member_func_trailing_requires_ret42.cpp~~ - **FIXED**: sizeof(T) in template member functions with trailing requires clauses now correctly evaluates template parameter
-- ~~test_qualified_base_class_ret42.cpp~~ - **FIXED**: Template base classes with qualified member type access (e.g., Base<T>::type) now correctly resolved during instantiation
-- ~~test_member_var_template_ret42.cpp~~ - **FIXED**: Member variable templates with non-type parameters and sizeof expressions now correctly instantiate and evaluate
-- ~~test_member_partial_spec_inherit_ret4.cpp~~ - **FIXED**: Partial specialization static member with sizeof expression now correctly evaluates template parameters
+| Test File | Expected | Actually Returns | Notes |
+|-----------|----------|------------------|-------|
+| test_var_template_static_inline_ret132.cpp | 132 | 99 | Variable template with static inline member - value calculation issue |
+| test_var_template_values_ret162.cpp | 162 | 47 | Variable template value instantiation - value calculation issue |
 
-The following tests are still returning incorrect values:
-
-| Test File | Expected | Currently Returning | Notes |
-|-----------|----------|---------------------|-------|
-| test_template_disambiguation_pack_ret40.cpp | 40 | 30 | Template disambiguation with parameter pack |
+**Note:** These are legitimate bugs in the compiler where the variable template instantiation or evaluation is not working correctly. They are tracked separately from the previously fixed template function call issues.
 
 ## Runtime Crashes
 

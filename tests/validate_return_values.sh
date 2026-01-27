@@ -49,6 +49,7 @@ declare -A OUT_OF_RANGE_UNKNOWN=()
 declare -A COMPILE_FAIL=()
 declare -A LINK_FAIL=()
 declare -A RUNTIME_CRASH=()
+declare -A RETURN_MISMATCH=()
 
 contains() {
     local e match="$1"
@@ -159,8 +160,20 @@ for base in "${TEST_FILES[@]}"; do
     
     # Check if return value is in valid range (0-255)
     if [ $return_value -ge 0 ] && [ $return_value -le 255 ]; then
-        echo -e "${GREEN}OK${NC} (returned $return_value)"
-        VALID_RETURNS["$base"]=$return_value
+        # Check if the filename indicates an expected return value (e.g., test_name_ret42.cpp expects 42)
+        if [[ "$base" =~ _ret([0-9]+)\.cpp$ ]]; then
+            expected_value="${BASH_REMATCH[1]}"
+            if [ "$return_value" -eq "$expected_value" ]; then
+                echo -e "${GREEN}OK${NC} (returned $return_value)"
+                VALID_RETURNS["$base"]=$return_value
+            else
+                echo -e "${RED}MISMATCH${NC} (expected $expected_value, got $return_value)"
+                RETURN_MISMATCH["$base"]="Expected $expected_value, got $return_value"
+            fi
+        else
+            echo -e "${GREEN}OK${NC} (returned $return_value)"
+            VALID_RETURNS["$base"]=$return_value
+        fi
     else
         # This shouldn't happen on Linux (return values are masked to 0-255)
         # but we'll check anyway
@@ -183,6 +196,7 @@ echo "SUMMARY"
 echo "================================"
 echo "Total files tested: $TOTAL"
 echo -e "Valid returns (0-255): ${GREEN}${#VALID_RETURNS[@]}${NC}"
+echo -e "Return mismatches: ${RED}${#RETURN_MISMATCH[@]}${NC}"
 echo -e "Out of range (valid): ${YELLOW}${#OUT_OF_RANGE_VALID[@]}${NC}"
 echo -e "Out of range (unknown): ${YELLOW}${#OUT_OF_RANGE_UNKNOWN[@]}${NC}"
 echo -e "Compile failures: ${RED}${#COMPILE_FAIL[@]}${NC}"
@@ -191,6 +205,14 @@ echo -e "Runtime crashes: ${RED}${#RUNTIME_CRASH[@]}${NC}"
 echo ""
 
 # Show details
+if [ ${#RETURN_MISMATCH[@]} -gt 0 ]; then
+    echo -e "${RED}Return value mismatches:${NC}"
+    for file in "${!RETURN_MISMATCH[@]}"; do
+        echo "  $file: ${RETURN_MISMATCH[$file]}"
+    done
+    echo ""
+fi
+
 if [ ${#OUT_OF_RANGE_UNKNOWN[@]} -gt 0 ]; then
     echo -e "${YELLOW}Files with unknown out-of-range return values:${NC}"
     for file in "${!OUT_OF_RANGE_UNKNOWN[@]}"; do
@@ -235,6 +257,73 @@ if [ ${#LINK_FAIL[@]} -gt 0 ]; then
         echo "  (all expected)"
     fi
     echo ""
+fi
+
+# Comprehensive failure list at the end
+total_failures=$((${#RETURN_MISMATCH[@]} + ${#RUNTIME_CRASH[@]} + ${#COMPILE_FAIL[@]} + ${#LINK_FAIL[@]} + ${#OUT_OF_RANGE_UNKNOWN[@]}))
+if [ $total_failures -gt 0 ]; then
+    echo "================================"
+    echo "ALL FAILING TESTS"
+    echo "================================"
+    echo ""
+    
+    if [ ${#RETURN_MISMATCH[@]} -gt 0 ]; then
+        echo -e "${RED}Return Mismatches (${#RETURN_MISMATCH[@]}):${NC}"
+        for file in "${!RETURN_MISMATCH[@]}"; do
+            echo "  - $file: ${RETURN_MISMATCH[$file]}"
+        done
+        echo ""
+    fi
+    
+    if [ ${#RUNTIME_CRASH[@]} -gt 0 ]; then
+        echo -e "${RED}Runtime Crashes (${#RUNTIME_CRASH[@]}):${NC}"
+        for file in "${!RUNTIME_CRASH[@]}"; do
+            echo "  - $file: ${RUNTIME_CRASH[$file]}"
+        done
+        echo ""
+    fi
+    
+    # Only show unexpected compile failures
+    unexpected_compile_count=0
+    for file in "${!COMPILE_FAIL[@]}"; do
+        if ! contains "$file" "${EXPECTED_FAIL[@]}"; then
+            ((unexpected_compile_count++))
+        fi
+    done
+    if [ $unexpected_compile_count -gt 0 ]; then
+        echo -e "${RED}Unexpected Compile Failures ($unexpected_compile_count):${NC}"
+        for file in "${!COMPILE_FAIL[@]}"; do
+            if ! contains "$file" "${EXPECTED_FAIL[@]}"; then
+                echo "  - $file: ${COMPILE_FAIL[$file]}"
+            fi
+        done
+        echo ""
+    fi
+    
+    # Only show unexpected link failures
+    unexpected_link_count=0
+    for file in "${!LINK_FAIL[@]}"; do
+        if ! contains "$file" "${EXPECTED_LINK_FAIL[@]}"; then
+            ((unexpected_link_count++))
+        fi
+    done
+    if [ $unexpected_link_count -gt 0 ]; then
+        echo -e "${RED}Unexpected Link Failures ($unexpected_link_count):${NC}"
+        for file in "${!LINK_FAIL[@]}"; do
+            if ! contains "$file" "${EXPECTED_LINK_FAIL[@]}"; then
+                echo "  - $file: ${LINK_FAIL[$file]}"
+            fi
+        done
+        echo ""
+    fi
+    
+    if [ ${#OUT_OF_RANGE_UNKNOWN[@]} -gt 0 ]; then
+        echo -e "${YELLOW}Unknown Out-of-Range Returns (${#OUT_OF_RANGE_UNKNOWN[@]}):${NC}"
+        for file in "${!OUT_OF_RANGE_UNKNOWN[@]}"; do
+            echo "  - $file: ${OUT_OF_RANGE_UNKNOWN[$file]}"
+        done
+        echo ""
+    fi
 fi
 
 # Note about return values
