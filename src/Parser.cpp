@@ -35987,8 +35987,9 @@ ASTNode Parser::substitute_template_params_in_expression(
 		if (it != nontype_substitution_map.end()) {
 			// Replace the identifier with a numeric literal
 			int64_t value = it->second;
-			// Create a token for the numeric literal (we don't have line/column info from IdentifierNode, use defaults)
-			Token value_token(Token::Type::Literal, std::to_string(value), 0, 0, 0);
+			// Create a persistent string for the token value using StringBuilder
+			std::string_view val_str = StringBuilder().append(value).commit();
+			Token value_token(Token::Type::Literal, val_str, 0, 0, 0);
 			return emplace_node<ExpressionNode>(
 				NumericLiteralNode(value_token, static_cast<unsigned long long>(value), Type::Int, TypeQualifier::None, 32));
 		}
