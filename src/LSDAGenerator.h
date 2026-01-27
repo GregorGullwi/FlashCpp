@@ -175,16 +175,6 @@ private:
 	
 	// Encode action table
 	void encode_action_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info) {
-		// Action table entries describe what to do when exception is caught
-		// Each entry has:
-		// - Type filter (SLEB128) - positive for catch clause, 0 for cleanup, negative for exception spec
-		// - Next action (SLEB128) - offset to next action or 0
-		//
-		// Type filter meanings (Itanium C++ ABI):
-		// - Positive N: catch clause, match type at index N (1-based) in type table
-		// - Zero: cleanup action (no type matching, always executed during unwind)
-		// - Negative: exception specification filter (NOT used for regular catch clauses)
-
 		// Generate action entries for each catch handler in order.
 		// Multiple handlers are chained via the 'next action' offset (SLEB128).
 		for (const auto& try_region : info.try_regions) {

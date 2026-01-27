@@ -743,7 +743,9 @@ public:
 			}
 
 			uint32_t current_offset = 0;  // Start of function
-			uint32_t function_end_offset = min_landing_pad_offset;  // End at first landing pad, not end of function
+			// Cover the whole function (excluding landing pads themselves) so the personality
+			// routine sees call-site entries for code after the first landing pad as well.
+			uint32_t function_end_offset = fde_info.function_length;
 
 			for (const auto& try_block : sorted_try_blocks) {
 				// Add call site entry for code BEFORE this try block (if any)
