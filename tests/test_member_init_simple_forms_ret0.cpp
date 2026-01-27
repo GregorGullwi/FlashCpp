@@ -8,7 +8,6 @@ struct A {
 	B b1 = { .a = 1 };  // Designated initializer
 };
 
-// Expected return: 0
 int main() {
 	A obj;
 	return obj.b1.a;  // Should return 1

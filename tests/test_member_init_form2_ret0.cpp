@@ -9,7 +9,6 @@ struct A {
 	B b2 = B{ .a = 2 };
 };
 
-// Expected return: 0
 int main() {
 	A obj;
 	return obj.b2.a;  // Should return 2

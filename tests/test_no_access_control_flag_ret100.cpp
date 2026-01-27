@@ -17,7 +17,6 @@ int test_access_private_with_flag() {
 }
 
 
-// Expected return: 100
 int main() {
     return test_access_private_with_flag();
 }

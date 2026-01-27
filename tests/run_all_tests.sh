@@ -97,7 +97,7 @@ for base in "${TEST_FILES[@]}"; do
     
     # Compile (with 30 second timeout to avoid hangs)
     extra_flags=()
-    if [ "$base" == "test_no_access_control_flag.cpp" ]; then
+    if [ "$base" == "test_no_access_control_flag_ret100.cpp" ]; then
         extra_flags+=("-fno-access-control")
     fi
     compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 "${extra_flags[@]}" "$f" 2>&1)

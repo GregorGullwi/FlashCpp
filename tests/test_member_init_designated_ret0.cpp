@@ -21,7 +21,6 @@ struct A {
 	C c3 = C{3};
 };
 
-// Expected return: 0
 int main() {
 	A obj;
 	// b1.a = 1, b2.a = 2, b3.a = 3

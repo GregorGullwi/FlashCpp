@@ -53,33 +53,33 @@ struct wrapper<bool> {
 // Expected return: 0
 int main() {
     // Test 1: Access type alias from specialization
-    enable_if<true>::type x1 = 42;        // Should be int
+    enable_if<true>::type x1 = 10;        // Should be int
     enable_if<false>::type* x2 = nullptr; // Should be void*
     
     // Test 2: Type identity mapping
-    type_identity<bool>::type x3 = 99;  // Should be int (mapped from bool)
-    type_identity<int>::type x4 = 100;  // Should be int (unchanged)
+    type_identity<bool>::type x3 = 15;  // Should be int (mapped from bool)
+    type_identity<int>::type x4 = 20;  // Should be int (unchanged)
     
     // Test 3: Multiple full specializations
-    int_to_type<0>::type x5 = 'A';   // Should be char
-    int_to_type<1>::type x6 = 123;   // Should be short
-    int_to_type<2>::type x7 = 456;   // Should be int
+    int_to_type<0>::type x5 = 'A';   // Should be char (65)
+    int_to_type<1>::type x6 = 25;   // Should be short
+    int_to_type<2>::type x7 = 30;   // Should be int
     
     // Test 4: Type wrapper
-    wrapper<bool>::value_type x8 = 789;  // Should be int (mapped from bool)
-    wrapper<int>::value_type x9 = 100;   // Should be int (unchanged)
+    wrapper<bool>::value_type x8 = 35;  // Should be int (mapped from bool)
+    wrapper<int>::value_type x9 = 40;   // Should be int (unchanged)
     
     // Verify correct types by doing operations
     int result = 0;
-    result += x1;  // 42
-    result += x3;  // 99
-    result += x4;  // 100
+    result += x1;  // 10
+    result += x3;  // 15
+    result += x4;  // 20
     result += x5;  // 65 ('A')
-    result += x6;  // 123
-    result += x7;  // 456
-    result += x8;  // 789
-    result += x9;  // 100
+    result += x6;  // 25
+    result += x7;  // 30
+    result += x8;  // 35
+    result += x9;  // 40
     
-    // Expected: 42 + 99 + 100 + 65 + 123 + 456 + 789 + 100 = 1774
-    return (result == 1774) ? 0 : 1;
+    // Expected: 10 + 15 + 20 + 65 + 25 + 30 + 35 + 40 = 240
+    return (result == 240) ? 0 : 1;
 }

@@ -6,7 +6,6 @@ struct Container {
 template<typename T>
 int Container<T>::value = 42;
 
-// Expected return: 214
 int main() {
     int x = Container<int>::value;
     return x - 42;

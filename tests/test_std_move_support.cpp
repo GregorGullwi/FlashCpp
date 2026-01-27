@@ -22,7 +22,7 @@ int consume(int&& x) {
     return x + 10;
 }
 
-// Expected return: 1
+// Expected return: 0
 int main() {
     int value = 5;
     

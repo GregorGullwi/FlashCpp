@@ -30,7 +30,6 @@ int sum_ints(int count, ...) {
     return total;
 }
 
-// Expected return: 60
 int main() {
     // Test: sum_ints(3, 10, 20, 30) should return 60
     int result = sum_ints(3, 10, 20, 30);
