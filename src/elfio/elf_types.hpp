@@ -529,6 +529,7 @@ constexpr Elf_Word SHT_ARM_PREEMPTMAP     = 0x70000002;
 constexpr Elf_Word SHT_ARM_ATTRIBUTES     = 0x70000003;
 constexpr Elf_Word SHT_ARM_DEBUGOVERLAY   = 0x70000004;
 constexpr Elf_Word SHT_ARM_OVERLAYSECTION = 0x70000005;
+constexpr Elf_Word SHT_X86_64_UNWIND      = 0x70000001; // x86-64 exception handling unwind info
 constexpr Elf_Word SHT_HIPROC             = 0x7FFFFFFF;
 constexpr Elf_Word SHT_LOUSER             = 0x80000000;
 // Used by Nintendo Wii U
