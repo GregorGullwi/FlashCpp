@@ -8,20 +8,27 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-27 (validate_return_values.sh - after template function explicit args fix)
+**Last Run:** 2026-01-27 (validate_return_values.sh - after template function explicit args fix + validation script enhancements)
 
 **Total files tested:** 960
-**Valid returns:** 956
-**Return mismatches:** 0
+**Valid returns:** 952
+**Return mismatches:** 2
 **Runtime crashes:** 2
-**Compile failures:** 0
-**Link failures:** 0
+**Compile failures:** 1
+**Link failures:** 1
 
 ## Known Return Mismatches
 
-**Note (2026-01-27):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 return mismatches out of 960 tests. All previously tracked return mismatches have been fixed!
+The following tests have return value mismatches. These are tests where the filename indicates an expected return value (e.g., `_ret42.cpp` expects 42), but the actual return value differs:
 
-**Fixed in this PR:**
+| Test File | Expected | Actually Returns | Notes |
+|-----------|----------|------------------|-------|
+| test_var_template_static_inline_ret132.cpp | 132 | 99 | Variable template with static inline member - value calculation issue |
+| test_var_template_values_ret162.cpp | 162 | 47 | Variable template value instantiation - value calculation issue |
+
+**Note:** These are legitimate bugs in the compiler where the variable template instantiation or evaluation is not working correctly. They are tracked separately from the previously fixed template function call issues.
+
+**Fixed in previous PRs:**
 - ~~test_less_in_base_class_ret0.cpp~~ - **FIXED**: Template base class with comparison expressions in template arguments now correctly evaluated
 - ~~test_out_of_line_ctor_ret0.cpp~~ - **FIXED**: Copy constructor now correctly preferred over converting constructors for direct initialization
 - ~~test_member_func_trailing_requires_ret42.cpp~~ - **FIXED**: sizeof(T) in template member functions with trailing requires clauses now correctly evaluates template parameter
@@ -30,7 +37,21 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 - ~~test_member_partial_spec_inherit_ret4.cpp~~ - **FIXED**: Partial specialization static member with sizeof expression now correctly evaluates template parameters
 - ~~test_template_disambiguation_pack_ret40.cpp~~ - **FIXED**: Function template calls with explicit template arguments now correctly resolve to the matching specialization based on template argument count
 
-**No remaining return mismatches!** 🎉
+## Compile Failures
+
+The following test files fail to compile:
+
+1. **test_std_move_support.cpp** - Compilation error
+   - Tests std::move and related features
+   - Represents missing standard library support or incomplete move semantics implementation
+
+## Link Failures
+
+The following test files fail to link:
+
+1. **test_rvo_cannot_apply.cpp** - Linking error
+   - Tests return value optimization (RVO) edge cases
+   - Represents missing implementation or unresolved symbols
 
 ## Runtime Crashes
 

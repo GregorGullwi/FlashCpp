@@ -20376,14 +20376,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				
 				// If still not found and no explicit template arguments, try deducing from function arguments
-				// Apply lvalue reference for forwarding deduction on arg_types
-				std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
-				
-				// Try to instantiate the qualified template function
-				if (!arg_types.empty()) {
-					std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
-					if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
-						identifierType = *template_inst;
+				if (!identifierType.has_value() && (!template_args.has_value() || template_args->empty())) {
+					// Apply lvalue reference for forwarding deduction on arg_types
+					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
+					
+					// Try to instantiate the qualified template function
+					if (!arg_types.empty()) {
+						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+							identifierType = *template_inst;
+						}
 					}
 				}
 			}
