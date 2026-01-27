@@ -8,10 +8,10 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-27 (validate_return_values.sh - after static member partial specialization fix)
+**Last Run:** 2026-01-27 (validate_return_values.sh - after template function explicit args fix)
 
 **Total files tested:** 960
-**Valid returns:** 957
+**Valid returns:** 956
 **Return mismatches:** 0
 **Runtime crashes:** 2
 **Compile failures:** 0
@@ -19,7 +19,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Known Return Mismatches
 
-**Note (2026-01-27):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 return mismatches out of 960 tests. The tests listed below do not follow the exact naming pattern and were tracked separately as known issues.
+**Note (2026-01-27):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 return mismatches out of 960 tests. All previously tracked return mismatches have been fixed!
 
 **Fixed in this PR:**
 - ~~test_less_in_base_class_ret0.cpp~~ - **FIXED**: Template base class with comparison expressions in template arguments now correctly evaluated
@@ -28,12 +28,9 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 - ~~test_qualified_base_class_ret42.cpp~~ - **FIXED**: Template base classes with qualified member type access (e.g., Base<T>::type) now correctly resolved during instantiation
 - ~~test_member_var_template_ret42.cpp~~ - **FIXED**: Member variable templates with non-type parameters and sizeof expressions now correctly instantiate and evaluate
 - ~~test_member_partial_spec_inherit_ret4.cpp~~ - **FIXED**: Partial specialization static member with sizeof expression now correctly evaluates template parameters
+- ~~test_template_disambiguation_pack_ret40.cpp~~ - **FIXED**: Function template calls with explicit template arguments now correctly resolve to the matching specialization based on template argument count
 
-The following tests are still returning incorrect values:
-
-| Test File | Expected | Currently Returning | Notes |
-|-----------|----------|---------------------|-------|
-| test_template_disambiguation_pack_ret40.cpp | 40 | 30 | Template disambiguation with parameter pack |
+**No remaining return mismatches!** 🎉
 
 ## Runtime Crashes
 
