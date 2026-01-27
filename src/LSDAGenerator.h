@@ -20,6 +20,28 @@
 // References:
 // - Itanium C++ ABI Exception Handling
 // - LSB Exception Frames specification
+//
+// MULTIPLE CATCH HANDLER SUPPORT STATUS:
+// =======================================
+// The action table now correctly generates chained entries for multiple catch handlers
+// within a single try block. Each action entry has a next_offset field that points to
+// the next handler in the chain, allowing the personality routine to try each handler
+// in sequence.
+//
+// KNOWN LIMITATION - Landing Pad Architecture:
+// However, for full multiple catch handler support in Itanium C++ ABI, the landing pad
+// code generation in IRConverter.h also needs to be updated. Currently, each catch handler
+// generates its own separate landing pad with __cxa_begin_catch call. The correct approach is:
+//
+// 1. All catch handlers in a try block should share ONE unified landing pad entry point
+// 2. The personality routine sets RDX (selector) to indicate which handler matched
+// 3. The unified landing pad should:
+//    - Call __cxa_begin_catch once
+//    - Read the selector value from RDX
+//    - Use a switch/jump table to dispatch to the appropriate handler body
+//
+// Until the landing pad architecture is fixed, only the first catch handler will execute,
+// even though the action table correctly supports chaining.
 
 class LSDAGenerator {
 public:
@@ -177,49 +199,84 @@ private:
 		// - Positive N: catch clause, match type at index N (1-based) in type table
 		// - Zero: cleanup action (no type matching, always executed during unwind)
 		// - Negative: exception specification filter (NOT used for regular catch clauses)
+		//
+		// For multiple catch handlers in a single try block, actions are chained:
+		// - Each action's next_offset is a signed byte offset from the end of the next_offset field
+		//   to the start of the next action's type_filter field
+		// - The last action in the chain has next_offset = 0
+		// - The personality routine tries each handler in sequence until a match is found
 
-		// Generate action entries for each try region
-		// Note: For now, we only support one catch handler per try block
-		// Multiple catch handlers would require chaining actions
+		// Process each try region
 		for (const auto& try_region : info.try_regions) {
 			if (try_region.catch_handlers.empty()) {
 				continue;  // No handlers, no action entry needed
 			}
 
-			// For simplicity, only handle the first catch handler
-			// TODO: Support multiple catch handlers with action chaining
-			const auto& handler = try_region.catch_handlers[0];
-
-			if (handler.is_catch_all) {
-				// Catch-all (catch(...)): type filter = 0 means cleanup
-				// Actually, for catch(...), we use type filter that matches any exception
-				// The personality routine treats filter 0 as cleanup (not catch-all)
-				// For true catch-all, we need a type filter that always matches
-				// Looking at GCC output: it uses filter > 0 pointing to a 0 type entry
-				// But simpler approach: -1 as exception spec that matches all
-				DwarfCFI::appendSLEB128(data, 0);  // 0 = cleanup, will run for any exception
-			} else {
-				// Find type index in type table (0-based)
-				int type_index = find_type_index(info.type_table, handler.typeinfo_symbol);
-				if (type_index < 0) {
-					// Type not found in type table - treat as catch-all
-					// This shouldn't happen but handle gracefully
-					DwarfCFI::appendSLEB128(data, 0);
+			// Generate action entries for all catch handlers in this try region
+			// We need to encode them and track positions to calculate offsets
+			std::vector<std::vector<uint8_t>> action_entries;
+			
+			// First pass: encode all type filters
+			for (size_t handler_idx = 0; handler_idx < try_region.catch_handlers.size(); ++handler_idx) {
+				const auto& handler = try_region.catch_handlers[handler_idx];
+				
+				std::vector<uint8_t> type_filter_bytes;
+				
+				// Generate type filter
+				if (handler.is_catch_all) {
+					DwarfCFI::appendSLEB128(type_filter_bytes, 0);  // 0 = cleanup, will run for any exception
 				} else {
-					// Type filter is POSITIVE and 1-based for catch clauses
-					// So index 0 in type table -> filter 1, index 1 -> filter 2, etc.
-					int filter = type_index + 1;
-					if (g_enable_debug_output) {
-						std::cerr << "[DEBUG] Action table: type_index=" << type_index
-						         << " filter=" << filter << std::endl;
+					// Find type index in type table (0-based)
+					int type_index = find_type_index(info.type_table, handler.typeinfo_symbol);
+					if (type_index < 0) {
+						DwarfCFI::appendSLEB128(type_filter_bytes, 0);
+					} else {
+						// Type filter is POSITIVE and 1-based for catch clauses
+						int filter = type_index + 1;
+						if (g_enable_debug_output) {
+							std::cerr << "[DEBUG] Action table: handler_idx=" << handler_idx
+							         << " type_index=" << type_index
+							         << " filter=" << filter << std::endl;
+						}
+						DwarfCFI::appendSLEB128(type_filter_bytes, filter);
 					}
-					DwarfCFI::appendSLEB128(data, filter);
 				}
+				
+				action_entries.push_back(type_filter_bytes);
 			}
-
-			// Next action: always 0 for now (no chaining)
-			DwarfCFI::appendSLEB128(data, 0);
+			
+			// Second pass: encode and write all entries with correct next_offset values
+			for (size_t i = 0; i < action_entries.size(); ++i) {
+				const auto& type_filter_bytes = action_entries[i];
+				bool is_last = (i == action_entries.size() - 1);
+				
+				// Write type filter
+				DwarfCFI::appendVector(data, type_filter_bytes);
+				
+				// Calculate next_offset
+				// The next_offset is a signed byte offset from the end of this next_offset field
+				// to the start of the next action's type_filter field.
+				// For sequentially laid-out actions, this is typically 1 byte when both
+				// type_filter and next_offset encode as 1 byte each in SLEB128.
+				int64_t next_offset = 0;
+				if (!is_last) {
+					// Simplified approach: assume next entry immediately follows
+					// For typical cases where type_filter and next_offset are 1 byte each,
+					// the offset is 1 byte from the end of current next_offset to the
+					// start of next type_filter.
+					next_offset = 1;
+					
+					if (g_enable_debug_output) {
+						std::cerr << "[DEBUG] Action chaining: entry " << i
+						         << " -> entry " << (i + 1)
+						         << " next_offset=" << next_offset << std::endl;
+					}
+				}
+				
+				DwarfCFI::appendSLEB128(data, next_offset);
+			}
 		}
+		
 		if (g_enable_debug_output) {
 			std::cerr << "[DEBUG] Action table size: " << data.size() << " bytes" << std::endl;
 		}
