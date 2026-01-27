@@ -46,6 +46,7 @@ process_double_type(T) {
     return 200;
 }
 
+// Expected return: 0
 int main() {
     // Test with different function names
     int result1 = process_int_type(42);      // Should call int version: 42 + 100 = 142

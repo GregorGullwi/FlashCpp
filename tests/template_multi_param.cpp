@@ -15,6 +15,7 @@ T add_mixed(T a, U b) {
     return a + b;
 }
 
+// Expected return: 0
 int main() {
     // Explicit template arguments with multiple params
     int x = first<int, float>(42, 3.14f);

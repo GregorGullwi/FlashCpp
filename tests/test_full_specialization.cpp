@@ -13,6 +13,7 @@ struct Container<bool> {
     int type_id;
 };
 
+// Expected return: 0
 int main() {
     // Use primary template
     Container<int> int_container;

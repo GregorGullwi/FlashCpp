@@ -26,6 +26,7 @@ struct Container<T*> {
     }
 };
 
+// Expected return: 0
 int main() {
     int x = 42;
     Container<int*> c;

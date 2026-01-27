@@ -35,6 +35,7 @@ only_for_int(T val) {
     return val + 100;
 }
 
+// Expected return: 0
 int main() {
     // This should work - is_int<int>::value is true
     int result = only_for_int(42);

@@ -9,6 +9,7 @@ T1 first(T1 a, T2 b) {
     return a;
 }
 
+// Expected return: 0
 int main() {
     int x = identity<int>(42);
     int y = first<int, float>(10, 3.14f);

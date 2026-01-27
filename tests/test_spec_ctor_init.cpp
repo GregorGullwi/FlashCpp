@@ -14,6 +14,7 @@ struct Calculator<T*> {
     }
 };
 
+// Expected return: 0
 int main() {
     Calculator<int*> calc;
     // Should return 42 - 42 = 0

@@ -7,6 +7,7 @@ struct PtrBox {
 template <typename T>
 PtrBox(T* value_ptr) -> PtrBox<T>;
 
+// Expected return: 0
 int main() {
     int value = 21;
     PtrBox box{&value};

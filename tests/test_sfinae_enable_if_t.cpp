@@ -32,6 +32,7 @@ modern_process(T val) {
     return val + 50;
 }
 
+// Expected return: 0
 int main() {
     // Test modern enable_if_t pattern
     int result = modern_process(42);

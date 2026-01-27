@@ -3,6 +3,7 @@ struct UnsignedParam {
     unsigned int value = U;
 };
 
+// Expected return: 0
 int main() {
     UnsignedParam<100U> up;
     return up.value == 100U ? 0 : 1;

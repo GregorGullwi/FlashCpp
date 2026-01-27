@@ -45,6 +45,7 @@ int test_operators() {
     return a;
 }
 
+// Expected return: 0 (test_operators() evaluates to 0 after all operations)
 int main() {
     return test_operators();
 }

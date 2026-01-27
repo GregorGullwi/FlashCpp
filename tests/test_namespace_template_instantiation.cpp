@@ -9,6 +9,7 @@ namespace my_ns {
     };
 }
 
+// Expected return: 0
 int main() {
     // This line causes "Failed to parse top-level construct" error
     return my_ns::Wrapper<int>::value - 42;

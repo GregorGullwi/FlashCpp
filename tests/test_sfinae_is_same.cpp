@@ -35,6 +35,7 @@ only_double(T val) {
     return static_cast<int>(val) + 20;
 }
 
+// Expected return: 0
 int main() {
     // Test: Call only_int with int
     int result1 = only_int(42);  // Should work: 42 + 10 = 52

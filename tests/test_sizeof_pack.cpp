@@ -7,6 +7,7 @@ struct Tuple {
     static const int size = sizeof...(Args);
 };
 
+// Expected return: 0
 int main() {
     // Empty pack: sizeof...(Args) = 0
     int empty_size = Tuple<>::size;

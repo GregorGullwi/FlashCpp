@@ -17,6 +17,7 @@ int sum<int, int, int>(int arg0, int arg1, int arg2) {
     return arg0 + arg1 + arg2;
 }
 
+// Expected return: 0
 int main() {
     int a = sum<int>(5);
     int b = sum<int, int>(3, 7);

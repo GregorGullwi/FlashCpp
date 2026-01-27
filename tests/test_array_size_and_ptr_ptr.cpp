@@ -23,6 +23,7 @@ int get_via_ptr_ptr(int** pp) {
     return **pp;
 }
 
+// Expected return: 0
 int main() {
     // Test 1: Static array size
     int size = get_array_size();

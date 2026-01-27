@@ -23,6 +23,7 @@ template<typename T>
 struct is_int : helper<T>::type {
 };
 
+// Expected return: 0
 int main() {
 	static_assert(is_int<int>::value);
 	static_assert(!is_int<float>::value);

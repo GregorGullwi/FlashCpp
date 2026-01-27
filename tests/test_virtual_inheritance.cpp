@@ -121,6 +121,7 @@ int test_multi_virtual() {
 }
 
 // Main function to run all tests
+// Expected return: 0
 int main() {
     int result = 0;
     result += test_simple_inheritance();      // 30
