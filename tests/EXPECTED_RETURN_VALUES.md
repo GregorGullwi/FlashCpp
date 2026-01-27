@@ -8,10 +8,10 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-26 (validate_return_values.sh - after variable template instantiation fix)
+**Last Run:** 2026-01-27 (validate_return_values.sh - after static member partial specialization fix)
 
 **Total files tested:** 960
-**Valid returns:** 956
+**Valid returns:** 957
 **Return mismatches:** 0
 **Runtime crashes:** 2
 **Compile failures:** 0
@@ -19,7 +19,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Known Return Mismatches
 
-**Note (2026-01-26):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 return mismatches out of 960 tests. The tests listed below do not follow the exact naming pattern and were tracked separately as known issues.
+**Note (2026-01-27):** The validation script (which tests files following the `test_name_retNN.cpp` naming convention) shows 0 return mismatches out of 960 tests. The tests listed below do not follow the exact naming pattern and were tracked separately as known issues.
 
 **Fixed in this PR:**
 - ~~test_less_in_base_class_ret0.cpp~~ - **FIXED**: Template base class with comparison expressions in template arguments now correctly evaluated
@@ -27,12 +27,12 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 - ~~test_member_func_trailing_requires_ret42.cpp~~ - **FIXED**: sizeof(T) in template member functions with trailing requires clauses now correctly evaluates template parameter
 - ~~test_qualified_base_class_ret42.cpp~~ - **FIXED**: Template base classes with qualified member type access (e.g., Base<T>::type) now correctly resolved during instantiation
 - ~~test_member_var_template_ret42.cpp~~ - **FIXED**: Member variable templates with non-type parameters and sizeof expressions now correctly instantiate and evaluate
+- ~~test_member_partial_spec_inherit_ret4.cpp~~ - **FIXED**: Partial specialization static member with sizeof expression now correctly evaluates template parameters
 
 The following tests are still returning incorrect values:
 
 | Test File | Expected | Currently Returning | Notes |
 |-----------|----------|---------------------|-------|
-| test_member_partial_spec_inherit_ret4.cpp | 4 | 0 | Partial specialization inheritance issue |
 | test_template_disambiguation_pack_ret40.cpp | 40 | 30 | Template disambiguation with parameter pack |
 
 ## Runtime Crashes

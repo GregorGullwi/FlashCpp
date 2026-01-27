@@ -382,12 +382,14 @@ public:
 			}
 		};
 		
-		auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value) -> bool {
+		auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value, const StructTypeInfo* struct_info) -> bool {
 			ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 			ctx.storage_duration = ConstExpr::StorageDuration::Static;
 			// Enable on-demand template instantiation when static member initializers
 			// reference uninstantiated template members during constexpr evaluation
 			ctx.parser = parser_;
+			// Set struct_info so that sizeof(T) can be resolved from template arguments in struct name
+			ctx.struct_info = struct_info;
 			
 			auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 			if (!eval_result.success()) {
@@ -599,9 +601,9 @@ public:
 						}
 					} else {
 						unsigned long long evaluated_value = 0;
-						if (evaluate_static_initializer(*static_member.initializer, evaluated_value)) {
+						if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
 							FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for static member '", 
-							          qualified_name, "'");
+							          qualified_name, "' = ", evaluated_value);
 							append_bytes(evaluated_value, op.size_in_bits, op.init_data);
 						} else {
 							FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '", 
@@ -742,7 +744,7 @@ public:
 										found_base_value = true;
 										FLASH_LOG(Codegen, Debug, "Found double literal value: ", d);
 									}
-								} else if (evaluate_static_initializer(*static_member_ptr->initializer, inferred_value)) {
+								} else if (evaluate_static_initializer(*static_member_ptr->initializer, inferred_value, owner_struct)) {
 									found_base_value = true;
 									FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for inherited static member '", member_name, "'");
 								}
@@ -8591,13 +8593,11 @@ private:
 			}
 
 			// Check if this is a static member access (e.g., StructName::static_member or ns::StructName::static_member)
-			auto struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
-			FLASH_LOG(Codegen, Debug, "generateQualifiedIdentifierIr: struct_or_enum_name='", struct_or_enum_name, "', found=", (struct_type_it != gTypesByName.end()));
-			
-			// If not found directly, try with full qualified name (all namespace components joined)
+			// For nested types (depth > 1), try fully qualified name FIRST to avoid ambiguity
 			// This handles member template specializations like MakeUnsigned::List_int_char
-			// Also handles type aliases accessed through parent struct (e.g., test<T>::type::value)
-			if (struct_type_it == gTypesByName.end() && gNamespaceRegistry.getDepth(ns_handle) > 1) {
+			auto struct_type_it = gTypesByName.end();
+			
+			if (gNamespaceRegistry.getDepth(ns_handle) > 1) {
 				StringHandle ns_qualified_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
 				std::string_view full_qualified_name = StringTable::getStringView(ns_qualified_handle);
 				
@@ -8622,6 +8622,12 @@ private:
 						}
 					}
 				}
+			}
+			
+			// If not found with fully qualified name, try simple name
+			if (struct_type_it == gTypesByName.end()) {
+				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_or_enum_name));
+				FLASH_LOG(Codegen, Debug, "generateQualifiedIdentifierIr: struct_or_enum_name='", struct_or_enum_name, "', found=", (struct_type_it != gTypesByName.end()));
 			}
 			
 			// If not found directly, try with default template argument suffix "_void"
