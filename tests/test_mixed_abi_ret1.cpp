@@ -16,7 +16,6 @@ extern "C" double test_mixed_args(int a, double b, int c, double d) {
     return a + b + c + d;
 }
 
-// Expected return: 1
 extern "C" int main() {
     double result = test_mixed_args(10, 20.5, 30, 40.5);
     // Expected: 10 + 20.5 + 30 + 40.5 = 101.0

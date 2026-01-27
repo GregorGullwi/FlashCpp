@@ -8,7 +8,6 @@ struct is_same : integral_constant<bool, false> {};
 template<typename T>
 struct is_same<T, T> : integral_constant<bool, true> {};
 
-// Expected return: 10
 int main() {
     int result = 0;
     result += 10;
