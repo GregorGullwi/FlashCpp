@@ -776,7 +776,7 @@ void Parser::register_builtin_functions() {
 	// These will be handled as intrinsics in CodeGen
 	
 	// Create dummy tokens for builtin functions
-	Token dummy_token(Token::Type::Identifier, "", 0, 0, 0);
+	Token dummy_token(Token::Type::Identifier, ""sv, 0, 0, 0);
 	
 	// Helper lambda to register a builtin function with one parameter
 	auto register_builtin = [&](std::string_view name, Type return_type, Type param_type) {
@@ -1482,7 +1482,7 @@ ParseResult Parser::parse_type_and_name() {
                         consume_token(); // consume identifier
                     } else {
                         // Unnamed pointer-to-member-function parameter
-                        identifier_token = Token(Token::Type::Identifier, "",
+                        identifier_token = Token(Token::Type::Identifier, ""sv,
                             current_token_->line(), current_token_->column(),
                             current_token_->file_index());
                     }
@@ -1959,7 +1959,7 @@ ParseResult Parser::parse_type_and_name() {
                 if (next == "," || next == ")" || next == "=" || next == "[") {
                     // This is an unnamed parameter - create a synthetic empty identifier
                     FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Unnamed parameter detected, next={}", std::string(next));
-                    identifier_token = Token(Token::Type::Identifier, "",
+                    identifier_token = Token(Token::Type::Identifier, ""sv,
                                             current_token_->line(), current_token_->column(),
                                             current_token_->file_index());
                 } else {
@@ -2196,7 +2196,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
             
             // Now parse the function parameters: '(' params ')'
             // Create a dummy identifier token for the unnamed parameter
-            Token dummy_identifier(Token::Type::Identifier, "", 0, 0, 0);
+            Token dummy_identifier(Token::Type::Identifier, ""sv, 0, 0, 0);
             
             return parse_postfix_declarator(base_type, dummy_identifier);
         }
@@ -3052,7 +3052,7 @@ ParseResult Parser::parse_declaration_or_function_definition()
 		);
 		this_type_ref.add_pointer_level();  // Make it a pointer
 		
-		Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+		Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
 		auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
 		gSymbolTable.insert("this"sv, this_decl_node);
 		
@@ -3746,7 +3746,7 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	);
 	this_type_ref.add_pointer_level();  // Make it a pointer
 	
-	Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+	Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
 	auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
 	gSymbolTable.insert("this"sv, this_decl_node);
 	
@@ -6573,7 +6573,7 @@ ParseResult Parser::parse_struct_declaration()
 
 				// Special-case defaulted spaceship operator: emit a safe return value
 				if (decl_node.identifier_token().value() == "operator<=>") {
-					Token zero_token(Token::Type::Literal, "0",
+					Token zero_token(Token::Type::Literal, "0"sv,
 						decl_node.identifier_token().line(),
 						decl_node.identifier_token().column(),
 						decl_node.identifier_token().file_index());
@@ -7286,9 +7286,7 @@ ParseResult Parser::parse_struct_declaration()
 		param_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
 
 		// Create parameter declaration
-		// Use a static string to ensure the string_view in the token remains valid
-		static const std::string param_name = "other";
-		Token param_token(Token::Type::Identifier, param_name, 0, 0, 0);
+		Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
 		auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
 
 		// Add parameter to constructor
@@ -7331,8 +7329,7 @@ ParseResult Parser::parse_struct_declaration()
 		return_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
 
 		// Create declaration node for operator=
-		static const std::string operator_eq_name = "operator=";
-		Token operator_name_token(Token::Type::Identifier, operator_eq_name,
+		Token operator_name_token(Token::Type::Identifier, "operator="sv,
 		                          name_token->line(), name_token->column(),
 		                          name_token->file_index());
 
@@ -7354,8 +7351,7 @@ ParseResult Parser::parse_struct_declaration()
 		param_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
 
 		// Create parameter declaration
-		static const std::string param_name_assign = "other";
-		Token param_token(Token::Type::Identifier, param_name_assign, 0, 0, 0);
+		Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
 		auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
 
 		// Add parameter to function
@@ -7409,8 +7405,7 @@ ParseResult Parser::parse_struct_declaration()
 		param_type_node.as<TypeSpecifierNode>().set_reference(true);  // true = rvalue reference
 
 		// Create parameter declaration
-		static const std::string param_name_move = "other";
-		Token param_token(Token::Type::Identifier, param_name_move, 0, 0, 0);
+		Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
 		auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
 
 		// Add parameter to constructor
@@ -7450,8 +7445,7 @@ ParseResult Parser::parse_struct_declaration()
 		return_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
 
 		// Create declaration node for operator=
-		static const std::string move_operator_eq_name = "operator=";
-		Token move_operator_name_token(Token::Type::Identifier, move_operator_eq_name,
+		Token move_operator_name_token(Token::Type::Identifier, "operator="sv,
 		                          name_token->line(), name_token->column(),
 		                          name_token->file_index());
 
@@ -7473,8 +7467,7 @@ ParseResult Parser::parse_struct_declaration()
 		move_param_type_node.as<TypeSpecifierNode>().set_reference(true);  // true = rvalue reference
 
 		// Create parameter declaration
-		static const std::string param_name_move_assign = "other";
-		Token move_param_token(Token::Type::Identifier, param_name_move_assign, 0, 0, 0);
+		Token move_param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
 		auto move_param_decl_node = emplace_node<DeclarationNode>(move_param_type_node, move_param_token);
 
 		// Add parameter to function
@@ -7509,7 +7502,7 @@ ParseResult Parser::parse_struct_declaration()
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		
 		// Array of comparison operators to synthesize
-		static const std::array<std::pair<std::string_view, std::string>, 6> comparison_ops = {{
+		static const std::array<std::pair<std::string_view, std::string_view>, 6> comparison_ops = {{
 			{"==", "operator=="},
 			{"!=", "operator!="},
 			{"<", "operator<"},
@@ -7551,8 +7544,7 @@ ParseResult Parser::parse_struct_declaration()
 			param_type_node.as<TypeSpecifierNode>().set_reference(false);  // lvalue reference
 			
 			// Create parameter declaration
-			static const std::string param_name_comp = "other";
-			Token param_token(Token::Type::Identifier, param_name_comp, 0, 0, 0);
+			Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
 			auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
 			
 			// Add parameter to function
@@ -7581,13 +7573,13 @@ ParseResult Parser::parse_struct_declaration()
 			auto [op_block_node, op_block_ref] = create_node_ref(BlockNode());
 			
 			// Create "this" identifier
-			Token this_token(Token::Type::Keyword, "this",
+			Token this_token(Token::Type::Keyword, "this"sv,
 			                name_token->line(), name_token->column(),
 			                name_token->file_index());
 			auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
 			
 			// Create "other" identifier reference
-			Token other_token(Token::Type::Identifier, param_name_comp,
+			Token other_token(Token::Type::Identifier, "other"sv,
 			                 name_token->line(), name_token->column(),
 			                 name_token->file_index());
 			auto other_node = emplace_node<ExpressionNode>(IdentifierNode(other_token));
@@ -7601,7 +7593,7 @@ ParseResult Parser::parse_struct_declaration()
 				MemberFunctionCallNode(this_node, const_cast<FunctionDeclarationNode&>(*spaceship_func), std::move(spaceship_args), operator_name_token));
 			
 			// Create numeric literal for 0
-			Token zero_token(Token::Type::Literal, "0",
+			Token zero_token(Token::Type::Literal, "0"sv,
 			                name_token->line(), name_token->column(),
 			                name_token->file_index());
 			auto zero_node = emplace_node<ExpressionNode>(
@@ -10671,7 +10663,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		consume_token(); // consume ')'
 		
 		// Create a zero literal of the appropriate type (value initialization)
-		Token zero_token(Token::Type::Literal, "0", type_token.line(), type_token.column(), type_token.file_index());
+		Token zero_token(Token::Type::Literal, "0"sv, type_token.line(), type_token.column(), type_token.file_index());
 		
 		// Use 0.0 for floating point types, 0 for integral types
 		if (cast_type == Type::Double || cast_type == Type::Float) {
@@ -13465,7 +13457,7 @@ ParseResult Parser::parse_function_body_with_context(
 			this_type_ref.add_pointer_level();
 
 			// Create a declaration node for 'this'
-			Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+			Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
 			auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
 
 			// Insert 'this' into the symbol table
@@ -14890,7 +14882,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			consume_token(); // consume '}'
 			
 			// Create a zero literal of the appropriate type
-			Token zero_token(Token::Type::Literal, "0", 0, 0, 0);
+			Token zero_token(Token::Type::Literal, "0"sv, 0, 0, 0);
 			
 			// Use 0.0 for floating point types, 0ULL for integral types
 			if (type_specifier.type() == Type::Double || type_specifier.type() == Type::Float) {
@@ -16024,7 +16016,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				
 				if (is_valid_type) {
 					// This is a C-style cast: (Type)expression
-					Token cast_token = Token(Token::Type::Punctuator, "cast",
+					Token cast_token = Token(Token::Type::Punctuator, "cast"sv,
 											current_token_->line(), current_token_->column(),
 											current_token_->file_index());
 
@@ -16775,7 +16767,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		// The true parameter indicates this is a prefix operator
 		// The fourth parameter (is_builtin_addressof=true) marks this to bypass operator overload resolution
 		// Note: __builtin_addressof always gets the true address, bypassing any overloaded operator&
-		Token addressof_token = Token(Token::Type::Operator, "&", 
+		Token addressof_token = Token(Token::Type::Operator, "&"sv, 
 		                               builtin_token.line(), builtin_token.column(), 
 		                               builtin_token.file_index());
 		
@@ -18266,8 +18258,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			} else {
 				// Create operator() call as a member function call
 				// The member function name is "operator()"
-				static const std::string operator_call_name = "operator()";
-				Token operator_token(Token::Type::Identifier, operator_call_name,
+				Token operator_token(Token::Type::Identifier, "operator()"sv,
 				                     paren_token.line(), paren_token.column(), paren_token.file_index());
 
 				// Create a temporary function declaration for operator()
@@ -19230,7 +19221,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Inside a member function - this is a member operator call
 			// Create this->operator_name(args) pattern
 			// First create 'this' identifier
-			Token this_token(Token::Type::Keyword, "this", 
+			Token this_token(Token::Type::Keyword, "this"sv, 
 			                operator_keyword_token.line(), operator_keyword_token.column(), operator_keyword_token.file_index());
 			auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
 
@@ -20120,7 +20111,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					
 					// Create a BoolLiteralNode with the result
 					bool concept_satisfied = constraint_result.satisfied;
-					Token bool_token(Token::Type::Keyword, concept_satisfied ? "true" : "false",
+					Token bool_token(Token::Type::Keyword, concept_satisfied ? "true"sv : "false"sv,
 					                final_identifier.line(), final_identifier.column(), final_identifier.file_index());
 					result = emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, concept_satisfied));
 					return ParseResult::success(*result);
@@ -21176,7 +21167,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (decl.identifier_token().value() == idenfifier_token.value()) {
 								// This is a member variable! Transform it into this->member
 								// Create a "this" token with the correct value
-								Token this_token(Token::Type::Keyword, "this",
+								Token this_token(Token::Type::Keyword, "this"sv,
 								                 idenfifier_token.line(), idenfifier_token.column(),
 								                 idenfifier_token.file_index());
 								auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
@@ -21204,7 +21195,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(base_type_index, StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
 							if (member_result) {
 								// This is an inherited member variable! Transform it into this->member
-								Token this_token(Token::Type::Keyword, "this",
+								Token this_token(Token::Type::Keyword, "this"sv,
 								                 idenfifier_token.line(), idenfifier_token.column(),
 								                 idenfifier_token.file_index());
 								auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
@@ -21263,7 +21254,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						for (const auto& member : struct_info->members) {
 							if (member.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
 								// This is a member variable! Transform it into this->member
-								Token this_token(Token::Type::Keyword, "this",
+								Token this_token(Token::Type::Keyword, "this"sv,
 								                 idenfifier_token.line(), idenfifier_token.column(),
 								                 idenfifier_token.file_index());
 								auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
@@ -21281,7 +21272,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						auto member_result = FlashCpp::gLazyMemberResolver.resolve(member_func_ctx.struct_type_index, StringTable::getOrInternStringHandle(std::string(idenfifier_token.value())));
 						if (member_result) {
 							// This is an inherited member variable! Transform it into this->member
-							Token this_token(Token::Type::Keyword, "this",
+							Token this_token(Token::Type::Keyword, "this"sv,
 							                 idenfifier_token.line(), idenfifier_token.column(),
 							                 idenfifier_token.file_index());
 							auto this_ident = emplace_node<ExpressionNode>(IdentifierNode(this_token));
@@ -21669,7 +21660,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// create a MemberFunctionCallNode with implicit 'this' as the object
 				if (found_member_function_in_context && identifierType->is<FunctionDeclarationNode>()) {
 					// Create implicit 'this' expression
-					Token this_token(Token::Type::Keyword, "this", idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+					Token this_token(Token::Type::Keyword, "this"sv, idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 					auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
 					
 					// Get the FunctionDeclarationNode
@@ -22148,7 +22139,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									Token concept_token = idenfifier_token;
 									
 									// Create a dummy declaration for the concept call
-									Token void_token(Token::Type::Keyword, "void", concept_token.line(), concept_token.column(), concept_token.file_index());
+									Token void_token(Token::Type::Keyword, "void"sv, concept_token.line(), concept_token.column(), concept_token.file_index());
 									auto void_type = emplace_node<TypeSpecifierNode>(
 										Type::Void, 0, 0, void_token, CVQualifier::None);
 									auto concept_decl = emplace_node<DeclarationNode>(void_type, concept_token);
@@ -22192,7 +22183,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								
 								// Create a BoolLiteralNode with the result
 								bool concept_satisfied = constraint_result.satisfied;
-								Token bool_token(Token::Type::Keyword, concept_satisfied ? "true" : "false",
+								Token bool_token(Token::Type::Keyword, concept_satisfied ? "true"sv : "false"sv,
 								                idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 								result = emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, concept_satisfied));
 								return ParseResult::success(*result);
@@ -22928,7 +22919,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						return ParseResult::error("operator() not found in struct", idenfifier_token);
 					}
 
-					Token operator_token(Token::Type::Identifier, "operator()", idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+					Token operator_token(Token::Type::Identifier, "operator()"sv, idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
 					result = emplace_node<ExpressionNode>(MemberFunctionCallNode(object_expr, *operator_call_func, std::move(args), operator_token));
 				}
 				// For template parameter constructor calls, create ConstructorCallNode
@@ -24759,7 +24750,7 @@ ParseResult Parser::parse_lambda_expression() {
     // Create operator() declaration
     DeclarationNode& operator_call_decl = emplace_node<DeclarationNode>(
         emplace_node<TypeSpecifierNode>(return_type_spec),
-        Token(Token::Type::Identifier, "operator()", lambda_token.line(), lambda_token.column(), lambda_token.file_index())
+        Token(Token::Type::Identifier, "operator()"sv, lambda_token.line(), lambda_token.column(), lambda_token.file_index())
     ).as<DeclarationNode>();
 
     // Create FunctionDeclarationNode for operator()
@@ -29453,7 +29444,7 @@ if (struct_type_info.getStructInfo()) {
 				);
 				this_type_ref.add_pointer_level();
 				
-				Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+				Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
 				auto [this_decl_node, this_decl_ref] = emplace_node_ref<DeclarationNode>(this_type_node, this_token);
 				gSymbolTable.insert("this"sv, this_decl_node);
 				
@@ -31123,7 +31114,7 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 		
 		requires_clause = emplace_node<RequiresClauseNode>(
 			*constraint_result.node(),
-			Token(Token::Type::Keyword, "requires", 0, 0, 0));
+			Token(Token::Type::Keyword, "requires"sv, 0, 0, 0));
 	}
 
 	// Check for template constructor: template<typename U> StructName(params)
@@ -36305,7 +36296,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				);
 				
 				// Create the initializer expression - use 'true' for specializations that match reference types
-				Token true_token(Token::Type::Keyword, "true", orig_token.line(), orig_token.column(), orig_token.file_index());
+				Token true_token(Token::Type::Keyword, "true"sv, orig_token.line(), orig_token.column(), orig_token.file_index());
 				auto true_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
 				
 				auto var_decl_node = emplace_node<VariableDeclarationNode>(
@@ -36940,7 +36931,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Create a bool literal for && and ||, numeric for others
 		if (op == "&&" || op == "||") {
-			Token bool_token(Token::Type::Keyword, *result ? "true" : "false", 0, 0, 0);
+			Token bool_token(Token::Type::Keyword, *result ? "true"sv : "false"sv, 0, 0, 0);
 			return emplace_node<ExpressionNode>(
 				BoolLiteralNode(bool_token, *result != 0)
 			);
@@ -39485,7 +39476,7 @@ if (struct_type_info.getStructInfo()) {
 							if (i < template_args_to_use.size() && template_args_to_use[i].is_value) {
 								// Create a numeric literal node with the substituted value
 								int64_t val = template_args_to_use[i].value;
-								Token num_token(Token::Type::Literal, std::to_string(val), 0, 0, 0);
+								Token num_token(Token::Type::Literal, StringBuilder().append(val).commit(), 0, 0, 0);
 								auto num_literal = emplace_node<ExpressionNode>(
 									NumericLiteralNode(num_token, static_cast<unsigned long long>(val), Type::Int, TypeQualifier::None, 32)
 								);
@@ -42406,7 +42397,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		Token()
 	);
 
-	Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+	Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
 	auto this_decl = emplace_node<DeclarationNode>(this_type, this_token);
 	gSymbolTable.insert("this"sv, this_decl);
 
@@ -42809,7 +42800,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 					if (fold_result.has_value()) {
 						// Create a bool literal for && and ||, numeric for others
 						if (op == "&&" || op == "||") {
-							Token bool_token(Token::Type::Keyword, *fold_result ? "true" : "false", 0, 0, 0);
+							Token bool_token(Token::Type::Keyword, *fold_result ? "true"sv : "false"sv, 0, 0, 0);
 							substituted_initializer = emplace_node<ExpressionNode>(
 								BoolLiteralNode(bool_token, *fold_result != 0)
 							);
@@ -43424,7 +43415,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 			
 			// Add 'this' pointer to global symbol table
 			// Create a token for 'this'
-			Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+			Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
 			
 			// Create type node for 'this' (pointer to struct)
 			auto this_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
@@ -43495,7 +43486,7 @@ ASTNode Parser::substituteTemplateParameters(
 	const std::vector<TemplateArgument>& template_args
 ) {
 	// Helper function to get type name as string
-	auto get_type_name = [](Type type) -> std::string {
+	auto get_type_name = [](Type type) -> std::string_view {
 		switch (type) {
 			case Type::Void: return "void";
 			case Type::Bool: return "bool";
@@ -43535,7 +43526,7 @@ ASTNode Parser::substituteTemplateParameters(
 
 					if (arg.kind == TemplateArgument::Kind::Type) {
 						// Create an identifier node for the concrete type
-						Token type_token(Token::Type::Identifier, std::string(get_type_name(arg.type_value)),
+						Token type_token(Token::Type::Identifier, get_type_name(arg.type_value),
 						                tparam_ref.token().line(), tparam_ref.token().column(),
 						                tparam_ref.token().file_index());
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
@@ -43543,7 +43534,7 @@ ASTNode Parser::substituteTemplateParameters(
 						// Create a numeric literal node for the value with the correct type
 						Type value_type = arg.value_type;
 						int size_bits = get_type_size_bits(value_type);
-						Token value_token(Token::Type::Literal, std::to_string(arg.int_value),
+						Token value_token(Token::Type::Literal, StringBuilder().append(arg.int_value).commit(),
 						                 tparam_ref.token().line(), tparam_ref.token().column(),
 						                 tparam_ref.token().file_index());
 						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.int_value), value_type, TypeQualifier::None, size_bits));
@@ -43571,13 +43562,13 @@ ASTNode Parser::substituteTemplateParameters(
 					
 					if (arg.kind == TemplateArgument::Kind::Type) {
 						// Create an identifier node for the concrete type
-						Token type_token(Token::Type::Identifier, std::string(get_type_name(arg.type_value)), 0, 0, 0);
+						Token type_token(Token::Type::Identifier, get_type_name(arg.type_value), 0, 0, 0);
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
 					} else if (arg.kind == TemplateArgument::Kind::Value) {
 						// Create a numeric literal node for the value with the correct type
 						Type value_type = arg.value_type;
 						int size_bits = get_type_size_bits(value_type);
-						Token value_token(Token::Type::Literal, std::to_string(arg.int_value), 0, 0, 0);
+						Token value_token(Token::Type::Literal, StringBuilder().append(arg.int_value).commit(), 0, 0, 0);
 						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.int_value), value_type, TypeQualifier::None, size_bits));
 					}
 					break;

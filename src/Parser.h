@@ -992,7 +992,7 @@ inline void FlashCpp::FunctionScopeGuard::injectThisPointer() {
 	this_type_node.add_pointer_level();
 	
 	// Create a declaration node for 'this'
-	Token this_token(Token::Type::Keyword, "this", 0, 0, 0);
+	Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);
 	ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(this_type_node);
 	ASTNode this_decl = ASTNode::emplace_node<DeclarationNode>(type_node, this_token);
 	

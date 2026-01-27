@@ -121,7 +121,7 @@ public:
 			}
 		}
 
-		return Token(Token::Type::EndOfFile, "", line_, column_,
+		return Token(Token::Type::EndOfFile, ""sv, line_, column_,
 			current_file_index_);
 	}
 

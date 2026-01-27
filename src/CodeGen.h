@@ -22,6 +22,7 @@
 #include <typeinfo>
 #include <limits>
 #include <charconv>
+#include <string_view>
 #include "IRConverter.h"
 #include "Log.h"
 
@@ -4887,14 +4888,14 @@ private:
 			IdentifierNode(Token(Token::Type::Identifier, array_name, 0, 0, 0))
 		);
 		auto zero_literal = ASTNode::emplace_node<ExpressionNode>(
-			NumericLiteralNode(Token(Token::Type::Literal, "0", 0, 0, 0),
+			NumericLiteralNode(Token(Token::Type::Literal, "0"sv, 0, 0, 0),
 				static_cast<unsigned long long>(0), Type::Int, TypeQualifier::None, 32)
 		);
 		auto first_element = ASTNode::emplace_node<ExpressionNode>(
-			ArraySubscriptNode(array_expr_begin, zero_literal, Token(Token::Type::Punctuator, "[", 0, 0, 0))
+			ArraySubscriptNode(array_expr_begin, zero_literal, Token(Token::Type::Punctuator, "["sv, 0, 0, 0))
 		);
 		auto begin_init = ASTNode::emplace_node<ExpressionNode>(
-			UnaryOperatorNode(Token(Token::Type::Operator, "&", 0, 0, 0), first_element, true)
+			UnaryOperatorNode(Token(Token::Type::Operator, "&"sv, 0, 0, 0), first_element, true)
 		);
 		auto begin_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_init);
 		visit(begin_var_decl_node);
@@ -4904,10 +4905,10 @@ private:
 			IdentifierNode(Token(Token::Type::Identifier, array_name, 0, 0, 0))
 		);
 		auto past_end_element = ASTNode::emplace_node<ExpressionNode>(
-			ArraySubscriptNode(array_expr_end, array_size_node.value(), Token(Token::Type::Punctuator, "[", 0, 0, 0))
+			ArraySubscriptNode(array_expr_end, array_size_node.value(), Token(Token::Type::Punctuator, "["sv, 0, 0, 0))
 		);
 		auto end_init = ASTNode::emplace_node<ExpressionNode>(
-			UnaryOperatorNode(Token(Token::Type::Operator, "&", 0, 0, 0), past_end_element, true)
+			UnaryOperatorNode(Token(Token::Type::Operator, "&"sv, 0, 0, 0), past_end_element, true)
 		);
 		auto end_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(end_decl_node, end_init);
 		visit(end_var_decl_node);
@@ -4926,7 +4927,7 @@ private:
 		auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 		auto end_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(end_token));
 		auto condition_expr = ASTNode::emplace_node<ExpressionNode>(
-			BinaryOperatorNode(Token(Token::Type::Operator, "!=", 0, 0, 0), begin_ident_expr, end_ident_expr)
+			BinaryOperatorNode(Token(Token::Type::Operator, "!="sv, 0, 0, 0), begin_ident_expr, end_ident_expr)
 		);
 		auto condition_operands = visitExpressionNode(condition_expr.as<ExpressionNode>());
 
@@ -4969,7 +4970,7 @@ private:
 			// Value: dereference the iterator to get the element value
 			auto begin_deref_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 			init_expr = ASTNode::emplace_node<ExpressionNode>(
-				UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), begin_deref_expr, true)
+				UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), begin_deref_expr, true)
 			);
 		}
 		
@@ -4989,7 +4990,7 @@ private:
 		// Increment pointer: ++__begin
 		auto increment_begin = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 		auto increment_expr = ASTNode::emplace_node<ExpressionNode>(
-			UnaryOperatorNode(Token(Token::Type::Operator, "++", 0, 0, 0), increment_begin, true)
+			UnaryOperatorNode(Token(Token::Type::Operator, "++"sv, 0, 0, 0), increment_begin, true)
 		);
 		visitExpressionNode(increment_expr.as<ExpressionNode>());
 
@@ -5112,7 +5113,7 @@ private:
 		auto begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 		auto end_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(end_token));
 		auto condition_expr = ASTNode::emplace_node<ExpressionNode>(
-			BinaryOperatorNode(Token(Token::Type::Operator, "!=", 0, 0, 0), begin_ident_expr, end_ident_expr)
+			BinaryOperatorNode(Token(Token::Type::Operator, "!="sv, 0, 0, 0), begin_ident_expr, end_ident_expr)
 		);
 		auto condition_operands = visitExpressionNode(condition_expr.as<ExpressionNode>());
 
@@ -5153,10 +5154,10 @@ private:
 			);
 			loop_ptr_type.as<TypeSpecifierNode>().add_pointer_level();
 			auto cast_expr = ASTNode::emplace_node<ExpressionNode>(
-				ReinterpretCastNode(loop_ptr_type, deref_begin_ident_expr, Token(Token::Type::Keyword, "reinterpret_cast", 0, 0, 0))
+				ReinterpretCastNode(loop_ptr_type, deref_begin_ident_expr, Token(Token::Type::Keyword, "reinterpret_cast"sv, 0, 0, 0))
 			);
 			init_expr = ASTNode::emplace_node<ExpressionNode>(
-				UnaryOperatorNode(Token(Token::Type::Operator, "*", 0, 0, 0), cast_expr, true)
+				UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), cast_expr, true)
 			);
 		}
 		
@@ -5175,7 +5176,7 @@ private:
 		// Increment iterator: ++__begin
 		auto increment_begin = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 		auto increment_expr = ASTNode::emplace_node<ExpressionNode>(
-			UnaryOperatorNode(Token(Token::Type::Operator, "++", 0, 0, 0), increment_begin, true)
+			UnaryOperatorNode(Token(Token::Type::Operator, "++"sv, 0, 0, 0), increment_begin, true)
 		);
 		visitExpressionNode(increment_expr.as<ExpressionNode>());
 
@@ -20297,7 +20298,7 @@ private:
 			this_type_node.as<TypeSpecifierNode>().add_pointer_level(CVQualifier::None);
 			
 			// Create 'this' declaration
-			Token this_token(Token::Type::Identifier, "this", 
+			Token this_token(Token::Type::Identifier, "this"sv, 
 				template_decl.identifier_token().line(),
 				template_decl.identifier_token().column(),
 				template_decl.identifier_token().file_index());
