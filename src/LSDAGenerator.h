@@ -142,8 +142,8 @@ private:
 	
 	// Encode call site table
 	void encode_call_site_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info) {
-		// Action table entries are emitted in the same order as try_regions
-		// We need to reference them with 1-based indices per region that has handlers.
+		// Action table entries are emitted in the same order as try_regions' handlers.
+		// Track the starting action index for each region; increment by handler count.
 		uint32_t next_action_index = 1;
 		for (const auto& try_region : info.try_regions) {
 			// Call site entry:
@@ -168,7 +168,7 @@ private:
 				DwarfCFI::appendULEB128(data, 0);
 			} else {
 				DwarfCFI::appendULEB128(data, next_action_index);
-				++next_action_index;
+				next_action_index += static_cast<uint32_t>(try_region.catch_handlers.size());
 			}
 		}
 	}
@@ -212,11 +212,8 @@ private:
 				}
 
 				// Next action offset: 0 for last handler in region, otherwise 2 (two SLEB128s ahead)
-				if (i + 1 < try_region.catch_handlers.size()) {
-					DwarfCFI::appendSLEB128(data, 2);
-				} else {
-					DwarfCFI::appendSLEB128(data, 0);
-				}
+				// NOTE: Actions are contiguous; offset of 2 selects the next action entry.
+				DwarfCFI::appendSLEB128(data, (i + 1 < try_region.catch_handlers.size()) ? 2 : 0);
 			}
 		}
 		if (g_enable_debug_output) {
