@@ -9,6 +9,7 @@ extern "C" int test_func_6_args(int a, int b, int c, int d, int e, int f) {
     return a + b + c + d + e + f;
 }
 
+// Expected return: 0
 extern "C" int main() {
     int result = test_func_6_args(1, 2, 3, 4, 5, 6);
     return result == 21 ? 0 : 1;  // Expected: 1+2+3+4+5+6 = 21
