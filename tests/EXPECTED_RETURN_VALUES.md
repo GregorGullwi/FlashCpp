@@ -8,25 +8,18 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-27 (validate_return_values.sh - after template function explicit args fix + validation script enhancements)
+**Last Run:** 2026-01-27 (validate_return_values.sh - after variable template type substitution fix)
 
 **Total files tested:** 960
 **Valid returns:** 956
-**Return mismatches:** 2
+**Return mismatches:** 0
 **Runtime crashes:** 2
 **Compile failures:** 0
 **Link failures:** 0
 
 ## Known Return Mismatches
 
-The following tests have return value mismatches. These are tests where the filename indicates an expected return value (e.g., `_ret42.cpp` expects 42), but the actual return value differs:
-
-| Test File | Expected | Actually Returns | Notes |
-|-----------|----------|------------------|-------|
-| test_var_template_static_inline_ret132.cpp | 132 | 99 | Variable template with static inline member - value calculation issue |
-| test_var_template_values_ret162.cpp | 162 | 47 | Variable template value instantiation - value calculation issue |
-
-**Note:** These are legitimate bugs in the compiler where the variable template instantiation or evaluation is not working correctly. They are tracked separately from the previously fixed template function call issues.
+No return mismatches currently detected. All tests with `_retNN.cpp` naming convention return their expected values.
 
 ## Runtime Crashes
 

@@ -36411,14 +36411,34 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			TypeIndex param_type_index = 0;
 			bool found_param = false;
 			
-			// Search for the template parameter in gTypeInfo
-			// Template parameters have Type::UserDefined
-			for (TypeIndex ti = 0; ti < gTypeInfo.size(); ++ti) {
-				if (gTypeInfo[ti].type_ == Type::UserDefined || gTypeInfo[ti].type_ == Type::Template) {
-					if (StringTable::getStringView(gTypeInfo[ti].name()) == param_name) {
-						param_type_index = ti;
+			// IMPORTANT: If orig_type refers to a template parameter (Type::UserDefined),
+			// we should use orig_type.type_index() directly, as it's the correct type_index
+			// for THIS template's parameter. Searching by name can find the wrong type_index
+			// when multiple templates use the same parameter name (e.g., 'T').
+			if (orig_type.type() == Type::UserDefined) {
+				// Check if orig_type's type name matches this template parameter
+				if (orig_type.type_index() < gTypeInfo.size()) {
+					std::string_view orig_type_name = StringTable::getStringView(gTypeInfo[orig_type.type_index()].name());
+					if (orig_type_name == param_name) {
+						// Use the type_index from orig_type directly
+						param_type_index = orig_type.type_index();
 						found_param = true;
-						break;
+					}
+				}
+			}
+			
+			// If we didn't find it from orig_type, search in gTypeInfo
+			// This is needed for initializer expression substitution
+			if (!found_param) {
+				// Search for the template parameter in gTypeInfo
+				// Template parameters have Type::UserDefined or Type::Template
+				for (TypeIndex ti = 0; ti < gTypeInfo.size(); ++ti) {
+					if (gTypeInfo[ti].type_ == Type::UserDefined || gTypeInfo[ti].type_ == Type::Template) {
+						if (StringTable::getStringView(gTypeInfo[ti].name()) == param_name) {
+							param_type_index = ti;
+							found_param = true;
+							break;
+						}
 					}
 				}
 			}
@@ -36450,6 +36470,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				for (size_t p = 0; p < arg.pointer_depth; ++p) {
 					substituted_type.add_pointer_level(CVQualifier::None);
 				}
+			} else {
+				FLASH_LOG(Templates, Debug, "Type does NOT match - skipping substitution for '", template_name, "'");
 			}
 		} else if (tparam.kind() == TemplateParameterKind::NonType) {
 			// Handle non-type template parameters
