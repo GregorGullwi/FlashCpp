@@ -7637,7 +7637,7 @@ private:
 			int address_offset = getStackOffsetFromTempVar(address_var);
 			emitMovFromFrame(X64Register::RAX, address_offset);
 		} else if (std::holds_alternative<StringHandle>(op.address)) {
-			// Address is an identifier (variable name) - load from stack
+			// Address is an identifier (variable name) - load from stack or compute address for arrays
 			StringHandle address_name_handle = std::get<StringHandle>(op.address);
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(address_name_handle);
@@ -7646,7 +7646,12 @@ private:
 				return;
 			}
 			int address_offset = it->second.offset;
-			emitMovFromFrame(X64Register::RAX, address_offset);
+			// For arrays, we need the address of the array (LEA), not its contents (MOV)
+			if (it->second.is_array) {
+				emitLeaFromFrame(X64Register::RAX, address_offset);
+			} else {
+				emitMovFromFrame(X64Register::RAX, address_offset);
+			}
 		} else if (std::holds_alternative<unsigned long long>(op.address)) {
 			// Address is a constant - load immediate value
 			uint64_t address_value = std::get<unsigned long long>(op.address);

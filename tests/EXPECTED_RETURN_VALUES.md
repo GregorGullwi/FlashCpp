@@ -8,12 +8,12 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-27 (validate_return_values.sh - after variable template type substitution fix)
+**Last Run:** 2026-01-27 (validate_return_values.sh - after placement new array address fix)
 
 **Total files tested:** 960
-**Valid returns:** 956
+**Valid returns:** 957
 **Return mismatches:** 0
-**Runtime crashes:** 2
+**Runtime crashes:** 1
 **Compile failures:** 0
 **Link failures:** 0
 
@@ -23,17 +23,12 @@ No return mismatches currently detected. All tests with `_retNN.cpp` naming conv
 
 ## Runtime Crashes
 
-The following test files crash at runtime:
+The following test file crashes at runtime:
 
 1. **test_exceptions_nested.cpp** - Signal 6 (Abort)
    - Nested exception handling test
    - Crashes during exception throwing/catching
    - Represents missing or incomplete exception handling in the compiler
-
-2. **test_placement_new_parsing_ret42.cpp** - Signal 11 (Segmentation fault)
-   - Tests placement new with multiple arguments
-   - Uses alignas and array placement new features
-   - Crash likely related to unsupported placement new syntax or alignas
 
 ## Notes
 
