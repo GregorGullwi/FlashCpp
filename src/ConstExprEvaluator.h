@@ -484,11 +484,31 @@ private:
 						
 						// Parse the struct name to extract template arguments
 						// e.g., "Container_int" -> T = int (4 bytes), "Processor_char" -> T = char (1 byte)
+						// For variadic templates like "List_int_char", try all arguments in order
 						// Pointer types have "P" suffix: "Container_intP" -> T = int* (8 bytes)
 						// Reference types have "R" or "RR" suffix: "Container_intR" -> T = int& (sizeof returns size of int)
-						size_t underscore_pos = struct_name.rfind('_');
-						if (underscore_pos != std::string_view::npos && underscore_pos + 1 < struct_name.size()) {
-							std::string_view type_suffix = struct_name.substr(underscore_pos + 1);
+						
+						// Find the first underscore (start of template arguments)
+						size_t first_underscore = struct_name.find('_');
+						if (first_underscore != std::string_view::npos && first_underscore + 1 < struct_name.size()) {
+							// Extract all template arguments by splitting on underscores
+							std::vector<std::string_view> template_args;
+							size_t start = first_underscore + 1;
+							while (start < struct_name.size()) {
+								size_t next = struct_name.find('_', start);
+								if (next == std::string_view::npos) {
+									template_args.push_back(struct_name.substr(start));
+									break;
+								} else {
+									template_args.push_back(struct_name.substr(start, next - start));
+									start = next + 1;
+								}
+							}
+							
+							// Try each template argument in order until we find one with a valid size
+							// For templates like List<Tp, Up...>, the first argument corresponds to Tp
+							for (const auto& type_suffix_raw : template_args) {
+								std::string_view type_suffix = type_suffix_raw;
 							
 							// Strip CV qualifier prefixes ('C' for const, 'V' for volatile)
 							// TemplateTypeArg::toString() adds CV qualifiers as prefixes (e.g., "Cint" for const int)
@@ -592,6 +612,7 @@ private:
 									return EvalResult::from_int(static_cast<long long>(param_size_bytes));
 								}
 							}
+							}  // End of for loop over template_args
 						}
 					}
 				}
