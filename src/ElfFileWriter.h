@@ -1153,7 +1153,7 @@ public:
 		
 		// Create .eh_frame section
 		auto* eh_frame_section = elf_writer_.sections.add(".eh_frame");
-		eh_frame_section->set_type(ELFIO::SHT_PROGBITS);
+		eh_frame_section->set_type(ELFIO::SHT_X86_64_UNWIND);
 		eh_frame_section->set_flags(ELFIO::SHF_ALLOC);
 		eh_frame_section->set_addr_align(8);
 		eh_frame_section->set_data(reinterpret_cast<const char*>(eh_frame_data.data()),

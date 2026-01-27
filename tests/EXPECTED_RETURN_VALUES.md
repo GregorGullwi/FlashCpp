@@ -8,7 +8,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-27 (validate_return_values.sh - after placement new array address fix)
+**Last Run:** 2026-01-27 (validate_return_values.sh - after .eh_frame section type fix)
 
 **Total files tested:** 960
 **Valid returns:** 957
