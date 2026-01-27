@@ -142,6 +142,9 @@ private:
 	
 	// Encode call site table
 	void encode_call_site_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info) {
+		// Action table entries are emitted in the same order as try_regions
+		// We need to reference them with 1-based indices per region that has handlers.
+		uint32_t next_action_index = 1;
 		for (const auto& try_region : info.try_regions) {
 			// Call site entry:
 			// - Start offset (ULEB128)
@@ -153,7 +156,7 @@ private:
 				std::cerr << "[LSDA] Call site: start=" << try_region.try_start_offset
 				         << " len=" << try_region.try_length
 				         << " lpad=" << try_region.landing_pad_offset
-				         << " action=" << (try_region.catch_handlers.empty() ? 0 : 1) << std::endl;
+				         << " action=" << (try_region.catch_handlers.empty() ? 0 : next_action_index) << std::endl;
 			}
 
 			DwarfCFI::appendULEB128(data, try_region.try_start_offset);
@@ -161,8 +164,12 @@ private:
 			DwarfCFI::appendULEB128(data, try_region.landing_pad_offset);
 
 			// Action index: 1-based index into action table
-			// For now, use 1 for first try block (will be refined)
-			DwarfCFI::appendULEB128(data, try_region.catch_handlers.empty() ? 0 : 1);
+			if (try_region.catch_handlers.empty()) {
+				DwarfCFI::appendULEB128(data, 0);
+			} else {
+				DwarfCFI::appendULEB128(data, next_action_index);
+				++next_action_index;
+			}
 		}
 	}
 	
@@ -178,47 +185,39 @@ private:
 		// - Zero: cleanup action (no type matching, always executed during unwind)
 		// - Negative: exception specification filter (NOT used for regular catch clauses)
 
-		// Generate action entries for each try region
-		// Note: For now, we only support one catch handler per try block
-		// Multiple catch handlers would require chaining actions
+		// Generate action entries for each catch handler in order.
+		// Multiple handlers are chained via the 'next action' offset (SLEB128).
 		for (const auto& try_region : info.try_regions) {
-			if (try_region.catch_handlers.empty()) {
-				continue;  // No handlers, no action entry needed
-			}
+			for (size_t i = 0; i < try_region.catch_handlers.size(); ++i) {
+				const auto& handler = try_region.catch_handlers[i];
 
-			// For simplicity, only handle the first catch handler
-			// TODO: Support multiple catch handlers with action chaining
-			const auto& handler = try_region.catch_handlers[0];
-
-			if (handler.is_catch_all) {
-				// Catch-all (catch(...)): type filter = 0 means cleanup
-				// Actually, for catch(...), we use type filter that matches any exception
-				// The personality routine treats filter 0 as cleanup (not catch-all)
-				// For true catch-all, we need a type filter that always matches
-				// Looking at GCC output: it uses filter > 0 pointing to a 0 type entry
-				// But simpler approach: -1 as exception spec that matches all
-				DwarfCFI::appendSLEB128(data, 0);  // 0 = cleanup, will run for any exception
-			} else {
-				// Find type index in type table (0-based)
-				int type_index = find_type_index(info.type_table, handler.typeinfo_symbol);
-				if (type_index < 0) {
-					// Type not found in type table - treat as catch-all
-					// This shouldn't happen but handle gracefully
+				if (handler.is_catch_all) {
+					// Catch-all: use filter 0 (cleanup) which matches any exception.
 					DwarfCFI::appendSLEB128(data, 0);
 				} else {
-					// Type filter is POSITIVE and 1-based for catch clauses
-					// So index 0 in type table -> filter 1, index 1 -> filter 2, etc.
-					int filter = type_index + 1;
-					if (g_enable_debug_output) {
-						std::cerr << "[DEBUG] Action table: type_index=" << type_index
-						         << " filter=" << filter << std::endl;
+					// Find type index in type table (0-based)
+					int type_index = find_type_index(info.type_table, handler.typeinfo_symbol);
+					if (type_index < 0) {
+						// Type not found in type table - treat as catch-all
+						DwarfCFI::appendSLEB128(data, 0);
+					} else {
+						// Type filter is 1-based for catch clauses
+						int filter = type_index + 1;
+						if (g_enable_debug_output) {
+							std::cerr << "[DEBUG] Action table: type_index=" << type_index
+							         << " filter=" << filter << std::endl;
+						}
+						DwarfCFI::appendSLEB128(data, filter);
 					}
-					DwarfCFI::appendSLEB128(data, filter);
+				}
+
+				// Next action offset: 0 for last handler in region, otherwise 2 (two SLEB128s ahead)
+				if (i + 1 < try_region.catch_handlers.size()) {
+					DwarfCFI::appendSLEB128(data, 2);
+				} else {
+					DwarfCFI::appendSLEB128(data, 0);
 				}
 			}
-
-			// Next action: always 0 for now (no chaining)
-			DwarfCFI::appendSLEB128(data, 0);
 		}
 		if (g_enable_debug_output) {
 			std::cerr << "[DEBUG] Action table size: " << data.size() << " bytes" << std::endl;
