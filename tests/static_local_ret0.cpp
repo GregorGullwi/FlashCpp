@@ -17,7 +17,6 @@ int uninitialized_static() {
 }
 
 
-// Expected return: 0 (tests static variable initialization and increment)
 int main() {
     return counter();
 }

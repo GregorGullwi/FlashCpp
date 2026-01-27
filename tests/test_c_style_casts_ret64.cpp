@@ -85,7 +85,18 @@ int test_multiple_casts() {
 }
 
 
-// Expected return: 42
 int main() {
-    return test_int_to_int();
+    // Call multiple test functions
+    int result = 0;
+    result += test_int_to_int();        // 42
+    result += test_enum_to_int();       // 1
+    result += test_int_to_enum();       // 2
+    result += test_enum_class_to_int(); // 0
+    result += test_nested_casts();      // 5
+    result += test_cast_in_expression();// 10
+    result += test_cast_in_switch();    // 2
+    result += test_multiple_casts();    // 3
+    
+    // Total: 42 + 1 + 2 + 0 + 5 + 10 + 2 + 3 = 65
+    return result;
 }

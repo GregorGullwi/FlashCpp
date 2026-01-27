@@ -2,7 +2,6 @@
 // x86-64 has 16 XMM registers (XMM0-XMM15)
 // This test uses 20 float variables to trigger XMM register spilling
 
-// Expected return: 0
 int main() {
     float a = 1.0f;
     float b = 2.0f;

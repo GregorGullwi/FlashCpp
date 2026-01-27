@@ -2,7 +2,6 @@
 // This test uses exactly 16 float variables to use all XMM0-XMM15 registers
 // without triggering spilling (if the compiler allocates them properly)
 
-// Expected return: 0
 int main() {
     // Declare 16 float variables to potentially use all 16 XMM registers
     float v0 = 1.0f;
