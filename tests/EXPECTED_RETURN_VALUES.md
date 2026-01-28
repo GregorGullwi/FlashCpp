@@ -11,9 +11,9 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-28
 
 **Total files tested:** 961
-**Valid returns:** 937
-**Return mismatches:** 23
-**Runtime crashes:** 1
+**Valid returns:** 939
+**Return mismatches:** 22
+**Runtime crashes:** 0
 **Ignored files:** 0
 **Compile failures:** 0
 **Link failures:** 0
@@ -24,6 +24,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
   test_array_static_size_ret0.cpp
   test_c_style_casts_ret65.cpp
   test_ctad_struct_lifecycle_ret0.cpp
+  test_exceptions_nested_ret0.cpp
   test_feature_macros_ret0.cpp
   test_lambda_copy_this_multiple_lambdas_ret84.cpp
   test_member_alias_in_partial_spec_ret0.cpp
@@ -39,20 +40,13 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
   test_spec_func_ptr_ret0.cpp
   test_spec_init_simple_ret0.cpp
   test_std_move_support_ret0.cpp
-  test_struct_ref_member_simple_ret0.cpp
-  test_struct_ref_members_ret0.cpp
   test_xvalue_all_casts_ret0.cpp
   test_xvalue_move_ret0.cpp
 
 
 ## Runtime Crashes
 
-The following test file crashes at runtime:
-
-1. **test_exceptions_nested.cpp** - Signal 6 (Abort)
-   - Nested exception handling test
-   - Crashes during exception throwing/catching
-   - Represents missing or incomplete exception handling in the compiler
+No tests currently crash at runtime.
 
 ## Notes
 
