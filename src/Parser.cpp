@@ -42678,8 +42678,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 				for (size_t i = 0; i < lazy_info.template_params.size() && i < lazy_info.template_args.size(); ++i) {
 					if (lazy_info.template_params[i].is<TemplateParameterNode>()) {
-						const TemplateParameterNode& param = lazy_info.template_params[i].as<TemplateParameterNode>();
-						param_map[param.name()] = lazy_info.template_args[i];
+						const TemplateParameterNode& template_param = lazy_info.template_params[i].as<TemplateParameterNode>();
+						param_map[template_param.name()] = lazy_info.template_args[i];
 					}
 				}
 				ExpressionSubstitutor substitutor(param_map, *this);
