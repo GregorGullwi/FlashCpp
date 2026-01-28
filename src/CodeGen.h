@@ -17176,6 +17176,18 @@ private:
 		// Add the member access instruction (Load context - default)
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
+		// For reference members in LValueAddress context, the result_var now holds the
+		// pointer value loaded from the member slot. Update the LValueInfo to be Kind::Indirect
+		// so that assignment goes THROUGH the pointer (dereference store), not to the member slot.
+		if (context == ExpressionContext::LValueAddress && member->is_reference) {
+			LValueInfo ref_lvalue_info(
+				LValueInfo::Kind::Indirect,
+				result_var,  // The TempVar holding the loaded pointer
+				0            // No offset - the pointer points directly to the target
+			);
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(ref_lvalue_info));
+		}
+
 		// Return the result variable with its type, size, and optionally type_index
 		// For struct types, we need to include type_index for nested member access (e.g., obj.inner.member)
 		// For primitive types, we only return 3 operands to maintain compatibility with binary operators
