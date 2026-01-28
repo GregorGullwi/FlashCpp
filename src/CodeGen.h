@@ -3827,19 +3827,42 @@ private:
 									}
 								}
 							} else {
-								// Zero-initialize based on type
-								if (member.type == Type::Int || member.type == Type::Long ||
-								    member.type == Type::Short || member.type == Type::Char) {
-									member_value = 0ULL;  // Zero for integer types
-								} else if (member.type == Type::Float || member.type == Type::Double) {
-									member_value = 0.0;  // Zero for floating-point types
-								} else if (member.type == Type::Bool) {
-									member_value = 0ULL;  // False for bool (0)
+								// Check if this is a struct type with a constructor
+								bool is_struct_with_constructor = false;
+								if (member.type == Type::Struct && member.type_index < gTypeInfo.size()) {
+									const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+									if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
+										is_struct_with_constructor = true;
+									}
+								}
+								
+								if (is_struct_with_constructor) {
+									// Call the nested struct's default constructor instead of zero-initializing
+									const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+									ConstructorCallOp ctor_op;
+									ctor_op.struct_name = member_type_info.name();
+									ctor_op.object = StringTable::getOrInternStringHandle("this");
+									// No arguments for default constructor
+									// Use base_class_offset to specify the member's offset within the parent struct
+									assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
+									ctor_op.base_class_offset = static_cast<int>(member.offset);
+									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+									continue;  // Skip the MemberStore since constructor handles initialization
 								} else {
-									member_value = 0ULL;  // Default to zero
+									// Zero-initialize based on type
+									if (member.type == Type::Int || member.type == Type::Long ||
+									    member.type == Type::Short || member.type == Type::Char) {
+										member_value = 0ULL;  // Zero for integer types
+									} else if (member.type == Type::Float || member.type == Type::Double) {
+										member_value = 0.0;  // Zero for floating-point types
+									} else if (member.type == Type::Bool) {
+										member_value = 0ULL;  // False for bool (0)
+									} else {
+										member_value = 0ULL;  // Default to zero
+									}
 								}
 							}
-
+	
 							MemberStoreOp member_store;
 							member_store.value.type = member.type;
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
@@ -3850,7 +3873,7 @@ private:
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
 							member_store.struct_type_info = nullptr;
-
+	
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 						}
 					}
@@ -3950,19 +3973,42 @@ private:
 								}
 							}
 						} else {
-							// Zero-initialize based on type
-							if (member.type == Type::Int || member.type == Type::Long ||
-							    member.type == Type::Short || member.type == Type::Char) {
-								member_value = 0ULL;  // Zero for integer types
-							} else if (member.type == Type::Float || member.type == Type::Double) {
-								member_value = 0.0;  // Zero for floating-point types
-							} else if (member.type == Type::Bool) {
-								member_value = 0ULL;  // False for bool (0)
+							// Check if this is a struct type with a constructor
+							bool is_struct_with_constructor = false;
+							if (member.type == Type::Struct && member.type_index < gTypeInfo.size()) {
+								const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+								if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
+									is_struct_with_constructor = true;
+								}
+							}
+							
+							if (is_struct_with_constructor) {
+								// Call the nested struct's default constructor instead of zero-initializing
+								const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+								ConstructorCallOp ctor_op;
+								ctor_op.struct_name = member_type_info.name();
+								ctor_op.object = StringTable::getOrInternStringHandle("this");
+								// No arguments for default constructor
+								// Use base_class_offset to specify the member's offset within the parent struct
+								assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
+								ctor_op.base_class_offset = static_cast<int>(member.offset);
+								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+								continue;  // Skip the MemberStore since constructor handles initialization
 							} else {
-								member_value = 0ULL;  // Default to zero
+								// Zero-initialize based on type
+								if (member.type == Type::Int || member.type == Type::Long ||
+								    member.type == Type::Short || member.type == Type::Char) {
+									member_value = 0ULL;  // Zero for integer types
+								} else if (member.type == Type::Float || member.type == Type::Double) {
+									member_value = 0.0;  // Zero for floating-point types
+								} else if (member.type == Type::Bool) {
+									member_value = 0ULL;  // False for bool (0)
+								} else {
+									member_value = 0ULL;  // Default to zero
+								}
 							}
 						}
-
+	
 						MemberStoreOp member_store;
 						member_store.value.type = member.type;
 						member_store.value.size_in_bits = static_cast<int>(member.size * 8);
