@@ -11564,8 +11564,7 @@ private:
 
 		// Store result XMM to stack
 		auto result_offset = getStackOffsetFromTempVar(op.result);
-		bool is_float_result = (op.to_type == Type::Float);
-		emitFloatStoreToAddressWithOffset(textSectionData, result_xmm, X64Register::RBP, result_offset, is_float_result);
+		emitFloatStoreToAddressWithOffset(textSectionData, result_xmm, X64Register::RBP, result_offset, is_float);
 		regAlloc.set_stack_variable_offset(result_xmm, result_offset, op.to_size_in_bits);
 	}
 
