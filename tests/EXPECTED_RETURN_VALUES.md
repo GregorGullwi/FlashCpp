@@ -11,8 +11,8 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-28
 
 **Total files tested:** 961
-**Valid returns:** 936
-**Return mismatches:** 24
+**Valid returns:** 937
+**Return mismatches:** 23
 **Runtime crashes:** 1
 **Ignored files:** 0
 **Compile failures:** 0
@@ -32,7 +32,6 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
   test_out_of_class_static_comprehensive_ret0.cpp
   test_out_of_class_static_ret0.cpp
   test_out_of_class_static_simple_ret0.cpp
-  test_range_for_const_ref_ret88.cpp
   test_rvo_cannot_apply_ret0.cpp
   test_rvo_large_struct_ret0.cpp
   test_rvo_mixed_types_ret0.cpp
