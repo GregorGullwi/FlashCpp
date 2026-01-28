@@ -6940,7 +6940,7 @@ private:
 				if (ctor_params[i].is<DeclarationNode>()) {
 					const auto& param_decl = ctor_params[i].as<DeclarationNode>();
 					if (param_decl.type_node().is<TypeSpecifierNode>()) {
-						const auto& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+						auto param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
 						parameter_types.push_back(param_type_spec);
 						continue;
 					}
@@ -7013,7 +7013,7 @@ private:
 								if (params.size() == 1 && params[0].is<DeclarationNode>()) {
 									const auto& param_decl = params[0].as<DeclarationNode>();
 									if (param_decl.type_node().is<TypeSpecifierNode>()) {
-										const auto& ctor_param_type = param_decl.type_node().as<TypeSpecifierNode>();
+										auto ctor_param_type = param_decl.type_node().as<TypeSpecifierNode>();
 										copy_ctor_cv = ctor_param_type.cv_qualifier();
 									}
 								}
@@ -8792,7 +8792,7 @@ private:
 										vtable_func_name = StringTable::getStringView(vfunc->getName());
 										
 										// Generate mangled function name using the function's owning struct
-										const auto& vfunc_return_type = func_node.decl_node().type_node().as<TypeSpecifierNode>();
+										auto vfunc_return_type = func_node.decl_node().type_node().as<TypeSpecifierNode>();
 										const auto& vfunc_params = func_node.parameter_nodes();
 										std::vector<std::string_view> empty_ns_path;
 										auto vfunc_mangled = NameMangling::generateMangledName(

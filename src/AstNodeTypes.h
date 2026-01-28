@@ -2423,10 +2423,10 @@ struct StaticMemberDecl {
 	std::optional<ASTNode> initializer;  // AST node for initializer expression (e.g., sizeof(T)), used for template parameter substitution during instantiation
 	bool is_const;                // Whether member is const
 
-	StaticMemberDecl(StringHandle name, Type type, TypeIndex type_index, size_t size, size_t alignment, 
-	                 AccessSpecifier access, std::optional<ASTNode> initializer, bool is_const)
-		: name(name), type(type), type_index(type_index), size(size), alignment(alignment), 
-		  access(access), initializer(initializer), is_const(is_const) {}
+	StaticMemberDecl(StringHandle name_, Type type_, TypeIndex type_index_, size_t size_, size_t alignment_,
+	                 AccessSpecifier access_, std::optional<ASTNode> initializer_, bool is_const_)
+		: name(name_), type(type_), type_index(type_index_), size(size_), alignment(alignment_),
+		  access(access_), initializer(initializer_), is_const(is_const_) {}
 };
 
 class StructDeclarationNode {

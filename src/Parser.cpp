@@ -41372,26 +41372,39 @@ if (struct_type_info.getStructInfo()) {
 			}
 		}
 		
-		// Add the static member to the instantiated struct
+		// Add the static member to the instantiated struct (or update if it already exists)
 		if (out_of_line_var.type_node.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = out_of_line_var.type_node.as<TypeSpecifierNode>();
 			size_t member_size = get_type_size_bits(type_spec.type()) / 8;
 			size_t member_alignment = get_type_alignment(type_spec.type(), member_size);
-			
+
 			StringHandle static_member_name_handle = out_of_line_var.member_name;
-			struct_info_ptr->addStaticMember(
-				static_member_name_handle,
-				type_spec.type(),
-				type_spec.type_index(),
-				member_size,
-				member_alignment,
-				AccessSpecifier::Public,
-				substituted_initializer,
-				false  // is_const
-			);
-			
-			FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name, 
-			          " to instantiated struct ", instantiated_name);
+
+			// Check if this static member was already added (e.g., from primary template processing)
+			// If it exists, update the initializer; otherwise add a new member
+			const StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
+			if (existing_member != nullptr) {
+				// Member already exists - update the initializer with the out-of-line definition
+				if (substituted_initializer.has_value()) {
+					struct_info_ptr->updateStaticMemberInitializer(static_member_name_handle, substituted_initializer);
+					FLASH_LOG(Templates, Debug, "Updated out-of-line static member initializer for ", out_of_line_var.member_name,
+					          " in instantiated struct ", instantiated_name);
+				}
+			} else {
+				struct_info_ptr->addStaticMember(
+					static_member_name_handle,
+					type_spec.type(),
+					type_spec.type_index(),
+					member_size,
+					member_alignment,
+					AccessSpecifier::Public,
+					substituted_initializer,
+					false  // is_const
+				);
+
+				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,
+				          " to instantiated struct ", instantiated_name);
+			}
 		}
 	}
 
