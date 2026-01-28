@@ -8,19 +8,18 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-27 (run_all_tests.sh)
+**Last Run:** 2026-01-28 (run_all_tests.sh)
 
 **Total files tested:** 960
-**Valid returns:** 924
-**Return mismatches:** 33
+**Valid returns:** 927
+**Return mismatches:** 32
 **Runtime crashes:** 1
-**Ignored files:** 2
+**Ignored files:** 0
 **Compile failures:** 0
 **Link failures:** 0
 
 ## Known Return Mismatches
 
-  static_local_ret1.cpp
   template_multi_param_ret63.cpp
   test_array_static_size_ret0.cpp
   test_c_style_casts_ret65.cpp

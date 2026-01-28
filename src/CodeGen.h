@@ -8084,7 +8084,13 @@ private:
 			// This is a static local - generate GlobalLoad with mangled name
 			const StaticLocalInfo& info = static_local_it->second;
 
-			// Generate GlobalLoad with mangled name
+			// For LValueAddress context (assignment LHS), return the mangled name directly
+			// This allows the assignment instruction to store to the global variable
+			if (context == ExpressionContext::LValueAddress) {
+				return { info.type, info.size_in_bits, info.mangled_name, 0ULL };
+			}
+
+			// For Load context (normal read), generate GlobalLoad with mangled name
 			TempVar result_temp = var_counter.next();
 			GlobalLoadOp op;
 			op.result.type = info.type;
@@ -10665,13 +10671,18 @@ private:
 			}
 		}
 
-		// Special handling for global variable assignment
+		// Special handling for global variable and static local variable assignment
 		if (op == "=" && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 			const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 				const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
 				std::string_view lhs_name = lhs_ident.name();
 
+				// Check if this is a static local variable
+				StringHandle lhs_handle = StringTable::getOrInternStringHandle(lhs_name);
+				auto static_local_it = static_local_names_.find(lhs_handle);
+				bool is_static_local = (static_local_it != static_local_names_.end());
+				
 				// Check if this is a global variable (not found in local symbol table, but found in global)
 				const std::optional<ASTNode> local_symbol = symbol_table.lookup(lhs_name);
 				bool is_global = false;
@@ -10684,14 +10695,19 @@ private:
 					}
 				}
 				
-				if (is_global) {
-					// This is a global variable assignment - generate GlobalStore instruction
+				if (is_global || is_static_local) {
+					// This is a global variable or static local assignment - generate GlobalStore instruction
 					// Generate IR for the RHS
 					auto rhsIrOperands = visitExpressionNode(binaryOperatorNode.get_rhs().as<ExpressionNode>());
 
 					// Generate GlobalStore IR: global_store @global_name, %value
 					std::vector<IrOperand> store_operands;
-					store_operands.emplace_back(StringTable::getOrInternStringHandle(lhs_name));  // global name
+					// For static locals, use the mangled name; for globals, use the simple name
+					if (is_static_local) {
+						store_operands.emplace_back(static_local_it->second.mangled_name);  // mangled name for static local
+					} else {
+						store_operands.emplace_back(StringTable::getOrInternStringHandle(lhs_name));  // simple name for global
+					}
 					
 					// Extract the value from RHS (rhsIrOperands[2])
 					if (std::holds_alternative<TempVar>(rhsIrOperands[2])) {
