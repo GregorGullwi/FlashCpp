@@ -11,8 +11,8 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-28 (manual validation)
 
 **Total files tested:** 960
-**Valid returns:** 931
-**Return mismatches:** 27
+**Valid returns:** 932
+**Return mismatches:** 26
 **Runtime crashes:** 1
 **Ignored files:** 0
 **Compile failures:** 0
@@ -42,7 +42,6 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
   test_spec_func_ptr_ret0.cpp
   test_spec_init_simple_ret0.cpp
   test_std_move_support_ret0.cpp
-  test_struct_default_arg_constructor_ret42.cpp
   test_struct_ref_member_simple_ret0.cpp
   test_struct_ref_members_ret0.cpp
   test_xvalue_all_casts_ret0.cpp
