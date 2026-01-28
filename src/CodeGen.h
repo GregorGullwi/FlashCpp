@@ -4983,8 +4983,8 @@ private:
 			// and fall through to next check when false. Since both labels are forward references,
 			// we emit: test condition; jz next_check; jmp case_label
 			CondBranchOp cond_branch;
-			cond_branch.label_true = StringTable::getOrInternStringHandle(next_check_label); // Swap: jump to next if FALSE
-			cond_branch.label_false = StringTable::getOrInternStringHandle(case_label);      // This won't be used
+			cond_branch.label_true = StringTable::getOrInternStringHandle(case_label);       // Fallthrough to JMP case_label if TRUE
+			cond_branch.label_false = StringTable::getOrInternStringHandle(next_check_label); // Jump to next check if FALSE
 			cond_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 1, .value = cmp_result};
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
@@ -8607,20 +8607,30 @@ private:
 			if (type_node.type() == Type::Enum && !type_node.is_reference() && type_node.pointer_depth() == 0) {
 				// Check if this identifier is actually an enumerator (not just a variable of enum type)
 				size_t enum_type_index = type_node.type_index();
+				FLASH_LOG(Codegen, Debug, "  enum_type_index: ", enum_type_index, ", gTypeInfo.size(): ", gTypeInfo.size());
 				if (enum_type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[enum_type_index];
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 					if (enum_info) {
 						// Use findEnumerator to check if this identifier is actually an enumerator
-						const Enumerator* enumerator = enum_info->findEnumerator(StringTable::getOrInternStringHandle(identifierNode.name()));
+						StringHandle enum_name_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+						const Enumerator* enumerator = enum_info->findEnumerator(enum_name_handle);
+						FLASH_LOG(Codegen, Debug, "  Looking up enumerator: ", identifierNode.name(), ", found: ", (enumerator != nullptr));
 						if (enumerator) {
 							// This IS an enumerator constant - return its value using the underlying type
+							FLASH_LOG(Codegen, Debug, "  Found enum value: ", identifierNode.name(), " = ", enumerator->value, " (type: ", static_cast<int>(enum_info->underlying_type), ", size: ", enum_info->underlying_size, ")");
 							return { enum_info->underlying_type, static_cast<int>(enum_info->underlying_size),
 							         static_cast<unsigned long long>(enumerator->value) };
 						}
 						// If not found as an enumerator, it's a variable of enum type - fall through to variable handling
+					} else {
+						FLASH_LOG(Codegen, Debug, "  No enum_info found for type_index: ", enum_type_index);
 					}
+				} else {
+					FLASH_LOG(Codegen, Debug, "  enum_type_index out of range: ", enum_type_index);
 				}
+			} else {
+				FLASH_LOG(Codegen, Debug, "  Not an enum type or has reference/pointer");
 			}
 
 			// Check if this is a global variable

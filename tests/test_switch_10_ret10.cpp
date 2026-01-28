@@ -171,5 +171,5 @@ int test_static_cast_enum() {
 
 // Expected return: 10
 int main() {
-    return test_basic_switch(1);
+    return test_fallthrough(4) - test_basic_switch(3) - test_enum_switch(Color::Blue) - test_c_cast_in_switch();	// 45 - 30 - 3 - 2 = 10
 }
