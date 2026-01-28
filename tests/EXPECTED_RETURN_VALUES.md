@@ -8,11 +8,11 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-28 (run_all_tests.sh)
+**Last Run:** 2026-01-28 (manual validation)
 
 **Total files tested:** 960
-**Valid returns:** 927
-**Return mismatches:** 32
+**Valid returns:** 931
+**Return mismatches:** 28
 **Runtime crashes:** 1
 **Ignored files:** 0
 **Compile failures:** 0
@@ -28,11 +28,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
   test_feature_macros_ret0.cpp
   test_lambda_copy_this_multiple_lambdas_ret84.cpp
   test_member_alias_in_partial_spec_ret0.cpp
-  test_member_init_designated_ret12.cpp
-  test_member_init_designated_simple_ret1.cpp
-  test_member_init_form2_ret2.cpp
   test_member_init_nested_ret15.cpp
-  test_member_init_simple_forms_ret1.cpp
   test_mixed_abi_ret0.cpp
   test_mixed_float_double_params_ret3.cpp
   test_new_intrinsics_ret1.cpp

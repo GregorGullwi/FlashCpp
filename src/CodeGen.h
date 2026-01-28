@@ -3541,6 +3541,107 @@ private:
 									} else {
 										member_value = 0ULL;  // fallback
 									}
+								} else if (init_node.has_value() && init_node.is<InitializerListNode>()) {
+									// Handle brace initializers like `B b1 = { .a = 1 };`
+									const InitializerListNode& init_list = init_node.as<InitializerListNode>();
+									const auto& initializers = init_list.initializers();
+									
+									// For struct members with brace initializers, we need to handle them specially
+									// Get the type info for this member
+									TypeIndex member_type_index = member.type_index;
+									if (member_type_index < gTypeInfo.size()) {
+										const TypeInfo& member_type_info = gTypeInfo[member_type_index];
+										
+										// If this is a struct type, we need to initialize its members
+										if (member_type_info.struct_info_ && !member_type_info.struct_info_->members.empty()) {
+											// Build a map of member names to initializer expressions
+											std::unordered_map<StringHandle, const ASTNode*> member_values;
+											size_t positional_index = 0;
+											
+											for (size_t i = 0; i < initializers.size(); ++i) {
+												if (init_list.is_designated(i)) {
+													// Designated initializer - use member name
+													StringHandle member_name = init_list.member_name(i);
+													member_values[member_name] = &initializers[i];
+												} else {
+													// Positional initializer - map to member by index
+													if (positional_index < member_type_info.struct_info_->members.size()) {
+														StringHandle member_name = member_type_info.struct_info_->members[positional_index].getName();
+														member_values[member_name] = &initializers[i];
+														positional_index++;
+													}
+												}
+											}
+											
+											// Generate nested member stores for each member of the nested struct
+											for (const StructMember& nested_member : member_type_info.struct_info_->members) {
+												// Determine initial value for nested member
+												IrValue nested_member_value;
+												StringHandle nested_member_name_handle = nested_member.getName();
+												
+												if (member_values.count(nested_member_name_handle)) {
+													const ASTNode& init_expr = *member_values[nested_member_name_handle];
+													if (init_expr.is<ExpressionNode>()) {
+														auto init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+														if (std::holds_alternative<TempVar>(init_operands[2])) {
+															nested_member_value = std::get<TempVar>(init_operands[2]);
+														} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+															nested_member_value = std::get<unsigned long long>(init_operands[2]);
+														} else if (std::holds_alternative<double>(init_operands[2])) {
+															nested_member_value = std::get<double>(init_operands[2]);
+														} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
+															nested_member_value = std::get<StringHandle>(init_operands[2]);
+														} else {
+															nested_member_value = 0ULL;
+														}
+													} else {
+														nested_member_value = 0ULL;
+													}
+												} else {
+													// Zero-initialize unspecified nested members
+													nested_member_value = 0ULL;
+												}
+												
+												// Generate nested member store
+												MemberStoreOp nested_member_store;
+												nested_member_store.value.type = nested_member.type;
+												nested_member_store.value.size_in_bits = static_cast<int>(nested_member.size * 8);
+												nested_member_store.value.value = nested_member_value;
+												nested_member_store.object = StringTable::getOrInternStringHandle("this");
+												nested_member_store.member_name = nested_member.getName();
+												// Calculate offset: parent member offset + nested member offset
+												nested_member_store.offset = static_cast<int>(member.offset + nested_member.offset);
+												nested_member_store.is_reference = nested_member.is_reference;
+												nested_member_store.is_rvalue_reference = nested_member.is_rvalue_reference;
+												nested_member_store.struct_type_info = nullptr;
+												
+												ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(nested_member_store), node.name_token()));
+											}
+											
+											// Skip the outer member store since we've already generated nested stores
+											continue;
+										} else {
+											// For non-struct types with single-element initializer lists
+											if (initializers.size() == 1 && initializers[0].is<ExpressionNode>()) {
+												auto init_operands = visitExpressionNode(initializers[0].as<ExpressionNode>());
+												if (std::holds_alternative<TempVar>(init_operands[2])) {
+													member_value = std::get<TempVar>(init_operands[2]);
+												} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+													member_value = std::get<unsigned long long>(init_operands[2]);
+												} else if (std::holds_alternative<double>(init_operands[2])) {
+													member_value = std::get<double>(init_operands[2]);
+												} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
+													member_value = std::get<StringHandle>(init_operands[2]);
+												} else {
+													member_value = 0ULL;
+												}
+											} else {
+												member_value = 0ULL;
+											}
+										}
+									} else {
+										member_value = 0ULL;
+									}
 								} else {
 									// Default initializer exists but isn't an expression, zero-initialize
 									if (member.type == Type::Int || member.type == Type::Long ||
