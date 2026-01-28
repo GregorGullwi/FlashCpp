@@ -1895,15 +1895,17 @@ private:
 	                                     std::string_view op) {
 		// Check if LHS has a TempVar with lvalue metadata
 		if (lhs_operands.size() < 3 || !std::holds_alternative<TempVar>(lhs_operands[2])) {
-			FLASH_LOG(Codegen, Info, "handleLValueCompoundAssignment: FAIL - size=", lhs_operands.size());
+			FLASH_LOG(Codegen, Info, "handleLValueCompoundAssignment: FAIL - size=", lhs_operands.size(), 
+				", has_tempvar=", (lhs_operands.size() >= 3 && std::holds_alternative<TempVar>(lhs_operands[2])));
 			return false;
 		}
 
 		TempVar lhs_temp = std::get<TempVar>(lhs_operands[2]);
+		FLASH_LOG_FORMAT(Codegen, Debug, "handleLValueCompoundAssignment: Checking TempVar {} for metadata", lhs_temp.var_number);
 		auto lvalue_info_opt = getTempVarLValueInfo(lhs_temp);
 		
 		if (!lvalue_info_opt.has_value()) {
-			FLASH_LOG(Codegen, Info, "handleLValueCompoundAssignment: FAIL - no lvalue metadata");
+			FLASH_LOG_FORMAT(Codegen, Info, "handleLValueCompoundAssignment: FAIL - no lvalue metadata for TempVar {}", lhs_temp.var_number);
 			return false;
 		}
 
@@ -1925,17 +1927,24 @@ private:
 		// Generate a Load instruction based on the lvalue kind
 		// Support both Member kind and Indirect kind (for dereferenced pointers like &y in lambda captures)
 		if (lv_info.kind == LValueInfo::Kind::Indirect) {
-			// For Indirect kind (dereferenced pointer), the base is a TempVar holding the address
+			// For Indirect kind (dereferenced pointer), the base can be a TempVar or StringHandle
 			// Generate a Dereference instruction to load the current value
 			DereferenceOp deref_op;
 			deref_op.result = current_value_temp;
 			deref_op.pointer.type = std::get<Type>(lhs_operands[0]);
 			deref_op.pointer.size_in_bits = 64;  // pointer size
 			deref_op.pointer.pointer_depth = 1;
+			
+			// Extract the base (TempVar or StringHandle)
+			std::variant<TempVar, StringHandle> base_value;
 			if (std::holds_alternative<TempVar>(lv_info.base)) {
 				deref_op.pointer.value = std::get<TempVar>(lv_info.base);
+				base_value = std::get<TempVar>(lv_info.base);
+			} else if (std::holds_alternative<StringHandle>(lv_info.base)) {
+				deref_op.pointer.value = std::get<StringHandle>(lv_info.base);
+				base_value = std::get<StringHandle>(lv_info.base);
 			} else {
-				FLASH_LOG(Codegen, Debug, "     Indirect kind requires TempVar base");
+				FLASH_LOG(Codegen, Debug, "     Indirect kind requires TempVar or StringHandle base");
 				return false;
 			}
 			
@@ -1980,8 +1989,21 @@ private:
 			result_tv.size_in_bits = std::get<int>(lhs_operands[1]);
 			result_tv.value = result_temp;
 			
-			emitDereferenceStore(result_tv, std::get<Type>(lhs_operands[0]), std::get<int>(lhs_operands[1]),
-			                     std::get<TempVar>(lv_info.base), token);
+			// Handle both TempVar and StringHandle bases for DereferenceStore
+			if (std::holds_alternative<TempVar>(base_value)) {
+				emitDereferenceStore(result_tv, std::get<Type>(lhs_operands[0]), std::get<int>(lhs_operands[1]),
+				                     std::get<TempVar>(base_value), token);
+			} else {
+				// StringHandle base: emitDereferenceStore expects a TempVar, so we pass the StringHandle as the pointer
+				// Generate DereferenceStore with StringHandle directly
+				DereferenceStoreOp store_op;
+				store_op.pointer.type = std::get<Type>(lhs_operands[0]);
+				store_op.pointer.size_in_bits = 64;
+				store_op.pointer.pointer_depth = 1;
+				store_op.pointer.value = std::get<StringHandle>(base_value);
+				store_op.value = result_tv;
+				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
+			}
 			
 			return true;
 		}
@@ -8662,8 +8684,8 @@ private:
 				}
 				
 				// For LValueAddress context (e.g., LHS of assignment, function call with reference parameter)
-				// Return the reference variable name directly as a pointer (64 bits) - don't dereference
-				// This is critical for passing reference variables to reference parameters
+				// For compound assignments, we need to return a TempVar with lvalue metadata
+				// For simple assignments and function calls, we can return the reference directly
 				if (context == ExpressionContext::LValueAddress) {
 					// For auto types, default to int (32 bits)
 					Type pointee_type = type_node.type();
@@ -8674,10 +8696,23 @@ private:
 					}
 					
 					TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
-					// Return reference name directly with POINTEE type and size (not pointer size)
-					// This is important for handleLValueAssignment which uses lhs_operands[0] and [1] as pointee type/size
-					// The reference variable will hold the pointer, but we return the pointee info
-					return { pointee_type, pointee_size, StringTable::getOrInternStringHandle(identifierNode.name()), static_cast<unsigned long long>(type_index) };
+					
+					// Create a TempVar with Indirect lvalue metadata for compound assignments
+					// This allows handleLValueCompoundAssignment to work with reference variables
+					TempVar lvalue_temp = var_counter.next();
+					FLASH_LOG_FORMAT(Codegen, Debug, "Reference LValueAddress: Creating TempVar {} for reference '{}'", 
+						lvalue_temp.var_number, identifierNode.name());
+					LValueInfo lvalue_info(
+						LValueInfo::Kind::Indirect,
+						StringTable::getOrInternStringHandle(identifierNode.name()),  // The reference variable name
+						0  // offset is 0 for simple dereference
+					);
+					setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info));
+					FLASH_LOG_FORMAT(Codegen, Debug, "Reference LValueAddress: Set metadata on TempVar {}", lvalue_temp.var_number);
+					
+					// Return with TempVar that has lvalue metadata
+					// The type/size are for the pointee (what the reference refers to)
+					return { pointee_type, pointee_size, lvalue_temp, static_cast<unsigned long long>(type_index) };
 				}
 				
 				// For non-array references in Load context, we need to dereference to get the value
@@ -8710,6 +8745,15 @@ private:
 				deref_op.pointer.pointer_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;  // References are like pointers
 				deref_op.pointer.value = StringTable::getOrInternStringHandle(identifierNode.name());  // The reference parameter holds the address
 				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
+				
+				// Mark as lvalue with Indirect metadata for unified assignment handler
+				// This allows compound assignments (like x *= 2) to work on dereferenced references
+				LValueInfo lvalue_info(
+					LValueInfo::Kind::Indirect,
+					StringTable::getOrInternStringHandle(identifierNode.name()),  // The reference variable name
+					0  // offset is 0 for simple dereference
+				);
+				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 				
 				TypeIndex type_index = (pointee_type == Type::Struct || type_node.type() == Type::Enum) ? type_node.type_index() : 0;
 				return { pointee_type, pointee_size, result_temp, static_cast<unsigned long long>(type_index) };
@@ -8792,6 +8836,9 @@ private:
 				// Reference variables (both lvalue & and rvalue &&) hold an address, and we need to load the value from that address
 				// EXCEPT for array references, where the reference IS the array pointer
 				if (type_node.is_reference()) {
+					FLASH_LOG_FORMAT(Codegen, Debug, "VariableDecl reference '{}': context={}", 
+						identifierNode.name(), context == ExpressionContext::LValueAddress ? "LValueAddress" : "Load");
+					
 					// For references to arrays (e.g., int (&arr)[3]), the reference variable
 					// already holds the array address directly. We don't dereference it.
 					// Just return it as a pointer (64 bits on x64 architecture).
@@ -8803,6 +8850,7 @@ private:
 					// For LValueAddress context (assignment LHS), we need to treat the reference variable
 					// as an indirect lvalue (pointer that needs dereferencing for stores)
 					if (context == ExpressionContext::LValueAddress) {
+						FLASH_LOG_FORMAT(Codegen, Debug, "VariableDecl reference '{}': Creating addr_temp for LValueAddress", identifierNode.name());
 						// For auto types, default to int (32 bits)
 						Type pointee_type = type_node.type();
 						int pointee_size = static_cast<int>(type_node.size_in_bits());
@@ -8829,7 +8877,7 @@ private:
 						// This tells the assignment handler to use DereferenceStore
 						LValueInfo lvalue_info(
 							LValueInfo::Kind::Indirect,
-							addr_temp,  // The pointer temp var
+							addr_temp,  // The temp holding the pointer address
 							0  // offset is 0 for dereference
 						);
 						setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info));
@@ -8857,6 +8905,15 @@ private:
 					deref_op.pointer.pointer_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;  // References are like pointers
 					deref_op.pointer.value = StringTable::getOrInternStringHandle(identifierNode.name());  // The reference variable holds the address
 					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), Token()));
+					
+					// Mark as lvalue with Indirect metadata for unified assignment handler
+					// This allows compound assignments (like x *= 2) to work on dereferenced references
+					LValueInfo lvalue_info(
+						LValueInfo::Kind::Indirect,
+						StringTable::getOrInternStringHandle(identifierNode.name()),  // The reference variable name
+						0  // offset is 0 for simple dereference
+					);
+					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info));
 					
 					TypeIndex type_index = (pointee_type == Type::Struct) ? type_node.type_index() : 0;
 					return { pointee_type, pointee_size, result_temp, static_cast<unsigned long long>(type_index) };
