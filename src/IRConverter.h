@@ -2419,12 +2419,16 @@ inline void emitFloatStoreToAddressWithOffset(std::vector<char>& textSectionData
 	uint8_t xmm_bits = static_cast<uint8_t>(xmm_src) & 0x07;
 	uint8_t addr_bits = static_cast<uint8_t>(addr_reg) & 0x07;
 	bool addr_extended = static_cast<uint8_t>(addr_reg) >= static_cast<uint8_t>(X64Register::R8);
+	bool xmm_extended = static_cast<uint8_t>(xmm_src) >= static_cast<uint8_t>(X64Register::XMM8);
 	
-	// MOVSD [addr_reg + disp], xmm: F2 0F 11 modrm [disp]
-	// MOVSS [addr_reg + disp], xmm: F3 0F 11 modrm [disp]
+	// MOVSD [addr_reg + disp], xmm: F2 [REX] 0F 11 modrm [disp]
+	// MOVSS [addr_reg + disp], xmm: F3 [REX] 0F 11 modrm [disp]
 	textSectionData.push_back(is_float ? 0xF3 : 0xF2);
-	if (addr_extended) {
-		textSectionData.push_back(0x41); // REX.B for extended addr_reg
+	if (addr_extended || xmm_extended) {
+		uint8_t rex = 0x40;
+		if (xmm_extended) rex |= 0x04; // REX.R for extended XMM register
+		if (addr_extended) rex |= 0x01; // REX.B for extended addr_reg
+		textSectionData.push_back(rex);
 	}
 	textSectionData.push_back(0x0F);
 	textSectionData.push_back(0x11); // MOVSD/MOVSS m, xmm (store variant)
@@ -11558,8 +11562,9 @@ private:
 		// Release source GPR
 		regAlloc.release(source_reg);
 
-		// Store result XMM to stack - keep it in register for now
+		// Store result XMM to stack
 		auto result_offset = getStackOffsetFromTempVar(op.result);
+		emitFloatStoreToAddressWithOffset(textSectionData, result_xmm, X64Register::RBP, result_offset, is_float);
 		regAlloc.set_stack_variable_offset(result_xmm, result_offset, op.to_size_in_bits);
 	}
 
@@ -11602,8 +11607,10 @@ private:
 		// Release source XMM
 		regAlloc.release(source_xmm);
 
-		// Store result XMM to stack - keep it in register for now
+		// Store result XMM to stack
 		auto result_offset = getStackOffsetFromTempVar(op.result);
+		bool is_float_result = (op.to_type == Type::Float);
+		emitFloatStoreToAddressWithOffset(textSectionData, result_xmm, X64Register::RBP, result_offset, is_float_result);
 		regAlloc.set_stack_variable_offset(result_xmm, result_offset, op.to_size_in_bits);
 	}
 
