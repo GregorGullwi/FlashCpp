@@ -15278,11 +15278,15 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			std::string_view member_name = peek_token()->value();
 			consume_token();
 
+			FLASH_LOG(Parser, Debug, "Parsing designated initializer for member: ", member_name);
+
 			// Validate member name exists in struct
 			bool member_found = false;
+			const StructMember* target_member = nullptr;
 			for (const auto& member : struct_info.members) {
 				if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
 					member_found = true;
+					target_member = &member;
 					break;
 				}
 			}
@@ -15302,9 +15306,28 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			}
 			consume_token();  // consume '='
 
-			// Parse the initializer expression with precedence > comma operator (precedence 1)
-			// This prevents comma from being treated as an operator in initializer lists
-			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
+			// Check if the next token is a brace - if so, we need to parse it as a nested brace initializer
+			ParseResult init_expr_result;
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+				FLASH_LOG(Parser, Debug, "Detected nested brace initializer for member: ", member_name);
+				// Create a type specifier for the member's type to properly parse the nested brace initializer
+				if (target_member && target_member->type_index > 0 && target_member->type_index < gTypeInfo.size()) {
+					const TypeInfo& member_type_info = gTypeInfo[target_member->type_index];
+					auto [member_type_node, member_type_ref] = emplace_node_ref<TypeSpecifierNode>(
+						member_type_info.type_, target_member->type_index, member_type_info.type_size_ * 8, Token()
+					);
+					FLASH_LOG(Parser, Debug, "Parsing nested brace initializer with type index: ", target_member->type_index);
+					init_expr_result = parse_brace_initializer(member_type_ref);
+				} else {
+					FLASH_LOG(Parser, Warning, "Could not determine member type for nested brace initializer, falling back to expression parsing");
+					init_expr_result = parse_expression(2, ExpressionContext::Normal);
+				}
+			} else {
+				// Parse the initializer expression with precedence > comma operator (precedence 1)
+				// This prevents comma from being treated as an operator in initializer lists
+				FLASH_LOG(Parser, Debug, "Parsing simple expression initializer for member: ", member_name);
+				init_expr_result = parse_expression(2, ExpressionContext::Normal);
+			}
 			if (init_expr_result.is_error()) {
 				return init_expr_result;
 			}
@@ -15326,9 +15349,31 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				return ParseResult::error("Too many initializers for struct", *current_token_);
 			}
 
-			// Parse the initializer expression with precedence > comma operator (precedence 1)
-			// This prevents comma from being treated as an operator in initializer lists
-			ParseResult init_expr_result = parse_expression(2, ExpressionContext::Normal);
+			FLASH_LOG(Parser, Debug, "Parsing positional initializer for member index: ", member_index);
+
+			// Check if the next token is a brace - if so, we need to parse it as a nested brace initializer
+			ParseResult init_expr_result;
+			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+				FLASH_LOG(Parser, Debug, "Detected nested brace initializer for positional member at index: ", member_index);
+				// Create a type specifier for the member's type to properly parse the nested brace initializer
+				const StructMember& target_member = struct_info.members[member_index];
+				if (target_member.type_index > 0 && target_member.type_index < gTypeInfo.size()) {
+					const TypeInfo& member_type_info = gTypeInfo[target_member.type_index];
+					auto [member_type_node, member_type_ref] = emplace_node_ref<TypeSpecifierNode>(
+						member_type_info.type_, target_member.type_index, member_type_info.type_size_ * 8, Token()
+					);
+					FLASH_LOG(Parser, Debug, "Parsing nested brace initializer with type index: ", target_member.type_index);
+					init_expr_result = parse_brace_initializer(member_type_ref);
+				} else {
+					FLASH_LOG(Parser, Warning, "Could not determine member type for nested brace initializer, falling back to expression parsing");
+					init_expr_result = parse_expression(2, ExpressionContext::Normal);
+				}
+			} else {
+				// Parse the initializer expression with precedence > comma operator (precedence 1)
+				// This prevents comma from being treated as an operator in initializer lists
+				FLASH_LOG(Parser, Debug, "Parsing simple expression initializer for positional member at index: ", member_index);
+				init_expr_result = parse_expression(2, ExpressionContext::Normal);
+			}
 			if (init_expr_result.is_error()) {
 				return init_expr_result;
 			}
