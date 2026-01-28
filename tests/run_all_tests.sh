@@ -41,6 +41,11 @@ EXPECTED_LINK_FAIL=(
     "test_external_abi_simple.cpp"        # Needs external C helper functions from test_external_abi_helper.c
 )
 
+# Expected runtime crashes - files that compile and link but crash at runtime
+EXPECTED_RUNTIME_CRASH=(
+    "test_exceptions_nested_ret0.cp"          # Known crash with nested exception handling (signal 6 - SIGABRT)
+)
+
 # Results
 declare -a COMPILE_OK=()
 declare -a COMPILE_FAIL=()
@@ -48,6 +53,8 @@ declare -a LINK_OK=()
 declare -a LINK_FAIL=()
 declare -a FAIL_OK=()
 declare -a FAIL_BAD=()
+declare -a RUNTIME_CRASH=()
+declare -a RETURN_MISMATCH=()
 
 contains() {
     local e match="$1"
@@ -90,7 +97,7 @@ for base in "${TEST_FILES[@]}"; do
     
     # Compile (with 30 second timeout to avoid hangs)
     extra_flags=()
-    if [ "$base" == "test_no_access_control_flag.cpp" ]; then
+    if [ "$base" == "test_no_access_control_flag_ret100.cpp" ]; then
         extra_flags+=("-fno-access-control")
     fi
     compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 "${extra_flags[@]}" "$f" 2>&1)
@@ -121,8 +128,51 @@ for base in "${TEST_FILES[@]}"; do
         
         if [ $link_exit_code -eq 0 ]; then
             LINK_OK+=("$base")
+            
+            # Run the executable to validate return value
+            stderr_output=$(timeout 5 "$exe" 2>&1 > /dev/null)
+            return_value=$?
+            
+            # Check for timeout (exit code 124)
+            if [ $return_value -eq 124 ]; then
+                echo "" >&2
+                echo -e "${RED}[RUNTIME TIMEOUT]${NC} $base"
+                RUNTIME_CRASH+=("$base")
+                rm -f "$exe"
+                continue
+            fi
+            
+            # Check for actual crashes by looking for crash indicators in stderr
+            if echo "$stderr_output" | grep -qiE "(segmentation fault|illegal instruction|aborted|bus error|floating point exception|killed|dumped core)"; then
+                # Check if this is an expected runtime crash
+                if contains "$base" "${EXPECTED_RUNTIME_CRASH[@]}"; then
+                    echo "OK (expected runtime crash)" >&2
+                else
+                    signal=$((return_value - 128))
+                    echo "" >&2
+                    echo -e "${RED}[RUNTIME CRASH]${NC} $base (signal: $signal)"
+                    RUNTIME_CRASH+=("$base")
+                fi
+                rm -f "$exe"
+                continue
+            fi
+            
+            # Check if the filename indicates an expected return value (e.g., test_name_ret42.cpp expects 42)
+            if [[ "$base" =~ _ret([0-9]+)\.cpp$ ]]; then
+                expected_value="${BASH_REMATCH[1]}"
+                if [ "$return_value" -ne "$expected_value" ]; then
+                    echo "" >&2
+                    echo -e "${RED}[RETURN MISMATCH]${NC} $base (expected $expected_value, got $return_value)"
+                    RETURN_MISMATCH+=("$base")
+                else
+                    echo "OK (returned $expected_value)" >&2
+                fi
+            else
+                # No expected return value in filename, just report OK
+                echo "OK (returned $return_value)" >&2
+            fi
+            
             rm -f "$exe"
-            echo "OK" >&2
         else
             # Check if this is an expected link failure
             if contains "$base" "${EXPECTED_LINK_FAIL[@]}"; then
@@ -213,6 +263,7 @@ echo "========================"
 echo "Total: $TOTAL files tested"
 printf "Compile: ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#COMPILE_OK[@]}" "${#COMPILE_FAIL[@]}"
 printf "Link:    ${GREEN}%d pass${NC} / ${RED}%d fail${NC}\n" "${#LINK_OK[@]}" "${#LINK_FAIL[@]}"
+printf "Runtime: ${GREEN}%d pass${NC} / ${RED}%d crash${NC} / ${RED}%d mismatch${NC}\n" "$((${#LINK_OK[@]} - ${#RUNTIME_CRASH[@]} - ${#RETURN_MISMATCH[@]}))" "${#RUNTIME_CRASH[@]}" "${#RETURN_MISMATCH[@]}"
 [ ${#FAIL_FILES[@]} -gt 0 ] && printf "_fail:   ${GREEN}%d correct${NC} / ${RED}%d wrong${NC}\n" "${#FAIL_OK[@]}" "${#FAIL_BAD[@]}"
 
 # Show failures
@@ -227,12 +278,25 @@ if [ ${#LINK_FAIL[@]} -gt 0 ]; then
     echo "  (vtables, constructors, exceptions, etc.)"
 fi
 
+if [ ${#RUNTIME_CRASH[@]} -gt 0 ]; then
+    echo -e "\n${RED}Runtime crashes (${#RUNTIME_CRASH[@]}):${NC}"
+    printf '  %s\n' "${RUNTIME_CRASH[@]}"
+fi
+
+if [ ${#RETURN_MISMATCH[@]} -gt 0 ]; then
+    echo -e "\n${RED}Return value mismatches (${#RETURN_MISMATCH[@]}):${NC}"
+    printf '  %s\n' "${RETURN_MISMATCH[@]}"
+fi
+
 [ ${#FAIL_BAD[@]} -gt 0 ] && {
     echo -e "\n${RED}_fail files that passed:${NC}"
     printf '  %s\n' "${FAIL_BAD[@]}"
 }
 
 echo ""
+# NOTE: Runtime crashes and return mismatches are currently disabled from failing the build
+# since test files are now named with clang's expected return values, which exposes FlashCpp bugs.
+# To re-enable these checks, add: && [ ${#RUNTIME_CRASH[@]} -eq 0 ] && [ ${#RETURN_MISMATCH[@]} -eq 0 ]
 if [ ${#COMPILE_FAIL[@]} -eq 0 ] && [ ${#LINK_FAIL[@]} -eq 0 ] && [ ${#FAIL_BAD[@]} -eq 0 ]; then
     echo -e "${GREEN}RESULT: SUCCESS${NC}"
     exit 0
