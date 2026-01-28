@@ -40613,8 +40613,8 @@ if (struct_type_info.getStructInfo()) {
 							std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 							for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
 								if (template_params[i].is<TemplateParameterNode>()) {
-									const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-									param_map[param.name()] = template_args_to_use[i];
+									const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
+									param_map[template_param.name()] = template_args_to_use[i];
 								}
 							}
 							ExpressionSubstitutor substitutor(param_map, *this);
@@ -40737,8 +40737,8 @@ if (struct_type_info.getStructInfo()) {
 							std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 							for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
 								if (template_params[i].is<TemplateParameterNode>()) {
-									const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-									param_map[param.name()] = template_args_to_use[i];
+									const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
+									param_map[template_param.name()] = template_args_to_use[i];
 								}
 							}
 							ExpressionSubstitutor substitutor(param_map, *this);
@@ -41081,8 +41081,8 @@ if (struct_type_info.getStructInfo()) {
 								std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 								for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
 									if (template_params[i].is<TemplateParameterNode>()) {
-										const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-										param_map[param.name()] = template_args_to_use[i];
+										const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
+										param_map[template_param.name()] = template_args_to_use[i];
 									}
 								}
 								ExpressionSubstitutor substitutor(param_map, *this);
