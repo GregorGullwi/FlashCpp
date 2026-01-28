@@ -12,7 +12,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 **Total files tested:** 960
 **Valid returns:** 931
-**Return mismatches:** 28
+**Return mismatches:** 27
 **Runtime crashes:** 1
 **Ignored files:** 0
 **Compile failures:** 0
@@ -28,7 +28,6 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
   test_feature_macros_ret0.cpp
   test_lambda_copy_this_multiple_lambdas_ret84.cpp
   test_member_alias_in_partial_spec_ret0.cpp
-  test_member_init_nested_ret15.cpp
   test_mixed_abi_ret0.cpp
   test_mixed_float_double_params_ret3.cpp
   test_new_intrinsics_ret1.cpp
