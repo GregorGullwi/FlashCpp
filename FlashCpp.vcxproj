@@ -259,6 +259,7 @@
     <ClCompile>
       <UndefinePreprocessorDefinitions>USE_LLVM</UndefinePreprocessorDefinitions>
       <Optimization>Disabled</Optimization>
+      <WarningLevel>Level3</WarningLevel>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">

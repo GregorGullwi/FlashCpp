@@ -233,6 +233,7 @@
     </Link>
     <ClCompile>
       <Optimization>Disabled</Optimization>
+      <WarningLevel>Level1</WarningLevel>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
