@@ -1269,6 +1269,144 @@ private:
 		return false;
 	}
 
+	// Implementation of recursive nested member store generation
+	void generateNestedMemberStores(
+	    const StructTypeInfo& struct_info,
+	    const InitializerListNode& init_list,
+	    StringHandle base_object,
+	    int base_offset,
+	    const Token& token)
+	{
+		// Build map of member names to initializer expressions
+		std::unordered_map<StringHandle, const ASTNode*> member_values;
+		size_t positional_index = 0;
+		const auto& initializers = init_list.initializers();
+
+		for (size_t i = 0; i < initializers.size(); ++i) {
+			if (init_list.is_designated(i)) {
+				member_values[init_list.member_name(i)] = &initializers[i];
+			} else if (positional_index < struct_info.members.size()) {
+				StringHandle member_name = struct_info.members[positional_index].getName();
+				member_values[member_name] = &initializers[i];
+				positional_index++;
+			}
+		}
+
+		// Process each struct member
+		for (const StructMember& member : struct_info.members) {
+			StringHandle member_name = member.getName();
+
+			if (!member_values.count(member_name)) {
+				// Zero-initialize unspecified members
+				MemberStoreOp member_store;
+				member_store.value.type = member.type;
+				member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+				member_store.value.value = 0ULL;
+				member_store.object = base_object;
+				member_store.member_name = member_name;
+				member_store.offset = base_offset + static_cast<int>(member.offset);
+				member_store.is_reference = member.is_reference;
+				member_store.is_rvalue_reference = member.is_rvalue_reference;
+				member_store.struct_type_info = nullptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+				continue;
+			}
+
+			const ASTNode& init_expr = *member_values[member_name];
+
+			if (init_expr.is<InitializerListNode>()) {
+				// Nested brace initializer - check if member is a struct
+				const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
+
+				if (member.type_index < gTypeInfo.size()) {
+					const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+
+					if (member_type_info.struct_info_ && !member_type_info.struct_info_->members.empty()) {
+						// RECURSIVE CALL for nested struct
+						generateNestedMemberStores(
+						    *member_type_info.struct_info_,
+						    nested_init_list,
+						    base_object,
+						    base_offset + static_cast<int>(member.offset),
+						    token
+						);
+						continue;
+					}
+				}
+
+				// Not a struct type - try to extract single value from single-element list
+				const auto& nested_initializers = nested_init_list.initializers();
+				if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
+					auto init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
+					IrValue member_value = 0ULL;
+					if (init_operands.size() >= 3) {
+						if (std::holds_alternative<TempVar>(init_operands[2])) {
+							member_value = std::get<TempVar>(init_operands[2]);
+						} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+							member_value = std::get<unsigned long long>(init_operands[2]);
+						} else if (std::holds_alternative<double>(init_operands[2])) {
+							member_value = std::get<double>(init_operands[2]);
+						} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
+							member_value = std::get<StringHandle>(init_operands[2]);
+						}
+					}
+
+					MemberStoreOp member_store;
+					member_store.value.type = member.type;
+					member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+					member_store.value.value = member_value;
+					member_store.object = base_object;
+					member_store.member_name = member_name;
+					member_store.offset = base_offset + static_cast<int>(member.offset);
+					member_store.is_reference = member.is_reference;
+					member_store.is_rvalue_reference = member.is_rvalue_reference;
+					member_store.struct_type_info = nullptr;
+					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+				} else {
+					// Zero-initialize if we can't extract a value
+					MemberStoreOp member_store;
+					member_store.value.type = member.type;
+					member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+					member_store.value.value = 0ULL;
+					member_store.object = base_object;
+					member_store.member_name = member_name;
+					member_store.offset = base_offset + static_cast<int>(member.offset);
+					member_store.is_reference = member.is_reference;
+					member_store.is_rvalue_reference = member.is_rvalue_reference;
+					member_store.struct_type_info = nullptr;
+					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+				}
+			} else if (init_expr.is<ExpressionNode>()) {
+				// Direct expression initializer
+				auto init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
+				IrValue member_value = 0ULL;
+				if (init_operands.size() >= 3) {
+					if (std::holds_alternative<TempVar>(init_operands[2])) {
+						member_value = std::get<TempVar>(init_operands[2]);
+					} else if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+						member_value = std::get<unsigned long long>(init_operands[2]);
+					} else if (std::holds_alternative<double>(init_operands[2])) {
+						member_value = std::get<double>(init_operands[2]);
+					} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
+						member_value = std::get<StringHandle>(init_operands[2]);
+					}
+				}
+
+				MemberStoreOp member_store;
+				member_store.value.type = member.type;
+				member_store.value.size_in_bits = static_cast<int>(member.size * 8);
+				member_store.value.value = member_value;
+				member_store.object = base_object;
+				member_store.member_name = member_name;
+				member_store.offset = base_offset + static_cast<int>(member.offset);
+				member_store.is_reference = member.is_reference;
+				member_store.is_rvalue_reference = member.is_rvalue_reference;
+				member_store.struct_type_info = nullptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
+			}
+		}
+	}
+
 	// Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 	// Used when a member function call syntax is used but the object is not a struct
 	std::vector<IrOperand> convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
@@ -3576,12 +3714,50 @@ private:
 											// Generate nested member stores for each member of the nested struct
 											for (const StructMember& nested_member : member_type_info.struct_info_->members) {
 												// Determine initial value for nested member
-												IrValue nested_member_value;
+												std::optional<IrValue> nested_member_value;
 												StringHandle nested_member_name_handle = nested_member.getName();
 												
 												if (member_values.count(nested_member_name_handle)) {
 													const ASTNode& init_expr = *member_values[nested_member_name_handle];
-													if (init_expr.is<ExpressionNode>()) {
+														
+													// Check if this is a nested braced initializer (two-level nesting)
+													if (init_expr.is<InitializerListNode>()) {
+														// Handle nested braced initializers using the recursive helper
+														const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
+															
+														// Get the type info for the nested member
+														TypeIndex nested_member_type_index = nested_member.type_index;
+														if (nested_member_type_index < gTypeInfo.size()) {
+															const TypeInfo& nested_member_type_info = gTypeInfo[nested_member_type_index];
+																
+															// If this is a struct type, use the recursive helper
+															if (nested_member_type_info.struct_info_ && !nested_member_type_info.struct_info_->members.empty()) {
+																generateNestedMemberStores(
+																	*nested_member_type_info.struct_info_,
+																	nested_init_list,
+																	StringTable::getOrInternStringHandle("this"),
+																	static_cast<int>(member.offset + nested_member.offset),
+																	node.name_token()
+																);
+																continue;  // Skip the nested member store
+															} else {
+																// For non-struct types with single-element initializer lists
+																const auto& nested_initializers = nested_init_list.initializers();
+																if (nested_initializers.size() == 1 && nested_initializers[0].is<ExpressionNode>()) {
+																	auto nested_init_operands = visitExpressionNode(nested_initializers[0].as<ExpressionNode>());
+																	if (std::holds_alternative<TempVar>(nested_init_operands[2])) {
+																		nested_member_value = std::get<TempVar>(nested_init_operands[2]);
+																	} else if (std::holds_alternative<unsigned long long>(nested_init_operands[2])) {
+																		nested_member_value = std::get<unsigned long long>(nested_init_operands[2]);
+																	} else if (std::holds_alternative<double>(nested_init_operands[2])) {
+																		nested_member_value = std::get<double>(nested_init_operands[2]);
+																	} else if (std::holds_alternative<StringHandle>(nested_init_operands[2])) {
+																		nested_member_value = std::get<StringHandle>(nested_init_operands[2]);
+																	}
+																}
+															}
+														}
+													} else if (init_expr.is<ExpressionNode>()) {
 														auto init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 														if (std::holds_alternative<TempVar>(init_operands[2])) {
 															nested_member_value = std::get<TempVar>(init_operands[2]);
@@ -3591,31 +3767,26 @@ private:
 															nested_member_value = std::get<double>(init_operands[2]);
 														} else if (std::holds_alternative<StringHandle>(init_operands[2])) {
 															nested_member_value = std::get<StringHandle>(init_operands[2]);
-														} else {
-															nested_member_value = 0ULL;
 														}
-													} else {
-														nested_member_value = 0ULL;
 													}
-												} else {
-													// Zero-initialize unspecified nested members
-													nested_member_value = 0ULL;
 												}
 												
-												// Generate nested member store
-												MemberStoreOp nested_member_store;
-												nested_member_store.value.type = nested_member.type;
-												nested_member_store.value.size_in_bits = static_cast<int>(nested_member.size * 8);
-												nested_member_store.value.value = nested_member_value;
-												nested_member_store.object = StringTable::getOrInternStringHandle("this");
-												nested_member_store.member_name = nested_member.getName();
-												// Calculate offset: parent member offset + nested member offset
-												nested_member_store.offset = static_cast<int>(member.offset + nested_member.offset);
-												nested_member_store.is_reference = nested_member.is_reference;
-												nested_member_store.is_rvalue_reference = nested_member.is_rvalue_reference;
-												nested_member_store.struct_type_info = nullptr;
+												if (nested_member_value.has_value()) {
+													// Generate nested member store
+													MemberStoreOp nested_member_store;
+													nested_member_store.value.type = nested_member.type;
+													nested_member_store.value.size_in_bits = static_cast<int>(nested_member.size * 8);
+													nested_member_store.value.value = nested_member_value.value();
+													nested_member_store.object = StringTable::getOrInternStringHandle("this");
+													nested_member_store.member_name = nested_member.getName();
+													// Calculate offset: parent member offset + nested member offset
+													nested_member_store.offset = static_cast<int>(member.offset + nested_member.offset);
+													nested_member_store.is_reference = nested_member.is_reference;
+													nested_member_store.is_rvalue_reference = nested_member.is_rvalue_reference;
+													nested_member_store.struct_type_info = nullptr;
 												
-												ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(nested_member_store), node.name_token()));
+													ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(nested_member_store), node.name_token()));
+												}
 											}
 											
 											// Skip the outer member store since we've already generated nested stores
@@ -3656,19 +3827,42 @@ private:
 									}
 								}
 							} else {
-								// Zero-initialize based on type
-								if (member.type == Type::Int || member.type == Type::Long ||
-								    member.type == Type::Short || member.type == Type::Char) {
-									member_value = 0ULL;  // Zero for integer types
-								} else if (member.type == Type::Float || member.type == Type::Double) {
-									member_value = 0.0;  // Zero for floating-point types
-								} else if (member.type == Type::Bool) {
-									member_value = 0ULL;  // False for bool (0)
+								// Check if this is a struct type with a constructor
+								bool is_struct_with_constructor = false;
+								if (member.type == Type::Struct && member.type_index < gTypeInfo.size()) {
+									const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+									if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
+										is_struct_with_constructor = true;
+									}
+								}
+								
+								if (is_struct_with_constructor) {
+									// Call the nested struct's default constructor instead of zero-initializing
+									const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+									ConstructorCallOp ctor_op;
+									ctor_op.struct_name = member_type_info.name();
+									ctor_op.object = StringTable::getOrInternStringHandle("this");
+									// No arguments for default constructor
+									// Use base_class_offset to specify the member's offset within the parent struct
+									assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
+									ctor_op.base_class_offset = static_cast<int>(member.offset);
+									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+									continue;  // Skip the MemberStore since constructor handles initialization
 								} else {
-									member_value = 0ULL;  // Default to zero
+									// Zero-initialize based on type
+									if (member.type == Type::Int || member.type == Type::Long ||
+									    member.type == Type::Short || member.type == Type::Char) {
+										member_value = 0ULL;  // Zero for integer types
+									} else if (member.type == Type::Float || member.type == Type::Double) {
+										member_value = 0.0;  // Zero for floating-point types
+									} else if (member.type == Type::Bool) {
+										member_value = 0ULL;  // False for bool (0)
+									} else {
+										member_value = 0ULL;  // Default to zero
+									}
 								}
 							}
-
+	
 							MemberStoreOp member_store;
 							member_store.value.type = member.type;
 							member_store.value.size_in_bits = static_cast<int>(member.size * 8);
@@ -3679,7 +3873,7 @@ private:
 							member_store.is_reference = member.is_reference;
 							member_store.is_rvalue_reference = member.is_rvalue_reference;
 							member_store.struct_type_info = nullptr;
-
+	
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 						}
 					}
@@ -3779,19 +3973,42 @@ private:
 								}
 							}
 						} else {
-							// Zero-initialize based on type
-							if (member.type == Type::Int || member.type == Type::Long ||
-							    member.type == Type::Short || member.type == Type::Char) {
-								member_value = 0ULL;  // Zero for integer types
-							} else if (member.type == Type::Float || member.type == Type::Double) {
-								member_value = 0.0;  // Zero for floating-point types
-							} else if (member.type == Type::Bool) {
-								member_value = 0ULL;  // False for bool (0)
+							// Check if this is a struct type with a constructor
+							bool is_struct_with_constructor = false;
+							if (member.type == Type::Struct && member.type_index < gTypeInfo.size()) {
+								const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+								if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
+									is_struct_with_constructor = true;
+								}
+							}
+							
+							if (is_struct_with_constructor) {
+								// Call the nested struct's default constructor instead of zero-initializing
+								const TypeInfo& member_type_info = gTypeInfo[member.type_index];
+								ConstructorCallOp ctor_op;
+								ctor_op.struct_name = member_type_info.name();
+								ctor_op.object = StringTable::getOrInternStringHandle("this");
+								// No arguments for default constructor
+								// Use base_class_offset to specify the member's offset within the parent struct
+								assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
+								ctor_op.base_class_offset = static_cast<int>(member.offset);
+								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+								continue;  // Skip the MemberStore since constructor handles initialization
 							} else {
-								member_value = 0ULL;  // Default to zero
+								// Zero-initialize based on type
+								if (member.type == Type::Int || member.type == Type::Long ||
+								    member.type == Type::Short || member.type == Type::Char) {
+									member_value = 0ULL;  // Zero for integer types
+								} else if (member.type == Type::Float || member.type == Type::Double) {
+									member_value = 0.0;  // Zero for floating-point types
+								} else if (member.type == Type::Bool) {
+									member_value = 0ULL;  // False for bool (0)
+								} else {
+									member_value = 0ULL;  // Default to zero
+								}
 							}
 						}
-
+	
 						MemberStoreOp member_store;
 						member_store.value.type = member.type;
 						member_store.value.size_in_bits = static_cast<int>(member.size * 8);
@@ -6207,11 +6424,36 @@ private:
 									StringHandle member_name_handle = member.getName();
 									if (member_values.count(member_name_handle)) {
 										const ASTNode& init_expr = *member_values[member_name_handle];
+										
+										// Check if this is a nested braced initializer (InitializerListNode)
+										if (init_expr.is<InitializerListNode>()) {
+											// Nested braced initializer - handle it recursively using the helper function
+											const InitializerListNode& nested_init_list = init_expr.as<InitializerListNode>();
+											
+											// Get the type info for the nested member
+											TypeIndex nested_member_type_index = member.type_index;
+											if (nested_member_type_index < gTypeInfo.size()) {
+												const TypeInfo& nested_member_type_info = gTypeInfo[nested_member_type_index];
+												
+												// If this is a struct type, use the recursive helper
+												if (nested_member_type_info.struct_info_ && !nested_member_type_info.struct_info_->members.empty()) {
+													generateNestedMemberStores(
+													    *nested_member_type_info.struct_info_,
+													    nested_init_list,
+													    StringTable::getOrInternStringHandle(decl.identifier_token().value()),
+													    static_cast<int>(member.offset),
+													    decl.identifier_token()
+													);
+													continue;  // Skip the outer member store
+												}
+											}
+										}
+
 										std::vector<IrOperand> init_operands;
 										if (init_expr.is<ExpressionNode>()) {
 											init_operands = visitExpressionNode(init_expr.as<ExpressionNode>());
 										} else {
-											assert(false && "Initializer must be an ExpressionNode");
+											assert(false && "Initializer must be an ExpressionNode or InitializerListNode");
 										}
 
 										if (init_operands.size() >= 3) {
