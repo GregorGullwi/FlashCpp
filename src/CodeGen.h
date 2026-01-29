@@ -16331,21 +16331,14 @@ private:
 								const StructTypeInfo* struct_info = type_info.getStructInfo();
 								if (struct_info) {
 									element_size_bits = static_cast<int>(struct_info->total_size * 8);
-										}
-							// For array references (e.g., int (&arr)[3]), size_in_bits() returns total size
-							// We need to divide by array count to get element size
-							if ((type_node.is_reference() || type_node.is_rvalue_reference()) && type_node.array_size().has_value()) {
-								size_t array_count = *type_node.array_size();
-								if (array_count > 0) {
-									element_size_bits = element_size_bits / static_cast<int>(array_count);
 								}
-					}
 							}
 						}
 					}
-					// Check if this array is accessed through a reference (e.g., int (&arr)[3])
-					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-						is_pointer_to_array = true;  // Reference to array needs indirection
+					// For array parameters with explicit size (e.g., reference-to-array params),
+					// we need pointer indirection
+					if (type_node.is_array() && decl_ptr->array_size().has_value()) {
+						is_pointer_to_array = true;
 					}
 					// For pointer types or reference types (not arrays), get the pointee size
 					else if (type_node.pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference()) {
