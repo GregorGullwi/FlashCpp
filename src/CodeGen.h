@@ -17525,11 +17525,26 @@ private:
 								const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
 								
 								// Get the element type size
-								// For arrays, size_in_bits represents the element size
 								int element_size_bits = var_type.size_in_bits();
 								if (element_size_bits == 0) {
 									element_size_bits = get_type_size_bits(var_type.type());
 								}
+								
+								// Handle struct element types
+								if (element_size_bits == 0 && var_type.type() == Type::Struct) {
+									size_t type_index = var_type.type_index();
+									if (type_index < gTypeInfo.size()) {
+										const TypeInfo& type_info = gTypeInfo[type_index];
+										const StructTypeInfo* struct_info = type_info.getStructInfo();
+										if (struct_info) {
+											size_in_bytes = struct_info->total_size;
+											FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): array=", id_node.name(), 
+											          " struct element_size=", size_in_bytes);
+											return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+										}
+									}
+								}
+								
 								size_in_bytes = element_size_bits / 8;
 								
 								FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): array=", id_node.name(), 
@@ -17539,6 +17554,10 @@ private:
 								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
 							}
 						}
+						
+						// If we couldn't resolve compile-time, log and fall through
+						FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Could not resolve '", id_node.name(), 
+						          "' at compile-time, falling back to IR generation");
 					}
 				}
 			}
