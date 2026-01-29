@@ -990,6 +990,7 @@ struct CallOp {
 	bool is_variadic = false;             // 1 byte
 	bool uses_return_slot = false;        // 1 byte - True if using hidden return parameter for RVO
 	bool is_indirect_call = false;        // 1 byte - True if calling through function pointer/reference
+	bool returns_rvalue_reference = false; // 1 byte - True if function returns T&&
 	std::optional<TempVar> return_slot;   // Optional temp var representing the return slot location
 	
 	// Helper to get function_name as StringHandle

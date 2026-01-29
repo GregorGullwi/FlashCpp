@@ -8702,9 +8702,20 @@ private:
 					TempVar lvalue_temp = var_counter.next();
 					FLASH_LOG_FORMAT(Codegen, Debug, "Reference LValueAddress: Creating TempVar {} for reference '{}'", 
 						lvalue_temp.var_number, identifierNode.name());
+					
+					// Generate Assignment to copy the pointer value from the reference parameter to the temp
+					StringHandle var_handle = StringTable::getOrInternStringHandle(identifierNode.name());
+					AssignmentOp assign_op;
+					assign_op.result = lvalue_temp;
+					assign_op.lhs = TypedValue{pointee_type, 64, lvalue_temp};  // 64-bit pointer dest
+					assign_op.rhs = TypedValue{pointee_type, 64, var_handle};  // 64-bit pointer source
+					assign_op.is_pointer_store = false;
+					assign_op.dereference_rhs_references = false;  // Don't dereference - just copy the pointer!
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
+					
 					LValueInfo lvalue_info(
 						LValueInfo::Kind::Indirect,
-						StringTable::getOrInternStringHandle(identifierNode.name()),  // The reference variable name
+						lvalue_temp,  // Use the temp var holding the address, not the parameter name
 						0  // offset is 0 for simple dereference
 					);
 					setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info));
@@ -14297,6 +14308,7 @@ private:
 			: static_cast<int>(return_type.size_in_bits());
 		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
+		call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
 		
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
 		bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0);
@@ -14370,6 +14382,14 @@ private:
 
 		// Add the function call instruction with typed payload
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
+
+		// For functions returning rvalue references, mark the result as an xvalue
+		// This prevents taking the address of the result when passing to another function
+		if (return_type.is_rvalue_reference()) {
+			// Create lvalue info indicating this is a Direct value (the function returns the address directly)
+			LValueInfo lvalue_info(LValueInfo::Kind::Direct, ret_var, 0);
+			setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.type(), static_cast<int>(return_type.size_in_bits())));
+		}
 
 		// Return the result variable with its type and size
 		// For references, return 64-bit size (address size)
