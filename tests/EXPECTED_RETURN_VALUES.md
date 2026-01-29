@@ -8,12 +8,12 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-28
+**Last Run:** 2026-01-29
 
 **Total files tested:** 961
-**Valid returns:** 943
-**Return mismatches:** 18
-**Runtime crashes:** 0
+**Valid returns:** 945
+**Return mismatches:** 16
+**Runtime crashes:** 5
 **Ignored files:** 0
 **Compile failures:** 0
 **Link failures:** 0
@@ -21,9 +21,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 ## Known Return Mismatches
 
   template_multi_param_ret63.cpp
-  test_c_style_casts_ret65.cpp
   test_ctad_struct_lifecycle_ret0.cpp
-  test_exceptions_nested_ret0.cpp
   test_feature_macros_ret0.cpp
   test_lambda_copy_this_multiple_lambdas_ret84.cpp
   test_member_alias_in_partial_spec_ret0.cpp
@@ -42,7 +40,11 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Runtime Crashes
 
-No tests currently crash at runtime.
+  test_array_brace_init_ret0.cpp
+  test_exceptions_nested_ret0.cpp
+  test_pointer_arithmetic_ret20.cpp
+  test_range_for_const_ref_ret88.cpp
+  test_sizeof_complex_expr_ret28.cpp
 
 ## Notes
 
