@@ -6746,6 +6746,20 @@ private:
 					result_offset);
 			}
 			
+			// Mark rvalue reference returns in reference_stack_info_ so they are treated as pointers
+			// This is needed for proper handling when passing rvalue reference results to other functions
+			if (call_op.returns_rvalue_reference) {
+				reference_stack_info_[result_offset] = ReferenceInfo{
+					.value_type = call_op.return_type,
+					.value_size_bits = call_op.return_size_in_bits,
+					.is_rvalue_reference = true,
+					.holds_address_only = true  // The function returned a pointer/address
+				};
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Marked function call result at offset {} as rvalue reference (holds address)",
+					result_offset);
+			}
+			
 			// No stack cleanup needed after call:
 			// - Windows x64 ABI: Uses pre-allocated shadow space, not PUSH
 			// - Linux System V AMD64: Arguments in registers or pushed before call, stack pointer already adjusted
