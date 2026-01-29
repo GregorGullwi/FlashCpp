@@ -17524,36 +17524,68 @@ private:
 							if (decl) {
 								const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
 								
-								// Get the element type size
-								int element_size_bits = var_type.size_in_bits();
-								if (element_size_bits == 0) {
-									element_size_bits = get_type_size_bits(var_type.type());
+								// Get the base element type size
+								size_t element_size = var_type.size_in_bits() / 8;
+								if (element_size == 0) {
+									element_size = get_type_size_bits(var_type.type()) / 8;
 								}
 								
 								// Handle struct element types
-								if (element_size_bits == 0 && var_type.type() == Type::Struct) {
+								if (element_size == 0 && var_type.type() == Type::Struct) {
 									size_t type_index = var_type.type_index();
 									if (type_index < gTypeInfo.size()) {
 										const TypeInfo& type_info = gTypeInfo[type_index];
 										const StructTypeInfo* struct_info = type_info.getStructInfo();
 										if (struct_info) {
-											size_in_bytes = struct_info->total_size;
-											FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): array=", id_node.name(), 
-											          " struct element_size=", size_in_bytes);
-											return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+											element_size = struct_info->total_size;
 										}
 									}
 								}
 								
-								size_in_bytes = element_size_bits / 8;
+								// For multidimensional arrays, arr[0] should return size of the sub-array
+								// e.g., for int arr[3][4], sizeof(arr[0]) = sizeof(int[4]) = 16
+								const auto& dims = decl->array_dimensions();
+								if (dims.size() > 1) {
+									// Calculate sub-array size: element_size * product of all dims except first
+									size_t sub_array_count = 1;
+									ConstExpr::EvaluationContext ctx(symbol_table);
+									
+									for (size_t i = 1; i < dims.size(); ++i) {
+										auto eval_result = ConstExpr::Evaluator::evaluate(dims[i], ctx);
+										if (!eval_result.success()) {
+											// Can't evaluate dimension at compile time, fall through to IR generation
+											FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Could not evaluate dimension ", i, 
+											          " for '", id_node.name(), "', falling back to IR generation");
+											goto fallback_to_ir;
+										}
+										
+										long long dim_size = eval_result.as_int();
+										if (dim_size <= 0) {
+											FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Invalid dimension size ", dim_size, 
+											          " for '", id_node.name(), "'");
+											goto fallback_to_ir;
+										}
+										
+										sub_array_count *= static_cast<size_t>(dim_size);
+									}
+									
+									size_in_bytes = element_size * sub_array_count;
+									FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): multidim array=", id_node.name(), 
+									          " element_size=", element_size, " sub_array_count=", sub_array_count,
+									          " total=", size_in_bytes);
+								} else {
+									// Single dimension or non-array, just return element size
+									size_in_bytes = element_size;
+									FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): array=", id_node.name(), 
+									          " element_size=", size_in_bytes);
+								}
 								
-								FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): array=", id_node.name(), 
-								          " element_size=", size_in_bytes);
-								
-								// Return the element size without generating runtime IR
+								// Return the size without generating runtime IR
 								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
 							}
 						}
+						
+						fallback_to_ir:
 						
 						// If we couldn't resolve compile-time, log and fall through
 						FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Could not resolve '", id_node.name(), 
