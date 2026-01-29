@@ -13023,9 +13023,6 @@ private:
 					// For pointer array elements, always use element_size_bits (64) not op.value.size_in_bits
 					// This ensures pointers are loaded as 64-bit values, not sign-extended 32-bit ints
 					int actual_size_bits = element_size_bits;
-					FLASH_LOG_FORMAT(Codegen, Debug, 
-						"ArrayStore: Loading value for store: element_size_bits={}, op.value.size_in_bits={}, actual_size_bits={}",
-						element_size_bits, op.value.size_in_bits, actual_size_bits);
 					
 					// Check if value is already in a register
 					if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {

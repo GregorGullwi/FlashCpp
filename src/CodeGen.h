@@ -16341,7 +16341,8 @@ private:
 						is_pointer_to_array = true;
 					}
 					// For pointer types or reference types (not arrays), get the pointee size
-					else if (type_node.pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference()) {
+					// BUT: Skip this if we already handled an array of pointers above (decl_ptr->is_array() case)
+					else if (!decl_ptr->is_array() && (type_node.pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference())) {
 						// Get the base type size (what the pointer points to)
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
 						is_pointer_to_array = true;  // This is a pointer or reference, not an actual array
