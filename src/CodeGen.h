@@ -16337,8 +16337,16 @@ private:
 					}
 					// For array parameters with explicit size (e.g., reference-to-array params),
 					// we need pointer indirection
+					// NOTE: Local arrays with explicit size (e.g., int arr[3]) are NOT pointers
+					// EXCEPTION: Reference-to-array parameters (e.g., int (&arr)[3]) ARE pointers
 					if (type_node.is_array() && decl_ptr->array_size().has_value()) {
-						is_pointer_to_array = true;
+						// Check if this is a reference to an array (parameter)
+						// References to arrays need pointer indirection
+						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
+							is_pointer_to_array = true;
+						}
+						// Local arrays with explicit size are NOT pointers (they're actual arrays on stack)
+						// We don't set is_pointer_to_array for non-reference arrays
 					}
 					// For pointer types or reference types (not arrays), get the pointee size
 					// BUT: Skip this if we already handled an array of pointers above (decl_ptr->is_array() case)
