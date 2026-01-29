@@ -17501,6 +17501,47 @@ private:
 					}
 				}
 			}
+			// Special handling for array subscript: sizeof(arr[0]) 
+			// This should not generate runtime code - just get the element type
+			else if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+				const ArraySubscriptNode& array_subscript = std::get<ArraySubscriptNode>(expr);
+				const ASTNode& array_expr_node = array_subscript.array_expr();
+				
+				// Check if the array expression is an identifier
+				if (array_expr_node.is<ExpressionNode>()) {
+					const ExpressionNode& array_expr = array_expr_node.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(array_expr)) {
+						const IdentifierNode& id_node = std::get<IdentifierNode>(array_expr);
+						
+						// Look up the array identifier in the symbol table
+						std::optional<ASTNode> symbol = symbol_table.lookup(id_node.name());
+						if (!symbol.has_value() && global_symbol_table_) {
+							symbol = global_symbol_table_->lookup(id_node.name());
+						}
+						
+						if (symbol.has_value()) {
+							const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+							if (decl) {
+								const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
+								
+								// Get the element type size
+								// For arrays, size_in_bits represents the element size
+								int element_size_bits = var_type.size_in_bits();
+								if (element_size_bits == 0) {
+									element_size_bits = get_type_size_bits(var_type.type());
+								}
+								size_in_bytes = element_size_bits / 8;
+								
+								FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): array=", id_node.name(), 
+								          " element_size=", size_in_bytes);
+								
+								// Return the element size without generating runtime IR
+								return { Type::UnsignedLongLong, 64, static_cast<unsigned long long>(size_in_bytes) };
+							}
+						}
+					}
+				}
+			}
 
 			// Fall back to default expression handling
 			// Generate IR for the expression to get its type
