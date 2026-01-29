@@ -11,9 +11,9 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-29
 
 **Total files tested:** 961
-**Valid returns:** 944
-**Return mismatches:** 16
-**Runtime crashes:** 1
+**Valid returns:** 946
+**Return mismatches:** 13
+**Runtime crashes:** 2
 **Ignored files:** 0
 **Compile failures:** 0
 **Link failures:** 0
@@ -33,14 +33,12 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
   test_sfinae_same_name_overload_ret0.cpp
   test_spec_func_ptr_ret0.cpp
   test_spec_init_simple_ret0.cpp
-  test_std_move_support_ret0.cpp
-  test_xvalue_all_casts_ret0.cpp
-  test_xvalue_move_ret0.cpp
 
 
 ## Runtime Crashes
 
   test_exceptions_nested_ret0.cpp
+  test_xvalue_all_casts_ret0.cpp
 
 ## Notes
 
