@@ -814,8 +814,8 @@ public:
 				}
 			}
 			
-			// Generate trivial default constructor if no constructor exists
-			if (!has_constructor) {
+			// Generate trivial default constructor if no constructor exists and it's not deleted
+			if (!has_constructor && !struct_info->isDefaultConstructorDeleted()) {
 				FLASH_LOG(Codegen, Debug, "Generating trivial constructor for ", type_name);
 
 				// Use the pattern from visitConstructorDeclarationNode
@@ -6176,7 +6176,8 @@ private:
 								// Special case: if empty initializer list and struct needs a trivial default constructor
 								// This handles template specializations where the constructor is generated later
 								if (!use_direct_member_init && num_initializers == 0 &&
-								    !struct_info.hasAnyConstructor() && struct_info.needs_default_constructor) {
+								    !struct_info.hasAnyConstructor() && struct_info.needs_default_constructor &&
+								    !struct_info.isDefaultConstructorDeleted()) {
 									has_matching_constructor = true;
 									matching_ctor = nullptr;
 								}
@@ -6428,6 +6429,14 @@ private:
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 							} else {
 								// No constructor - use direct member initialization
+								// But first check if default constructor is deleted
+								if (num_initializers == 0 && struct_info.isDefaultConstructorDeleted()) {
+									std::string_view error_msg = StringBuilder().append("Cannot default-initialize struct ")
+										.append(StringTable::getStringView(struct_info.name))
+										.append(" - default constructor is deleted").commit();
+									throw std::runtime_error(std::string(error_msg));
+								}
+
 								// Build a map of member names to initializer expressions
 								std::unordered_map<StringHandle, const ASTNode*> member_values;
 								size_t positional_index = 0;

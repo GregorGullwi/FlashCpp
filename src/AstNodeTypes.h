@@ -2577,6 +2577,15 @@ public:
 		return enclosing_class_;
 	}
 
+	// Deleted special member function tracking
+	void mark_deleted_default_constructor() { has_deleted_default_constructor_ = true; }
+	void mark_deleted_copy_constructor() { has_deleted_copy_constructor_ = true; }
+	void mark_deleted_move_constructor() { has_deleted_move_constructor_ = true; }
+
+	bool has_deleted_default_constructor() const { return has_deleted_default_constructor_; }
+	bool has_deleted_copy_constructor() const { return has_deleted_copy_constructor_; }
+	bool has_deleted_move_constructor() const { return has_deleted_move_constructor_; }
+
 	bool is_nested() const {
 		return enclosing_class_ != nullptr;
 	}
@@ -2614,6 +2623,9 @@ private:
 	bool is_class_;  // true for class, false for struct
 	bool is_union_;  // true for union, false for struct/class
 	bool is_final_ = false;  // true if declared with 'final' keyword
+	bool has_deleted_default_constructor_ = false;  // Track deleted default constructor
+	bool has_deleted_copy_constructor_ = false;     // Track deleted copy constructor
+	bool has_deleted_move_constructor_ = false;     // Track deleted move constructor
 	std::vector<DeferredStaticAssert> deferred_static_asserts_;  // Static_asserts deferred during template definition
 };
 
