@@ -11,9 +11,9 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-29
 
 **Total files tested:** 961
-**Valid returns:** 945
+**Valid returns:** 941
 **Return mismatches:** 16
-**Runtime crashes:** 5
+**Runtime crashes:** 4
 **Ignored files:** 0
 **Compile failures:** 0
 **Link failures:** 0
@@ -42,7 +42,6 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
   test_array_brace_init_ret0.cpp
   test_exceptions_nested_ret0.cpp
-  test_pointer_arithmetic_ret20.cpp
   test_range_for_const_ref_ret88.cpp
   test_sizeof_complex_expr_ret28.cpp
 

@@ -13020,19 +13020,24 @@ private:
 					}
 				} else {
 					// Integer/pointer value
+					// For pointer array elements, always use element_size_bits (64) not op.value.size_in_bits
+					// This ensures pointers are loaded as 64-bit values, not sign-extended 32-bit ints
+					int actual_size_bits = element_size_bits;
+					
 					// Check if value is already in a register
 					if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
 						// Value is already in a register - move it to RDX if not already there
 						if (value_reg.value() != X64Register::RDX) {
-							auto move_op = regAlloc.get_reg_reg_move_op_code(X64Register::RDX, value_reg.value(), op.value.size_in_bits / 8);
+							auto move_op = regAlloc.get_reg_reg_move_op_code(X64Register::RDX, value_reg.value(), actual_size_bits / 8);
 							textSectionData.insert(textSectionData.end(), move_op.op_codes.begin(), move_op.op_codes.begin() + move_op.size_in_bytes);
 						}
 						// If already in RDX, no move needed
 					} else {
 						// Not in register - load from stack
+						// Use element_size_bits to ensure pointers are loaded correctly as 64-bit
 						emitMovFromFrameSized(
 							SizedRegister{X64Register::RDX, 64, false},  // dest: 64-bit register
-							SizedStackSlot{static_cast<int32_t>(value_offset), op.value.size_in_bits, isSignedType(op.value.type)}  // source: value from stack
+							SizedStackSlot{static_cast<int32_t>(value_offset), actual_size_bits, false}  // source: Never sign-extend pointers!
 						);
 					}
 				}
