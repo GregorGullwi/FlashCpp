@@ -11,8 +11,8 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-28
 
 **Total files tested:** 961
-**Valid returns:** 942
-**Return mismatches:** 19
+**Valid returns:** 943
+**Return mismatches:** 18
 **Runtime crashes:** 0
 **Ignored files:** 0
 **Compile failures:** 0
@@ -21,7 +21,6 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 ## Known Return Mismatches
 
   template_multi_param_ret63.cpp
-  test_array_static_size_ret0.cpp
   test_c_style_casts_ret65.cpp
   test_ctad_struct_lifecycle_ret0.cpp
   test_exceptions_nested_ret0.cpp
