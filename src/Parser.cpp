@@ -28027,12 +28027,52 @@ ParseResult Parser::parse_template_declaration() {
 								} else if (peek_token()->value() == "delete") {
 									consume_token();
 									is_deleted = true;
-									
+
 									if (!consume_punctuator(";")) {
 										gSymbolTable.exit_scope();
 										return ParseResult::error("Expected ';' after '= delete'", *peek_token());
 									}
-									
+
+									// Determine what kind of constructor this is based on parameters
+									size_t num_params = ctor_ref.parameter_nodes().size();
+									bool is_copy_ctor = false;
+									bool is_move_ctor = false;
+
+									if (num_params == 1) {
+										// Check if the parameter is a reference to this type
+										const auto& param = ctor_ref.parameter_nodes()[0];
+										if (param.is<DeclarationNode>()) {
+											const auto& param_decl = param.as<DeclarationNode>();
+											const auto& type_node = param_decl.type_node();
+											if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
+												const auto& type_spec = type_node.as<TypeSpecifierNode>();
+												std::string_view param_type_name = type_spec.token().value();
+												// For template specializations, match against base template name
+												if (param_type_name == template_name ||
+												    param_type_name == instantiated_name) {
+													if (type_spec.is_rvalue_reference()) {
+														is_move_ctor = true;
+													} else if (type_spec.is_reference()) {
+														is_copy_ctor = true;
+													}
+												}
+											}
+										}
+									}
+
+									// Mark the deleted constructor in the struct AST node
+									if (is_copy_ctor) {
+										struct_ref.mark_deleted_copy_constructor();
+										FLASH_LOG(Templates, Debug, "Marked copy constructor as deleted in struct: ", instantiated_name);
+									} else if (is_move_ctor) {
+										struct_ref.mark_deleted_move_constructor();
+										FLASH_LOG(Templates, Debug, "Marked move constructor as deleted in struct: ", instantiated_name);
+									} else {
+										// Default constructor (no params or only optional params)
+										struct_ref.mark_deleted_default_constructor();
+										FLASH_LOG(Templates, Debug, "Marked default constructor as deleted in struct: ", instantiated_name);
+									}
+
 									gSymbolTable.exit_scope();
 									continue;
 								} else {
@@ -29045,12 +29085,52 @@ ParseResult Parser::parse_template_declaration() {
 								} else if (peek_token()->value() == "delete") {
 									consume_token();
 									is_deleted = true;
-									
+
 									if (!consume_punctuator(";")) {
 										gSymbolTable.exit_scope();
 										return ParseResult::error("Expected ';' after '= delete'", *peek_token());
 									}
-									
+
+									// Determine what kind of constructor this is based on parameters
+									size_t num_params = ctor_ref.parameter_nodes().size();
+									bool is_copy_ctor = false;
+									bool is_move_ctor = false;
+
+									if (num_params == 1) {
+										// Check if the parameter is a reference to this type
+										const auto& param = ctor_ref.parameter_nodes()[0];
+										if (param.is<DeclarationNode>()) {
+											const auto& param_decl = param.as<DeclarationNode>();
+											const auto& type_node = param_decl.type_node();
+											if (type_node.has_value() && type_node.is<TypeSpecifierNode>()) {
+												const auto& type_spec = type_node.as<TypeSpecifierNode>();
+												std::string_view param_type_name = type_spec.token().value();
+												// For template specializations, match against base template name
+												if (param_type_name == template_name ||
+												    param_type_name == instantiated_name) {
+													if (type_spec.is_rvalue_reference()) {
+														is_move_ctor = true;
+													} else if (type_spec.is_reference()) {
+														is_copy_ctor = true;
+													}
+												}
+											}
+										}
+									}
+
+									// Mark the deleted constructor in the struct AST node
+									if (is_copy_ctor) {
+										struct_ref.mark_deleted_copy_constructor();
+										FLASH_LOG(Templates, Debug, "Marked copy constructor as deleted in struct: ", instantiated_name);
+									} else if (is_move_ctor) {
+										struct_ref.mark_deleted_move_constructor();
+										FLASH_LOG(Templates, Debug, "Marked move constructor as deleted in struct: ", instantiated_name);
+									} else {
+										// Default constructor (no params or only optional params)
+										struct_ref.mark_deleted_default_constructor();
+										FLASH_LOG(Templates, Debug, "Marked default constructor as deleted in struct: ", instantiated_name);
+									}
+
 									gSymbolTable.exit_scope();
 									continue;
 								} else {
@@ -37822,13 +37902,54 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		struct_info->needs_default_constructor = !struct_info->hasAnyConstructor();
 
-		// Copy static members from the pattern
+		// Copy deleted special member function flags from the pattern AST node
+		// This is especially important for partial specializations where deleted constructors
+		// are tracked in the AST node but not yet in StructTypeInfo
+		FLASH_LOG(Templates, Debug, "Checking pattern AST node for deleted constructors: default=",
+			pattern_struct.has_deleted_default_constructor(), ", copy=",
+			pattern_struct.has_deleted_copy_constructor(), ", move=",
+			pattern_struct.has_deleted_move_constructor());
+		if (pattern_struct.has_deleted_default_constructor()) {
+			struct_info->has_deleted_default_constructor = true;
+			FLASH_LOG(Templates, Debug, "Copied has_deleted_default_constructor from pattern AST node");
+		}
+		if (pattern_struct.has_deleted_copy_constructor()) {
+			struct_info->has_deleted_copy_constructor = true;
+		}
+		if (pattern_struct.has_deleted_move_constructor()) {
+			struct_info->has_deleted_move_constructor = true;
+		}
+
+		// Also copy deleted constructor flags from the pattern's StructTypeInfo (if available)
 		// Get the pattern's StructTypeInfo
 		auto pattern_type_it = gTypesByName.find(pattern_struct.name());
 		if (pattern_type_it != gTypesByName.end()) {
 			const TypeInfo* pattern_type_info = pattern_type_it->second;
 			const StructTypeInfo* pattern_struct_info = pattern_type_info->getStructInfo();
 			if (pattern_struct_info) {
+				// Copy deleted constructor flags from pattern
+				if (pattern_struct_info->has_deleted_default_constructor) {
+					struct_info->has_deleted_default_constructor = true;
+				}
+				if (pattern_struct_info->has_deleted_copy_constructor) {
+					struct_info->has_deleted_copy_constructor = true;
+				}
+				if (pattern_struct_info->has_deleted_move_constructor) {
+					struct_info->has_deleted_move_constructor = true;
+				}
+				if (pattern_struct_info->has_deleted_copy_assignment) {
+					struct_info->has_deleted_copy_assignment = true;
+				}
+				if (pattern_struct_info->has_deleted_move_assignment) {
+					struct_info->has_deleted_move_assignment = true;
+				}
+				if (pattern_struct_info->has_deleted_destructor) {
+					struct_info->has_deleted_destructor = true;
+				}
+				FLASH_LOG(Templates, Debug, "Copied deleted constructor flags from pattern StructTypeInfo: default=",
+					pattern_struct_info->has_deleted_default_constructor, ", copy=",
+					pattern_struct_info->has_deleted_copy_constructor);
+
 				FLASH_LOG(Templates, Debug, "Copying ", pattern_struct_info->static_members.size(), " static members from pattern");
 				for (const auto& static_member : pattern_struct_info->static_members) {
 					FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.getName());
