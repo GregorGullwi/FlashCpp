@@ -4983,12 +4983,12 @@ private:
 			// and fall through to next check when false. Since both labels are forward references,
 			// we emit: test condition; jz next_check; jmp case_label
 			CondBranchOp cond_branch;
-			cond_branch.label_true = StringTable::getOrInternStringHandle(next_check_label); // Swap: jump to next if FALSE
-			cond_branch.label_false = StringTable::getOrInternStringHandle(case_label);      // This won't be used
+			cond_branch.label_true = StringTable::getOrInternStringHandle(case_label);       // Fall through to unconditional branch when TRUE
+			cond_branch.label_false = StringTable::getOrInternStringHandle(next_check_label); // Jump to next check when FALSE
 			cond_branch.condition = TypedValue{.type = Type::Bool, .size_in_bits = 1, .value = cmp_result};
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
-			// Unconditional branch to case label (when condition is true)
+			// Unconditional branch to case label (when condition is true, we fall through here)
 			BranchOp branch_to_case;
 			branch_to_case.target_label = StringTable::getOrInternStringHandle(case_label);
 			ir_.addInstruction(IrInstruction(IrOpcode::Branch, std::move(branch_to_case), Token()));
