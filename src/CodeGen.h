@@ -16335,11 +16335,16 @@ private:
 							}
 						}
 					}
-					// For pointer types (not arrays), get the pointee size
-					else if (type_node.pointer_depth() > 0) {
+					// For array parameters with explicit size (e.g., reference-to-array params),
+					// we need pointer indirection
+					if (type_node.is_array() && decl_ptr->array_size().has_value()) {
+						is_pointer_to_array = true;
+					}
+					// For pointer types or reference types (not arrays), get the pointee size
+					else if (type_node.pointer_depth() > 0 || type_node.is_reference() || type_node.is_rvalue_reference()) {
 						// Get the base type size (what the pointer points to)
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
-						is_pointer_to_array = true;  // This is a pointer, not an actual array
+						is_pointer_to_array = true;  // This is a pointer or reference, not an actual array
 					}
 				}
 			}

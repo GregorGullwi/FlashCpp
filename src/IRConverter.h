@@ -12804,6 +12804,7 @@ private:
 			TempVar result_var = op.result;
 			int element_size_bits = op.element_size_in_bits;
 			int element_size_bytes = element_size_bits / 8;
+			bool is_pointer_to_array = op.is_pointer_to_array;
 			
 			// Get the array base address
 			int64_t array_base_offset = 0;
@@ -12822,22 +12823,37 @@ private:
 			// Handle constant or variable index
 			if (std::holds_alternative<unsigned long long>(op.index.value)) {
 				uint64_t index_value = std::get<unsigned long long>(op.index.value);
-				int64_t element_offset = array_base_offset + (index_value * element_size_bytes);
-				
-				// LEA RAX, [RBP + element_offset]
-				textSectionData.push_back(0x48); // REX.W
-				textSectionData.push_back(0x8D); // LEA r64, m
-				
-				if (element_offset >= -128 && element_offset <= 127) {
-					textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
-					textSectionData.push_back(static_cast<uint8_t>(element_offset));
+
+				if (is_pointer_to_array) {
+					// Array is a pointer/reference - load it first, then add offset
+					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
+					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+						                    load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+
+					// Add element offset to pointer
+					int64_t offset_bytes = index_value * element_size_bytes;
+					if (offset_bytes != 0) {
+						emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
+					}
 				} else {
-					textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
-					uint32_t offset_u32 = static_cast<uint32_t>(static_cast<int32_t>(element_offset));
-					textSectionData.push_back(offset_u32 & 0xFF);
-					textSectionData.push_back((offset_u32 >> 8) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 16) & 0xFF);
-					textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+					// Array is a regular variable - use direct stack offset
+					int64_t element_offset = array_base_offset + (index_value * element_size_bytes);
+					
+					// LEA RAX, [RBP + element_offset]
+					textSectionData.push_back(0x48); // REX.W
+					textSectionData.push_back(0x8D); // LEA r64, m
+					
+					if (element_offset >= -128 && element_offset <= 127) {
+						textSectionData.push_back(0x45); // ModR/M: [RBP + disp8], RAX
+						textSectionData.push_back(static_cast<uint8_t>(element_offset));
+					} else {
+						textSectionData.push_back(0x85); // ModR/M: [RBP + disp32], RAX
+						uint32_t offset_u32 = static_cast<uint32_t>(static_cast<int32_t>(element_offset));
+						textSectionData.push_back(offset_u32 & 0xFF);
+						textSectionData.push_back((offset_u32 >> 8) & 0xFF);
+						textSectionData.push_back((offset_u32 >> 16) & 0xFF);
+						textSectionData.push_back((offset_u32 >> 24) & 0xFF);
+					}
 				}
 			} else if (std::holds_alternative<TempVar>(op.index.value)) {
 				TempVar index_var = std::get<TempVar>(op.index.value);
@@ -12852,8 +12868,15 @@ private:
 				// Multiply index by element size
 				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 				
+				if (is_pointer_to_array) {
+					// Array is a pointer/reference - load the pointer value first
+					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
+					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+						                    load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+				} else {
 				// Load address of array base into RAX
 				emitLeaFromFrame(X64Register::RAX, array_base_offset);
+				}
 				
 				// Add offset to get final address
 				emitAddRAXRCX(textSectionData);
@@ -12876,8 +12899,15 @@ private:
 				// Multiply index by element size
 				emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 				
+				if (is_pointer_to_array) {
+					// Array is a pointer/reference - load the pointer value first
+					auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
+					textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
+						                    load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
+				} else {
 				// Load address of array base into RAX
 				emitLeaFromFrame(X64Register::RAX, array_base_offset);
+				}
 				
 				// Add offset to get final address
 				emitAddRAXRCX(textSectionData);
