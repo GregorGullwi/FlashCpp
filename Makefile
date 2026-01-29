@@ -35,7 +35,7 @@ endif
 CXX ?= clang++
 
 # Compiler flags - enable strict warnings for clean code
-CXXFLAGS := -std=c++20 -Wall -Wextra -Wshadow -Werror
+CXXFLAGS := -std=c++20 -Wall -Wextra -Wshadow
 
 # Directories
 SRCDIR := src

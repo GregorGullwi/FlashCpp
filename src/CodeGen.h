@@ -6171,8 +6171,17 @@ private:
 								// Also consider constructors with default arguments
 								bool has_matching_constructor = false;
 								const ConstructorDeclarationNode* matching_ctor = nullptr;
-								if (!use_direct_member_init && struct_info.hasAnyConstructor()) {
 								size_t num_initializers = initializers.size();
+
+								// Special case: if empty initializer list and struct needs a trivial default constructor
+								// This handles template specializations where the constructor is generated later
+								if (!use_direct_member_init && num_initializers == 0 &&
+								    !struct_info.hasAnyConstructor() && struct_info.needs_default_constructor) {
+									has_matching_constructor = true;
+									matching_ctor = nullptr;
+								}
+
+								if (!has_matching_constructor && !use_direct_member_init && struct_info.hasAnyConstructor()) {
 								
 								// FIRST: Try to find copy constructor if we have exactly one initializer of the same struct type
 								// This ensures copy constructors are preferred over converting constructors

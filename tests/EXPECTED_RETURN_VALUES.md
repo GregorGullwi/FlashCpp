@@ -11,8 +11,8 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-29
 
 **Total files tested:** 961
-**Valid returns:** 946
-**Return mismatches:** 13
+**Valid returns:** 947
+**Return mismatches:** 12
 **Runtime crashes:** 2
 **Ignored files:** 0
 **Compile failures:** 0
@@ -32,7 +32,6 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
   test_rvo_mixed_types_ret0.cpp
   test_sfinae_same_name_overload_ret0.cpp
   test_spec_func_ptr_ret0.cpp
-  test_spec_init_simple_ret0.cpp
 
 
 ## Runtime Crashes
