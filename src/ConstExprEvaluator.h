@@ -686,6 +686,59 @@ private:
 					return EvalResult::from_int(static_cast<long long>(size_in_bytes));
 				}
 				
+				// Handle array subscript: sizeof(arr[index])
+				// For single dimension: returns element size
+				// For multidimensional (e.g. int arr[3][4]): sizeof(arr[0]) returns sizeof(int[4]) = 16
+				if (std::holds_alternative<ArraySubscriptNode>(expr)) {
+					const auto& array_subscript = std::get<ArraySubscriptNode>(expr);
+					const ASTNode& array_expr_node = array_subscript.array_expr();
+					
+					// Check if the array expression is an identifier
+					if (array_expr_node.is<ExpressionNode>()) {
+						const ExpressionNode& array_expr = array_expr_node.as<ExpressionNode>();
+						if (std::holds_alternative<IdentifierNode>(array_expr)) {
+							const auto& id_node = std::get<IdentifierNode>(array_expr);
+							
+							// Look up the array identifier in the symbol table
+							if (context.symbols) {
+								auto symbol = context.symbols->lookup(id_node.name());
+								if (symbol.has_value()) {
+									const DeclarationNode* decl = get_decl_from_symbol(*symbol);
+									if (decl && decl->is_array()) {
+										const auto& array_type_spec = decl->type_node().as<TypeSpecifierNode>();
+										size_t element_size = get_typespec_size_bytes(array_type_spec);
+										
+										// For multidimensional arrays, calculate sub-array size
+										const auto& dims = decl->array_dimensions();
+										if (dims.size() > 1) {
+											// Calculate size of sub-array: element_size * product of dims[1..]
+											long long sub_array_count = 1;
+											bool all_evaluated = true;
+											for (size_t i = 1; i < dims.size(); ++i) {
+												auto eval_result = evaluate(dims[i], context);
+												if (eval_result.success() && eval_result.as_int() > 0) {
+													sub_array_count *= eval_result.as_int();
+												} else {
+													all_evaluated = false;
+													break;
+												}
+											}
+											if (all_evaluated && element_size > 0) {
+												return EvalResult::from_int(static_cast<long long>(element_size * sub_array_count));
+											}
+										} else {
+											// Single dimension array, return element size
+											if (element_size > 0) {
+												return EvalResult::from_int(static_cast<long long>(element_size));
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				
 				// For other expressions, we would need full type inference
 				// which requires tracking expression types through the AST
 				// This is a compiler limitation, not a C++20 limitation
