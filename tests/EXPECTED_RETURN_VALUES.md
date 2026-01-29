@@ -12,8 +12,8 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 **Total files tested:** 961
 **Valid returns:** 947
-**Return mismatches:** 14
-**Runtime crashes:** 0
+**Return mismatches:** 12
+**Runtime crashes:** 2
 **Ignored files:** 0
 **Compile failures:** 0
 **Link failures:** 0
@@ -22,7 +22,6 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
   template_multi_param_ret63.cpp
   test_ctad_struct_lifecycle_ret0.cpp
-  test_exceptions_nested_ret0.cpp
   test_feature_macros_ret0.cpp
   test_lambda_copy_this_multiple_lambdas_ret84.cpp
   test_member_alias_in_partial_spec_ret0.cpp
@@ -33,12 +32,12 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
   test_rvo_mixed_types_ret0.cpp
   test_sfinae_same_name_overload_ret0.cpp
   test_spec_func_ptr_ret0.cpp
-  test_xvalue_all_casts_ret0.cpp
 
 
 ## Runtime Crashes
 
-  None
+  test_exceptions_nested_ret0.cpp
+  test_xvalue_all_casts_ret0.cpp
 
 ## Notes
 
