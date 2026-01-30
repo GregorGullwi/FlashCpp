@@ -3052,10 +3052,18 @@ private:
 			}
 		} else {
 			// User-defined function body
+			// Enter a scope for the function body to track destructors
+			enterScope();
 			const BlockNode& block = node.get_definition().value().as<BlockNode>();
 			block.get_statements().visit([&](ASTNode statement) {
 				visit(statement);
 			});
+		}
+
+		// Exit the function body scope and call destructors before returning
+		// Only do this for user-defined function bodies where we called enterScope()
+		if (!node.is_implicit() || !node.is_member_function()) {
+			exitScope();
 		}
 
 		// Add implicit return if needed
@@ -4639,8 +4647,8 @@ private:
 
 		if (enter_scope) {
 			// Exit scope and call destructors
-			ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
 			exitScope();
+			ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
 			symbol_table.exit_scope();
 		}
 	}
@@ -7111,7 +7119,7 @@ private:
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
 							// Register for destructor if needed
-							if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
+			if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
 								registerVariableWithDestructor(
 									std::string(decl.identifier_token().value()),
 									std::string(StringTable::getStringView(type_info.name()))
@@ -13603,7 +13611,7 @@ private:
 					int arg_size = std::get<int>(argumentIrOperands[1]);
 					IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 						using T = std::decay_t<decltype(arg)>;
-						if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, std::string_view> ||
+						if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
 						              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 							return arg;
 						} else {
@@ -13707,7 +13715,7 @@ private:
 							int arg_size = std::get<int>(argumentIrOperands[1]);
 							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 								using T = std::decay_t<decltype(arg)>;
-								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, std::string_view> ||
+								if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
 								              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 									return arg;
 								} else {
@@ -14865,7 +14873,7 @@ private:
 										int arg_size = std::get<int>(argumentIrOperands[1]);
 										IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 											using T = std::decay_t<decltype(arg)>;
-											if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, std::string_view> ||
+											if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
 											              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 												return arg;
 											} else {
@@ -15068,7 +15076,7 @@ private:
 								int arg_size = std::get<int>(argumentIrOperands[1]);
 								IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 									using T = std::decay_t<decltype(arg)>;
-									if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, std::string_view> ||
+									if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
 												  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 										return arg;
 									} else {

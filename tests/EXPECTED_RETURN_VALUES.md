@@ -11,19 +11,22 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-30
 
 **Total files tested:** 961
-**Valid returns:** 957
-**Return mismatches:** 4
+**Valid returns:** 958
+**Return mismatches:** 3
 **Runtime crashes:** 0 (1 expected crash handled correctly)
 **Ignored files:** 0
 **Compile failures:** 0
 **Link failures:** 0
 
+**Recent Fixes:**
+- Partial destructor fix (afd4a52): Fixed destructor call ordering and function-level scope tracking
+- Function pointer argument fix: Fixed indirect call arguments using StringHandle instead of 0
+
 ## Known Return Mismatches
 
-  test_ctad_struct_lifecycle_ret0.cpp
-  test_lambda_copy_this_multiple_lambdas_ret84.cpp
-  test_rvo_cannot_apply_ret0.cpp
-  test_spec_func_ptr_ret0.cpp
+  test_ctad_struct_lifecycle_ret0.cpp - Destructor not called for template instantiations
+  test_lambda_copy_this_multiple_lambdas_ret84.cpp - Lambda copy capture [*this] not working correctly
+  test_rvo_cannot_apply_ret0.cpp - Value not moved correctly in explicit std::move case
 
 ## Runtime Crashes
 
