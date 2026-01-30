@@ -16932,13 +16932,16 @@ private:
 						if (capture_kind_it != current_lambda_context_.capture_kinds.end() && 
 						    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
 							// [*this] capture: load from the copied object in __copy_this
-							int copy_this_offset = getClosureMemberOffset("__copy_this");
+							const StructTypeInfo* closure_struct = getCurrentClosureStruct();
+							const StructMember* copy_this_member = closure_struct ? closure_struct->findMember("__copy_this") : nullptr;
+							int copy_this_offset = copy_this_member ? static_cast<int>(copy_this_member->offset) : 0;
+							int copy_this_size_bits = copy_this_member ? static_cast<int>(copy_this_member->size * 8) : 64;
 							
 							TempVar copy_this_ref = var_counter.next();
 							MemberLoadOp load_copy_this;
 							load_copy_this.result.value = copy_this_ref;
 							load_copy_this.result.type = Type::Struct;
-							load_copy_this.result.size_in_bits = 64;  // Pointer size
+							load_copy_this.result.size_in_bits = copy_this_size_bits;  // Actual size of the copied struct
 							load_copy_this.object = StringTable::getOrInternStringHandle("this"sv);  // Lambda's this (the closure)
 							load_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 							load_copy_this.offset = copy_this_offset;
@@ -19998,7 +20001,7 @@ private:
 									store_copy_this.value.size_in_bits = static_cast<int>(enclosing_member.size * 8);
 									store_copy_this.value.value = loaded_value;
 									store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
-									store_copy_this.member_name = enclosing_member.getName();
+									store_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 									store_copy_this.offset = copy_base_offset + static_cast<int>(enclosing_member.offset);
 									store_copy_this.is_reference = enclosing_member.is_reference;
 									store_copy_this.is_rvalue_reference = enclosing_member.is_rvalue_reference;
