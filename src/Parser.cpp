@@ -41140,6 +41140,9 @@ if (struct_type_info.getStructInfo()) {
 					
 					// Add the substituted destructor to the instantiated struct
 					instantiated_struct_ref.add_destructor(new_dtor_node, mem_func.access);
+
+					// Also add to struct_info so hasDestructor() returns true during codegen
+					struct_info_ptr->addDestructor(new_dtor_node, mem_func.access, mem_func.is_virtual);
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for destructor ", 
 					          dtor_decl.name(), ": ", e.what());
@@ -41155,6 +41158,9 @@ if (struct_type_info.getStructInfo()) {
 					mem_func.function_declaration,
 					mem_func.access
 				);
+
+				// Also add to struct_info so hasDestructor() returns true during codegen
+				struct_info_ptr->addDestructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
 			}
 		} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
 			// Member template functions should be copied to the instantiated class as-is
