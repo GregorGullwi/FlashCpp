@@ -35,6 +35,6 @@ int main() {
     #endif
     
     // Should have EXPECTED_FEATURE_COUNT features defined
-    // Return 42 if all features are present, 0 otherwise
-    return (result == EXPECTED_FEATURE_COUNT) ? 42 : 0;
+    // Return 0 if all features are present, non-zero otherwise
+    return (result == EXPECTED_FEATURE_COUNT) ? 0 : result;
 }
