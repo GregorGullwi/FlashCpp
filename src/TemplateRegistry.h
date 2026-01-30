@@ -243,9 +243,15 @@ struct TemplateTypeArg {
 	bool isParameterPack() const {
 		return is_pack;
 	}
-	
+
 	// Get string representation for mangling
 	std::string toString() const {
+		// For dependent types/values, use the dependent_name if available
+		// This preserves template parameter names in placeholder types
+		if (is_dependent && dependent_name.isValid()) {
+			return std::string(StringTable::getStringView(dependent_name));
+		}
+
 		if (is_value) {
 			// For boolean values, use "true" or "false" instead of "1" or "0"
 			// This is important for template specialization matching

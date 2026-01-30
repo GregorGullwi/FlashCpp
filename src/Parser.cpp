@@ -26935,12 +26935,12 @@ ParseResult Parser::parse_template_declaration() {
 		bool has_unresolved_params = false;
 		StringHandle target_template_name;
 		std::vector<ASTNode> target_template_arg_nodes;
-		
-		if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) && 
+
+		if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
 		    type_spec.type_index() < gTypeInfo.size()) {
 			const TypeInfo& ti = gTypeInfo[type_spec.type_index()];
 			std::string_view type_name = StringTable::getStringView(ti.name());
-			
+
 			// Check for "_unknown" suffix indicating unresolved template parameters
 			if (type_name.find("_unknown") != std::string_view::npos) {
 				has_unresolved_params = true;
@@ -26956,6 +26956,25 @@ ParseResult Parser::parse_template_declaration() {
 				if (template_opt.has_value()) {
 					FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a primary template (instantiation was skipped due to dependent args) - using deferred instantiation");
 					has_unresolved_params = true;
+				}
+			}
+
+			// Also check if the type is a dependent placeholder (UserDefined type with
+			// a name containing our template parameter names)
+			// This catches cases like "integral_constant_bool_B" created by dependent template instantiation
+			if (!has_unresolved_params && type_spec.type() == Type::UserDefined) {
+				for (const auto& param_name : template_param_names) {
+					std::string_view param_sv = param_name.view();
+					// Check if the type name contains the parameter as a suffix (after underscore)
+					// Pattern: "..._<param>" like "integral_constant_bool_B"
+					size_t pos = type_name.rfind(param_sv);
+					if (pos != std::string_view::npos && pos > 0 && type_name[pos - 1] == '_' &&
+					    pos + param_sv.size() == type_name.size()) {
+						has_unresolved_params = true;
+						FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a dependent placeholder containing template param '",
+						          param_sv, "' - using deferred instantiation");
+						break;
+					}
 				}
 			}
 			
@@ -33560,20 +33579,24 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 						const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 						StringHandle param_name = tparam_ref.param_name();
+						// Store the dependent name for placeholder type generation
+						dependent_arg.dependent_name = param_name;
 						// Look up the template parameter type in gTypesByName
 						auto type_it = gTypesByName.find(param_name);
 						if (type_it != gTypesByName.end()) {
 							dependent_arg.type_index = type_it->second->type_index_;
-							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index, 
+							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index,
 							          " for template parameter '", StringTable::getStringView(param_name), "'");
 						}
 					} else if (std::holds_alternative<IdentifierNode>(expr)) {
 						const auto& id = std::get<IdentifierNode>(expr);
+						// Store the dependent name for placeholder type generation
+						dependent_arg.dependent_name = StringTable::getOrInternStringHandle(id.name());
 						// Check if this identifier is a template parameter by looking it up
 						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(id.name()));
 						if (type_it != gTypesByName.end()) {
 							dependent_arg.type_index = type_it->second->type_index_;
-							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index, 
+							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index,
 							          " for identifier '", id.name(), "'");
 						} else {
 							// Check if this identifier is a template alias (like void_t)
