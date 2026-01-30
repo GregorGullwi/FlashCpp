@@ -5126,6 +5126,10 @@ ParseResult Parser::parse_struct_declaration()
 			bool has_dependent_args = false;
 			auto contains_template_param = [this](StringHandle type_name_handle) -> bool {
 				std::string_view type_name = StringTable::getStringView(type_name_handle);
+				// Check if this looks like a mangled template name (contains underscores as separators)
+				// Mangled names like "is_integral__Tp" use underscore as separator
+				bool is_mangled_name = type_name.find('_') != std::string_view::npos;
+
 				for (const auto& param_name : current_template_param_names_) {
 					std::string_view param_sv = StringTable::getStringView(param_name);
 					// Check if type_name contains param_name as an identifier
@@ -5136,6 +5140,18 @@ ParseResult Parser::parse_struct_declaration()
 						bool end_ok = (pos + param_sv.size() >= type_name.size()) || (!std::isalnum(static_cast<unsigned char>(type_name[pos + param_sv.size()])) && type_name[pos + param_sv.size()] != '_');
 						if (start_ok && end_ok) {
 							return true;
+						}
+						// For mangled template names (like "is_integral__Tp"), underscore is a valid separator
+						// Allow matching when the param starts with _ and is preceded by another _
+						// e.g., "__Tp" in "is_integral__Tp" where param is "_Tp"
+						if (is_mangled_name && pos > 0 && type_name[pos - 1] == '_' && param_sv[0] == '_') {
+							// Check end boundary (must be end of string or followed by underscore/non-alnum)
+							bool relaxed_end_ok = (pos + param_sv.size() >= type_name.size()) ||
+							                      (type_name[pos + param_sv.size()] == '_') ||
+							                      (!std::isalnum(static_cast<unsigned char>(type_name[pos + param_sv.size()])));
+							if (relaxed_end_ok) {
+								return true;
+							}
 						}
 						pos = type_name.find(param_sv, pos + 1);
 					}
@@ -12261,6 +12277,23 @@ ParseResult Parser::parse_type_specifier()
 					}
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(
 						Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+				}
+
+				// If type not found and we have dependent template args, create a placeholder type
+				// with the full instantiated name (e.g., "is_function__Tp" instead of "is_function")
+				// This preserves the dependent type information for use in nested template instantiations
+				if (has_dependent_args) {
+					FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent template placeholder for '{}'", instantiated_name);
+					auto type_idx = StringTable::getOrInternStringHandle(instantiated_name);
+					auto& type_info = gTypeInfo.emplace_back();
+					type_info.type_ = Type::UserDefined;
+					type_info.type_index_ = gTypeInfo.size() - 1;
+					type_info.type_size_ = 0;  // Unknown size for dependent type
+					type_info.name_ = type_idx;
+					gTypesByName[type_idx] = &type_info;
+
+					return ParseResult::success(emplace_node<TypeSpecifierNode>(
+						Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
 				}
 				// If type not found, fall through to error handling below
 			}
