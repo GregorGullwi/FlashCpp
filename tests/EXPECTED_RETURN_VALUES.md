@@ -11,8 +11,8 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-30
 
 **Total files tested:** 961
-**Valid returns:** 951
-**Return mismatches:** 9
+**Valid returns:** 952
+**Return mismatches:** 8
 **Runtime crashes:** 1
 **Ignored files:** 0
 **Compile failures:** 0
@@ -23,7 +23,6 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
   test_ctad_struct_lifecycle_ret0.cpp
   test_feature_macros_ret0.cpp
   test_lambda_copy_this_multiple_lambdas_ret84.cpp
-  test_new_intrinsics_ret1.cpp
   test_rvo_cannot_apply_ret0.cpp
   test_rvo_large_struct_ret0.cpp
   test_rvo_mixed_types_ret0.cpp
