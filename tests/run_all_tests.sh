@@ -43,7 +43,7 @@ EXPECTED_LINK_FAIL=(
 
 # Expected runtime crashes - files that compile and link but crash at runtime
 EXPECTED_RUNTIME_CRASH=(
-    "test_exceptions_nested_ret0.cp"          # Known crash with nested exception handling (signal 6 - SIGABRT)
+    "test_exceptions_nested_ret0.cpp"          # Known crash with nested exception handling (signal 6 - SIGABRT)
 )
 
 # Results
@@ -143,7 +143,7 @@ for base in "${TEST_FILES[@]}"; do
             fi
             
             # Check for actual crashes by looking for crash indicators in stderr
-            if echo "$stderr_output" | grep -qiE "(segmentation fault|illegal instruction|aborted|bus error|floating point exception|killed|dumped core)"; then
+            if echo "$stderr_output" | grep -qiE "(segmentation fault|illegal instruction|aborted|bus error|floating point exception|killed|dumped core|terminate called)"; then
                 # Check if this is an expected runtime crash
                 if contains "$base" "${EXPECTED_RUNTIME_CRASH[@]}"; then
                     echo "OK (expected runtime crash)" >&2

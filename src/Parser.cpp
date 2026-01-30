@@ -35514,13 +35514,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		// No namespace
 		function_name_only = template_name;
 	}
-	
-	// Compute the proper C++ ABI mangled name using NameMangling
-	// We need to pass the function name, return type, parameter types, and namespace path
-	NameMangling::MangledName proper_mangled_name = NameMangling::generateMangledNameFromNode(new_func_ref, namespace_path);
-	new_func_ref.set_mangled_name(proper_mangled_name.view());
 
 	// Add parameters with substituted types
+	// Note: We compute the mangled name AFTER adding parameters, since the mangled name
+	// includes parameter types in its encoding
 	size_t arg_type_index = 0;  // Track which argument type we're using
 	for (size_t i = 0; i < func_decl.parameter_nodes().size(); ++i) {
 		const auto& param = func_decl.parameter_nodes()[i];
@@ -35648,6 +35645,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 	}
+
+	// Compute the proper C++ ABI mangled name using NameMangling
+	// We need to pass the function name, return type, parameter types, and namespace path
+	// This MUST be done AFTER adding parameters since the mangled name encodes parameter types
+	NameMangling::MangledName proper_mangled_name = NameMangling::generateMangledNameFromNode(new_func_ref, namespace_path);
+	new_func_ref.set_mangled_name(proper_mangled_name.view());
 
 	// Handle the function body
 	// Check if the template has a body position stored for re-parsing
