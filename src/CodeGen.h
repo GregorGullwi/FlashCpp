@@ -4603,8 +4603,10 @@ private:
 			} else if (std::holds_alternative<double>(operands[2])) {
 				ret_op.return_value = std::get<double>(operands[2]);
 			}
-			ret_op.return_type = std::get<Type>(operands[0]);
-			ret_op.return_size = std::get<int>(operands[1]);
+			// Use the function's return type, not the expression type
+			// This is important when returning references - the function's return type is what matters
+			ret_op.return_type = current_function_return_type_;
+			ret_op.return_size = current_function_return_size_;
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), node.return_token()));
 		}
 		else {
@@ -14399,7 +14401,8 @@ private:
 		call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
 		
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
-		bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0);
+		// Exclude references - they return a pointer, not a struct by value
+		bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
 		if (returns_struct_by_value) {
 			call_op.uses_return_slot = true;
 			call_op.return_slot = ret_var;  // The result temp var serves as the return slot
