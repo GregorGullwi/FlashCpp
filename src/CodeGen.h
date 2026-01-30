@@ -3052,6 +3052,8 @@ private:
 			}
 		} else {
 			// User-defined function body
+			// Enter a scope for the function body to track destructors
+			enterScope();
 			const BlockNode& block = node.get_definition().value().as<BlockNode>();
 			block.get_statements().visit([&](ASTNode statement) {
 				visit(statement);
@@ -3083,6 +3085,11 @@ private:
 			// For other non-void functions, this is an error (missing return statement)
 			// TODO: This should be a compile error, but for now we'll allow it
 			// Full implementation requires control flow analysis to check all paths
+		}
+
+		// Exit the function body scope and call destructors before returning
+		if (node.get_definition().has_value() && !node.get_definition().value().is<ConstructorDeclarationNode>()) {
+			exitScope();
 		}
 
 		symbol_table.exit_scope();
@@ -4639,8 +4646,8 @@ private:
 
 		if (enter_scope) {
 			// Exit scope and call destructors
-			ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
 			exitScope();
+			ir_.addInstruction(IrOpcode::ScopeEnd, {}, Token());
 			symbol_table.exit_scope();
 		}
 	}
@@ -7039,7 +7046,7 @@ private:
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
 							// Register for destructor if needed
-							if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
+			if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
 								registerVariableWithDestructor(
 									std::string(decl.identifier_token().value()),
 									std::string(StringTable::getStringView(type_info.name()))
@@ -7111,7 +7118,7 @@ private:
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
 							// Register for destructor if needed
-							if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
+			if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
 								registerVariableWithDestructor(
 									std::string(decl.identifier_token().value()),
 									std::string(StringTable::getStringView(type_info.name()))
