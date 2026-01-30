@@ -7047,7 +7047,7 @@ private:
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
 							// Register for destructor if needed
-			if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
+							if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
 								registerVariableWithDestructor(
 									std::string(decl.identifier_token().value()),
 									std::string(StringTable::getStringView(type_info.name()))
