@@ -9356,6 +9356,45 @@ private:
 		}
 
 		// For non-literal values (variables, TempVars), check if conversion is needed
+
+		// Check for int-to-float or float-to-int conversions
+		bool from_is_float = is_floating_point_type(fromType);
+		bool to_is_float = is_floating_point_type(toType);
+
+		if (from_is_float != to_is_float) {
+			// Converting between int and float (or vice versa)
+			TempVar resultVar = var_counter.next();
+			TypeConversionOp conv_op{
+				.result = resultVar,
+				.from = toTypedValue(std::span<const IrOperand>(operands.data(), operands.size())),
+				.to_type = toType,
+				.to_size_in_bits = toSize
+			};
+
+			if (from_is_float && !to_is_float) {
+				// Float to int conversion
+				ir_.addInstruction(IrInstruction(IrOpcode::FloatToInt, std::move(conv_op), source_token));
+			} else if (!from_is_float && to_is_float) {
+				// Int to float conversion
+				ir_.addInstruction(IrInstruction(IrOpcode::IntToFloat, std::move(conv_op), source_token));
+			}
+
+			return { toType, toSize, resultVar, 0ULL };
+		}
+
+		// If both are floats but different sizes, use FloatToFloat conversion
+		if (from_is_float && to_is_float && fromSize != toSize) {
+			TempVar resultVar = var_counter.next();
+			TypeConversionOp conv_op{
+				.result = resultVar,
+				.from = toTypedValue(std::span<const IrOperand>(operands.data(), operands.size())),
+				.to_type = toType,
+				.to_size_in_bits = toSize
+			};
+			ir_.addInstruction(IrInstruction(IrOpcode::FloatToFloat, std::move(conv_op), source_token));
+			return { toType, toSize, resultVar, 0ULL };
+		}
+
 		// If sizes are equal and only signedness differs, no actual conversion instruction is needed
 		// The value can be reinterpreted as the new type
 		if (fromSize == toSize) {
