@@ -2443,6 +2443,17 @@ private:
 		load_op.struct_type_info = nullptr;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), token));
 
+		// Mark this temp var as an lvalue pointing to %this.__copy_this
+		// This allows subsequent member accesses and stores to properly chain offsets
+		LValueInfo lvalue_info(
+			LValueInfo::Kind::Member,
+			StringTable::getOrInternStringHandle("this"),
+			static_cast<int>(copy_this_member->offset)
+		);
+		lvalue_info.member_name = StringTable::getOrInternStringHandle("__copy_this");
+		lvalue_info.is_pointer_to_member = true;  // Treat closure 'this' as a pointer
+		setTempVarMetadata(copy_this_temp, TempVarMetadata::makeLValue(lvalue_info));
+
 		return copy_this_temp;
 	}
 
@@ -16932,13 +16943,16 @@ private:
 						if (capture_kind_it != current_lambda_context_.capture_kinds.end() && 
 						    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
 							// [*this] capture: load from the copied object in __copy_this
-							int copy_this_offset = getClosureMemberOffset("__copy_this");
+							const StructTypeInfo* closure_struct = getCurrentClosureStruct();
+							const StructMember* copy_this_member = closure_struct ? closure_struct->findMember("__copy_this") : nullptr;
+							int copy_this_offset = copy_this_member ? static_cast<int>(copy_this_member->offset) : 0;
+							int copy_this_size_bits = copy_this_member ? static_cast<int>(copy_this_member->size * 8) : 64;
 							
 							TempVar copy_this_ref = var_counter.next();
 							MemberLoadOp load_copy_this;
 							load_copy_this.result.value = copy_this_ref;
 							load_copy_this.result.type = Type::Struct;
-							load_copy_this.result.size_in_bits = 64;  // Pointer size
+							load_copy_this.result.size_in_bits = copy_this_size_bits;  // Actual size of the copied struct
 							load_copy_this.object = StringTable::getOrInternStringHandle("this"sv);  // Lambda's this (the closure)
 							load_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 							load_copy_this.offset = copy_this_offset;
@@ -16946,6 +16960,17 @@ private:
 							load_copy_this.is_rvalue_reference = false;
 							load_copy_this.struct_type_info = nullptr;
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_copy_this), memberAccessNode.member_token()));
+							
+							// Mark this temp var as an lvalue pointing to %this.__copy_this
+							// This allows subsequent member accesses and stores to properly chain offsets
+							LValueInfo lvalue_info(
+								LValueInfo::Kind::Member,
+								StringTable::getOrInternStringHandle("this"sv),
+								copy_this_offset
+							);
+							lvalue_info.member_name = StringTable::getOrInternStringHandle("__copy_this");
+							lvalue_info.is_pointer_to_member = true;  // Treat closure 'this' as a pointer
+							setTempVarMetadata(copy_this_ref, TempVarMetadata::makeLValue(lvalue_info));
 							
 							// Use this as the base (it's a struct value, not a pointer)
 							base_object = copy_this_ref;
@@ -19998,7 +20023,7 @@ private:
 									store_copy_this.value.size_in_bits = static_cast<int>(enclosing_member.size * 8);
 									store_copy_this.value.value = loaded_value;
 									store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
-									store_copy_this.member_name = enclosing_member.getName();
+									store_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
 									store_copy_this.offset = copy_base_offset + static_cast<int>(enclosing_member.offset);
 									store_copy_this.is_reference = enclosing_member.is_reference;
 									store_copy_this.is_rvalue_reference = enclosing_member.is_rvalue_reference;
