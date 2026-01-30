@@ -12157,7 +12157,7 @@ ParseResult Parser::parse_type_specifier()
 							TypeSpecifierNode instantiated_type = alias_node.target_type_node();
 							[[maybe_unused]] const auto& template_params = alias_node.template_parameters();
 							const auto& param_names = alias_node.template_param_names();
-							
+
 							// Perform substitution for template parameters in the target type
 							for (size_t i = 0; i < member_template_args->size() && i < param_names.size(); ++i) {
 								const auto& arg = (*member_template_args)[i];
@@ -12220,7 +12220,7 @@ ParseResult Parser::parse_type_specifier()
 									}
 								}
 							}
-							
+
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 						}
 					}

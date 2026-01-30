@@ -2177,6 +2177,8 @@ public:
 			// Value being stored
 			if (std::holds_alternative<unsigned long long>(op.value.value))
 				oss << std::get<unsigned long long>(op.value.value);
+			else if (std::holds_alternative<double>(op.value.value))
+				oss << std::get<double>(op.value.value);
 			else if (std::holds_alternative<TempVar>(op.value.value))
 				oss << "%" << std::get<TempVar>(op.value.value).var_number;
 			else if (std::holds_alternative<StringHandle>(op.value.value))

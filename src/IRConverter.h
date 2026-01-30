@@ -14477,10 +14477,15 @@ private:
 		
 		// Allocate a second register for the value - must be different from ptr_reg
 		X64Register value_reg = allocateRegisterWithSpilling();
-		
+
 		if (std::holds_alternative<unsigned long long>(op.value.value)) {
 			uint64_t imm_value = std::get<unsigned long long>(op.value.value);
 			emitMovImm64(value_reg, imm_value);
+		} else if (std::holds_alternative<double>(op.value.value)) {
+			double double_value = std::get<double>(op.value.value);
+			uint64_t bits;
+			std::memcpy(&bits, &double_value, sizeof(double));
+			emitMovImm64(value_reg, bits);
 		} else if (std::holds_alternative<TempVar>(op.value.value)) {
 			TempVar value_temp = std::get<TempVar>(op.value.value);
 			int32_t value_offset = getStackOffsetFromTempVar(value_temp);
