@@ -759,6 +759,16 @@ public:  // Public methods for template instantiation
         ParseResult parse_postfix_expression(ExpressionContext context);  // Phase 3: New postfix operator layer
         ParseResult apply_postfix_operators(ASTNode& result);  // Apply postfix operators (., ->, [], (), ++, --) to existing result
         ParseResult parse_unary_expression(ExpressionContext context);
+
+        // C++ cast operators helper
+        enum class CppCastKind {
+            Static,
+            Dynamic,
+            Const,
+            Reinterpret
+        };
+        ParseResult parse_cpp_cast_expression(CppCastKind kind, std::string_view cast_name, const Token& cast_token);
+
         ParseResult parse_qualified_identifier();  // Parse namespace::identifier
         ParseResult parse_qualified_identifier_after_template(const Token& template_base_token, bool* had_template_keyword = nullptr);  // Parse Template<T>::member
         
