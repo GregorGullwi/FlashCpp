@@ -18,6 +18,10 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Compile failures:** 0
 **Link failures:** 0
 
+**Note:** Partial destructor fix implemented (afd4a52). Fixed destructor call ordering
+and added function-level scope tracking. Some tests may still fail due to template
+instantiation issues that require further investigation.
+
 ## Known Return Mismatches
 
   test_ctad_struct_lifecycle_ret0.cpp
