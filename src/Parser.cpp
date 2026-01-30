@@ -15689,6 +15689,91 @@ ParseResult Parser::parse_return_statement()
 	}
 }
 
+// Helper function for parsing C++ cast operators: static_cast, dynamic_cast, const_cast, reinterpret_cast
+// Consolidates the duplicated parsing logic for all four cast types
+ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view cast_name, const Token& cast_token)
+{
+	// Expect '<'
+	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
+	    peek_token()->value() != "<") {
+		return ParseResult::error(std::string(StringBuilder().append("Expected '<' after '").append(cast_name).append("'").commit()), *current_token_);
+	}
+	consume_token(); // consume '<'
+
+	// Parse the target type
+	ParseResult type_result = parse_type_specifier();
+	if (type_result.is_error() || !type_result.node().has_value()) {
+		return ParseResult::error(std::string(StringBuilder().append("Expected type in ").append(cast_name).commit()), *current_token_);
+	}
+
+	// Parse pointer declarators: * [const] [volatile] *...
+	TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+	while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
+	       peek_token()->value() == "*") {
+		consume_token(); // consume '*'
+
+		// Check for CV-qualifiers after the *
+		CVQualifier ptr_cv = parse_cv_qualifiers();
+
+		type_spec.add_pointer_level(ptr_cv);
+	}
+
+	// Parse reference declarators: & or &&
+	ReferenceQualifier ref_qual = parse_reference_qualifier();
+	if (ref_qual == ReferenceQualifier::RValueReference) {
+		type_spec.set_reference(true);  // true = rvalue reference
+	} else if (ref_qual == ReferenceQualifier::LValueReference) {
+		type_spec.set_reference(false);  // false = lvalue reference
+	}
+
+	// Expect '>'
+	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
+	    peek_token()->value() != ">") {
+		return ParseResult::error(std::string(StringBuilder().append("Expected '>' after type in ").append(cast_name).commit()), *current_token_);
+	}
+	consume_token(); // consume '>'
+
+	// Expect '('
+	if (!consume_punctuator("(")) {
+		return ParseResult::error(std::string(StringBuilder().append("Expected '(' after ").append(cast_name).append("<Type>").commit()), *current_token_);
+	}
+
+	// Parse the expression to cast
+	ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+	if (expr_result.is_error() || !expr_result.node().has_value()) {
+		return ParseResult::error(std::string(StringBuilder().append("Expected expression in ").append(cast_name).commit()), *current_token_);
+	}
+
+	// Expect ')'
+	if (!consume_punctuator(")")) {
+		return ParseResult::error(std::string(StringBuilder().append("Expected ')' after ").append(cast_name).append(" expression").commit()), *current_token_);
+	}
+
+	// Create the appropriate cast node based on the kind
+	ASTNode cast_expr;
+	switch (kind) {
+		case CppCastKind::Static:
+			cast_expr = emplace_node<ExpressionNode>(
+				StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
+			break;
+		case CppCastKind::Dynamic:
+			cast_expr = emplace_node<ExpressionNode>(
+				DynamicCastNode(*type_result.node(), *expr_result.node(), cast_token));
+			break;
+		case CppCastKind::Const:
+			cast_expr = emplace_node<ExpressionNode>(
+				ConstCastNode(*type_result.node(), *expr_result.node(), cast_token));
+			break;
+		case CppCastKind::Reinterpret:
+			cast_expr = emplace_node<ExpressionNode>(
+				ReinterpretCastNode(*type_result.node(), *expr_result.node(), cast_token));
+			break;
+	}
+
+	// Apply postfix operators (e.g., .operator<=>(), .member, etc.)
+	return apply_postfix_operators(cast_expr);
+}
+
 ParseResult Parser::parse_unary_expression(ExpressionContext context)
 {
 	
@@ -15696,272 +15781,28 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "static_cast") {
 		Token cast_token = *current_token_;
 		consume_token(); // consume 'static_cast'
-
-		// Expect '<'
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
-		    peek_token()->value() != "<") {
-			return ParseResult::error("Expected '<' after 'static_cast'", *current_token_);
-		}
-		consume_token(); // consume '<'
-
-		// Parse the target type
-		ParseResult type_result = parse_type_specifier();
-		if (type_result.is_error() || !type_result.node().has_value()) {
-			return ParseResult::error("Expected type in static_cast", *current_token_);
-		}
-
-		// Parse pointer declarators: * [const] [volatile] *...
-		TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-		       peek_token()->value() == "*") {
-			consume_token(); // consume '*'
-
-			// Check for CV-qualifiers after the *
-			CVQualifier ptr_cv = parse_cv_qualifiers();
-
-			type_spec.add_pointer_level(ptr_cv);
-		}
-
-		// Parse reference declarators: & or &&
-		ReferenceQualifier ref_qual = parse_reference_qualifier();
-		if (ref_qual == ReferenceQualifier::RValueReference) {
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else if (ref_qual == ReferenceQualifier::LValueReference) {
-			type_spec.set_reference(false);  // false = lvalue reference
-		}
-
-		// Expect '>'
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
-		    peek_token()->value() != ">") {
-			return ParseResult::error("Expected '>' after type in static_cast", *current_token_);
-		}
-		consume_token(); // consume '>'
-
-		// Expect '('
-		if (!consume_punctuator("(")) {
-			return ParseResult::error("Expected '(' after static_cast<Type>", *current_token_);
-		}
-
-		// Parse the expression to cast
-		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-		if (expr_result.is_error() || !expr_result.node().has_value()) {
-			return ParseResult::error("Expected expression in static_cast", *current_token_);
-		}
-
-		// Expect ')'
-		if (!consume_punctuator(")")) {
-			return ParseResult::error("Expected ')' after static_cast expression", *current_token_);
-		}
-
-		auto cast_expr = emplace_node<ExpressionNode>(
-			StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
-		
-		// Apply postfix operators (e.g., .operator<=>(), .member, etc.)
-		return apply_postfix_operators(cast_expr);
+		return parse_cpp_cast_expression(CppCastKind::Static, "static_cast", cast_token);
 	}
 
 	// Check for 'dynamic_cast' keyword
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "dynamic_cast") {
 		Token cast_token = *current_token_;
 		consume_token(); // consume 'dynamic_cast'
-
-		// Expect '<'
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
-		    peek_token()->value() != "<") {
-			return ParseResult::error("Expected '<' after 'dynamic_cast'", *current_token_);
-		}
-		consume_token(); // consume '<'
-
-		// Parse the target type
-		ParseResult type_result = parse_type_specifier();
-		if (type_result.is_error() || !type_result.node().has_value()) {
-			return ParseResult::error("Expected type in dynamic_cast", *current_token_);
-		}
-
-		// Parse pointer declarators: * [const] [volatile] *...
-		TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-		       peek_token()->value() == "*") {
-			consume_token(); // consume '*'
-
-			// Check for CV-qualifiers after the *
-			CVQualifier ptr_cv = parse_cv_qualifiers();
-
-			type_spec.add_pointer_level(ptr_cv);
-		}
-
-		// Parse reference declarators: & or &&
-		ReferenceQualifier ref_qual = parse_reference_qualifier();
-		if (ref_qual == ReferenceQualifier::RValueReference) {
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else if (ref_qual == ReferenceQualifier::LValueReference) {
-			type_spec.set_reference(false);  // false = lvalue reference
-		}
-
-		// Expect '>'
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
-		    peek_token()->value() != ">") {
-			return ParseResult::error("Expected '>' after type in dynamic_cast", *current_token_);
-		}
-		consume_token(); // consume '>'
-
-		// Expect '('
-		if (!consume_punctuator("(")) {
-			return ParseResult::error("Expected '(' after dynamic_cast<Type>", *current_token_);
-		}
-
-		// Parse the expression to cast
-		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-		if (expr_result.is_error() || !expr_result.node().has_value()) {
-			return ParseResult::error("Expected expression in dynamic_cast", *current_token_);
-		}
-
-		// Expect ')'
-		if (!consume_punctuator(")")) {
-			return ParseResult::error("Expected ')' after dynamic_cast expression", *current_token_);
-		}
-
-		auto cast_expr = emplace_node<ExpressionNode>(
-			DynamicCastNode(*type_result.node(), *expr_result.node(), cast_token));
-		
-		// Apply postfix operators (e.g., .operator<=>(), .member, etc.)
-		return apply_postfix_operators(cast_expr);
+		return parse_cpp_cast_expression(CppCastKind::Dynamic, "dynamic_cast", cast_token);
 	}
 
 	// Check for 'const_cast' keyword
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "const_cast") {
 		Token cast_token = *current_token_;
 		consume_token(); // consume 'const_cast'
-
-		// Expect '<'
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
-		    peek_token()->value() != "<") {
-			return ParseResult::error("Expected '<' after 'const_cast'", *current_token_);
-		}
-		consume_token(); // consume '<'
-
-		// Parse the target type
-		ParseResult type_result = parse_type_specifier();
-		if (type_result.is_error() || !type_result.node().has_value()) {
-			return ParseResult::error("Expected type in const_cast", *current_token_);
-		}
-
-		// Parse pointer declarators: * [const] [volatile] *...
-		TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-		       peek_token()->value() == "*") {
-			consume_token(); // consume '*'
-
-			// Check for CV-qualifiers after the *
-			CVQualifier ptr_cv = parse_cv_qualifiers();
-
-			type_spec.add_pointer_level(ptr_cv);
-		}
-
-		// Parse reference declarators: & or &&
-		ReferenceQualifier ref_qual = parse_reference_qualifier();
-		if (ref_qual == ReferenceQualifier::RValueReference) {
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else if (ref_qual == ReferenceQualifier::LValueReference) {
-			type_spec.set_reference(false);  // false = lvalue reference
-		}
-
-		// Expect '>'
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
-		    peek_token()->value() != ">") {
-			return ParseResult::error("Expected '>' after type in const_cast", *current_token_);
-		}
-		consume_token(); // consume '>'
-
-		// Expect '('
-		if (!consume_punctuator("(")) {
-			return ParseResult::error("Expected '(' after const_cast<Type>", *current_token_);
-		}
-
-		// Parse the expression to cast
-		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-		if (expr_result.is_error() || !expr_result.node().has_value()) {
-			return ParseResult::error("Expected expression in const_cast", *current_token_);
-		}
-
-		// Expect ')'
-		if (!consume_punctuator(")")) {
-			return ParseResult::error("Expected ')' after const_cast expression", *current_token_);
-		}
-
-		auto cast_expr = emplace_node<ExpressionNode>(
-			ConstCastNode(*type_result.node(), *expr_result.node(), cast_token));
-		
-		// Apply postfix operators (e.g., .operator<=>(), .member, etc.)
-		return apply_postfix_operators(cast_expr);
+		return parse_cpp_cast_expression(CppCastKind::Const, "const_cast", cast_token);
 	}
 
 	// Check for 'reinterpret_cast' keyword
 	if (current_token_->type() == Token::Type::Keyword && current_token_->value() == "reinterpret_cast") {
 		Token cast_token = *current_token_;
 		consume_token(); // consume 'reinterpret_cast'
-
-		// Expect '<'
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
-		    peek_token()->value() != "<") {
-			return ParseResult::error("Expected '<' after 'reinterpret_cast'", *current_token_);
-		}
-		consume_token(); // consume '<'
-
-		// Parse the target type
-		ParseResult type_result = parse_type_specifier();
-		if (type_result.is_error() || !type_result.node().has_value()) {
-			return ParseResult::error("Expected type in reinterpret_cast", *current_token_);
-		}
-
-		// Parse pointer declarators: * [const] [volatile] *...
-		TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Operator &&
-		       peek_token()->value() == "*") {
-			consume_token(); // consume '*'
-
-			// Check for CV-qualifiers after the *
-			CVQualifier ptr_cv = parse_cv_qualifiers();
-
-			type_spec.add_pointer_level(ptr_cv);
-		}
-
-		// Parse reference declarators: & or &&
-		ReferenceQualifier ref_qual = parse_reference_qualifier();
-		if (ref_qual == ReferenceQualifier::RValueReference) {
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else if (ref_qual == ReferenceQualifier::LValueReference) {
-			type_spec.set_reference(false);  // false = lvalue reference
-		}
-
-		// Expect '>'
-		if (!peek_token().has_value() || peek_token()->type() != Token::Type::Operator ||
-		    peek_token()->value() != ">") {
-			return ParseResult::error("Expected '>' after type in reinterpret_cast", *current_token_);
-		}
-		consume_token(); // consume '>'
-
-		// Expect '('
-		if (!consume_punctuator("(")) {
-			return ParseResult::error("Expected '(' after reinterpret_cast<Type>", *current_token_);
-		}
-
-		// Parse the expression to cast
-		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-		if (expr_result.is_error() || !expr_result.node().has_value()) {
-			return ParseResult::error("Expected expression in reinterpret_cast", *current_token_);
-		}
-
-		// Expect ')'
-		if (!consume_punctuator(")")) {
-			return ParseResult::error("Expected ')' after reinterpret_cast expression", *current_token_);
-		}
-
-		auto cast_expr = emplace_node<ExpressionNode>(
-			ReinterpretCastNode(*type_result.node(), *expr_result.node(), cast_token));
-		
-		// Apply postfix operators (e.g., .operator<=>(), .member, etc.)
-		return apply_postfix_operators(cast_expr);
+		return parse_cpp_cast_expression(CppCastKind::Reinterpret, "reinterpret_cast", cast_token);
 	}
 
 	// Check for C-style cast: (Type)expression
