@@ -3088,7 +3088,8 @@ private:
 		}
 
 		// Exit the function body scope and call destructors before returning
-		if (node.get_definition().has_value() && !node.get_definition().value().is<ConstructorDeclarationNode>()) {
+		// Only do this for user-defined function bodies where we called enterScope()
+		if (!node.is_implicit() || !node.is_member_function()) {
 			exitScope();
 		}
 
