@@ -9629,7 +9629,9 @@ private:
 						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
 						// Also dereference rvalue references (from std::move) when returning by value
 						auto ref_it = reference_stack_info_.find(var_offset);
-						if (ref_it != reference_stack_info_.end() && !current_function_returns_reference_) {
+						if (ref_it != reference_stack_info_.end() && 
+							(ref_it->second.is_rvalue_reference || !ref_it->second.holds_address_only) && 
+							!current_function_returns_reference_) {
 							// This is a reference and function returns by value - load pointer and dereference
 							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing reference at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
