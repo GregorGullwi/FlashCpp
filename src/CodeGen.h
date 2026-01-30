@@ -3060,6 +3060,12 @@ private:
 			});
 		}
 
+		// Exit the function body scope and call destructors before returning
+		// Only do this for user-defined function bodies where we called enterScope()
+		if (!node.is_implicit() || !node.is_member_function()) {
+			exitScope();
+		}
+
 		// Add implicit return if needed
 		// Check if the last instruction is a return
 		bool ends_with_return = false;
@@ -3085,12 +3091,6 @@ private:
 			// For other non-void functions, this is an error (missing return statement)
 			// TODO: This should be a compile error, but for now we'll allow it
 			// Full implementation requires control flow analysis to check all paths
-		}
-
-		// Exit the function body scope and call destructors before returning
-		// Only do this for user-defined function bodies where we called enterScope()
-		if (!node.is_implicit() || !node.is_member_function()) {
-			exitScope();
 		}
 
 		symbol_table.exit_scope();
