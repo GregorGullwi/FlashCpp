@@ -11,7 +11,7 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-30
 
 **Total files tested:** 961
-**Valid returns:** 950
+**Valid returns:** 951
 **Return mismatches:** 9
 **Runtime crashes:** 1
 **Ignored files:** 0
