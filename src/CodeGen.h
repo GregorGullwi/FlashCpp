@@ -7037,6 +7037,14 @@ private:
 							});
 							
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
+
+							// Register for destructor if needed
+							if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
+								registerVariableWithDestructor(
+									std::string(decl.identifier_token().value()),
+									std::string(StringTable::getStringView(type_info.name()))
+								);
+							}
 						} else if (has_copy_init) {
 							// Generate copy constructor call
 							ConstructorCallOp ctor_op;
@@ -7101,6 +7109,14 @@ private:
 							}
 
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
+
+							// Register for destructor if needed
+							if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
+								registerVariableWithDestructor(
+									std::string(decl.identifier_token().value()),
+									std::string(StringTable::getStringView(type_info.name()))
+								);
+							}
 						} else if (!has_rvalue_initializer) {
 							// No initializer - check if we need to call default constructor
 							// Call default constructor if:

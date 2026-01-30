@@ -7055,9 +7055,15 @@ private:
 		}  // End of if (actual_ctor) else block
 
 		// Load parameters into registers
-		// Max additional params: 5 on Linux (RDI is 'this', RSI-R9 for params), 3 on Windows (RCX is 'this', RDX-R9 for params)
-		const size_t max_register_params = getMaxIntParamRegs<TWriterClass>() - 1;  // Subtract 1 for 'this' pointer
-		for (size_t i = 0; i < num_params && i < max_register_params; ++i) {
+		// Use separate counters for integer and float registers (System V AMD64 ABI requirement)
+		// Integer regs: RDI is 'this', so start at index 1 for first param (RSI on Linux, RDX on Windows)
+		// Float regs: XMM0-XMM7 for floating-point parameters
+		const size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
+		const size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
+		size_t int_reg_index = 1;  // Start at 1 because index 0 (RDI/RCX) is 'this' pointer
+		size_t float_reg_index = 0;
+
+		for (size_t i = 0; i < num_params; ++i) {
 			const TypedValue& arg = ctor_op.arguments[i];
 			Type paramType = arg.type;
 			int paramSize = arg.size_in_bits;
@@ -7065,8 +7071,8 @@ private:
 			const IrValue& paramValue = arg.value;
 			bool arg_is_reference = arg.is_reference();  // Check if marked as reference
 
-			// Skip first register (this pointer): RCX on Windows, RDI on Linux
-			X64Register target_reg = getIntParamReg<TWriterClass>(i + 1);
+			// Check if this is a floating-point parameter
+			bool is_float_arg = (paramType == Type::Float || paramType == Type::Double);
 
 			// Check if this is a reference parameter (copy/move constructor - same struct type, OR marked as reference)
 			bool is_same_struct_type = false;
@@ -7075,59 +7081,87 @@ private:
 			}
 			bool is_reference_param = arg_is_reference || (num_params == 1 && paramType == Type::Struct && is_same_struct_type);
 
-			if (std::holds_alternative<unsigned long long>(paramValue)) {
-				// Immediate value
-				uint8_t rex_prefix = 0x48;
-				if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-					rex_prefix |= (1 << 2);
-				}
-				textSectionData.push_back(rex_prefix);
+			// Determine which register to use based on parameter type
+			if (is_float_arg && float_reg_index < max_float_regs) {
+				// Use XMM register for floating-point parameters
+				X64Register target_xmm = getFloatParamReg<TWriterClass>(float_reg_index++);
 
-				if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-					textSectionData.back() |= (1 << 0);
-				}
-				textSectionData.push_back(0xB8 + (static_cast<uint8_t>(target_reg) & 0x07));
-				unsigned long long value = std::get<unsigned long long>(paramValue);
-				for (size_t j = 0; j < 8; ++j) {
-					textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
-					value >>= 8;
-				}
-			} else if (std::holds_alternative<TempVar>(paramValue)) {
-				// Load from temp variable
-				const TempVar temp_var = std::get<TempVar>(paramValue);
-				int param_offset = getStackOffsetFromTempVar(temp_var);
-				if (is_reference_param) {
-					// For reference parameters, check if the temp var already holds a pointer
-					// (e.g., from addressof operation). If so, load the pointer value (MOV),
-					// otherwise take the address of the variable (LEA).
-					auto ref_it = reference_stack_info_.find(param_offset);
-					if (ref_it != reference_stack_info_.end()) {
-						// Temp var holds a pointer - load it
-						emitMovFromFrame(target_reg, param_offset);
+				// Handle floating-point immediate values (double literals)
+				if (std::holds_alternative<double>(paramValue)) {
+					double float_value = std::get<double>(paramValue);
+
+					// Convert to appropriate bit pattern (float or double)
+					uint64_t bits;
+					if (paramType == Type::Float) {
+						float float_val = static_cast<float>(float_value);
+						uint32_t float_bits;
+						std::memcpy(&float_bits, &float_val, sizeof(float_bits));
+						bits = float_bits; // Zero-extend to 64-bit
 					} else {
-						// Temp var holds a value - take its address
-						emitLeaFromFrame(target_reg, param_offset);
+						std::memcpy(&bits, &float_value, sizeof(bits));
 					}
-				} else {
-					// For value parameters: source (sized stack slot) -> dest (64-bit register)
-					emitMovFromFrameSized(
-						SizedRegister{target_reg, 64, false},  // dest: 64-bit register
-						SizedStackSlot{param_offset, paramSize, isSignedType(paramType)}  // source: sized stack slot
-					);
+
+					// Load bit pattern into temp GPR first
+					X64Register temp_gpr = allocateRegisterWithSpilling();
+					emitMovImm64(temp_gpr, bits);
+
+					// Move from GPR to XMM register using movq
+					emitMovqGprToXmm(temp_gpr, target_xmm);
+
+					regAlloc.release(temp_gpr);
+				} else if (std::holds_alternative<TempVar>(paramValue)) {
+					// Load from temp variable
+					const TempVar temp_var = std::get<TempVar>(paramValue);
+					int param_offset = getStackOffsetFromTempVar(temp_var);
+					bool is_float = (paramType == Type::Float);
+					emitFloatMovFromFrame(target_xmm, param_offset, is_float);
+				} else if (std::holds_alternative<StringHandle>(paramValue)) {
+					// Load from variable
+					StringHandle var_name_handle = std::get<StringHandle>(paramValue);
+					auto it = variable_scopes.back().variables.find(var_name_handle);
+					if (it != variable_scopes.back().variables.end()) {
+						int param_offset = it->second.offset;
+						bool is_float = (paramType == Type::Float);
+						emitFloatMovFromFrame(target_xmm, param_offset, is_float);
+					}
 				}
-			} else if (std::holds_alternative<StringHandle>(paramValue)) {
-				// Load from variable
-				StringHandle var_name_handle = std::get<StringHandle>(paramValue);
-				auto it = variable_scopes.back().variables.find(var_name_handle);
-				if (it != variable_scopes.back().variables.end()) {
-					int param_offset = it->second.offset;
-					// For large struct parameters (> 64 bits), pass by pointer according to System V AMD64 ABI
-					// This includes std::initializer_list which is 128 bits (16 bytes)
-					bool pass_by_pointer = is_reference_param || (paramType == Type::Struct && paramSize > 64);
-					if (pass_by_pointer) {
-						// For reference parameters or large structs, load address (LEA)
-						// LEA target_reg, [RBP + param_offset]
-						emitLeaFromFrame(target_reg, param_offset);
+			} else if (!is_float_arg && int_reg_index < max_int_regs) {
+				// Use integer register for non-floating-point parameters
+				X64Register target_reg = getIntParamReg<TWriterClass>(int_reg_index++);
+
+				if (std::holds_alternative<unsigned long long>(paramValue)) {
+					// Immediate value
+					uint8_t rex_prefix = 0x48;
+					if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+						rex_prefix |= (1 << 2);
+					}
+					textSectionData.push_back(rex_prefix);
+
+					if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
+						textSectionData.back() |= (1 << 0);
+					}
+					textSectionData.push_back(0xB8 + (static_cast<uint8_t>(target_reg) & 0x07));
+					unsigned long long value = std::get<unsigned long long>(paramValue);
+					for (size_t j = 0; j < 8; ++j) {
+						textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
+						value >>= 8;
+					}
+				} else if (std::holds_alternative<TempVar>(paramValue)) {
+					// Load from temp variable
+					const TempVar temp_var = std::get<TempVar>(paramValue);
+					int param_offset = getStackOffsetFromTempVar(temp_var);
+					if (is_reference_param) {
+						// For reference parameters, check if the temp var already holds a pointer
+						// (e.g., from addressof operation). If so, load the pointer value (MOV),
+						// otherwise take the address of the variable (LEA).
+						auto ref_it = reference_stack_info_.find(param_offset);
+						if (ref_it != reference_stack_info_.end()) {
+							// Temp var holds a pointer - load it
+							emitMovFromFrame(target_reg, param_offset);
+						} else {
+							// Temp var holds a value - take its address
+							emitLeaFromFrame(target_reg, param_offset);
+						}
 					} else {
 						// For value parameters: source (sized stack slot) -> dest (64-bit register)
 						emitMovFromFrameSized(
@@ -7135,8 +7169,30 @@ private:
 							SizedStackSlot{param_offset, paramSize, isSignedType(paramType)}  // source: sized stack slot
 						);
 					}
+				} else if (std::holds_alternative<StringHandle>(paramValue)) {
+					// Load from variable
+					StringHandle var_name_handle = std::get<StringHandle>(paramValue);
+					auto it = variable_scopes.back().variables.find(var_name_handle);
+					if (it != variable_scopes.back().variables.end()) {
+						int param_offset = it->second.offset;
+						// For large struct parameters (> 64 bits), pass by pointer according to System V AMD64 ABI
+						// This includes std::initializer_list which is 128 bits (16 bytes)
+						bool pass_by_pointer = is_reference_param || (paramType == Type::Struct && paramSize > 64);
+						if (pass_by_pointer) {
+							// For reference parameters or large structs, load address (LEA)
+							// LEA target_reg, [RBP + param_offset]
+							emitLeaFromFrame(target_reg, param_offset);
+						} else {
+							// For value parameters: source (sized stack slot) -> dest (64-bit register)
+							emitMovFromFrameSized(
+								SizedRegister{target_reg, 64, false},  // dest: 64-bit register
+								SizedStackSlot{param_offset, paramSize, isSignedType(paramType)}  // source: sized stack slot
+							);
+						}
+					}
 				}
 			}
+			// Note: If we run out of registers, we'd need to push args to stack (not implemented here for constructors)
 		}
 
 		// Generate the call instruction

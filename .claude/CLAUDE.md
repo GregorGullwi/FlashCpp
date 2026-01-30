@@ -3,12 +3,12 @@
 ## Project Structure & Module Organization
 FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit in `tests/*.cpp`. Generated binaries belong in `x64/` or `Debug/` and stay untracked.
 Bash scripts, and the `Makefile` cover clang workflows.
-Use `cd /tmp && /home/runner/work/FlashCpp/FlashCpp/x64/Debug/FlashCpp [test_file_name].cpp -o [test_file_name].o` when compiling individual test files to verify your changes.
-Link and run to verify the return output.
+Use `x64/Debug/FlashCpp [test_file_name].cpp -o [test_file_name].o` when compiling individual test files to verify your changes.
+Link with clang and run to verify the return output.
 
 ## Build, Test, and Development Commands
-- Use `make main CXX=clang++` — builds the compiler, good when using bash as WSL/Linux, to produce `x64\Debug\FlashCpp`. Run it whenever you change compiler source files.
-- Use `tests/run_all_tests.sh` — invokes all the tests in the tests folder on WSL/Linux.
+- Use `make main CXX=clang++` — builds the compiler, to produce `x64\Debug\FlashCpp`. Run it whenever you change compiler source files.
+- Use `tests/run_all_tests.sh` — invokes all the tests in the tests folder but takes a long time to run.
 
 ## Coding Style & Naming Conventions
 Try to reuse as much code as possible. Look in the same PR for similar code patterns and try to extract it into a function or a local lambda.
