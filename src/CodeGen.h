@@ -6597,16 +6597,23 @@ private:
 					}
 				}
 				
-				bool is_copy_init_for_struct = (type_node.type() == Type::Struct && 
+				// References don't use copy constructors - they bind to the address of the initializer
+				bool is_copy_init_for_struct = (type_node.type() == Type::Struct &&
 				                                 type_node.pointer_depth() == 0 &&
-				                                 node.initializer() && 
-				                                 init_node.is<ExpressionNode>() && 
+				                                 !type_node.is_reference() &&
+				                                 !type_node.is_rvalue_reference() &&
+				                                 node.initializer() &&
+				                                 init_node.is<ExpressionNode>() &&
 				                                 !init_node.is<InitializerListNode>() &&
 				                                 is_struct_with_constructor);
-				
-				
+
+
 				if (!is_copy_init_for_struct) {
-					auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
+					// For reference types, use LValueAddress context to get the address of the initializer
+					ExpressionContext ref_context = (type_node.is_reference() || type_node.is_rvalue_reference())
+						? ExpressionContext::LValueAddress
+						: ExpressionContext::Load;
+					auto init_operands = visitExpressionNode(init_node.as<ExpressionNode>(), ref_context);
 					
 					// Check if we need implicit conversion via conversion operator
 					// This handles cases like: int i = myStruct; where myStruct has operator int()
@@ -19511,11 +19518,18 @@ private:
 		// dynamic_cast<Type>(expr) performs runtime type checking
 		// Returns nullptr (for pointers) or throws bad_cast (for references) on failure
 
-		// Evaluate the expression to cast
-		auto expr_operands = visitExpressionNode(dynamicCastNode.expr().as<ExpressionNode>());
-
-		// Get the target type
+		// Get the target type first to determine evaluation context
 		const auto& target_type_node = dynamicCastNode.target_type().as<TypeSpecifierNode>();
+
+		// For reference casts (both lvalue and rvalue), we need the address of the expression,
+		// not its loaded value. Use LValueAddress context to get the address without dereferencing.
+		ExpressionContext eval_context = ExpressionContext::Load;
+		if (target_type_node.is_reference()) {
+			eval_context = ExpressionContext::LValueAddress;
+		}
+
+		// Evaluate the expression to cast
+		auto expr_operands = visitExpressionNode(dynamicCastNode.expr().as<ExpressionNode>(), eval_context);
 
 		// Get target struct type information
 		std::string target_type_name;
@@ -19563,6 +19577,12 @@ private:
 		// Get result type and size for metadata and return value
 		Type result_type = target_type_node.type();
 		int result_size = static_cast<int>(target_type_node.size_in_bits());
+
+		// For reference types, the result is a pointer (64 bits), not the struct size
+		bool is_reference_cast = target_type_node.is_reference() || target_type_node.is_rvalue_reference();
+		if (is_reference_cast) {
+			result_size = 64;  // Reference is represented as a pointer
+		}
 
 		// Mark value category for reference types
 		if (target_type_node.is_rvalue_reference()) {

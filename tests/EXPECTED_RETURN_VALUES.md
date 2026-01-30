@@ -11,9 +11,9 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-29
 
 **Total files tested:** 961
-**Valid returns:** 947
+**Valid returns:** 948
 **Return mismatches:** 12
-**Runtime crashes:** 2
+**Runtime crashes:** 1
 **Ignored files:** 0
 **Compile failures:** 0
 **Link failures:** 0
@@ -37,7 +37,6 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 ## Runtime Crashes
 
   test_exceptions_nested_ret0.cpp
-  test_xvalue_all_casts_ret0.cpp
 
 ## Notes
 
