@@ -11,9 +11,9 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Last Run:** 2026-01-30
 
 **Total files tested:** 961
-**Valid returns:** 958
-**Return mismatches:** 3
-**Runtime crashes:** 0 (1 expected crash handled correctly)
+**Valid returns:** 959
+**Return mismatches:** 2
+**Runtime crashes:** 0 (3 expected crash handled correctly)
 **Ignored files:** 0
 **Compile failures:** 0
 **Link failures:** 0
@@ -21,16 +21,18 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 **Recent Fixes:**
 - Partial destructor fix (afd4a52): Fixed destructor call ordering and function-level scope tracking
 - Function pointer argument fix: Fixed indirect call arguments using StringHandle instead of 0
+- std::move return fix (e0760db): Fixed return statement to use function's return type instead of expression type
 
 ## Known Return Mismatches
 
   test_ctad_struct_lifecycle_ret0.cpp - Destructor not called for template instantiations
   test_lambda_copy_this_multiple_lambdas_ret84.cpp - Lambda copy capture [*this] not working correctly
-  test_rvo_cannot_apply_ret0.cpp - Value not moved correctly in explicit std::move case
 
 ## Runtime Crashes
 
-  test_exceptions_nested_ret0.cpp (expected - exception handling issue)
+  test_operator_addressof_overload_baseline_ret99.cpp (expected - operator& overload issue)
+  test_operator_addressof_resolved_ret100.cpp (expected - operator& resolution issue)
+  test_return_pointer_ret100.cpp (expected - pointer return issue)
 
 ## Notes
 
