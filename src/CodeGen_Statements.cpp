@@ -1121,6 +1121,160 @@
 		}
 	}
 
+	// ============================================================================
+	// Windows SEH (Structured Exception Handling) Visitor Methods
+	// ============================================================================
+
+	void visitSehTryExceptStatementNode(const SehTryExceptStatementNode& node) {
+		// Generate __try/__except structure
+		// __try { try_block } __except(filter) { except_block }
+
+		// Generate unique labels using StringBuilder
+		static size_t seh_try_counter = 0;
+		size_t current_seh_id = seh_try_counter++;
+
+		// Create labels
+		StringBuilder handlers_sb;
+		handlers_sb.append("__seh_except_").append(current_seh_id);
+		std::string_view except_label = handlers_sb.commit();
+
+		StringBuilder end_sb;
+		end_sb.append("__seh_end_").append(current_seh_id);
+		std::string_view end_label = end_sb.commit();
+
+		// Emit SehTryBegin marker
+		ir_.addInstruction(IrInstruction(IrOpcode::SehTryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(except_label)}, node.try_token()));
+
+		// Visit __try block
+		visit(node.try_block());
+
+		// Emit SehTryEnd marker
+		ir_.addInstruction(IrOpcode::SehTryEnd, {}, node.try_token());
+
+		// Jump to end after successful __try block execution
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
+
+		// Emit label for __except handler
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(except_label)}, node.try_token()));
+
+		// Get the __except clause
+		const auto& except_clause = node.except_clause().as<SehExceptClauseNode>();
+
+		// Evaluate the filter expression
+		const auto& filter_expr = except_clause.filter_expression().as<SehFilterExpressionNode>();
+		auto filter_operands = visitExpressionNode(filter_expr.expression().as<ExpressionNode>());
+
+		// Allocate a temporary for the filter result
+		TempVar filter_result = var_counter.next();
+
+		// Store filter result (operands[2] contains the value)
+		if (filter_operands.size() >= 3 && std::holds_alternative<TempVar>(filter_operands[2])) {
+			filter_result = std::get<TempVar>(filter_operands[2]);
+		}
+
+		// Generate unique label for except end
+		StringBuilder except_end_sb;
+		except_end_sb.append("__seh_except_end_").append(current_seh_id);
+		std::string_view except_end_label = except_end_sb.commit();
+
+		// Emit SehExceptBegin marker with filter result
+		SehExceptBeginOp except_op;
+		except_op.filter_result = filter_result;
+		except_op.except_end_label = except_end_label;
+		ir_.addInstruction(IrInstruction(IrOpcode::SehExceptBegin, std::move(except_op), except_clause.except_token()));
+
+		// Enter scope for __except block
+		symbol_table.enter_scope(ScopeType::Block);
+
+		// Visit __except block body
+		visit(except_clause.body());
+
+		// Emit SehExceptEnd marker
+		ir_.addInstruction(IrOpcode::SehExceptEnd, {}, except_clause.except_token());
+
+		// Exit __except block scope
+		symbol_table.exit_scope();
+
+		// Jump to end after __except block
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, except_clause.except_token()));
+
+		// Emit except end label
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(except_end_label)}, except_clause.except_token()));
+
+		// Emit end label
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
+	}
+
+	void visitSehTryFinallyStatementNode(const SehTryFinallyStatementNode& node) {
+		// Generate __try/__finally structure
+		// __try { try_block } __finally { finally_block }
+
+		// Generate unique labels using StringBuilder
+		static size_t seh_finally_counter = 0;
+		size_t current_seh_id = seh_finally_counter++;
+
+		// Create labels
+		StringBuilder finally_sb;
+		finally_sb.append("__seh_finally_").append(current_seh_id);
+		std::string_view finally_label = finally_sb.commit();
+
+		StringBuilder end_sb;
+		end_sb.append("__seh_finally_end_").append(current_seh_id);
+		std::string_view end_label = end_sb.commit();
+
+		// Emit SehTryBegin marker
+		ir_.addInstruction(IrInstruction(IrOpcode::SehTryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(finally_label)}, node.try_token()));
+
+		// Visit __try block
+		visit(node.try_block());
+
+		// Emit SehTryEnd marker
+		ir_.addInstruction(IrOpcode::SehTryEnd, {}, node.try_token());
+
+		// Emit label for __finally handler
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(finally_label)}, node.try_token()));
+
+		// Get the __finally clause
+		const auto& finally_clause = node.finally_clause().as<SehFinallyClauseNode>();
+
+		// Emit SehFinallyBegin marker
+		ir_.addInstruction(IrOpcode::SehFinallyBegin, {}, finally_clause.finally_token());
+
+		// Enter scope for __finally block
+		symbol_table.enter_scope(ScopeType::Block);
+
+		// Visit __finally block body
+		visit(finally_clause.body());
+
+		// Emit SehFinallyEnd marker
+		ir_.addInstruction(IrOpcode::SehFinallyEnd, {}, finally_clause.finally_token());
+
+		// Exit __finally block scope
+		symbol_table.exit_scope();
+
+		// Jump to end after __finally block
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, finally_clause.finally_token()));
+
+		// Emit end label
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
+	}
+
+	void visitSehLeaveStatementNode(const SehLeaveStatementNode& node) {
+		// Generate __leave statement
+		// __leave jumps to the end of the current __try block (or __finally if present)
+
+		// For now, we'll generate a placeholder label
+		// In a full implementation, we'd need to track the current __try block's end label
+		StringBuilder leave_target_sb;
+		leave_target_sb.append("__seh_leave_target");
+		std::string_view leave_target = leave_target_sb.commit();
+
+		// Emit SehLeave instruction
+		SehLeaveOp leave_op;
+		leave_op.target_label = leave_target;
+		ir_.addInstruction(IrInstruction(IrOpcode::SehLeave, std::move(leave_op), node.leave_token()));
+	}
+
 	void visitVariableDeclarationNode(const ASTNode& ast_node) {
 		const VariableDeclarationNode& node = ast_node.as<VariableDeclarationNode>();
 		const auto& decl = node.declaration();
