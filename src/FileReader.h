@@ -2661,6 +2661,9 @@ private:
 		// __FUNCTION__ (MSVC extension)
 		defines_["__FUNCTION__"] = DefineDirective("__func__", {});
 
+		// __nullptr (MSVC extension) - represents nullptr type for decltype(__nullptr)
+		defines_["__nullptr"] = DefineDirective("nullptr", {});
+
 		// __PRETTY_FUNCTION__ (GCC extension) and __func__ (C++11 standard)
 		// These are NOT preprocessor macros - they are compiler builtins handled by the parser
 		// The parser will replace them with string literals containing the current function name
