@@ -12266,17 +12266,23 @@ ParseResult Parser::parse_type_specifier()
 				}
 				
 				auto inst_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
-				if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
-					const TypeInfo* struct_type_info = inst_type_it->second;
-					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
-
-					if (struct_info) {
-						type_size = static_cast<int>(struct_info->total_size * 8);
+				if (inst_type_it != gTypesByName.end()) {
+					const TypeInfo* existing_type = inst_type_it->second;
+					if (existing_type->isStruct()) {
+						// Return existing struct type
+						const StructTypeInfo* struct_info = existing_type->getStructInfo();
+						if (struct_info) {
+							type_size = static_cast<int>(struct_info->total_size * 8);
+						} else {
+							type_size = 0;
+						}
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							Type::Struct, existing_type->type_index_, type_size, type_name_token, cv_qualifier));
 					} else {
-						type_size = 0;
+						// Return existing placeholder (UserDefined) - don't create duplicates
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							existing_type->type_, existing_type->type_index_, 0, type_name_token, cv_qualifier));
 					}
-					return ParseResult::success(emplace_node<TypeSpecifierNode>(
-						Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
 				}
 
 				// If type not found and we have dependent template args, create a placeholder type
