@@ -365,6 +365,7 @@ private:
                 StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
                 StructTypeInfo* local_struct_info = nullptr;  // Pointer to StructTypeInfo being built (for static member lookup)
                 std::vector<StringHandle> imported_members;  // Members imported via using-declarations
+                bool has_inherited_constructors = false;  // True if constructors are inherited from base class
         };
         std::vector<StructParsingContext> struct_parsing_context_stack_;
 
@@ -937,6 +938,7 @@ public:  // Public methods for template instantiation
         // Helper for delayed parsing
         void skip_balanced_braces();  // Skip over a balanced brace block
         void skip_balanced_parens();  // Skip over a balanced parentheses block
+        void skip_template_arguments();  // Skip over template arguments <...>
         void skip_member_declaration_to_semicolon();  // Skip member declaration until ';' or end of struct
         
         // Helper to update angle bracket depth for template parsing
