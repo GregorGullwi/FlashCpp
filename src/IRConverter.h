@@ -9187,6 +9187,8 @@ private:
 			current_function_local_objects_.clear();  // Clear local object tracking
 			current_function_unwind_map_.clear();  // Clear unwind map
 			current_exception_state_ = -1;  // Reset state counter
+			current_function_seh_try_blocks_.clear();  // Clear SEH tracking for next function
+			current_seh_try_block_ = nullptr;
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				current_function_cfi_.clear();  // Clear CFI tracking for next function
 			}
@@ -16013,87 +16015,112 @@ private:
 
 	void handleSehTryBegin([[maybe_unused]] const IrInstruction& instruction) {
 		// SehTryBegin marks the start of a __try block
-		// For now, we'll generate placeholder code
-		// Full implementation requires .pdata/.xdata section generation
+		// Create a new SEH try block and record the current code offset
 
-		// Record the current code offset as the start of the __try block
-		// This will be used later for generating SEH tables
+		SehTryBlock seh_try_block;
+		seh_try_block.try_start_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+		seh_try_block.try_end_offset = 0;  // Will be set in handleSehTryEnd
 
-		// TODO: Track SEH try blocks similar to C++ try blocks
-		// For now, just emit a comment in debug builds
-		FLASH_LOG(Codegen, Debug, "SEH __try block begin at offset ",
-		          static_cast<uint32_t>(textSectionData.size()) - current_function_offset_);
+		current_function_seh_try_blocks_.push_back(seh_try_block);
+		current_seh_try_block_ = &current_function_seh_try_blocks_.back();
+
+		FLASH_LOG(Codegen, Debug, "SEH __try block begin at offset ", seh_try_block.try_start_offset);
 	}
 
 	void handleSehTryEnd([[maybe_unused]] const IrInstruction& instruction) {
 		// SehTryEnd marks the end of a __try block
+		// Record the current code offset as the end of the SEH try block
 
-		FLASH_LOG(Codegen, Debug, "SEH __try block end at offset ",
-		          static_cast<uint32_t>(textSectionData.size()) - current_function_offset_);
+		if (current_seh_try_block_) {
+			current_seh_try_block_->try_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+			FLASH_LOG(Codegen, Debug, "SEH __try block end at offset ", current_seh_try_block_->try_end_offset);
+
+			// Don't clear current_seh_try_block_ yet - we need it for the handler
+		}
 	}
 
-	void handleSehExceptBegin([[maybe_unused]] const IrInstruction& instruction) {
+	void handleSehExceptBegin(const IrInstruction& instruction) {
 		// SehExceptBegin marks the start of a __except handler
-		// The filter expression has already been evaluated
+		// Record this handler in the most recent SEH try block
 
-		// Extract data from typed payload
 		const auto& except_op = instruction.getTypedPayload<SehExceptBeginOp>();
 
-		// The filter result is in a temporary variable
-		// We need to check its value:
-		// - EXCEPTION_EXECUTE_HANDLER (1): execute this handler
-		// - EXCEPTION_CONTINUE_SEARCH (0): continue searching for handlers
-		// - EXCEPTION_CONTINUE_EXECUTION (-1): continue execution at the point of exception
+		if (current_seh_try_block_) {
+			SehExceptHandler handler;
+			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+			handler.filter_result = except_op.filter_result.var_number;
 
-		// For now, we'll assume the filter always returns EXCEPTION_EXECUTE_HANDLER
-		// and just execute the handler body
+			current_seh_try_block_->except_handler = handler;
 
-		FLASH_LOG(Codegen, Debug, "SEH __except handler begin at offset ",
-		          static_cast<uint32_t>(textSectionData.size()) - current_function_offset_,
-		          " filter_result=", except_op.filter_result.var_number);
+			FLASH_LOG(Codegen, Debug, "SEH __except handler begin at offset ", handler.handler_offset,
+			          " filter_result=", handler.filter_result);
+		}
 	}
 
 	void handleSehExceptEnd([[maybe_unused]] const IrInstruction& instruction) {
 		// SehExceptEnd marks the end of a __except handler
+		// Clear the current SEH try block pointer
 
 		FLASH_LOG(Codegen, Debug, "SEH __except handler end at offset ",
 		          static_cast<uint32_t>(textSectionData.size()) - current_function_offset_);
+
+		current_seh_try_block_ = nullptr;
 	}
 
 	void handleSehFinallyBegin([[maybe_unused]] const IrInstruction& instruction) {
 		// SehFinallyBegin marks the start of a __finally handler
-		// __finally blocks are always executed, whether an exception occurs or not
+		// Record this handler in the most recent SEH try block
 
-		FLASH_LOG(Codegen, Debug, "SEH __finally handler begin at offset ",
-		          static_cast<uint32_t>(textSectionData.size()) - current_function_offset_);
+		if (current_seh_try_block_) {
+			SehFinallyHandler handler;
+			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
+
+			current_seh_try_block_->finally_handler = handler;
+
+			FLASH_LOG(Codegen, Debug, "SEH __finally handler begin at offset ", handler.handler_offset);
+		}
 	}
 
 	void handleSehFinallyEnd([[maybe_unused]] const IrInstruction& instruction) {
 		// SehFinallyEnd marks the end of a __finally handler
+		// Clear the current SEH try block pointer
 
 		FLASH_LOG(Codegen, Debug, "SEH __finally handler end at offset ",
 		          static_cast<uint32_t>(textSectionData.size()) - current_function_offset_);
+
+		current_seh_try_block_ = nullptr;
 	}
 
-	void handleSehLeave([[maybe_unused]] const IrInstruction& instruction) {
+	void handleSehLeave(const IrInstruction& instruction) {
 		// SehLeave implements the __leave statement
-		// __leave jumps to the end of the current __try block
+		// This should jump to the end of the current __try block (or __finally if present)
 
-		// Extract data from typed payload
 		const auto& leave_op = instruction.getTypedPayload<SehLeaveOp>();
-
-		// Generate an unconditional jump to the target label
-		// The target label should be the end of the __try block (or __finally if present)
-
-		// For now, we'll emit a placeholder jump
-		// TODO: Implement proper label resolution for __leave targets
+		std::string_view target_label = leave_op.target_label;
 
 		FLASH_LOG(Codegen, Debug, "SEH __leave statement at offset ",
 		          static_cast<uint32_t>(textSectionData.size()) - current_function_offset_,
-		          " target=", leave_op.target_label);
+		          " target=", target_label);
 
-		// TODO: Emit a jump instruction to the target label
-		// For now, this is a placeholder - the jump will be handled by normal control flow
+		// Flush all dirty registers before jumping
+		flushAllDirtyRegisters();
+
+		// Generate JMP instruction (E9 + 32-bit relative offset)
+		// We'll use a placeholder offset and fix it up later
+		textSectionData.push_back(0xE9); // JMP rel32
+
+		// Store position where we need to patch the offset
+		uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
+
+		// Add placeholder offset (will be patched later)
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+		textSectionData.push_back(0x00);
+
+		// Record this jump for later patching (convert string_view to StringHandle)
+		pending_branches_.push_back({StringTable::getOrInternStringHandle(target_label), patch_position});
 	}
 
 	void finalizeSections() {
@@ -16661,4 +16688,24 @@ private:
 	std::vector<LocalObject> current_function_local_objects_;  // Objects with destructors
 	std::vector<UnwindMapEntry> current_function_unwind_map_;  // Unwind map for destructors
 	int current_exception_state_ = -1;  // Current exception handling state number
+
+	// Windows SEH (Structured Exception Handling) tracking
+	struct SehExceptHandler {
+		uint32_t handler_offset;  // Code offset of __except handler
+		uint32_t filter_result;   // Filter expression evaluation result (temp var number)
+	};
+
+	struct SehFinallyHandler {
+		uint32_t handler_offset;  // Code offset of __finally handler
+	};
+
+	struct SehTryBlock {
+		uint32_t try_start_offset;  // Code offset where __try block starts
+		uint32_t try_end_offset;    // Code offset where __try block ends
+		std::optional<SehExceptHandler> except_handler;   // __except handler (if present)
+		std::optional<SehFinallyHandler> finally_handler; // __finally handler (if present)
+	};
+
+	std::vector<SehTryBlock> current_function_seh_try_blocks_;  // SEH try blocks in current function
+	SehTryBlock* current_seh_try_block_ = nullptr;  // Currently active SEH try block being processed
 }; // End of IrToObjConverter class
