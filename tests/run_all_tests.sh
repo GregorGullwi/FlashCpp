@@ -70,6 +70,13 @@ FAIL_FILES=()
 for f in tests/*.cpp; do
     [ -f "$f" ] || continue
     base=$(basename "$f")
+
+    # Skip Windows-only SEH tests on Linux
+    if [[ "$base" == test_seh_*.cpp ]]; then
+        echo "Skipping Windows-only SEH test: $base" >&2
+        continue
+    fi
+
     if grep -q '\bint\s\+main\s*(' "$f" || grep -q '\bvoid\s\+main\s*(' "$f"; then
         [[ "$base" == *"_fail.cpp" ]] && FAIL_FILES+=("$base") || TEST_FILES+=("$base")
     fi
