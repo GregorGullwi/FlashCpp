@@ -5126,6 +5126,10 @@ ParseResult Parser::parse_struct_declaration()
 			bool has_dependent_args = false;
 			auto contains_template_param = [this](StringHandle type_name_handle) -> bool {
 				std::string_view type_name = StringTable::getStringView(type_name_handle);
+				// Check if this looks like a mangled template name (contains underscores as separators)
+				// Mangled names like "is_integral__Tp" use underscore as separator
+				bool is_mangled_name = type_name.find('_') != std::string_view::npos;
+
 				for (const auto& param_name : current_template_param_names_) {
 					std::string_view param_sv = StringTable::getStringView(param_name);
 					// Check if type_name contains param_name as an identifier
@@ -5136,6 +5140,18 @@ ParseResult Parser::parse_struct_declaration()
 						bool end_ok = (pos + param_sv.size() >= type_name.size()) || (!std::isalnum(static_cast<unsigned char>(type_name[pos + param_sv.size()])) && type_name[pos + param_sv.size()] != '_');
 						if (start_ok && end_ok) {
 							return true;
+						}
+						// For mangled template names (like "is_integral__Tp"), underscore is a valid separator
+						// Allow matching when the param starts with _ and is preceded by another _
+						// e.g., "__Tp" in "is_integral__Tp" where param is "_Tp"
+						if (is_mangled_name && pos > 0 && type_name[pos - 1] == '_' && param_sv[0] == '_') {
+							// Check end boundary (must be end of string or followed by underscore/non-alnum)
+							bool relaxed_end_ok = (pos + param_sv.size() >= type_name.size()) ||
+							                      (type_name[pos + param_sv.size()] == '_') ||
+							                      (!std::isalnum(static_cast<unsigned char>(type_name[pos + param_sv.size()])));
+							if (relaxed_end_ok) {
+								return true;
+							}
 						}
 						pos = type_name.find(param_sv, pos + 1);
 					}
@@ -12250,17 +12266,40 @@ ParseResult Parser::parse_type_specifier()
 				}
 				
 				auto inst_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
-				if (inst_type_it != gTypesByName.end() && inst_type_it->second->isStruct()) {
-					const TypeInfo* struct_type_info = inst_type_it->second;
-					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
-
-					if (struct_info) {
-						type_size = static_cast<int>(struct_info->total_size * 8);
+				if (inst_type_it != gTypesByName.end()) {
+					const TypeInfo* existing_type = inst_type_it->second;
+					if (existing_type->isStruct()) {
+						// Return existing struct type
+						const StructTypeInfo* struct_info = existing_type->getStructInfo();
+						if (struct_info) {
+							type_size = static_cast<int>(struct_info->total_size * 8);
+						} else {
+							type_size = 0;
+						}
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							Type::Struct, existing_type->type_index_, type_size, type_name_token, cv_qualifier));
 					} else {
-						type_size = 0;
+						// Return existing placeholder (UserDefined) - don't create duplicates
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							existing_type->type_, existing_type->type_index_, 0, type_name_token, cv_qualifier));
 					}
+				}
+
+				// If type not found and we have dependent template args, create a placeholder type
+				// with the full instantiated name (e.g., "is_function__Tp" instead of "is_function")
+				// This preserves the dependent type information for use in nested template instantiations
+				if (has_dependent_args) {
+					FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent template placeholder for '{}'", instantiated_name);
+					auto type_idx = StringTable::getOrInternStringHandle(instantiated_name);
+					auto& type_info = gTypeInfo.emplace_back();
+					type_info.type_ = Type::UserDefined;
+					type_info.type_index_ = gTypeInfo.size() - 1;
+					type_info.type_size_ = 0;  // Unknown size for dependent type
+					type_info.name_ = type_idx;
+					gTypesByName[type_idx] = &type_info;
+
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(
-						Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+						Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
 				}
 				// If type not found, fall through to error handling below
 			}
@@ -25700,7 +25739,45 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 					}
 				}
 			}
-			
+
+			// Handle dependent placeholder types like "TC_T" - template instantiations that
+			// contain template parameters in their mangled name. Extract the template base
+			// name and instantiate with the substituted arguments.
+			if (!found_match && type_name.find('_') != std::string_view::npos) {
+				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+					if (!template_params[i].is<TemplateParameterNode>()) continue;
+					const auto& tparam = template_params[i].as<TemplateParameterNode>();
+					std::string_view param_name = tparam.name();
+
+					// Check if the type name ends with "_<param>" pattern (like "TC_T" for param "T")
+					size_t pos = type_name.rfind(param_name);
+					if (pos != std::string_view::npos && pos > 0 && type_name[pos - 1] == '_' &&
+					    pos + param_name.size() == type_name.size()) {
+						// Extract the template base name by finding the template in registry
+						std::string_view base_sv = type_name.substr(0, pos - 1);
+						auto template_opt = gTemplateRegistry.lookupTemplate(base_sv);
+						if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+							// Found the template! Instantiate it with the concrete arguments
+							FLASH_LOG(Templates, Debug, "substitute_template_parameter: '", type_name,
+							          "' is a dependent placeholder for template '", base_sv, "' - instantiating with concrete args");
+
+							try_instantiate_class_template(base_sv, template_args);
+							std::string_view instantiated_name = get_instantiated_class_name(base_sv, template_args);
+
+							auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
+							if (type_it != gTypesByName.end()) {
+								const TypeInfo* resolved_info = type_it->second;
+								result_type = resolved_info->type_;
+								result_type_index = resolved_info->type_index_;
+								found_match = true;
+								FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", result_type_index, ")");
+							}
+							break;
+						}
+					}
+				}
+			}
+
 			// If not found as a direct template parameter, check if this is a type alias
 			// that resolves to a template parameter (e.g., "using value_type = T;")
 			// This requires a valid type_index to look up the alias info
@@ -26902,12 +26979,12 @@ ParseResult Parser::parse_template_declaration() {
 		bool has_unresolved_params = false;
 		StringHandle target_template_name;
 		std::vector<ASTNode> target_template_arg_nodes;
-		
-		if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) && 
+
+		if ((type_spec.type() == Type::Struct || type_spec.type() == Type::UserDefined) &&
 		    type_spec.type_index() < gTypeInfo.size()) {
 			const TypeInfo& ti = gTypeInfo[type_spec.type_index()];
 			std::string_view type_name = StringTable::getStringView(ti.name());
-			
+
 			// Check for "_unknown" suffix indicating unresolved template parameters
 			if (type_name.find("_unknown") != std::string_view::npos) {
 				has_unresolved_params = true;
@@ -26923,6 +27000,25 @@ ParseResult Parser::parse_template_declaration() {
 				if (template_opt.has_value()) {
 					FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a primary template (instantiation was skipped due to dependent args) - using deferred instantiation");
 					has_unresolved_params = true;
+				}
+			}
+
+			// Also check if the type is a dependent placeholder (UserDefined type with
+			// a name containing our template parameter names)
+			// This catches cases like "integral_constant_bool_B" created by dependent template instantiation
+			if (!has_unresolved_params && type_spec.type() == Type::UserDefined) {
+				for (const auto& param_name : template_param_names) {
+					std::string_view param_sv = param_name.view();
+					// Check if the type name contains the parameter as a suffix (after underscore)
+					// Pattern: "..._<param>" like "integral_constant_bool_B"
+					size_t pos = type_name.rfind(param_sv);
+					if (pos != std::string_view::npos && pos > 0 && type_name[pos - 1] == '_' &&
+					    pos + param_sv.size() == type_name.size()) {
+						has_unresolved_params = true;
+						FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a dependent placeholder containing template param '",
+						          param_sv, "' - using deferred instantiation");
+						break;
+					}
 				}
 			}
 			
@@ -33527,20 +33623,24 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 						const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 						StringHandle param_name = tparam_ref.param_name();
+						// Store the dependent name for placeholder type generation
+						dependent_arg.dependent_name = param_name;
 						// Look up the template parameter type in gTypesByName
 						auto type_it = gTypesByName.find(param_name);
 						if (type_it != gTypesByName.end()) {
 							dependent_arg.type_index = type_it->second->type_index_;
-							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index, 
+							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index,
 							          " for template parameter '", StringTable::getStringView(param_name), "'");
 						}
 					} else if (std::holds_alternative<IdentifierNode>(expr)) {
 						const auto& id = std::get<IdentifierNode>(expr);
+						// Store the dependent name for placeholder type generation
+						dependent_arg.dependent_name = StringTable::getOrInternStringHandle(id.name());
 						// Check if this identifier is a template parameter by looking it up
 						auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(id.name()));
 						if (type_it != gTypesByName.end()) {
 							dependent_arg.type_index = type_it->second->type_index_;
-							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index, 
+							FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index,
 							          " for identifier '", id.name(), "'");
 						} else {
 							// Check if this identifier is a template alias (like void_t)

@@ -7,38 +7,38 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~29ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~113ms) |
+| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Parse Error | Parses 400 templates (~100ms), static_assert constexpr evaluation issue |
 | `<compare>` | N/A | ✅ Compiled | ~258ms (2026-01-24: Fixed with operator[], brace-init, and throw expression fixes) |
 | `<version>` | N/A | ✅ Compiled | ~17ms |
 | `<source_location>` | N/A | ✅ Compiled | ~17ms |
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | static_assert constexpr evaluation (~155ms) |
-| `<vector>` | `test_std_vector.cpp` | ❌ Timeout/Parse Error | Hangs or takes very long - likely placement new in decltype issue |
-| `<tuple>` | `test_std_tuple.cpp` | ❌ Parse Error | Needs investigation with <compare> fix |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Fails at line 337 - inheriting constructors not supported (~263ms) |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | static_assert constexpr evaluation issue (~161ms) |
-| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Out-of-line nested template member function definition (~128ms) |
+| `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template complexity causes timeout |
+| `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Template complexity causes timeout |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Parses 650 templates (~241ms), inheriting constructors not supported (line 341) |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Base class `__ull_constant` not found in parse_numbers.h |
+| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Parses 500 templates (~122ms), out-of-line nested template member function (line 574) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
-| `<utility>` | `test_std_utility.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
-| `<bit>` | N/A | ❌ Parse Error | `<compare>` header parsing failure |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
-| `<string>` | `test_std_string.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
+| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
+| `<bit>` | N/A | ❌ Parse Error | Out-of-line template member functions in char_traits.h |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Parses 600 templates (~206ms), out-of-line template member in char_traits.h |
+| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Out-of-line template member functions in char_traits.h |
+| `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Test file missing |
-| `<functional>` | `test_std_functional.cpp` | ❌ Parse Error | `<compare>` header parsing failure (~143ms) |
+| `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Test file missing |
-| `<map>` | `test_std_map.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
-| `<set>` | `test_std_set.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
-| `<span>` | `test_std_span.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | `<compare>` header parsing failure |
+| `<map>` | `test_std_map.cpp` | ❌ Parse Error | Likely out-of-line template member functions |
+| `<set>` | `test_std_set.cpp` | ❌ Parse Error | Likely out-of-line template member functions |
+| `<span>` | `test_std_span.cpp` | ❌ Parse Error | Out-of-line template member functions |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Out-of-line template member functions |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Out-of-line template member functions |
 | `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Test file missing |
 | `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
 | `<typeinfo>` | N/A | ✅ Compiled | ~18ms |
-| `<typeindex>` | N/A | ❌ Parse Error | `<compare>` header parsing failure |
+| `<typeindex>` | N/A | ❌ Parse Error | Out-of-line template member functions |
 | `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
 | `<csignal>` | N/A | ✅ Compiled | ~22ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
@@ -48,9 +48,12 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<text_encoding>` | N/A | ✅ Compiled | ~17ms (C++26) |
 | `<barrier>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<stacktrace>` | N/A | ✅ Compiled | ~17ms (C++23) |
-| `<coroutine>` | N/A | ❌ Parse Error | `<compare>` header parsing failure |
+| `<coroutine>` | N/A | ❌ Parse Error | Out-of-line template member functions |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
+
+**Note (2026-01-30 Latest Update):** Fixed dependent template instantiation to preserve template argument names in mangled type names. When a template like `is_function<_Tp>` is parsed inside a template body, it's now registered as `is_function__Tp` (a placeholder preserving the dependent type info) instead of falling back to `is_function` (the primary template). This fixes the issue where nested template instantiations like `__not_<__or_<is_function<_Tp>, ...>>` would lose their dependent type information. Also improved the `contains_template_param` check to recognize underscore-prefixed parameters (like `_Tp`) in mangled names.
+- **Impact:** `<utility>` now compiles successfully! Many other headers now parse significantly more templates before hitting their respective blockers.
 
 **Note (2026-01-23 Latest Update):** Fixed multiple `<compare>` header blockers including variable template lookup with dependent args, constructor parsing in member struct templates, and inline constexpr struct with trailing variable initializers. The header now progresses from line 763 to line 1210, failing on `requires requires` clause in inline constexpr struct member function (`_Synth3way::operator()`).
 
@@ -69,11 +72,11 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Note (2026-01-24 Latest Update):** Fixed `operator[]` parsing in template class bodies, brace initialization of structs with constructors but no data members, and throw expressions as unary operators. The `<compare>` header now fully compiles. Fixed union template parsing - union keyword now recognized in all template declaration paths. The `<optional>` header now progresses past line 204 and fails at line 141 with a different constexpr evaluation error.
 
 **Primary Remaining Blockers:**
-1. **Type alias resolution in inherited base classes** - When a template inherits from `Base<T>::type`, the type alias needs to be resolved to the underlying struct type. Currently, type alias TypeInfo objects created during template instantiation have invalid `type_index_` values (likely due to `gTypeInfo` vector reallocation), preventing proper base class resolution. This affects `<type_traits>` where `is_integral<int>` inherits from `__is_integral_helper<int>::type` which should resolve to `integral_constant<bool, true>`. See investigation notes below for details.
-2. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
-3. **Out-of-line nested template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported yet (affects `<any>`)
-4. **Vector header performance** - The `<vector>` header times out during template instantiation, likely due to template complexity. Note: The placement new syntax (`decltype(::new((void*)0) _Tp(...))`) itself parses correctly - the issue is elsewhere in vector's dependencies.
-5. **Inheriting constructors** - The `using BaseClass::Constructor;` syntax is not supported yet (affects `<optional>`)
+1. **Out-of-line template member functions** - Patterns like `template<typename T> void Class<T>::method()` and especially nested versions like `template<typename T> void Outer::Inner<T>::method()` are not fully supported. This is currently the **biggest blocker** - it affects `<any>`, `<string>`, `<string_view>`, and most container headers.
+2. **Inheriting constructors** - The `using BaseClass::Constructor;` syntax is not supported yet (affects `<optional>` at line 341)
+3. **Type alias resolution for constexpr evaluation** - Templates like `is_integral<int>` inherit from `integral_constant<bool, true>::type`. While parsing now works, constexpr evaluation of `::value` through the inheritance chain fails. This affects `static_assert` statements in `<type_traits>`, `<ratio>`.
+4. **Template complexity/performance** - Headers like `<vector>`, `<tuple>`, `<array>`, `<functional>` time out due to template instantiation complexity.
+5. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
 
 **Fixes Applied (2026-01-25 This PR - `this` keyword support):**
 - **Fixed** `this` keyword in statement context - Added `{"this", &Parser::parse_expression_statement}` to keyword_parsing_functions map (Parser.cpp:~14078)
