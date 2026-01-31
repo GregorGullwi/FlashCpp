@@ -25733,7 +25733,45 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 					}
 				}
 			}
-			
+
+			// Handle dependent placeholder types like "TC_T" - template instantiations that
+			// contain template parameters in their mangled name. Extract the template base
+			// name and instantiate with the substituted arguments.
+			if (!found_match && type_name.find('_') != std::string_view::npos) {
+				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+					if (!template_params[i].is<TemplateParameterNode>()) continue;
+					const auto& tparam = template_params[i].as<TemplateParameterNode>();
+					std::string_view param_name = tparam.name();
+
+					// Check if the type name ends with "_<param>" pattern (like "TC_T" for param "T")
+					size_t pos = type_name.rfind(param_name);
+					if (pos != std::string_view::npos && pos > 0 && type_name[pos - 1] == '_' &&
+					    pos + param_name.size() == type_name.size()) {
+						// Extract the template base name by finding the template in registry
+						std::string_view base_sv = type_name.substr(0, pos - 1);
+						auto template_opt = gTemplateRegistry.lookupTemplate(base_sv);
+						if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+							// Found the template! Instantiate it with the concrete arguments
+							FLASH_LOG(Templates, Debug, "substitute_template_parameter: '", type_name,
+							          "' is a dependent placeholder for template '", base_sv, "' - instantiating with concrete args");
+
+							try_instantiate_class_template(base_sv, template_args);
+							std::string_view instantiated_name = get_instantiated_class_name(base_sv, template_args);
+
+							auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
+							if (type_it != gTypesByName.end()) {
+								const TypeInfo* resolved_info = type_it->second;
+								result_type = resolved_info->type_;
+								result_type_index = resolved_info->type_index_;
+								found_match = true;
+								FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", result_type_index, ")");
+							}
+							break;
+						}
+					}
+				}
+			}
+
 			// If not found as a direct template parameter, check if this is a type alias
 			// that resolves to a template parameter (e.g., "using value_type = T;")
 			// This requires a valid type_index to look up the alias info

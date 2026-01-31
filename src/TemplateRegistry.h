@@ -246,12 +246,6 @@ struct TemplateTypeArg {
 
 	// Get string representation for mangling
 	std::string toString() const {
-		// For dependent types/values, use the dependent_name if available
-		// This preserves template parameter names in placeholder types
-		if (is_dependent && dependent_name.isValid()) {
-			return std::string(StringTable::getStringView(dependent_name));
-		}
-
 		if (is_value) {
 			// For boolean values, use "true" or "false" instead of "1" or "0"
 			// This is important for template specialization matching
@@ -272,33 +266,37 @@ struct TemplateTypeArg {
 			result += "V";  // volatile
 		}
 
-		// Add base type name
-		switch (base_type) {
-			case Type::Void: result += "void"; break;
-			case Type::Int: result += "int"; break;
-			case Type::Float: result += "float"; break;
-			case Type::Double: result += "double"; break;
-			case Type::Bool: result += "bool"; break;
-			case Type::Char: result += "char"; break;
-			case Type::Long: result += "long"; break;
-			case Type::LongLong: result += "longlong"; break;
-			case Type::Short: result += "short"; break;
-			case Type::UnsignedInt: result += "uint"; break;
-			case Type::UnsignedLong: result += "ulong"; break;
-			case Type::UnsignedLongLong: result += "ulonglong"; break;
-			case Type::UnsignedShort: result += "ushort"; break;
-			case Type::UnsignedChar: result += "uchar"; break;
-			case Type::UserDefined:
-			case Type::Struct:
-			case Type::Enum:
-				// For user-defined types, look up the name from gTypeInfo
-				if (type_index < gTypeInfo.size()) {
-					result += StringTable::getStringView(gTypeInfo[type_index].name());
-				} else {
-					result += "unknown";
-				}
-				break;
-			default: result += "unknown"; break;
+		// Add base type name - for dependent types, use dependent_name if available
+		if (is_dependent && dependent_name.isValid()) {
+			result += StringTable::getStringView(dependent_name);
+		} else {
+			switch (base_type) {
+				case Type::Void: result += "void"; break;
+				case Type::Int: result += "int"; break;
+				case Type::Float: result += "float"; break;
+				case Type::Double: result += "double"; break;
+				case Type::Bool: result += "bool"; break;
+				case Type::Char: result += "char"; break;
+				case Type::Long: result += "long"; break;
+				case Type::LongLong: result += "longlong"; break;
+				case Type::Short: result += "short"; break;
+				case Type::UnsignedInt: result += "uint"; break;
+				case Type::UnsignedLong: result += "ulong"; break;
+				case Type::UnsignedLongLong: result += "ulonglong"; break;
+				case Type::UnsignedShort: result += "ushort"; break;
+				case Type::UnsignedChar: result += "uchar"; break;
+				case Type::UserDefined:
+				case Type::Struct:
+				case Type::Enum:
+					// For user-defined types, look up the name from gTypeInfo
+					if (type_index < gTypeInfo.size()) {
+						result += StringTable::getStringView(gTypeInfo[type_index].name());
+					} else {
+						result += "unknown";
+					}
+					break;
+				default: result += "unknown"; break;
+			}
 		}
 
 		// Add pointer markers
