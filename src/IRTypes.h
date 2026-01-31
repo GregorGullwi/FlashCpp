@@ -142,6 +142,14 @@ enum class IrOpcode : int_fast16_t {
 	CatchEnd,            // End catch handler
 	Throw,               // Throw exception: [exception_temp, type_index]
 	Rethrow,             // Rethrow current exception (throw; with no argument)
+	// Windows SEH (Structured Exception Handling)
+	SehTryBegin,         // Begin __try block: [label_for_handlers]
+	SehTryEnd,           // End __try block
+	SehExceptBegin,      // Begin __except handler: [filter_result_temp, except_end_label]
+	SehExceptEnd,        // End __except handler
+	SehFinallyBegin,     // Begin __finally handler
+	SehFinallyEnd,       // End __finally handler
+	SehLeave,            // __leave statement: jump to end of __try block
 };
 
 // ============================================================================
@@ -1448,6 +1456,21 @@ struct ThrowOp {
 	size_t size_in_bytes;         // Size of exception object in bytes
 	IrValue exception_value;      // Value to throw (TempVar, unsigned long long, double, or StringHandle)
 	bool is_rvalue;               // True if throwing an rvalue (can be moved)
+};
+
+// ============================================================================
+// Windows SEH (Structured Exception Handling) Operations
+// ============================================================================
+
+// SEH __except handler begin marker
+struct SehExceptBeginOp {
+	TempVar filter_result;        // Temporary holding the filter expression result
+	std::string_view except_end_label;  // Label to jump to after __except block
+};
+
+// SEH __leave operation - jumps to end of current __try block
+struct SehLeaveOp {
+	std::string_view target_label;  // Label to jump to (end of __try block or __finally)
 };
 
 // Helper function to format conversion operations for IR output
@@ -2807,6 +2830,45 @@ public:
 		case IrOpcode::Rethrow:
 			oss << "rethrow";
 			break;
+
+		// Windows SEH opcodes
+		case IrOpcode::SehTryBegin:
+		{
+			const auto& op = getTypedPayload<BranchOp>();
+			oss << "seh_try_begin @" << op.getTargetLabel();
+		}
+		break;
+
+		case IrOpcode::SehTryEnd:
+			oss << "seh_try_end";
+			break;
+
+		case IrOpcode::SehExceptBegin:
+		{
+			const auto& op = getTypedPayload<SehExceptBeginOp>();
+			oss << "seh_except_begin %" << op.filter_result.var_number;
+			oss << " -> @" << op.except_end_label;
+		}
+		break;
+
+		case IrOpcode::SehExceptEnd:
+			oss << "seh_except_end";
+			break;
+
+		case IrOpcode::SehFinallyBegin:
+			oss << "seh_finally_begin";
+			break;
+
+		case IrOpcode::SehFinallyEnd:
+			oss << "seh_finally_end";
+			break;
+
+		case IrOpcode::SehLeave:
+		{
+			const auto& op = getTypedPayload<SehLeaveOp>();
+			oss << "seh_leave @" << op.target_label;
+		}
+		break;
 
 		default:
 			FLASH_LOG(Codegen, Error, "Unhandled opcode: ", static_cast<std::underlying_type_t<IrOpcode>>(opcode_));

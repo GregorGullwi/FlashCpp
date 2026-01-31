@@ -65,6 +65,15 @@ public:
 		else if (node.is<ThrowStatementNode>()) {
 			visitThrowStatementNode(node.as<ThrowStatementNode>());
 		}
+		else if (node.is<SehTryExceptStatementNode>()) {
+			visitSehTryExceptStatementNode(node.as<SehTryExceptStatementNode>());
+		}
+		else if (node.is<SehTryFinallyStatementNode>()) {
+			visitSehTryFinallyStatementNode(node.as<SehTryFinallyStatementNode>());
+		}
+		else if (node.is<SehLeaveStatementNode>()) {
+			visitSehLeaveStatementNode(node.as<SehLeaveStatementNode>());
+		}
 		else if (node.is<BlockNode>()) {
 			visitBlockNode(node.as<BlockNode>());
 		}
