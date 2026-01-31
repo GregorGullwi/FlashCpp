@@ -1095,6 +1095,37 @@
 	LambdaContext current_lambda_context_;
 	std::vector<LambdaContext> lambda_context_stack_;
 
+	// SEH (Structured Exception Handling) context tracking
+	// Tracks the current __try block context for __leave statement resolution
+	struct SehContext {
+		std::string_view try_end_label;      // Label at the end of the __try block (where __leave jumps to)
+		std::string_view finally_label;      // Label for __finally handler (empty if no __finally)
+		bool has_finally;                    // True if this __try has a __finally clause
+	};
+	std::vector<SehContext> seh_context_stack_;  // Stack of active SEH contexts
+
+	// SEH context helper methods
+	void pushSehContext(std::string_view end_label, std::string_view finally_label, bool has_finally) {
+		SehContext ctx;
+		ctx.try_end_label = end_label;
+		ctx.finally_label = finally_label;
+		ctx.has_finally = has_finally;
+		seh_context_stack_.push_back(ctx);
+	}
+
+	void popSehContext() {
+		if (!seh_context_stack_.empty()) {
+			seh_context_stack_.pop_back();
+		}
+	}
+
+	const SehContext* getCurrentSehContext() const {
+		if (seh_context_stack_.empty()) {
+			return nullptr;
+		}
+		return &seh_context_stack_.back();
+	}
+
 	// Generate just the function declaration for a template instantiation (without body)
 	// This is called immediately when a template call is detected, so the IR converter
 	// knows the full function signature before the call is converted to object code
