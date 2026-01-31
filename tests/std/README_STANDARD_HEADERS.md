@@ -21,9 +21,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<any>` | `test_std_any.cpp` | ❌ Parse Error | Parses 500 templates (~200ms), nested out-of-line template member function (line 583) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
-| `<bit>` | N/A | ❌ Parse Error | Parse error in char_traits.h:373 (for loop with size_t) |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Parses 600 templates (~240ms), parse error in char_traits.h:373 (for loop with size_t) |
-| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Parses 600 templates (~248ms), parse error in char_traits.h:373 (for loop with size_t) |
+| `<bit>` | N/A | ❌ Parse Error | Parse error in char_traits.h:391 (__builtin_strlen function lookup) |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Parses 600 templates (~240ms), parse error in char_traits.h:391 (__builtin_strlen function lookup) |
+| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Parses 600 templates (~248ms), parse error in char_traits.h:391 (__builtin_strlen function lookup) |
 | `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Test file missing |
 | `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Template complexity causes timeout |
@@ -32,7 +32,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Parse error in char_traits.h:373 (for loop with size_t) |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Parse error in char_traits.h:391 (__builtin_strlen function lookup) |
 | `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Test file missing |
 | `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
@@ -52,22 +52,24 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
-**Note (2026-01-31 Latest Update - This PR):** Fixed two major blockers for standard library headers:
-1. **Inheriting constructors** - Parser now recognizes and handles `using BaseClass<T>::BaseClass;` syntax. Added support in `parse_member_type_alias` with lookahead to detect template arguments before `::`.
-2. **Out-of-line template member functions with pointer/reference return types** - Fixed `try_parse_out_of_line_template_member` to skip pointer and reference modifiers after the return type. This handles multi-line declarations like:
+**Note (2026-01-31 Latest Update - This PR):** Fixed three major blockers for standard library headers:
+1. **For loop initialization with type aliases** - Parser now recognizes type aliases (like `size_t`) in for loop initialization by checking `gTypesByName`. Previously only recognized language keywords as type names.
+2. **Inheriting constructors** - Parser now recognizes and handles `using BaseClass<T>::BaseClass;` syntax. Added support in `parse_member_type_alias` with lookahead to detect template arguments before `::`.
+3. **Out-of-line template member functions with pointer/reference return types** - Fixed `try_parse_out_of_line_template_member` to skip pointer and reference modifiers after the return type. This handles multi-line declarations like:
    ```cpp
    template<typename T>
    const typename Class<T>::nested_type*
    Class<T>::method(...) { ... }
    ```
 - **Impact:** 
+  - **NEW:** `<string>`, `<string_view>`, `<bit>`, `<iostream>` now progress past char_traits.h:373 for loop error to line 391 (__builtin_strlen lookup issue)
   - `<optional>` progresses past line 337 (inheriting constructors) to line 475 (unrelated parsing issue)
-  - `<string>`, `<string_view>`, `<bit>`, `<iostream>` progress past char_traits.h out-of-line member functions to line 373 (for loop parsing issue)
   - `<span>`, `<ranges>`, `<map>`, `<set>` now parse significantly more before hitting timeout (likely due to reduced backtracking)
   - `<any>` progresses to line 583 (nested out-of-line: `Outer::Inner<T>::method`)
 - **Remaining issues:**
   - Nested out-of-line template members (`Outer::Inner<T>::method`) not yet supported
-  - For loop initialization with `size_t __i = 0` in constexpr context needs fixing
+  - Builtin function lookup (`__builtin_strlen`) needs fixing for string headers
+  - Template instantiation in constexpr context (e.g., `is_integral<int>::value`) needs architecture changes
 
 **Note (2026-01-30 Latest Update):** Fixed dependent template instantiation to preserve template argument names in mangled type names. When a template like `is_function<_Tp>` is parsed inside a template body, it's now registered as `is_function__Tp` (a placeholder preserving the dependent type info) instead of falling back to `is_function` (the primary template). This fixes the issue where nested template instantiations like `__not_<__or_<is_function<_Tp>, ...>>` would lose their dependent type information. Also improved the `contains_template_param` check to recognize underscore-prefixed parameters (like `_Tp`) in mangled names.
 - **Impact:** `<utility>` now compiles successfully! Many other headers now parse significantly more templates before hitting their respective blockers.
@@ -90,10 +92,21 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Primary Remaining Blockers:**
 1. **Nested out-of-line template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported. Single-level out-of-line members (`Class<T>::method`) now work, but nested versions need additional parsing support. This affects `<any>` (line 583: `any::_Manager_internal<_Tp>::_S_manage`).
-2. **Type alias resolution for constexpr evaluation** - Templates like `is_integral<int>` inherit from `integral_constant<bool, true>::type`. While parsing now works, constexpr evaluation of `::value` through the inheritance chain fails. This affects `static_assert` statements in `<type_traits>`, `<ratio>`.
+2. **Type alias resolution for constexpr evaluation** - Templates like `is_integral<int>` inherit from `integral_constant<bool, true>::type`. While parsing now works, constexpr evaluation of `::value` through the inheritance chain fails. This affects `static_assert` statements in `<type_traits>`, `<ratio>`, `<variant>`.
 3. **Template complexity/performance** - Headers like `<vector>`, `<tuple>`, `<array>`, `<functional>`, `<map>`, `<set>`, `<span>`, `<ranges>` time out due to template instantiation complexity.
-4. **For loop initialization parsing** - Pattern `for (size_t __i = 0; ...)` fails in constexpr context (affects char_traits.h:373). This blocks `<string>`, `<string_view>`, `<iostream>`, `<bit>`.
+4. **Builtin function lookup** - Functions like `__builtin_strlen` are not found during function lookup. This blocks `<string>`, `<string_view>`, `<iostream>`, `<bit>` at char_traits.h:391.
 5. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
+
+**Fixes Applied (2026-01-31 This PR - For Loop Initialization with Type Aliases):**
+- **Fixed** For loop initialization with type aliases (e.g., `size_t`, custom types)
+  - Modified `parse_for_loop` to check `gTypesByName` for type aliases when parsing initialization
+  - Previously only recognized language keywords (int, char, etc.) as valid type names in for loop init
+  - Now handles patterns like `for (size_t __i = 0; __i < __n; ++__i)` correctly
+  - Solution: Added identifier check that looks up the name in `gTypesByName` before deciding to parse as declaration vs expression
+- **Impact:**
+  - `<string>`, `<string_view>`, `<iostream>`, `<bit>` progress from char_traits.h:373 (for loop parse error) to line 391 (__builtin_strlen lookup)
+  - Unblocks all headers that use standard type aliases in for loop initialization
+  - Fixes a fundamental limitation where only built-in type keywords were recognized in certain contexts
 
 **Fixes Applied (2026-01-31 This PR - Inheriting Constructors and Out-of-line Template Members):**
 - **Fixed** Inheriting constructors syntax: `using BaseClass<T>::BaseClass;`
