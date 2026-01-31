@@ -365,6 +365,7 @@ private:
                 StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
                 StructTypeInfo* local_struct_info = nullptr;  // Pointer to StructTypeInfo being built (for static member lookup)
                 std::vector<StringHandle> imported_members;  // Members imported via using-declarations
+                bool has_inherited_constructors = false;  // True if constructors are inherited from base class
         };
         std::vector<StructParsingContext> struct_parsing_context_stack_;
 

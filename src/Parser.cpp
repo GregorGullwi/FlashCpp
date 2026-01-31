@@ -3889,13 +3889,28 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		// Look ahead to see if this is:
 		// 1. Type alias: using Alias = Type;  (identifier followed by '=')
 		// 2. Using-declaration: using namespace::member;  (identifier followed by '::')
+		// 3. Inheriting constructor: using Base<T>::Base;  (identifier<template args> followed by '::')
 		SaveHandle lookahead_pos = save_token_position();
 		consume_token(); // consume first identifier
+		
+		// Skip template arguments if present
+		if (peek_token().has_value() && peek_token()->value() == "<") {
+			int depth = 1;
+			consume_token(); // consume '<'
+			while (depth > 0 && peek_token().has_value()) {
+				if (peek_token()->value() == "<") depth++;
+				else if (peek_token()->value() == ">") depth--;
+				consume_token();
+			}
+		}
+		
 		auto next_token = peek_token();
 		
 		if (next_token.has_value() && next_token->value() == "::") {
 			// This is a using-declaration like: using std::__is_integer<_Tp>::__value;
+			// Or an inheriting constructor like: using Base<T>::Base;
 			// Parse and extract the member name to register it in the current scope
+			std::string_view base_class_name = alias_token->value();  // Remember the first identifier (base class name)
 			std::string_view member_name;
 			
 			while (peek_token().has_value() && peek_token()->value() == "::") {
@@ -3926,6 +3941,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				}
 			}
 			
+			// Check if this is an inheriting constructor: using Base::Base;
+			// The member name should match the base class name (first identifier)
+			bool is_inheriting_constructor = (member_name == base_class_name);
+			
 			// Register the imported member name in the struct parsing context
 			// This makes the member accessible by its simple name even when the
 			// base class is a dependent type (template) that can't be resolved yet
@@ -3933,7 +3952,15 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				if (!struct_parsing_context_stack_.empty()) {
 					StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 					struct_parsing_context_stack_.back().imported_members.push_back(member_handle);
-					FLASH_LOG(Parser, Debug, "Using-declaration imports member '", member_name, "' into struct parsing context");
+					
+					if (is_inheriting_constructor) {
+						FLASH_LOG(Parser, Debug, "Inheriting constructors from '", base_class_name, "' into struct parsing context");
+						// For inheriting constructors, we import the constructors from the base class
+						// Mark that constructors are inherited
+						struct_parsing_context_stack_.back().has_inherited_constructors = true;
+					} else {
+						FLASH_LOG(Parser, Debug, "Using-declaration imports member '", member_name, "' into struct parsing context");
+					}
 				}
 			}
 			
@@ -31909,7 +31936,50 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					std::string_view alias_name = peek_token()->value();
 					consume_token(); // consume alias name
 					
-					// Expect '='
+					// Check if this is an inheriting constructor: using Base::Base;
+					// or a using-declaration: using Base::member;
+					if (peek_token().has_value() && peek_token()->value() == "::") {
+						// Parse the full qualified name
+						std::string_view base_class_name = alias_name;
+						
+						while (peek_token().has_value() && peek_token()->value() == "::") {
+							consume_token(); // consume '::'
+							
+							if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+								alias_name = peek_token()->value();  // Track last identifier
+								consume_token(); // consume identifier
+								
+								// Skip template arguments if present
+								if (peek_token().has_value() && peek_token()->value() == "<") {
+									int depth = 1;
+									consume_token(); // consume '<'
+									while (depth > 0 && peek_token().has_value()) {
+										if (peek_token()->value() == "<") depth++;
+										else if (peek_token()->value() == ">") depth--;
+										consume_token();
+									}
+								}
+							}
+						}
+						
+						// Check if this is an inheriting constructor
+						bool is_inheriting_constructor = (alias_name == base_class_name);
+						
+						if (is_inheriting_constructor) {
+							FLASH_LOG(Parser, Debug, "Inheriting constructors from '", base_class_name, "' in member struct template");
+						} else {
+							FLASH_LOG(Parser, Debug, "Using-declaration imports member '", alias_name, "' in member struct template");
+						}
+						
+						// Consume trailing semicolon
+						if (peek_token().has_value() && peek_token()->value() == ";") {
+							consume_token();
+						}
+						
+						continue;  // Move to next member
+					}
+					
+					// Expect '=' for type alias
 					if (!peek_token().has_value() || peek_token()->value() != "=") {
 						return ParseResult::error("Expected '=' after alias name", *current_token_);
 					}
