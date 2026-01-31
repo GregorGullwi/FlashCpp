@@ -43472,6 +43472,26 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 	ASTNode return_type_node = *return_type_result.node();
 
+	// Skip pointer/reference modifiers after the return type
+	// Pattern: Type*, Type&, Type&&, Type* const, Type const*, etc.
+	// This handles cases where the return type and class name are on separate lines:
+	//   template<typename T>
+	//   const typename Class<T>::nested_type*
+	//   Class<T>::method(...) { ... }
+	while (peek_token().has_value()) {
+		auto token_val = peek_token()->value();
+		if (token_val == "*" || token_val == "&") {
+			consume_token();
+			// Also skip CV-qualifiers after pointer/reference
+			while (peek_token().has_value() && 
+			       (peek_token()->value() == "const" || peek_token()->value() == "volatile")) {
+				consume_token();
+			}
+		} else {
+			break;
+		}
+	}
+
 	// Check for class name (identifier)
 	if (!peek_token().has_value() || peek_token()->type() != Token::Type::Identifier) {
 		restore_token_position(saved_pos);
