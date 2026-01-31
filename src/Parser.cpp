@@ -18267,7 +18267,6 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 
 		// Check for scope resolution operator :: (namespace/class member access)
 		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "::"sv) {
-			FLASH_LOG(Parser, Debug, "Postfix :: operator found, result type: ", result->type_name());
 			// Handle namespace::member or class::static_member syntax
 			// We have an identifier (in result), now parse :: and the member name
 			consume_token(); // consume '::'
@@ -22557,16 +22556,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			}
 			// If identifierType is null (not found), default to true (might be a template)
 			
-			FLASH_LOG(Parser, Debug, "About to check for template args, should_try_template_args=", should_try_template_args, 
-			          ", peek='", (peek_token().has_value() ? peek_token()->value() : "N/A"), "'");
-			
 			if (should_try_template_args && peek_token().has_value() && peek_token()->value() == "<") {
 				explicit_template_args = parse_explicit_template_arguments(&explicit_template_arg_nodes);
 				// If parsing failed, it might be a less-than operator, so continue normally
-				
-				FLASH_LOG(Templates, Debug, "After parsing template args, explicit_template_args.has_value()=", explicit_template_args.has_value(), 
-				          ", peek_token().has_value()=", peek_token().has_value(), 
-				          ", peek_token().value()='", (peek_token().has_value() ? peek_token()->value() : "N/A"), "'");
 				
 				// After template arguments, check for :: to handle Template<T>::member syntax
 				if (explicit_template_args.has_value() && peek_token().has_value() && peek_token()->value() == "::") {
@@ -22580,11 +22572,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						// Get the name from the instantiated struct
 						const StructDeclarationNode& inst_struct = instantiation_result->as<StructDeclarationNode>();
 						instantiated_class_name = StringTable::getStringView(inst_struct.name());
-						FLASH_LOG(Templates, Debug, "Got instantiated class name from struct: '", instantiated_class_name, "'");
 					} else {
 						// Fallback: build name from explicit args (may be missing defaults)
 						instantiated_class_name = get_instantiated_class_name(idenfifier_token.value(), *explicit_template_args);
-						FLASH_LOG(Templates, Debug, "Built instantiated class name from explicit args: '", instantiated_class_name, "'");
 					}
 					
 					// Create a token with the instantiated name to pass to parse_qualified_identifier_after_template
