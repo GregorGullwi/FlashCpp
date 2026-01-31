@@ -53,6 +53,29 @@ namespace ObjectFileCommon {
 		std::vector<CatchHandlerInfo> catch_handlers;
 	};
 
+	// Windows SEH (Structured Exception Handling) information
+
+	// SEH __except handler information
+	struct SehExceptHandlerInfo {
+		uint32_t handler_offset;  // Code offset of __except handler
+		uint32_t filter_result;   // Filter expression evaluation result (temp var number)
+	};
+
+	// SEH __finally handler information
+	struct SehFinallyHandlerInfo {
+		uint32_t handler_offset;  // Code offset of __finally handler
+	};
+
+	// SEH try block information
+	struct SehTryBlockInfo {
+		uint32_t try_start_offset;  // Code offset where __try block starts
+		uint32_t try_end_offset;    // Code offset where __try block ends
+		bool has_except_handler;    // True if this has an __except handler
+		bool has_finally_handler;   // True if this has a __finally handler
+		SehExceptHandlerInfo except_handler;   // __except handler (if has_except_handler is true)
+		SehFinallyHandlerInfo finally_handler; // __finally handler (if has_finally_handler is true)
+	};
+
 	// Base class descriptor info for RTTI emission
 	struct BaseClassDescriptorInfo {
 		std::string name;            // Base class name

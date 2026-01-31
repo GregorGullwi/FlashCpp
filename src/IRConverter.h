@@ -3743,6 +3743,39 @@ private:
 		return {std::move(try_blocks), std::move(unwind_map)};
 	}
 
+	// Helper to convert internal SEH try blocks to ObjectFileWriter format
+	// Used during function finalization to prepare SEH exception handling information
+	std::vector<ObjectFileWriter::SehTryBlockInfo> convertSehInfoToWriterFormat() {
+		std::vector<ObjectFileWriter::SehTryBlockInfo> seh_try_blocks;
+
+		for (const auto& seh_try_block : current_function_seh_try_blocks_) {
+			ObjectFileWriter::SehTryBlockInfo block_info;
+			block_info.try_start_offset = seh_try_block.try_start_offset;
+			block_info.try_end_offset = seh_try_block.try_end_offset;
+
+			// Check if this try block has an __except handler
+			if (seh_try_block.except_handler.has_value()) {
+				block_info.has_except_handler = true;
+				block_info.except_handler.handler_offset = seh_try_block.except_handler->handler_offset;
+				block_info.except_handler.filter_result = seh_try_block.except_handler->filter_result;
+			} else {
+				block_info.has_except_handler = false;
+			}
+
+			// Check if this try block has a __finally handler
+			if (seh_try_block.finally_handler.has_value()) {
+				block_info.has_finally_handler = true;
+				block_info.finally_handler.handler_offset = seh_try_block.finally_handler->handler_offset;
+			} else {
+				block_info.has_finally_handler = false;
+			}
+
+			seh_try_blocks.push_back(block_info);
+		}
+
+		return seh_try_blocks;
+	}
+
 	// Shared arithmetic operation context
 	struct ArithmeticOperationContext {
 		TypedValue result_value;
@@ -9167,10 +9200,11 @@ private:
 
 			// Add exception handling information (required for x64) - uses mangled name
 			auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
+			auto seh_try_blocks = convertSehInfoToWriterFormat();
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, current_function_cfi_);
 			} else {
-				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map);
+				writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks);
 			}
 		
 			// Clean up the previous function's variable scope

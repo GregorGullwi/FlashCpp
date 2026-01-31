@@ -67,6 +67,9 @@ public:
 	using CatchHandlerInfo = ObjectFileCommon::CatchHandlerInfo;
 	using UnwindMapEntryInfo = ObjectFileCommon::UnwindMapEntryInfo;
 	using TryBlockInfo = ObjectFileCommon::TryBlockInfo;
+	using SehExceptHandlerInfo = ObjectFileCommon::SehExceptHandlerInfo;
+	using SehFinallyHandlerInfo = ObjectFileCommon::SehFinallyHandlerInfo;
+	using SehTryBlockInfo = ObjectFileCommon::SehTryBlockInfo;
 	using BaseClassDescriptorInfo = ObjectFileCommon::BaseClassDescriptorInfo;
 
 	ObjectFileWriter() {
@@ -842,7 +845,7 @@ public:
 		debug_builder_.finalizeCurrentFunction();
 	}
 
-	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}) {
+	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<SehTryBlockInfo>& seh_try_blocks = {}) {
 		// Check if exception info has already been added for this function
 		for (const auto& existing : added_exception_functions_) {
 			if (existing == mangled_name) {
@@ -858,19 +861,37 @@ public:
 		auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
 		uint32_t xdata_offset = static_cast<uint32_t>(xdata_section->get_data_size());
 
+		// Determine if this is SEH or C++ exception handling
+		bool is_seh = !seh_try_blocks.empty();
+		bool is_cpp = !try_blocks.empty();
+
+		if (is_seh && is_cpp) {
+			FLASH_LOG(Codegen, Warning, "Function has both SEH and C++ exception handling - using SEH");
+		}
+
 		// Add XDATA (exception handling unwind information) for this specific function
-		// For C++ exception handling, we need to include an exception handler
 		// Windows x64 UNWIND_INFO structure:
 		// - BYTE Version:3, Flags:5
 		// - BYTE SizeOfProlog
 		// - BYTE CountOfCodes
 		// - BYTE FrameRegister:4, FrameOffset:4
 		// - UNWIND_CODE UnwindCode[CountOfCodes] (aligned to DWORD)
-		// - Optional: ExceptionHandler RVA (if UNW_FLAG_EHANDLER is set)
+		// - Optional: ExceptionHandler RVA (if UNW_FLAG_EHANDLER/UNW_FLAG_UHANDLER is set)
 		// - Optional: Exception-specific data
-		
+
+		// Determine flags based on exception type
+		uint8_t unwind_flags = 0x00;
+		if (is_seh) {
+			// SEH uses UNW_FLAG_EHANDLER (0x01) for __except or UNW_FLAG_UHANDLER (0x02) for __finally
+			// We'll use UNW_FLAG_EHANDLER (0x01) since __C_specific_handler handles both
+			unwind_flags = 0x01;  // UNW_FLAG_EHANDLER
+		} else if (is_cpp) {
+			// C++ uses UNW_FLAG_EHANDLER (0x01) for __CxxFrameHandler3
+			unwind_flags = 0x01;  // UNW_FLAG_EHANDLER
+		}
+
 		std::vector<char> xdata = {
-			0x09,  // Version 1, Flags 0x08 (UNW_FLAG_EHANDLER - exception handler present)
+			static_cast<char>(0x01 | (unwind_flags << 3)),  // Version 1, Flags (shifted left by 3)
 			0x04,  // Size of prolog (4 bytes: push rbp + mov rbp, rsp)
 			0x02,  // Count of unwind codes
 			0x00,  // Frame register (none)
@@ -881,14 +902,86 @@ public:
 		};
 		
 		// Add placeholder for exception handler RVA (4 bytes)
-		// This will point to __CxxFrameHandler3 or __CxxFrameHandler4
+		// This will point to __C_specific_handler (SEH) or __CxxFrameHandler3 (C++)
 		// We'll add a relocation for this
 		uint32_t handler_rva_offset = static_cast<uint32_t>(xdata.size());
 		xdata.push_back(0x00);
 		xdata.push_back(0x00);
 		xdata.push_back(0x00);
 		xdata.push_back(0x00);
-		
+
+		// Generate SEH-specific exception data
+		if (is_seh) {
+			// SEH uses a scope table instead of FuncInfo
+			// Scope table format:
+			//   DWORD Count (number of scope entries)
+			//   SCOPE_TABLE_ENTRY Entries[Count]
+			//
+			// Each SCOPE_TABLE_ENTRY:
+			//   DWORD BeginAddress (RVA of try block start)
+			//   DWORD EndAddress (RVA of try block end)
+			//   DWORD HandlerAddress (RVA of __except/__finally handler, or filter for __except)
+			//   DWORD JumpTarget (RVA to jump to after handler, or 1 for __finally)
+
+			FLASH_LOG_FORMAT(Codegen, Debug, "Generating SEH scope table with {} entries", seh_try_blocks.size());
+
+			// Count - number of scope table entries
+			uint32_t scope_count = static_cast<uint32_t>(seh_try_blocks.size());
+			xdata.push_back(static_cast<char>(scope_count & 0xFF));
+			xdata.push_back(static_cast<char>((scope_count >> 8) & 0xFF));
+			xdata.push_back(static_cast<char>((scope_count >> 16) & 0xFF));
+			xdata.push_back(static_cast<char>((scope_count >> 24) & 0xFF));
+
+			// Generate scope table entries
+			for (const auto& seh_block : seh_try_blocks) {
+				// BeginAddress - RVA of try block start (relative to function start)
+				uint32_t begin_address = function_start + seh_block.try_start_offset;
+				xdata.push_back(static_cast<char>(begin_address & 0xFF));
+				xdata.push_back(static_cast<char>((begin_address >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((begin_address >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((begin_address >> 24) & 0xFF));
+
+				// EndAddress - RVA of try block end (relative to function start)
+				uint32_t end_address = function_start + seh_block.try_end_offset;
+				xdata.push_back(static_cast<char>(end_address & 0xFF));
+				xdata.push_back(static_cast<char>((end_address >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((end_address >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((end_address >> 24) & 0xFF));
+
+				// HandlerAddress - RVA of handler
+				uint32_t handler_address;
+				if (seh_block.has_except_handler) {
+					handler_address = function_start + seh_block.except_handler.handler_offset;
+				} else if (seh_block.has_finally_handler) {
+					handler_address = function_start + seh_block.finally_handler.handler_offset;
+				} else {
+					handler_address = 0;  // No handler (shouldn't happen)
+				}
+				xdata.push_back(static_cast<char>(handler_address & 0xFF));
+				xdata.push_back(static_cast<char>((handler_address >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((handler_address >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((handler_address >> 24) & 0xFF));
+
+				// JumpTarget - for __except: 0 (filter expression), for __finally: 1 (termination handler)
+				uint32_t jump_target;
+				if (seh_block.has_except_handler) {
+					jump_target = 0;  // __except uses filter expression
+				} else if (seh_block.has_finally_handler) {
+					jump_target = 1;  // __finally is a termination handler
+				} else {
+					jump_target = 0;
+				}
+				xdata.push_back(static_cast<char>(jump_target & 0xFF));
+				xdata.push_back(static_cast<char>((jump_target >> 8) & 0xFF));
+				xdata.push_back(static_cast<char>((jump_target >> 16) & 0xFF));
+				xdata.push_back(static_cast<char>((jump_target >> 24) & 0xFF));
+
+				FLASH_LOG_FORMAT(Codegen, Debug, "SEH scope: begin={} end={} handler={} type={}",
+				                 seh_block.try_start_offset, seh_block.try_end_offset,
+				                 (seh_block.has_except_handler ? seh_block.except_handler.handler_offset : seh_block.finally_handler.handler_offset),
+				                 (seh_block.has_except_handler ? "__except" : "__finally"));
+			}
+		}
 		// Add FuncInfo structure for C++ exception handling
 		// This contains information about try blocks and catch handlers
 		// FuncInfo structure (simplified):
@@ -900,8 +993,8 @@ public:
 		//   DWORD nIPMapEntries
 		//   DWORD pIPToStateMap (RVA)
 		//   ... (other fields for EH4)
-		
-		if (!try_blocks.empty()) {
+
+		if (is_cpp && !try_blocks.empty()) {
 			[[maybe_unused]] uint32_t funcinfo_offset = static_cast<uint32_t>(xdata.size());
 			
 			// Magic number for FuncInfo4 (0x19930522 = EH4 with continuation addresses)
@@ -1190,10 +1283,16 @@ public:
 		
 		// Add the XDATA to the section
 		add_data(xdata, SectionType::XDATA);
-		
+
 		// Add relocation for the exception handler RVA
-		// Point to __CxxFrameHandler3 (MSVC's C++ exception handler)
-		add_xdata_relocation(xdata_offset + handler_rva_offset, "__CxxFrameHandler3");
+		// Point to __C_specific_handler (SEH) or __CxxFrameHandler3 (C++)
+		if (is_seh) {
+			add_xdata_relocation(xdata_offset + handler_rva_offset, "__C_specific_handler");
+			FLASH_LOG(Codegen, Debug, "Added relocation to __C_specific_handler for SEH");
+		} else if (is_cpp) {
+			add_xdata_relocation(xdata_offset + handler_rva_offset, "__CxxFrameHandler3");
+			FLASH_LOG(Codegen, Debug, "Added relocation to __CxxFrameHandler3 for C++");
+		}
 
 		// Get current PDATA section size to calculate relocation offsets
 		auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
