@@ -70,13 +70,23 @@ int test_nested() {
 
 int main() {
     int result = 0;
-    
-    result = test_try_except();
-    result = test_try_finally();
-    result = test_filter_expression(0);
-    result = test_leave();
-    result = test_nested();
-    
-    return 0;
+
+    // Test 1: Basic __try/__except - should return 42
+    result += test_try_except();  // result = 42
+
+    // Test 2: Basic __try/__finally - should return 101
+    result += test_try_finally();  // result = 42 + 101 = 143
+
+    // Test 3: __try/__except with filter - should return -1 (null pointer)
+    result += test_filter_expression(0);  // result = 143 + (-1) = 142
+
+    // Test 4: __leave statement - should return 15
+    result += test_leave();  // result = 142 + 15 = 157
+
+    // Test 5: Nested __try blocks - should return 1
+    result += test_nested();  // result = 157 + 1 = 158
+
+    // Expected final result: 42 + 101 + (-1) + 15 + 1 = 158
+    return result;
 }
 

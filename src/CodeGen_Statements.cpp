@@ -1142,6 +1142,10 @@
 		end_sb.append("__seh_end_").append(current_seh_id);
 		std::string_view end_label = end_sb.commit();
 
+		// Push SEH context for __leave statement resolution
+		// __try/__except doesn't have a __finally, so finally_label is empty
+		pushSehContext(end_label, std::string_view(), false);
+
 		// Emit SehTryBegin marker
 		ir_.addInstruction(IrInstruction(IrOpcode::SehTryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(except_label)}, node.try_token()));
 
@@ -1150,6 +1154,9 @@
 
 		// Emit SehTryEnd marker
 		ir_.addInstruction(IrOpcode::SehTryEnd, {}, node.try_token());
+
+		// Pop SEH context after __try block
+		popSehContext();
 
 		// Jump to end after successful __try block execution
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
@@ -1208,6 +1215,12 @@
 	void visitSehTryFinallyStatementNode(const SehTryFinallyStatementNode& node) {
 		// Generate __try/__finally structure
 		// __try { try_block } __finally { finally_block }
+		//
+		// Control flow:
+		// 1. Execute __try block
+		// 2. On normal exit: jump to __finally handler
+		// 3. Execute __finally handler
+		// 4. Continue after SEH block
 
 		// Generate unique labels using StringBuilder
 		static size_t seh_finally_counter = 0;
@@ -1222,6 +1235,9 @@
 		end_sb.append("__seh_finally_end_").append(current_seh_id);
 		std::string_view end_label = end_sb.commit();
 
+		// Push SEH context for __leave statement resolution
+		pushSehContext(end_label, finally_label, true);
+
 		// Emit SehTryBegin marker
 		ir_.addInstruction(IrInstruction(IrOpcode::SehTryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(finally_label)}, node.try_token()));
 
@@ -1230,6 +1246,13 @@
 
 		// Emit SehTryEnd marker
 		ir_.addInstruction(IrOpcode::SehTryEnd, {}, node.try_token());
+
+		// Pop SEH context after __try block
+		popSehContext();
+
+		// CRITICAL FIX: Jump to __finally handler on normal exit
+		// Without this, the __finally block is skipped and execution falls through to garbage memory
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(finally_label)}, node.try_token()));
 
 		// Emit label for __finally handler
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(finally_label)}, node.try_token()));
@@ -1252,7 +1275,7 @@
 		// Exit __finally block scope
 		symbol_table.exit_scope();
 
-		// Jump to end after __finally block
+		// Jump to end after __finally block (fall through to end label)
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, finally_clause.finally_token()));
 
 		// Emit end label
@@ -1261,13 +1284,25 @@
 
 	void visitSehLeaveStatementNode(const SehLeaveStatementNode& node) {
 		// Generate __leave statement
-		// __leave jumps to the end of the current __try block (or __finally if present)
+		// __leave jumps to the end of the current __try block
+		// If the __try has a __finally, it executes the __finally first
 
-		// For now, we'll generate a placeholder label
-		// In a full implementation, we'd need to track the current __try block's end label
-		StringBuilder leave_target_sb;
-		leave_target_sb.append("__seh_leave_target");
-		std::string_view leave_target = leave_target_sb.commit();
+		const SehContext* seh_ctx = getCurrentSehContext();
+		if (!seh_ctx) {
+			FLASH_LOG(Codegen, Error, "__leave statement outside of __try block");
+			assert(false && "__leave statement outside of __try block");
+			return;
+		}
+
+		// Determine the target label for __leave
+		// If there's a __finally, jump to the __finally handler
+		// Otherwise, jump to the end of the __try block
+		std::string_view leave_target;
+		if (seh_ctx->has_finally) {
+			leave_target = seh_ctx->finally_label;
+		} else {
+			leave_target = seh_ctx->try_end_label;
+		}
 
 		// Emit SehLeave instruction
 		SehLeaveOp leave_op;
