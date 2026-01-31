@@ -18413,14 +18413,23 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				
 				result = function_call_node;
 				continue; // Check for more postfix operators
-			} else if (template_args.has_value() && !peek_token()->value().empty() && peek_token()->value() != "(") {
+			}
+			
+			// DEBUG: Log what we have at this point
+			if (peek_token().has_value()) {
+				FLASH_LOG(Templates, Info, "After function call check: template_args.has_value()=", template_args.has_value(), 
+				          ", peek='", peek_token()->value(), "', peek.empty()=", peek_token()->value().empty());
+			}
+			
+			if (template_args.has_value() && !peek_token()->value().empty() && peek_token()->value() != "(") {
 				// This might be a variable template usage with qualified name: ns::var_template<Args>
 				// Build the qualified name for lookup
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
-				FLASH_LOG(Templates, Debug, "Checking for qualified variable template: ", qualified_name);
+				FLASH_LOG(Templates, Info, "Checking for qualified template: ", qualified_name, ", peek='", peek_token()->value(), "'");
 				
 				auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
 				if (var_template_opt.has_value()) {
+					FLASH_LOG(Templates, Info, "Found variable template: ", qualified_name);
 					auto instantiated_var = try_instantiate_variable_template(qualified_name, *template_args);
 					if (instantiated_var.has_value()) {
 						// Get the instantiated variable name
@@ -18443,6 +18452,14 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						FLASH_LOG(Templates, Debug, "Successfully instantiated qualified variable template: ", qualified_name);
 						continue; // Check for more postfix operators
 					}
+				}
+				
+				// Not a variable template - check if it's a class template that needs instantiation
+				// If we have template args, try to instantiate the class template
+				// This handles patterns like: std::is_integral<int>::value
+				if (!var_template_opt.has_value()) {
+					FLASH_LOG(Templates, Info, "Attempting class template instantiation for: ", qualified_name);
+					try_instantiate_class_template(qualified_name, *template_args);
 				}
 				
 				// Fall through to handle as regular qualified identifier if not a variable template

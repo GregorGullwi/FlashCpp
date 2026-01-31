@@ -2884,7 +2884,30 @@ public:
 			// Check if the namespace part looks like a template instantiation (contains template argument separator)
 			// Template names with arguments get mangled as template_name_arg1_arg2...
 			// If any argument is a template parameter (starts with _ often), it's template-dependent
-			if (!ns_name.empty() && ns_name.find('_') != std::string_view::npos && context.parser != nullptr) {
+			// BUT: Don't treat names like "is_integral_int" as dependent - "int" is a concrete type!
+			// Only treat as dependent if it contains identifiers that START with underscore (like _Tp, _Up)
+			// or have double underscores (like __type_parameter)
+			bool looks_dependent = false;
+			if (!ns_name.empty() && ns_name.find('_') != std::string_view::npos) {
+				// Check if any component looks like a template parameter (starts with _ or __)
+				// Split by underscore and check each part
+				for (size_t i = 0; i < ns_name.size(); ) {
+					if (ns_name[i] == '_') {
+						// Found underscore - check if next char is also underscore or uppercase
+						// Template parameters often look like: _Tp, _Up, _T, __type, etc.
+						if (i + 1 < ns_name.size()) {
+							char next = ns_name[i + 1];
+							if (next == '_' || std::isupper(static_cast<unsigned char>(next))) {
+								looks_dependent = true;
+								break;
+							}
+						}
+					}
+					++i;
+				}
+			}
+			
+			if (looks_dependent && context.parser != nullptr) {
 				// This might be a template instantiation with dependent arguments
 				// Treat it as template-dependent
 				return EvalResult::error("Template instantiation with dependent arguments in constant expression: " + 
