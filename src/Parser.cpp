@@ -18413,14 +18413,23 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				
 				result = function_call_node;
 				continue; // Check for more postfix operators
-			} else if (template_args.has_value() && !peek_token()->value().empty() && peek_token()->value() != "(") {
+			}
+			
+			// DEBUG: Log what we have at this point
+			if (peek_token().has_value()) {
+				FLASH_LOG(Templates, Info, "After function call check: template_args.has_value()=", template_args.has_value(), 
+				          ", peek='", peek_token()->value(), "', peek.empty()=", peek_token()->value().empty());
+			}
+			
+			if (template_args.has_value() && !peek_token()->value().empty() && peek_token()->value() != "(") {
 				// This might be a variable template usage with qualified name: ns::var_template<Args>
 				// Build the qualified name for lookup
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
-				FLASH_LOG(Templates, Debug, "Checking for qualified variable template: ", qualified_name);
+				FLASH_LOG(Templates, Info, "Checking for qualified template: ", qualified_name, ", peek='", peek_token()->value(), "'");
 				
 				auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
 				if (var_template_opt.has_value()) {
+					FLASH_LOG(Templates, Info, "Found variable template: ", qualified_name);
 					auto instantiated_var = try_instantiate_variable_template(qualified_name, *template_args);
 					if (instantiated_var.has_value()) {
 						// Get the instantiated variable name
@@ -18443,6 +18452,14 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 						FLASH_LOG(Templates, Debug, "Successfully instantiated qualified variable template: ", qualified_name);
 						continue; // Check for more postfix operators
 					}
+				}
+				
+				// Not a variable template - check if it's a class template that needs instantiation
+				// If we have template args, try to instantiate the class template
+				// This handles patterns like: std::is_integral<int>::value
+				if (!var_template_opt.has_value()) {
+					FLASH_LOG(Templates, Info, "Attempting class template instantiation for: ", qualified_name);
+					try_instantiate_class_template(qualified_name, *template_args);
 				}
 				
 				// Fall through to handle as regular qualified identifier if not a variable template
@@ -23599,25 +23616,32 @@ ParseResult Parser::parse_for_loop() {
     // Check if init is empty (starts with semicolon)
     if (!consume_punctuator(";"sv)) {
         // Not empty, parse init statement
-        if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-            // Check if it's a type keyword or CV-qualifier (variable declaration)
-            if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
-                // Handle variable declaration
-                ParseResult init = parse_variable_declaration();
-                if (init.is_error()) {
-                    return init;
+        bool try_as_declaration = false;
+        
+        if (peek_token().has_value()) {
+            if (peek_token()->type() == Token::Type::Keyword) {
+                // Check if it's a type keyword or CV-qualifier (variable declaration)
+                if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
+                    try_as_declaration = true;
                 }
-                init_statement = init.node();
-            } else {
-                // Not a type keyword, try parsing as expression
-                ParseResult init = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-                if (init.is_error()) {
-                    return init;
+            } else if (peek_token()->type() == Token::Type::Identifier) {
+                // Check if it's a known type name (e.g., size_t, string, etc.)
+                StringHandle type_handle = StringTable::getOrInternStringHandle(peek_token()->value());
+                if (gTypesByName.find(type_handle) != gTypesByName.end()) {
+                    try_as_declaration = true;
                 }
-                init_statement = init.node();
             }
+        }
+        
+        if (try_as_declaration) {
+            // Handle variable declaration
+            ParseResult init = parse_variable_declaration();
+            if (init.is_error()) {
+                return init;
+            }
+            init_statement = init.node();
         } else {
-            // Handle expression
+            // Try parsing as expression
             ParseResult init = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
             if (init.is_error()) {
                 return init;
@@ -38709,21 +38733,81 @@ if (struct_type_info.getStructInfo()) {
 		} else if (param.kind() == TemplateParameterKind::NonType) {
 			// For non-type parameters with defaults, evaluate the expression
 			const ASTNode& default_node = param.default_value();
+			FLASH_LOG(Templates, Debug, "Processing non-type param default, is_expression=", default_node.is<ExpressionNode>());
 			if (default_node.is<ExpressionNode>()) {
 				const ExpressionNode& expr = default_node.as<ExpressionNode>();
+				FLASH_LOG(Templates, Debug, "Expression node type index: ", expr.index());
 				if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 					const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
+					FLASH_LOG(Templates, Debug, "Processing QualifiedIdentifierNode for non-type default");
 					
-					// Handle dependent static member access like is_arithmetic_void::value
-					// namespace handle name = template instantiation name (e.g., is_arithmetic_void)
+					// Handle dependent static member access like is_arithmetic_void::value or is_arithmetic__Tp::value
+					// namespace handle name = template instantiation name (e.g., is_arithmetic_void or is_arithmetic__Tp)
 					// name() = member name (e.g., value)
 					if (!qual_id.namespace_handle().isGlobal()) {
 						std::string_view type_name = gNamespaceRegistry.getName(qual_id.namespace_handle());
 						std::string_view member_name = qual_id.name();
+						FLASH_LOG(Templates, Debug, "Non-global qualified id: type='", type_name, "', member='", member_name, "'");
 						
-						// Check if type_name ends with "_void" (dependent placeholder)
+						// Check if type_name contains a template parameter placeholder
+						// It could end with "_void" (old style) or "_<ParamName>" where ParamName is in current_template_param_names_
+						bool is_dependent = false;
+						std::string_view template_base_name;
+						
 						if (type_name.ends_with("_void") && !filled_template_args.empty()) {
-							std::string_view template_base_name(type_name.data(), type_name.size() - 5);
+							is_dependent = true;
+							template_base_name = std::string_view(type_name.data(), type_name.size() - 5);
+						} else if (!filled_template_args.empty()) {
+							// Check if type_name ends with what looks like a template parameter
+							// Mangling: template_name + "_" + param_name
+							// For param "_Tp", this becomes: template_name + "_" + "_Tp" = template_name + "__Tp"
+							size_t last_underscore = type_name.rfind('_');
+							FLASH_LOG(Templates, Debug, "Checking for dependent param in type='", type_name, "', last_underscore=", last_underscore);
+							if (last_underscore != std::string_view::npos && last_underscore > 0) {
+								std::string_view suffix = type_name.substr(last_underscore + 1);
+								FLASH_LOG(Templates, Debug, "Suffix='", suffix, "'");
+								
+								// Check if suffix looks like a template parameter
+								// Template parameters typically start with uppercase (Tp, T, U) or underscore (_Tp)
+								bool looks_like_param = false;
+								if (!suffix.empty() && (std::isupper(static_cast<unsigned char>(suffix[0])) || 
+								                        suffix[0] == '_')) {
+									looks_like_param = true;
+								}
+								
+								// Special case: if suffix is empty and the character before last_underscore is also '_',
+								// then the param starts with '_'. Try splitting earlier.
+								if (suffix.empty() && last_underscore > 0 && type_name[last_underscore - 1] == '_') {
+									// Double underscore: template_name + "__" + rest_of_param
+									// Try finding the underscore before the double underscore
+									size_t prev_underscore = type_name.rfind('_', last_underscore - 1);
+									if (prev_underscore != std::string_view::npos) {
+										template_base_name = type_name.substr(0, prev_underscore);
+										looks_like_param = true;
+										FLASH_LOG(Templates, Debug, "Double underscore detected, template_base_name='", template_base_name, "'");
+									}
+								} else if (looks_like_param) {
+									// Check if there's a double underscore pattern (param starts with _)
+									// Pattern: "template__Param" where Param starts with _ 
+									// We split at position of second _, giving suffix without leading _
+									// Check if previous char is also underscore
+									if (last_underscore > 0 && type_name[last_underscore - 1] == '_') {
+										// Yes, double underscore. Template name ends before the first of the two underscores
+										template_base_name = type_name.substr(0, last_underscore - 1);
+									} else {
+										// Single underscore separator
+										template_base_name = type_name.substr(0, last_underscore);
+									}
+								}
+								
+								if (looks_like_param && !template_base_name.empty()) {
+									is_dependent = true;
+									FLASH_LOG(Templates, Debug, "Looks like template param! template_base_name='", template_base_name, "'");
+								}
+							}
+						}
+						
+						if (is_dependent) {
 							
 							// Build the instantiated template name using first filled argument
 							StringBuilder inst_name_builder;
