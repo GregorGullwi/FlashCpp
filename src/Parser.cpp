@@ -588,6 +588,30 @@ void Parser::skip_balanced_parens() {
 	}
 }
 
+void Parser::skip_template_arguments() {
+	// Expect the current token to be '<'
+	if (!peek_token().has_value() || peek_token()->value() != "<") {
+		return;
+	}
+	
+	int angle_depth = 0;
+	size_t token_count = 0;
+	const size_t MAX_TOKENS = 10000;  // Safety limit to prevent infinite loops
+
+	while (peek_token().has_value() && token_count < MAX_TOKENS) {
+		std::string_view tok = peek_token()->value();
+		update_angle_depth(tok, angle_depth);
+		consume_token();
+		
+		if (angle_depth == 0) {
+			// We've consumed the closing '>' or '>>'
+			break;
+		}
+		
+		token_count++;
+	}
+}
+
 void Parser::skip_member_declaration_to_semicolon() {
 	// Skip tokens until we reach ';' at top level, or an unmatched '}'
 	// Handles nested parentheses, angle brackets, and braces
@@ -3895,13 +3919,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		
 		// Skip template arguments if present
 		if (peek_token().has_value() && peek_token()->value() == "<") {
-			int depth = 1;
-			consume_token(); // consume '<'
-			while (depth > 0 && peek_token().has_value()) {
-				if (peek_token()->value() == "<") depth++;
-				else if (peek_token()->value() == ">") depth--;
-				consume_token();
-			}
+			skip_template_arguments();
 		}
 		
 		auto next_token = peek_token();
@@ -3924,14 +3942,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						
 						// Check for template arguments
 						if (peek_token().has_value() && peek_token()->value() == "<") {
-							// Skip template arguments
-							int depth = 1;
-							consume_token(); // consume '<'
-							while (depth > 0 && peek_token().has_value()) {
-								if (peek_token()->value() == "<") depth++;
-								else if (peek_token()->value() == ">") depth--;
-								consume_token();
-							}
+							skip_template_arguments();
 							// After template args, the member name is whatever comes next
 							member_name = "";  // Reset - next identifier after :: will be the member
 						}
@@ -3942,7 +3953,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Check if this is an inheriting constructor: using Base::Base;
-			// The member name should match the base class name (first identifier)
+			// Per C++ standard, inheriting constructors specifically require the member name
+			// to match the base class name. General using-declarations can import any member.
+			// Example: using Base<T>::Base;  // Inherits all Base constructors
+			//          using Base::member;     // Imports a specific member
 			bool is_inheriting_constructor = (member_name == base_class_name);
 			
 			// Register the imported member name in the struct parsing context
@@ -31951,13 +31965,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 								
 								// Skip template arguments if present
 								if (peek_token().has_value() && peek_token()->value() == "<") {
-									int depth = 1;
-									consume_token(); // consume '<'
-									while (depth > 0 && peek_token().has_value()) {
-										if (peek_token()->value() == "<") depth++;
-										else if (peek_token()->value() == ">") depth--;
-										consume_token();
-									}
+									skip_template_arguments();
 								}
 							}
 						}
@@ -43483,10 +43491,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		if (token_val == "*" || token_val == "&") {
 			consume_token();
 			// Also skip CV-qualifiers after pointer/reference
-			while (peek_token().has_value() && 
-			       (peek_token()->value() == "const" || peek_token()->value() == "volatile")) {
-				consume_token();
-			}
+			parse_cv_qualifiers();
 		} else {
 			break;
 		}
