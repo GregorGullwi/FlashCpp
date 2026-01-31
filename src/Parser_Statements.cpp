@@ -88,6 +88,8 @@ ParseResult Parser::parse_statement_or_declaration()
 			{"goto", &Parser::parse_goto_statement},
 			{"try", &Parser::parse_try_statement},
 			{"throw", &Parser::parse_throw_statement},
+			{"__try", &Parser::parse_seh_try_statement},
+			{"__leave", &Parser::parse_seh_leave_statement},
 			{"using", &Parser::parse_using_directive_or_declaration},
 			{"namespace", &Parser::parse_namespace},
 			{"typedef", &Parser::parse_typedef_declaration},
