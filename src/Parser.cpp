@@ -23616,25 +23616,32 @@ ParseResult Parser::parse_for_loop() {
     // Check if init is empty (starts with semicolon)
     if (!consume_punctuator(";"sv)) {
         // Not empty, parse init statement
-        if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-            // Check if it's a type keyword or CV-qualifier (variable declaration)
-            if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
-                // Handle variable declaration
-                ParseResult init = parse_variable_declaration();
-                if (init.is_error()) {
-                    return init;
+        bool try_as_declaration = false;
+        
+        if (peek_token().has_value()) {
+            if (peek_token()->type() == Token::Type::Keyword) {
+                // Check if it's a type keyword or CV-qualifier (variable declaration)
+                if (type_keywords.find(peek_token()->value()) != type_keywords.end()) {
+                    try_as_declaration = true;
                 }
-                init_statement = init.node();
-            } else {
-                // Not a type keyword, try parsing as expression
-                ParseResult init = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-                if (init.is_error()) {
-                    return init;
+            } else if (peek_token()->type() == Token::Type::Identifier) {
+                // Check if it's a known type name (e.g., size_t, string, etc.)
+                StringHandle type_handle = StringTable::getOrInternStringHandle(peek_token()->value());
+                if (gTypesByName.find(type_handle) != gTypesByName.end()) {
+                    try_as_declaration = true;
                 }
-                init_statement = init.node();
             }
+        }
+        
+        if (try_as_declaration) {
+            // Handle variable declaration
+            ParseResult init = parse_variable_declaration();
+            if (init.is_error()) {
+                return init;
+            }
+            init_statement = init.node();
         } else {
-            // Handle expression
+            // Try parsing as expression
             ParseResult init = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
             if (init.is_error()) {
                 return init;
