@@ -9119,6 +9119,22 @@ private:
 				}
 			}
 			
+			// If still not found, search for any template instantiation that starts with the base name
+			// This handles cases like test<int> where the full instantiation is test_int_1 (with default params)
+			// NOTE: This assumes prefix matches are unique. If multiple instantiations exist with the same
+			// prefix, this will return the first one found (order depends on map iteration).
+			if (struct_type_it == gTypesByName.end()) {
+				std::string prefix = std::string(struct_or_enum_name) + "_";
+				for (auto it = gTypesByName.begin(); it != gTypesByName.end(); ++it) {
+					std::string_view key_str = StringTable::getStringView(it->first);
+					if (key_str.starts_with(prefix) && it->second->isStruct()) {
+						struct_type_it = it;  // Assign iterator directly, no redundant find
+						FLASH_LOG(Codegen, Debug, "Found struct with prefix match: ", key_str, " for ", struct_or_enum_name);
+						break;
+					}
+				}
+			}
+			
 			if (struct_type_it != gTypesByName.end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				// If struct_info is null, this might be a type alias - resolve it via type_index

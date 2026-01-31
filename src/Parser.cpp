@@ -18459,7 +18459,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				// This handles patterns like: std::is_integral<int>::value
 				if (!var_template_opt.has_value()) {
 					FLASH_LOG(Templates, Info, "Attempting class template instantiation for: ", qualified_name);
-					try_instantiate_class_template(qualified_name, *template_args);
+					auto instantiation_result = try_instantiate_class_template(qualified_name, *template_args);
+					// Update the type_name to use the fully instantiated name (with defaults filled in)
+					if (instantiation_result.has_value() && instantiation_result->is<StructDeclarationNode>()) {
+						const StructDeclarationNode& inst_struct = instantiation_result->as<StructDeclarationNode>();
+						std::string_view instantiated_name = StringTable::getStringView(inst_struct.name());
+						// Replace the base template name in namespaces with the instantiated name
+						if (!namespaces.empty()) {
+							namespaces.back() = StringType<32>(instantiated_name);
+							FLASH_LOG(Templates, Debug, "Updated namespace to use instantiated name: ", instantiated_name);
+						}
+					}
 				}
 				
 				// Fall through to handle as regular qualified identifier if not a variable template
@@ -22552,13 +22562,31 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				
 				// After template arguments, check for :: to handle Template<T>::member syntax
 				if (explicit_template_args.has_value() && peek_token().has_value() && peek_token()->value() == "::") {
+					// Instantiate the template to ensure defaults are filled in
+					// This returns the instantiated struct node
+					auto instantiation_result = try_instantiate_class_template(idenfifier_token.value(), *explicit_template_args);
+					
+					// Get the instantiated class name with defaults filled in
+					std::string_view instantiated_class_name;
+					if (instantiation_result.has_value() && instantiation_result->is<StructDeclarationNode>()) {
+						// Get the name from the instantiated struct
+						const StructDeclarationNode& inst_struct = instantiation_result->as<StructDeclarationNode>();
+						instantiated_class_name = StringTable::getStringView(inst_struct.name());
+					} else {
+						// Fallback: build name from explicit args (may be missing defaults)
+						instantiated_class_name = get_instantiated_class_name(idenfifier_token.value(), *explicit_template_args);
+					}
+					
+					// Create a token with the instantiated name to pass to parse_qualified_identifier_after_template
+					Token instantiated_token(Token::Type::Identifier, instantiated_class_name,
+					                        idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+					
 					// Parse qualified identifier after template
-					auto qualified_result = parse_qualified_identifier_after_template(idenfifier_token);
+					auto qualified_result = parse_qualified_identifier_after_template(instantiated_token);
 					if (!qualified_result.is_error() && qualified_result.node().has_value()) {
 						auto qualified_node = qualified_result.node()->as<QualifiedIdentifierNode>();
 						
 						// Try to parse member template function call: Template<T>::member<U>()
-						std::string_view instantiated_class_name = get_instantiated_class_name(idenfifier_token.value(), *explicit_template_args);
 						auto func_call_result = try_parse_member_template_function_call(
 							instantiated_class_name, qualified_node.name(), qualified_node.identifier_token());
 						if (func_call_result.has_value()) {
@@ -38734,8 +38762,28 @@ if (struct_type_info.getStructInfo()) {
 			// For non-type parameters with defaults, evaluate the expression
 			const ASTNode& default_node = param.default_value();
 			FLASH_LOG(Templates, Debug, "Processing non-type param default, is_expression=", default_node.is<ExpressionNode>());
-			if (default_node.is<ExpressionNode>()) {
-				const ExpressionNode& expr = default_node.as<ExpressionNode>();
+			
+			// Build parameter substitution map for already-filled template arguments
+			// This allows the default expression to reference earlier template parameters
+			std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+			for (size_t j = 0; j < i && j < template_params.size(); ++j) {
+				if (template_params[j].is<TemplateParameterNode>()) {
+					const TemplateParameterNode& earlier_param = template_params[j].as<TemplateParameterNode>();
+					param_map[earlier_param.name()] = filled_template_args[j];
+					FLASH_LOG(Templates, Debug, "Added param '", earlier_param.name(), "' to substitution map for default evaluation");
+				}
+			}
+			
+			// Substitute template parameters in the default expression
+			ASTNode substituted_default_node = default_node;
+			if (!param_map.empty() && default_node.is<ExpressionNode>()) {
+				ExpressionSubstitutor substitutor(param_map, *this);
+				substituted_default_node = substitutor.substitute(default_node);
+				FLASH_LOG(Templates, Debug, "Substituted template parameters in non-type default expression");
+			}
+			
+			if (substituted_default_node.is<ExpressionNode>()) {
+				const ExpressionNode& expr = substituted_default_node.as<ExpressionNode>();
 				FLASH_LOG(Templates, Debug, "Expression node type index: ", expr.index());
 				if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 					const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
