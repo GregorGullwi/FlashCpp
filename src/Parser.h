@@ -850,6 +850,10 @@ public:  // Public methods for template instantiation
         ParseResult parse_try_statement();  // Add try-catch statement parser
         ParseResult parse_throw_statement();  // Add throw statement parser
 
+        // Windows SEH (Structured Exception Handling) parsers
+        ParseResult parse_seh_try_statement();  // Parse __try/__except or __try/__finally
+        ParseResult parse_seh_leave_statement();  // Parse __leave statement
+
         // Helper functions for auto type deduction
         Type deduce_type_from_expression(const ASTNode& expr) const;
         void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);

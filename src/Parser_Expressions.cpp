@@ -9423,6 +9423,105 @@ ParseResult Parser::parse_throw_statement() {
     return ParseResult::success(emplace_node<ThrowStatementNode>(*expr_result.node(), throw_token));
 }
 
+// ============================================================================
+// Windows SEH (Structured Exception Handling) Parsers
+// ============================================================================
+
+ParseResult Parser::parse_seh_try_statement() {
+    // Parse: __try { block } __except(filter) { block }
+    //    or: __try { block } __finally { block }
+    if (peek() != "__try"_tok) {
+        return ParseResult::error("Expected '__try' keyword", current_token_);
+    }
+
+    Token try_token = peek_info();
+    advance(); // Consume the '__try' keyword
+
+    // Parse the try block
+    auto try_block_result = parse_block();
+    if (try_block_result.is_error()) {
+        return try_block_result;
+    }
+
+    ASTNode try_block = *try_block_result.node();
+
+    // Check what follows: __except or __finally
+    if (peek().type() != Token::Type::Keyword) {
+        return ParseResult::error("Expected '__except' or '__finally' after '__try' block", current_token_);
+    }
+
+    if (peek() == "__except"_tok) {
+        // Parse __except clause
+        Token except_token = peek_info();
+        advance(); // Consume '__except'
+
+        if (!consume("("_tok)) {
+            return ParseResult::error("Expected '(' after '__except'", current_token_);
+        }
+
+        // Parse the filter expression
+        auto filter_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+        if (filter_expr_result.is_error()) {
+            return filter_expr_result;
+        }
+
+        if (!consume(")"_tok)) {
+            return ParseResult::error("Expected ')' after __except filter expression", current_token_);
+        }
+
+        // Create filter expression node
+        ASTNode filter_node = emplace_node<SehFilterExpressionNode>(*filter_expr_result.node(), except_token);
+
+        // Parse the except block
+        auto except_block_result = parse_block();
+        if (except_block_result.is_error()) {
+            return except_block_result;
+        }
+
+        // Create except clause node
+        ASTNode except_clause = emplace_node<SehExceptClauseNode>(filter_node, *except_block_result.node(), except_token);
+
+        // Create and return try-except statement node
+        return ParseResult::success(emplace_node<SehTryExceptStatementNode>(try_block, except_clause, try_token));
+
+    } else if (peek() == "__finally"_tok) {
+        // Parse __finally clause
+        Token finally_token = peek_info();
+        advance(); // Consume '__finally'
+
+        // Parse the finally block
+        auto finally_block_result = parse_block();
+        if (finally_block_result.is_error()) {
+            return finally_block_result;
+        }
+
+        // Create finally clause node
+        ASTNode finally_clause = emplace_node<SehFinallyClauseNode>(*finally_block_result.node(), finally_token);
+
+        // Create and return try-finally statement node
+        return ParseResult::success(emplace_node<SehTryFinallyStatementNode>(try_block, finally_clause, try_token));
+
+    } else {
+        return ParseResult::error("Expected '__except' or '__finally' after '__try' block", current_token_);
+    }
+}
+
+ParseResult Parser::parse_seh_leave_statement() {
+    // Parse: __leave;
+    if (peek() != "__leave"_tok) {
+        return ParseResult::error("Expected '__leave' keyword", current_token_);
+    }
+
+    Token leave_token = peek_info();
+    advance(); // Consume the '__leave' keyword
+
+    if (!consume(";"_tok)) {
+        return ParseResult::error("Expected ';' after '__leave'", current_token_);
+    }
+
+    return ParseResult::success(emplace_node<SehLeaveStatementNode>(leave_token));
+}
+
 ParseResult Parser::parse_lambda_expression() {
     // Expect '['
     if (!consume("["_tok)) {

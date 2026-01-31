@@ -557,7 +557,9 @@ private:
 			// Microsoft-specific function specifiers
 			"__inline",     "__forceinline",
 			// Microsoft-specific attributes
-			"__declspec"
+			"__declspec",
+			// Microsoft-specific SEH (Structured Exception Handling) keywords
+			"__try",        "__except",  "__finally",     "__leave"
 		};
 
 		return keywords.count(value) > 0;
