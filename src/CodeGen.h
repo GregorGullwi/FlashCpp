@@ -5792,6 +5792,10 @@ private:
 		end_sb.append("__seh_end_").append(current_seh_id);
 		std::string_view end_label = end_sb.commit();
 
+		// Push SEH context for __leave statement resolution
+		// __try/__except doesn't have a __finally, so finally_label is empty
+		pushSehContext(end_label, std::string_view(), false);
+
 		// Emit SehTryBegin marker
 		ir_.addInstruction(IrInstruction(IrOpcode::SehTryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(except_label)}, node.try_token()));
 
@@ -5800,6 +5804,9 @@ private:
 
 		// Emit SehTryEnd marker
 		ir_.addInstruction(IrOpcode::SehTryEnd, {}, node.try_token());
+
+		// Pop SEH context after __try block
+		popSehContext();
 
 		// Jump to end after successful __try block execution
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
@@ -5858,6 +5865,12 @@ private:
 	void visitSehTryFinallyStatementNode(const SehTryFinallyStatementNode& node) {
 		// Generate __try/__finally structure
 		// __try { try_block } __finally { finally_block }
+		//
+		// Control flow:
+		// 1. Execute __try block
+		// 2. On normal exit: jump to __finally handler
+		// 3. Execute __finally handler
+		// 4. Continue after SEH block
 
 		// Generate unique labels using StringBuilder
 		static size_t seh_finally_counter = 0;
@@ -5872,6 +5885,9 @@ private:
 		end_sb.append("__seh_finally_end_").append(current_seh_id);
 		std::string_view end_label = end_sb.commit();
 
+		// Push SEH context for __leave statement resolution
+		pushSehContext(end_label, finally_label, true);
+
 		// Emit SehTryBegin marker
 		ir_.addInstruction(IrInstruction(IrOpcode::SehTryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(finally_label)}, node.try_token()));
 
@@ -5880,6 +5896,13 @@ private:
 
 		// Emit SehTryEnd marker
 		ir_.addInstruction(IrOpcode::SehTryEnd, {}, node.try_token());
+
+		// Pop SEH context after __try block
+		popSehContext();
+
+		// CRITICAL FIX: Jump to __finally handler on normal exit
+		// Without this, the __finally block is skipped and execution falls through to garbage memory
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(finally_label)}, node.try_token()));
 
 		// Emit label for __finally handler
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(finally_label)}, node.try_token()));
@@ -5902,7 +5925,7 @@ private:
 		// Exit __finally block scope
 		symbol_table.exit_scope();
 
-		// Jump to end after __finally block
+		// Jump to end after __finally block (fall through to end label)
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, finally_clause.finally_token()));
 
 		// Emit end label
@@ -5911,13 +5934,25 @@ private:
 
 	void visitSehLeaveStatementNode(const SehLeaveStatementNode& node) {
 		// Generate __leave statement
-		// __leave jumps to the end of the current __try block (or __finally if present)
+		// __leave jumps to the end of the current __try block
+		// If the __try has a __finally, it executes the __finally first
 
-		// For now, we'll generate a placeholder label
-		// In a full implementation, we'd need to track the current __try block's end label
-		StringBuilder leave_target_sb;
-		leave_target_sb.append("__seh_leave_target");
-		std::string_view leave_target = leave_target_sb.commit();
+		const SehContext* seh_ctx = getCurrentSehContext();
+		if (!seh_ctx) {
+			FLASH_LOG(Codegen, Error, "__leave statement outside of __try block");
+			assert(false && "__leave statement outside of __try block");
+			return;
+		}
+
+		// Determine the target label for __leave
+		// If there's a __finally, jump to the __finally handler
+		// Otherwise, jump to the end of the __try block
+		std::string_view leave_target;
+		if (seh_ctx->has_finally) {
+			leave_target = seh_ctx->finally_label;
+		} else {
+			leave_target = seh_ctx->try_end_label;
+		}
 
 		// Emit SehLeave instruction
 		SehLeaveOp leave_op;
@@ -21014,6 +21049,15 @@ private:
 	// Collected template instantiations for deferred generation
 	std::vector<TemplateInstantiationInfo> collected_template_instantiations_;
 
+	// SEH (Structured Exception Handling) context tracking
+	// Tracks the current __try block context for __leave statement resolution
+	struct SehContext {
+		std::string_view try_end_label;      // Label at the end of the __try block (where __leave jumps to)
+		std::string_view finally_label;      // Label for __finally handler (empty if no __finally)
+		bool has_finally;                    // True if this __try has a __finally clause
+	};
+	std::vector<SehContext> seh_context_stack_;  // Stack of active SEH contexts
+
 	// Track emitted static members to avoid duplicates
 	std::unordered_set<StringHandle> emitted_static_members_;
 	
@@ -21036,6 +21080,28 @@ private:
 	};
 	LambdaContext current_lambda_context_;
 	std::vector<LambdaContext> lambda_context_stack_;
+
+	// SEH context helper methods
+	void pushSehContext(std::string_view end_label, std::string_view finally_label, bool has_finally) {
+		SehContext ctx;
+		ctx.try_end_label = end_label;
+		ctx.finally_label = finally_label;
+		ctx.has_finally = has_finally;
+		seh_context_stack_.push_back(ctx);
+	}
+
+	void popSehContext() {
+		if (!seh_context_stack_.empty()) {
+			seh_context_stack_.pop_back();
+		}
+	}
+
+	const SehContext* getCurrentSehContext() const {
+		if (seh_context_stack_.empty()) {
+			return nullptr;
+		}
+		return &seh_context_stack_.back();
+	}
 
 	// Generate just the function declaration for a template instantiation (without body)
 	// This is called immediately when a template call is detected, so the IR converter
