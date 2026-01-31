@@ -18267,6 +18267,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 
 		// Check for scope resolution operator :: (namespace/class member access)
 		if (peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "::"sv) {
+			FLASH_LOG(Parser, Debug, "Postfix :: operator found, result type: ", result->type_name());
 			// Handle namespace::member or class::static_member syntax
 			// We have an identifier (in result), now parse :: and the member name
 			consume_token(); // consume '::'
@@ -18459,7 +18460,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				// This handles patterns like: std::is_integral<int>::value
 				if (!var_template_opt.has_value()) {
 					FLASH_LOG(Templates, Info, "Attempting class template instantiation for: ", qualified_name);
-					try_instantiate_class_template(qualified_name, *template_args);
+					auto instantiation_result = try_instantiate_class_template(qualified_name, *template_args);
+					// Update the type_name to use the fully instantiated name (with defaults filled in)
+					if (instantiation_result.has_value() && instantiation_result->is<StructDeclarationNode>()) {
+						const StructDeclarationNode& inst_struct = instantiation_result->as<StructDeclarationNode>();
+						std::string_view instantiated_name = StringTable::getStringView(inst_struct.name());
+						// Replace the base template name in namespaces with the instantiated name
+						if (!namespaces.empty()) {
+							namespaces.back() = StringType<32>(instantiated_name);
+							FLASH_LOG(Templates, Debug, "Updated namespace to use instantiated name: ", instantiated_name);
+						}
+					}
 				}
 				
 				// Fall through to handle as regular qualified identifier if not a variable template
@@ -22545,6 +22556,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// For all other cases (templates, functions, unknown), try template args
 			}
 			// If identifierType is null (not found), default to true (might be a template)
+			
+			FLASH_LOG(Parser, Debug, "About to check for template args, should_try_template_args=", should_try_template_args, 
+			          ", peek='", (peek_token().has_value() ? peek_token()->value() : "N/A"), "'");
 			
 			if (should_try_template_args && peek_token().has_value() && peek_token()->value() == "<") {
 				explicit_template_args = parse_explicit_template_arguments(&explicit_template_arg_nodes);
