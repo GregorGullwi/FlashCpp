@@ -61,8 +61,11 @@ struct CallingConventionMapping {
 
 static constexpr CallingConventionMapping calling_convention_map[] = {
 	{"__cdecl"sv, CallingConvention::Cdecl},
+	{"_cdecl"sv, CallingConvention::Cdecl},
 	{"__stdcall"sv, CallingConvention::Stdcall},
+	{"_stdcall"sv, CallingConvention::Stdcall},
 	{"__fastcall"sv, CallingConvention::Fastcall},
+	{"_fastcall"sv, CallingConvention::Fastcall},
 	{"__vectorcall"sv, CallingConvention::Vectorcall},
 	{"__thiscall"sv, CallingConvention::Thiscall},
 	{"__clrcall"sv, CallingConvention::Clrcall}
@@ -1383,15 +1386,18 @@ ParseResult Parser::parse_type_and_name() {
     // Check if this might be a function pointer declaration
     // Function pointers have the pattern: type (*identifier)(params)
     // We need to check for '(' followed by '*' to detect this
+    // Also handle calling convention: type (__cdecl *identifier)(params)
     if (peek_token().has_value() && peek_token()->value() == "(") {
-        FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Found '(' - checking for function pointer. current_token={}", 
+        FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Found '(' - checking for function pointer. current_token={}",
             current_token_.has_value() ? std::string(current_token_->value()) : "N/A");
         // Save position in case this isn't a function pointer or reference declarator
         SaveHandle saved_pos = save_token_position();
         consume_token(); // consume '('
-        FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: After consuming '(', current_token={}, peek={}", 
+        FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: After consuming '(', current_token={}, peek={}",
             current_token_.has_value() ? std::string(current_token_->value()) : "N/A",
             peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
+
+        parse_calling_convention();
 
         // Check if next token is '*' (function pointer pattern) or '&' (reference to array pattern)
         if (peek_token().has_value() && peek_token()->value() == "*") {
@@ -2202,6 +2208,8 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
     // This is the pattern for function pointers: int (*fp)(int, int)
     if (peek_token().has_value() && peek_token()->value() == "(") {
         consume_token(); // consume '('
+
+        parse_calling_convention();
 
         // Expect '*' for function pointer
         if (!peek_token().has_value() || peek_token()->value() != "*") {
@@ -9283,19 +9291,7 @@ ParseResult Parser::parse_typedef_declaration()
 		SaveHandle paren_saved = save_token_position();
 		consume_token(); // consume '('
 		
-		// Check for optional calling convention or additional modifiers before '*'
-		// e.g., typedef void (__cdecl *handler)();
-		// Skip any calling convention specifiers
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-			std::string_view kw = peek_token()->value();
-			if (kw == "__cdecl" || kw == "__stdcall" || kw == "__fastcall" || 
-			    kw == "__thiscall" || kw == "__vectorcall" || kw == "_cdecl" ||
-			    kw == "_stdcall" || kw == "_fastcall") {
-				consume_token();
-			} else {
-				break;
-			}
-		}
+		parse_calling_convention();
 		
 		if (peek_token().has_value() && peek_token()->value() == "*") {
 			consume_token(); // consume '*'
@@ -17766,16 +17762,17 @@ CallingConvention Parser::parse_calling_convention()
 {
 	CallingConvention calling_conv = CallingConvention::Default;
 	
-	while (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
+	while (peek_token().has_value() &&
+	       (peek_token()->type() == Token::Type::Keyword || peek_token()->type() == Token::Type::Identifier)) {
 		std::string_view token_val = peek_token()->value();
 		
 		// Look up calling convention in the mapping table using ranges
 		auto it = std::ranges::find(calling_convention_map, token_val, &CallingConventionMapping::keyword);
 		if (it != std::end(calling_convention_map)) {
-			calling_conv = it->convention;  // Last one wins if multiple specified
+			calling_conv = it->convention;
 			consume_token();
 		} else {
-			break;  // Not a calling convention keyword, stop scanning
+			break;
 		}
 	}
 	
