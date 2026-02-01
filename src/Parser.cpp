@@ -11511,8 +11511,10 @@ ParseResult Parser::parse_type_specifier()
 			// If parsing succeeded, check if this is an alias template first
 			if (template_args.has_value()) {
 				// Check if this is an alias template
+				FLASH_LOG_FORMAT(Parser, Debug, "Checking for alias template: '{}'", type_name);
 				auto alias_opt = gTemplateRegistry.lookup_alias_template(type_name);
 				if (alias_opt.has_value()) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Found alias template for '{}', is_deferred={}", type_name, alias_opt->as<TemplateAliasNode>().is_deferred());
 					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
 					
 					// Check for recursion: if we're already resolving this alias, return error
@@ -25765,6 +25767,9 @@ ParseResult Parser::validate_and_add_base_class(
 
 	const TypeInfo* base_type_info = base_type_it->second;
 	
+	FLASH_LOG_FORMAT(Parser, Debug, "process_base_class: initial base_type_info for '{}': type={}, type_index={}", 
+	                 base_class_name, static_cast<int>(base_type_info->type_), base_type_info->type_index_);
+	
 	// Resolve type aliases: if base_type_info points to another type (type alias),
 	// follow the chain to find the actual struct type
 	size_t max_alias_depth = 10;  // Prevent infinite loops
@@ -25772,10 +25777,13 @@ ParseResult Parser::validate_and_add_base_class(
 		const TypeInfo& underlying = gTypeInfo[base_type_info->type_index_];
 		// Stop if we're pointing to ourselves (not a valid alias)
 		if (&underlying == base_type_info) break;
-		FLASH_LOG_FORMAT(Parser, Debug, "Resolving type alias '{}' -> type_index {}", 
-		                 base_class_name, base_type_info->type_index_);
+		FLASH_LOG_FORMAT(Parser, Debug, "Resolving type alias '{}' -> type_index {}, underlying type={}", 
+		                 base_class_name, base_type_info->type_index_, static_cast<int>(underlying.type_));
 		base_type_info = &underlying;
 	}
+	
+	FLASH_LOG_FORMAT(Parser, Debug, "process_base_class: final base_type_info: type={}, type_index={}", 
+	                 static_cast<int>(base_type_info->type_), base_type_info->type_index_);
 	
 	// Check if base class is a template parameter
 	bool is_template_param = is_base_class_template_parameter(base_class_name);
@@ -27190,6 +27198,24 @@ ParseResult Parser::parse_template_declaration() {
 			if (type_name.find("_unknown") != std::string_view::npos) {
 				has_unresolved_params = true;
 				FLASH_LOG(Parser, Debug, "Alias target type '", type_name, "' has unresolved parameters - using deferred instantiation");
+			}
+			// Check for hash-based naming (template$hash format) indicating dependent instantiation
+			// But NOT if the name already contains :: after the hash (which means ::type was already resolved)
+			else if (type_name.find('$') != std::string_view::npos) {
+				size_t dollar_pos = type_name.find('$');
+				// Only treat as deferred if there's NO :: after the hash
+				// If there's ::type or similar, the type has already been resolved to a member type
+				if (type_name.find("::", dollar_pos) == std::string_view::npos) {
+					// Extract the template name part (before the $)
+					std::string_view template_name_part = type_name.substr(0, dollar_pos);
+					auto template_opt = gTemplateRegistry.lookupTemplate(template_name_part);
+					if (template_opt.has_value()) {
+						has_unresolved_params = true;
+						FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' uses hash-based dependent placeholder - using deferred instantiation");
+					}
+				} else {
+					FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a resolved member type (not a dependent placeholder)");
+				}
 			}
 			// FALLBACK: Check if the resolved type name is a registered primary template
 			// This happens when template arguments are dependent and instantiation was skipped,
@@ -35062,42 +35088,51 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						const TypeInfo& type_info = gTypeInfo[type_index];
 						std::string_view instantiated_name = StringTable::getStringView(type_info.name());
 						
-						// Parse the instantiated name to extract template name and type arguments
-						// Format: template_name_type1_type2_...
+						// Parse the instantiated name to extract template name
+						// Format: template_name$hash (new hash-based format) or template_name_type1_type2_... (legacy)
+						size_t dollar_pos = instantiated_name.find('$');
 						size_t first_underscore = instantiated_name.find('_');
-						if (first_underscore != std::string_view::npos) {
-							std::string_view inner_template_name = instantiated_name.substr(0, first_underscore);
+						
+						// Prefer $ separator (new hash-based naming), fall back to _ (legacy)
+						size_t separator_pos = (dollar_pos != std::string_view::npos) ? dollar_pos : first_underscore;
+						
+						if (separator_pos != std::string_view::npos) {
+							std::string_view inner_template_name = instantiated_name.substr(0, separator_pos);
 							
 							// Check if this template exists
 							auto template_check = gTemplateRegistry.lookupTemplate(inner_template_name);
 							if (template_check.has_value()) {
 								template_args.push_back(TemplateArgument::makeTemplate(inner_template_name));
 								
-								// Extract type arguments from the remaining parts
-								std::string_view remaining = instantiated_name.substr(first_underscore + 1);
-								size_t pos = 0;
-								while (pos < remaining.size()) {
-									size_t next_underscore = remaining.find('_', pos);
-									std::string_view type_str = (next_underscore == std::string_view::npos) 
-										? remaining.substr(pos) 
-										: remaining.substr(pos, next_underscore - pos);
-									
-									// Convert type string to Type
-									Type deduced_type = TemplateRegistry::stringToType(type_str);
-									if (deduced_type != Type::Invalid) {
-										deduced_type_args.push_back(deduced_type);
-									} else {
-
-										return std::nullopt;
+								// For hash-based naming, we can't extract type args from the hash
+								// The type info should be looked up from the V2 cache or type registry
+								if (dollar_pos == std::string_view::npos && first_underscore != std::string_view::npos) {
+									// Legacy format: Extract type arguments from the remaining parts
+									std::string_view remaining = instantiated_name.substr(first_underscore + 1);
+									size_t pos = 0;
+									while (pos < remaining.size()) {
+										size_t next_underscore = remaining.find('_', pos);
+										std::string_view type_str = (next_underscore == std::string_view::npos) 
+											? remaining.substr(pos) 
+											: remaining.substr(pos, next_underscore - pos);
+										
+										// Convert type string to Type
+										Type deduced_type = TemplateRegistry::stringToType(type_str);
+										if (deduced_type != Type::Invalid) {
+											deduced_type_args.push_back(deduced_type);
+										} else {
+											return std::nullopt;
+										}
+										
+										if (next_underscore == std::string_view::npos) break;
+										pos = next_underscore + 1;
 									}
-									
-									if (next_underscore == std::string_view::npos) break;
-									pos = next_underscore + 1;
 								}
+								// For hash-based naming, type arguments will be deduced from the actual argument type
 								
 								arg_index++;
 							} else {
-								FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template '", template_name, "' not found");
+								FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Template '", inner_template_name, "' not found");
 
 								return std::nullopt;
 							}
