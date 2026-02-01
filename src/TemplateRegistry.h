@@ -244,6 +244,16 @@ struct TemplateTypeArg {
 	bool isParameterPack() const {
 		return is_pack;
 	}
+	
+	// Get reference qualifier as enum instead of bools
+	ReferenceQualifier reference_qualifier() const {
+		if (is_rvalue_reference) {
+			return ReferenceQualifier::RValueReference;
+		} else if (is_reference) {
+			return ReferenceQualifier::LValueReference;
+		}
+		return ReferenceQualifier::None;
+	}
 
 	// Get string representation for mangling
 	std::string toString() const {
@@ -374,14 +384,7 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.type_index = arg.type_index;
 	result.base_type = arg.base_type;  // Include base_type for primitive types
 	result.cv_qualifier = arg.cv_qualifier;
-	// Convert the is_reference / is_rvalue_reference bools to ReferenceQualifier
-	if (arg.is_rvalue_reference) {
-		result.ref_qualifier = ReferenceQualifier::RValueReference;
-	} else if (arg.is_reference) {
-		result.ref_qualifier = ReferenceQualifier::LValueReference;
-	} else {
-		result.ref_qualifier = ReferenceQualifier::None;
-	}
+	result.ref_qualifier = arg.reference_qualifier();
 	result.pointer_depth = static_cast<uint8_t>(std::min(arg.pointer_depth, size_t(255)));
 	return result;
 }
