@@ -18,6 +18,7 @@
 #include "Lexer.h"
 #include "StringTable.h"
 #include "NamespaceRegistry.h"
+#include "InlineVector.h"
 
 // SaveHandle type for parser save/restore operations
 // Matches Parser::SaveHandle typedef in Parser.h
@@ -1079,14 +1080,19 @@ struct TypeInfo
 	
 	// Lightweight storage for template argument type indices (avoids TemplateTypeArg dependency)
 	// For type arguments: stores TypeIndex (index into gTypeInfo)
-	// For non-type arguments: stores the value directly (as int64_t cast to size_t)
+	// For non-type arguments: stores the value directly (supports int64_t, double, StringHandle)
 	struct TemplateArgInfo {
 		Type base_type = Type::Invalid;  // For primitive types
 		TypeIndex type_index = 0;        // For user-defined types
-		int64_t value = 0;               // For non-type arguments
+		std::variant<int64_t, double, StringHandle> value = int64_t{0};  // For non-type arguments
 		bool is_value = false;           // true if this is a non-type argument
+		
+		// Helper methods for value access
+		int64_t intValue() const { return std::holds_alternative<int64_t>(value) ? std::get<int64_t>(value) : 0; }
+		double doubleValue() const { return std::holds_alternative<double>(value) ? std::get<double>(value) : 0.0; }
+		StringHandle stringValue() const { return std::holds_alternative<StringHandle>(value) ? std::get<StringHandle>(value) : StringHandle{}; }
 	};
-	std::vector<TemplateArgInfo> template_args_;
+	InlineVector<TemplateArgInfo, 4> template_args_;
 
 	StringHandle name() const { 
 		return name_;
@@ -1095,9 +1101,9 @@ struct TypeInfo
 	// Helper methods for template instantiations
 	bool isTemplateInstantiation() const { return base_template_name_.handle != 0; }
 	StringHandle baseTemplateName() const { return base_template_name_; }
-	const std::vector<TemplateArgInfo>& templateArgs() const { return template_args_; }
+	const InlineVector<TemplateArgInfo, 4>& templateArgs() const { return template_args_; }
 	
-	void setTemplateInstantiationInfo(StringHandle base_template, std::vector<TemplateArgInfo> args) {
+	void setTemplateInstantiationInfo(StringHandle base_template, InlineVector<TemplateArgInfo, 4> args) {
 		base_template_name_ = base_template;
 		template_args_ = std::move(args);
 	}
