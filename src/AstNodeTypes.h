@@ -1072,10 +1072,35 @@ struct TypeInfo
 	
 	// For function pointer/reference type aliases, store the function signature
 	std::optional<FunctionSignature> function_signature_;
+	
+	// For template instantiations: store metadata to avoid name parsing
+	// If base_template_name_ is valid, this type is a template instantiation
+	StringHandle base_template_name_;  // e.g., "vector" for vector<int>
+	
+	// Lightweight storage for template argument type indices (avoids TemplateTypeArg dependency)
+	// For type arguments: stores TypeIndex (index into gTypeInfo)
+	// For non-type arguments: stores the value directly (as int64_t cast to size_t)
+	struct TemplateArgInfo {
+		Type base_type = Type::Invalid;  // For primitive types
+		TypeIndex type_index = 0;        // For user-defined types
+		int64_t value = 0;               // For non-type arguments
+		bool is_value = false;           // true if this is a non-type argument
+	};
+	std::vector<TemplateArgInfo> template_args_;
 
 	StringHandle name() const { 
 		return name_;
 	};
+	
+	// Helper methods for template instantiations
+	bool isTemplateInstantiation() const { return base_template_name_.handle != 0; }
+	StringHandle baseTemplateName() const { return base_template_name_; }
+	const std::vector<TemplateArgInfo>& templateArgs() const { return template_args_; }
+	
+	void setTemplateInstantiationInfo(StringHandle base_template, std::vector<TemplateArgInfo> args) {
+		base_template_name_ = base_template;
+		template_args_ = std::move(args);
+	}
 
 	// Helper methods for struct types
 	bool isStruct() const { return type_ == Type::Struct; }

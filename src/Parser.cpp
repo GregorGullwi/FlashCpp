@@ -133,6 +133,22 @@ static size_t getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
 	return 0;  // Will be resolved during member access
 }
 
+// Helper to convert TemplateTypeArg vector to TypeInfo::TemplateArgInfo vector
+// This enables storing template instantiation metadata in TypeInfo for O(1) lookup
+static std::vector<TypeInfo::TemplateArgInfo> convertToTemplateArgInfo(const std::vector<TemplateTypeArg>& template_args) {
+	std::vector<TypeInfo::TemplateArgInfo> result;
+	result.reserve(template_args.size());
+	for (const auto& arg : template_args) {
+		TypeInfo::TemplateArgInfo info;
+		info.base_type = arg.base_type;
+		info.type_index = arg.type_index;
+		info.value = arg.value;
+		info.is_value = arg.is_value;
+		result.push_back(info);
+	}
+	return result;
+}
+
 // Split a qualified namespace string ("a::b::c") into components for mangling.
 static std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified_namespace) {
 	std::vector<std::string_view> components;
@@ -27751,7 +27767,13 @@ ParseResult Parser::parse_template_declaration() {
 				);
 				
 				// Register the type so it can be referenced later
-				add_struct_type(instantiated_name);
+				TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+				
+				// Store template instantiation metadata for O(1) lookup (Phase 6)
+				struct_type_info.setTemplateInstantiationInfo(
+					StringTable::getOrInternStringHandle(template_name),
+					convertToTemplateArgInfo(template_args)
+				);
 				
 				// Register the specialization with the template registry
 				gTemplateRegistry.registerSpecialization(
@@ -27783,6 +27805,12 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Create struct type info first so we can reference it
 			TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+			
+			// Store template instantiation metadata for O(1) lookup (Phase 6)
+			struct_type_info.setTemplateInstantiationInfo(
+				StringTable::getOrInternStringHandle(template_name),
+				convertToTemplateArgInfo(template_args)
+			);
 
 			// Create struct info for tracking members - required before parsing static members
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access());
@@ -37007,6 +37035,13 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	
 	// Create TypeInfo for the specialization
 	TypeInfo& struct_type_info = add_struct_type(StringTable::getOrInternStringHandle(instantiated_name));
+	
+	// Store template instantiation metadata for O(1) lookup (Phase 6)
+	struct_type_info.setTemplateInstantiationInfo(
+		StringTable::getOrInternStringHandle(template_name),
+		convertToTemplateArgInfo(template_args)
+	);
+	
 	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access());
 	struct_info->is_union = spec_struct.is_union();
 	
@@ -37794,6 +37829,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Create struct type info first
 		TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+		
+		// Store template instantiation metadata for O(1) lookup (Phase 6)
+		struct_type_info.setTemplateInstantiationInfo(
+			StringTable::getOrInternStringHandle(template_name),
+			convertToTemplateArgInfo(template_args)
+		);
+		
 		auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, pattern_struct.default_access());
 		struct_info->is_union = pattern_struct.is_union();
 		
@@ -39293,6 +39335,13 @@ if (struct_type_info.getStructInfo()) {
 
 	// Create a new struct type for the instantiation (but don't create AST node for template instantiations)
 	TypeInfo& struct_type_info = add_struct_type(instantiated_name);
+	
+	// Store template instantiation metadata for O(1) lookup (Phase 6)
+	// This allows us to check if a type is a template instantiation without parsing the name
+	struct_type_info.setTemplateInstantiationInfo(
+		StringTable::getOrInternStringHandle(template_name),
+		convertToTemplateArgInfo(template_args_to_use)
+	);
 	
 	// Create StructTypeInfo
 	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public);
