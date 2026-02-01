@@ -12,6 +12,7 @@
 #include <assert.h>
 #include <deque>
 #include <string>
+#include <cstdint>
 
 #ifdef __has_include
 #if __has_include(<memory_resource>)
@@ -28,7 +29,7 @@
 #define DEQUE_SIZE_T sizeof(std::deque<std::vector<T>>)
 #endif
 
-template<std::size_t ChunkSize = 64 * 1024 * 1024, std::size_t InternalBufferSize = DEQUE_SIZE_ANY + 4 * sizeof(void*)>
+template<uint32_t ChunkSize = 64 * 1024 * 1024, uint32_t InternalBufferSize = static_cast<uint32_t>(DEQUE_SIZE_ANY + 4 * sizeof(void*))>
 class ChunkedAnyVector {
 public:
 	ChunkedAnyVector()
@@ -94,7 +95,7 @@ private:
 	std::vector<std::type_index> index_to_type;
 };
 
-template<typename T, std::size_t ChunkSize = sizeof(T) * 4, std::size_t InternalBufferSize = DEQUE_SIZE_T + ChunkSize>
+template<typename T, uint32_t ChunkSize = static_cast<uint32_t>(sizeof(T) * 4), uint32_t InternalBufferSize = static_cast<uint32_t>(DEQUE_SIZE_T) + ChunkSize>
 class ChunkedVector {
 public:
 	ChunkedVector()
@@ -208,7 +209,7 @@ public:
 		}
 	}
 
-	template<typename Visitor>
+  template<typename Visitor>
 	void visit(Visitor&& visitor) const {
 		for (const auto& chunk : data) {
 			for (const auto& element : chunk) {
@@ -216,6 +217,80 @@ public:
 			}
 		}
 	}
+
+#ifdef HAS_MEMORY_RESOURCE
+	using DataType = std::pmr::deque<std::pmr::vector<T>>;
+#else
+	using DataType = std::deque<std::vector<T>>;
+#endif
+
+	template<bool IsConst>
+	class iterator_impl {
+	public:
+		using iterator_category = std::forward_iterator_tag;
+		using value_type = std::conditional_t<IsConst, const T, T>;
+		using difference_type = std::ptrdiff_t;
+		using pointer = std::conditional_t<IsConst, const T*, T*>;
+		using reference = std::conditional_t<IsConst, const T&, T&>;
+		using data_ptr_t = std::conditional_t<IsConst, const DataType*, DataType*>;
+
+		iterator_impl() = default;
+		iterator_impl(data_ptr_t d, uint32_t chunk_idx, uint32_t elem_idx)
+			: data_(d), chunk_idx_(chunk_idx), elem_idx_(elem_idx) {
+			if (data_) {
+				total_chunks_ = static_cast<uint32_t>(data_->size());
+				if (chunk_idx_ < total_chunks_) {
+					chunk_size_ = static_cast<uint32_t>((*data_)[chunk_idx_].size());
+				}
+			}
+		}
+
+		reference operator*() const { return (*data_)[chunk_idx_][elem_idx_]; }
+		pointer operator->() const { return &(*data_)[chunk_idx_][elem_idx_]; }
+
+		iterator_impl& operator++() {
+			++elem_idx_;
+			if (elem_idx_ >= chunk_size_) {
+				elem_idx_ = 0;
+				++chunk_idx_;
+				chunk_size_ = (chunk_idx_ < total_chunks_) ? static_cast<uint32_t>((*data_)[chunk_idx_].size()) : 0;
+			}
+			return *this;
+		}
+
+		iterator_impl operator++(int) {
+			iterator_impl tmp = *this;
+			++(*this);
+			return tmp;
+		}
+
+		bool operator==(const iterator_impl& other) const {
+			return data_ == other.data_ && chunk_idx_ == other.chunk_idx_ && elem_idx_ == other.elem_idx_;
+		}
+		bool operator!=(const iterator_impl& other) const { return !(*this == other); }
+
+		bool operator==(std::default_sentinel_t) const {
+			if (!data_) return true;
+			assert(total_chunks_ == data_->size() && "Container modified during iteration");
+			return chunk_idx_ >= total_chunks_ || (chunk_idx_ + 1 == total_chunks_ && elem_idx_ >= chunk_size_);
+		}
+		bool operator!=(std::default_sentinel_t s) const { return !(*this == s); }
+
+	private:
+		data_ptr_t data_ = nullptr;
+		uint32_t chunk_idx_ = 0;
+		uint32_t elem_idx_ = 0;
+		uint32_t chunk_size_ = 0;
+		uint32_t total_chunks_ = 0;
+	};
+
+	using iterator = iterator_impl<false>;
+	using const_iterator = iterator_impl<true>;
+
+	iterator begin() { return iterator(&data, 0, 0); }
+	std::default_sentinel_t end() { return std::default_sentinel; }
+	const_iterator begin() const { return const_iterator(&data, 0, 0); }
+	std::default_sentinel_t end() const { return std::default_sentinel; }
 
 private:
 	std::array<char, InternalBufferSize> internal_buffer;

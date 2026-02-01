@@ -157,11 +157,12 @@ TEST_CASE("ChunkedVector") {
 				++count;
 		}
 	});
+
 	CHECK(count == 2);
 }
 
 TEST_CASE("ChunkedVector") {
-	ChunkedVector<int> vec;
+	ChunkedVector<int,2> vec;
 	vec.push_back(1);
 	vec.push_back(2);
 	vec.push_back(3);
@@ -169,6 +170,12 @@ TEST_CASE("ChunkedVector") {
 	CHECK(vec[0] == 1);
 	CHECK(vec[1] == 2);
 	CHECK(vec[2] == 3);
+
+	for (int check = 0; int i : vec)
+	{
+		++check;
+		CHECK(i == check);
+	}
 }
 
 TEST_CASE("preprocessor") {

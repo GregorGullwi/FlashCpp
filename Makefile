@@ -35,7 +35,7 @@ endif
 CXX ?= clang++
 
 # Compiler flags - enable strict warnings for clean code
-CXXFLAGS := -std=c++20 -Wall -Wextra -Wshadow
+CXXFLAGS := -std=c++20 -Wall -Wextra -Wshadow -Werror
 
 # Directories
 SRCDIR := src
@@ -76,8 +76,8 @@ $(MAIN_TARGET): $(MAIN_SOURCES)
 $(RELEASE_TARGET): $(MAIN_SOURCES)
 	@echo "Building main executable (Release) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(RELEASE_DIR) 2>nul || $(MKDIR) $(RELEASE_DIR) || true
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DFLASHCPP_LOG_LEVEL=1 -O3 -o $@ $^
-	@echo "Built: $@"
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DNDEBUG -DFLASHCPP_LOG_LEVEL=1 -O3 -o $@ $^
+	@echo "Built: $@
 
 # Build test executable
 $(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp $(TEST_SOURCES)
@@ -90,8 +90,8 @@ $(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.c
 $(BENCHMARK_TARGET): $(SRCDIR)/benchmark.cpp
 	@echo "Building benchmark executable for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(BENCHMARK_DIR) 2>nul || $(MKDIR) $(BENCHMARK_DIR) || true
-	$(CXX) $(CXXFLAGS) -o -O3 $@ $^ $(LLVM_LIBS)
-	@echo "Built: $@"
+	$(CXX) $(CXXFLAGS) -DNDEBUG -O3 -o $@ $^ $(LLVM_LIBS)
+	@echo "Built: $@
 
 # Phony targets
 .PHONY: all clean test main release benchmark help test-all
