@@ -25911,7 +25911,19 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 						std::string_view base_sv(base_part);
 						size_t underscore_pos = 0;
 						
-						while ((underscore_pos = base_sv.find('_', underscore_pos)) != std::string::npos) {
+						auto direct_template = gTemplateRegistry.lookupTemplate(base_sv);
+						if (direct_template.has_value()) {
+							base_template_name = base_sv;
+						} else if (gTemplateRegistry.lookup_alias_template(base_sv).has_value()) {
+							base_template_name = base_sv;
+						} else {
+							StringHandle base_handle = StringTable::getOrInternStringHandle(base_sv);
+							if (auto base_name = gTemplateRegistry.getTemplateBaseName(base_handle)) {
+								base_template_name = StringTable::getStringView(*base_name);
+							}
+						}
+						
+						while (base_template_name.empty() && (underscore_pos = base_sv.find('_', underscore_pos)) != std::string::npos) {
 							std::string_view candidate = base_sv.substr(0, underscore_pos);
 							auto candidate_opt = gTemplateRegistry.lookupTemplate(candidate);
 							if (candidate_opt.has_value()) {
@@ -25934,6 +25946,8 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 								try_instantiate_class_template(base_template_name, template_args);
 								
 								std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
+								StringHandle instantiated_handle = StringTable::getOrInternStringHandle(instantiated_base);
+								gTemplateRegistry.registerTemplateBaseName(instantiated_handle, base_template_name);
 								resolved_handle = build_resolved_handle(instantiated_base, member_part);
 								type_it = gTypesByName.find(resolved_handle);
 								FLASH_LOG(Templates, Debug, "After instantiating base template '", base_template_name, "', lookup for '",
@@ -35624,6 +35638,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					try_instantiate_class_template(base_template_name, template_args_as_type_args);
 					
 					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args_as_type_args);
+					StringHandle instantiated_handle = StringTable::getOrInternStringHandle(instantiated_base);
+					gTemplateRegistry.registerTemplateBaseName(instantiated_handle, base_template_name);
 					resolved_handle = build_resolved_handle(instantiated_base, member_part);
 					type_it = gTypesByName.find(resolved_handle);
 					

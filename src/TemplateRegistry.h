@@ -1003,6 +1003,10 @@ public:
 		instantiation_base_names_[instantiated_name] = base_name;
 	}
 	
+	void registerTemplateBaseName(StringHandle instantiated_name, std::string_view base_name) {
+		instantiation_base_names_[instantiated_name] = StringTable::getOrInternStringHandle(base_name);
+	}
+	
 	std::optional<StringHandle> getTemplateBaseName(StringHandle instantiated_name) const {
 		auto it = instantiation_base_names_.find(instantiated_name);
 		if (it != instantiation_base_names_.end()) {
