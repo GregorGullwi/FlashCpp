@@ -948,29 +948,32 @@ public:
 				xdata.push_back(static_cast<char>((end_address >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((end_address >> 24) & 0xFF));
 
-				// HandlerAddress - RVA of handler
+				// HandlerAddress - RVA of handler (or constant filter value for __except with constant filter)
 				uint32_t handler_address;
+				uint32_t jump_target;
 				if (seh_block.has_except_handler) {
-					handler_address = function_start + seh_block.except_handler.handler_offset;
+					if (seh_block.except_handler.is_constant_filter) {
+						handler_address = static_cast<uint32_t>(static_cast<int32_t>(seh_block.except_handler.constant_filter_value));
+						jump_target = function_start + seh_block.except_handler.handler_offset;
+						FLASH_LOG_FORMAT(Codegen, Debug, "SEH __except: constant filter={}, jump_target={:x}",
+						                 seh_block.except_handler.constant_filter_value, jump_target);
+					} else {
+						handler_address = 0;  // TODO: filter function (not implemented yet)
+						jump_target = function_start + seh_block.except_handler.handler_offset;
+						FLASH_LOG(Codegen, Debug, "SEH __except: non-constant filter (not supported yet)");
+					}
 				} else if (seh_block.has_finally_handler) {
 					handler_address = function_start + seh_block.finally_handler.handler_offset;
+					jump_target = 1;  // __finally is a termination handler
 				} else {
 					handler_address = 0;  // No handler (shouldn't happen)
+					jump_target = 0;
 				}
 				xdata.push_back(static_cast<char>(handler_address & 0xFF));
 				xdata.push_back(static_cast<char>((handler_address >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((handler_address >> 16) & 0xFF));
 				xdata.push_back(static_cast<char>((handler_address >> 24) & 0xFF));
 
-				// JumpTarget - for __except: 0 (filter expression), for __finally: 1 (termination handler)
-				uint32_t jump_target;
-				if (seh_block.has_except_handler) {
-					jump_target = 0;  // __except uses filter expression
-				} else if (seh_block.has_finally_handler) {
-					jump_target = 1;  // __finally is a termination handler
-				} else {
-					jump_target = 0;
-				}
 				xdata.push_back(static_cast<char>(jump_target & 0xFF));
 				xdata.push_back(static_cast<char>((jump_target >> 8) & 0xFF));
 				xdata.push_back(static_cast<char>((jump_target >> 16) & 0xFF));

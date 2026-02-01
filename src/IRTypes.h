@@ -1464,7 +1464,9 @@ struct ThrowOp {
 
 // SEH __except handler begin marker
 struct SehExceptBeginOp {
-	TempVar filter_result;        // Temporary holding the filter expression result
+	TempVar filter_result;        // Temporary holding the filter expression result (for non-constant filters)
+	bool is_constant_filter;      // True if filter is a compile-time constant
+	int32_t constant_filter_value; // Constant filter value (EXCEPTION_EXECUTE_HANDLER=1, EXCEPTION_CONTINUE_SEARCH=0, etc.)
 	std::string_view except_end_label;  // Label to jump to after __except block
 };
 

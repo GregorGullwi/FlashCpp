@@ -3758,6 +3758,8 @@ private:
 				block_info.has_except_handler = true;
 				block_info.except_handler.handler_offset = seh_try_block.except_handler->handler_offset;
 				block_info.except_handler.filter_result = seh_try_block.except_handler->filter_result;
+				block_info.except_handler.is_constant_filter = seh_try_block.except_handler->is_constant_filter;
+				block_info.except_handler.constant_filter_value = seh_try_block.except_handler->constant_filter_value;
 			} else {
 				block_info.has_except_handler = false;
 			}
@@ -16084,10 +16086,14 @@ private:
 			SehExceptHandler handler;
 			handler.handler_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 			handler.filter_result = except_op.filter_result.var_number;
+			handler.is_constant_filter = except_op.is_constant_filter;
+			handler.constant_filter_value = except_op.constant_filter_value;
 
 			current_seh_try_block_->except_handler = handler;
 
 			FLASH_LOG(Codegen, Debug, "SEH __except handler begin at offset ", handler.handler_offset,
+			          " is_constant=", handler.is_constant_filter,
+			          " constant_value=", handler.constant_filter_value,
 			          " filter_result=", handler.filter_result);
 		}
 	}
@@ -16727,6 +16733,8 @@ private:
 	struct SehExceptHandler {
 		uint32_t handler_offset;  // Code offset of __except handler
 		uint32_t filter_result;   // Filter expression evaluation result (temp var number)
+		bool is_constant_filter;  // True if filter is a compile-time constant
+		int32_t constant_filter_value; // Constant filter value (EXCEPTION_EXECUTE_HANDLER=1, EXCEPTION_CONTINUE_SEARCH=0, etc.)
 	};
 
 	struct SehFinallyHandler {

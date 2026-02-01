@@ -1171,12 +1171,20 @@
 		const auto& filter_expr = except_clause.filter_expression().as<SehFilterExpressionNode>();
 		auto filter_operands = visitExpressionNode(filter_expr.expression().as<ExpressionNode>());
 
-		// Allocate a temporary for the filter result
+		// Detect if filter is a compile-time constant or requires runtime evaluation
+		bool is_constant_filter = false;
+		int32_t constant_filter_value = 0;
 		TempVar filter_result = var_counter.next();
 
-		// Store filter result (operands[2] contains the value)
-		if (filter_operands.size() >= 3 && std::holds_alternative<TempVar>(filter_operands[2])) {
-			filter_result = std::get<TempVar>(filter_operands[2]);
+		if (filter_operands.size() >= 3) {
+			if (std::holds_alternative<unsigned long long>(filter_operands[2])) {
+				is_constant_filter = true;
+				constant_filter_value = static_cast<int32_t>(std::get<unsigned long long>(filter_operands[2]));
+				FLASH_LOG(Codegen, Debug, "SEH filter is constant: ", constant_filter_value);
+			} else if (std::holds_alternative<TempVar>(filter_operands[2])) {
+				filter_result = std::get<TempVar>(filter_operands[2]);
+				FLASH_LOG(Codegen, Debug, "SEH filter is runtime expression in temp ", filter_result.var_number);
+			}
 		}
 
 		// Generate unique label for except end
@@ -1187,6 +1195,8 @@
 		// Emit SehExceptBegin marker with filter result
 		SehExceptBeginOp except_op;
 		except_op.filter_result = filter_result;
+		except_op.is_constant_filter = is_constant_filter;
+		except_op.constant_filter_value = constant_filter_value;
 		except_op.except_end_label = except_end_label;
 		ir_.addInstruction(IrInstruction(IrOpcode::SehExceptBegin, std::move(except_op), except_clause.except_token()));
 
