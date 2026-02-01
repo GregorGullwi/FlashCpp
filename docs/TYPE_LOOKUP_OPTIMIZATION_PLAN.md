@@ -324,6 +324,7 @@ bool matchesSignature(const ChunkedVector<TypeIndex>& param_types) {
 ### Phase 2.5: Base Template Name Tracking
 - [ ] Track base template name per instantiation to avoid parsing underscores
 - [ ] Use base-name mapping when deducing template-template parameters
+- [ ] Use base-name mapping when resolving member templates on instantiated classes
 
 ### Phase 3: Function Resolution
 - [ ] Store function signatures as `ChunkedVector<TypeIndex>`

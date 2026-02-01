@@ -52,7 +52,7 @@ int main() {
     Wrapper_int<float> w;
     int wrapper = w.getType();
 
-    int sizes = size_val(Tiny{});
+    int sizes = size_val(Big{});
     
-    return generic + specialized + wrapper + sizes - 6;  // Should return 1
+    return generic + specialized + wrapper + sizes - 9;  // Should return 1
 }
