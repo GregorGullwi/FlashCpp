@@ -597,6 +597,9 @@ inline FlashCpp::TypeIndexArg makeTypeIndexArgFromSpec(const TypeSpecifierNode& 
 	arg.cv_qualifier = spec.cv_qualifier();
 	arg.ref_qualifier = spec.reference_qualifier();
 	arg.pointer_depth = static_cast<uint8_t>(std::min(spec.pointer_depth(), size_t(255)));
+	// Include array info - critical for differentiating T[] from T[N] from T
+	arg.is_array = spec.is_array();
+	arg.array_size = spec.array_size();
 	return arg;
 }
 

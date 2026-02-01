@@ -386,6 +386,9 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.cv_qualifier = arg.cv_qualifier;
 	result.ref_qualifier = arg.reference_qualifier();
 	result.pointer_depth = static_cast<uint8_t>(std::min(arg.pointer_depth, size_t(255)));
+	// Include array info - critical for differentiating T[] from T[N] from T
+	result.is_array = arg.is_array;
+	result.array_size = arg.array_size;
 	return result;
 }
 
