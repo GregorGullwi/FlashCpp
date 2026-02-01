@@ -64,7 +64,7 @@ int main() {
     int wrapper = w.getType();
 
     int sizes = size_val(Big{});
-    int templated = apply_zero<Wrap>();
+    int wrap_size = apply_zero<Wrap>();
     
-    return generic + specialized + wrapper + sizes + templated - 13;  // Should return 1
+    return generic + specialized + wrapper + sizes + wrap_size - 13;  // Should return 1
 }
