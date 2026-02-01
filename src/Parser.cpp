@@ -36432,19 +36432,22 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				}
 				
 				// Extract base template name from instantiation name
-				// For template instantiations like "ratio_1_2", extract "ratio"
-				// Template instantiation names are built as "template_name_arg1_arg2..."
-				size_t first_underscore = type_name.find('_');
-				if (first_underscore != std::string_view::npos) {
-					// Check if this looks like a template instantiation (has underscore)
-					// Extract the base name before the first underscore
-					std::string_view base_name = type_name.substr(0, first_underscore);
+				// After template refactoring, instantiation names use hash format: "ratio$hash"
+				// Legacy format was: "ratio_arg1_arg2..."
+				// Extract the base name before the $ or _ separator
+				size_t separator_pos = type_name.find('$');
+				if (separator_pos == std::string_view::npos) {
+					separator_pos = type_name.find('_');
+				}
+				if (separator_pos != std::string_view::npos) {
+					// Extract the base name before the separator
+					std::string_view base_name = type_name.substr(0, separator_pos);
 					// Verify this is likely a template instantiation by checking if there's
-					// something after the underscore (not just a trailing underscore)
-					if (first_underscore + 1 < type_name.length()) {
+					// something after the separator (not just a trailing separator)
+					if (separator_pos + 1 < type_name.length()) {
 						type_name = base_name;
 					}
-					// else: keep full name (might be a type with underscore in the name itself)
+					// else: keep full name (might be a type with separator in the name itself)
 				}
 				
 				pattern_builder.append(type_name);
@@ -36479,10 +36482,14 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					}
 					
 					// Extract base template name from instantiation name
-					// For template instantiations like "ratio_1_2", extract "ratio"
-					size_t first_underscore = type_name.find('_');
-					if (first_underscore != std::string_view::npos && first_underscore + 1 < type_name.length()) {
-						type_name = type_name.substr(0, first_underscore);
+					// After template refactoring, instantiation names use hash format: "ratio$hash"
+					// Legacy format was: "ratio_arg1_arg2..."
+					size_t separator_pos = type_name.find('$');
+					if (separator_pos == std::string_view::npos) {
+						separator_pos = type_name.find('_');
+					}
+					if (separator_pos != std::string_view::npos && separator_pos + 1 < type_name.length()) {
+						type_name = type_name.substr(0, separator_pos);
 					}
 					
 					qualified_pattern_builder.append(type_name);
