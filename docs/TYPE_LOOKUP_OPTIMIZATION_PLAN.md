@@ -236,6 +236,29 @@ auto key = makeInstantiationKeyV2(template_handle, template_args);
 StringHandle name = generateInstantiatedName(key);  // Uses hash-based unique ID
 ```
 
+### Phase 6: Future Enhancements (From Updated Analysis)
+
+The following ideas from `TYPE_LOOKUP_OPTIMIZATION_PLAN_UPDATED.md` are deferred for future phases:
+
+#### 6a. Base + Extension Key Split
+- Split TemplateInstantiationKey into ~80-100 byte base + optional extension
+- Extension only allocated for edge cases (variadic >4 args, nested templates, etc.)
+- Target: 70-80% memory savings for common templates
+
+#### 6b. Advanced Template Edge Cases
+- **RecursionGuard**: Cycle detection for recursive templates (Factorial<N>)
+- **SFINAE Failure Cache**: Separate cache for failed instantiations
+- **Scope Disambiguation**: `namespace_qualifiers` and `enclosing_class` fields
+- **Specialization Rank**: For partial specialization ordering in overload resolution
+
+#### 6c. Implementation Checklist (When Needed)
+- Template template parameter handling
+- Recursive template detection and cycle prevention
+- Type alias resolution tracking  
+- constexpr expression evaluation for non-type args
+- Overload resolution with specialization ranking
+- Default argument handling
+
 **Proposed TemplateInstantiator Interface:**
 ```cpp
 class TemplateInstantiator {
