@@ -372,12 +372,15 @@ namespace FlashCpp {
 inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	TypeIndexArg result;
 	result.type_index = arg.type_index;
-	result.is_const = (arg.cv_qualifier == CVQualifier::Const || 
-	                   arg.cv_qualifier == CVQualifier::ConstVolatile);
-	result.is_volatile = (arg.cv_qualifier == CVQualifier::Volatile || 
-	                      arg.cv_qualifier == CVQualifier::ConstVolatile);
-	result.is_reference = arg.is_reference;
-	result.is_rvalue_reference = arg.is_rvalue_reference;
+	result.cv_qualifier = arg.cv_qualifier;
+	// Convert the is_reference / is_rvalue_reference bools to ReferenceQualifier
+	if (arg.is_rvalue_reference) {
+		result.ref_qualifier = ReferenceQualifier::RValueReference;
+	} else if (arg.is_reference) {
+		result.ref_qualifier = ReferenceQualifier::LValueReference;
+	} else {
+		result.ref_qualifier = ReferenceQualifier::None;
+	}
 	result.pointer_depth = static_cast<uint8_t>(std::min(arg.pointer_depth, size_t(255)));
 	return result;
 }
