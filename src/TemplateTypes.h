@@ -148,17 +148,22 @@ public:
 	}
 	
 	T& operator[](size_t i) {
-		return i < N ? inline_data_[i] : overflow_[i - N];
+		// If i is within inline storage that has been filled, use inline_data_
+		// Otherwise use overflow (handles case when i >= N)
+		return i < static_cast<size_t>(inline_count_) ? inline_data_[i] : overflow_[i - N];
 	}
 	
 	const T& operator[](size_t i) const {
-		return i < N ? inline_data_[i] : overflow_[i - N];
+		return i < static_cast<size_t>(inline_count_) ? inline_data_[i] : overflow_[i - N];
 	}
 	
 	T& back() {
+		// Precondition: container must not be empty
+		// Note: Calling back() on empty container is undefined behavior (matches std::vector)
 		if (!overflow_.empty()) {
 			return overflow_.back();
 		}
+		// inline_count_ > 0 is guaranteed if overflow_ is empty and container is non-empty
 		return inline_data_[inline_count_ - 1];
 	}
 	
@@ -242,6 +247,7 @@ public:
 	const_iterator cend() const { return const_iterator(this, size()); }
 
 private:
+	static_assert(N <= 255, "InlineVector: N must be <= 255 (inline_count_ is uint8_t)");
 	std::array<T, N> inline_data_{};
 	uint8_t inline_count_ = 0;
 	std::vector<T> overflow_;
