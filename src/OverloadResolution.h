@@ -594,16 +594,7 @@ inline FlashCpp::TypeIndexArg makeTypeIndexArgFromSpec(const TypeSpecifierNode& 
 	FlashCpp::TypeIndexArg arg;
 	arg.type_index = spec.type_index();
 	arg.cv_qualifier = spec.cv_qualifier();
-	
-	// Convert reference flags to ReferenceQualifier
-	if (spec.is_rvalue_reference()) {
-		arg.ref_qualifier = ReferenceQualifier::RValueReference;
-	} else if (spec.is_reference()) {
-		arg.ref_qualifier = ReferenceQualifier::LValueReference;
-	} else {
-		arg.ref_qualifier = ReferenceQualifier::None;
-	}
-	
+	arg.ref_qualifier = spec.reference_qualifier();
 	arg.pointer_depth = static_cast<uint8_t>(std::min(spec.pointer_depth(), size_t(255)));
 	return arg;
 }
