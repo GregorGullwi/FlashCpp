@@ -1013,6 +1013,12 @@ public:
 	// This overwrites any existing entry for the same instantiated_name (re-instantiations/updates).
 	// Copies the args; add a move-based overload if profiling shows significant copy overhead.
 	void registerTemplateInstantiationArgs(StringHandle instantiated_name, const std::vector<TemplateTypeArg>& args) {
+		if constexpr (WITH_DEBUG_INFO) {
+			if (instantiation_template_args_.find(instantiated_name) != instantiation_template_args_.end()) {
+				FLASH_LOG(Templates, Debug, "Overwriting template args for instantiated name: ",
+				          StringTable::getStringView(instantiated_name));
+			}
+		}
 		instantiation_template_args_[instantiated_name] = args;
 	}
 	
@@ -1527,7 +1533,7 @@ private:
 	// Note: This intentionally duplicates data from the instantiations_ map (TemplateInstantiationKey -> ASTNode).
 	// Use instantiations_ for lookups by key; use this map when only an instantiated name is available and args are needed.
 	// A unified structure is possible but would require reverse indexing on instantiations_.
-	// If memory becomes a concern (e.g., tens of thousands of instantiations), consider moving this data into a shared cache
+	// If memory becomes a concern (e.g., >10k instantiations), consider moving this data into a shared cache
 	// or pruning rarely used entries.
 	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> instantiation_template_args_;
 };
