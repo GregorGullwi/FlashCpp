@@ -37215,6 +37215,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 	
+	// V2 Cache: Check TypeIndex-based instantiation cache for O(1) lookup
+	// This uses TypeIndex instead of string keys to avoid ambiguity with type names containing underscores
+	StringHandle template_name_handle = StringTable::getOrInternStringHandle(template_name);
+	auto v2_key = FlashCpp::makeInstantiationKeyV2(template_name_handle, template_args);
+	auto v2_cached = gTemplateRegistry.getInstantiationV2(v2_key);
+	if (v2_cached.has_value()) {
+		FLASH_LOG_FORMAT(Templates, Debug, "V2 cache hit for '{}' with {} args", template_name, template_args.size());
+		return std::nullopt;  // Already instantiated - return nullopt to indicate success
+	}
+	
 	// Build InstantiationKey for cycle detection
 	// Note: Caching is handled by gTypesByName check later in the function
 	FlashCpp::InstantiationKey inst_key = FlashCpp::InstantiationQueue::makeKey(template_name, template_args);
@@ -38764,13 +38774,16 @@ if (struct_type_info.getStructInfo()) {
 				// Don't return error - continue with other static_asserts
 				continue;
 			}
-			
+		
 			FLASH_LOG(Templates, Debug, "Deferred static_assert passed during template instantiation");
 		}
 		
 		// Mark instantiation complete with the type index
 		FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
 		in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
+		
+		// Register in V2 cache for O(1) lookup on future instantiations
+		gTemplateRegistry.registerInstantiationV2(v2_key, instantiated_struct);
 		
 		return instantiated_struct;  // Return the struct node for code generation
 		}
@@ -42288,6 +42301,9 @@ if (struct_type_info.getStructInfo()) {
 	// Mark instantiation complete with the type index
 	FlashCpp::gInstantiationQueue.markComplete(inst_key, struct_type_info.type_index_);
 	in_progress_guard.dismiss();  // Don't remove from in_progress in destructor
+	
+	// Register in V2 cache for O(1) lookup on future instantiations
+	gTemplateRegistry.registerInstantiationV2(v2_key, instantiated_struct);
 	
 	// Return the instantiated struct node for code generation
 	return instantiated_struct;
