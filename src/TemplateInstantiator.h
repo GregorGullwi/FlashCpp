@@ -99,11 +99,7 @@ inline std::vector<TemplateArgument> buildTemplateArgumentsFromTypeArgs(
 				Token{},
 				arg.cv_qualifier
 			);
-			if (arg.is_rvalue_reference) {
-				type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);
-			} else if (arg.is_reference) {
-				type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);
-			}
+			type_spec.set_reference_qualifier(arg.reference_qualifier());
 			for (uint8_t i = 0; i < arg.pointer_depth; ++i) {
 				type_spec.add_pointer_level(CVQualifier::None);
 			}
@@ -260,10 +256,8 @@ public:
 				}
 				
 				// Set reference qualifier from the template argument
-				if (arg.is_rvalue_reference) {
-					result.set_reference_qualifier(ReferenceQualifier::RValueReference);
-				} else if (arg.is_reference) {
-					result.set_reference_qualifier(ReferenceQualifier::LValueReference);
+				if (arg.reference_qualifier() != ReferenceQualifier::None) {
+					result.set_reference_qualifier(arg.reference_qualifier());
 				} else if (type_spec.reference_qualifier() != ReferenceQualifier::None) {
 					// Preserve original reference if argument doesn't specify one
 					result.set_reference_qualifier(type_spec.reference_qualifier());
@@ -292,21 +286,16 @@ public:
 	}
 	
 	/**
-	 * Build the instantiated name (e.g., "Vector_int" for Vector<int>)
+	 * Build the instantiated name using hash-based naming to avoid collisions
+	 * 
+	 * Uses generateInstantiatedNameFromArgs() for unambiguous naming like
+	 * "Vector$a1b2c3d4" instead of the old "Vector_int" which could collide.
 	 * 
 	 * @param base_name The base template name
-	 * @return The instantiated name
+	 * @return The instantiated name with hash suffix
 	 */
 	std::string_view build_instantiated_name(std::string_view base_name) const {
-		StringBuilder builder;
-		builder.append(base_name);
-		
-		for (size_t i = 0; i < args_.size(); ++i) {
-			builder.append("_");
-			builder.append(args_[i].toString());
-		}
-		
-		return builder.commit();
+		return FlashCpp::generateInstantiatedNameFromArgs(base_name, args_);
 	}
 	
 	/**

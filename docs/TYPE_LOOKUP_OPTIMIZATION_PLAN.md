@@ -212,29 +212,29 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 2. The existing Parser methods are well-tested with 900+ passing tests
 3. The current TemplateInstantiator provides useful utilities that can be used incrementally
 
-### Phase 5: Eliminate String-Based Template Name Generation (Planned)
-The current system still uses `get_instantiated_class_name()` which builds string names like `"vector_int"` for `vector<int>`. This is problematic because:
-1. Names with underscores (e.g., `is_arithmetic`) create ambiguity with type names containing underscores
-2. String concatenation is slower than TypeIndex-based lookups
-3. Template arguments may contain complex types that don't stringify cleanly
+### Phase 5: Eliminate String-Based Template Name Generation ✅ COMPLETED
+The system now uses hash-based naming via `generateInstantiatedName()` to avoid underscore ambiguity.
 
-**Goals:**
-- [ ] Replace `get_instantiated_class_name()` with TypeIndex-based naming
-- [ ] Store instantiated types using `TemplateInstantiationKeyV2` as the canonical key
-- [ ] Generate unique type names using TypeIndex hashes instead of string concatenation
-- [ ] Update `gTypesByName` to use TypeIndex-based keys for template instantiations
-- [ ] Migrate template argument parsing from string-based to TypeIndex-based
+**Key Changes Implemented:**
+1. Added `base_type` field to `TypeIndexArg` - critical for differentiating primitive types (all have `type_index=0`)
+2. `get_instantiated_class_name()` now uses `generateInstantiatedNameFromArgs()` for hash-based naming
+3. `TemplateInstantiator::build_instantiated_name()` also uses hash-based naming
+4. Added `TemplateTypeArg::reference_qualifier()` method for cleaner API
 
-**Key Changes:**
+**Before (ambiguous):**
 ```cpp
-// Old: String-based naming (ambiguous)
-std::string_view name = get_instantiated_class_name("is_arithmetic", {int_type});
-// Returns "is_arithmetic_int" - could also be "is_arithmetic" + "_int" type!
-
-// New: TypeIndex-based naming (unambiguous)
-auto key = makeInstantiationKeyV2(template_handle, template_args);
-StringHandle name = generateInstantiatedName(key);  // Uses hash-based unique ID
+get_instantiated_class_name("is_arithmetic", {int_type});
+// Returns "is_arithmetic_int" - could be "is_arithmetic<int>" or "is_arithmetic_int" type!
 ```
+
+**After (unambiguous):**
+```cpp
+get_instantiated_class_name("is_arithmetic", {int_type});
+// Returns "is_arithmetic$a1b2c3d4" - unique hash-based name
+```
+
+**Bug Fixed:** Primitive types (int, float, etc.) all have `type_index=0`, causing hash collisions.
+Adding `base_type` to the hash ensures different primitive types get unique hashes.
 
 ### Phase 6: Future Enhancements (From Updated Analysis)
 

@@ -36056,8 +36056,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	return new_func_node;
 }
 
-// Get the mangled name for an instantiated class template
-// Example: Container<int> -> Container_int
+// Get the mangled name for an instantiated class template using hash-based naming
+// Example: Container<int> -> Container$a1b2c3d4 (hash-based, unambiguous)
 std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
 	// Use hash-based naming to avoid underscore ambiguity
 	// Old: "is_arithmetic_int" - could be is_arithmetic<int> or is_arithmetic + "_int" type!
