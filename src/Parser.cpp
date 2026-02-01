@@ -27618,21 +27618,33 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						
 						// Only include type name for TEMPLATE INSTANTIATION patterns, not simple template parameters
-						// Template instantiation placeholders look like "ratio_void_void" (contain "_void") OR "ratio$hash" (hash-based)
-						// Simple template parameters look like "T" or "_Tp" (no "_void" or "$")
-						std::string type_name_str(type_name);
-						bool is_template_instantiation_placeholder = (type_name_str.find("_void") != std::string::npos) ||
-						                                              (type_name_str.find('$') != std::string::npos);
+						// Use TypeInfo to detect template instantiations directly
+						const TypeInfo& arg_type_info = gTypeInfo[arg.type_index];
+						bool is_template_instantiation_placeholder = arg_type_info.isTemplateInstantiation();
+						
+						// Fallback to string-based check for backward compatibility
+						if (!is_template_instantiation_placeholder) {
+							std::string type_name_str(type_name);
+							is_template_instantiation_placeholder = (type_name_str.find("_void") != std::string::npos) ||
+							                                        (type_name_str.find('$') != std::string::npos);
+						}
+						
 						if (is_template_instantiation_placeholder) {
 							// This is a dependent template instantiation like ratio<_Num, _Den>
-							// Extract just the base template name "ratio"
-							// For old naming: ratio_void_void -> stop at first '_'
-							// For hash naming: ratio$hash -> stop at first '$'
-							size_t first_separator = type_name.find_first_of("_$");
-							if (first_separator != std::string_view::npos) {
-								type_name = type_name.substr(0, first_separator);
+							// Get the base template name from TypeInfo if available
+							std::string_view base_name;
+							if (arg_type_info.isTemplateInstantiation()) {
+								base_name = StringTable::getStringView(arg_type_info.baseTemplateName());
+							} else {
+								// Fallback: extract from string
+								size_t first_separator = type_name.find_first_of("_$");
+								if (first_separator != std::string_view::npos) {
+									base_name = type_name.substr(0, first_separator);
+								} else {
+									base_name = type_name;
+								}
 							}
-							pattern_name.append(type_name);
+							pattern_name.append(base_name);
 							included_type_name = true;
 						} else if (!arg.is_dependent) {
 							// Non-dependent concrete type - include the full type name

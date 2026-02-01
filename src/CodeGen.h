@@ -9109,8 +9109,23 @@ private:
 				FLASH_LOG(Codegen, Debug, "generateQualifiedIdentifierIr: struct_or_enum_name='", struct_or_enum_name, "', found=", (struct_type_it != gTypesByName.end()));
 			}
 			
-			// If not found directly, try with default template argument suffix "_void"
+			// If not found directly, search for any template instantiation with this base name
 			// This handles cases like has_type<T>::value where T has a default = void argument
+			// Uses hash-based naming (template$hash) or old-style naming (template_suffix)
+			if (struct_type_it == gTypesByName.end()) {
+				// First try hash-based naming pattern: look for template$hash
+				std::string prefix_hash = std::string(struct_or_enum_name) + "$";
+				for (auto it = gTypesByName.begin(); it != gTypesByName.end(); ++it) {
+					std::string_view key_str = StringTable::getStringView(it->first);
+					if (key_str.starts_with(prefix_hash) && it->second->isStruct()) {
+						struct_type_it = it;
+						FLASH_LOG(Codegen, Debug, "Found struct with hash-based prefix: ", key_str, " for ", struct_or_enum_name);
+						break;
+					}
+				}
+			}
+			
+			// Fallback: try old-style _void suffix for backward compatibility
 			if (struct_type_it == gTypesByName.end()) {
 				std::string_view struct_name_with_void = StringBuilder().append(struct_or_enum_name).append("_void"sv).commit();
 				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_with_void));
