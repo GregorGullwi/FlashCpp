@@ -59,6 +59,8 @@ namespace ObjectFileCommon {
 	struct SehExceptHandlerInfo {
 		uint32_t handler_offset;  // Code offset of __except handler
 		uint32_t filter_result;   // Filter expression evaluation result (temp var number)
+		bool is_constant_filter;  // True if filter is a compile-time constant
+		int32_t constant_filter_value; // Constant filter value (EXCEPTION_EXECUTE_HANDLER=1, EXCEPTION_CONTINUE_SEARCH=0, etc.)
 	};
 
 	// SEH __finally handler information
