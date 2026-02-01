@@ -12041,15 +12041,15 @@ ParseResult Parser::parse_type_specifier()
 										std::string type_name_str(gNamespaceRegistry.getName(qual_id.namespace_handle()));
 										std::string_view member_name = qual_id.name();
 										
-										// Check if type_name ends with "_void" (dependent placeholder)
-										if (type_name_str.ends_with("_void") && !filled_template_args.empty()) {
-											std::string_view template_base_name(type_name_str.data(), type_name_str.size() - 5);
+										// Check if type_name is a dependent placeholder (ends with "_void" for old naming, or contains "$" for hash-based)
+										bool is_dependent_placeholder = type_name_str.ends_with("_void") || type_name_str.find('$') != std::string::npos;
+										if (is_dependent_placeholder && !filled_template_args.empty()) {
+											// Extract base template name (stop at '_' for old naming or '$' for hash-based)
+											size_t separator_pos = type_name_str.find_first_of("_$");
+											std::string_view template_base_name(type_name_str.data(), separator_pos);
 											
-											// Build the instantiated template name using first filled argument
-											StringBuilder inst_name_builder;
-											inst_name_builder.append(template_base_name).append("_");
-											append_type_name_suffix(inst_name_builder, filled_template_args[0]);
-											std::string_view inst_name = inst_name_builder.commit();
+											// Build the instantiated template name using hash-based naming
+											std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 											
 											// Try to instantiate the template
 											try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
@@ -12523,17 +12523,19 @@ ParseResult Parser::parse_type_specifier()
 							if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 								const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
 								
-								if (!qual_id.namespace_handle().isGlobal()) {
-									std::string type_name_str(gNamespaceRegistry.getName(qual_id.namespace_handle()));
-									std::string_view member_name = qual_id.name();
+							if (!qual_id.namespace_handle().isGlobal()) {
+								std::string type_name_str(gNamespaceRegistry.getName(qual_id.namespace_handle()));
+								std::string_view member_name = qual_id.name();
+								
+								// Check for dependent placeholder (old: _void suffix, new: $ separator)
+								bool is_dependent_placeholder = type_name_str.ends_with("_void") || type_name_str.find('$') != std::string::npos;
+								if (is_dependent_placeholder && !filled_template_args.empty()) {
+									// Extract base template name (stop at '_' for old naming or '$' for hash-based)
+									size_t separator_pos = type_name_str.find_first_of("_$");
+									std::string_view template_base_name(type_name_str.data(), separator_pos);
 									
-									if (type_name_str.ends_with("_void") && !filled_template_args.empty()) {
-										std::string_view template_base_name(type_name_str.data(), type_name_str.size() - 5);
-										
-										StringBuilder inst_name_builder;
-										inst_name_builder.append(template_base_name).append("_");
-										append_type_name_suffix(inst_name_builder, filled_template_args[0]);
-										std::string_view inst_name = inst_name_builder.commit();
+									// Build the instantiated template name using hash-based naming
+									std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 										
 										try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 										
@@ -20339,17 +20341,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									if (std::holds_alternative<QualifiedIdentifierNode>(expr_default)) {
 										const QualifiedIdentifierNode& qual_id_default = std::get<QualifiedIdentifierNode>(expr_default);
 										
-										if (!qual_id_default.namespace_handle().isGlobal()) {
-											std::string type_name_str(gNamespaceRegistry.getName(qual_id_default.namespace_handle()));
-											std::string_view default_member_name = qual_id_default.name();
+									if (!qual_id_default.namespace_handle().isGlobal()) {
+										std::string type_name_str(gNamespaceRegistry.getName(qual_id_default.namespace_handle()));
+										std::string_view default_member_name = qual_id_default.name();
+										
+										// Check for dependent placeholder (old: _void suffix, new: $ separator)
+										bool is_dependent_placeholder = type_name_str.ends_with("_void") || type_name_str.find('$') != std::string::npos;
+										if (is_dependent_placeholder && !filled_template_args.empty()) {
+											// Extract base template name (stop at '_' for old naming or '$' for hash-based)
+											size_t separator_pos = type_name_str.find_first_of("_$");
+											std::string_view template_base_name(type_name_str.data(), separator_pos);
 											
-											if (type_name_str.ends_with("_void") && !filled_template_args.empty()) {
-												std::string_view template_base_name(type_name_str.data(), type_name_str.size() - 5);
-												
-												StringBuilder inst_name_builder;
-												inst_name_builder.append(template_base_name).append("_");
-												append_type_name_suffix(inst_name_builder, filled_template_args[0]);
-												std::string_view inst_name = inst_name_builder.commit();
+											// Build the instantiated template name using hash-based naming
+											std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 												
 												try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 												
@@ -27610,15 +27614,19 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						
 						// Only include type name for TEMPLATE INSTANTIATION patterns, not simple template parameters
-						// Template instantiation placeholders look like "ratio_void_void" (contain "_void")
-						// Simple template parameters look like "T" or "_Tp" (no "_void")
+						// Template instantiation placeholders look like "ratio_void_void" (contain "_void") OR "ratio$hash" (hash-based)
+						// Simple template parameters look like "T" or "_Tp" (no "_void" or "$")
 						std::string type_name_str(type_name);
-						if (type_name_str.find("_void") != std::string::npos) {
+						bool is_template_instantiation_placeholder = (type_name_str.find("_void") != std::string::npos) ||
+						                                              (type_name_str.find('$') != std::string::npos);
+						if (is_template_instantiation_placeholder) {
 							// This is a dependent template instantiation like ratio<_Num, _Den>
 							// Extract just the base template name "ratio"
-							size_t first_underscore = type_name.find('_');
-							if (first_underscore != std::string_view::npos) {
-								type_name = type_name.substr(0, first_underscore);
+							// For old naming: ratio_void_void -> stop at first '_'
+							// For hash naming: ratio$hash -> stop at first '$'
+							size_t first_separator = type_name.find_first_of("_$");
+							if (first_separator != std::string_view::npos) {
+								type_name = type_name.substr(0, first_separator);
 							}
 							pattern_name.append(type_name);
 							included_type_name = true;
@@ -37345,29 +37353,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	};
 	
-	// Helper lambda to append type name suffix based on TemplateTypeArg
-	// Used to build instantiated template names like "wrapper_int" from "wrapper" + int argument
-	auto append_type_name_suffix = [](StringBuilder& builder, const TemplateTypeArg& arg) {
-		if (arg.base_type == Type::Int) builder.append("int");
-		else if (arg.base_type == Type::UnsignedInt) builder.append("unsigned_int");
-		else if (arg.base_type == Type::Long) builder.append("long");
-		else if (arg.base_type == Type::UnsignedLong) builder.append("unsigned_long");
-		else if (arg.base_type == Type::LongLong) builder.append("long_long");
-		else if (arg.base_type == Type::UnsignedLongLong) builder.append("unsigned_long_long");
-		else if (arg.base_type == Type::Short) builder.append("short");
-		else if (arg.base_type == Type::UnsignedShort) builder.append("unsigned_short");
-		else if (arg.base_type == Type::Char) builder.append("char");
-		else if (arg.base_type == Type::Bool) builder.append("bool");
-		else if (arg.base_type == Type::Float) builder.append("float");
-		else if (arg.base_type == Type::Double) builder.append("double");
-		else if (arg.base_type == Type::Void) builder.append("void");
-		else if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct) {
-			if (arg.type_index < gTypeInfo.size()) {
-				builder.append(StringTable::getStringView(gTypeInfo[arg.type_index].name()));
-			}
-		}
-	};
-	
 	// Helper lambda to resolve a dependent qualified type (like wrapper_void::type)
 	// to its actual type after substituting template arguments.
 	// Returns a resolved TemplateTypeArg if successful, nullopt otherwise.
@@ -37388,18 +37373,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		FLASH_LOG(Templates, Debug, "Resolving dependent type: ", type_name,
 		          " -> base='", base_part, "', member='", member_name, "'");
 		
-		// Check if base_part contains a placeholder (ends with "_void")
-		if (!base_part.ends_with("_void")) {
+		// Check if base_part contains a placeholder (old: ends with "_void", new: contains "$" for hash-based)
+		bool is_dependent_placeholder = base_part.ends_with("_void") || base_part.find('$') != std::string_view::npos;
+		if (!is_dependent_placeholder) {
 			return std::nullopt;
 		}
 		
-		std::string_view template_base_name = base_part.substr(0, base_part.size() - 5);
+		// Extract template base name (stop at '_' for old naming or '$' for hash-based)
+		size_t separator_pos = base_part.find_first_of("_$");
+		std::string_view template_base_name = base_part.substr(0, separator_pos);
 		
-		// Build the instantiated template name (e.g., "wrapper_int")
-		StringBuilder instantiated_base_builder;
-		instantiated_base_builder.append(template_base_name).append("_");
-		append_type_name_suffix(instantiated_base_builder, actual_arg);
-		std::string_view instantiated_base_name = instantiated_base_builder.commit();
+		// Build the instantiated template name using hash-based naming
+		std::string_view instantiated_base_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{actual_arg});
 		
 		// Try to instantiate the template if not already done
 		std::vector<TemplateTypeArg> base_template_args = { actual_arg };
@@ -37569,15 +37554,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							std::string_view type_name = gNamespaceRegistry.getName(qual_id.namespace_handle());
 							std::string_view member_name = qual_id.name();
 							
-							// Check if type_name ends with "_void" (dependent placeholder)
-							if (type_name.ends_with("_void") && !filled_args_for_pattern_match.empty()) {
-								std::string_view template_base_name(type_name.data(), type_name.size() - 5);
+						// Check for dependent placeholder (old: _void suffix, new: $ separator)
+							bool is_dependent_placeholder = type_name.ends_with("_void") || type_name.find('$') != std::string_view::npos;
+							if (is_dependent_placeholder && !filled_args_for_pattern_match.empty()) {
+								// Extract base template name (stop at '_' for old naming or '$' for hash-based)
+								size_t separator_pos = type_name.find_first_of("_$");
+								std::string_view template_base_name(type_name.data(), separator_pos);
 								
-								// Build the instantiated template name using first filled argument
-								StringBuilder inst_name_builder;
-								inst_name_builder.append(template_base_name).append("_");
-								append_type_name_suffix(inst_name_builder, filled_args_for_pattern_match[0]);
-								std::string_view inst_name = inst_name_builder.commit();
+								// Build the instantiated template name using hash-based naming
+								std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_args_for_pattern_match[0]});
 								
 								FLASH_LOG(Templates, Debug, "Resolving dependent qualified identifier (pattern match): ", 
 								          type_name, "::", member_name, " -> ", inst_name, "::", member_name);
@@ -37945,20 +37930,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// The pattern has T* (Type::UserDefined with ptr_depth=1)
 			// We need to substitute T with the concrete type (e.g., int)
 			
-			Type member_type = type_spec.type();
-			TypeIndex member_type_index = type_spec.type_index();
+			// For pattern specializations, member types need substitution!
+			// Use substitute_template_parameter to properly match template parameters by name
+			auto [member_type, member_type_index] = substitute_template_parameter(
+				type_spec, template_params, template_args);
 			size_t ptr_depth = type_spec.pointer_depth();
-			
-			// Check if this member type needs substitution
-			if (member_type == Type::UserDefined) {
-				// Substitute with concrete type from template_args
-				// For now, assume single template parameter (T)
-				if (!template_args.empty()) {
-					member_type = template_args[0].base_type;
-					member_type_index = template_args[0].type_index;
-					// Note: ptr_depth is already set correctly from the pattern
-				}
-			}
 			
 			// Calculate member size accounting for pointer depth
 			size_t member_size;
@@ -38971,9 +38947,12 @@ if (struct_type_info.getStructInfo()) {
 						bool is_dependent = false;
 						std::string_view template_base_name;
 						
-						if (type_name.ends_with("_void") && !filled_template_args.empty()) {
+						// Check for dependent placeholder (old: _void suffix, new: $ separator for hash-based)
+						if ((type_name.ends_with("_void") || type_name.find('$') != std::string_view::npos) && !filled_template_args.empty()) {
 							is_dependent = true;
-							template_base_name = std::string_view(type_name.data(), type_name.size() - 5);
+							// Extract base template name (stop at '_' for old naming or '$' for hash-based)
+							size_t separator_pos = type_name.find_first_of("_$");
+							template_base_name = type_name.substr(0, separator_pos);
 						} else if (!filled_template_args.empty()) {
 							// Check if type_name ends with what looks like a template parameter
 							// Mangling: template_name + "_" + param_name
