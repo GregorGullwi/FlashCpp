@@ -36550,12 +36550,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				
 				// Extract base template name from instantiation name
 				// After template refactoring, instantiation names use hash format: "ratio$hash"
-				// Legacy format was: "ratio_arg1_arg2..."
-				// Extract the base name before the $ or _ separator
 				size_t separator_pos = type_name.find('$');
-				if (separator_pos == std::string_view::npos) {
-					separator_pos = type_name.find('_');
-				}
 				if (separator_pos != std::string_view::npos) {
 					// Extract the base name before the separator
 					std::string_view base_name = type_name.substr(0, separator_pos);
@@ -36600,11 +36595,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					
 					// Extract base template name from instantiation name
 					// After template refactoring, instantiation names use hash format: "ratio$hash"
-					// Legacy format was: "ratio_arg1_arg2..."
 					size_t separator_pos = type_name.find('$');
-					if (separator_pos == std::string_view::npos) {
-						separator_pos = type_name.find('_');
-					}
 					if (separator_pos != std::string_view::npos && separator_pos + 1 < type_name.length()) {
 						type_name = type_name.substr(0, separator_pos);
 					}
