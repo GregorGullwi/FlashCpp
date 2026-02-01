@@ -20,11 +20,14 @@
  * // Create instantiator with template parameters and arguments
  * TemplateInstantiator instantiator(template_params, template_args);
  * 
- * // Instantiate a class template
- * auto result = instantiator.instantiate_class(template_decl);
+ * // Check if a name is a template parameter
+ * if (instantiator.isTemplateParameter("T")) {
+ *     auto arg = instantiator.getArgumentForParameter("T");
+ *     // Use arg->base_type, arg->type_index, etc.
+ * }
  * 
- * // Instantiate a function template
- * auto result = instantiator.instantiate_function(template_decl);
+ * // Substitute types
+ * TypeSpecifierNode result = instantiator.substitute_in_type(original_type);
  * ```
  */
 
@@ -67,6 +70,52 @@ inline std::unordered_map<std::string_view, TemplateTypeArg> buildTemplateParamM
 }
 
 /**
+ * Build a map from parameter names to TemplateArgument (used with substituteTemplateParameters)
+ * 
+ * @param params Vector of TemplateParameterNode AST nodes
+ * @param args Vector of TemplateTypeArg arguments
+ * @return Vector of TemplateArgument
+ */
+inline std::vector<TemplateArgument> buildTemplateArgumentsFromTypeArgs(
+	const std::vector<TemplateTypeArg>& args)
+{
+	std::vector<TemplateArgument> result;
+	result.reserve(args.size());
+	
+	for (const auto& arg : args) {
+		TemplateArgument ta;
+		if (arg.is_value_arg) {
+			ta.kind = TemplateArgument::Kind::Value;
+			ta.int_value = arg.int_value;
+			ta.value_type = arg.base_type;
+		} else {
+			ta.kind = TemplateArgument::Kind::Type;
+			ta.type_value = arg.base_type;
+			// Create a TypeSpecifierNode for the argument
+			TypeSpecifierNode& type_spec = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+				arg.base_type,
+				arg.type_index,
+				get_type_size_bits(arg.base_type),
+				Token{},
+				arg.cv_qualifier
+			);
+			if (arg.is_rvalue_reference) {
+				type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);
+			} else if (arg.is_reference) {
+				type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);
+			}
+			for (uint8_t i = 0; i < arg.pointer_depth; ++i) {
+				type_spec.add_pointer_level(CVQualifier::None);
+			}
+			ta.type_specifier = type_spec;
+		}
+		result.push_back(ta);
+	}
+	
+	return result;
+}
+
+/**
  * TemplateInstantiator - Encapsulates template instantiation logic
  * 
  * This class handles the instantiation of template functions, classes,
@@ -79,12 +128,10 @@ public:
 	 * 
 	 * @param params Vector of TemplateParameterNode AST nodes
 	 * @param args Vector of TemplateTypeArg representing the concrete arguments
-	 * @param parser Reference to the parser for node creation and lookups
 	 */
 	TemplateInstantiator(
 		const std::vector<ASTNode>& params,
-		const std::vector<TemplateTypeArg>& args,
-		[[maybe_unused]] Parser& parser)
+		const std::vector<TemplateTypeArg>& args)
 		: params_(params)
 		, args_(args)
 		, param_map_(buildTemplateParamMap(params, args))
@@ -100,54 +147,20 @@ public:
 	}
 	
 	/**
-	 * Instantiate a function template
-	 * 
-	 * @param template_decl The template function declaration to instantiate
-	 * @return The instantiated function declaration, or nullopt on failure
+	 * Get the template parameters
 	 */
-	std::optional<ASTNode> instantiate_function([[maybe_unused]] const ASTNode& template_decl) {
-		FLASH_LOG(Templates, Debug, "TemplateInstantiator::instantiate_function called");
-		
-		// TODO: Extract function template instantiation logic from Parser::try_instantiate_template
-		// This will be done in a follow-up commit to minimize risk
-		
-		// For now, return nullopt to indicate not yet implemented
-		// The existing Parser methods will continue to be used
-		return std::nullopt;
-	}
+	const std::vector<ASTNode>& getParams() const { return params_; }
 	
 	/**
-	 * Instantiate a class template
-	 * 
-	 * @param template_decl The template class declaration to instantiate
-	 * @return The instantiated class declaration, or nullopt on failure
+	 * Get the template arguments
 	 */
-	std::optional<ASTNode> instantiate_class([[maybe_unused]] const ASTNode& template_decl) {
-		FLASH_LOG(Templates, Debug, "TemplateInstantiator::instantiate_class called");
-		
-		// TODO: Extract class template instantiation logic from Parser::try_instantiate_class_template
-		// This will be done in a follow-up commit to minimize risk
-		
-		// For now, return nullopt to indicate not yet implemented
-		// The existing Parser methods will continue to be used
-		return std::nullopt;
-	}
+	const std::vector<TemplateTypeArg>& getArgs() const { return args_; }
 	
 	/**
-	 * Instantiate a variable template
-	 * 
-	 * @param template_decl The template variable declaration to instantiate
-	 * @return The instantiated variable declaration, or nullopt on failure
+	 * Get TemplateArguments suitable for use with Parser::substituteTemplateParameters
 	 */
-	std::optional<ASTNode> instantiate_variable([[maybe_unused]] const ASTNode& template_decl) {
-		FLASH_LOG(Templates, Debug, "TemplateInstantiator::instantiate_variable called");
-		
-		// TODO: Extract variable template instantiation logic from Parser::try_instantiate_variable_template
-		// This will be done in a follow-up commit to minimize risk
-		
-		// For now, return nullopt to indicate not yet implemented
-		// The existing Parser methods will continue to be used
-		return std::nullopt;
+	std::vector<TemplateArgument> getTemplateArguments() const {
+		return buildTemplateArgumentsFromTypeArgs(args_);
 	}
 	
 	/**
@@ -182,32 +195,38 @@ public:
 		}
 		return std::nullopt;
 	}
-
-	/**
-	 * Substitute template parameters in an AST node
-	 * 
-	 * This is the core substitution logic used by all instantiate_* methods.
-	 * It recursively traverses the AST and replaces template parameter
-	 * references with their concrete argument values.
-	 * 
-	 * @param node The AST node to substitute in
-	 * @return The substituted AST node
-	 */
-	ASTNode substitute_in_node(const ASTNode& node) {
-		// TODO: Extract core substitution logic from Parser::substituteTemplateParameters
-		// This will be done in a follow-up commit to minimize risk
-		
-		// For now, return a copy of the original node
-		return node;
-	}
 	
 	/**
+	 * Get the argument index for a template parameter
+	 * 
+	 * @param name The parameter name
+	 * @return The index if found, nullopt otherwise
+	 */
+	std::optional<size_t> getArgumentIndex(std::string_view name) const {
+		for (size_t i = 0; i < params_.size(); ++i) {
+			if (params_[i].is<TemplateParameterNode>()) {
+				const TemplateParameterNode& param = params_[i].as<TemplateParameterNode>();
+				if (param.name() == name) {
+					return i;
+				}
+			}
+		}
+		return std::nullopt;
+	}
+
+	/**
 	 * Substitute template parameters in a type specifier
+	 * 
+	 * This is the primary method for type substitution. It handles:
+	 * - Direct parameter substitution (T -> int)
+	 * - Preserving pointer levels from both original and argument
+	 * - Preserving reference qualifiers
+	 * - Preserving CV qualifiers
 	 * 
 	 * @param type_spec The type specifier to substitute in
 	 * @return The substituted type specifier
 	 */
-	TypeSpecifierNode substitute_in_type(const TypeSpecifierNode& type_spec) {
+	TypeSpecifierNode substitute_in_type(const TypeSpecifierNode& type_spec) const {
 		// Check if this type is a template parameter
 		if (type_spec.type() == Type::UserDefined || type_spec.type_index() == 0) {
 			std::string_view type_name = type_spec.token().value();
@@ -230,9 +249,14 @@ public:
 					arg.cv_qualifier
 				);
 				
-				// Copy pointer levels
+				// Copy pointer levels from original type spec (e.g., T* keeps the *)
 				for (const auto& ptr_level : type_spec.pointer_levels()) {
 					result.add_pointer_level(ptr_level.cv_qualifier);
+				}
+				
+				// Also add pointer levels from the argument (e.g., T = int* adds *)
+				for (uint8_t i = 0; i < arg.pointer_depth; ++i) {
+					result.add_pointer_level(CVQualifier::None);
 				}
 				
 				// Set reference qualifier from the template argument
@@ -240,6 +264,9 @@ public:
 					result.set_reference_qualifier(ReferenceQualifier::RValueReference);
 				} else if (arg.is_reference) {
 					result.set_reference_qualifier(ReferenceQualifier::LValueReference);
+				} else if (type_spec.reference_qualifier() != ReferenceQualifier::None) {
+					// Preserve original reference if argument doesn't specify one
+					result.set_reference_qualifier(type_spec.reference_qualifier());
 				}
 				
 				return result;
@@ -251,26 +278,50 @@ public:
 	}
 	
 	/**
+	 * Get the substituted type info for a parameter
+	 * 
+	 * This is a simplified interface that returns just Type and TypeIndex,
+	 * matching the signature of Parser::substitute_template_parameter.
+	 * 
+	 * @param original_type The original type specifier
+	 * @return Pair of (Type, TypeIndex) for the substituted type
+	 */
+	std::pair<Type, TypeIndex> substituteType(const TypeSpecifierNode& original_type) const {
+		TypeSpecifierNode result = substitute_in_type(original_type);
+		return {result.type(), result.type_index()};
+	}
+	
+	/**
 	 * Build the instantiated name (e.g., "Vector_int" for Vector<int>)
 	 * 
 	 * @param base_name The base template name
 	 * @return The instantiated name
 	 */
-	std::string_view build_instantiated_name(std::string_view base_name) {
+	std::string_view build_instantiated_name(std::string_view base_name) const {
 		StringBuilder builder;
 		builder.append(base_name);
 		
 		for (size_t i = 0; i < args_.size(); ++i) {
-			builder.append(i == 0 ? "_" : "_");
+			builder.append("_");
 			builder.append(args_[i].toString());
 		}
 		
 		return builder.commit();
 	}
+	
+	/**
+	 * Build a TypeIndex-based key for this instantiation
+	 * 
+	 * @param template_name_handle StringHandle of the template name
+	 * @return TemplateInstantiationKeyV2 for cache lookups
+	 */
+	FlashCpp::TemplateInstantiationKeyV2 buildInstantiationKey(StringHandle template_name_handle) const {
+		return FlashCpp::makeInstantiationKeyV2(template_name_handle, args_);
+	}
 
 private:
 	// Template parameters (TemplateParameterNode AST nodes)
-	[[maybe_unused]] const std::vector<ASTNode>& params_;
+	const std::vector<ASTNode>& params_;
 	
 	// Template arguments (concrete types/values)
 	const std::vector<TemplateTypeArg>& args_;

@@ -198,10 +198,19 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 - [x] Create `src/TemplateInstantiator.h` header file with class interface (inlined)
 - [x] Add `buildTemplateParamMap()` helper function
 - [x] Implement `substitute_in_type()` for type substitution
-- [ ] Migrate `instantiate_function()` from Parser (follow-up)
-- [ ] Migrate `instantiate_class()` from Parser (follow-up)
-- [ ] Migrate `instantiate_variable()` from Parser (follow-up)
-- [ ] Migrate `substitute_in_node()` core logic from Parser (follow-up)
+- [x] Add `buildTemplateArgumentsFromTypeArgs()` for Parser interop
+- [x] Add `substituteType()` returning (Type, TypeIndex) pair
+- [x] Add `getArgumentIndex()` for parameter lookup by name
+- [x] Add `buildInstantiationKey()` for V2 cache integration
+- [x] Add `getTemplateArguments()` for Parser::substituteTemplateParameters interop
+- [ ] Migrate `instantiate_function()` from Parser (deferred - high risk)
+- [ ] Migrate `instantiate_class()` from Parser (deferred - high risk)
+- [ ] Migrate `instantiate_variable()` from Parser (deferred - high risk)
+
+**Note:** The full migration of instantiation methods is deferred because:
+1. They depend heavily on Parser state (token stream, symbol tables, etc.)
+2. The existing Parser methods are well-tested with 900+ passing tests
+3. The current TemplateInstantiator provides useful utilities that can be used incrementally
 
 ### Phase 5: Eliminate String-Based Template Name Generation (Planned)
 The current system still uses `get_instantiated_class_name()` which builds string names like `"vector_int"` for `vector<int>`. This is problematic because:
