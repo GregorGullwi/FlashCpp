@@ -236,7 +236,7 @@ get_instantiated_class_name("is_arithmetic", {int_type});
 **Bug Fixed:** Primitive types (int, float, etc.) all have `type_index=0`, causing hash collisions.
 Adding `base_type` to the hash ensures different primitive types get unique hashes.
 
-### Phase 6: Template Instantiation Metadata ✅ COMPLETED (Partial)
+### Phase 6: Template Instantiation Metadata ✅ COMPLETED
 
 Added template instantiation metadata to `TypeInfo` for O(1) lookup:
 
@@ -273,16 +273,17 @@ struct TypeInfo {
 - Can retrieve base template name without parsing `$`-separated names
 - Foundation for Phase 6b: removing all string parsing from template lookups
 
-### Phase 6b: Future - Eliminate Remaining $ Parsing
+### Phase 6b: Eliminate All $ Parsing ✅ COMPLETED
 
-The following code still parses `$` in type names:
-1. `Parser.cpp:27085` - Detecting hash-based placeholders for deferred alias instantiation
-2. `Parser.cpp:34973` - Template template parameter deduction (extracting template name)
-3. `Parser.cpp:36436` - Ratio type parsing
-4. `Parser.cpp:39813` - Member struct name parsing
+Replaced all `find('$')` calls with `TypeInfo::isTemplateInstantiation()` and `baseTemplateName()`:
 
-These can be eliminated by using `TypeInfo::isTemplateInstantiation()` and
-`TypeInfo::baseTemplateName()` instead of parsing type name strings.
+1. **Alias template deferred instantiation detection** - Uses `ti.isTemplateInstantiation()`
+2. **Template template parameter deduction** - Uses `type_info.baseTemplateName()` and `templateArgs()`
+3. **Variable template pattern matching** - Uses `arg_type_info.isTemplateInstantiation()`
+4. **Member struct instantiation detection** - Uses `member_type_info.baseTemplateName()`
+5. **std::initializer_list detection** - Uses `type_info.isTemplateInstantiation()`
+
+**Verification:** `grep "find('\$')" src/Parser.cpp` returns no matches.
 
 ### Phase 6c: Future Enhancements (From Updated Analysis)
 
