@@ -1523,7 +1523,7 @@ private:
 	
 	// Map from instantiated template name to template arguments
 	// Populated during instantiation to avoid reparsing mangled names; cleared in TemplateRegistry::clear().
-	// Note: This intentionally duplicates data from the TemplateInstantiationKey cache. Use the key cache
+	// Note: This intentionally duplicates data from the instantiations_ TemplateInstantiationKey cache. Use the key cache
 	// for instantiation lookups; use this map when only an instantiated name is available and args are needed.
 	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> instantiation_template_args_;
 };
