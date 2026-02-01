@@ -39941,7 +39941,20 @@ if (struct_type_info.getStructInfo()) {
 				if (inst_type_it != gTypesByName.end()) {
 					// Update member_type_index to point to the instantiated type
 					member_type_index = inst_type_it->second->type_index_;
+					// Update member_type to match the instantiated type's actual type
+					// This ensures codegen knows it's a struct type (fixes Type::UserDefined issue)
+					member_type = inst_type_it->second->type_;
 				}
+			}
+		}
+
+		// After template refactoring, instantiated templates may have Type::UserDefined
+		// but gTypeInfo correctly stores them as Type::Struct. Synchronize member_type.
+		if (member_type_index < gTypeInfo.size() && member_type_index > 0) {
+			const TypeInfo& member_type_info = gTypeInfo[member_type_index];
+			if (member_type_info.getStructInfo() && member_type == Type::UserDefined) {
+				// Fix Type::UserDefined to Type::Struct for instantiated templates
+				member_type = member_type_info.type_;
 			}
 		}
 
