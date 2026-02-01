@@ -372,6 +372,67 @@ struct TemplateInstantiationKeyV2Hash {
 };
 
 // ============================================================================
+// FunctionSignatureKey - TypeIndex-based function signature for caching
+// ============================================================================
+
+/**
+ * FunctionSignatureKey - A function signature key using TypeIndex
+ * 
+ * This represents a function signature using TypeIndex values instead of
+ * type names or TypeSpecifierNode comparisons. Used for:
+ * - Caching function lookup results
+ * - Fast signature comparison during overload resolution
+ * 
+ * The key includes:
+ * - function_name: StringHandle of the function name
+ * - param_types: TypeIndex values for each parameter type
+ * - param_qualifiers: CV and reference qualifiers for each parameter
+ */
+struct FunctionSignatureKey {
+	StringHandle function_name;                   // Function name handle
+	InlineVector<TypeIndexArg, 8> param_types;    // Parameter types (8 inline for common cases)
+	
+	FunctionSignatureKey() = default;
+	
+	explicit FunctionSignatureKey(StringHandle name)
+		: function_name(name) {}
+	
+	bool operator==(const FunctionSignatureKey& other) const {
+		return function_name == other.function_name &&
+		       param_types == other.param_types;
+	}
+	
+	bool operator!=(const FunctionSignatureKey& other) const {
+		return !(*this == other);
+	}
+	
+	[[nodiscard]] bool empty() const {
+		return function_name.handle == 0;
+	}
+	
+	void clear() {
+		function_name = StringHandle{};
+		param_types.clear();
+	}
+};
+
+/**
+ * Hash function for FunctionSignatureKey
+ */
+struct FunctionSignatureKeyHash {
+	size_t operator()(const FunctionSignatureKey& key) const {
+		size_t h = std::hash<uint32_t>{}(key.function_name.handle);
+		
+		// Hash parameter types
+		for (const auto& param : key.param_types) {
+			h ^= param.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		
+		return h;
+	}
+};
+
+// ============================================================================
 // Helper functions for building template keys
 // ============================================================================
 // NOTE: These functions are implemented in TemplateRegistry.h after the 
@@ -396,6 +457,13 @@ namespace std {
 	struct hash<FlashCpp::TypeIndexArg> {
 		size_t operator()(const FlashCpp::TypeIndexArg& arg) const {
 			return arg.hash();
+		}
+	};
+	
+	template<>
+	struct hash<FlashCpp::FunctionSignatureKey> {
+		size_t operator()(const FlashCpp::FunctionSignatureKey& key) const {
+			return FlashCpp::FunctionSignatureKeyHash{}(key);
 		}
 	};
 }

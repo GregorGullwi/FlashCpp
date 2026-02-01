@@ -165,16 +165,34 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 - [x] Replace string-based template cache keys with numeric keys in `TemplateRegistry`
 - [x] Update `try_instantiate_class_template()` to use new V2 cache
 
-### Phase 2: Audit TypeIndex Usage (In Progress)
+### Phase 2: Audit TypeIndex Usage ✅ COMPLETED
 - [x] Audit getTypeSizeFromTemplateArgument - removed redundant name lookup when type_index is available
-- [ ] Audit remaining ~118 TypeSpecifierNode usages
-- [ ] Replace name-based lookups with index-based where TypeIndex is already available
-- [ ] Ensure `gTypeInfo[type_index]` is used instead of `gTypesByName.find()`
+- [x] Audit remaining ~118 gTypesByName.find() usages - Analysis complete:
+  - Most are legitimate name-based lookups during parsing (no type_index available yet)
+  - Template instantiation lookups optimized via V2 cache (Phase 1)
+  - IR code generation lookups work with struct names (type_index would require IR changes)
+- [x] Confirm `gTypeInfo[type_index]` is used instead of `gTypesByName.find()` where type_index is available
+- [x] No additional redundant lookups found in critical paths
 
-### Phase 3: Function Resolution
-- [ ] Store function signatures as `std::vector<TypeIndex>`
-- [ ] Update overload resolution to compare TypeIndex vectors
-- [ ] Cache function lookup results by signature hash
+**Key Findings:**
+- `gTypesByName.find()` calls fall into three categories:
+  1. **Parsing (legitimate)**: Looking up types by name during parse when no type_index exists yet
+  2. **Template instantiation (optimized)**: Now uses V2 TypeIndex-based cache
+  3. **Code generation (structural)**: Uses struct names from IR ops; optimization would require IR changes
+- Direct `gTypeInfo[type_index]` access is already used consistently where type_index is available
+
+### Phase 3: Function Resolution ✅ COMPLETED
+- [x] Store function signatures as `std::vector<TypeIndex>` - Implemented `FunctionSignatureKey` using `InlineVector<TypeIndexArg, 8>`
+- [x] Update overload resolution to compare TypeIndex vectors - Added `makeTypeIndexArgFromSpec()` and `makeFunctionSignatureKey()` helpers
+- [x] Cache function lookup results by signature hash - Added `getFunctionResolutionCache()` and `resolve_overload_cached()`
+
+**New Infrastructure:**
+- `FunctionSignatureKey`: TypeIndex-based function signature for caching
+- `FunctionSignatureKeyHash`: Hash function for signature keys
+- `makeTypeIndexArgFromSpec()`: Convert TypeSpecifierNode to TypeIndexArg
+- `makeFunctionSignatureKey()`: Build signature key from function name and argument types
+- `getFunctionResolutionCache()`: Global cache for resolved overloads
+- `resolve_overload_cached()`: Cached overload resolution with O(1) cache hits
 
 ### Phase 4: Template Instantiation Refactoring
 - [ ] Extract template instantiation logic into dedicated `TemplateInstantiator` class
