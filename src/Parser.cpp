@@ -27213,19 +27213,19 @@ ParseResult Parser::parse_template_declaration() {
 				has_unresolved_params = true;
 				FLASH_LOG(Parser, Debug, "Alias target type '", type_name, "' has unresolved parameters - using deferred instantiation");
 			}
-			// Check for hash-based naming (template$hash format) indicating dependent instantiation
-			// But NOT if the name already contains :: after the hash (which means ::type was already resolved)
-			else if (type_name.find('$') != std::string_view::npos) {
-				size_t dollar_pos = type_name.find('$');
-				// Only treat as deferred if there's NO :: after the hash
+			// Phase 6: Use TypeInfo::isTemplateInstantiation() instead of parsing $
+			// Check if this is a template instantiation (hash-based naming)
+			// But NOT if the name already contains :: (which means ::type was already resolved)
+			else if (ti.isTemplateInstantiation()) {
+				// Only treat as deferred if there's NO :: in the name
 				// If there's ::type or similar, the type has already been resolved to a member type
-				if (type_name.find("::", dollar_pos) == std::string_view::npos) {
-					// Extract the template name part (before the $)
-					std::string_view template_name_part = type_name.substr(0, dollar_pos);
+				if (type_name.find("::") == std::string_view::npos) {
+					// Use the stored base template name instead of parsing the $
+					std::string_view template_name_part = StringTable::getStringView(ti.baseTemplateName());
 					auto template_opt = gTemplateRegistry.lookupTemplate(template_name_part);
 					if (template_opt.has_value()) {
 						has_unresolved_params = true;
-						FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' uses hash-based dependent placeholder - using deferred instantiation");
+						FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is template instantiation - using deferred instantiation");
 					}
 				} else {
 					FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a resolved member type (not a dependent placeholder)");
@@ -35112,49 +35112,26 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					TypeIndex type_index = arg_type.type_index();
 					if (type_index < gTypeInfo.size()) {
 						const TypeInfo& type_info = gTypeInfo[type_index];
-						std::string_view instantiated_name = StringTable::getStringView(type_info.name());
 						
-						// Parse the instantiated name to extract template name
-						// Format: template_name$hash (new hash-based format) or template_name_type1_type2_... (legacy)
-						size_t dollar_pos = instantiated_name.find('$');
-						size_t first_underscore = instantiated_name.find('_');
-						
-						// Prefer $ separator (new hash-based naming), fall back to _ (legacy)
-						size_t separator_pos = (dollar_pos != std::string_view::npos) ? dollar_pos : first_underscore;
-						
-						if (separator_pos != std::string_view::npos) {
-							std::string_view inner_template_name = instantiated_name.substr(0, separator_pos);
+						// Phase 6: Use TypeInfo::isTemplateInstantiation() to check if this is a template instantiation
+						// and baseTemplateName() to get the template name without parsing
+						if (type_info.isTemplateInstantiation()) {
+							// Get the base template name directly from TypeInfo metadata
+							std::string_view inner_template_name = StringTable::getStringView(type_info.baseTemplateName());
 							
 							// Check if this template exists
 							auto template_check = gTemplateRegistry.lookupTemplate(inner_template_name);
 							if (template_check.has_value()) {
 								template_args.push_back(TemplateArgument::makeTemplate(inner_template_name));
 								
-								// For hash-based naming, we can't extract type args from the hash
-								// The type info should be looked up from the V2 cache or type registry
-								if (dollar_pos == std::string_view::npos && first_underscore != std::string_view::npos) {
-									// Legacy format: Extract type arguments from the remaining parts
-									std::string_view remaining = instantiated_name.substr(first_underscore + 1);
-									size_t pos = 0;
-									while (pos < remaining.size()) {
-										size_t next_underscore = remaining.find('_', pos);
-										std::string_view type_str = (next_underscore == std::string_view::npos) 
-											? remaining.substr(pos) 
-											: remaining.substr(pos, next_underscore - pos);
-										
-										// Convert type string to Type
-										Type deduced_type = TemplateRegistry::stringToType(type_str);
-										if (deduced_type != Type::Invalid) {
-											deduced_type_args.push_back(deduced_type);
-										} else {
-											return std::nullopt;
-										}
-										
-										if (next_underscore == std::string_view::npos) break;
-										pos = next_underscore + 1;
+								// For hash-based naming, type arguments can be retrieved from TypeInfo::templateArgs()
+								// instead of parsing the name string
+								const auto& stored_args = type_info.templateArgs();
+								for (const auto& stored_arg : stored_args) {
+									if (!stored_arg.is_value) {
+										deduced_type_args.push_back(stored_arg.base_type);
 									}
 								}
-								// For hash-based naming, type arguments will be deduced from the actual argument type
 								
 								arg_index++;
 							} else {
@@ -35163,7 +35140,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 								return std::nullopt;
 							}
 						} else {
-							FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Could not extract template name from '", instantiated_name, "'");
+							// Not a template instantiation - cannot deduce template template parameter
+							std::string_view type_name = StringTable::getStringView(type_info.name());
+							FLASH_LOG(Templates, Error, "[depth=", recursion_depth, "]: Type '", type_name, "' is not a template instantiation");
 
 							return std::nullopt;
 						}
@@ -36568,26 +36547,19 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		// e.g., for __is_ratio_v<ratio<1,2>>, look for pattern "__is_ratio_v_ratio"
 		if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
 			if (arg.type_index < gTypeInfo.size()) {
+				const TypeInfo& arg_type_info = gTypeInfo[arg.type_index];
 				// Get the simple name (without namespace) for pattern matching
-				std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+				std::string_view type_name = StringTable::getStringView(arg_type_info.name());
 				// Strip namespace prefix if present
 				size_t last_colon = type_name.rfind("::");
 				if (last_colon != std::string_view::npos) {
 					type_name = type_name.substr(last_colon + 2);
 				}
 				
-				// Extract base template name from instantiation name
-				// After template refactoring, instantiation names use hash format: "ratio$hash"
-				size_t separator_pos = type_name.find('$');
-				if (separator_pos != std::string_view::npos) {
-					// Extract the base name before the separator
-					std::string_view base_name = type_name.substr(0, separator_pos);
-					// Verify this is likely a template instantiation by checking if there's
-					// something after the separator (not just a trailing separator)
-					if (separator_pos + 1 < type_name.length()) {
-						type_name = base_name;
-					}
-					// else: keep full name (might be a type with separator in the name itself)
+				// Phase 6: Use TypeInfo::isTemplateInstantiation() to check if this is a template instantiation
+				// and baseTemplateName() to get the base name without parsing $
+				if (arg_type_info.isTemplateInstantiation()) {
+					type_name = StringTable::getStringView(arg_type_info.baseTemplateName());
 				}
 				
 				pattern_builder.append(type_name);
@@ -36615,17 +36587,16 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			qualified_pattern_builder.append("_");
 			if (arg.base_type == Type::UserDefined || arg.base_type == Type::Struct || arg.base_type == Type::Enum) {
 				if (arg.type_index < gTypeInfo.size()) {
-					std::string_view type_name = StringTable::getStringView(gTypeInfo[arg.type_index].name());
+					const TypeInfo& arg_type_info = gTypeInfo[arg.type_index];
+					std::string_view type_name = StringTable::getStringView(arg_type_info.name());
 					size_t last_colon = type_name.rfind("::");
 					if (last_colon != std::string_view::npos) {
 						type_name = type_name.substr(last_colon + 2);
 					}
 					
-					// Extract base template name from instantiation name
-					// After template refactoring, instantiation names use hash format: "ratio$hash"
-					size_t separator_pos = type_name.find('$');
-					if (separator_pos != std::string_view::npos && separator_pos + 1 < type_name.length()) {
-						type_name = type_name.substr(0, separator_pos);
+					// Phase 6: Use TypeInfo::isTemplateInstantiation() instead of parsing $
+					if (arg_type_info.isTemplateInstantiation()) {
+						type_name = StringTable::getStringView(arg_type_info.baseTemplateName());
 					}
 					
 					qualified_pattern_builder.append(type_name);
@@ -39973,13 +39944,12 @@ if (struct_type_info.getStructInfo()) {
 			const TypeInfo& member_type_info = gTypeInfo[member_type_index];
 			std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 			
-			// Check if this is a template instantiation placeholder (contains $)
-			// or a template with size 0 that needs instantiation
+			// Phase 6: Use TypeInfo::isTemplateInstantiation() instead of parsing $
+			// Check if this is a template instantiation placeholder or a template with size 0 that needs instantiation
 			bool needs_instantiation = false;
-			if (member_struct_name.find('$') != std::string_view::npos) {
-				// This is a placeholder - extract the base template name and instantiate
-				size_t dollar_pos = member_struct_name.find('$');
-				member_struct_name = member_struct_name.substr(0, dollar_pos);
+			if (member_type_info.isTemplateInstantiation()) {
+				// This is a placeholder - get the base template name from TypeInfo
+				member_struct_name = StringTable::getStringView(member_type_info.baseTemplateName());
 				needs_instantiation = true;
 			} else if (member_type_info.getStructInfo() && member_type_info.getStructInfo()->total_size == 0) {
 				// This is a template with size 0
