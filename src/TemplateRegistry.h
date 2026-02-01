@@ -998,6 +998,18 @@ public:
 		std::string key(name);
 		templates_[key].push_back(template_node);
 	}
+	
+	void registerTemplateBaseName(StringHandle instantiated_name, StringHandle base_name) {
+		instantiation_base_names_[instantiated_name] = base_name;
+	}
+	
+	std::optional<StringHandle> getTemplateBaseName(StringHandle instantiated_name) const {
+		auto it = instantiation_base_names_.find(instantiated_name);
+		if (it != instantiation_base_names_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
+	}
 
 	// Register template parameter names for a template
 	void registerTemplateParameters(StringHandle key, const std::vector<StringHandle>& param_names) {
@@ -1429,6 +1441,7 @@ public:
 		variable_templates_.clear();
 		deduction_guides_.clear();
 		instantiation_to_pattern_.clear();
+		instantiation_base_names_.clear();
 	}
 
 	// Public access to specialization patterns for pattern matching in Parser
@@ -1480,6 +1493,10 @@ private:
 	// Example: "Wrapper_int_0" -> "Wrapper_pattern__"
 	// This allows looking up member aliases from the correct specialization
 	std::unordered_map<StringHandle, StringHandle, TransparentStringHash, std::equal_to<>> instantiation_to_pattern_;
+	
+	// Map from instantiated template name to base template name
+	// Example: "Wrapper_int" -> "Wrapper"
+	std::unordered_map<StringHandle, StringHandle, TransparentStringHash, std::equal_to<>> instantiation_base_names_;
 };
 
 // Global template registry

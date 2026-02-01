@@ -27723,7 +27723,8 @@ ParseResult Parser::parse_template_declaration() {
 				
 				// For forward declarations, just register the type name and return
 				// The instantiated name includes the template arguments
-				auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
+		auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
+		gTemplateRegistry.registerTemplateBaseName(instantiated_name, StringTable::getOrInternStringHandle(template_name));
 				
 				// Create a minimal struct node
 				auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
@@ -27755,6 +27756,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Now parse the class body as a regular struct
 			// But we need to give it a unique name that includes the template arguments
 			auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
+			gTemplateRegistry.registerTemplateBaseName(instantiated_name, StringTable::getOrInternStringHandle(template_name));
 
 			// Create a struct node with the instantiated name
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
@@ -35068,9 +35070,18 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						
 						// Parse the instantiated name to extract template name and type arguments
 						// Format: template_name_type1_type2_...
+						StringHandle instantiated_handle = StringTable::getOrInternStringHandle(instantiated_name);
+						std::string_view inner_template_name = instantiated_name;
+						if (auto base_name = gTemplateRegistry.getTemplateBaseName(instantiated_handle)) {
+							inner_template_name = StringTable::getStringView(*base_name);
+						}
+
 						size_t first_underscore = instantiated_name.find('_');
-						if (first_underscore != std::string_view::npos) {
-							std::string_view inner_template_name = instantiated_name.substr(0, first_underscore);
+						bool has_suffix = first_underscore != std::string_view::npos;
+						if (!has_suffix && gTemplateRegistry.getTemplateBaseName(instantiated_handle)) {
+							has_suffix = true;
+						}
+						if (has_suffix) {
 							
 							// Check if this template exists
 							auto template_check = gTemplateRegistry.lookupTemplate(inner_template_name);
@@ -35078,25 +35089,27 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 								template_args.push_back(TemplateArgument::makeTemplate(inner_template_name));
 								
 								// Extract type arguments from the remaining parts
-								std::string_view remaining = instantiated_name.substr(first_underscore + 1);
-								size_t pos = 0;
-								while (pos < remaining.size()) {
-									size_t next_underscore = remaining.find('_', pos);
-									std::string_view type_str = (next_underscore == std::string_view::npos) 
-										? remaining.substr(pos) 
-										: remaining.substr(pos, next_underscore - pos);
-									
-									// Convert type string to Type
-									Type deduced_type = TemplateRegistry::stringToType(type_str);
-									if (deduced_type != Type::Invalid) {
-										deduced_type_args.push_back(deduced_type);
-									} else {
-
-										return std::nullopt;
+								std::string_view remaining = instantiated_name.substr(first_underscore == std::string_view::npos ? instantiated_name.size() : first_underscore + 1);
+								if (!remaining.empty()) {
+									size_t pos = 0;
+									while (pos < remaining.size()) {
+										size_t next_underscore = remaining.find('_', pos);
+										std::string_view type_str = (next_underscore == std::string_view::npos) 
+											? remaining.substr(pos) 
+											: remaining.substr(pos, next_underscore - pos);
+										
+										// Convert type string to Type
+										Type deduced_type = TemplateRegistry::stringToType(type_str);
+										if (deduced_type != Type::Invalid) {
+											deduced_type_args.push_back(deduced_type);
+										} else {
+										
+											return std::nullopt;
+										}
+										
+										if (next_underscore == std::string_view::npos) break;
+										pos = next_underscore + 1;
 									}
-									
-									if (next_underscore == std::string_view::npos) break;
-									pos = next_underscore + 1;
 								}
 								
 								arg_index++;
@@ -36064,6 +36077,13 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 	}
 
 	return result.commit();
+}
+
+StringHandle Parser::get_base_template_name_handle(StringHandle instantiated_name) {
+	if (auto base_name = gTemplateRegistry.getTemplateBaseName(instantiated_name)) {
+		return *base_name;
+	}
+	return instantiated_name;
 }
 
 // Helper function to instantiate base class template and register it in the AST
@@ -37407,6 +37427,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	
 	// Generate the instantiated class name first
 	auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
+	gTemplateRegistry.registerTemplateBaseName(instantiated_name, StringTable::getOrInternStringHandle(template_name));
 
 	// Check if we already have this instantiation
 	auto existing_type = gTypesByName.find(instantiated_name);
@@ -39237,6 +39258,7 @@ if (struct_type_info.getStructInfo()) {
 
 	// Generate the instantiated class name (again, with filled args)
 	instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args_to_use));
+	gTemplateRegistry.registerTemplateBaseName(instantiated_name, StringTable::getOrInternStringHandle(template_name));
 
 	// Check if we already have this instantiation (after filling defaults)
 	existing_type = gTypesByName.find(instantiated_name);
@@ -42728,7 +42750,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// Convert TemplateTypeArg to TemplateArgument
 	std::vector<TemplateArgument> template_args;
 	for (const auto& type_arg : template_type_args) {
-		template_args.push_back(TemplateArgument::makeType(type_arg.base_type));
+		template_args.push_back(toTemplateArgument(type_arg));
 	}
 
 	// Check if we already have this instantiation

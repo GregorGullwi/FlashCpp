@@ -321,6 +321,10 @@ bool matchesSignature(const ChunkedVector<TypeIndex>& param_types) {
 - [ ] Replace name-based lookups with index-based where TypeIndex is already available
 - [ ] Ensure `gTypeInfo[type_index]` is used instead of `gTypesByName.find()`
 
+### Phase 2.5: Base Template Name Tracking
+- [ ] Track base template name per instantiation to avoid parsing underscores
+- [ ] Use base-name mapping when deducing template-template parameters
+
 ### Phase 3: Function Resolution
 - [ ] Store function signatures as `ChunkedVector<TypeIndex>`
 - [ ] Update overload resolution to compare TypeIndex vectors
