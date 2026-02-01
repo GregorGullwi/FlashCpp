@@ -339,6 +339,34 @@ struct TemplateTypeArg {
 
 		return result;
 	}
+
+	// Get hash-based string representation for mangling (unambiguous)
+	// Uses the same hash algorithm as TemplateTypeArgHash for consistency
+	std::string toHashString() const {
+		// Compute hash using the same algorithm as TemplateTypeArgHash
+		size_t hash = std::hash<int>{}(static_cast<int>(base_type));
+		if (base_type == Type::Struct || base_type == Type::Enum || base_type == Type::UserDefined) {
+			hash ^= std::hash<size_t>{}(type_index) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
+		hash ^= std::hash<bool>{}(is_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<bool>{}(is_rvalue_reference) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<size_t>{}(pointer_depth) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(cv_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<bool>{}(is_array) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		if (array_size.has_value()) {
+			hash ^= std::hash<size_t>{}(*array_size) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
+		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(member_pointer_kind)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		hash ^= std::hash<bool>{}(is_value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		if (is_value) {
+			hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
+		
+		// Convert to hex string
+		char buf[17];
+		snprintf(buf, sizeof(buf), "%016zx", hash);
+		return std::string(buf);
+	}
 };
 
 // Hash function for TemplateTypeArg

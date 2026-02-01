@@ -1064,18 +1064,24 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 	StringBuilder name_with_args;
 	name_with_args.append(func_name);
 	if (!type_template_args.empty()) {
-		name_with_args.append("<");
-		for (size_t i = 0; i < type_template_args.size(); ++i) {
-			if (i > 0) name_with_args.append(",");
-			const auto& arg = type_template_args[i];
+		// Phase 8: Use hash-based naming for template arguments to avoid collisions
+		// Format: func_name$hash where hash is computed from all template arguments
+		name_with_args.append("$");
+		// Compute combined hash of all template arguments
+		size_t combined_hash = 0;
+		for (const auto& arg : type_template_args) {
+			size_t arg_hash;
 			if (arg.is_value) {
-				name_with_args.append(static_cast<uint64_t>(arg.value));
+				arg_hash = std::hash<int64_t>{}(arg.value);
 			} else {
-				// Append type name
-				name_with_args.append(arg.toString());
+				// Use the same hash as TemplateTypeArgHash
+				arg_hash = TemplateTypeArgHash{}(arg);
 			}
+			combined_hash ^= arg_hash + 0x9e3779b9 + (combined_hash << 6) + (combined_hash >> 2);
 		}
-		name_with_args.append(">");
+		char hash_buf[17];
+		snprintf(hash_buf, sizeof(hash_buf), "%016zx", combined_hash);
+		name_with_args.append(hash_buf);
 	}
 
 	// Fall back to regular mangling with modified name
