@@ -4,8 +4,10 @@
 #include "SymbolTable.h"
 #include "CompileContext.h"
 #include "ChunkedString.h"
+#include "TemplateTypes.h"  // For FunctionSignatureKey
 #include <vector>
 #include <optional>
+#include <unordered_map>
 
 // Conversion rank for overload resolution
 // Lower rank = better match
@@ -576,6 +578,119 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 	// This would require searching the global scope for matching functions
 	
 	return OperatorOverloadResult::no_overload();
+}
+
+// ============================================================================
+// TypeIndex-based Function Signature Utilities (Phase 3)
+// ============================================================================
+
+/**
+ * Create a TypeIndexArg from a TypeSpecifierNode
+ * 
+ * Extracts type information into a compact TypeIndexArg for fast comparison
+ * and hashing in function signature caching.
+ */
+inline FlashCpp::TypeIndexArg makeTypeIndexArgFromSpec(const TypeSpecifierNode& spec) {
+	FlashCpp::TypeIndexArg arg;
+	arg.type_index = spec.type_index();
+	arg.cv_qualifier = spec.cv_qualifier();
+	
+	// Convert reference flags to ReferenceQualifier
+	if (spec.is_rvalue_reference()) {
+		arg.ref_qualifier = ReferenceQualifier::RValueReference;
+	} else if (spec.is_reference()) {
+		arg.ref_qualifier = ReferenceQualifier::LValueReference;
+	} else {
+		arg.ref_qualifier = ReferenceQualifier::None;
+	}
+	
+	arg.pointer_depth = static_cast<uint8_t>(std::min(spec.pointer_depth(), size_t(255)));
+	return arg;
+}
+
+/**
+ * Create a FunctionSignatureKey from function name and argument types
+ * 
+ * This creates a TypeIndex-based key for function lookup caching.
+ * The key can be used as a hash map key for O(1) function resolution cache lookups.
+ */
+inline FlashCpp::FunctionSignatureKey makeFunctionSignatureKey(
+	StringHandle function_name,
+	const std::vector<TypeSpecifierNode>& argument_types) {
+	
+	FlashCpp::FunctionSignatureKey key(function_name);
+	key.param_types.reserve(argument_types.size());
+	
+	for (const auto& arg_type : argument_types) {
+		key.param_types.push_back(makeTypeIndexArgFromSpec(arg_type));
+	}
+	
+	return key;
+}
+
+/**
+ * Global function resolution cache
+ * 
+ * Caches resolved function overloads keyed by function name + argument signature.
+ * This avoids repeated overload resolution for the same function call patterns.
+ * 
+ * Key: FunctionSignatureKey (function name + TypeIndex-based parameter types)
+ * Value: Pointer to the selected function declaration ASTNode (or nullptr if no match)
+ */
+inline std::unordered_map<FlashCpp::FunctionSignatureKey, const ASTNode*, 
+                          FlashCpp::FunctionSignatureKeyHash>& getFunctionResolutionCache() {
+	static std::unordered_map<FlashCpp::FunctionSignatureKey, const ASTNode*,
+	                          FlashCpp::FunctionSignatureKeyHash> cache;
+	return cache;
+}
+
+/**
+ * Clear the function resolution cache
+ * 
+ * Should be called when starting a new compilation unit or when
+ * the symbol table changes (e.g., after parsing new declarations).
+ */
+inline void clearFunctionResolutionCache() {
+	getFunctionResolutionCache().clear();
+}
+
+/**
+ * Resolve overload with caching
+ * 
+ * First checks the cache for a previous resolution. If not found,
+ * performs full overload resolution and caches the result.
+ * 
+ * @param function_name The function name handle
+ * @param overloads Vector of candidate function overloads
+ * @param argument_types Vector of argument TypeSpecifierNodes
+ * @return OverloadResolutionResult with selected overload or no_match/ambiguous
+ */
+inline OverloadResolutionResult resolve_overload_cached(
+	StringHandle function_name,
+	const std::vector<ASTNode>& overloads,
+	const std::vector<TypeSpecifierNode>& argument_types)
+{
+	// Build signature key for cache lookup
+	auto key = makeFunctionSignatureKey(function_name, argument_types);
+	
+	// Check cache first
+	auto& cache = getFunctionResolutionCache();
+	auto it = cache.find(key);
+	if (it != cache.end()) {
+		// Cache hit
+		if (it->second == nullptr) {
+			return OverloadResolutionResult::no_match();
+		}
+		return OverloadResolutionResult(it->second);
+	}
+	
+	// Cache miss - perform full overload resolution
+	auto result = resolve_overload(overloads, argument_types);
+	
+	// Cache the result
+	cache[key] = result.selected_overload;
+	
+	return result;
 }
 
 
