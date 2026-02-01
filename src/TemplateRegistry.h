@@ -1007,6 +1007,18 @@ public:
 		instantiation_base_names_[instantiated_name] = StringTable::getOrInternStringHandle(base_name);
 	}
 	
+	void registerTemplateInstantiationArgs(StringHandle instantiated_name, const std::vector<TemplateTypeArg>& args) {
+		instantiation_template_args_[instantiated_name] = args;
+	}
+	
+	const std::vector<TemplateTypeArg>* getTemplateInstantiationArgs(StringHandle instantiated_name) const {
+		auto it = instantiation_template_args_.find(instantiated_name);
+		if (it != instantiation_template_args_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
 	std::optional<StringHandle> getTemplateBaseName(StringHandle instantiated_name) const {
 		auto it = instantiation_base_names_.find(instantiated_name);
 		if (it != instantiation_base_names_.end()) {
@@ -1446,6 +1458,7 @@ public:
 		deduction_guides_.clear();
 		instantiation_to_pattern_.clear();
 		instantiation_base_names_.clear();
+		instantiation_template_args_.clear();
 	}
 
 	// Public access to specialization patterns for pattern matching in Parser
@@ -1501,6 +1514,9 @@ private:
 	// Map from instantiated template name to base template name
 	// Example: "Wrapper_int" -> "Wrapper"
 	std::unordered_map<StringHandle, StringHandle, TransparentStringHash, std::equal_to<>> instantiation_base_names_;
+	
+	// Map from instantiated template name to template arguments
+	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> instantiation_template_args_;
 };
 
 // Global template registry

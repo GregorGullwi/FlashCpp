@@ -27745,6 +27745,7 @@ ParseResult Parser::parse_template_declaration() {
 				// The instantiated name includes the template arguments
 		auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
 		gTemplateRegistry.registerTemplateBaseName(instantiated_name, StringTable::getOrInternStringHandle(template_name));
+		gTemplateRegistry.registerTemplateInstantiationArgs(instantiated_name, template_args);
 				
 				// Create a minimal struct node
 				auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
@@ -27777,6 +27778,7 @@ ParseResult Parser::parse_template_declaration() {
 			// But we need to give it a unique name that includes the template arguments
 			auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
 			gTemplateRegistry.registerTemplateBaseName(instantiated_name, StringTable::getOrInternStringHandle(template_name));
+			gTemplateRegistry.registerTemplateInstantiationArgs(instantiated_name, template_args);
 
 			// Create a struct node with the instantiated name
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
@@ -35109,26 +35111,32 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 								template_args.push_back(TemplateArgument::makeTemplate(inner_template_name));
 								
 								// Extract type arguments from the remaining parts
-								std::string_view remaining = instantiated_name.substr(first_underscore == std::string_view::npos ? instantiated_name.size() : first_underscore + 1);
-								if (!remaining.empty()) {
-									size_t pos = 0;
-									while (pos < remaining.size()) {
-										size_t next_underscore = remaining.find('_', pos);
-										std::string_view type_str = (next_underscore == std::string_view::npos) 
-											? remaining.substr(pos) 
-											: remaining.substr(pos, next_underscore - pos);
-										
-										// Convert type string to Type
-										Type deduced_type = TemplateRegistry::stringToType(type_str);
-										if (deduced_type != Type::Invalid) {
-											deduced_type_args.push_back(deduced_type);
-										} else {
-										
-											return std::nullopt;
+								if (const auto* stored_args = gTemplateRegistry.getTemplateInstantiationArgs(instantiated_handle)) {
+									for (const auto& stored_arg : *stored_args) {
+										deduced_type_args.push_back(stored_arg.base_type);
+									}
+								} else {
+									std::string_view remaining = instantiated_name.substr(first_underscore == std::string_view::npos ? instantiated_name.size() : first_underscore + 1);
+									if (!remaining.empty()) {
+										size_t pos = 0;
+										while (pos < remaining.size()) {
+											size_t next_underscore = remaining.find('_', pos);
+											std::string_view type_str = (next_underscore == std::string_view::npos) 
+												? remaining.substr(pos) 
+												: remaining.substr(pos, next_underscore - pos);
+											
+											// Convert type string to Type
+											Type deduced_type = TemplateRegistry::stringToType(type_str);
+											if (deduced_type != Type::Invalid) {
+												deduced_type_args.push_back(deduced_type);
+											} else {
+											
+												return std::nullopt;
+											}
+											
+											if (next_underscore == std::string_view::npos) break;
+											pos = next_underscore + 1;
 										}
-										
-										if (next_underscore == std::string_view::npos) break;
-										pos = next_underscore + 1;
 									}
 								}
 								
@@ -37460,6 +37468,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Generate the instantiated class name first
 	auto instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args));
 	gTemplateRegistry.registerTemplateBaseName(instantiated_name, StringTable::getOrInternStringHandle(template_name));
+	gTemplateRegistry.registerTemplateInstantiationArgs(instantiated_name, template_args);
+	gTemplateRegistry.registerTemplateInstantiationArgs(instantiated_name, template_args);
+	gTemplateRegistry.registerTemplateInstantiationArgs(instantiated_name, template_args);
 
 	// Check if we already have this instantiation
 	auto existing_type = gTypesByName.find(instantiated_name);
@@ -39291,6 +39302,7 @@ if (struct_type_info.getStructInfo()) {
 	// Generate the instantiated class name (again, with filled args)
 	instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args_to_use));
 	gTemplateRegistry.registerTemplateBaseName(instantiated_name, StringTable::getOrInternStringHandle(template_name));
+	gTemplateRegistry.registerTemplateInstantiationArgs(instantiated_name, template_args_to_use);
 
 	// Check if we already have this instantiation (after filling defaults)
 	existing_type = gTypesByName.find(instantiated_name);

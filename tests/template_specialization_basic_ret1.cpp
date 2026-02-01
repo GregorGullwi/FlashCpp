@@ -32,6 +32,17 @@ int size_val(T) {
     return sizeof(T);
 }
 
+template<typename T>
+struct Wrap {
+    T value;
+};
+
+template<template<typename> class Container>
+int apply_zero() {
+    Container<int> c{};
+    return static_cast<int>(sizeof(c.value));
+}
+
 // Full specialization for int
 template<>
 class Container<int> {
@@ -53,6 +64,7 @@ int main() {
     int wrapper = w.getType();
 
     int sizes = size_val(Big{});
+    int templated = apply_zero<Wrap>();
     
-    return generic + specialized + wrapper + sizes - 9;  // Should return 1
+    return generic + specialized + wrapper + sizes + templated - 13;  // Should return 1
 }
