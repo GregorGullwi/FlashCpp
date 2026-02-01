@@ -12462,6 +12462,13 @@ ParseResult Parser::parse_type_specifier()
 					type_info.type_size_ = 0;  // Unknown size for dependent type
 					type_info.name_ = type_idx;
 					gTypesByName[type_idx] = &type_info;
+					
+					// Set template instantiation metadata so isTemplateInstantiation() returns true
+					// This is needed for deferred alias template detection
+					auto template_args_info = convertToTemplateArgInfo(template_args.value());
+					type_info.setTemplateInstantiationInfo(StringTable::getOrInternStringHandle(type_name), template_args_info);
+					FLASH_LOG_FORMAT(Templates, Debug, "Set template instantiation metadata for dependent placeholder: base='{}', args={}",
+					                 type_name, template_args_info.size());
 
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(
 						Type::UserDefined, type_info.type_index_, 0, type_name_token, cv_qualifier));
