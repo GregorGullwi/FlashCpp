@@ -121,18 +121,12 @@ static size_t getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
 	// For UserDefined and other types (Template, etc), try to extract size from type_specifier
 	if (arg.type_specifier.has_value()) {
 		const auto& type_spec = arg.type_specifier.value();
-		// Try type_index first
+		// Use type_index for direct O(1) lookup - no name-based lookup needed
 		size_t type_index = type_spec.type_index();
 		if (type_index > 0 && type_index < gTypeInfo.size()) {
-			size_t size = gTypeInfo[type_index].type_size_;
-			if (size > 0) {
-				return size;
-			}
-			// For template struct instantiations (e.g., "TC_int"), look up by name
-			StringHandle type_name_handle = gTypeInfo[type_index].name();
-			auto it = gTypesByName.find(type_name_handle);
-			if (it != gTypesByName.end() && it->second->type_size_ > 0) {
-				return it->second->type_size_;
+			const TypeInfo& type_info = gTypeInfo[type_index];
+			if (type_info.type_size_ > 0) {
+				return type_info.type_size_;
 			}
 		}
 	}
