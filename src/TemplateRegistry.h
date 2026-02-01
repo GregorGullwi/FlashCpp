@@ -1007,12 +1007,14 @@ public:
 		instantiation_base_names_[instantiated_name] = StringTable::getOrInternStringHandle(base_name);
 	}
 	
-	// Register template args for an instantiated name (called alongside registerTemplateBaseName during instantiation).
+	// Register template args for an instantiated name.
+	// Should be called during template instantiation alongside registerTemplateBaseName.
 	void registerTemplateInstantiationArgs(StringHandle instantiated_name, const std::vector<TemplateTypeArg>& args) {
 		instantiation_template_args_[instantiated_name] = args;
 	}
 	
 	// Returns nullptr when no args were registered for the instantiated name.
+	// Callers can fall back to string-based parsing when this returns nullptr.
 	const std::vector<TemplateTypeArg>* getTemplateInstantiationArgs(StringHandle instantiated_name) const {
 		auto it = instantiation_template_args_.find(instantiated_name);
 		if (it != instantiation_template_args_.end()) {
