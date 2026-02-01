@@ -7294,6 +7294,123 @@ ParseResult Parser::parse_struct_declaration()
 				func_decl.is_override,
 				func_decl.is_final
 			);
+	}
+}
+
+	// Generate inherited constructors if "using Base::Base;" was encountered
+	// This must happen before implicit constructor generation
+	if (!struct_parsing_context_stack_.empty() && 
+	    struct_parsing_context_stack_.back().has_inherited_constructors && 
+	    !parsing_template_class_) {
+		// Iterate through base classes and generate forwarding constructors
+		for (const auto& base_class : struct_info->base_classes) {
+			if (base_class.type_index >= gTypeInfo.size()) {
+				continue;
+			}
+			
+			const TypeInfo& base_type_info = gTypeInfo[base_class.type_index];
+			const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+			
+			if (!base_struct_info) {
+				continue;
+			}
+			
+			// Generate a forwarding constructor for each base class constructor
+			for (const auto& base_ctor_info : base_struct_info->member_functions) {
+				if (!base_ctor_info.is_constructor) {
+					continue;
+				}
+				
+				const ConstructorDeclarationNode& base_ctor = 
+					base_ctor_info.function_decl.as<ConstructorDeclarationNode>();
+				
+				// Skip copy and move constructors (they are not inherited)
+				const auto& base_params = base_ctor.parameter_nodes();
+				if (base_params.size() == 1) {
+					const auto& param_decl = base_params[0].as<DeclarationNode>();
+					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+					
+					if (param_type.is_reference() && param_type.type() == Type::Struct) {
+						// This is a copy or move constructor - skip it
+						continue;
+					}
+				}
+				
+				// Create a forwarding constructor for the derived class
+				auto [derived_ctor_node, derived_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+					qualified_struct_name,
+					qualified_struct_name
+				);
+				
+				// Copy parameters from base constructor to derived constructor
+				for (const auto& base_param : base_params) {
+					const DeclarationNode& base_param_decl = base_param.as<DeclarationNode>();
+					const TypeSpecifierNode& base_param_type = base_param_decl.type_node().as<TypeSpecifierNode>();
+					
+					// Create a copy of the parameter for the derived constructor
+					auto param_type_node = emplace_node<TypeSpecifierNode>(
+						base_param_type.type(),
+						base_param_type.type_index(),
+						base_param_type.size_in_bits(),
+						base_param_decl.identifier_token(),
+						base_param_type.cv_qualifier()
+					);
+					
+					// Copy reference qualifiers
+					if (base_param_type.is_rvalue_reference()) {
+						param_type_node.as<TypeSpecifierNode>().set_reference(true);
+					} else if (base_param_type.is_reference()) {
+						param_type_node.as<TypeSpecifierNode>().set_lvalue_reference(true);
+					}
+					
+					auto param_decl_node = emplace_node<DeclarationNode>(
+						param_type_node,
+						base_param_decl.identifier_token()
+					);
+					
+					derived_ctor_ref.add_parameter_node(param_decl_node);
+				}
+				
+				// Create base initializer to forward to base constructor
+				// This will call Base::Base(args...) where args are the parameters
+				std::vector<ASTNode> base_init_args;
+				for (const auto& param : base_params) {
+					const DeclarationNode& param_decl = param.as<DeclarationNode>();
+					// Create an identifier node for the parameter and wrap it in an ExpressionNode
+					IdentifierNode id_node(param_decl.identifier_token());
+					auto expr_node = emplace_node<ExpressionNode>(id_node);
+					base_init_args.push_back(expr_node);
+				}
+				
+				// Add base initializer to constructor
+				derived_ctor_ref.add_base_initializer(
+					StringTable::getOrInternStringHandle(base_class.name),
+					std::move(base_init_args)
+				);
+				
+				// Create an empty block for the constructor body
+				auto [block_node, block_ref] = create_node_ref(BlockNode());
+				derived_ctor_ref.set_definition(block_node);
+				
+				// Mark this as an implicit constructor (even though it's inherited)
+				derived_ctor_ref.set_is_implicit(false);
+				
+				// Add the inherited constructor to the struct type info
+				struct_info->addConstructor(
+					derived_ctor_node,
+					AccessSpecifier::Public
+				);
+				
+				// Add the inherited constructor to the struct node
+				struct_ref.add_constructor(derived_ctor_node, AccessSpecifier::Public);
+				
+				// Mark that we now have a user-defined constructor (the inherited one)
+				has_user_defined_constructor = true;
+				
+				FLASH_LOG(Parser, Debug, "Generated inherited constructor for '", 
+						  StringTable::getStringView(qualified_struct_name), "' with ", 
+						  base_params.size(), " parameter(s)");
+			}
 		}
 	}
 
