@@ -3,6 +3,7 @@
 #include "AstNodeTypes.h"
 #include "ChunkedString.h"
 #include "Lexer.h"  // For TokenPosition
+#include "TemplateTypes.h"  // For TypeIndex-based template keys
 #include <string>
 #include <string_view>
 #include <vector>
@@ -355,6 +356,59 @@ struct TemplateTypeArgHash {
 		return hash;
 	}
 };
+
+// ============================================================================
+// Implementation of TemplateTypes.h helper functions
+// ============================================================================
+
+namespace FlashCpp {
+
+/**
+ * Create a TypeIndexArg from a TemplateTypeArg
+ * 
+ * This converts the rich TemplateTypeArg representation to the simpler
+ * TypeIndexArg used for template instantiation lookup keys.
+ */
+inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
+	TypeIndexArg result;
+	result.type_index = arg.type_index;
+	result.is_const = (arg.cv_qualifier == CVQualifier::Const || 
+	                   arg.cv_qualifier == CVQualifier::ConstVolatile);
+	result.is_volatile = (arg.cv_qualifier == CVQualifier::Volatile || 
+	                      arg.cv_qualifier == CVQualifier::ConstVolatile);
+	result.is_reference = arg.is_reference;
+	result.is_rvalue_reference = arg.is_rvalue_reference;
+	result.pointer_depth = static_cast<uint8_t>(std::min(arg.pointer_depth, size_t(255)));
+	return result;
+}
+
+/**
+ * Create a TemplateInstantiationKeyV2 from template name and TemplateTypeArg vector
+ */
+inline TemplateInstantiationKeyV2 makeInstantiationKeyV2(
+	StringHandle template_name,
+	const std::vector<TemplateTypeArg>& args) {
+	
+	TemplateInstantiationKeyV2 key(template_name);
+	key.type_args.reserve(args.size());
+	
+	for (const auto& arg : args) {
+		if (arg.is_value) {
+			// Non-type template argument
+			key.value_args.push_back(arg.value);
+		} else if (arg.is_template_template_arg) {
+			// Template template argument
+			key.template_template_args.push_back(arg.template_name_handle);
+		} else {
+			// Type template argument
+			key.type_args.push_back(makeTypeIndexArg(arg));
+		}
+	}
+	
+	return key;
+}
+
+} // namespace FlashCpp
 
 // Template instantiation key - uniquely identifies a template instantiation
 struct TemplateInstantiationKey {
@@ -1072,6 +1126,39 @@ public:
 		instantiations_[key] = instantiated_node;
 	}
 	
+	// ============================================================================
+	// V2 TypeIndex-based template instantiation API
+	// ============================================================================
+	
+	// Get an existing instantiation using V2 key
+	std::optional<ASTNode> getInstantiationV2(const FlashCpp::TemplateInstantiationKeyV2& key) const {
+		auto it = instantiations_v2_.find(key);
+		if (it != instantiations_v2_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
+	}
+	
+	// Register a new instantiation using V2 key
+	void registerInstantiationV2(const FlashCpp::TemplateInstantiationKeyV2& key, ASTNode instantiated_node) {
+		instantiations_v2_[key] = instantiated_node;
+	}
+	
+	// Convenience method: register instantiation using template name and args
+	void registerInstantiationV2(StringHandle template_name, 
+	                              const std::vector<TemplateTypeArg>& args,
+	                              ASTNode instantiated_node) {
+		auto key = FlashCpp::makeInstantiationKeyV2(template_name, args);
+		instantiations_v2_[key] = instantiated_node;
+	}
+	
+	// Convenience method: lookup instantiation using template name and args
+	std::optional<ASTNode> getInstantiationV2(StringHandle template_name,
+	                                           const std::vector<TemplateTypeArg>& args) const {
+		auto key = FlashCpp::makeInstantiationKeyV2(template_name, args);
+		return getInstantiationV2(key);
+	}
+	
 	// Helper to convert Type to string for mangling
 	static std::string_view typeToString(Type type) {
 		switch (type) {
@@ -1410,6 +1497,11 @@ private:
 
 	// Map from instantiation key to instantiated function node
 	std::unordered_map<TemplateInstantiationKey, ASTNode, TemplateInstantiationKeyHash> instantiations_;
+	
+	// V2: TypeIndex-based template instantiation cache (replaces string-based keys)
+	// This provides O(1) lookup without string concatenation and avoids ambiguity
+	// when type names contain underscores
+	std::unordered_map<FlashCpp::TemplateInstantiationKeyV2, ASTNode, FlashCpp::TemplateInstantiationKeyV2Hash> instantiations_v2_;
 
 	// Map from class name to out-of-line member function definitions (supports heterogeneous lookup)
 	std::unordered_map<std::string, std::vector<OutOfLineMemberFunction>, TransparentStringHash, std::equal_to<>> out_of_line_members_;
