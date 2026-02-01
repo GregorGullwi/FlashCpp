@@ -14909,9 +14909,11 @@ std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNod
 	// Check if the type name matches std::initializer_list pattern
 	// Template instantiations are named like "std::initializer_list_int" (with underscore)
 	// or "std::initializer_list<int>" (with angle brackets)
+	// or "std::initializer_list$hash" (with dollar sign for hash-based naming)
 	// We must check for "std::" prefix to ensure it's the standard library type
 	if ((type_name.find("std::initializer_list<") != std::string_view::npos ||
-	     type_name.find("std::initializer_list_") != std::string_view::npos)) {
+	     type_name.find("std::initializer_list_") != std::string_view::npos ||
+	     type_name.find("std::initializer_list$") != std::string_view::npos)) {
 		// This is an initializer_list type from the std namespace
 		FLASH_LOG(Parser, Debug, "is_initializer_list_type: detected '", type_name, "' as initializer_list type");
 		return type_index;
