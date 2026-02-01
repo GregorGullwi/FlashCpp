@@ -243,9 +243,13 @@ private:
  * This is a simpler representation than TemplateTypeArg, focused purely on
  * identity for lookup purposes. The full type information (references, 
  * pointers, cv-qualifiers) is encoded in the TypeIndex itself.
+ * 
+ * NOTE: For primitive types (int, float, etc.), type_index may be 0, so we 
+ * also store base_type to ensure unique hashes for different primitive types.
  */
 struct TypeIndexArg {
 	TypeIndex type_index = 0;
+	Type base_type = Type::Invalid;  // Needed for primitive types where type_index is 0
 	
 	// CV-qualifiers and reference info that affect template identity
 	// These are stored separately because the same TypeIndex with different
@@ -258,14 +262,16 @@ struct TypeIndexArg {
 	
 	explicit TypeIndexArg(TypeIndex idx) : type_index(idx) {}
 	
-	TypeIndexArg(TypeIndex idx, CVQualifier cv, ReferenceQualifier ref, uint8_t ptr_depth)
+	TypeIndexArg(TypeIndex idx, Type type, CVQualifier cv, ReferenceQualifier ref, uint8_t ptr_depth)
 		: type_index(idx)
+		, base_type(type)
 		, cv_qualifier(cv)
 		, ref_qualifier(ref)
 		, pointer_depth(ptr_depth) {}
 	
 	bool operator==(const TypeIndexArg& other) const {
 		return type_index == other.type_index &&
+		       base_type == other.base_type &&
 		       cv_qualifier == other.cv_qualifier &&
 		       ref_qualifier == other.ref_qualifier &&
 		       pointer_depth == other.pointer_depth;
@@ -277,6 +283,8 @@ struct TypeIndexArg {
 	
 	size_t hash() const {
 		size_t h = std::hash<TypeIndex>{}(type_index);
+		// Include base_type in hash to differentiate primitive types with type_index=0
+		h ^= std::hash<int>{}(static_cast<int>(base_type)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(cv_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<uint8_t>{}(pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
