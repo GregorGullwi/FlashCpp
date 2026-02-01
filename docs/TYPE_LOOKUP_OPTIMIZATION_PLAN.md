@@ -175,6 +175,27 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 - [ ] Update overload resolution to compare TypeIndex vectors
 - [ ] Cache function lookup results by signature hash
 
+### Phase 4: Template Instantiation Refactoring
+- [ ] Extract template instantiation logic into dedicated `TemplateInstantiator` class
+- [ ] Create new `src/TemplateInstantiator.h` header file
+
+**Proposed TemplateInstantiator Interface:**
+```cpp
+class TemplateInstantiator {
+public:
+    TemplateInstantiator(const std::vector<ASTNode>& params, 
+                         const std::vector<TemplateTypeArg>& args);
+    
+    ASTNode instantiate_function(const ASTNode& template_decl);
+    ASTNode instantiate_class(const ASTNode& template_decl);
+    ASTNode instantiate_variable(const ASTNode& template_decl);
+    
+private:
+    ASTNode substitute_in_node(const ASTNode& node);
+    // Shared substitution logic
+};
+```
+
 ## Implementation Notes (Phase 1)
 
 ### New Files Created
