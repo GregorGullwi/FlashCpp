@@ -353,6 +353,50 @@ private:
 2. Gradually migrate template instantiation lookups to new cache
 3. Profile to confirm performance improvement before removing string cache
 
+### Phase 7: Eliminate Remaining Old-Style Name Checking (In Progress)
+
+**Status:** In Progress
+
+Many locations still check for `_void` suffix or parse `$` to detect template instantiation placeholders.
+These need to be converted to use `TypeInfo::isTemplateInstantiation()` and `TypeInfo::baseTemplateName()`.
+
+#### Locations Using `append_type_name_suffix` (Old-Style Name Building)
+These build names like `template_int` instead of `template$hash`:
+
+| Line | Location | Description |
+|------|----------|-------------|
+| 21794 | substitute_template_parameter | Building member access instantiation name |
+| 22016 | function template instantiation | Explicit template args |
+| 22691 | function template instantiation | Explicit template args |
+| 25368 | function name building | Template function name |
+| 38894 | member access | Static member instantiation |
+| 38981 | member access | Static member instantiation |
+
+#### Locations Checking `_void` Suffix (Old-Style Placeholder Detection)
+These use `ends_with("_void")` to detect dependent placeholders:
+
+| Line | Location | Description |
+|------|----------|-------------|
+| 11928 | dependent static member | Const expr evaluation |
+| 12414 | dependent placeholder | Const expr evaluation |
+| 20232 | dependent placeholder | Default arg evaluation |
+| 21789 | type name substitution | Member value resolution |
+| 27503 | template placeholder | Pattern name building |
+| 37260 | dependent qualified type | Type resolution |
+| 37441 | dependent static member | Member access |
+| 38834 | dependent placeholder | Member access |
+
+#### CodeGen.h `_void` Lookup (Line 9115)
+The codegen tries to look up `struct_name_void` when direct lookup fails.
+Should use `TypeInfo::isTemplateInstantiation()` instead.
+
+#### Conversion Strategy
+For each location:
+1. Get the `TypeInfo*` for the type being checked
+2. Use `type_info->isTemplateInstantiation()` instead of string checks
+3. Use `type_info->baseTemplateName()` instead of extracting from string
+4. Use hash-based `get_instantiated_class_name()` for building names
+
 ## Considerations
 
 - **TypeIndex stability**: TypeIndex values are assigned during parsing. Consider if they need to be stable across compilation units (for incremental compilation).

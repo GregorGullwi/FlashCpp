@@ -21903,13 +21903,28 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 													std::string type_name_str(gNamespaceRegistry.getName(qual_id_default.namespace_handle()));
 													std::string_view member_name = qual_id_default.name();
 													
-													if (type_name_str.ends_with("_void") && !filled_template_args.empty()) {
-														std::string_view template_base_name(type_name_str.data(), type_name_str.size() - 5);
-														
-														StringBuilder inst_name_builder;
-														inst_name_builder.append(template_base_name).append("_");
-														append_type_name_suffix(inst_name_builder, filled_template_args[0]);
-														std::string_view inst_name = inst_name_builder.commit();
+													// Look up the type info to check if it's a template instantiation placeholder
+													auto placeholder_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name_str));
+													bool is_dependent_placeholder = false;
+													std::string_view template_base_name;
+													
+													if (placeholder_type_it != gTypesByName.end()) {
+														const TypeInfo* placeholder_info = placeholder_type_it->second;
+														if (placeholder_info->isTemplateInstantiation()) {
+															is_dependent_placeholder = true;
+															template_base_name = StringTable::getStringView(placeholder_info->baseTemplateName());
+														}
+													}
+													// Fallback to string check for old-style names
+													if (!is_dependent_placeholder && (type_name_str.ends_with("_void") || type_name_str.find('$') != std::string::npos)) {
+														is_dependent_placeholder = true;
+														size_t separator_pos = type_name_str.find_first_of("_$");
+														template_base_name = std::string_view(type_name_str.data(), separator_pos);
+													}
+													
+													if (is_dependent_placeholder && !filled_template_args.empty()) {
+														// Build instantiated name using hash-based naming
+														std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 														
 														try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 														
@@ -22125,14 +22140,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", idenfifier_token.value());
 								
-								// Build the instantiated type name
-								StringBuilder inst_name_builder;
-								inst_name_builder.append(idenfifier_token.value()).append("_");
-								for (size_t i = 0; i < explicit_template_args->size(); ++i) {
-									if (i > 0) inst_name_builder.append("_");
-									append_type_name_suffix(inst_name_builder, (*explicit_template_args)[i]);
-								}
-								std::string_view instantiated_type_name = inst_name_builder.commit();
+								// Build the instantiated type name using hash-based naming
+								std::string_view instantiated_type_name = get_instantiated_class_name(idenfifier_token.value(), *explicit_template_args);
 								
 								// Try to instantiate the class template (may fail for dependent args, which is OK)
 								try_instantiate_class_template(idenfifier_token.value(), *explicit_template_args);
@@ -22800,14 +22809,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				if (class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", idenfifier_token.value());
 					
-					// Build the instantiated type name
-					StringBuilder inst_name_builder;
-					inst_name_builder.append(idenfifier_token.value()).append("_");
-					for (size_t i = 0; i < explicit_template_args->size(); ++i) {
-						if (i > 0) inst_name_builder.append("_");
-						append_type_name_suffix(inst_name_builder, (*explicit_template_args)[i]);
-					}
-					std::string_view instantiated_type_name = inst_name_builder.commit();
+					// Build the instantiated type name using hash-based naming
+					std::string_view instantiated_type_name = get_instantiated_class_name(idenfifier_token.value(), *explicit_template_args);
 					
 					// Try to instantiate the class template
 					try_instantiate_class_template(idenfifier_token.value(), *explicit_template_args);
@@ -25476,14 +25479,15 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	func_name_builder.append("::");
 	func_name_builder.append(member_name);
 	
-	// If member has template args, append them to the function name
+	// If member has template args, append them using hash-based naming
 	if (member_template_args.has_value() && !member_template_args->empty()) {
-		func_name_builder.append("_");
-		for (size_t i = 0; i < member_template_args->size(); ++i) {
-			if (i > 0) func_name_builder.append("_");
-			const auto& arg = (*member_template_args)[i];
-			append_type_name_suffix(func_name_builder, arg);
-		}
+		// Generate hash suffix for template args
+		auto key = FlashCpp::makeInstantiationKeyV2(StringTable::getOrInternStringHandle(member_name), *member_template_args);
+		func_name_builder.append("$");
+		auto hash_val = FlashCpp::TemplateInstantiationKeyV2Hash{}(key);
+		char hex[17];
+		std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(hash_val));
+		func_name_builder.append(std::string_view(hex, 16));
 	}
 	std::string_view func_name = func_name_builder.commit();
 	
@@ -39005,11 +39009,8 @@ if (struct_type_info.getStructInfo()) {
 						
 						if (is_dependent) {
 							
-							// Build the instantiated template name using first filled argument
-							StringBuilder inst_name_builder;
-							inst_name_builder.append(template_base_name).append("_");
-							append_type_name_suffix(inst_name_builder, filled_template_args[0]);
-							std::string_view inst_name = inst_name_builder.commit();
+							// Build the instantiated template name using hash-based naming
+							std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 							
 							FLASH_LOG(Templates, Debug, "Resolving dependent qualified identifier: ", 
 							          type_name, "::", member_name, " -> ", inst_name, "::", member_name);
@@ -39088,15 +39089,13 @@ if (struct_type_info.getStructInfo()) {
 							
 							// Check if this identifier has template arguments stored separately
 							// For now, look for a type that was parsed as a dependent template instantiation
-							// The type name might be stored like "is_arithmetic_void" for is_arithmetic<T>
+							// The type name might be stored like "is_arithmetic$hash" for is_arithmetic<T>
 							
 							// Try looking up as a dependent template instantiation
 							// Build the instantiated name using filled_template_args
 							if (!filled_template_args.empty()) {
-								StringBuilder inst_name_builder;
-								inst_name_builder.append(obj_name).append("_");
-								append_type_name_suffix(inst_name_builder, filled_template_args[0]);
-								std::string_view inst_name = inst_name_builder.commit();
+								// Use hash-based naming instead of underscore-based
+								std::string_view inst_name = get_instantiated_class_name(obj_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 								
 								FLASH_LOG(Templates, Debug, "Looking up instantiated type: '", inst_name, "'");
 								
