@@ -991,6 +991,7 @@ struct SpecializationKeyHash {
 };
 
 // Template registry - stores template declarations and manages instantiations
+// Thread-safety: this registry is not thread-safe; callers must synchronize access.
 class TemplateRegistry {
 public:
 	// Register a template function declaration
@@ -1009,7 +1010,7 @@ public:
 	
 	// Register template args for an instantiated name.
 	// Should be called during template instantiation alongside registerTemplateBaseName.
-	// This overwrites any existing entry for the same instantiated_name. The registry is not thread-safe.
+	// This overwrites any existing entry for the same instantiated_name.
 	void registerTemplateInstantiationArgs(StringHandle instantiated_name, const std::vector<TemplateTypeArg>& args) {
 		instantiation_template_args_[instantiated_name] = args;
 	}
@@ -1522,7 +1523,7 @@ private:
 	
 	// Map from instantiated template name to template arguments
 	// Populated during instantiation to avoid reparsing mangled names; cleared in TemplateRegistry::clear().
-	// Note: This intentionally duplicates data from the instantiation cache to avoid string parsing in edge cases.
+	// Note: This intentionally duplicates data from the TemplateInstantiationKey cache to avoid string parsing in edge cases.
 	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> instantiation_template_args_;
 };
 
