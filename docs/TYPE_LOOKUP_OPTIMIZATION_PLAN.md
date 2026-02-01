@@ -236,28 +236,68 @@ get_instantiated_class_name("is_arithmetic", {int_type});
 **Bug Fixed:** Primitive types (int, float, etc.) all have `type_index=0`, causing hash collisions.
 Adding `base_type` to the hash ensures different primitive types get unique hashes.
 
-### Phase 6: Future Enhancements (From Updated Analysis)
+### Phase 6: Template Instantiation Metadata ✅ COMPLETED (Partial)
+
+Added template instantiation metadata to `TypeInfo` for O(1) lookup:
+
+```cpp
+struct TypeInfo {
+    // ... existing fields ...
+    
+    // For template instantiations: store metadata to avoid name parsing
+    StringHandle base_template_name_;  // e.g., "vector" for vector<int>
+    
+    struct TemplateArgInfo {
+        Type base_type = Type::Invalid;  // For primitive types
+        TypeIndex type_index = 0;        // For user-defined types
+        int64_t value = 0;               // For non-type arguments
+        bool is_value = false;           // true if this is a non-type argument
+    };
+    std::vector<TemplateArgInfo> template_args_;
+    
+    // Helper methods
+    bool isTemplateInstantiation() const { return base_template_name_.handle != 0; }
+    StringHandle baseTemplateName() const { return base_template_name_; }
+    const std::vector<TemplateArgInfo>& templateArgs() const { return template_args_; }
+};
+```
+
+**Changes Made:**
+1. Added `TemplateArgInfo` struct to `TypeInfo` in `AstNodeTypes.h`
+2. Added `convertToTemplateArgInfo()` helper in `Parser.cpp`
+3. Updated all template instantiation registration points to store metadata
+4. Template instantiations now tagged at creation time for O(1) lookup
+
+**Benefits:**
+- Can check if a type is a template instantiation with O(1) lookup
+- Can retrieve base template name without parsing `$`-separated names
+- Foundation for Phase 6b: removing all string parsing from template lookups
+
+### Phase 6b: Future - Eliminate Remaining $ Parsing
+
+The following code still parses `$` in type names:
+1. `Parser.cpp:27085` - Detecting hash-based placeholders for deferred alias instantiation
+2. `Parser.cpp:34973` - Template template parameter deduction (extracting template name)
+3. `Parser.cpp:36436` - Ratio type parsing
+4. `Parser.cpp:39813` - Member struct name parsing
+
+These can be eliminated by using `TypeInfo::isTemplateInstantiation()` and
+`TypeInfo::baseTemplateName()` instead of parsing type name strings.
+
+### Phase 6c: Future Enhancements (From Updated Analysis)
 
 The following ideas from `TYPE_LOOKUP_OPTIMIZATION_PLAN_UPDATED.md` are deferred for future phases:
 
-#### 6a. Base + Extension Key Split
+#### Base + Extension Key Split
 - Split TemplateInstantiationKey into ~80-100 byte base + optional extension
 - Extension only allocated for edge cases (variadic >4 args, nested templates, etc.)
 - Target: 70-80% memory savings for common templates
 
-#### 6b. Advanced Template Edge Cases
+#### Advanced Template Edge Cases
 - **RecursionGuard**: Cycle detection for recursive templates (Factorial<N>)
 - **SFINAE Failure Cache**: Separate cache for failed instantiations
 - **Scope Disambiguation**: `namespace_qualifiers` and `enclosing_class` fields
 - **Specialization Rank**: For partial specialization ordering in overload resolution
-
-#### 6c. Implementation Checklist (When Needed)
-- Template template parameter handling
-- Recursive template detection and cycle prevention
-- Type alias resolution tracking  
-- constexpr expression evaluation for non-type args
-- Overload resolution with specialization ranking
-- Default argument handling
 
 **Proposed TemplateInstantiator Interface:**
 ```cpp
