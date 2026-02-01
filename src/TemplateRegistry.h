@@ -372,6 +372,7 @@ namespace FlashCpp {
 inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	TypeIndexArg result;
 	result.type_index = arg.type_index;
+	result.base_type = arg.base_type;  // Include base_type for primitive types
 	result.cv_qualifier = arg.cv_qualifier;
 	// Convert the is_reference / is_rvalue_reference bools to ReferenceQualifier
 	if (arg.is_rvalue_reference) {

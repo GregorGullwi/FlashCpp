@@ -593,6 +593,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 inline FlashCpp::TypeIndexArg makeTypeIndexArgFromSpec(const TypeSpecifierNode& spec) {
 	FlashCpp::TypeIndexArg arg;
 	arg.type_index = spec.type_index();
+	arg.base_type = spec.type();  // Include base type for primitive types
 	arg.cv_qualifier = spec.cv_qualifier();
 	arg.ref_qualifier = spec.reference_qualifier();
 	arg.pointer_depth = static_cast<uint8_t>(std::min(spec.pointer_depth(), size_t(255)));

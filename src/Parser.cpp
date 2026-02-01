@@ -36059,17 +36059,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 // Get the mangled name for an instantiated class template
 // Example: Container<int> -> Container_int
 std::string_view Parser::get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) {
-	StringBuilder result;
-	result.append(template_name);
-	result.append("_");
-
-	for (size_t i = 0; i < template_args.size(); ++i) {
-		if (i > 0) result.append("_");
-
-		result.append(template_args[i].toString());
-	}
-
-	return result.commit();
+	// Use hash-based naming to avoid underscore ambiguity
+	// Old: "is_arithmetic_int" - could be is_arithmetic<int> or is_arithmetic + "_int" type!
+	// New: "is_arithmetic$a1b2c3d4" - unambiguous hash-based name
+	return FlashCpp::generateInstantiatedNameFromArgs(template_name, template_args);
 }
 
 // Helper function to instantiate base class template and register it in the AST
