@@ -12293,12 +12293,16 @@ ParseResult Parser::parse_type_specifier()
 						// Instantiated names have patterns like "ClassName_int" or "ClassName_int_1"
 						// We need to find the original template name by progressively stripping suffixes
 						if (!member_alias_opt.has_value()) {
-							std::string_view base_template_name = instantiated_name;
+							StringHandle instantiated_handle = StringTable::getOrInternStringHandle(instantiated_name);
+							auto base_name_handle = gTemplateRegistry.getTemplateBaseName(instantiated_handle);
+							std::string_view base_template_name = base_name_handle.has_value()
+								? StringTable::getStringView(*base_name_handle)
+								: instantiated_name;
 							
 							// Try progressively stripping '_suffix' patterns until we find a match
 							while (!member_alias_opt.has_value() && !base_template_name.empty()) {
 								size_t underscore_pos = base_template_name.find_last_of('_');
-								if (underscore_pos == std::string_view::npos) {
+								if (underscore_pos == std::string_view::npos || base_name_handle.has_value()) {
 									break;  // No more underscores to strip
 								}
 								
