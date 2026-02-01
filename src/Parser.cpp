@@ -12679,6 +12679,10 @@ ParseResult Parser::parse_type_specifier()
 		Type resolved_type = Type::UserDefined;
 		if (type_it != gTypesByName.end()) {
 			user_type_index = type_it->second->type_index_;
+			if (type_it->second->type_ == Type::Template) {
+				return ParseResult::success(emplace_node<TypeSpecifierNode>(
+					Type::Template, user_type_index, 0, type_name_token, cv_qualifier));
+			}
 			// If this is a typedef (has a stored type and size, but is not a struct/enum), use the underlying type
 			bool is_typedef = (type_it->second->type_size_ > 0 && !type_it->second->isStruct() && !type_it->second->isEnum());
 			// Also consider function pointer/reference type aliases as typedefs (they may have size 0 but have function_signature)
@@ -25950,6 +25954,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 								std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
 								StringHandle instantiated_handle = StringTable::getOrInternStringHandle(instantiated_base);
 								gTemplateRegistry.registerTemplateBaseName(instantiated_handle, base_template_name);
+								gTemplateRegistry.registerTemplateInstantiationArgs(instantiated_handle, template_args);
 								resolved_handle = build_resolved_handle(instantiated_base, member_part);
 								type_it = gTypesByName.find(resolved_handle);
 								FLASH_LOG(Templates, Debug, "After instantiating base template '", base_template_name, "', lookup for '",
@@ -35655,6 +35660,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args_as_type_args);
 					StringHandle instantiated_handle = StringTable::getOrInternStringHandle(instantiated_base);
 					gTemplateRegistry.registerTemplateBaseName(instantiated_handle, base_template_name);
+					gTemplateRegistry.registerTemplateInstantiationArgs(instantiated_handle, template_args_as_type_args);
 					resolved_handle = build_resolved_handle(instantiated_base, member_part);
 					type_it = gTypesByName.find(resolved_handle);
 					
