@@ -411,6 +411,25 @@ inline TemplateInstantiationKeyV2 makeInstantiationKeyV2(
 	return key;
 }
 
+/**
+ * Generate instantiated name from template name and arguments directly
+ * 
+ * This is a convenience function that builds the key internally and generates
+ * an unambiguous hash-based name.
+ * 
+ * @param template_name The base template name (e.g., "is_arithmetic")
+ * @param args The template arguments
+ * @return A unique name like "is_arithmetic$a1b2c3d4"
+ */
+inline std::string_view generateInstantiatedNameFromArgs(
+	std::string_view template_name,
+	const std::vector<TemplateTypeArg>& args) {
+	
+	auto key = makeInstantiationKeyV2(
+		StringTable::getOrInternStringHandle(template_name), args);
+	return generateInstantiatedName(template_name, key);
+}
+
 } // namespace FlashCpp
 
 // Template instantiation key - uniquely identifies a template instantiation
