@@ -258,6 +258,10 @@ struct TypeIndexArg {
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
 	uint8_t pointer_depth = 0;
 	
+	// Array information - critical for differentiating T[], T[N], and T
+	bool is_array = false;
+	std::optional<size_t> array_size;  // nullopt for T[], value for T[N]
+	
 	TypeIndexArg() = default;
 	
 	explicit TypeIndexArg(TypeIndex idx) : type_index(idx) {}
@@ -274,7 +278,9 @@ struct TypeIndexArg {
 		       base_type == other.base_type &&
 		       cv_qualifier == other.cv_qualifier &&
 		       ref_qualifier == other.ref_qualifier &&
-		       pointer_depth == other.pointer_depth;
+		       pointer_depth == other.pointer_depth &&
+		       is_array == other.is_array &&
+		       array_size == other.array_size;
 	}
 	
 	bool operator!=(const TypeIndexArg& other) const {
@@ -288,6 +294,11 @@ struct TypeIndexArg {
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(cv_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<uint8_t>{}(pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		// Include array info in hash - critical for differentiating T[] from T[N] from T
+		h ^= std::hash<bool>{}(is_array) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (array_size.has_value()) {
+			h ^= std::hash<size_t>{}(*array_size) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
 		return h;
 	}
 };
