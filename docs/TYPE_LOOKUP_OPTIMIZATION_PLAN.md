@@ -28,6 +28,13 @@ The main performance concern is in **template instantiation caching**, where str
 StringBuilder().append(template_name).append("_").append(type_name).commit();
 ```
 
+### Immediate Fix (Phase 1A)
+
+The current cache key stores only `Type` enums for arguments, which collapses
+distinct struct types into the same key. The first step is to store full
+`TemplateTypeArg` entries (including `TypeIndex`) for template instantiation
+keys, so struct types like `Wrapper_int` and `Wrapper_double` no longer collide.
+
 ## Template Arguments: Types vs Non-Type Values
 
 Template arguments come in two forms that need different handling:
@@ -305,9 +312,9 @@ bool matchesSignature(const ChunkedVector<TypeIndex>& param_types) {
 ## Implementation Phases
 
 ### Phase 1: Template Instantiation Cache
-- [ ] Implement `TemplateInstantiationKey` with TypeIndex + non-type value based hashing
-- [ ] Replace string-based template cache keys with numeric keys
-- [ ] Update template instantiation code to use new cache
+- [ ] Update `TemplateInstantiationKey` to store `TemplateTypeArg` (TypeIndex + qualifiers) for cache keys
+- [ ] Replace Type-only cache keys with TypeIndex + non-type value based keys
+- [ ] Update template instantiation code to use the new cache key
 
 ### Phase 2: Audit TypeIndex Usage
 - [ ] Audit all TypeSpecifierNode usages
@@ -1135,4 +1142,3 @@ Before removing old string-based cache:
    - Mitigation: 95% of templates have <=4 args, inline storage covers most cases
 4. Dependent types can't use TypeIndex
    - Mitigation: Keep dependent type info separate from cache
-

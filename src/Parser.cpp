@@ -34653,10 +34653,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Check if we already have this instantiation using the mangled name as key
 	// This ensures that int, int&, and int&& are treated as distinct instantiations
-	TemplateInstantiationKey key;
-	key.template_name = StringTable::getOrInternStringHandle(mangled_name);  // Use mangled name for uniqueness
-	// Note: We don't need to populate type_arguments since the mangled name already 
-	// includes all type info including references
+	TemplateInstantiationKey key = TemplateInstantiationKey::fromArguments(
+		StringTable::getOrInternStringHandle(mangled_name), template_args);
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
@@ -35174,17 +35172,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Step 2: Check if we already have this instantiation
-	TemplateInstantiationKey key;
-	key.template_name = StringTable::getOrInternStringHandle(template_name);
-	for (const auto& arg : template_args) {
-		if (arg.kind == TemplateArgument::Kind::Type) {
-			key.type_arguments.push_back(arg.type_value);
-		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			key.template_arguments.push_back(StringTable::getOrInternStringHandle(arg.template_name));
-		} else {
-			key.value_arguments.push_back(arg.int_value);
-		}
-	}
+	TemplateInstantiationKey key = TemplateInstantiationKey::fromArguments(template_name, template_args);
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
@@ -42367,17 +42355,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	// Check if we already have this instantiation
-	TemplateInstantiationKey key;
-	key.template_name = qualified_name;  // Already a StringHandle
-	for (const auto& arg : template_args) {
-		if (arg.kind == TemplateArgument::Kind::Type) {
-			key.type_arguments.push_back(arg.type_value);
-		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			key.template_arguments.push_back(StringTable::getOrInternStringHandle(arg.template_name));
-		} else {
-			key.value_arguments.push_back(arg.int_value);
-		}
-	}
+	TemplateInstantiationKey key = TemplateInstantiationKey::fromArguments(qualified_name, template_args);
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {
@@ -42754,17 +42732,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	}
 
 	// Check if we already have this instantiation
-	TemplateInstantiationKey key;
-	key.template_name = qualified_name;  // Already a StringHandle
-	for (const auto& arg : template_args) {
-		if (arg.kind == TemplateArgument::Kind::Type) {
-			key.type_arguments.push_back(arg.type_value);
-		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			key.template_arguments.push_back(StringTable::getOrInternStringHandle(arg.template_name));
-		} else {
-			key.value_arguments.push_back(arg.int_value);
-		}
-	}
+	TemplateInstantiationKey key = TemplateInstantiationKey::fromArguments(qualified_name, template_args);
 
 	auto existing_inst = gTemplateRegistry.getInstantiation(key);
 	if (existing_inst.has_value()) {

@@ -356,38 +356,6 @@ struct TemplateTypeArgHash {
 	}
 };
 
-// Template instantiation key - uniquely identifies a template instantiation
-struct TemplateInstantiationKey {
-	StringHandle template_name;
-	std::vector<Type> type_arguments;  // For type parameters
-	std::vector<int64_t> value_arguments;  // For non-type parameters
-	std::vector<StringHandle> template_arguments;  // For template template parameters
-	
-	bool operator==(const TemplateInstantiationKey& other) const {
-		return template_name == other.template_name &&
-		       type_arguments == other.type_arguments &&
-		       value_arguments == other.value_arguments &&
-		       template_arguments == other.template_arguments;
-	}
-};
-
-// Hash function for TemplateInstantiationKey
-struct TemplateInstantiationKeyHash {
-	std::size_t operator()(const TemplateInstantiationKey& key) const {
-		std::size_t hash = std::hash<StringHandle>{}(key.template_name);
-		for (const auto& type : key.type_arguments) {
-			hash ^= std::hash<int>{}(static_cast<int>(type)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		for (const auto& value : key.value_arguments) {
-			hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		for (const auto& tmpl : key.template_arguments) {
-			hash ^= std::hash<StringHandle>{}(tmpl) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		return hash;
-	}
-};
-
 // Template argument - can be a type, a value, or a template
 struct TemplateArgument {
 	enum class Kind {
@@ -574,6 +542,94 @@ inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
 		return TemplateArgument::makeTypeSpecifier(ts);
 	}
 }
+
+// Template instantiation key - uniquely identifies a template instantiation
+// Uses TemplateTypeArg to avoid string-based collisions in cache keys.
+struct TemplateInstantiationKey {
+	StringHandle template_name;
+	std::vector<TemplateTypeArg> arguments;
+	
+	bool operator==(const TemplateInstantiationKey& other) const {
+		if (template_name != other.template_name || arguments.size() != other.arguments.size()) {
+			return false;
+		}
+		for (size_t i = 0; i < arguments.size(); ++i) {
+			if (!areArgumentsEqual(arguments[i], other.arguments[i])) {
+				return false;
+			}
+		}
+		return true;
+	}
+	
+	static bool areArgumentsEqual(const TemplateTypeArg& lhs, const TemplateTypeArg& rhs) {
+		if (lhs.is_template_template_arg != rhs.is_template_template_arg) {
+			return false;
+		}
+		if (lhs.is_template_template_arg && lhs.template_name_handle != rhs.template_name_handle) {
+			return false;
+		}
+		return lhs == rhs;
+	}
+	
+	static TemplateTypeArg makeArgument(const TemplateArgument& arg) {
+		if (arg.kind == TemplateArgument::Kind::Template) {
+			TemplateTypeArg result;
+			result.is_template_template_arg = true;
+			result.template_name_handle = StringTable::getOrInternStringHandle(arg.template_name);
+			return result;
+		}
+		return toTemplateTypeArg(arg);
+	}
+	
+	static TemplateInstantiationKey fromArguments(StringHandle template_name,
+		const std::vector<TemplateArgument>& arguments) {
+		TemplateInstantiationKey key;
+		key.template_name = template_name;
+		key.arguments.reserve(arguments.size());
+		for (const auto& arg : arguments) {
+			key.arguments.push_back(makeArgument(arg));
+		}
+		return key;
+	}
+	
+	static TemplateInstantiationKey fromArguments(std::string_view template_name,
+		const std::vector<TemplateArgument>& arguments) {
+		return fromArguments(StringTable::getOrInternStringHandle(template_name), arguments);
+	}
+	
+	static TemplateInstantiationKey fromArguments(StringHandle template_name,
+		const std::vector<TemplateTypeArg>& arguments) {
+		TemplateInstantiationKey key;
+		key.template_name = template_name;
+		key.arguments.reserve(arguments.size());
+		for (const auto& arg : arguments) {
+			key.arguments.push_back(arg);
+		}
+		return key;
+	}
+	
+	static TemplateInstantiationKey fromArguments(std::string_view template_name,
+		const std::vector<TemplateTypeArg>& arguments) {
+		return fromArguments(StringTable::getOrInternStringHandle(template_name), arguments);
+	}
+};
+
+// Hash function for TemplateInstantiationKey
+struct TemplateInstantiationKeyHash {
+	std::size_t operator()(const TemplateInstantiationKey& key) const {
+		std::size_t hash = std::hash<StringHandle>{}(key.template_name);
+		TemplateTypeArgHash arg_hasher;
+		for (const auto& arg : key.arguments) {
+			size_t arg_hash = arg_hasher(arg);
+			if (arg.is_template_template_arg) {
+				arg_hash ^= std::hash<StringHandle>{}(arg.template_name_handle) + 0x9e3779b9 + (arg_hash << 6) + (arg_hash >> 2);
+			}
+			arg_hash ^= std::hash<bool>{}(arg.is_template_template_arg) + 0x9e3779b9 + (arg_hash << 6) + (arg_hash >> 2);
+			hash ^= arg_hash + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
+		return hash;
+	}
+};
 
 // Out-of-line template member function definition
 struct OutOfLineMemberFunction {
