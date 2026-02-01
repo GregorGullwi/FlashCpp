@@ -46,5 +46,5 @@ struct is_nonref_void {
 int main() {
     is_nonref_void<int> check;
     (void)check;
-    return 42;
+    return 0;
 }

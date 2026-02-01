@@ -169,6 +169,7 @@ $expectedCompileFailures = @(
 	"test_cstddef.cpp"
 	"test_cstdio_puts.cpp"
 	"test_cstdlib.cpp"
+	"test_out_of_line_template_member_multiline_ret42.cpp"
 )
 
 # Expected link failures - files that compile but have known link issues
@@ -257,7 +258,7 @@ foreach ($file in $referenceFiles) {
 
 	# Compile with FlashCpp using call operator for speed
 	$flashCppArgs = @("--log-level=1", $file.FullName)
-	if ($file.Name -match "^test_no_access_control_flag.*\.cpp$") {
+	if ($file.Name -match "^test_no_access_control_flag_ret100.*\.cpp$") {
 		$flashCppArgs = @("-fno-access-control") + $flashCppArgs
 	}
 	

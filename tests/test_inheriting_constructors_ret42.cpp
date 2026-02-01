@@ -15,5 +15,5 @@ int main() {
     Derived d_value(2);
     (void)d_default;
     (void)d_value;
-    return 42;
+    return d_value.value + d_default.value;
 }
