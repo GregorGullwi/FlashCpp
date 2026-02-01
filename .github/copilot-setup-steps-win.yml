@@ -1,0 +1,32 @@
+# Setup steps for GitHub Copilot agent environment (Windows)
+# This file is read by Copilot to set up the development environment on a Windows runner
+
+setup:
+  - name: Install Chocolatey
+    run: |
+      Set-ExecutionPolicy Bypass -Scope Process -Force
+      [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+      iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+    shell: pwsh
+
+  - name: Install debugging tools
+    run: |
+      choco install -y mingw gdb windbg
+    shell: pwsh
+
+  - name: Install additional build tools
+    run: |
+      choco install -y visualstudio2019buildtools make
+    shell: pwsh
+
+  - name: Verify installations
+    run: |
+      gdb --version
+      if (Get-Command windbg -ErrorAction SilentlyContinue) { Write-Output "windbg installed" } else { Write-Output "windbg not found in PATH" }
+      if (Get-Command cl.exe -ErrorAction SilentlyContinue) { cl.exe /? } else { Write-Output "cl.exe not found (Visual Studio Build Tools may need additional configuration)" }
+    shell: pwsh
+
+  - name: Notes
+    run: |
+      Write-Output "Valgrind and strace are Linux tools and are not available on native Windows runners. Use WSL2 or an Ubuntu runner if you need those tools."
+    shell: pwsh
