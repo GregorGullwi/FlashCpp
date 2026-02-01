@@ -194,9 +194,15 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 - `getFunctionResolutionCache()`: Global cache for resolved overloads
 - `resolve_overload_cached()`: Cached overload resolution with O(1) cache hits
 
-### Phase 4: Template Instantiation Refactoring
-- [ ] Extract template instantiation logic into dedicated `TemplateInstantiator` class
-- [ ] Create new `src/TemplateInstantiator.h` header file
+### Phase 4: Template Instantiation Refactoring (In Progress)
+- [x] Create `src/TemplateInstantiator.h` header file with class interface
+- [x] Create `src/TemplateInstantiator.cpp` with stub implementations
+- [x] Add `buildTemplateParamMap()` helper function
+- [x] Implement `substitute_in_type()` for type substitution
+- [ ] Migrate `instantiate_function()` from Parser (follow-up)
+- [ ] Migrate `instantiate_class()` from Parser (follow-up)
+- [ ] Migrate `instantiate_variable()` from Parser (follow-up)
+- [ ] Migrate `substitute_in_node()` core logic from Parser (follow-up)
 
 **Proposed TemplateInstantiator Interface:**
 ```cpp
