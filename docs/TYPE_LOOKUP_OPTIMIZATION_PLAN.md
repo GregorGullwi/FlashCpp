@@ -41,7 +41,9 @@ Template arguments come in two forms that need different handling:
 - Represent compile-time constant values like integers, pointers, or enums
 - Cannot be represented by `TypeIndex` - need the actual value
 - Example: `std::array<int, 5>` - the `5` is a non-type argument
-- Already stored as `std::vector<int64_t> non_type_template_args_` in the codebase
+- Already stored as `std::vector<int64_t> value_arguments` (for non-type parameters) in `TemplateInstantiationKey`
+- **Note**: Non-type template arguments are used by all template kinds (class templates like `std::array<int, 5>`, function templates, variable templates, and alias templates), not just function templates
+- **Migration**: Current `std::vector` should be changed to `ChunkedVector<int64_t>` for better memory allocation patterns
 
 ### Combined Template Key Structure
 
@@ -52,7 +54,7 @@ Most templates have 1-4 arguments, so we use an inline array to avoid heap alloc
 template<typename T, size_t N = 4>
 struct InlineVector {
     std::array<T, N> inline_data;
-    std::vector<T> overflow;
+    ChunkedVector<T> overflow;  // Use ChunkedVector for better memory allocation
     uint8_t inline_count = 0;
     
     void push_back(T value) {
@@ -76,25 +78,169 @@ struct InlineVector {
         }
         return true;
     }
+    
+    bool empty() const { return inline_count == 0 && overflow.empty(); }
+    size_t capacity() const { return N + overflow.capacity(); }
+    
+    // Iterator support for range-based for loops
+    // Note: We use index-based iteration since inline_data and overflow are separate regions
+    class const_iterator {
+        const InlineVector* vec;
+        size_t index;
+    public:
+        const_iterator() : vec(nullptr), index(0) {}
+        const_iterator(const InlineVector& v, size_t i) : vec(&v), index(i) {}
+        const T& operator*() const { return (*vec)[index]; }
+        const_iterator& operator++() { ++index; return *this; }
+        bool operator!=(const const_iterator& other) const { 
+            return index != other.index; 
+        }
+        bool operator==(const const_iterator& other) const { 
+            return index == other.index; 
+        }
+    };
+    
+    using iterator = const_iterator;  // InlineVector is typically immutable after construction
+    
+    const_iterator begin() const { return const_iterator(*this, 0); }
+    const_iterator end() const { return const_iterator(*this, size()); }
 };
 
-struct TemplateInstantiationKey {
-    TypeIndex base_template;                    // The template being instantiated
-    InlineVector<TypeIndex, 4> type_args;       // Type arguments - inline up to 4
-    InlineVector<int64_t, 4> non_type_args;     // Non-type arguments - inline up to 4
+// ============================================================================
+// Memory-Optimized Template Key Design
+// ============================================================================
+// 
+// SIZE ANALYSIS:
+// The monolithic struct would be ~400-500 bytes due to:
+// - Core fields: ~100 bytes (used by 95% of templates)
+// - 7x ChunkedVector empty overhead: ~168 bytes (each ~24 bytes)
+// - Optional<AliasResolution>: ~40-80 bytes (includes another key!)
+// - Various bools/padding: ~20-30 bytes
+// Total: ~350-400 bytes per key, even for simple vector<int>!
+//
+// SOLUTION: Split into Base + Extension pattern
+// - BaseKey: ~100 bytes for common case (vector<int>, array<T, N>, etc.)
+// - Extension: Pointer to additional data only when needed
+// - Estimated savings: 70-80% memory reduction for common templates
+
+// ============================================================================
+// BASE KEY (used for 95% of templates)
+// ============================================================================
+
+struct TemplateInstantiationBaseKey {
+    // Core fields (always present, ~80-100 bytes total)
+    StringHandle template_name;                    // Base template name
+    TypeIndex base_template;                       // Template type index
     
-    bool operator==(const TemplateInstantiationKey&) const = default;
+    // Arguments (fixed inline storage covers ~95% of use cases)
+    InlineVector<TypeIndex, 4> type_args;          // Type arguments
+    InlineVector<int64_t, 4> value_arguments;      // Non-type arguments
+    
+    // Packed flags (bitmask to save space)
+    uint32_t flags;  // Bit 0: has_extension, Bit 1: is_variadic, Bit 2: is_scoped, etc.
+    
+    // Quick scope check (often empty, but frequently needed)
+    StringHandle scope_hash;  // 0 = global scope, otherwise combined namespace+class hash
+    
+    bool operator==(const TemplateInstantiationBaseKey&) const = default;
+};
+
+// ============================================================================
+// EXTENSION DATA (only allocated when needed)
+// ============================================================================
+
+struct TemplateInstantiationExtension {
+    // Variadic templates (only when >4 args)
+    ChunkedVector<TypeIndex> variadic_type_args;
+    ChunkedVector<int64_t> variadic_value_args;
+    
+    // Template template parameters (rare)
+    ChunkedVector<StringHandle> template_template_args;
+    
+    // Detailed scope info (when scope_hash is non-zero)
+    ChunkedVector<StringHandle> namespace_qualifiers;
+    TypeIndex enclosing_class;
+    
+    // Template nesting (rare)
+    TemplateInstantiationBaseKey* parent_key;
+    int nesting_level;
+    
+    // Type aliases (rare)
+    std::unique_ptr<AliasResolution> alias_resolution;
+    
+    // C++20 concepts (rare)
+    ChunkedVector<StringHandle> satisfied_concepts;
+    
+    // Complex expressions (rare)
+    ChunkedVector<NonTypeConstant> evaluated_value_args;
+    
+    // Specialization info (for overload resolution)
+    int specialization_rank;
+    uint16_t args_are_defaults;  // Bitmask for default args (up to 16 args)
+};
+
+// ============================================================================
+// COMPLETE KEY (base + optional extension)
+// ============================================================================
+
+struct TemplateInstantiationKey {
+    TemplateInstantiationBaseKey base;
+    std::unique_ptr<TemplateInstantiationExtension> ext;  // nullptr for 95% of templates
+    
+    // Helper accessors (delegate to base or extension)
+    StringHandle template_name() const { return base.template_name; }
+    bool is_variadic() const { return base.flags & (1u << 1); }
+    ChunkedVector<TypeIndex>& variadic_type_args() { 
+        if (!ext) ext = std::make_unique<TemplateInstantiationExtension>();
+        return ext->variadic_type_args; 
+    }
+    
+    bool operator==(const TemplateInstantiationKey& other) const {
+        if (!(base == other.base)) return false;
+        if (!ext && !other.ext) return true;
+        if (!ext || !other.ext) return false;
+        // Compare extensions...
+        return true;
+    }
+};
+
+// Supporting structures (unchanged)
+struct AliasResolution {
+    StringHandle alias_name;
+    ChunkedVector<StringHandle> alias_params;
+    TemplateInstantiationKey resolved_key;
+};
+
+struct NonTypeConstant {
+    int64_t value;
+    Type type;
+    bool is_evaluated;
 };
 
 struct TemplateInstantiationKeyHash {
     size_t operator()(const TemplateInstantiationKey& key) const {
-        size_t h = std::hash<TypeIndex>{}(key.base_template);
-        for (size_t i = 0; i < key.type_args.size(); ++i) {
-            h ^= std::hash<TypeIndex>{}(key.type_args[i]) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        // Hash base fields (always present)
+        size_t h = std::hash<TypeIndex>{}(key.base.base_template);
+        h ^= std::hash<uint32_t>{}(key.base.flags);
+        
+        for (const auto& type_arg : key.base.type_args) {
+            h ^= std::hash<TypeIndex>{}(type_arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
         }
-        for (size_t i = 0; i < key.non_type_args.size(); ++i) {
-            h ^= std::hash<int64_t>{}(key.non_type_args[i]) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        for (const auto& value_arg : key.base.value_arguments) {
+            h ^= std::hash<int64_t>{}(value_arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
         }
+        
+        // Hash extension fields (only if present)
+        if (key.ext) {
+            for (const auto& type_arg : key.ext->variadic_type_args) {
+                h ^= std::hash<TypeIndex>{}(type_arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            }
+            for (const auto& value_arg : key.ext->variadic_value_args) {
+                h ^= std::hash<int64_t>{}(value_arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            }
+            h ^= std::hash<int>{}(key.ext->specialization_rank);
+        }
+        
         return h;
     }
 };
@@ -151,8 +297,8 @@ bool matchesSignature(const std::vector<TypeSpecifierNode>& params) {
 }
 
 // Proposed approach:
-bool matchesSignature(const std::vector<TypeIndex>& param_types) {
-    return param_types == expected_param_types_;  // Direct vector comparison
+bool matchesSignature(const ChunkedVector<TypeIndex>& param_types) {
+    return param_types == expected_param_types_;  // Direct ChunkedVector comparison
 }
 ```
 
@@ -169,7 +315,7 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 - [ ] Ensure `gTypeInfo[type_index]` is used instead of `gTypesByName.find()`
 
 ### Phase 3: Function Resolution
-- [ ] Store function signatures as `std::vector<TypeIndex>`
+- [ ] Store function signatures as `ChunkedVector<TypeIndex>`
 - [ ] Update overload resolution to compare TypeIndex vectors
 - [ ] Cache function lookup results by signature hash
 
@@ -186,7 +332,8 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 - `gTypesByName`: `std::unordered_map<StringHandle, const TypeInfo*>` - name-based lookup  
 - `TypeIndex`: `size_t` alias - used throughout AST nodes
 - `TypeSpecifierNode::type_index_`: Already stores type index
-- `non_type_template_args_`: Already stores non-type template arguments as `std::vector<int64_t>`
+- `value_arguments`: Already stores non-type template arguments as `std::vector<int64_t>`
+- **Migration Note**: These std::vectors should be changed to `ChunkedVector<T>` for better memory allocation patterns
 
 ## Migration Strategy
 
@@ -202,7 +349,37 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 
 ---
 
+## Memory Optimization Strategy
+
+### Why Split the Key?
+
+**Problem**: A monolithic struct with all fields would be ~400-500 bytes per key, even for simple templates like `vector<int>`.
+
+**Solution**: Base + Extension pattern
+- **BaseKey**: ~80-100 bytes, handles 95% of templates (vector<int>, array<T,N>, etc.)
+- **Extension**: Allocated only when needed (variadic, scoped, nested, etc.)
+- **Memory savings**: 70-80% reduction for common cases
+
+### Field Allocation Strategy
+
+| Data | Location | When Allocated |
+|------|----------|----------------|
+| template_name, base_template | Base | Always |
+| type_args, value_arguments (≤4) | Base | Always |
+| scope_hash (quick check) | Base | Always (0 if global scope) |
+| flags bitmask | Base | Always |
+| Variadic args (>4) | Extension | Only if >4 args |
+| Template template params | Extension | Only if present |
+| Namespace qualifiers | Extension | Only if non-global scope |
+| Parent key, nesting level | Extension | Only for nested templates |
+| Alias resolution | Extension | Only if alias |
+| Concepts | Extension | Only if requires clause |
+| Complex expressions | Extension | Only if non-trivial constexpr |
+| Specialization rank | Extension | Only for partial specs |
+
 ## Edge Cases and Handling Strategies
+
+Each edge case below indicates whether fields are in **Base** or **Extension**. The implementation lazily allocates the Extension only when edge case fields are needed.
 
 ### Critical Edge Cases
 
@@ -212,6 +389,10 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 - Need to track template name and nested parameters
 - Example: `template<typename> class Op, std::array<int, Op>`
 
+**Related Fields**:
+- `template_template_args` - Stores names of template template parameters (e.g., "Container", "Allocator")
+- `template_template_param_lists` - Stores the parameter lists for each template template arg
+
 **Current handling**:
 ```cpp
 // TemplateTypeArg already has:
@@ -219,21 +400,20 @@ bool is_template_template_arg;     // true if this is a template template argume
 StringHandle template_name_handle;  // name of the template
 ```
 
-**Proposed handling**:
-- Add `template_template_name` field to TemplateInstantiationKey
-- Include template's parameter list in key for disambiguation
-- Store `StringHandle` of template name in key
-
-**Updated key structure**:
+**Implementation**:
 ```cpp
-struct TemplateInstantiationKey {
-    StringHandle template_name;                    // Base template name
-    InlineVector<TypeIndex, 4> type_args;       // Type arguments
-    InlineVector<int64_t, 4> non_type_args;     // Non-type arguments
-    // NEW: Template template parameters
-    std::vector<StringHandle> template_template_args;   // Names of template template params
-    std::vector<std::vector<TypeIndex>> template_template_param_lists;  // Their parameters
-};
+TemplateInstantiationKey key;
+key.template_name = StringTable::getOrInternStringHandle("my_template");
+
+// For: template<template<typename> class Container>
+//      struct MyClass { ... };
+if (arg.is_template_template_arg) {
+    key.template_template_args.push_back(arg.template_name_handle);
+    // Also store the template's own parameters if needed
+    ChunkedVector<TypeIndex> params;
+    // ... populate params ...
+    key.template_template_param_lists.push_back(std::move(params));
+}
 ```
 
 #### 2. Dependent Types (T::iterator, T::value_type)
@@ -242,6 +422,10 @@ struct TemplateInstantiationKey {
 - Need to preserve dependency information through instantiation
 - Example: `template<typename T> using iterator = typename T::iterator;`
 
+**Related Fields**:
+- `type_args` - After resolution, stores the concrete TypeIndex (e.g., int::iterator -> TypeIndex)
+- Dependent types are resolved BEFORE creating the key, so the key always contains concrete TypeIndex values
+
 **Current handling**:
 ```cpp
 // TemplateTypeArg already supports:
@@ -249,13 +433,7 @@ bool is_dependent;      // true if this type depends on uninstantiated template 
 StringHandle dependent_name;  // name of the dependent template parameter or type name
 ```
 
-**Proposed handling**:
-- Don't create TypeIndex for dependent types
-- Keep dependent type as unresolved until instantiation
-- During instantiation, substitute dependent names with concrete types
-- TemplateInstantiationKey should have separate handling for dependent vs resolved
-
-**Implementation strategy**:
+**Implementation Strategy**:
 ```cpp
 // During template definition:
 TemplateTypeArg arg;
@@ -266,36 +444,41 @@ arg.dependent_name = StringTable::getOrInternStringHandle("T::iterator");
 // 1. Substitute: arg.dependent_name = "int::iterator"
 // 2. Lookup type_index for "int::iterator"
 // 3. Store in type_args vector as TypeIndex
+TemplateInstantiationKey key;
+key.type_args.push_back(resolved_type_index);  // Concrete type, not dependent
 ```
+
+**Key Design Principle**: TemplateInstantiationKey ALWAYS contains resolved, concrete types. Dependent type resolution happens during instantiation BEFORE the key is created.
 
 #### 3. Partial Specializations with Dependent Patterns (template<typename T> struct Foo<T*>)
 **Problem**: Template arguments themselves are type patterns, not concrete types
 - `T*` where T is a template parameter is a dependent pattern
-- TypeIndex for parameter, but pointer applies to parameter
-- Example: `template<typename T> struct vector<T*>` - T is parameter, `T*` is dependent
+- Pattern matching happens BEFORE creating the instantiation key
+- Example: `template<typename T> struct vector<T*>` - T is parameter, `T*` is pattern
 
-**Current handling**:
+**Related Fields**:
+- `type_args` - Stores the final resolved concrete types after pattern matching
+- `specialization_rank` - Used to select the most specialized matching partial specialization
+- `is_partial_specialization` - Marks if this is a partial specialization vs primary template
+
+**Pattern Matching Phase** (BEFORE key creation):
 ```cpp
-// TemplateTypeArg tracks pointer_depth and is_dependent
-size_t pointer_depth;  // 0 = not pointer, 1 = T*, 2 = T**, etc.
-bool is_dependent;     // true if depends on uninstantiated parameters
-```
-
-**Proposed handling**:
-- For partial specializations, store pointer/reference info separately
-- In TemplateInstantiationKey, track which arguments are patterns vs concrete
-- Only resolve dependent patterns during instantiation
-
-**Updated key structure**:
-```cpp
-struct TemplateTypeArgInfo {
-    TypeIndex type_index;           // For concrete types
-    bool is_dependent_pattern;      // For patterns like T*, T&, const T&
-    size_t pattern_pointer_depth;     // Pointer depth in pattern
-    size_t pattern_array_rank;       // Array dimensions in pattern
-    StringHandle dependent_base;     // For T::value_type
+// TemplateTypeArg tracks pattern information during matching
+struct TemplateTypeArg {
+    TypeIndex type_index;           // Base type (e.g., T in T*)
+    size_t pointer_depth;           // 0 = T, 1 = T*, 2 = T**, etc.
+    bool is_dependent;              // true if depends on template parameters
+    // ... other fields
 };
+
+// During pattern matching for vector<T*> with T=int:
+// 1. Pattern arg: pointer_depth=1, base_type=T (Type::UserDefined)
+// 2. Concrete arg: pointer_depth=1, base_type=int (Type::Int)
+// 3. Match succeeds: T=int with pointer modifier
+// 4. Key stores: type_args[0] = TypeIndex for int*
 ```
+
+**Key Design**: Pattern matching uses TemplateTypeArg with modifiers. Once matched, the key stores only the resolved TypeIndex in `type_args`. The `specialization_rank` field helps select between multiple matching partial specializations.
 
 #### 4. Recursive Templates (Factorial<N>, Fibonacci<N>)
 **Problem**: Templates that instantiate themselves
@@ -303,15 +486,14 @@ struct TemplateTypeArgInfo {
 - Need recursion depth detection and termination
 - Example: `template<int N> struct Factorial { static constexpr int value = N * Factorial<N-1>::value; };`
 
-**Current handling**:
-- Parser tracks `current_template_param_names_` for detecting recursive patterns
-- Template instantiation doesn't explicitly detect cycles
+**Related Fields**:
+- The complete `TemplateInstantiationKey` itself is used for cycle detection in a `RecursionGuard`
+- `value_arguments` stores N, which decreases in recursive instantiations (Factorial<5> -> Factorial<4> -> ...)
 
-**Proposed handling**:
+**Implementation**:
 ```cpp
-// Add recursion tracking to TemplateRegistry:
 struct RecursionGuard {
-    std::unordered_set<template_instantiation_key> in_progress_;
+    std::unordered_set<TemplateInstantiationKey, TemplateInstantiationKeyHash> in_progress_;
     
     bool enter(const TemplateInstantiationKey& key) {
         if (in_progress_.contains(key)) {
@@ -326,19 +508,24 @@ struct RecursionGuard {
     }
 };
 
-// Usage in template instantiation:
+// Usage:
+TemplateInstantiationKey key;
+key.template_name = "Factorial"_sh;
+key.value_arguments.push_back(5);  // Factorial<5>
+
 RecursionGuard guard;
 if (!guard.enter(key)) {
     throw std::runtime_error("Recursive template instantiation detected");
 }
-// ... instantiate template ...
+// Key uniqueness ensures Factorial<5> != Factorial<4> != Factorial<3>...
+// Recursion terminates naturally when reaching Factorial<0> (base case)
 guard.exit(key);
 ```
 
 **Special cases**:
-- Base case templates (e.g., `Factorial<0>`) - pre-instantiate these
+- Base case templates (e.g., `Factorial<0>`) - pre-instantiate and cache
 - Maximum recursion depth (e.g., 1000) - prevent stack overflow
-- Caching of base cases to avoid repeated recursion
+- The key naturally prevents false cycles because Factorial<5> and Factorial<4> have different `value_arguments`
 
 #### 5. Variadic Templates with Unlimited Arguments (template<typename... Args>)
 **Problem**: Parameter packs can have unlimited arguments
@@ -353,39 +540,28 @@ bool is_pack;  // true if this represents a parameter pack (typename... Args)
 ```
 
 **Proposed handling**:
-- Use std::vector for unlimited parameter packs
+- Use ChunkedVector for unlimited parameter packs (better memory allocation than std::vector)
 - Keep InlineVector for small optimization when pack is small (<=4 args)
 - Track pack expansion count for hashing
 
-**Updated key structure**:
-```cpp
-struct TemplateInstantiationKey {
-    StringHandle template_name;
-    InlineVector<TypeIndex, 4> type_args;       // For fixed args
-    InlineVector<int64_t, 4> non_type_args;     // For fixed args
-    // NEW: For variadic args
-    std::vector<TypeIndex> variadic_type_args;       // Unlimited pack
-    std::vector<int64_t> variadic_non_type_args; // Unlimited pack
-    size_t variadic_arg_count;                    // Number of pack args
-};
-```
+**Related Fields**:
+- `variadic_type_args` - Stores type packs (e.g., int, float, double in tuple<int, float, double>)
+- `variadic_value_args` - Stores non-type packs (e.g., 1, 2, 3 in int_sequence<1, 2, 3>)
+- `variadic_arg_count` - Total count for hash function
 
-**Hash function update**:
+**Implementation**:
 ```cpp
-size_t operator()(const TemplateInstantiationKey& key) const {
-    // Hash fixed args as before
-    size_t h = std::hash<StringHandle>{}(key.template_name);
-    // ... hash inline vectors ...
-    
-    // Add variadic args to hash
-    for (const auto& type_arg : key.variadic_type_args) {
-        h ^= std::hash<TypeIndex>{}(type_arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    }
-    for (const auto& value_arg : key.variadic_non_type_args) {
-        h ^= std::hash<int64_t>{}(value_arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    }
-    h ^= std::hash<size_t>{}(key.variadic_arg_count);
-    return h;
+// Example: tuple<int, float, double>
+TemplateInstantiationKey key;
+key.template_name = "tuple"_sh;
+key.variadic_type_args.push_back(int_type_index);
+key.variadic_type_args.push_back(float_type_index);
+key.variadic_type_args.push_back(double_type_index);
+key.variadic_arg_count = 3;
+
+// Hash includes all variadic args:
+for (const auto& type_arg : key.variadic_type_args) {
+    h ^= std::hash<TypeIndex>{}(type_arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
 }
 ```
 
@@ -395,24 +571,27 @@ size_t operator()(const TemplateInstantiationKey& key) const {
 - Each level needs its own instantiation key
 - Dependencies between levels
 
-**Current handling**:
-- Template nesting tracked by `parsing_template_class_` stack
-- Each level has its own template parameter context
+**Related Fields**:
+- `parent_key` - Pointer to parent template's instantiation key
+- `nesting_level` - Depth in the nesting hierarchy (0 = top-level)
 
-**Proposed handling**:
-- Each template level gets its own TemplateInstantiationKey
-- Parent keys stored as dependencies
-- Cache should include hierarchy information
-
-**Updated key structure**:
+**Implementation**:
 ```cpp
-struct TemplateInstantiationKey {
-    StringHandle template_name;
-    InlineVector<TypeIndex, 4> type_args;
-    InlineVector<int64_t, 4> non_type_args;
-    // NEW: Template nesting information
-    TemplateInstantiationKey* parent_key;  // Parent instantiation (for nested templates)
-    int nesting_level;                      // 0 = top-level, 1 = one level nested, etc.
+// Outer template: Foo<T*>
+TemplateInstantiationKey outer_key;
+outer_key.template_name = "Foo"_sh;
+outer_key.type_args.push_back(int_pointer_type_index);
+outer_key.nesting_level = 0;
+outer_key.parent_key = nullptr;
+
+// Inner template: Foo<T*>::Inner<U>
+TemplateInstantiationKey inner_key;
+inner_key.template_name = "Inner"_sh;
+inner_key.type_args.push_back(some_type_index);
+inner_key.nesting_level = 1;
+inner_key.parent_key = &outer_key;  // Link to parent
+
+// This creates a chain: inner -> outer, enabling proper dependency tracking
 };
 ```
 
@@ -422,85 +601,85 @@ struct TemplateInstantiationKey {
 - Need to resolve alias to underlying template
 - Example: `template<typename T> using Ptr = T*; template<typename T> struct Container { using type = Ptr<T>; };`
 
-**Current handling**:
-- `get_instantiated_class_name()` builds string names including aliases
-- TemplateTypeArg stores `is_template_template_arg` but not alias chain
-
-**Proposed handling**:
-- Track alias chains separately from direct instantiations
-- Alias resolution should create new TemplateInstantiationKey pointing to underlying template
-- Store alias resolution result in cache
+**Related Fields**:
+- `alias_resolution` (optional) - Stores the chain: alias -> resolved key
+- `is_alias_instantiation` - Flag to quickly check if this is an alias
 
 **Implementation**:
 ```cpp
-struct AliasResolution {
-    StringHandle alias_name;
-    std::vector<StringHandle> alias_params;  // Parameters of the alias
-    TemplateInstantiationKey resolved_key;      // The key this alias resolves to
+// For: template<typename T> using Vec = std::vector<T>;
+//      Vec<int> x;
+// Should resolve to: std::vector<int>
+
+TemplateInstantiationKey alias_key;
+alias_key.template_name = "Vec"_sh;
+alias_key.type_args.push_back(int_type_index);
+alias_key.is_alias_instantiation = true;
+
+// Record what this alias resolves to
+alias_key.alias_resolution = AliasResolution{
+    .alias_name = "Vec"_sh,
+    .alias_params = {int_type_index},  // Vec<int>
+    .resolved_key = underlying_key     // std::vector<int>
 };
 
-// In TemplateInstantiationKey:
-struct TemplateInstantiationKey {
-    StringHandle template_name;
-    // ... other fields ...
-    // NEW: Alias tracking
-    std::optional<AliasResolution> alias_resolution;
-    bool is_alias_instantiation;  // True if this came from an alias
-};
+// Cache both keys pointing to same instantiation:
+// cache[Vec<int>] -> instantiation
+// cache[vector<int>] -> same instantiation
 ```
 
 #### 8. Template Arguments with CV Qualifiers (const T, volatile T, const volatile T)
-**Problem**: CV qualifiers on template arguments
-- `template<typename T> struct Foo { void bar(const T&); }`
-- TypeIndex should capture CV qualifiers
-- CV qualifiers affect type matching
+**Problem**: CV qualifiers on template arguments affect type identity
+- `Foo<const int>` is different from `Foo<int>`
+- CV qualifiers must be part of the key
 
-**Current handling**:
+**Related Fields**:
+- `type_args` - The TypeIndex captures the fully qualified type including CV qualifiers
+- Type system ensures `const int` has different TypeIndex than `int`
+
+**Implementation**:
 ```cpp
-// TemplateTypeArg has:
-CVQualifier cv_qualifier;  // const/volatile qualifiers
-```
+// Type system already handles CV qualifiers:
+// const int -> TypeIndex A
+// int -> TypeIndex B  (A != B)
 
-**Proposed handling**:
-- CV qualifiers already supported in TemplateTypeArg
-- Ensure they're included in TemplateInstantiationKey comparison
-- Hash function should include cv_qualifier
+TemplateInstantiationKey key1;
+key1.template_name = "Foo"_sh;
+key1.type_args.push_back(const_int_type_index);  // const int
 
-**Hash function update**:
-```cpp
-// Already includes cv_qualifier:
-hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.cv_qualifier)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+TemplateInstantiationKey key2;
+key2.template_name = "Foo"_sh;
+key2.type_args.push_back(int_type_index);        // int
 
-// Ensure TemplateInstantiationKey operator== compares CV qualifiers:
-return base_type == other.base_type &&
-       type_index_match &&
-       cv_qualifier == other.cv_qualifier &&  // Should already be there
-       // ... other comparisons ...
+// key1 != key2 because type_args differ
+// Hash automatically differentiates via TypeIndex hash
 ```
 
 #### 9. Template Arguments with Pointer/Reference Levels (T**, T&&, T&*)
 **Problem**: Complex pointer/reference combinations
-- `template<typename T> struct Foo { T*** ptr; T&& ref; };`
-- Need to track multi-level pointers accurately
-- References to pointers, pointers to references
+- `Foo<T**>` is different from `Foo<T*>` and `Foo<T>`
+- Must track multi-level pointers accurately
 
-**Current handling**:
+**Related Fields**:
+- `type_args` - TypeIndex captures complete type with pointer/reference levels
+- Type system treats `int**`, `int*`, `int` as distinct types with different TypeIndex values
+
+**Implementation**:
 ```cpp
-// TemplateTypeArg has:
-size_t pointer_depth;         // 0 = not pointer, 1 = T*, 2 = T**, etc.
-bool is_reference;           // true if this is a reference
-bool is_rvalue_reference;    // true if this is an rvalue reference (&&)
+// Type system already tracks:
+// int** -> TypeIndex A
+// int*  -> TypeIndex B  
+// int&  -> TypeIndex C
+// int   -> TypeIndex D
+// All are distinct!
+
+TemplateInstantiationKey key;
+key.template_name = "Container"_sh;
+key.type_args.push_back(int_pointer_pointer_type_index);  // T = int**
+
+// Key naturally differentiates all combinations:
+// Container<int**> != Container<int*> != Container<int&> != Container<int>
 ```
-
-**Proposed handling**:
-- Current fields already handle these cases correctly
-- Ensure TemplateInstantiationKey includes these in comparison
-- Special case: pointers to member functions `T::*`
-
-**Test cases**:
-- `T*` - simple pointer (pointer_depth=1)
-- `T**` - double pointer (pointer_depth=2)
-- `T&&` - rvalue reference (is_rvalue_reference=true)
 - `T&` - lvalue reference (is_reference=true)
 - `T**&` - reference to pointer (pointer_depth=2, is_reference=true)
 - `T::*` - pointer to member (member_pointer_kind != None)
@@ -509,65 +688,68 @@ bool is_rvalue_reference;    // true if this is an rvalue reference (&&)
 **Problem**: Compile-time constant expressions as template arguments
 - `template<int N = sizeof(T)> struct Foo;`
 - `template<int N = alignof(T)> struct Bar;`
-- Need to evaluate expression to constant value
+- Need to evaluate expression to constant value before creating key
 
-**Current handling**:
-```cpp
-// TemplateTypeArg has:
-int64_t value;        // For non-type template parameters
-Type value_type;       // For non-type arguments: type of the value (bool, int, etc.)
-```
-
-**Proposed handling**:
-- Store evaluated constant expression in TemplateInstantiationKey
-- Don't store expression AST node (only store evaluated value)
-- Evaluate during template definition, not during instantiation
+**Related Fields**:
+- `value_arguments` - Simple evaluated values (int64_t)
+- `evaluated_value_args` - Complex evaluated expressions with type info
+- `unevaluated_expressions` - Fallback if evaluation fails (SFINAE)
 
 **Implementation**:
 ```cpp
-struct NonTypeConstant {
-    int64_t value;          // Evaluated constant value
-    Type type;               // Type of the expression (int, bool, etc.)
-    bool is_evaluated;      // True if successfully evaluated
-};
+// For: template<int N = sizeof(T)> struct Foo {};
+//      Foo<> x;  // Uses sizeof(T) as N
 
-// In TemplateInstantiationKey:
-struct TemplateInstantiationKey {
-    // ... other fields ...
-    // NEW: For complex non-type args
-    std::vector<NonTypeConstant> evaluated_non_type_args;
-    std::vector<ASTNode> unevaluated_expressions;  // Fallback if evaluation failed
-};
+// Step 1: Evaluate the expression
+auto result = ConstExprEvaluator::evaluate(sizeof_expr);
+
+TemplateInstantiationKey key;
+key.template_name = "Foo"_sh;
+
+if (result.has_value()) {
+    // Simple case: store the evaluated value
+    key.value_arguments.push_back(result->value);
+} else if (is_complex_expression) {
+    // Complex case: store full evaluation info
+    key.evaluated_value_args.push_back(NonTypeConstant{
+        .value = result->value,
+        .type = result->type,
+        .is_evaluated = true
+    });
+} else {
+    // Evaluation failed: store for SFINAE
+    key.unevaluated_expressions.push_back(expr_ast);
+}
 ```
 
 #### 11. Function Type Template Arguments (template<typename R, typename... Args> R(*)(Args...))
 **Problem**: Template arguments representing function types
 - Function signatures as template parameters
-- Complex representation: return type + parameter types
 - Example: `template<typename T> struct FunctionPtr { using type = void(*)(T*); };`
 
-**Current handling**:
-- Function types parsed as TypeSpecifierNode with `type() == Type::Function`
-- TypeIndex assigned to function types
-
-**Proposed handling**:
-- Function types should have their own TypeIndex range
-- Store function signature in TypeInfo
-- TemplateTypeArg can reference function TypeIndex
+**Related Fields**:
+- `type_args` - Stores TypeIndex for function types
+- Function types have unique TypeIndex just like any other type
 
 **Implementation**:
 ```cpp
-struct FunctionTypeInfo {
-    TypeIndex return_type;
-    std::vector<TypeIndex> parameter_types;
-    CallingConvention calling_convention;
-    bool is_variadic;
+// Function types get their own TypeIndex in gTypeInfo
+// void(*)(int*, float&) -> TypeIndex 1234 (unique)
+
+TemplateInstantiationKey key;
+key.template_name = "FunctionPtr"_sh;
+key.type_args.push_back(func_type_index);  // TypeIndex for void(*)(T*)
+
+// The TypeInfo for function types stores signature details:
+struct TypeInfo {
+    Type type;  // Type::Function
+    std::optional<FunctionTypeInfo> function_info;  // Signature details
 };
 
-// In TypeInfo (gTypeInfo):
-struct TypeInfo {
-    // ... existing fields ...
-    std::optional<FunctionTypeInfo> function_info;  // NEW: For function types
+struct FunctionTypeInfo {
+    TypeIndex return_type;              // void
+    ChunkedVector<TypeIndex> param_types;  // [int*, float&]
+    bool is_variadic;
 };
 ```
 
@@ -575,77 +757,65 @@ struct TypeInfo {
 **Problem**: Array types with compile-time dimensions
 - `template<typename T, int N> struct Array { T data[N]; };`
 - Multiple dimensions: `T[N][M]`
-- Need to track dimensions and sizes
 
-**Current handling**:
+**Related Fields**:
+- `type_args` - TypeIndex captures the complete array type with dimensions
+- Array types like `int[5][10]` get unique TypeIndex values
+
+**Implementation**:
 ```cpp
-// TemplateTypeArg has:
-bool is_array;                    // true if this is an array
-std::optional<size_t> array_size;  // Known array size if available
-```
+// Type system creates unique TypeIndex per array signature:
+// int[5]     -> TypeIndex 100
+// int[10]    -> TypeIndex 101
+// int[5][10] -> TypeIndex 102
 
-**Proposed handling**:
-- Current structure supports single-dimensional arrays
-- For multi-dimensional, store vector of sizes
-- Array types get unique TypeIndex per dimension signature
+TemplateInstantiationKey key;
+key.template_name = "Array"_sh;
+key.type_args.push_back(array_type_index);  // Complete array type
 
-**Updated key structure**:
-```cpp
-struct TemplateTypeArg {
-    // ... existing fields ...
-    bool is_array;
-    // NEW: For multi-dimensional arrays
-    std::vector<size_t> array_dimensions;  // All dimensions: [N, M] for T[N][M]
-};
-
-// Alternative: Create TypeIndex per unique array signature
-// e.g., Array_int_5_10 is different from Array_int_5
+// For template: template<typename T, int N> struct Array {}
+//              Array<int[5][10], 100>
+key.type_args.push_back(array_of_int_5_10_index);
+key.value_arguments.push_back(100);  // N = 100
 ```
 
 #### 13. Lambda Capture Types (decltype(lambda), closure types)
 **Problem**: Lambda types as template arguments
-- Lambda types generated by compiler, not user-defined
-- Need to capture type in instantiation key
-- Example: `template<typename F> void call(F f); call([](int x) { return x; });`
+- `template<typename F> void call(F f); call([](int x) { return x; });`
 
-**Current handling**:
-- Lambda types assigned TypeIndex when created
-- Lambda types are user-defined types in TypeInfo
+**Related Fields**:
+- `type_args` - Stores TypeIndex for lambda types (just like any other type)
 
-**Proposed handling**:
-- Lambda types should be treated like any other user-defined type
-- No special handling needed if TypeIndex is assigned correctly
-- Ensure lambda closure types are stable across compilation
+**Implementation**:
+```cpp
+// Lambdas are treated as regular user-defined types:
+// auto lambda = [](int x) { return x; };
+// TypeIndex lambda_type = getOrCreateType("<lambda_123>_main_line_42");
 
-**Potential issue**:
-- Lambda types in different scopes might get different TypeIndex
-- Template instantiation with lambda might not find same TypeIndex
-- Solution: Use mangled lambda name as stable key
+TemplateInstantiationKey key;
+key.template_name = "call"_sh;
+key.type_args.push_back(lambda_type_index);
+
+// No special handling needed - lambdas work via TypeIndex like any other type
+// Key ensures: call<lambda_123> != call<lambda_456>
+```
 
 #### 14. SFINAE and Failed Instantiations
 **Problem**: Substitution failures should not create cache entries
 - `template<typename T> struct SFINAE<T, typename T::iterator>` - fails if T has no iterator
-- Failed instantiations shouldn't pollute cache
-- But should cache that certain arguments cause failure
 
-**Current handling**:
-- SFINAE context tracked by `in_sfinae_context_`
-- Failed instantiations don't cache (I think?)
+**Related Fields**:
+- `unevaluated_expressions` - Stores failed expression evaluations
+- All key fields participate in the hash for failed instantiation cache
 
-**Proposed handling**:
+**Implementation**:
 ```cpp
-struct TemplateInstantiationResult {
-    bool success;
-    std::optional<TypeIndex> type_index;  // On success
-    std::string error_message;              // On failure
-};
-
-// Separate cache for failed instantiations:
-std::unordered_map<TemplateInstantiationKey, std::string> gFailedInstantiations;
+// Separate cache for failed instantiations
+std::unordered_map<TemplateInstantiationKey, std::string, TemplateInstantiationKeyHash> gFailedInstantiations;
 
 // In TemplateRegistry:
-std::optional<ASTNode> tryGetInstantiation(const TemplateInstantiationKey& key) const {
-    // Check cache first
+std::optional<ASTNode> tryGetInstantiation(const TemplateInstantiationKey& key) {
+    // Check success cache first
     if (auto it = instantiations_.find(key); it != instantiations_.end()) {
         return it->second;
     }
@@ -662,74 +832,75 @@ std::optional<ASTNode> tryGetInstantiation(const TemplateInstantiationKey& key) 
 
 #### 15. Template Instantiation in Different Scopes (namespace::Template vs class member)
 **Problem**: Same template name in different scopes
-- `struct Foo { template<typename T> struct Bar; };`
-- `namespace Ns { template<typename T> struct Bar; };`
-- Different instantiations, should be separate cache entries
+- `struct Foo { template<typename T> struct Bar; };` vs `namespace Ns { template<typename T> struct Bar; };`
 
-**Current handling**:
-- Namespaces tracked by NamespaceRegistry
-- Class members in StructTypeInfo
+**Related Fields**:
+- `namespace_qualifiers` - Namespace path (e.g., ["std", "detail"])
+- `enclosing_class` - TypeIndex of enclosing class for member templates
+- `scope_unique_key` - Combined hash for quick comparison
 
-**Proposed handling**:
-- Include scope/namespace in TemplateInstantiationKey
-- Differentiate instantiations by scope context
-
-**Updated key structure**:
+**Implementation**:
 ```cpp
-struct TemplateInstantiationKey {
-    StringHandle template_name;
-    InlineVector<TypeIndex, 4> type_args;
-    InlineVector<int64_t, 4> non_type_args;
-    // NEW: Scope information
-    std::vector<StringHandle> namespace_qualifiers;  // e.g., ["std", "vector"] for std::vector
-    TypeIndex enclosing_class;                  // For class member templates
-    StringHandle scope_unique_key;               // Combines namespace + class for uniqueness
-};
+// std::vector<int>
+TemplateInstantiationKey key1;
+key1.template_name = "vector"_sh;
+key1.namespace_qualifiers = {"std"};  // std::vector
+key1.type_args.push_back(int_type_index);
+
+// Foo::vector<int> (class member template)
+TemplateInstantiationKey key2;
+key2.template_name = "vector"_sh;
+key2.enclosing_class = foo_class_type_index;  // Foo::vector
+key2.type_args.push_back(int_type_index);
+
+// Different keys -> separate cache entries
+assert(key1 != key2);  // Different scopes!
 ```
 
 #### 16. Out-of-Line Template Member Definitions (template<typename T> void Foo<T>::method())
 **Problem**: Template members defined outside class
-- Instantiation happens with template arguments
-- But definition location is outside class
-- Need to track both declaration and definition locations
+- Instantiation happens with template arguments but definition is elsewhere
 
-**Current handling**:
-- OutOfLineMemberFunction struct tracks body position
-- Template member functions registered in TemplateRegistry
+**Related Fields**:
+- `enclosing_class` - Links out-of-line definition to its class
 
-**Proposed handling**:
-- TemplateInstantiationKey should work for out-of-line definitions
-- No special handling needed if TypeIndex is used consistently
-- Ensure member function gets correct instantiation
+**Implementation**:
+```cpp
+// Out-of-line: template<typename T> void Foo<T>::method() { ... }
+TemplateInstantiationKey key;
+key.template_name = "method"_sh;
+key.enclosing_class = foo_template_type_index;  // Foo<T>
+key.type_args.push_back(concrete_type_index);   // T = int
+
+// Key links out-of-line definition to the class instantiation
+```
 
 #### 17. Template Instantiation with constexpr Evaluation
 **Problem**: Constant evaluation during instantiation
 - `template<int N> struct Array { static constexpr int size = N * 2; };`
-- Template argument might be constexpr expression, not just literal
-- Need to evaluate expressions before creating key
 
-**Current handling**:
-- ConstExprEvaluator handles constant expressions
-- Template instantiation calls evaluator
-
-**Proposed handling**:
-- Ensure TemplateInstantiationKey stores evaluated values, not expressions
-- All non-type template args must be reduced to constants before caching
-- Evaluation errors should propagate to template instantiation failure
+**Related Fields**:
+- `value_arguments` - Stores evaluated constant values
+- `evaluated_value_args` - For complex expressions with type info
 
 **Implementation**:
 ```cpp
-// During template instantiation:
-for (size_t i = 0; i < template_args.size(); ++i) {
-    if (template_args[i].is_value && !template_args[i].is_evaluated) {
-        auto result = ConstExprEvaluator::evaluate(template_args[i].value_expression);
-        if (!result.has_value()) {
-            return TemplateInstantiationResult::failure(result.error());
-        }
-        template_args[i].value = result.value();
-        template_args[i].is_evaluated = true;
+// Step 1: Evaluate all expressions to constants
+for (auto& arg : template_args) {
+    if (arg.is_value && !arg.is_evaluated) {
+        auto result = ConstExprEvaluator::evaluate(arg.expression);
+        if (!result) return failure;  // SFINAE
+        arg.value = result->value;
+        arg.is_evaluated = true;
     }
 }
+
+// Step 2: Create key with evaluated values only
+TemplateInstantiationKey key;
+key.template_name = "Array"_sh;
+key.value_arguments.push_back(evaluated_n);  // N = 10 (from N*2 where N=5)
+
+// Key contains only constants, never expressions
 
 // Now create TemplateInstantiationKey with evaluated values
 ```
@@ -737,72 +908,51 @@ for (size_t i = 0; i < template_args.size(); ++i) {
 #### 18. Template Instantiation with Concepts (template<typename T> requires Integral<T>)
 **Problem**: Requires clauses affect instantiation
 - Templates can't be instantiated if concept doesn't satisfy
-- Requires clause needs to be part of instantiation key
 - Example: `template<typename T> requires std::is_integral_v<T> struct Foo;`
 
-**Current handling**:
-- Concepts tracked in ConceptRegistry
-- Requires clauses stored in template nodes
+**Related Fields**:
+- `satisfied_concepts` - List of concepts that must be satisfied
+- `concepts_evaluated` - Flag indicating concept check completed
 
-**Proposed handling**:
-- Include satisfied concepts in TemplateInstantiationKey
-- Failed concept satisfaction shouldn't create cache entry
-- Concept evaluation happens before instantiation
-
-**Updated key structure**:
+**Implementation**:
 ```cpp
-struct TemplateInstantiationKey {
-    StringHandle template_name;
-    InlineVector<TypeIndex, 4> type_args;
-    InlineVector<int64_t, 4> non_type_args;
-    // NEW: Concept satisfaction
-    std::vector<StringHandle> satisfied_concepts;  // All concepts that must be satisfied
-    bool concepts_evaluated;                // True if concepts checked
-};
+// Step 1: Evaluate concepts
+TemplateInstantiationKey key;
+key.template_name = "Foo"_sh;
+key.type_args.push_back(int_type_index);
 
-// Instantiation flow:
-// 1. Evaluate concept satisfaction
-// 2. If fails: cache as failed instantiation (see edge case #14)
-// 3. If succeeds: proceed with instantiation
+// Check if T satisfies Integral concept
+if (ConceptRegistry::satisfies(int_type_index, "Integral")) {
+    key.satisfied_concepts.push_back("Integral"_sh);
+    key.concepts_evaluated = true;
+    // Proceed with instantiation
+} else {
+    // SFINAE: Don't cache, don't instantiate
+    return std::nullopt;
+}
 ```
 
 #### 19. Default Template Arguments Not Provided (template<typename T = int> struct Foo)
 **Problem**: Default arguments vs explicit arguments
-- Template instantiation key shouldn't treat default args as explicit
 - Need to distinguish `Foo<int>` vs `Foo<>` (using default)
-- Example: `template<typename T = int> struct Foo; Foo<> x;` uses default int
 
-**Current handling**:
-- Default arguments stored in template parameter nodes
-- When args not provided, defaults are used
-
-**Proposed handling**:
-- TemplateInstantiationKey needs flag for each arg: was default provided or explicit
-- Or: Default args filled in before creating key
-- Two separate cache entries for `Foo<int>` vs `Foo<>`
+**Related Fields**:
+- `args_are_defaults` - Bitmask tracking which arguments used defaults
 
 **Implementation**:
 ```cpp
-struct TemplateInstantiationKey {
-    StringHandle template_name;
-    InlineVector<TypeIndex, 4> type_args;
-    InlineVector<int64_t, 4> non_type_args;
-    // NEW: Track which args are defaults
-    std::bitset<8> args_are_defaults;  // Bit N = true if arg N was defaulted
-};
+TemplateInstantiationKey key;
+key.template_name = "Foo"_sh;
+key.type_args.push_back(int_type_index);
 
-// During key creation:
-for (size_t i = 0; i < template_params.size(); ++i) {
-    if (i < provided_args.size()) {
-        // Explicit argument
-        key.type_args[i] = provided_args[i];
-        key.args_are_defaults[i] = false;
-    } else {
-        // Use default argument
-        key.type_args[i] = template_params[i].default_type;
-        key.args_are_defaults[i] = true;
-    }
-}
+// For: Foo<> (using default int)
+key.args_are_defaults[0] = true;  // Arg 0 was defaulted
+
+// For: Foo<int> (explicit)
+key.args_are_defaults[0] = false;  // Arg 0 was explicit
+
+// Different keys -> separate cache entries
+// This allows different behavior for explicit vs defaulted args
 ```
 
 #### 20. Template Instantiation Overload Resolution
@@ -822,54 +972,90 @@ for (size_t i = 0; i < template_params.size(); ++i) {
   3. Cache separate entries for each overload
 - Instantiation key should include specialization depth
 
+**Related Fields**:
+- `base.scope_hash` - For quick scope filtering (in Base)
+- `ext->specialization_rank` - Higher = more specialized (in Extension, allocated for partial specs)
+
 **Implementation**:
 ```cpp
-struct TemplateInstantiationKey {
-    // ... existing fields ...
-    // NEW: Specialization ranking
-    int specialization_rank;  // 0 = primary, 1 = more specialized, etc.
-    bool is_partial_specialization;  // True if this is a partial spec
-};
+// Primary template: template<typename T> struct Foo {};
+// specialization_rank = 0 (in base struct, no extension needed)
+
+// Partial specialization: template<typename T> struct Foo<T*> {};
+// extension->specialization_rank = 1 (extension allocated)
 
 // Overload resolution:
-std::vector<ASTNode> findInstantiation(const std::string& name, 
-                                       const std::vector<TemplateTypeArg>& args) {
-    std::vector<TemplateInstantiationKey> candidates;
-    
-    // Find all matching instantiations
-    for (const auto& [key, node] : gTemplateRegistry.instantiations_) {
-        if (key.template_name == name) {
-            if (matchesArgs(key, args)) {
-                candidates.push_back({key, node});
-            }
-        }
+ChunkedVector<std::pair<TemplateInstantiationKey, ASTNode>> candidates;
+
+// Find all matching keys with same scope
+for (const auto& [key, node] : gTemplateRegistry.instantiations_) {
+    if (key.base.template_name == name && 
+        key.base.scope_hash == current_scope_hash &&
+        matchesArgs(key, args)) {
+        candidates.push_back({key, node});
     }
-    }
-    
-    // Sort by specialization_rank (higher = more specialized)
-    std::sort(candidates.begin(), candidates.end(),
-              [](const auto& a, const auto& b) {
-                  return a.key.specialization_rank > b.key.specialization_rank;
-              });
-    
-    // Return most specialized
-    return candidates.empty() ? std::vector<>() 
-                           : std::vector<>{candidates[0].node};
+}
+
+// Sort by specialization_rank from extension
+std::vector<decltype(candidates)::value_type> candidates_vec(
+    candidates.begin(), candidates.end());
+std::sort(candidates_vec.begin(), candidates_vec.end(),
+          [](const auto& a, const auto& b) {
+              int rank_a = a.first.ext ? a.first.ext->specialization_rank : 0;
+              int rank_b = b.first.ext ? b.first.ext->specialization_rank : 0;
+              return rank_a > rank_b;  // Higher rank = more specialized
+          });
+
+return candidates_vec.empty() ? ChunkedVector<ASTNode>() 
+                              : ChunkedVector<ASTNode>{candidates_vec[0].second};
 }
 ```
 
 ---
 
+## Quick Reference: Fields by Edge Case
+
+| Field | Location | Purpose | Edge Case # |
+|-------|----------|---------|-------------|
+| **BASE KEY** (always present, ~80-100 bytes) ||||
+| `template_name` | Base | Base template identifier | All |
+| `base_template` | Base | TypeIndex for direct lookup | Core |
+| `type_args` | Base | Type arguments (up to 4 inline) | 1, 2, 8, 9, 11, 12, 13 |
+| `value_arguments` | Base | Non-type arguments (up to 4 inline) | 4, 10, 17, 19 |
+| `flags` | Base | Bitmask: variadic, scoped, nested, etc. | All |
+| `scope_hash` | Base | Quick scope check (0 = global) | 15 |
+| **EXTENSION** (allocated on demand) ||||
+| `variadic_type_args` | Extension | Unlimited type packs | 5 |
+| `variadic_value_args` | Extension | Unlimited non-type packs | 5 |
+| `template_template_args` | Extension | Template template param names | 1 |
+| `namespace_qualifiers` | Extension | Detailed namespace path | 15 |
+| `enclosing_class` | Extension | TypeIndex of containing class | 15, 16 |
+| `parent_key` | Extension | Pointer to parent template | 6 |
+| `nesting_level` | Extension | Nesting depth (0 = top) | 6 |
+| `alias_resolution` | Extension | Alias -> actual mapping | 7 |
+| `satisfied_concepts` | Extension | List of satisfied concepts | 18 |
+| `evaluated_value_args` | Extension | Complex evaluated expressions | 10, 17 |
+| `unevaluated_expressions` | Extension | Failed evaluations (SFINAE) | 14 |
+| `specialization_rank` | Extension | Higher = more specialized | 3, 20 |
+
 ## Implementation Checklist
 
 ### Phase 1: Data Structures
-- [ ] Update `TemplateInstantiationKey` with edge case fields
-  - [ ] Add `template_template_args` vector
-  - [ ] Add `variadic_type_args` and `variadic_non_type_args` for unlimited packs
-  - [ ] Add `namespace_qualifiers` for scope disambiguation
-  - [ ] Add `specialization_rank` for overload resolution
-  - [ ] Add `parent_key` for nested templates
-  - [ ] Add `args_are_defaults` bitset for default arg tracking
+- [ ] Split TemplateInstantiationKey into Base + Extension
+  - [ ] Implement `TemplateInstantiationBaseKey` with core fields (~80-100 bytes)
+    - [ ] template_name, base_template
+    - [ ] type_args, value_arguments (InlineVector<4>)
+    - [ ] flags bitmask
+    - [ ] scope_hash
+  - [ ] Implement `TemplateInstantiationExtension` with edge case fields
+    - [ ] Add `template_template_args` vector
+    - [ ] Add `variadic_type_args` and `variadic_value_args` for unlimited packs
+    - [ ] Add `namespace_qualifiers` for scope disambiguation
+    - [ ] Add `specialization_rank` for overload resolution
+    - [ ] Add `parent_key` for nested templates
+    - [ ] Add `args_are_defaults` bitset for default arg tracking
+  - [ ] Implement lazy allocation (Extension only when needed)
+  - [ ] **Target: 70-80% memory savings for common templates**
 
 ### Phase 2: Hash Function Updates
 - [ ] Update `TemplateInstantiationKeyHash::operator()` for new fields

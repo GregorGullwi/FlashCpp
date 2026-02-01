@@ -200,6 +200,17 @@ public:
 		return (data.size() - 1) * ChunkSize + data.back().size();
 	}
 
+	bool empty() const {
+		return data.empty() || (data.size() == 1 && data.front().empty());
+	}
+
+	void clear() {
+		data.clear();
+	}
+
+	// Note: ChunkedVector doesn't provide data() because elements are not contiguous
+	// Use operator[], iterators, or visit() instead
+
 	template<typename Visitor>
 	void visit(Visitor&& visitor) {
 		for (const auto& chunk : data) {
