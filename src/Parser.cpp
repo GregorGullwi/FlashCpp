@@ -39805,23 +39805,32 @@ if (struct_type_info.getStructInfo()) {
 			type_spec, template_params, template_args_to_use
 		);
 
-		// WORKAROUND: If member type is a Struct that is actually a template (not an instantiation),
+		// WORKAROUND: If member type is a Struct or UserDefined that is actually a template (not an instantiation),
 		// try to instantiate it with the current template arguments.
 		// This handles cases like:
 		//   template<typename T> struct TC { T val; };
 		//   template<typename T> struct TD { TC<T> c; }; 
-		// where TC<T> is stored as just "TC" (Struct type) without the <T> information.
-		// We assume TC should be instantiated with the same args as the containing template.
-		if (member_type == Type::Struct && member_type_index < gTypeInfo.size()) {
+		// where TC<T> is stored as a dependent placeholder with Type::UserDefined.
+		// We need to instantiate TC with the concrete args when instantiating TD.
+		if ((member_type == Type::Struct || member_type == Type::UserDefined) && member_type_index < gTypeInfo.size()) {
 			const TypeInfo& member_type_info = gTypeInfo[member_type_index];
+			std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 			
-			// Check if this struct has a StructInfo with size 0 (likely a template, not instantiation)
-			if (member_type_info.getStructInfo() && member_type_info.getStructInfo()->total_size == 0) {
-				// This might be a template. Try to instantiate it.
-				std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
-				
+			// Check if this is a template instantiation placeholder (contains $)
+			// or a template with size 0 that needs instantiation
+			bool needs_instantiation = false;
+			if (member_struct_name.find('$') != std::string_view::npos) {
+				// This is a placeholder - extract the base template name and instantiate
+				size_t dollar_pos = member_struct_name.find('$');
+				member_struct_name = member_struct_name.substr(0, dollar_pos);
+				needs_instantiation = true;
+			} else if (member_type_info.getStructInfo() && member_type_info.getStructInfo()->total_size == 0) {
+				// This is a template with size 0
+				needs_instantiation = true;
+			}
+			
+			if (needs_instantiation) {
 				// Try to instantiate with the current template arguments
-				// This assumes the member template has compatible parameters
 				auto inst_result = try_instantiate_class_template(member_struct_name, template_args_to_use);
 				
 				// If instantiation succeeded, look up the instantiated type
