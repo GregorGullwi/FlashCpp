@@ -25905,9 +25905,9 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 					          StringTable::getStringView(resolved_handle), "' found=", (type_it != gTypesByName.end()));
 					
 					// If not found, try instantiating the base template
-					// The base_part contains a mangled name like "enable_if_void_int"
-					// We need to find the actual template name, which could be "enable_if" not just "enable"
-					// Try progressively longer prefixes until we find a registered template
+		// The base_part contains a mangled name like "enable_if_void_int"
+		// We need to find the actual template name, which could be "enable_if" not just "enable"
+		// Prefer base-name mapping if already recorded.
 					if (type_it == gTypesByName.end()) {
 						std::string_view base_template_name;
 						std::string_view base_sv(base_part);
@@ -35615,7 +35615,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			std::string_view base_sv(base_part);
 			size_t underscore_pos = 0;
 			
-			while ((underscore_pos = base_sv.find('_', underscore_pos)) != std::string::npos) {
+			StringHandle base_handle = StringTable::getOrInternStringHandle(base_sv);
+			if (auto base_name = gTemplateRegistry.getTemplateBaseName(base_handle)) {
+				base_template_name = StringTable::getStringView(*base_name);
+			}
+			
+			while (base_template_name.empty() && (underscore_pos = base_sv.find('_', underscore_pos)) != std::string::npos) {
 				std::string_view candidate = base_sv.substr(0, underscore_pos);
 				auto candidate_opt = gTemplateRegistry.lookupTemplate(candidate);
 				if (candidate_opt.has_value()) {
