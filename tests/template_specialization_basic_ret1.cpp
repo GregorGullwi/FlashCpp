@@ -40,7 +40,8 @@ struct Wrap {
 template<template<typename> class Container>
 int apply_zero() {
     Container<int> c{};
-    return static_cast<int>(sizeof(c.value));
+    c.value = 2;
+    return static_cast<int>(sizeof(c.value)) + c.value;
 }
 
 // Full specialization for int
@@ -66,5 +67,5 @@ int main() {
     int sizes = size_val(Big{});
     int wrap_size = apply_zero<Wrap>();
     
-    return generic + specialized + wrapper + sizes + wrap_size - 13;  // Should return 1
+    return generic + specialized + wrapper + sizes + wrap_size - 15;  // Should return 1
 }

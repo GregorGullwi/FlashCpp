@@ -1516,6 +1516,7 @@ private:
 	std::unordered_map<StringHandle, StringHandle, TransparentStringHash, std::equal_to<>> instantiation_base_names_;
 	
 	// Map from instantiated template name to template arguments
+	// Populated during instantiation to avoid reparsing mangled names; cleared via clear().
 	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> instantiation_template_args_;
 };
 
