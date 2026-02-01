@@ -187,57 +187,37 @@ public:
 	}
 	
 	// Iterator support for range-based for loops
-	class iterator {
+	// Unified iterator implementation using template parameter for const/non-const
+	template<bool IsConst>
+	class iterator_impl {
 	public:
 		using iterator_category = std::random_access_iterator_tag;
 		using value_type = T;
 		using difference_type = std::ptrdiff_t;
-		using pointer = T*;
-		using reference = T&;
+		using vec_type = std::conditional_t<IsConst, const InlineVector*, InlineVector*>;
+		using pointer = std::conditional_t<IsConst, const T*, T*>;
+		using reference = std::conditional_t<IsConst, const T&, T&>;
 		
-		iterator(InlineVector* vec, size_t idx) : vec_(vec), idx_(idx) {}
-		
-		reference operator*() { return (*vec_)[idx_]; }
-		pointer operator->() { return &(*vec_)[idx_]; }
-		
-		iterator& operator++() { ++idx_; return *this; }
-		iterator operator++(int) { iterator tmp = *this; ++idx_; return tmp; }
-		iterator& operator--() { --idx_; return *this; }
-		iterator operator--(int) { iterator tmp = *this; --idx_; return tmp; }
-		
-		bool operator==(const iterator& other) const { return idx_ == other.idx_; }
-		bool operator!=(const iterator& other) const { return idx_ != other.idx_; }
-		
-	private:
-		InlineVector* vec_;
-		size_t idx_;
-	};
-	
-	class const_iterator {
-	public:
-		using iterator_category = std::random_access_iterator_tag;
-		using value_type = T;
-		using difference_type = std::ptrdiff_t;
-		using pointer = const T*;
-		using reference = const T&;
-		
-		const_iterator(const InlineVector* vec, size_t idx) : vec_(vec), idx_(idx) {}
+		iterator_impl(vec_type vec, size_t idx) : vec_(vec), idx_(idx) {}
 		
 		reference operator*() const { return (*vec_)[idx_]; }
 		pointer operator->() const { return &(*vec_)[idx_]; }
 		
-		const_iterator& operator++() { ++idx_; return *this; }
-		const_iterator operator++(int) { const_iterator tmp = *this; ++idx_; return tmp; }
-		const_iterator& operator--() { --idx_; return *this; }
-		const_iterator operator--(int) { const_iterator tmp = *this; --idx_; return tmp; }
+		iterator_impl& operator++() { ++idx_; return *this; }
+		iterator_impl operator++(int) { iterator_impl tmp = *this; ++idx_; return tmp; }
+		iterator_impl& operator--() { --idx_; return *this; }
+		iterator_impl operator--(int) { iterator_impl tmp = *this; --idx_; return tmp; }
 		
-		bool operator==(const const_iterator& other) const { return idx_ == other.idx_; }
-		bool operator!=(const const_iterator& other) const { return idx_ != other.idx_; }
+		bool operator==(const iterator_impl& other) const { return idx_ == other.idx_; }
+		bool operator!=(const iterator_impl& other) const { return idx_ != other.idx_; }
 		
 	private:
-		const InlineVector* vec_;
+		vec_type vec_;
 		size_t idx_;
 	};
+	
+	using iterator = iterator_impl<false>;
+	using const_iterator = iterator_impl<true>;
 	
 	iterator begin() { return iterator(this, 0); }
 	iterator end() { return iterator(this, size()); }
@@ -270,31 +250,24 @@ struct TypeIndexArg {
 	// CV-qualifiers and reference info that affect template identity
 	// These are stored separately because the same TypeIndex with different
 	// qualifiers represents different template arguments (e.g., int vs const int&)
-	bool is_const = false;
-	bool is_volatile = false;
-	bool is_reference = false;
-	bool is_rvalue_reference = false;
+	CVQualifier cv_qualifier = CVQualifier::None;
+	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
 	uint8_t pointer_depth = 0;
 	
 	TypeIndexArg() = default;
 	
 	explicit TypeIndexArg(TypeIndex idx) : type_index(idx) {}
 	
-	TypeIndexArg(TypeIndex idx, bool is_const_, bool is_volatile_, 
-	             bool is_ref, bool is_rvalue_ref, uint8_t ptr_depth)
+	TypeIndexArg(TypeIndex idx, CVQualifier cv, ReferenceQualifier ref, uint8_t ptr_depth)
 		: type_index(idx)
-		, is_const(is_const_)
-		, is_volatile(is_volatile_)
-		, is_reference(is_ref)
-		, is_rvalue_reference(is_rvalue_ref)
+		, cv_qualifier(cv)
+		, ref_qualifier(ref)
 		, pointer_depth(ptr_depth) {}
 	
 	bool operator==(const TypeIndexArg& other) const {
 		return type_index == other.type_index &&
-		       is_const == other.is_const &&
-		       is_volatile == other.is_volatile &&
-		       is_reference == other.is_reference &&
-		       is_rvalue_reference == other.is_rvalue_reference &&
+		       cv_qualifier == other.cv_qualifier &&
+		       ref_qualifier == other.ref_qualifier &&
 		       pointer_depth == other.pointer_depth;
 	}
 	
@@ -304,10 +277,8 @@ struct TypeIndexArg {
 	
 	size_t hash() const {
 		size_t h = std::hash<TypeIndex>{}(type_index);
-		// Pack qualifiers into a single byte for hashing
-		uint8_t quals = (is_const ? 1 : 0) | (is_volatile ? 2 : 0) | 
-		                (is_reference ? 4 : 0) | (is_rvalue_reference ? 8 : 0);
-		h ^= std::hash<uint8_t>{}(quals) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(cv_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<uint8_t>{}(pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		return h;
 	}
@@ -382,18 +353,18 @@ struct TemplateInstantiationKeyV2Hash {
 		size_t h = std::hash<uint32_t>{}(key.base_template.handle);
 		
 		// Hash type arguments
-		for (size_t i = 0; i < key.type_args.size(); ++i) {
-			h ^= key.type_args[i].hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+		for (const auto& arg : key.type_args) {
+			h ^= arg.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		
 		// Hash value arguments
-		for (size_t i = 0; i < key.value_args.size(); ++i) {
-			h ^= std::hash<int64_t>{}(key.value_args[i]) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		for (const auto& val : key.value_args) {
+			h ^= std::hash<int64_t>{}(val) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		
 		// Hash template template arguments
-		for (size_t i = 0; i < key.template_template_args.size(); ++i) {
-			h ^= std::hash<uint32_t>{}(key.template_template_args[i].handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		for (const auto& tmpl : key.template_template_args) {
+			h ^= std::hash<uint32_t>{}(tmpl.handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		
 		return h;
