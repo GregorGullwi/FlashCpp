@@ -311,8 +311,9 @@ bool matchesSignature(const ChunkedVector<TypeIndex>& param_types) {
 - [x] Replace string-based template cache keys with numeric keys in `TemplateRegistry`
 - [x] Update `try_instantiate_class_template()` to use new V2 cache
 
-### Phase 2: Audit TypeIndex Usage
-- [ ] Audit all TypeSpecifierNode usages
+### Phase 2: Audit TypeIndex Usage (In Progress)
+- [x] Audit getTypeSizeFromTemplateArgument - removed redundant name lookup when type_index is available
+- [ ] Audit remaining ~118 TypeSpecifierNode usages
 - [ ] Replace name-based lookups with index-based where TypeIndex is already available
 - [ ] Ensure `gTypeInfo[type_index]` is used instead of `gTypesByName.find()`
 
