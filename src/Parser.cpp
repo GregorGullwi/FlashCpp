@@ -12299,22 +12299,24 @@ ParseResult Parser::parse_type_specifier()
 								? StringTable::getStringView(*base_name_handle)
 								: instantiated_name;
 							
-							// Try progressively stripping '_suffix' patterns until we find a match
-							while (!member_alias_opt.has_value() && !base_template_name.empty()) {
-								size_t underscore_pos = base_template_name.find_last_of('_');
-								if (underscore_pos == std::string_view::npos || base_name_handle.has_value()) {
-									break;  // No more underscores to strip
+							if (!base_name_handle.has_value()) {
+								// Try progressively stripping '_suffix' patterns until we find a match
+								while (!member_alias_opt.has_value() && !base_template_name.empty()) {
+									size_t underscore_pos = base_template_name.find_last_of('_');
+									if (underscore_pos == std::string_view::npos) {
+										break;  // No more underscores to strip
+									}
+									
+									base_template_name = base_template_name.substr(0, underscore_pos);
+									if (base_template_name.empty()) {
+										break;
+									}
+									
+									StringBuilder base_builder;
+									std::string_view base_member_alias_name = base_builder.append(base_template_name).append("::").append(member_name).preview();
+									member_alias_opt = gTemplateRegistry.lookup_alias_template(base_member_alias_name);
+									base_builder.reset();
 								}
-								
-								base_template_name = base_template_name.substr(0, underscore_pos);
-								if (base_template_name.empty()) {
-									break;
-								}
-								
-								StringBuilder base_builder;
-								std::string_view base_member_alias_name = base_builder.append(base_template_name).append("::").append(member_name).preview();
-								member_alias_opt = gTemplateRegistry.lookup_alias_template(base_member_alias_name);
-								base_builder.reset();
 							}
 						}
 						

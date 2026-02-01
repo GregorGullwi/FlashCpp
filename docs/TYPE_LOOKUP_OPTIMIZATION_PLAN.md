@@ -331,6 +331,9 @@ bool matchesSignature(const ChunkedVector<TypeIndex>& param_types) {
 - [ ] Update overload resolution to compare TypeIndex vectors
 - [ ] Cache function lookup results by signature hash
 
+### Phase 4: Template Edge Cases
+- [ ] Prefer base-template name mapping over underscore parsing in dependent member alias resolution
+
 ## Expected Benefits
 
 1. **Performance**: Direct `gTypeInfo[type_index]` access is already O(1); the main gain is eliminating string concatenation for template instantiation keys
