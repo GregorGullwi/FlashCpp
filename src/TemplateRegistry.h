@@ -356,38 +356,6 @@ struct TemplateTypeArgHash {
 	}
 };
 
-// Template instantiation key - uniquely identifies a template instantiation
-struct TemplateInstantiationKey {
-	StringHandle template_name;
-	std::vector<Type> type_arguments;  // For type parameters
-	std::vector<int64_t> value_arguments;  // For non-type parameters
-	std::vector<StringHandle> template_arguments;  // For template template parameters
-	
-	bool operator==(const TemplateInstantiationKey& other) const {
-		return template_name == other.template_name &&
-		       type_arguments == other.type_arguments &&
-		       value_arguments == other.value_arguments &&
-		       template_arguments == other.template_arguments;
-	}
-};
-
-// Hash function for TemplateInstantiationKey
-struct TemplateInstantiationKeyHash {
-	std::size_t operator()(const TemplateInstantiationKey& key) const {
-		std::size_t hash = std::hash<StringHandle>{}(key.template_name);
-		for (const auto& type : key.type_arguments) {
-			hash ^= std::hash<int>{}(static_cast<int>(type)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		for (const auto& value : key.value_arguments) {
-			hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		for (const auto& tmpl : key.template_arguments) {
-			hash ^= std::hash<StringHandle>{}(tmpl) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-		}
-		return hash;
-	}
-};
-
 // Template argument - can be a type, a value, or a template
 struct TemplateArgument {
 	enum class Kind {
@@ -574,6 +542,94 @@ inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
 		return TemplateArgument::makeTypeSpecifier(ts);
 	}
 }
+
+// Template instantiation key - uniquely identifies a template instantiation
+// Uses TemplateTypeArg to avoid string-based collisions in cache keys.
+struct TemplateInstantiationKey {
+	StringHandle template_name;
+	std::vector<TemplateTypeArg> arguments;
+	
+	bool operator==(const TemplateInstantiationKey& other) const {
+		if (template_name != other.template_name || arguments.size() != other.arguments.size()) {
+			return false;
+		}
+		for (size_t i = 0; i < arguments.size(); ++i) {
+			if (!areArgumentsEqual(arguments[i], other.arguments[i])) {
+				return false;
+			}
+		}
+		return true;
+	}
+	
+	static bool areArgumentsEqual(const TemplateTypeArg& lhs, const TemplateTypeArg& rhs) {
+		if (lhs.is_template_template_arg != rhs.is_template_template_arg) {
+			return false;
+		}
+		if (lhs.is_template_template_arg && lhs.template_name_handle != rhs.template_name_handle) {
+			return false;
+		}
+		return lhs == rhs;
+	}
+	
+	static TemplateTypeArg makeArgument(const TemplateArgument& arg) {
+		if (arg.kind == TemplateArgument::Kind::Template) {
+			TemplateTypeArg result;
+			result.is_template_template_arg = true;
+			result.template_name_handle = StringTable::getOrInternStringHandle(arg.template_name);
+			return result;
+		}
+		return toTemplateTypeArg(arg);
+	}
+	
+	static TemplateInstantiationKey fromArguments(StringHandle template_name,
+		const std::vector<TemplateArgument>& arguments) {
+		TemplateInstantiationKey key;
+		key.template_name = template_name;
+		key.arguments.reserve(arguments.size());
+		for (const auto& arg : arguments) {
+			key.arguments.push_back(makeArgument(arg));
+		}
+		return key;
+	}
+	
+	static TemplateInstantiationKey fromArguments(std::string_view template_name,
+		const std::vector<TemplateArgument>& arguments) {
+		return fromArguments(StringTable::getOrInternStringHandle(template_name), arguments);
+	}
+	
+	static TemplateInstantiationKey fromArguments(StringHandle template_name,
+		const std::vector<TemplateTypeArg>& arguments) {
+		TemplateInstantiationKey key;
+		key.template_name = template_name;
+		key.arguments.reserve(arguments.size());
+		for (const auto& arg : arguments) {
+			key.arguments.push_back(arg);
+		}
+		return key;
+	}
+	
+	static TemplateInstantiationKey fromArguments(std::string_view template_name,
+		const std::vector<TemplateTypeArg>& arguments) {
+		return fromArguments(StringTable::getOrInternStringHandle(template_name), arguments);
+	}
+};
+
+// Hash function for TemplateInstantiationKey
+struct TemplateInstantiationKeyHash {
+	std::size_t operator()(const TemplateInstantiationKey& key) const {
+		std::size_t hash = std::hash<StringHandle>{}(key.template_name);
+		TemplateTypeArgHash arg_hasher;
+		for (const auto& arg : key.arguments) {
+			size_t arg_hash = arg_hasher(arg);
+			if (arg.is_template_template_arg) {
+				arg_hash ^= std::hash<StringHandle>{}(arg.template_name_handle) + 0x9e3779b9 + (arg_hash << 6) + (arg_hash >> 2);
+			}
+			arg_hash ^= std::hash<bool>{}(arg.is_template_template_arg) + 0x9e3779b9 + (arg_hash << 6) + (arg_hash >> 2);
+			hash ^= arg_hash + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
+		return hash;
+	}
+};
 
 // Out-of-line template member function definition
 struct OutOfLineMemberFunction {
@@ -935,12 +991,53 @@ struct SpecializationKeyHash {
 };
 
 // Template registry - stores template declarations and manages instantiations
+// Thread-safety: this registry is not thread-safe; callers must synchronize access.
 class TemplateRegistry {
 public:
 	// Register a template function declaration
 	void registerTemplate(std::string_view name, ASTNode template_node) {
 		std::string key(name);
 		templates_[key].push_back(template_node);
+	}
+	
+	void registerTemplateBaseName(StringHandle instantiated_name, StringHandle base_name) {
+		instantiation_base_names_[instantiated_name] = base_name;
+	}
+	
+	void registerTemplateBaseName(StringHandle instantiated_name, std::string_view base_name) {
+		instantiation_base_names_[instantiated_name] = StringTable::getOrInternStringHandle(base_name);
+	}
+	
+	// Register template args for an instantiated name.
+	// Should be called during template instantiation alongside registerTemplateBaseName.
+	// This overwrites any existing entry for the same instantiated_name (re-instantiations/updates).
+	// Copies the args; add a move-based overload if profiling shows significant copy overhead.
+	void registerTemplateInstantiationArgs(StringHandle instantiated_name, const std::vector<TemplateTypeArg>& args) {
+		if constexpr (WITH_DEBUG_INFO) {
+			if (instantiation_template_args_.find(instantiated_name) != instantiation_template_args_.end()) {
+				FLASH_LOG(Templates, Debug, "Overwriting template args for instantiated name: ",
+				          StringTable::getStringView(instantiated_name));
+			}
+		}
+		instantiation_template_args_[instantiated_name] = args;
+	}
+	
+	// Returns nullptr when no args were registered for the instantiated name.
+	// Callers can fall back to string-based parsing when this returns nullptr.
+	const std::vector<TemplateTypeArg>* getTemplateInstantiationArgs(StringHandle instantiated_name) const {
+		auto it = instantiation_template_args_.find(instantiated_name);
+		if (it != instantiation_template_args_.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+	
+	std::optional<StringHandle> getTemplateBaseName(StringHandle instantiated_name) const {
+		auto it = instantiation_base_names_.find(instantiated_name);
+		if (it != instantiation_base_names_.end()) {
+			return it->second;
+		}
+		return std::nullopt;
 	}
 
 	// Register template parameter names for a template
@@ -1373,6 +1470,8 @@ public:
 		variable_templates_.clear();
 		deduction_guides_.clear();
 		instantiation_to_pattern_.clear();
+		instantiation_base_names_.clear();
+		instantiation_template_args_.clear();
 	}
 
 	// Public access to specialization patterns for pattern matching in Parser
@@ -1424,6 +1523,19 @@ private:
 	// Example: "Wrapper_int_0" -> "Wrapper_pattern__"
 	// This allows looking up member aliases from the correct specialization
 	std::unordered_map<StringHandle, StringHandle, TransparentStringHash, std::equal_to<>> instantiation_to_pattern_;
+	
+	// Map from instantiated template name to base template name
+	// Example: "Wrapper_int" -> "Wrapper"
+	std::unordered_map<StringHandle, StringHandle, TransparentStringHash, std::equal_to<>> instantiation_base_names_;
+	
+	// Map from instantiated template name to template arguments
+	// Populated during instantiation to avoid reparsing mangled names; cleared in TemplateRegistry::clear().
+	// Note: This intentionally duplicates data from the instantiations_ map (TemplateInstantiationKey -> ASTNode).
+	// Use instantiations_ for lookups by key; use this map when only an instantiated name is available and args are needed.
+	// A unified structure is possible but would require reverse indexing on instantiations_.
+	// If memory becomes a concern (e.g., >10k instantiations), consider moving this data into a shared cache
+	// or pruning rarely used entries.
+	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> instantiation_template_args_;
 };
 
 // Global template registry

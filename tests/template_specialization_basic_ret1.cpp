@@ -10,6 +10,29 @@ public:
     }
 };
 
+template<typename T>
+class Wrapper_int {
+public:
+    T value;
+    int getType() {
+        return 5;
+    }
+};
+
+struct Tiny {
+    char c;
+};
+
+struct Big {
+    int x;
+};
+
+template<typename T>
+int size_val(T) {
+    return sizeof(T);
+}
+
+
 // Full specialization for int
 template<>
 class Container<int> {
@@ -26,7 +49,11 @@ int main() {
     
     Container<int> ci;
     int specialized = ci.getType();  // Should be 1
-    
-    return generic + specialized;  // Should return 1
-}
 
+    Wrapper_int<float> w;
+    int wrapper = w.getType();
+
+    int sizes = size_val(Big{});
+    
+    return generic + specialized + wrapper + sizes - 9;  // Should return 1
+}
