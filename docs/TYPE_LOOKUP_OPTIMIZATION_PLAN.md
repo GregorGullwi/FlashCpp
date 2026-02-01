@@ -304,10 +304,12 @@ bool matchesSignature(const ChunkedVector<TypeIndex>& param_types) {
 
 ## Implementation Phases
 
-### Phase 1: Template Instantiation Cache
-- [ ] Implement `TemplateInstantiationKey` with TypeIndex + non-type value based hashing
-- [ ] Replace string-based template cache keys with numeric keys
-- [ ] Update template instantiation code to use new cache
+### Phase 1: Template Instantiation Cache ✅ COMPLETED
+- [x] Implement `TemplateInstantiationKeyV2` with TypeIndex + non-type value based hashing
+- [x] Create `InlineVector` for efficient storage of template arguments (≤4 args inline)
+- [x] Add `TypeIndexArg` for type arguments with CV-qualifier tracking
+- [x] Replace string-based template cache keys with numeric keys in `TemplateRegistry`
+- [x] Update `try_instantiate_class_template()` to use new V2 cache
 
 ### Phase 2: Audit TypeIndex Usage
 - [ ] Audit all TypeSpecifierNode usages
@@ -318,6 +320,21 @@ bool matchesSignature(const ChunkedVector<TypeIndex>& param_types) {
 - [ ] Store function signatures as `ChunkedVector<TypeIndex>`
 - [ ] Update overload resolution to compare TypeIndex vectors
 - [ ] Cache function lookup results by signature hash
+
+## Implementation Notes (Phase 1)
+
+### New Files Created
+- `src/TemplateTypes.h`: Contains `InlineVector`, `TypeIndexArg`, `TemplateInstantiationKeyV2`
+
+### Changes to Existing Files
+- `src/TemplateRegistry.h`:
+  - Added `makeTypeIndexArg()` and `makeInstantiationKeyV2()` helpers
+  - Added `instantiations_v2_` map for V2 caching
+  - Added `registerInstantiationV2()` and `getInstantiationV2()` methods
+
+- `src/Parser.cpp`:
+  - Added V2 cache lookup at start of `try_instantiate_class_template()`
+  - Added V2 cache registration on successful instantiation
 
 ## Expected Benefits
 
@@ -337,7 +354,7 @@ bool matchesSignature(const ChunkedVector<TypeIndex>& param_types) {
 
 ## Migration Strategy
 
-1. Add `TemplateInstantiationKey`-based cache alongside existing string cache
+1. ✅ Add `TemplateInstantiationKeyV2`-based cache alongside existing string cache
 2. Gradually migrate template instantiation lookups to new cache
 3. Profile to confirm performance improvement before removing string cache
 
