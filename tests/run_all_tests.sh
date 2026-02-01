@@ -30,6 +30,7 @@ EXPECTED_FAIL=(
     # Tests restored from workarounds - expose known FlashCpp limitations
     # Note: test_member_var_template_ret42.cpp now compiles successfully (member variable template support added)
     # Note: test_placement_new_parsing_ret42.cpp now parses and compiles successfully (placement new with multiple args and alignas(type-id) added)
+    "test_out_of_line_template_member_multiline.cpp"  # Valid C++ multiline out-of-line member; parser doesn't handle yet
 )
 
 # Expected link failures - files that compile but require external C helper files
