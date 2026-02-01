@@ -14920,15 +14920,16 @@ std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNod
 	}
 	
 	const TypeInfo& type_info = gTypeInfo[type_index];
-	std::string_view type_name = StringTable::getStringView(type_info.name());
 	
-	// Check if the type name matches std::initializer_list pattern
-	// Template instantiations are named like "std::initializer_list$hash" (with dollar sign for hash-based naming)
-	// We must check for "std::" prefix to ensure it's the standard library type
-	if (type_name.find("std::initializer_list$") != std::string_view::npos) {
-		// This is an initializer_list type from the std namespace
-		FLASH_LOG(Parser, Debug, "is_initializer_list_type: detected '", type_name, "' as initializer_list type");
-		return type_index;
+	// Phase 6: Use TypeInfo::isTemplateInstantiation() to check for initializer_list
+	// Check if this is a template instantiation of std::initializer_list
+	if (type_info.isTemplateInstantiation()) {
+		std::string_view base_name = StringTable::getStringView(type_info.baseTemplateName());
+		if (base_name == "std::initializer_list" || base_name == "initializer_list") {
+			// This is an initializer_list type from the std namespace
+			FLASH_LOG(Parser, Debug, "is_initializer_list_type: detected as initializer_list type");
+			return type_index;
+		}
 	}
 	
 	return std::nullopt;
