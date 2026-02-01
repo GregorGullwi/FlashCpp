@@ -25,8 +25,8 @@ make main CXX=clang++         # Build compiler
 
 #### Windows (PowerShell)
 ```powershell
-# Run the comprehensive test suite
-.\tests\test_reference_files.ps1
+    # Run the comprehensive test suite
+    .\tests\run_all_tests.ps1
 
 # Analyze object file symbols
 .\tests\analyze_obj_symbols.ps1
@@ -85,7 +85,7 @@ The compiler includes 600+ test cases covering:
 
 **Windows (PowerShell):**
 - [`tests\analyze_obj_symbols.ps1`](tests/analyze_obj_symbols.ps1) - Analyze object file symbols
-- [`tests\test_reference_files.ps1`](tests/test_reference_files.ps1) - Run comprehensive test suite
+- [`tests\run_all_tests.ps1`](tests/run_all_tests.ps1) - Run comprehensive test suite
 
 **Linux/WSL (Bash):**
 - [`tests/run_all_tests.sh`](tests/run_all_tests.sh) - Run all tests on Linux

@@ -1,5 +1,5 @@
 #!/bin/bash
-# FlashCpp ELF Test Runner - Port of test_reference_files.ps1 for Linux
+# FlashCpp ELF Test Runner - Port of run_all_tests.ps1 for Linux
 # Tests compilation and linking of all test files
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
