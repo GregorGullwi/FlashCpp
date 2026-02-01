@@ -135,9 +135,8 @@ static size_t getTypeSizeFromTemplateArgument(const TemplateArgument& arg) {
 
 // Helper to convert TemplateTypeArg vector to TypeInfo::TemplateArgInfo vector
 // This enables storing template instantiation metadata in TypeInfo for O(1) lookup
-static std::vector<TypeInfo::TemplateArgInfo> convertToTemplateArgInfo(const std::vector<TemplateTypeArg>& template_args) {
-	std::vector<TypeInfo::TemplateArgInfo> result;
-	result.reserve(template_args.size());
+static InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::vector<TemplateTypeArg>& template_args) {
+	InlineVector<TypeInfo::TemplateArgInfo, 4> result;
 	for (const auto& arg : template_args) {
 		TypeInfo::TemplateArgInfo info;
 		info.base_type = arg.base_type;
@@ -14923,9 +14922,10 @@ std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNod
 	
 	// Phase 6: Use TypeInfo::isTemplateInstantiation() to check for initializer_list
 	// Check if this is a template instantiation of std::initializer_list
+	// Only match fully qualified std::initializer_list, not unqualified names
 	if (type_info.isTemplateInstantiation()) {
 		std::string_view base_name = StringTable::getStringView(type_info.baseTemplateName());
-		if (base_name == "std::initializer_list" || base_name == "initializer_list") {
+		if (base_name == "std::initializer_list") {
 			// This is an initializer_list type from the std namespace
 			FLASH_LOG(Parser, Debug, "is_initializer_list_type: detected as initializer_list type");
 			return type_index;
