@@ -432,6 +432,54 @@ struct FunctionSignatureKeyHash {
 	}
 };
 
+/**
+ * Generate a unique, unambiguous name for a template instantiation
+ * 
+ * Instead of building names like "is_arithmetic_int" (which is ambiguous with
+ * types containing underscores), this generates names using a hash of the 
+ * TypeIndex values: "is_arithmetic$12345678" where 12345678 is a hex hash.
+ * 
+ * Benefits:
+ * - Unambiguous: No confusion with types containing underscores
+ * - Consistent: Same arguments always produce same name
+ * - Fast: Hash-based generation avoids string manipulation
+ * 
+ * @param template_name The base template name (e.g., "is_arithmetic")
+ * @param key The instantiation key with type arguments
+ * @return A unique, human-readable name like "is_arithmetic$a1b2c3d4"
+ */
+inline std::string_view generateInstantiatedName(std::string_view template_name, 
+                                                  const TemplateInstantiationKeyV2& key) {
+	// Compute the hash of the template arguments
+	size_t h = 0;
+	for (const auto& arg : key.type_args) {
+		h ^= arg.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
+	for (const auto& arg : key.value_args) {
+		h ^= std::hash<int64_t>{}(arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
+	for (const auto& arg : key.template_template_args) {
+		h ^= std::hash<uint32_t>{}(arg.handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
+	
+	// Build the name: template_name$hash (using $ as unambiguous separator)
+	// Use lowercase hex for compactness
+	static const char hex_chars[] = "0123456789abcdef";
+	char hash_str[17];  // 16 hex chars + null terminator
+	for (int i = 15; i >= 0; --i) {
+		hash_str[i] = hex_chars[h & 0xF];
+		h >>= 4;
+	}
+	hash_str[16] = '\0';
+	
+	StringBuilder builder;
+	builder.append(template_name);
+	builder.append("$");  // $ is not valid in C++ identifiers, so unambiguous
+	builder.append(std::string_view(hash_str, 16));
+	
+	return builder.commit();
+}
+
 // ============================================================================
 // Helper functions for building template keys
 // ============================================================================
