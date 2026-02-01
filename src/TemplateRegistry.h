@@ -1011,6 +1011,7 @@ public:
 	// Register template args for an instantiated name.
 	// Should be called during template instantiation alongside registerTemplateBaseName.
 	// This overwrites any existing entry for the same instantiated_name (re-instantiations/updates).
+	// Copies the args; add a move-based overload if instantiation becomes a hot path.
 	void registerTemplateInstantiationArgs(StringHandle instantiated_name, const std::vector<TemplateTypeArg>& args) {
 		instantiation_template_args_[instantiated_name] = args;
 	}
@@ -1526,6 +1527,7 @@ private:
 	// Note: This intentionally duplicates data from the instantiations_ map (TemplateInstantiationKey -> ASTNode).
 	// Use instantiations_ for lookups by key; use this map when only an instantiated name is available and args are needed.
 	// A unified structure is possible but would require reverse indexing on instantiations_.
+	// If memory becomes a concern, consider moving this data into a shared cache or pruning rarely used entries.
 	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> instantiation_template_args_;
 };
 
