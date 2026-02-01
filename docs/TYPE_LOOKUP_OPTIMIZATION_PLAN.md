@@ -195,14 +195,37 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 - `resolve_overload_cached()`: Cached overload resolution with O(1) cache hits
 
 ### Phase 4: Template Instantiation Refactoring (In Progress)
-- [x] Create `src/TemplateInstantiator.h` header file with class interface
-- [x] Create `src/TemplateInstantiator.cpp` with stub implementations
+- [x] Create `src/TemplateInstantiator.h` header file with class interface (inlined)
 - [x] Add `buildTemplateParamMap()` helper function
 - [x] Implement `substitute_in_type()` for type substitution
 - [ ] Migrate `instantiate_function()` from Parser (follow-up)
 - [ ] Migrate `instantiate_class()` from Parser (follow-up)
 - [ ] Migrate `instantiate_variable()` from Parser (follow-up)
 - [ ] Migrate `substitute_in_node()` core logic from Parser (follow-up)
+
+### Phase 5: Eliminate String-Based Template Name Generation (Planned)
+The current system still uses `get_instantiated_class_name()` which builds string names like `"vector_int"` for `vector<int>`. This is problematic because:
+1. Names with underscores (e.g., `is_arithmetic`) create ambiguity with type names containing underscores
+2. String concatenation is slower than TypeIndex-based lookups
+3. Template arguments may contain complex types that don't stringify cleanly
+
+**Goals:**
+- [ ] Replace `get_instantiated_class_name()` with TypeIndex-based naming
+- [ ] Store instantiated types using `TemplateInstantiationKeyV2` as the canonical key
+- [ ] Generate unique type names using TypeIndex hashes instead of string concatenation
+- [ ] Update `gTypesByName` to use TypeIndex-based keys for template instantiations
+- [ ] Migrate template argument parsing from string-based to TypeIndex-based
+
+**Key Changes:**
+```cpp
+// Old: String-based naming (ambiguous)
+std::string_view name = get_instantiated_class_name("is_arithmetic", {int_type});
+// Returns "is_arithmetic_int" - could also be "is_arithmetic" + "_int" type!
+
+// New: TypeIndex-based naming (unambiguous)
+auto key = makeInstantiationKeyV2(template_handle, template_args);
+StringHandle name = generateInstantiatedName(key);  // Uses hash-based unique ID
+```
 
 **Proposed TemplateInstantiator Interface:**
 ```cpp
