@@ -37608,41 +37608,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												const TemplateTypeArg& filled_arg = filled_args_for_pattern_match[j];
 												if (filled_arg.base_type != Type::Invalid) {
 													// Calculate the size of the filled type
-													int size_in_bytes = 0;
-													switch (filled_arg.base_type) {
-														case Type::Bool:
-														case Type::Char:
-														case Type::UnsignedChar:
-															size_in_bytes = 1;
-															break;
-														case Type::Short:
-														case Type::UnsignedShort:
-															size_in_bytes = 2;
-															break;
-														case Type::Int:
-														case Type::UnsignedInt:
-														case Type::Float:
-															size_in_bytes = 4;
-															break;
-														case Type::Long:
-														case Type::UnsignedLong:
-														case Type::LongLong:
-														case Type::UnsignedLongLong:
-														case Type::Double:
-															size_in_bytes = 8;
-															break;
-														case Type::Struct:
-															// For struct types, we need to look up the actual size
-															if (filled_arg.type_index < gTypeInfo.size()) {
-																const TypeInfo& struct_type = gTypeInfo[filled_arg.type_index];
-																if (struct_type.getStructInfo()) {
-																	size_in_bytes = struct_type.getStructInfo()->total_size;
+													int size_in_bytes = get_type_size_bits(filled_arg.base_type) / 8;
+													if (size_in_bytes == 0)
+													{
+														switch (filled_arg.base_type) {
+															case Type::Struct:
+															case Type::UserDefined:
+																// For struct types, we need to look up the size from TypeInfo
+																if (filled_arg.type_index < gTypeInfo.size()) {
+																	const TypeInfo& ti = gTypeInfo[filled_arg.type_index];
+																	if (ti.isStruct()) {
+																		const StructTypeInfo* si = ti.getStructInfo();
+																		if (si) {
+																			size_in_bytes = si->total_size;
+																		}
+																	}
 																}
-															}
-															break;
-														default:
-															break;
+																break;
+															default:
+																size_in_bytes = 8; // Default to 64 bits if unknown
+																break;
+														}
 													}
+
 													if (size_in_bytes > 0) {
 														filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
 														FLASH_LOG(Templates, Debug, "Filled in sizeof(", type_name, ") default: ", size_in_bytes, " bytes");

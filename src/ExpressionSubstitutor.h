@@ -86,6 +86,7 @@ private:
 	ASTNode substituteIdentifier(const IdentifierNode& id);
 	ASTNode substituteQualifiedIdentifier(const QualifiedIdentifierNode& qual_id);
 	ASTNode substituteMemberAccess(const MemberAccessNode& member_access);
+	ASTNode substituteSizeofExpr(const SizeofExprNode& sizeof_expr);
 	ASTNode substituteLiteral(const ASTNode& literal);
 
 	// Helper: substitute in a type specifier with template args
