@@ -91,27 +91,23 @@ Extract pure functions first (no Parser state dependency):
 3. **`check_template_constraints()`** - Concept checking logic
 4. **`match_partial_specialization()`** - Pattern matching logic
 
-### Phase C: Create Interface Layer (Medium Risk)
+### Phase C: Create Interface Layer (Low Risk)
 
-Create an interface that abstracts Parser state:
+Pass `Parser&` directly to instantiation functions - no virtual functions needed:
 
 ```cpp
-// TemplateInstantiationContext - abstracts Parser state
-struct TemplateInstantiationContext {
-    // Token access
-    virtual TokenRange getTemplateBody(const ASTNode& template_decl) = 0;
-    
-    // Symbol access
-    virtual std::optional<TypeIndex> resolveTypeName(std::string_view name) = 0;
-    virtual std::optional<FunctionDecl*> resolveFunction(std::string_view name) = 0;
-    
-    // Template access
-    virtual const std::vector<TemplateTypeArg>& getCurrentTemplateArgs() = 0;
-    virtual bool isInInstantiation(std::string_view template_name) = 0;
-    
-    // Type registration
-    virtual TypeIndex registerInstantiatedType(std::string_view name, TypeInfo&& info) = 0;
-};
+// TemplateInstantiationHelper.h
+TypeIndex instantiateClassTemplate(Parser& parser, const ASTNode& template_decl, 
+                                    const std::vector<TemplateTypeArg>& args);
+TypeIndex instantiateFunctionTemplate(Parser& parser, const std::string& name,
+                                     const std::vector<TemplateTypeArg>& args);
+TypeIndex instantiateVariableTemplate(Parser& parser, const std::string& name,
+                                      const std::vector<TemplateTypeArg>& args);
+
+// Parser.cpp - thin wrappers
+TypeIndex Parser::try_instantiate_class_template(/* args */) {
+    return ::instantiateClassTemplate(*this, /* args */);
+}
 ```
 
 ### Phase D: Incremental Migration (High Risk)
@@ -163,12 +159,12 @@ checkTemplateConstraints(template_params, args, constraints)
 substituteTypeInExpression(expr, param_to_arg_map)
 ```
 
-### Task 3: Interface Design (2-4 hours)
+### Task 3: Function Signatures (1-2 hours)
 
-Design `TemplateInstantiationContext` interface that:
-- Provides read-only access to Parser state
-- Allows type/function registration
-- Supports recursion tracking
+Design function signatures in `TemplateInstantiationHelper.h`:
+- Pass `Parser&` as first parameter
+- Identify all Parser member accesses needed
+- Keep Parser methods as thin wrappers
 
 ### Task 4: Variable Template Migration (4-8 hours)
 
@@ -210,21 +206,24 @@ Each phase should be a separate commit/PR:
 |-------|----------------|------------|
 | A: Analysis | 2-4 hours | Low |
 | B: Extract Helpers | 4-8 hours | Medium |
-| C: Interface Layer | 2-4 hours | Medium |
-| D1: Variable Templates | 4-8 hours | Medium |
-| D2: Function Templates | 8-16 hours | High |
-| D3: Class Templates | 16-32 hours | High |
-| **Total** | **36-72 hours** | - |
+| C: Function Signatures | 1-2 hours | Low |
+| D1: Variable Templates | 4-8 hours | Low |
+| D2: Function Templates | 8-16 hours | Low |
+| D3: Class Templates | 16-32 hours | Medium |
+| **Total** | **35-70 hours** | - |
 
 ## Recommendation
 
-Given the risk assessment:
+Given the simplified approach using `Parser&` directly:
 
-1. **Start with Phase A (Analysis)** - This is safe and provides valuable information
+1. **Start with Phase A (Analysis)** - Safe, provides valuable information
 2. **Continue with Phase B (Extract Helpers)** - Low risk, immediate benefit
-3. **Evaluate after Phase B** - Decide if full migration is worth the risk
+3. **Proceed with Phase C & D** - Risk reduced by eliminating virtual function overhead
 
-The current `TemplateInstantiationHelper.h` provides useful utilities without the full migration risk. Complete migration should only proceed if:
-- There's a clear benefit (performance, maintainability)
-- Test coverage is verified for all code paths
-- Time is available for thorough testing
+Using `Parser&` directly instead of virtual functions:
+- Zero runtime overhead
+- Simpler code structure
+- No interface indirection
+- Parser methods become thin wrappers
+
+The migration can proceed more confidently given the reduced complexity.
