@@ -14954,13 +14954,18 @@ std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNod
 	
 	// Phase 6: Use TypeInfo::isTemplateInstantiation() to check for initializer_list
 	// Check if this is a template instantiation of std::initializer_list
-	// Only match fully qualified std::initializer_list, not unqualified names
+	// Note: baseTemplateName() stores the unqualified name (without namespace prefix)
+	// so we check for "initializer_list" and verify it's in the std namespace
 	if (type_info.isTemplateInstantiation()) {
 		std::string_view base_name = StringTable::getStringView(type_info.baseTemplateName());
-		if (base_name == "std::initializer_list") {
-			// This is an initializer_list type from the std namespace
-			FLASH_LOG(Parser, Debug, "is_initializer_list_type: detected as initializer_list type");
-			return type_index;
+		if (base_name == "initializer_list") {
+			// Verify this is from the std namespace by checking the full type name
+			std::string_view full_name = StringTable::getStringView(type_info.name_);
+			if (full_name.starts_with("std::initializer_list")) {
+				// This is an initializer_list type from the std namespace
+				FLASH_LOG(Parser, Debug, "is_initializer_list_type: detected as initializer_list type");
+				return type_index;
+			}
 		}
 	}
 	
