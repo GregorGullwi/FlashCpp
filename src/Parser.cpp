@@ -37926,9 +37926,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				type_spec, template_params, template_args);
 			size_t ptr_depth = type_spec.pointer_depth();
 			
-			FLASH_LOG(Templates, Debug, "Member ", decl.identifier_token().value(), " substituted: type=", (int)member_type, 
-			          ", type_index=", member_type_index, ", ptr_depth=", ptr_depth);
-			
 			// Calculate member size accounting for pointer depth
 			size_t member_size;
 			if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
@@ -39280,8 +39277,13 @@ if (struct_type_info.getStructInfo()) {
 	
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	// This allows us to check if a type is a template instantiation without parsing the name
+	// IMPORTANT: Use base template name without namespace prefix
+	std::string_view base_template_name = template_name;
+	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
+		base_template_name = template_name.substr(last_colon + 2);
+	}
 	struct_type_info.setTemplateInstantiationInfo(
-		StringTable::getOrInternStringHandle(template_name),
+		StringTable::getOrInternStringHandle(base_template_name),
 		convertToTemplateArgInfo(template_args_to_use)
 	);
 	
