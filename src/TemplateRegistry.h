@@ -120,7 +120,7 @@ struct TemplateTypeArg {
 	TypeIndex type_index;  // For user-defined types
 	bool is_reference;
 	bool is_rvalue_reference;
-	size_t pointer_depth;  // 0 = not pointer, 1 = T*, 2 = T**, etc.
+	uint8_t pointer_depth;  // 0 = not pointer, 1 = T*, 2 = T**, etc.
 	CVQualifier cv_qualifier;  // const/volatile qualifiers
 	bool is_array;
 	std::optional<size_t> array_size;  // Known array size if available
@@ -413,7 +413,7 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.base_type = arg.base_type;  // Include base_type for primitive types
 	result.cv_qualifier = arg.cv_qualifier;
 	result.ref_qualifier = arg.reference_qualifier();
-	result.pointer_depth = static_cast<uint8_t>(std::min(arg.pointer_depth, size_t(255)));
+	result.pointer_depth = std::min(arg.pointer_depth, uint8_t(255));
 	// Include array info - critical for differentiating T[] from T[N] from T
 	result.is_array = arg.is_array;
 	result.array_size = arg.array_size;

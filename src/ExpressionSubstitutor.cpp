@@ -37,7 +37,10 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 				return substitutor.substituteQualifiedIdentifier(node);
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				return substitutor.substituteMemberAccess(node);
-			} else if constexpr (std::is_same_v<T, NumericLiteralNode> || 
+			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
+				FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Dispatching to substituteSizeofExpr");
+				return substitutor.substituteSizeofExpr(node);
+			} else if constexpr (std::is_same_v<T, NumericLiteralNode> ||
 			                     std::is_same_v<T, BoolLiteralNode> || 
 			                     std::is_same_v<T, StringLiteralNode>) {
 				// Literals don't need substitution - return as ASTNode
@@ -67,6 +70,9 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	}
 	else if (expr.is<IdentifierNode>()) {
 		return substituteIdentifier(expr.as<IdentifierNode>());
+	}
+	else if (expr.is<SizeofExprNode>()) {
+		return substituteSizeofExpr(expr.as<SizeofExprNode>());
 	}
 	else if (expr.is<NumericLiteralNode>()) {
 		// Literals don't need substitution
@@ -770,6 +776,43 @@ ASTNode ExpressionSubstitutor::substituteMemberAccess(const MemberAccessNode& me
 	return ASTNode(&new_expr);
 }
 
+ASTNode ExpressionSubstitutor::substituteSizeofExpr(const SizeofExprNode& sizeof_expr) {
+	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing sizeof expression");
+	
+	// Get the type or expression from the sizeof
+	ASTNode type_or_expr = sizeof_expr.type_or_expr();
+	
+	if (sizeof_expr.is_type() && type_or_expr.is<TypeSpecifierNode>()) {
+		// This is sizeof(type) - substitute the type
+		const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
+		TypeSpecifierNode substituted_type = substituteInType(type_spec);
+		
+		// Create new TypeSpecifierNode
+		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(substituted_type);
+		
+		// Create new SizeofExprNode with substituted type
+		SizeofExprNode& new_sizeof = gChunkedAnyStorage.emplace_back<SizeofExprNode>(
+			ASTNode(&new_type),
+			sizeof_expr.sizeof_token()
+		);
+		
+		// Wrap in ExpressionNode
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_sizeof);
+		return ASTNode(&new_expr);
+	} else {
+		// This is sizeof(expression) - substitute the expression
+		ASTNode substituted_expr = substitute(type_or_expr);
+		
+		// Create new SizeofExprNode with substituted expression
+		SizeofExprNode new_sizeof = SizeofExprNode::from_expression(substituted_expr, sizeof_expr.sizeof_token());
+		SizeofExprNode& new_sizeof_ref = gChunkedAnyStorage.emplace_back<SizeofExprNode>(new_sizeof);
+		
+		// Wrap in ExpressionNode
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_sizeof_ref);
+		return ASTNode(&new_expr);
+	}
+}
+
 ASTNode ExpressionSubstitutor::substituteLiteral(const ASTNode& literal) {
 	// Literals don't need substitution
 	return literal;
@@ -777,6 +820,65 @@ ASTNode ExpressionSubstitutor::substituteLiteral(const ASTNode& literal) {
 
 TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNode& type) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Substituting in type");
+	FLASH_LOG_FORMAT(Templates, Debug, "  Input type: base_type={}, type_index={}", (int)type.type(), type.type_index());
+	
+	// First, check if this is a template parameter type that needs substitution
+	// Template parameters can show up as Type::Template, Type::Auto, or Type::UserDefined
+	if ((type.type() == Type::Template || type.type() == Type::Auto || type.type() == Type::UserDefined) 
+	    && type.type_index() < gTypeInfo.size()) {
+		const TypeInfo& type_info = gTypeInfo[type.type_index()];
+		std::string_view type_name = StringTable::getStringView(type_info.name());
+		
+		FLASH_LOG(Templates, Debug, "  Type is template parameter: ", type_name);
+		
+		// Look up this template parameter in our substitution map
+		auto it = param_map_.find(type_name);
+		if (it != param_map_.end()) {
+			const TemplateTypeArg& subst = it->second;
+			FLASH_LOG(Templates, Debug, "  Substituting template parameter: ", type_name, 
+			          " -> base_type=", (int)subst.base_type, ", type_index=", subst.type_index);
+			
+			// Create a TypeSpecifierNode from the substitution
+			// Determine the correct size_in_bits based on the type
+			int size_in_bits = get_type_size_bits(subst.base_type);
+			if (size_in_bits == 0)
+			{
+				switch (subst.base_type) {
+					case Type::Struct:
+					case Type::UserDefined:
+						// For struct types, we need to look up the size from TypeInfo
+						if (subst.type_index < gTypeInfo.size()) {
+							const TypeInfo& ti = gTypeInfo[subst.type_index];
+							if (ti.isStruct()) {
+								const StructTypeInfo* si = ti.getStructInfo();
+								if (si) {
+									size_in_bits = si->total_size * 8;
+								}
+							}
+						}
+						break;
+					default:
+						size_in_bits = 64; // Default to 64 bits if unknown
+						break;
+				}
+			}
+			
+			TypeSpecifierNode substituted_type(
+				subst.base_type,
+				subst.type_index,
+				size_in_bits,
+				Token{},
+				subst.cv_qualifier,
+				subst.reference_qualifier()
+			);
+			
+			substituted_type.add_pointer_levels(subst.pointer_depth);
+			
+			return substituted_type;
+		}
+		
+		FLASH_LOG(Templates, Warning, "  Template parameter not found in substitution map: ", type_name);
+	}
 	
 	// Check if this is a struct/class type that might have template arguments
 	if (type.type() == Type::Struct && type.type_index() < gTypeInfo.size()) {

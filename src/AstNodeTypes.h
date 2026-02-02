@@ -1260,8 +1260,8 @@ public:
 
 	// Constructor for struct types
 	TypeSpecifierNode(Type type, TypeIndex type_index, int sizeInBits,
-		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
-		: type_(type), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index) {}
+		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None, ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
+		: type_(type), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
 
 	auto type() const { return type_; }
 	auto size_in_bits() const { return size_; }
@@ -1282,6 +1282,7 @@ public:
 	size_t pointer_depth() const { return pointer_levels_.empty() ? 0 : pointer_levels_.size(); }
 	const std::vector<PointerLevel>& pointer_levels() const { return pointer_levels_; }
 	void add_pointer_level(CVQualifier cv = CVQualifier::None) { pointer_levels_.push_back(PointerLevel(cv)); }
+	void add_pointer_levels(int pointer_depth) { while (pointer_depth) { pointer_levels_.push_back(PointerLevel(CVQualifier::None)); --pointer_depth; } }
 	void remove_pointer_level() { if (!pointer_levels_.empty()) pointer_levels_.pop_back(); }
 	void copy_pointer_levels_from(const TypeSpecifierNode& other) { pointer_levels_ = other.pointer_levels_; }
 
