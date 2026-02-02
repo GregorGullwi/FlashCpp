@@ -600,22 +600,78 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	// Get the namespace name (e.g., "R1_T")
 	std::string_view ns_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
 	
-	// Check if the namespace name contains template parameters (has underscore)
-	size_t underscore_pos = ns_name.find('_');
-	if (underscore_pos == std::string_view::npos) {
-		// No template parameters, return as-is
-		FLASH_LOG(Templates, Debug, "  No template parameters in namespace, returning as-is");
+	// Check if the namespace name contains template parameters
+	// Old format: has underscore (e.g., "R1_T")
+	// New format: has dollar sign + hash (e.g., "R1$3b360731384e1358")
+	size_t separator_pos = ns_name.find('$');
+	bool is_hash_based = (separator_pos != std::string_view::npos);
+	
+	if (!is_hash_based) {
+		separator_pos = ns_name.find('_');
+		if (separator_pos == std::string_view::npos) {
+			// No template parameters, return as-is
+			FLASH_LOG(Templates, Debug, "  No template parameters in namespace, returning as-is");
+			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+			return ASTNode(&new_expr);
+		}
+	}
+	
+	// Extract the base template name (e.g., "R1")
+	std::string_view base_template_name = ns_name.substr(0, separator_pos);
+	std::string_view param_part = ns_name.substr(separator_pos + 1);
+	
+	FLASH_LOG(Templates, Debug, "  Base template: ", base_template_name, ", param part: ", param_part, ", is_hash_based: ", is_hash_based);
+	
+	// For hash-based names, the namespace already contains the fully instantiated name
+	// We just need to ensure the template is instantiated with the concrete type arguments
+	if (is_hash_based) {
+		// Hash-based name - extract template arguments from param_map_ and trigger instantiation
+		std::vector<TemplateTypeArg> inst_args;
+		
+		// Collect all template arguments from param_map_
+		for (const auto& [param_name, param_arg] : param_map_) {
+			inst_args.push_back(param_arg);
+		}
+		
+		// Also check pack_map_ for variadic template arguments
+		for (const auto& [pack_name, pack_args] : pack_map_) {
+			inst_args.insert(inst_args.end(), pack_args.begin(), pack_args.end());
+		}
+		
+		if (!inst_args.empty()) {
+			FLASH_LOG(Templates, Debug, "  Triggering instantiation of template '", base_template_name, 
+			          "' with ", inst_args.size(), " arguments");
+			parser_.try_instantiate_class_template(base_template_name, inst_args, true);
+			
+			// After instantiation, get the actual instantiated name (with new hash based on concrete types)
+			// The dependent hash in ns_name is based on template parameters (T), 
+			// but we need the hash based on concrete types (long)
+			std::string_view instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
+			
+			FLASH_LOG(Templates, Debug, "  Substituted namespace: ", ns_name, " -> ", instantiated_name);
+			
+			// Create a new QualifiedIdentifierNode with the correct instantiated namespace
+			StringHandle instantiated_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+			NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+				NamespaceRegistry::GLOBAL_NAMESPACE, 
+				instantiated_name_handle
+			);
+			
+			QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+				new_ns_handle,
+				qual_id.identifier_token()
+			);
+			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
+			return ASTNode(&new_expr);
+		}
+		
+		// No template arguments - just return as-is
+		FLASH_LOG(Templates, Debug, "  Hash-based name, no template arguments to substitute");
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 		return ASTNode(&new_expr);
 	}
 	
-	// Extract the base template name (e.g., "R1") and parameter part (e.g., "T")
-	std::string_view base_template_name = ns_name.substr(0, underscore_pos);
-	std::string_view param_part = ns_name.substr(underscore_pos + 1);
-	
-	FLASH_LOG(Templates, Debug, "  Base template: ", base_template_name, ", param part: ", param_part);
-	
-	// Check if the parameter is in our substitution map
+	// Old underscore-based name - look up by parameter name
 	auto param_it = param_map_.find(param_part);
 	if (param_it == param_map_.end()) {
 		// Parameter not found in substitution map, return as-is
