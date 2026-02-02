@@ -353,49 +353,35 @@ private:
 2. Gradually migrate template instantiation lookups to new cache
 3. Profile to confirm performance improvement before removing string cache
 
-### Phase 7: Eliminate Remaining Old-Style Name Checking (In Progress)
+### Phase 7: Eliminate Remaining Old-Style Name Checking (✅ Complete)
 
-**Status:** In Progress
+**Status:** Complete
 
-Many locations still check for `_void` suffix or parse `$` to detect template instantiation placeholders.
-These need to be converted to use `TypeInfo::isTemplateInstantiation()` and `TypeInfo::baseTemplateName()`.
+All template instantiation naming has been converted from underscore-based (`template_int`) to hash-based (`template$hash`) naming. The remaining `append("_")` usages fall into these categories:
 
-#### Locations Using `append_type_name_suffix` (Old-Style Name Building)
-These build names like `template_int` instead of `template$hash`:
+#### ✅ Converted to Hash-Based Naming
+- Template instantiation naming
+- Lazy member template keys
+- Variable template instantiation
+- Template mangling
 
-| Line | Location | Description |
-|------|----------|-------------|
-| 21794 | substitute_template_parameter | Building member access instantiation name |
-| 22016 | function template instantiation | Explicit template args |
-| 22691 | function template instantiation | Explicit template args |
-| 25368 | function name building | Template function name |
-| 38894 | member access | Static member instantiation |
-| 38981 | member access | Static member instantiation |
+#### Remaining Underscore Usage (Legitimate)
+These are NOT template instantiation naming and don't need conversion:
 
-#### Locations Checking `_void` Suffix (Old-Style Placeholder Detection)
-These use `ends_with("_void")` to detect dependent placeholders:
+| Category | Description |
+|----------|-------------|
+| Anonymous struct naming | Internal naming for anonymous structs/unions |
+| Pack element naming | Variable naming for expanded parameter packs (`pack_0`, `pack_1`) |
+| Partial specialization patterns | Pattern keys for matching partial specializations |
+| CodeGen labels | Internal labels for switch cases, catch blocks, etc. |
 
-| Line | Location | Description |
-|------|----------|-------------|
-| 11928 | dependent static member | Const expr evaluation |
-| 12414 | dependent placeholder | Const expr evaluation |
-| 20232 | dependent placeholder | Default arg evaluation |
-| 21789 | type name substitution | Member value resolution |
-| 27503 | template placeholder | Pattern name building |
-| 37260 | dependent qualified type | Type resolution |
-| 37441 | dependent static member | Member access |
-| 38834 | dependent placeholder | Member access |
+### Phase 8: File Cleanup (✅ Complete)
 
-#### CodeGen.h `_void` Lookup (Line 9115)
-The codegen tries to look up `struct_name_void` when direct lookup fails.
-Should use `TypeInfo::isTemplateInstantiation()` instead.
+**Status:** Complete
 
-#### Conversion Strategy
-For each location:
-1. Get the `TypeInfo*` for the type being checked
-2. Use `type_info->isTemplateInstantiation()` instead of string checks
-3. Use `type_info->baseTemplateName()` instead of extracting from string
-4. Use hash-based `get_instantiated_class_name()` for building names
+- Merged unused `TemplateInstantiator.h` into `TemplateInstantiationHelper.h`
+- Removed `TemplateInstantiator.h` from codebase
+- Helper functions now consolidated in single file
 
 ## Considerations
 
