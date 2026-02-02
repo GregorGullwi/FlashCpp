@@ -91,7 +91,7 @@ $(BENCHMARK_TARGET): $(SRCDIR)/benchmark.cpp
 	@echo "Building benchmark executable for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(BENCHMARK_DIR) 2>nul || $(MKDIR) $(BENCHMARK_DIR) || true
 	$(CXX) $(CXXFLAGS) -DNDEBUG -O3 -o $@ $^ $(LLVM_LIBS)
-	@echo "Built: $@
+	@echo "Built: $@"
 
 # Phony targets
 .PHONY: all clean test main release benchmark help test-all

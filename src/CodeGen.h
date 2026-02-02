@@ -9109,44 +9109,32 @@ private:
 				FLASH_LOG(Codegen, Debug, "generateQualifiedIdentifierIr: struct_or_enum_name='", struct_or_enum_name, "', found=", (struct_type_it != gTypesByName.end()));
 			}
 			
-			// If not found directly, search for any template instantiation with this base name
+			// If not found directly, search for template instantiation using TypeInfo metadata
 			// This handles cases like has_type<T>::value where T has a default = void argument
-			// Uses hash-based naming (template$hash) or old-style naming (template_suffix)
+			// Uses TypeInfo::baseTemplateName() for deterministic lookup instead of prefix scanning
 			if (struct_type_it == gTypesByName.end()) {
-				// First try hash-based naming pattern: look for template$hash
-				std::string prefix_hash = std::string(struct_or_enum_name) + "$";
+				// Use TypeInfo metadata to find instantiation with matching base template name
+				// This avoids picking arbitrary instantiations when multiple exist
+				StringHandle base_name_handle = StringTable::getOrInternStringHandle(struct_or_enum_name);
 				for (auto it = gTypesByName.begin(); it != gTypesByName.end(); ++it) {
-					std::string_view key_str = StringTable::getStringView(it->first);
-					if (key_str.starts_with(prefix_hash) && it->second->isStruct()) {
-						struct_type_it = it;
-						FLASH_LOG(Codegen, Debug, "Found struct with hash-based prefix: ", key_str, " for ", struct_or_enum_name);
-						break;
+					if (it->second->isStruct() && it->second->isTemplateInstantiation()) {
+						// Use TypeInfo metadata for deterministic matching
+						if (it->second->baseTemplateName() == base_name_handle) {
+							struct_type_it = it;
+							FLASH_LOG(Codegen, Debug, "Found struct via TypeInfo metadata: baseTemplate=", 
+								struct_or_enum_name, " -> ", StringTable::getStringView(it->first));
+							break;
+						}
 					}
 				}
 			}
 			
-			// Fallback: try old-style _void suffix for backward compatibility
+			// Fallback: try old-style _void suffix for backward compatibility with legacy code
 			if (struct_type_it == gTypesByName.end()) {
 				std::string_view struct_name_with_void = StringBuilder().append(struct_or_enum_name).append("_void"sv).commit();
 				struct_type_it = gTypesByName.find(StringTable::getOrInternStringHandle(struct_name_with_void));
 				if (struct_type_it != gTypesByName.end()) {
 					FLASH_LOG(Codegen, Debug, "Found struct with _void suffix: ", struct_name_with_void);
-				}
-			}
-			
-			// If still not found, search for any template instantiation that starts with the base name
-			// This handles cases like test<int> where the full instantiation is test_int_1 (with default params)
-			// NOTE: This assumes prefix matches are unique. If multiple instantiations exist with the same
-			// prefix, this will return the first one found (order depends on map iteration).
-			if (struct_type_it == gTypesByName.end()) {
-				std::string prefix = std::string(struct_or_enum_name) + "_";
-				for (auto it = gTypesByName.begin(); it != gTypesByName.end(); ++it) {
-					std::string_view key_str = StringTable::getStringView(it->first);
-					if (key_str.starts_with(prefix) && it->second->isStruct()) {
-						struct_type_it = it;  // Assign iterator directly, no redundant find
-						FLASH_LOG(Codegen, Debug, "Found struct with prefix match: ", key_str, " for ", struct_or_enum_name);
-						break;
-					}
 				}
 			}
 			
