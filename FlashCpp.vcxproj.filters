@@ -185,6 +185,12 @@
     <ClInclude Include="src\NamespaceRegistry.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\TemplateInstantiationHelper.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\TemplateProfilingStats.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="LICENSE" />

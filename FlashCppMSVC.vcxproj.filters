@@ -63,6 +63,8 @@
     <ClInclude Include="src\InstantiationQueue.h" />
     <ClInclude Include="src\LazyMemberResolver.h" />
     <ClInclude Include="src\NamespaceRegistry.h" />
+    <ClInclude Include="src\TemplateInstantiationHelper.h" />
+    <ClInclude Include="src\TemplateProfilingStats.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="LICENSE" />
