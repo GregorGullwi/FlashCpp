@@ -36605,14 +36605,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				// Get original token info from the specialization for better error reporting
 				const Token& orig_token = spec_var_decl.declaration().identifier_token();
 				
-				// Generate unique name for this instantiation (use simple name without namespace for symbol table)
-				StringBuilder name_builder;
-				name_builder.append(simple_template_name);
-				for (const auto& targ : template_args) {
-					name_builder.append("_");
-					name_builder.append(targ.toString());
-				}
-				std::string_view persistent_name = name_builder.commit();
+				// Generate unique name for this instantiation using hash-based naming
+				std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, template_args);
 				
 				// Check if already instantiated
 				if (gSymbolTable.lookup(persistent_name).has_value()) {
@@ -36664,16 +36658,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	
 	const TemplateVariableDeclarationNode& var_template = template_opt->as<TemplateVariableDeclarationNode>();
 	
-	// Generate unique name for the instantiation using TemplateTypeArg::toString()
-	// This ensures consistent naming with class template instantiations (includes CV qualifiers)
-	// Use simple name (without namespace) for symbol table to match how specializations are registered
-	StringBuilder name_builder;
-	name_builder.append(simple_template_name);
-	for (const auto& arg : template_args) {
-		name_builder.append("_");
-		name_builder.append(arg.toString());
-	}
-	std::string_view persistent_name = name_builder.commit();
+	// Generate unique name for the instantiation using hash-based naming
+	// This ensures consistent naming with class template instantiations
+	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, template_args);
 	
 	// Check if already instantiated
 	if (gSymbolTable.lookup(persistent_name).has_value()) {

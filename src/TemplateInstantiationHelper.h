@@ -2,11 +2,13 @@
 
 #include "AstNodeTypes.h"
 #include "TemplateRegistry.h"
+#include "StringTable.h"
 #include "Log.h"
 #include <vector>
 #include <optional>
 #include <string_view>
 #include <string>
+#include <unordered_map>
 
 // Forward declarations
 class Parser;
@@ -346,4 +348,72 @@ inline bool TemplateInstantiationHelper::isTemplateTemplateParameter(const TypeS
 		}
 	}
 	return false;
+}
+
+// ============================================================================
+// Additional helper functions for template instantiation (from TemplateInstantiator)
+// ============================================================================
+
+/**
+ * Build a map from parameter names to template arguments
+ * 
+ * @param params Vector of TemplateParameterNode AST nodes
+ * @param args Vector of TemplateTypeArg arguments
+ * @return Map from parameter name to TemplateTypeArg
+ */
+inline std::unordered_map<std::string_view, TemplateTypeArg> buildTemplateParamMap(
+	const std::vector<ASTNode>& params,
+	const std::vector<TemplateTypeArg>& args)
+{
+	std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+	
+	for (size_t i = 0; i < params.size() && i < args.size(); ++i) {
+		if (params[i].is<TemplateParameterNode>()) {
+			const TemplateParameterNode& param = params[i].as<TemplateParameterNode>();
+			param_map[param.name()] = args[i];
+		}
+	}
+	
+	return param_map;
+}
+
+/**
+ * Build a map from parameter names to TemplateArgument (used with substituteTemplateParameters)
+ * 
+ * @param args Vector of TemplateTypeArg arguments
+ * @return Vector of TemplateArgument
+ */
+inline std::vector<TemplateArgument> buildTemplateArgumentsFromTypeArgs(
+	const std::vector<TemplateTypeArg>& args)
+{
+	std::vector<TemplateArgument> result;
+	result.reserve(args.size());
+	
+	for (const auto& arg : args) {
+		TemplateArgument ta;
+		if (arg.is_value) {
+			ta.kind = TemplateArgument::Kind::Value;
+			ta.int_value = arg.value;
+			ta.value_type = arg.base_type;
+		} else {
+			ta.kind = TemplateArgument::Kind::Type;
+			ta.type_value = arg.base_type;
+			// Create a TypeSpecifierNode for the argument
+			TypeSpecifierNode& type_spec = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+				arg.base_type,
+				arg.type_index,
+				get_type_size_bits(arg.base_type),
+				Token{},
+				arg.cv_qualifier
+			);
+			type_spec.set_reference_qualifier(arg.reference_qualifier());
+			for (uint8_t i = 0; i < arg.pointer_depth; ++i) {
+				type_spec.add_pointer_level(CVQualifier::None);
+			}
+			ta.type_specifier = type_spec;
+		}
+		result.push_back(ta);
+	}
+	
+	return result;
 }
