@@ -4209,11 +4209,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		
 		// Parse reference modifiers: & or &&
 		ReferenceQualifier ref_qual = parse_reference_qualifier();
-		if (ref_qual == ReferenceQualifier::RValueReference) {
-			type_spec.set_reference(true);  // true = rvalue reference
-		} else if (ref_qual == ReferenceQualifier::LValueReference) {
-			type_spec.set_reference(false);  // false = lvalue reference
-		}
+		FLASH_LOG_FORMAT(Parser, Debug, "Type alias '{}': ref_qual={} (0=None, 1=LValue, 2=RValue)", 
+			StringTable::getStringView(alias_name), static_cast<int>(ref_qual));
+		type_spec.set_reference_qualifier(ref_qual);
 		
 		// Consume semicolon
 		if (!consume_punctuator(";")) {
@@ -12670,6 +12668,7 @@ ParseResult Parser::parse_type_specifier()
 		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
 		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
 			// This is a struct type (or a typedef to a struct type)
+			const TypeInfo* original_type_info = type_it->second;  // Keep reference to original for checking ref qualifiers
 			const TypeInfo* struct_type_info = type_it->second;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
@@ -12690,8 +12689,25 @@ ParseResult Parser::parse_type_specifier()
 				// Use a placeholder size of 0 - it will be updated when the struct is finalized
 				type_size = 0;
 			}
-			return ParseResult::success(emplace_node<TypeSpecifierNode>(
-				Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier));
+			
+			// Create the TypeSpecifierNode for the struct
+			auto type_spec_node = emplace_node<TypeSpecifierNode>(
+				Type::Struct, struct_type_info->type_index_, type_size, type_name_token, cv_qualifier);
+			
+			// If this is a type alias with reference qualifiers (e.g., using ReturnType = Value&&),
+			// we need to preserve those reference qualifiers on the returned TypeSpecifierNode
+			if (original_type_info->is_reference_) {
+				if (original_type_info->is_rvalue_reference_) {
+					type_spec_node.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
+				} else {
+					type_spec_node.as<TypeSpecifierNode>().set_lvalue_reference(true);  // lvalue reference
+				}
+			}
+
+			// Also preserve pointer depth if the alias has pointers
+			type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(original_type_info->pointer_depth_);
+			
+			return ParseResult::success(type_spec_node);
 		}
 
 		// Check if this is a registered enum type
@@ -12722,15 +12738,18 @@ ParseResult Parser::parse_type_specifier()
 			if (!is_typedef && type_it->second->function_signature_.has_value()) {
 				is_typedef = true;
 			}
+			// Also consider reference type aliases as typedefs (they may have size 0 but have reference qualifiers)
+			// This is critical for std::move's ReturnType which is typename remove_reference<T>::type&&
+			if (!is_typedef && type_it->second->is_reference_) {
+				is_typedef = true;
+			}
 			if (is_typedef) {
 				resolved_type = type_it->second->type_;
 				type_size = type_it->second->type_size_;
 				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
 					resolved_type, user_type_index, type_size, type_name_token, cv_qualifier);
-				for (size_t i = 0; i < type_it->second->pointer_depth_; ++i) {
-					type_spec_node.as<TypeSpecifierNode>().add_pointer_level();
-				}
+				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(type_it->second->pointer_depth_);
 				// Add reference qualifiers from typedef
 				if (type_it->second->is_reference_) {
 					if (type_it->second->is_rvalue_reference_) {
