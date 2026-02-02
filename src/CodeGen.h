@@ -17644,14 +17644,14 @@ private:
 										// Fallback: If direct lookup failed or found size <= 1 (could be unsubstituted template),
 										// search for instantiated types that match this base template name
 										// This handles cases like test<int> where type_index points to 'test' 
-										// but we need 'test_int_4' for the correct member size
+										// but we need 'test$hash' for the correct member size
 										for (const auto& ti : gTypeInfo) {
 											std::string_view ti_name = StringTable::getStringView(ti.name());
 											// Check if this is an instantiation of the base template
-											// Instantiated names start with base_name followed by '_'
+											// Instantiated names start with base_name followed by '_' or '$'
 											if (ti_name.size() > base_type_name.size() && 
 											    ti_name.substr(0, base_type_name.size()) == base_type_name &&
-											    ti_name[base_type_name.size()] == '_') {
+											    (ti_name[base_type_name.size()] == '_' || ti_name[base_type_name.size()] == '$')) {
 												const StructTypeInfo* inst_struct_info = ti.getStructInfo();
 												if (inst_struct_info && !inst_struct_info->members.empty()) {
 													for (const auto& member : inst_struct_info->members) {
