@@ -207,10 +207,19 @@ bool matchesSignature(const std::vector<TypeIndex>& param_types) {
 - [ ] Migrate `instantiate_class()` from Parser (deferred - high risk)
 - [ ] Migrate `instantiate_variable()` from Parser (deferred - high risk)
 
-**Note:** The full migration of instantiation methods is deferred because:
+**Note:** The full migration of instantiation methods is deferred due to high risk.
+See [TEMPLATE_SUBSTITUTION_MIGRATION_PLAN.md](TEMPLATE_SUBSTITUTION_MIGRATION_PLAN.md) for:
+- Detailed risk assessment
+- Dependency analysis plan
+- Incremental migration strategy
+- Timeline estimates (36-72 hours total)
+- Rollback plan
+
+**Why High Risk:**
 1. They depend heavily on Parser state (token stream, symbol tables, etc.)
 2. The existing Parser methods are well-tested with 900+ passing tests
-3. The current TemplateInstantiator provides useful utilities that can be used incrementally
+3. Complex control flow with many edge cases (SFINAE, partial specialization, etc.)
+4. The current TemplateInstantiationHelper provides useful utilities that can be used incrementally
 
 ### Phase 5: Eliminate String-Based Template Name Generation ✅ COMPLETED
 The system now uses hash-based naming via `generateInstantiatedName()` to avoid underscore ambiguity.
