@@ -1254,44 +1254,39 @@ public:
 		return Type::Invalid;
 	}
 
-	// Generate a mangled name for a template instantiation
-	// Example: max<int> -> max_int, max<int, 5> -> max_int_5, max<vector> -> max_vector
+	// Generate a mangled name for a template instantiation using hash-based naming
+	// Example: max<int> -> max$a1b2c3d4, max<int, 5> -> max$e5f6g7h8
+	// This avoids collisions from underscore-based naming (e.g., type names with underscores)
 	static std::string_view mangleTemplateName(std::string_view base_name, const std::vector<TemplateArgument>& args) {
-		StringBuilder mangled;
-		mangled.append(base_name).append("_");
-
-		for (size_t i = 0; i < args.size(); ++i) {
-			if (i > 0) mangled.append("_");
-
-			if (args[i].kind == TemplateArgument::Kind::Type) {
-				// For UserDefined and Struct types, look up the actual type name
-				if ((args[i].type_value == Type::UserDefined || args[i].type_value == Type::Struct) 
-				    && args[i].type_index < gTypeInfo.size()) {
-					const TypeInfo& ti = gTypeInfo[args[i].type_index];
-					std::string_view type_name = StringTable::getStringView(ti.name());
-					mangled.append(type_name);
-				} else {
-					mangled.append(typeToString(args[i].type_value));
+		// Convert TemplateArgument to TemplateTypeArg for hash-based naming
+		std::vector<TemplateTypeArg> type_args;
+		type_args.reserve(args.size());
+		
+		for (const auto& arg : args) {
+			TemplateTypeArg ta;
+			if (arg.kind == TemplateArgument::Kind::Type) {
+				ta.base_type = arg.type_value;
+				ta.type_index = arg.type_index;
+				if (arg.type_specifier.has_value()) {
+					const auto& ts = *arg.type_specifier;
+					ta.is_reference = ts.is_reference();
+					ta.is_rvalue_reference = ts.is_rvalue_reference();
+					ta.cv_qualifier = ts.cv_qualifier();
+					ta.pointer_depth = static_cast<uint8_t>(ts.pointer_levels().size());
 				}
-				// Include reference qualifiers in mangled name for unique instantiations
-				// This ensures int, int&, and int&& generate different mangled names
-				if (args[i].type_specifier.has_value()) {
-					const auto& ts = *args[i].type_specifier;
-					if (ts.is_rvalue_reference()) {
-						mangled.append("RR");  // Rvalue reference suffix
-					} else if (ts.is_reference()) {
-						mangled.append("R");   // Lvalue reference suffix
-					}
-				}
-			} else if (args[i].kind == TemplateArgument::Kind::Value) {
-				mangled.append(args[i].int_value);
-			} else if (args[i].kind == TemplateArgument::Kind::Template) {
-				// For template template arguments, use the template name
-				mangled.append(args[i].template_name);
+			} else if (arg.kind == TemplateArgument::Kind::Value) {
+				ta.is_value = true;
+				ta.value = arg.int_value;
+				ta.base_type = arg.value_type;
+			} else if (arg.kind == TemplateArgument::Kind::Template) {
+				// For template template arguments, mark as template template arg
+				ta.is_template_template_arg = true;
+				ta.template_name_handle = StringTable::getOrInternStringHandle(arg.template_name);
 			}
+			type_args.push_back(ta);
 		}
-
-		return mangled.commit();
+		
+		return FlashCpp::generateInstantiatedNameFromArgs(base_name, type_args);
 	}
 
 	// Register an out-of-line template member function definition
@@ -1700,36 +1695,21 @@ public:
 	}
 	
 	// Register a member function template for lazy instantiation
-	// Key format: "qualified_name::template_args_encoded"
+	// Key format: "qualified_name$hash"
 	void registerLazyMemberTemplate(LazyMemberFunctionTemplateInfo info) {
-		// Create a unique key that includes both the function name and template arguments
-		StringBuilder key_builder;
-		key_builder.append(info.qualified_template_name).append("<");
-		for (size_t i = 0; i < info.pending_template_args.size(); ++i) {
-			if (i > 0) key_builder.append(",");
-			// Use type index and base type to create a unique identifier
-			key_builder.append(std::to_string(static_cast<int>(info.pending_template_args[i].base_type)));
-			key_builder.append("_");
-			key_builder.append(std::to_string(info.pending_template_args[i].type_index));
-		}
-		key_builder.append(">");
-		std::string_view key = key_builder.commit();
+		// Use hash-based key generation for consistency
+		std::string_view key = FlashCpp::generateInstantiatedNameFromArgs(
+			StringTable::getStringView(info.qualified_template_name), 
+			info.pending_template_args);
 		
 		lazy_member_templates_[StringTable::getOrInternStringHandle(key)] = std::move(info);
 	}
 	
 	// Check if a member function template needs lazy instantiation
 	bool needsInstantiation(StringHandle qualified_name, const std::vector<TemplateTypeArg>& template_args) const {
-		StringBuilder key_builder;
-		key_builder.append(qualified_name).append("<");
-		for (size_t i = 0; i < template_args.size(); ++i) {
-			if (i > 0) key_builder.append(",");
-			key_builder.append(std::to_string(static_cast<int>(template_args[i].base_type)));
-			key_builder.append("_");
-			key_builder.append(std::to_string(template_args[i].type_index));
-		}
-		key_builder.append(">");
-		std::string_view key = key_builder.commit();
+		std::string_view key = FlashCpp::generateInstantiatedNameFromArgs(
+			StringTable::getStringView(qualified_name), 
+			template_args);
 		
 		auto handle = StringTable::getOrInternStringHandle(key);
 		return lazy_member_templates_.find(handle) != lazy_member_templates_.end();
@@ -1740,16 +1720,9 @@ public:
 		StringHandle qualified_name, 
 		const std::vector<TemplateTypeArg>& template_args) {
 		
-		StringBuilder key_builder;
-		key_builder.append(qualified_name).append("<");
-		for (size_t i = 0; i < template_args.size(); ++i) {
-			if (i > 0) key_builder.append(",");
-			key_builder.append(std::to_string(static_cast<int>(template_args[i].base_type)));
-			key_builder.append("_");
-			key_builder.append(std::to_string(template_args[i].type_index));
-		}
-		key_builder.append(">");
-		std::string_view key = key_builder.commit();
+		std::string_view key = FlashCpp::generateInstantiatedNameFromArgs(
+			StringTable::getStringView(qualified_name), 
+			template_args);
 		
 		auto handle = StringTable::getOrInternStringHandle(key);
 		auto it = lazy_member_templates_.find(handle);
@@ -1761,16 +1734,9 @@ public:
 	
 	// Mark a member function template as instantiated
 	void markInstantiated(StringHandle qualified_name, const std::vector<TemplateTypeArg>& template_args) {
-		StringBuilder key_builder;
-		key_builder.append(qualified_name).append("<");
-		for (size_t i = 0; i < template_args.size(); ++i) {
-			if (i > 0) key_builder.append(",");
-			key_builder.append(std::to_string(static_cast<int>(template_args[i].base_type)));
-			key_builder.append("_");
-			key_builder.append(std::to_string(template_args[i].type_index));
-		}
-		key_builder.append(">");
-		std::string_view key = key_builder.commit();
+		std::string_view key = FlashCpp::generateInstantiatedNameFromArgs(
+			StringTable::getStringView(qualified_name), 
+			template_args);
 		
 		auto handle = StringTable::getOrInternStringHandle(key);
 		lazy_member_templates_.erase(handle);
