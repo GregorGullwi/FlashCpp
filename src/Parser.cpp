@@ -34603,19 +34603,19 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		if (param.kind() == TemplateParameterKind::Template) {
 			// Template template parameter - extract the template name from explicit_types[i]
 			// The parser stores template names as Type::Struct with a type_index pointing to the TypeInfo
-			std::string_view template_name_str;
+			StringHandle template_name;
 			if (i < explicit_types.size()) {
 				const auto& arg = explicit_types[i];
 				// Template arguments are stored as Type::Struct with type_index pointing to the template's TypeInfo
 				if (arg.base_type == Type::Struct && arg.type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[arg.type_index];
-					template_name_str = StringTable::getStringView(type_info.name());
+					template_name = type_info.name();
 				} else if (arg.is_dependent) {
 					// For dependent template arguments, use the dependent_name
-					template_name_str = arg.dependent_name.view();
+					template_name = arg.dependent_name;
 				}
 			}
-			template_args.push_back(TemplateArgument::makeTemplate(template_name_str));
+			template_args.push_back(TemplateArgument::makeTemplate(template_name));
 			++explicit_idx;
 		} else if (param.is_variadic()) {
 			// Variadic parameter pack - consume all remaining explicit types
@@ -35136,7 +35136,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						// and baseTemplateName() to get the template name without parsing
 						if (type_info.isTemplateInstantiation()) {
 							// Get the base template name directly from TypeInfo metadata
-							std::string_view inner_template_name = StringTable::getStringView(type_info.baseTemplateName());
+							StringHandle inner_template_name = type_info.baseTemplateName();
 							
 							// Check if this template exists
 							auto template_check = gTemplateRegistry.lookupTemplate(inner_template_name);
@@ -35233,7 +35233,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		if (arg.kind == TemplateArgument::Kind::Type) {
 			key.type_arguments.push_back(arg.type_value);
 		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			key.template_arguments.push_back(StringTable::getOrInternStringHandle(arg.template_name));
+			key.template_arguments.push_back(arg.template_name);
 		} else {
 			key.value_arguments.push_back(arg.int_value);
 		}
@@ -35292,12 +35292,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			// Store the template name so constraint evaluation can resolve Op<Args...>
 			TemplateTypeArg type_arg;
 			type_arg.is_template_template_arg = true;
-			type_arg.template_name_handle = StringTable::getOrInternStringHandle(arg.template_name);
+			type_arg.template_name_handle = arg.template_name;
 			// Try to find the template in the registry to get its type_index
 			auto template_opt = gTemplateRegistry.lookupTemplate(arg.template_name);
 			if (template_opt.has_value()) {
 				// Found the template - store a reference to it
-				auto type_handle = StringTable::getOrInternStringHandle(arg.template_name);
+				auto type_handle = arg.template_name;
 				auto type_it = gTypesByName.find(type_handle);
 				if (type_it != gTypesByName.end()) {
 					type_arg.type_index = type_it->second->type_index_;
@@ -42402,7 +42402,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		if (arg.kind == TemplateArgument::Kind::Type) {
 			key.type_arguments.push_back(arg.type_value);
 		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			key.template_arguments.push_back(StringTable::getOrInternStringHandle(arg.template_name));
+			key.template_arguments.push_back(arg.template_name);
 		} else {
 			key.value_arguments.push_back(arg.int_value);
 		}
@@ -42789,7 +42789,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		if (arg.kind == TemplateArgument::Kind::Type) {
 			key.type_arguments.push_back(arg.type_value);
 		} else if (arg.kind == TemplateArgument::Kind::Template) {
-			key.template_arguments.push_back(StringTable::getOrInternStringHandle(arg.template_name));
+			key.template_arguments.push_back(arg.template_name);
 		} else {
 			key.value_arguments.push_back(arg.int_value);
 		}

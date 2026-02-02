@@ -470,9 +470,9 @@ inline std::string_view generateInstantiatedNameFromArgs(
 // Template instantiation key - uniquely identifies a template instantiation
 struct TemplateInstantiationKey {
 	StringHandle template_name;
-	std::vector<Type> type_arguments;  // For type parameters
-	std::vector<int64_t> value_arguments;  // For non-type parameters
-	std::vector<StringHandle> template_arguments;  // For template template parameters
+	InlineVector<Type> type_arguments;  // For type parameters
+	InlineVector<int64_t> value_arguments;  // For non-type parameters
+	InlineVector<StringHandle> template_arguments;  // For template template parameters
 	
 	bool operator==(const TemplateInstantiationKey& other) const {
 		return template_name == other.template_name &&
@@ -512,7 +512,7 @@ struct TemplateArgument {
 	TypeIndex type_index = 0;  // For type arguments - index into gTypeInfo for complex types (NEW in Task 2)
 	int64_t int_value;  // For non-type integer arguments
 	Type value_type;  // For non-type arguments: the type of the value (bool, int, etc.)
-	std::string template_name;  // For template template arguments (name of the template)
+	StringHandle template_name;  // For template template arguments (name of the template)
 	std::optional<TypeSpecifierNode> type_specifier;  // Full type info including references, pointers, CV qualifiers
 	
 	static TemplateArgument makeType(Type t, TypeIndex idx = 0) {
@@ -540,10 +540,10 @@ struct TemplateArgument {
 		return arg;
 	}
 	
-	static TemplateArgument makeTemplate(std::string_view template_name) {
+	static TemplateArgument makeTemplate(StringHandle template_name) {
 		TemplateArgument arg;
 		arg.kind = Kind::Template;
-		arg.template_name = std::string(template_name);
+		arg.template_name = template_name;
 		return arg;
 	}
 	
@@ -664,18 +664,10 @@ inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
 		ts.set_type_index(arg.type_index);
 		
 		// Add pointer levels
-		for (size_t i = 0; i < arg.pointer_depth; ++i) {
-			ts.add_pointer_level(CVQualifier::None);
-		}
+		ts.add_pointer_levels(arg.pointer_depth);
 		
 		// Set reference type
-		// Check is_rvalue_reference FIRST because is_reference is true for BOTH lvalue and rvalue refs
-		// Note: set_reference(true) = rvalue reference (&&), set_reference(false) = lvalue reference (&)
-		if (arg.is_rvalue_reference) {
-			ts.set_reference(true);   // T&& - rvalue reference
-		} else if (arg.is_reference) {
-			ts.set_reference(false);  // T& - lvalue reference
-		}
+		ts.set_reference_qualifier(arg.reference_qualifier());
 		
 		// Set array info if present
 		if (arg.is_array) {
@@ -1281,7 +1273,7 @@ public:
 			} else if (arg.kind == TemplateArgument::Kind::Template) {
 				// For template template arguments, mark as template template arg
 				ta.is_template_template_arg = true;
-				ta.template_name_handle = StringTable::getOrInternStringHandle(arg.template_name);
+				ta.template_name_handle = arg.template_name;
 			}
 			type_args.push_back(ta);
 		}
