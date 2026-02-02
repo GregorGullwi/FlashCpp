@@ -39249,12 +39249,12 @@ if (struct_type_info.getStructInfo()) {
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	// This allows us to check if a type is a template instantiation without parsing the name
 	// IMPORTANT: Use base template name without namespace prefix
-	std::string_view base_template_name = template_name;
+	std::string_view unqualified_template_name = template_name;
 	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
-		base_template_name = template_name.substr(last_colon + 2);
+		unqualified_template_name = template_name.substr(last_colon + 2);
 	}
 	struct_type_info.setTemplateInstantiationInfo(
-		StringTable::getOrInternStringHandle(base_template_name),
+		StringTable::getOrInternStringHandle(unqualified_template_name),
 		convertToTemplateArgInfo(template_args_to_use)
 	);
 	
