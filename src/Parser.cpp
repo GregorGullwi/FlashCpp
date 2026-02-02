@@ -39929,15 +39929,16 @@ if (struct_type_info.getStructInfo()) {
 			
 			// Phase 6: Use TypeInfo::isTemplateInstantiation() instead of parsing $
 			// Check if this is a template instantiation that needs instantiation
-			// A template needs instantiation if it's a placeholder (total_size == 0)
+			// A template needs instantiation if it's a placeholder (no struct_info or total_size == 0)
 			bool needs_instantiation = false;
 			if (member_type_info.isTemplateInstantiation()) {
 				// This is a template instantiation - check if it's already fully instantiated
-				if (member_type_info.getStructInfo() && member_type_info.getStructInfo()->total_size == 0) {
+				// Need to instantiate if: no struct_info OR struct_info exists but size is 0
+				if (!member_type_info.getStructInfo() || member_type_info.getStructInfo()->total_size == 0) {
 					// Not yet instantiated - get the base template name and instantiate
 					member_struct_name = StringTable::getStringView(member_type_info.baseTemplateName());
 					needs_instantiation = true;
-					FLASH_LOG(Templates, Debug, "Member needs instantiation (placeholder with size=0): base_name='", member_struct_name, "'");
+					FLASH_LOG(Templates, Debug, "Member needs instantiation (placeholder with size=0 or no struct_info): base_name='", member_struct_name, "'");
 				} else {
 					FLASH_LOG(Templates, Debug, "Member already instantiated: ", member_struct_name, ", size=", 
 					          member_type_info.getStructInfo() ? member_type_info.getStructInfo()->total_size : 0);
