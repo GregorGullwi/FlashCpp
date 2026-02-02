@@ -37926,6 +37926,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				type_spec, template_params, template_args);
 			size_t ptr_depth = type_spec.pointer_depth();
 			
+			FLASH_LOG(Templates, Debug, "Member ", decl.identifier_token().value(), " substituted: type=", (int)member_type, 
+			          ", type_index=", member_type_index, ", ptr_depth=", ptr_depth);
+			
 			// Calculate member size accounting for pointer depth
 			size_t member_size;
 			if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
@@ -39912,20 +39915,35 @@ if (struct_type_info.getStructInfo()) {
 			const TypeInfo& member_type_info = gTypeInfo[member_type_index];
 			std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 			
+			FLASH_LOG(Templates, Debug, "Member type_info: name='", member_struct_name, 
+			          "', isTemplateInstantiation=", member_type_info.isTemplateInstantiation(),
+			          ", hasStructInfo=", (member_type_info.getStructInfo() != nullptr),
+			          ", total_size=", member_type_info.getStructInfo() ? member_type_info.getStructInfo()->total_size : 0);
+			
 			// Phase 6: Use TypeInfo::isTemplateInstantiation() instead of parsing $
-			// Check if this is a template instantiation placeholder or a template with size 0 that needs instantiation
+			// Check if this is a template instantiation that needs instantiation
+			// A template needs instantiation if it's a placeholder (total_size == 0)
 			bool needs_instantiation = false;
 			if (member_type_info.isTemplateInstantiation()) {
-				// This is a placeholder - get the base template name from TypeInfo
-				member_struct_name = StringTable::getStringView(member_type_info.baseTemplateName());
-				needs_instantiation = true;
+				// This is a template instantiation - check if it's already fully instantiated
+				if (member_type_info.getStructInfo() && member_type_info.getStructInfo()->total_size == 0) {
+					// Not yet instantiated - get the base template name and instantiate
+					member_struct_name = StringTable::getStringView(member_type_info.baseTemplateName());
+					needs_instantiation = true;
+					FLASH_LOG(Templates, Debug, "Member needs instantiation (placeholder with size=0): base_name='", member_struct_name, "'");
+				} else {
+					FLASH_LOG(Templates, Debug, "Member already instantiated: ", member_struct_name, ", size=", 
+					          member_type_info.getStructInfo() ? member_type_info.getStructInfo()->total_size : 0);
+				}
 			} else if (member_type_info.getStructInfo() && member_type_info.getStructInfo()->total_size == 0) {
-				// This is a template with size 0
+				// This is a non-template struct with size 0 (shouldn't normally happen)
 				needs_instantiation = true;
+				FLASH_LOG(Templates, Debug, "Member needs instantiation (non-template, total_size=0): name='", member_struct_name, "'");
 			}
 			
 			if (needs_instantiation) {
 				// Try to instantiate with the current template arguments
+				FLASH_LOG(Templates, Debug, "Instantiating member template: ", member_struct_name, " with ", template_args_to_use.size(), " args");
 				auto inst_result = try_instantiate_class_template(member_struct_name, template_args_to_use);
 				
 				// If instantiation succeeded, look up the instantiated type
