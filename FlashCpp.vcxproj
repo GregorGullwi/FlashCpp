@@ -205,6 +205,7 @@
     <ClInclude Include="src\FileReader.h" />
     <ClInclude Include="src\FileTree.h" />
     <ClInclude Include="src\CompileContext.h" />
+    <ClInclude Include="src\InlineVector.h" />
     <ClInclude Include="src\IRConverter.h" />
     <ClInclude Include="src\IROperandHelpers.h" />
     <ClInclude Include="src\IRTypes.h" />

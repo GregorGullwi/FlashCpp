@@ -121,11 +121,13 @@ public:
 	T& operator[](size_t i) {
 		// If i is within inline storage that has been filled, use inline_data_
 		// Otherwise use overflow (handles case when i >= N)
-		return i < static_cast<size_t>(inline_count_) ? inline_data_[i] : overflow_[i - N];
+		assert(i < size() && "Index out of bounds in InlineVector::operator[]");
+		return i < static_cast<size_t>(inline_count_) ? inline_data_[i] : overflow_[i - inline_count_];
 	}
 	
 	const T& operator[](size_t i) const {
-		return i < static_cast<size_t>(inline_count_) ? inline_data_[i] : overflow_[i - N];
+		assert(i < size() && "Index out of bounds in InlineVector::operator[]");
+		return i < static_cast<size_t>(inline_count_) ? inline_data_[i] : overflow_[i - inline_count_];
 	}
 	
 	T& back() {
