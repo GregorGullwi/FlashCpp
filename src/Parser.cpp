@@ -36882,16 +36882,22 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 						
 						FLASH_LOG(Templates, Debug, "Phase 3: Struct name from qualified ID: '", struct_name_view, "'");
 						
-						// The struct name might be a mangled template instantiation like "is_pointer_impl_T"
-						// We need to extract the template name by removing the underscore suffix
-						// For example: "is_pointer_impl_T" -> "is_pointer_impl"
-						size_t underscore_pos = struct_name_view.rfind('_');
+						// The struct name might be a mangled template instantiation
+						// Old format: "is_pointer_impl_T" (underscore-based)
+						// New format: "is_pointer_impl$47b270a920ee3ffb" (hash-based)
+						// We need to extract the template name by removing the suffix
+						size_t separator_pos = struct_name_view.find('$');
+						if (separator_pos == std::string_view::npos) {
+							separator_pos = struct_name_view.rfind('_');
+						}
+						
 						std::string_view template_name_to_lookup = struct_name_view;
-						if (underscore_pos != std::string_view::npos) {
-							// Check if what comes after _ looks like a template parameter (single letter or typename)
-							std::string_view suffix = struct_name_view.substr(underscore_pos + 1);
-							if (suffix.length() == 1 || suffix == "typename") {
-								template_name_to_lookup = struct_name_view.substr(0, underscore_pos);
+						if (separator_pos != std::string_view::npos) {
+							std::string_view suffix = struct_name_view.substr(separator_pos + 1);
+							// For hash-based: always extract base name (hash is always after $)
+							// For underscore-based: check if suffix looks like a template parameter
+							if (struct_name_view[separator_pos] == '$' || suffix.length() == 1 || suffix == "typename") {
+								template_name_to_lookup = struct_name_view.substr(0, separator_pos);
 								FLASH_LOG(Templates, Debug, "Phase 3: Extracted template name: '", template_name_to_lookup, "'");
 							}
 						}
@@ -44361,6 +44367,60 @@ ASTNode Parser::substituteTemplateParameters(
 			return emplace_node<ExpressionNode>(
 				NumericLiteralNode(literal_token, static_cast<unsigned long long>(num_pack_elements), 
 				                  Type::Int, TypeQualifier::None, 32));
+		} else if (std::holds_alternative<SizeofExprNode>(expr)) {
+			// sizeof operator - substitute template parameters in the operand and try to evaluate
+			const SizeofExprNode& sizeof_expr = std::get<SizeofExprNode>(expr);
+			
+			if (sizeof_expr.is_type()) {
+				// sizeof(type) - substitute the type
+				ASTNode type_or_expr = sizeof_expr.type_or_expr();
+				
+				// Check if the type is a TypeSpecifierNode
+				if (type_or_expr.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
+					
+					// Check if this is a user-defined type that matches a template parameter
+					if (type_spec.type() == Type::UserDefined && type_spec.type_index() < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[type_spec.type_index()];
+						std::string_view type_name = StringTable::getStringView(type_info.name());
+						
+						// Check if this type name matches a template parameter
+						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+							if (tparam.name() == type_name) {
+								const TemplateArgument& arg = template_args[i];
+								
+								if (arg.kind == TemplateArgument::Kind::Type) {
+									// Get the size of the concrete type in bytes
+									size_t type_size = get_type_size_bits(arg.type_value) / 8;
+									
+									// Create an integer literal with the type size
+									StringBuilder size_builder;
+									std::string_view size_str = size_builder.append(type_size).commit();
+									Token literal_token(Token::Type::Literal, size_str, 
+									                   sizeof_expr.sizeof_token().line(), sizeof_expr.sizeof_token().column(), 
+									                   sizeof_expr.sizeof_token().file_index());
+									return emplace_node<ExpressionNode>(
+										NumericLiteralNode(literal_token, static_cast<unsigned long long>(type_size), 
+										                  Type::UnsignedLongLong, TypeQualifier::None, 64));
+								}
+								break;
+							}
+						}
+					}
+					
+					// Otherwise, recursively substitute the type node
+					ASTNode substituted_type = substituteTemplateParameters(type_or_expr, template_params, template_args);
+					return emplace_node<ExpressionNode>(SizeofExprNode(substituted_type, sizeof_expr.sizeof_token()));
+				}
+			} else {
+				// sizeof(expression) - substitute the expression
+				ASTNode substituted_expr = substituteTemplateParameters(sizeof_expr.type_or_expr(), template_params, template_args);
+				return emplace_node<ExpressionNode>(SizeofExprNode::from_expression(substituted_expr, sizeof_expr.sizeof_token()));
+			}
+			
+			// Return the original node if no substitution was possible
+			return node;
 		}
 
 		// For other expression types that don't contain subexpressions, return as-is
