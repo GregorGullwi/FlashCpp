@@ -77,7 +77,7 @@ $(RELEASE_TARGET): $(MAIN_SOURCES)
 	@echo "Building main executable (Release) for $(PLATFORM) with $(CXX)..."
 	@$(MKDIR) $(RELEASE_DIR) 2>nul || $(MKDIR) $(RELEASE_DIR) || true
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -DNDEBUG -DFLASHCPP_LOG_LEVEL=1 -O3 -o $@ $^
-	@echo "Built: $@
+	@echo "Built: $@"
 
 # Build test executable
 $(TEST_TARGET): $(TESTDIR)/FlashCppTest/FlashCppTest/FlashCppTest/FlashCppTest.cpp $(TEST_SOURCES)
