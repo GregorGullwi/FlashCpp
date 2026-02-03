@@ -6737,7 +6737,24 @@ private:
 					// Float return value is in XMM0
 					bool is_float = (call_op.return_type == Type::Float);
 					emitFloatMovToFrame(X64Register::XMM0, result_offset, is_float);
+				} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+					// SystemV AMD64 ABI: structs 9-16 bytes return in RAX (low 8 bytes) and RDX (high 8 bytes)
+					if (call_op.return_type == Type::Struct && return_size_bits > 64 && return_size_bits <= 128) {
+						// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
+						emitMovToFrame(X64Register::RAX, result_offset);  // Store low 8 bytes
+						emitMovToFrame(X64Register::RDX, result_offset + 8);  // Store high 8 bytes
+						FLASH_LOG_FORMAT(Codegen, Debug,
+							"Storing two-register struct return ({} bits): RAX->offset {}, RDX->offset {}",
+							return_size_bits, result_offset, result_offset + 8);
+					} else {
+						// Single-register return (≤64 bits) in RAX
+						emitMovToFrameSized(
+							SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
+							SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.return_type)}  // dest
+						);
+					}
 				} else {
+					// Windows x64 ABI: small structs (≤64 bits) return in RAX only
 					emitMovToFrameSized(
 						SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
 						SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.return_type)}  // dest
@@ -9796,8 +9813,39 @@ private:
 								// Load floating-point value into XMM0
 								bool is_float = (ret_op.return_size == 32);
 								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+							} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+								// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
+								if (ret_op.return_type.has_value() && ret_op.return_type.value() == Type::Struct && 
+									var_size > 64 && var_size <= 128) {
+									// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
+									emitMovFromFrame(X64Register::RAX, var_offset);  // Load low 8 bytes
+									emitMovFromFrame(X64Register::RDX, var_offset + 8);  // Load high 8 bytes
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"TempVar two-register struct return ({} bits): RAX from offset {}, RDX from offset {}",
+										var_size, var_offset, var_offset + 8);
+									regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+									regAlloc.flushSingleDirtyRegister(X64Register::RDX);
+								} else {
+									// Single-register return (≤64 bits) in RAX - integer/pointer return
+									if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
+										if (reg_var.value() != X64Register::RAX) {
+											auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), ret_op.return_size / 8);
+											for (size_t i = 0; i < movResultToRax.size_in_bytes; ++i) {
+											}
+											logAsmEmit("handleReturn mov to RAX", movResultToRax.op_codes.data(), movResultToRax.size_in_bytes);
+											textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
+										} else {
+										}
+									}
+									else {
+										// Load from stack using RBP-relative addressing
+										// Use actual variable size for proper zero/sign extension
+										emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
+										regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+									}
+								}
 							} else {
-								// Integer/pointer return
+								// Windows x64 ABI: small structs (≤64 bits) return in RAX only - integer/pointer return
 								if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
 									if (reg_var.value() != X64Register::RAX) {
 										auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), ret_op.return_size / 8);
@@ -9837,9 +9885,25 @@ private:
 							// Load floating-point value into XMM0
 							bool is_float = (ret_op.return_size == 32);
 							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
+						} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+							// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
+							if (ret_op.return_type.has_value() && ret_op.return_type.value() == Type::Struct && 
+								var_size > 64 && var_size <= 128) {
+								// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
+								emitMovFromFrame(X64Register::RAX, var_offset);  // Load low 8 bytes
+								emitMovFromFrame(X64Register::RDX, var_offset + 8);  // Load high 8 bytes
+								FLASH_LOG_FORMAT(Codegen, Debug,
+									"Fallback two-register struct return ({} bits): RAX from offset {}, RDX from offset {}",
+									var_size, var_offset, var_offset + 8);
+								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+								regAlloc.flushSingleDirtyRegister(X64Register::RDX);
+							} else {
+								// Single-register return (≤64 bits) in RAX
+								emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
+								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+							}
 						} else {
-							// Load integer/pointer value into RAX
-							// Use actual variable size for proper zero/sign extension
+							// Windows x64 ABI: small structs (≤64 bits) return in RAX only
 							emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 						}

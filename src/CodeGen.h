@@ -2735,9 +2735,11 @@ private:
 		
 		// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this (pointer/reference returns are in RAX like regular pointers)
-		// Per Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
+		// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
+		// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
 		bool returns_struct_by_value = (ret_type.type() == Type::Struct && ret_type.pointer_depth() == 0 && !ret_type.is_reference());
-		bool needs_hidden_return_param = returns_struct_by_value && (ret_type.size_in_bits() > 64);
+		size_t struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
+		bool needs_hidden_return_param = returns_struct_by_value && (ret_type.size_in_bits() > struct_return_threshold);
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 		
 		// Track return type index and hidden parameter flag for current function context
@@ -14479,9 +14481,11 @@ private:
 		
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
 		// Exclude references - they return a pointer, not a struct by value
-		// Per Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
+		// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
+		// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
 		bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
-		bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > 64);
+		size_t struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
+		bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > struct_return_threshold);
 		if (needs_hidden_return_param) {
 			call_op.uses_return_slot = true;
 			call_op.return_slot = ret_var;  // The result temp var serves as the return slot
@@ -15653,9 +15657,11 @@ private:
 			call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
 			
 			// Detect if calling a member function that returns struct by value (needs hidden return parameter for RVO)
-			// Per Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
+			// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
+			// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
 			bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
-			bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > 64);
+			size_t struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
+			bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > struct_return_threshold);
 			if (needs_hidden_return_param) {
 				call_op.uses_return_slot = true;
 				call_op.return_slot = ret_var;  // The result temp var serves as the return slot
@@ -20453,9 +20459,11 @@ private:
 		
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this
-		// Per Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
+		// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
+		// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
 		bool returns_struct_by_value = (lambda_info.return_type == Type::Struct && !lambda_info.returns_reference);
-		bool needs_hidden_return_param = returns_struct_by_value && (lambda_info.return_size > 64);
+		size_t struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
+		bool needs_hidden_return_param = returns_struct_by_value && (lambda_info.return_size > struct_return_threshold);
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 		
 		// Track hidden return parameter flag for current function context
@@ -20636,9 +20644,11 @@ private:
 		func_decl_op.is_variadic = false;
 		
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
-		// Per Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
+		// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
+		// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
 		bool returns_struct_by_value = (lambda_info.return_type == Type::Struct && !lambda_info.returns_reference);
-		bool needs_hidden_return_param = returns_struct_by_value && (lambda_info.return_size > 64);
+		size_t struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
+		bool needs_hidden_return_param = returns_struct_by_value && (lambda_info.return_size > struct_return_threshold);
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 		
 		// Track hidden return parameter flag for current function context
