@@ -23440,6 +23440,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 										FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution_result.has_match, ", is_ambiguous=", resolution_result.is_ambiguous);
 										
+										// Special case for builtin functions that accept pointers: 
+										// If overload resolution fails but we have exactly 1 overload and 1 argument,
+										// and the argument is a pointer, allow the call anyway.
+										// This is needed for __builtin_strlen and similar functions where the parameter
+										// type (const char*) may not exactly match the argument type (const char_type*)
+										// when char_type is a typedef or template parameter.
+										if (!resolution_result.has_match && !resolution_result.is_ambiguous && 
+										    all_overloads.size() == 1 && arg_types.size() == 1 &&
+										    arg_types[0].is_pointer() &&
+										    (idenfifier_token.value().starts_with("__builtin_"))) {
+											FLASH_LOG(Parser, Debug, "Special case: allowing builtin function call with pointer argument");
+											resolution_result.has_match = true;
+											resolution_result.selected_overload = &all_overloads[0];
+										}
+										
 										if (resolution_result.is_ambiguous) {
 											return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 										} else if (!resolution_result.has_match) {
