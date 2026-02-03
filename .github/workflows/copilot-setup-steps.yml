@@ -1,7 +1,5 @@
 name: "Copilot Setup Steps"
 
-# Automatically run the setup steps when they are changed to allow for easy validation, and
-# allow manual testing through the repository's "Actions" tab
 on:
   workflow_dispatch:
   push:
@@ -12,15 +10,22 @@ on:
       - .github/workflows/copilot-setup-steps.yml
 
 jobs:
-  # The job MUST be called `copilot-setup-steps` or it will not be picked up by Copilot.
+  # The job MUST be called `copilot-setup-steps` for Copilot to pick it up.
   copilot-setup-steps:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
-    # You can define any steps you want, and they will run before the agent starts.
-    # If you do not check out your code, Copilot will do this for you.
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Setup MSBuild (Visual Studio)
-        uses: microsoft/setup-msbuild@v1
+      - name: Install debugging tools (gdb, lldb, strace)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # non-interactive install
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            gdb lldb strace
+          # show versions for logs
+          gdb --version || true
+          lldb --version || true
+          strace --version || true
