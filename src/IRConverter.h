@@ -6190,20 +6190,21 @@ private:
 			constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 			int struct_return_threshold = is_coff_format ? 64 : 128;
 			bool should_use_return_slot = is_struct_return && (return_size_bits > struct_return_threshold);
+			bool has_return_slot = call_op.return_slot.has_value();
 			bool return_slot_mismatch = (call_op.uses_return_slot != should_use_return_slot) ||
-				(call_op.return_slot.has_value() != should_use_return_slot);
+				(has_return_slot != should_use_return_slot);
 			
 			// Create a mutable copy to fix if needed
 			CallOp& mutable_call_op = const_cast<CallOp&>(call_op);
 			
 			if (return_slot_mismatch) {
-				if (call_op.uses_return_slot || call_op.return_slot.has_value()) {
+				if (should_use_return_slot) {
 					FLASH_LOG_FORMAT(Codegen, Warning,
-						"DEFENSIVE FIX: CallOp requested return slot but struct size={} bits is ≤ threshold={} - disabling return slot",
+						"DEFENSIVE FIX: CallOp missing return slot but struct size={} bits is > threshold={} - enabling return slot",
 						return_size_bits, struct_return_threshold);
 				} else {
 					FLASH_LOG_FORMAT(Codegen, Warning,
-						"DEFENSIVE FIX: CallOp missing return slot but struct size={} bits is > threshold={} - enabling return slot",
+						"DEFENSIVE FIX: CallOp requested return slot but struct size={} bits is ≤ threshold={} - disabling return slot",
 						return_size_bits, struct_return_threshold);
 				}
 
@@ -6213,7 +6214,7 @@ private:
 				} else {
 					mutable_call_op.return_slot.reset();
 				}
-			} else if (should_use_return_slot && !call_op.return_slot.has_value()) {
+			} else if (should_use_return_slot && !has_return_slot) {
 				mutable_call_op.return_slot = call_op.result;
 			}
 			
