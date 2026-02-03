@@ -6204,7 +6204,7 @@ private:
 						return_size_bits, struct_return_threshold);
 				} else {
 					FLASH_LOG_FORMAT(Codegen, Warning,
-						"DEFENSIVE FIX: CallOp requested return slot but struct size={} bits is ≤ threshold={} - disabling return slot",
+						"DEFENSIVE FIX: CallOp requested return slot but struct size={} bits is < threshold={} - disabling return slot",
 						return_size_bits, struct_return_threshold);
 				}
 
