@@ -1497,6 +1497,8 @@ public:
 		templates_.clear();
 		template_parameters_.clear();
 		instantiations_.clear();
+		instantiations_v2_.clear();
+		out_of_line_variables_.clear();
 		out_of_line_members_.clear();
 		specializations_.clear();
 		specialization_patterns_.clear();
