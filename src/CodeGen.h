@@ -9112,18 +9112,24 @@ private:
 			// If not found directly, search for template instantiation using TypeInfo metadata
 			// This handles cases like has_type<T>::value where T has a default = void argument
 			// Uses TypeInfo::baseTemplateName() for deterministic lookup instead of prefix scanning
+			// Selection is deterministic by choosing the instantiation with the smallest type_index_
 			if (struct_type_it == gTypesByName.end()) {
 				// Use TypeInfo metadata to find instantiation with matching base template name
-				// This avoids picking arbitrary instantiations when multiple exist
+				// We select deterministically by choosing the smallest type_index_ among matches
 				StringHandle base_name_handle = StringTable::getOrInternStringHandle(struct_or_enum_name);
+				TypeIndex best_type_index = std::numeric_limits<TypeIndex>::max();
 				for (auto it = gTypesByName.begin(); it != gTypesByName.end(); ++it) {
 					if (it->second->isStruct() && it->second->isTemplateInstantiation()) {
-						// Use TypeInfo metadata for deterministic matching
+						// Use TypeInfo metadata for matching
 						if (it->second->baseTemplateName() == base_name_handle) {
-							struct_type_it = it;
-							FLASH_LOG(Codegen, Debug, "Found struct via TypeInfo metadata: baseTemplate=", 
-								struct_or_enum_name, " -> ", StringTable::getStringView(it->first));
-							break;
+							// Deterministic selection: prefer smallest type_index_
+							if (it->second->type_index_ < best_type_index) {
+								best_type_index = it->second->type_index_;
+								struct_type_it = it;
+								FLASH_LOG(Codegen, Debug, "Found struct via TypeInfo metadata: baseTemplate=", 
+									struct_or_enum_name, " -> ", StringTable::getStringView(it->first),
+									" (type_index=", it->second->type_index_, ")");
+							}
 						}
 					}
 				}

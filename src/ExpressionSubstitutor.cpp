@@ -632,6 +632,12 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	// We just need to ensure the template is instantiated with the concrete type arguments
 	if (is_hash_based) {
 		// Hash-based name - extract template arguments from param_map_ and trigger instantiation
+		// NOTE: We iterate param_map_ in its internal order, which may not match the original
+		// template parameter declaration order. This is acceptable because:
+		// 1. The hash in the name is already computed based on the correct argument order
+		// 2. try_instantiate_class_template will look up the correct template definition
+		// 3. get_instantiated_class_name regenerates the hash based on correct ordering
+		// TODO: Consider passing template parameter order to ExpressionSubstitutor for stricter correctness
 		std::vector<TemplateTypeArg> inst_args;
 		
 		// Collect all template arguments from param_map_

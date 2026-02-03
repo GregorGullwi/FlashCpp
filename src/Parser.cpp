@@ -34603,19 +34603,19 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		if (param.kind() == TemplateParameterKind::Template) {
 			// Template template parameter - extract the template name from explicit_types[i]
 			// The parser stores template names as Type::Struct with a type_index pointing to the TypeInfo
-			StringHandle template_name;
+			StringHandle tpl_name_handle;
 			if (i < explicit_types.size()) {
 				const auto& arg = explicit_types[i];
 				// Template arguments are stored as Type::Struct with type_index pointing to the template's TypeInfo
 				if (arg.base_type == Type::Struct && arg.type_index < gTypeInfo.size()) {
 					const TypeInfo& type_info = gTypeInfo[arg.type_index];
-					template_name = type_info.name();
+					tpl_name_handle = type_info.name();
 				} else if (arg.is_dependent) {
 					// For dependent template arguments, use the dependent_name
-					template_name = arg.dependent_name;
+					tpl_name_handle = arg.dependent_name;
 				}
 			}
-			template_args.push_back(TemplateArgument::makeTemplate(template_name));
+			template_args.push_back(TemplateArgument::makeTemplate(tpl_name_handle));
 			++explicit_idx;
 		} else if (param.is_variadic()) {
 			// Variadic parameter pack - consume all remaining explicit types
