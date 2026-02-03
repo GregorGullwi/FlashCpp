@@ -12218,13 +12218,24 @@ ParseResult Parser::parse_type_specifier()
 						}
 					}
 				}
-				// Also check if the instantiated name itself is a dependent placeholder
-				// (e.g., remove_cv$hash from a previous template instantiation)
+				// Also check if the instantiated name itself contains dependent template arguments
+				// (e.g., remove_cv<remove_reference<T>::type> where the arg is a dependent placeholder)
 				if (!has_dependent_args) {
-					auto [is_dependent_placeholder, _] = isDependentTemplatePlaceholder(instantiated_name);
-					if (is_dependent_placeholder) {
-						has_dependent_args = true;
-						FLASH_LOG_FORMAT(Templates, Debug, "Instantiated name '{}' is a dependent placeholder", instantiated_name);
+					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
+					if (type_it != gTypesByName.end()) {
+						const TypeInfo* type_info = type_it->second;
+						// Check if this instantiation has template arguments and any are dependent
+						if (type_info->isTemplateInstantiation()) {
+							const auto& template_arg_infos = type_info->templateArgs();
+							for (const auto& arg_info : template_arg_infos) {
+								// Check if argument is a UserDefined type (dependent placeholder)
+								if (arg_info.base_type == Type::UserDefined && arg_info.type_index < gTypeInfo.size()) {
+									has_dependent_args = true;
+									FLASH_LOG_FORMAT(Templates, Debug, "Instantiated name '{}' has dependent template arguments", instantiated_name);
+									break;
+								}
+							}
+						}
 					}
 				}
 				
