@@ -7829,7 +7829,6 @@ private:
 						call_op.return_type_index = element_type_index;
 						call_op.function_name = get_mangled_name;
 						call_op.is_member_function = false;
-						call_op.uses_return_slot = false;
 						
 						// Pass the hidden variable as argument
 						TypedValue arg;
@@ -9887,7 +9886,6 @@ private:
 							}
 							call_op.function_name = mangled_name;  // MangledName implicitly converts to StringHandle
 							call_op.is_variadic = false;
-							call_op.uses_return_slot = false;
 							call_op.is_member_function = true;  // This is a member function call
 							
 							// Add 'this' pointer as first argument
@@ -11642,16 +11640,13 @@ private:
 					bool needs_hidden_return_param = returns_struct_by_value && (actual_return_size > struct_return_threshold);
 					
 					if (needs_hidden_return_param) {
-						call_op.uses_return_slot = true;
 						call_op.return_slot = result_var;
 						
 						FLASH_LOG_FORMAT(Codegen, Debug,
 							"Binary operator overload returns large struct by value (size={} bits) - using return slot",
 							actual_return_size);
 					} else if (returns_struct_by_value) {
-						// Small struct return - explicitly set uses_return_slot to false
-						call_op.uses_return_slot = false;
-						
+						// Small struct return - no return slot needed
 						FLASH_LOG_FORMAT(Codegen, Debug,
 							"Binary operator overload returns small struct by value (size={} bits) - will return in RAX",
 							actual_return_size);
@@ -11847,12 +11842,10 @@ private:
 								return_size, struct_return_threshold, returns_struct_by_value, needs_hidden_return_param);
 							
 							if (needs_hidden_return_param) {
-								call_op.uses_return_slot = true;
 								call_op.return_slot = result_var;
-								FLASH_LOG(Codegen, Debug, "Setting uses_return_slot=true for spaceship operator");
+								FLASH_LOG(Codegen, Debug, "Using return slot for spaceship operator");
 							} else {
-								call_op.uses_return_slot = false;
-								FLASH_LOG(Codegen, Debug, "Setting uses_return_slot=false for spaceship operator (small struct return in RAX)");
+								FLASH_LOG(Codegen, Debug, "No return slot for spaceship operator (small struct return in RAX)");
 							}
 							
 							// Add the LHS object as the first argument (this pointer)
@@ -14562,7 +14555,6 @@ private:
 		int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
 		bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > struct_return_threshold);
 		if (needs_hidden_return_param) {
-			call_op.uses_return_slot = true;
 			call_op.return_slot = ret_var;  // The result temp var serves as the return slot
 			
 			FLASH_LOG_FORMAT(Codegen, Debug,
@@ -15745,7 +15737,6 @@ private:
 				returns_struct_by_value, return_type.size_in_bits(), struct_return_threshold, needs_hidden_return_param);
 			
 			if (needs_hidden_return_param) {
-				call_op.uses_return_slot = true;
 				call_op.return_slot = ret_var;  // The result temp var serves as the return slot
 				call_op.return_type_index = return_type.type_index();
 				
@@ -15753,12 +15744,11 @@ private:
 					"Member function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
 					StringTable::getStringView(function_name), return_type.size_in_bits(), ret_var.var_number);
 			} else if (returns_struct_by_value) {
-				// Small struct return - explicitly set uses_return_slot to false
-				call_op.uses_return_slot = false;
+				// Small struct return - no return slot needed
 				call_op.return_type_index = return_type.type_index();
 				FLASH_LOG_FORMAT(Codegen, Debug,
-					"Member function call {} returns small struct by value (size={} bits) - will return in RAX, uses_return_slot={}",
-					StringTable::getStringView(function_name), return_type.size_in_bits(), call_op.uses_return_slot);
+					"Member function call {} returns small struct by value (size={} bits) - will return in RAX",
+					StringTable::getStringView(function_name), return_type.size_in_bits());
 			}
 			
 			// Add the object as the first argument (this pointer)
@@ -16967,7 +16957,6 @@ private:
 							}
 							call_op.function_name = mangled_name;
 							call_op.is_variadic = false;
-							call_op.uses_return_slot = false;
 							call_op.is_member_function = true;
 							
 							// Add 'this' pointer as first argument
