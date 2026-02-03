@@ -34,5 +34,5 @@ int main() {
     
     bool lt2 = m1 < m2;
     
-    return 0;
+    return !eq && ne && !lt2 ? 0 : 1;
 }
