@@ -11668,6 +11668,9 @@ private:
 		// Special handling for spaceship operator <=> on struct types
 		// This should be converted to a member function call: lhs.operator<=>(rhs)
 		if (op == "<=>") {
+			FLASH_LOG_FORMAT(Codegen, Debug, "Spaceship operator detected: lhsType={}, is_struct={}", 
+				static_cast<int>(lhsType), lhsType == Type::Struct);
+			
 			// Check if LHS is a struct type
 			if (lhsType == Type::Struct && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 				const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
@@ -11781,6 +11784,26 @@ private:
 							call_op.return_size_in_bits = return_size;
 							call_op.is_member_function = true;
 							call_op.is_variadic = func_decl.is_variadic();
+							
+							// Determine if return slot is needed (same logic as generateFunctionCallIr)
+							// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
+							// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
+							bool returns_struct_by_value = (return_type == Type::Struct && return_type_node.pointer_depth() == 0 && !return_type_node.is_reference());
+							int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
+							bool needs_hidden_return_param = returns_struct_by_value && (return_size > struct_return_threshold);
+							
+							FLASH_LOG_FORMAT(Codegen, Debug,
+								"Spaceship operator call: return_size={}, threshold={}, returns_struct={}, needs_hidden={}",
+								return_size, struct_return_threshold, returns_struct_by_value, needs_hidden_return_param);
+							
+							if (needs_hidden_return_param) {
+								call_op.uses_return_slot = true;
+								call_op.return_slot = result_var;
+								FLASH_LOG(Codegen, Debug, "Setting uses_return_slot=true for spaceship operator");
+							} else {
+								call_op.uses_return_slot = false;
+								FLASH_LOG(Codegen, Debug, "Setting uses_return_slot=false for spaceship operator (small struct return in RAX)");
+							}
 							
 							// Add the LHS object as the first argument (this pointer)
 							// For member functions, the this pointer is passed by name or temp var
