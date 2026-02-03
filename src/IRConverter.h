@@ -4843,7 +4843,10 @@ private:
 					if (is_coff_format) {
 						if (call_op->is_variadic) {
 							// Windows variadic: ALL args on stack, starting at RSP+0
-							outgoing_bytes = arg_count * 8;
+							// Need at least 32 bytes shadow space for first 4 register params
+							// Align to 16 bytes for stack alignment requirements
+							outgoing_bytes = std::max(arg_count * 8, static_cast<size_t>(32));
+							outgoing_bytes = (outgoing_bytes + 15) & ~static_cast<size_t>(15);
 						} else {
 							// Windows normal: First 4 in registers, rest on stack starting at RSP+32
 							if (arg_count > 4) {
@@ -8986,9 +8989,10 @@ private:
 		// TempVars are allocated within this space, not extending beyond it
 		variable_scopes.back().scope_stack_space = -total_stack_space;
 		
-		// Store named_vars + outgoing_args for patching (temp_vars are pre-calculated, not dynamic)
+		// Store named_vars size for TempVar offset calculation
 		// Note: named_vars_size already includes parameter home space
-		current_function_named_vars_size_ = func_stack_space.named_vars_size + func_stack_space.outgoing_args_space;
+		// IMPORTANT: Don't include outgoing_args_space here - TempVars go AFTER named vars but BEFORE outgoing args
+		current_function_named_vars_size_ = func_stack_space.named_vars_size;
 
 		// Handle parameters
 		struct ParameterInfo {
