@@ -14765,7 +14765,12 @@ ParseResult Parser::parse_statement_or_declaration()
 	else if (current_token.type() == Token::Type::Punctuator) {
 		// Handle lambda expressions and other expression statements starting with punctuators
 		std::string_view punct = current_token.value();
-		if (punct == "[") {
+		if (punct == ";") {
+			// Empty statement (null statement) - just consume the semicolon
+			consume_token();
+			return ParseResult::success();
+		}
+		else if (punct == "[") {
 			// Lambda expression
 			return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		}
