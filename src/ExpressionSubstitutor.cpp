@@ -620,29 +620,39 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 			return ASTNode(&new_expr);
 		}
+		FLASH_LOG_FORMAT(Templates, Warning, "Detected old underscore-based template name format, which is deprecated: {}", ns_name);
+		assert(false && "Old underscore-based template names are deprecated");
 	}
 	
 	// Extract the base template name (e.g., "R1")
 	std::string_view base_template_name = ns_name.substr(0, separator_pos);
-	std::string_view param_part = ns_name.substr(separator_pos + 1);
-	
-	FLASH_LOG(Templates, Debug, "  Base template: ", base_template_name, ", param part: ", param_part, ", is_hash_based: ", is_hash_based);
-	
+
+	if (IS_FLASH_LOG_ENABLED(Templates, Debug)) {
+		std::string_view param_part = ns_name.substr(separator_pos + 1);
+		FLASH_LOG(Templates, Debug, "  Base template: ", base_template_name, ", param part: ", param_part, ", is_hash_based: ", is_hash_based);
+	}
+
 	// For hash-based names, the namespace already contains the fully instantiated name
 	// We just need to ensure the template is instantiated with the concrete type arguments
 	if (is_hash_based) {
 		// Hash-based name - extract template arguments from param_map_ and trigger instantiation
-		// NOTE: We iterate param_map_ in its internal order, which may not match the original
-		// template parameter declaration order. This is acceptable because:
-		// 1. The hash in the name is already computed based on the correct argument order
-		// 2. try_instantiate_class_template will look up the correct template definition
-		// 3. get_instantiated_class_name regenerates the hash based on correct ordering
-		// TODO: Consider passing template parameter order to ExpressionSubstitutor for stricter correctness
+		// Use template_param_order_ to preserve the original template parameter declaration order
+		// This ensures stricter correctness by maintaining the proper template argument order
 		std::vector<TemplateTypeArg> inst_args;
 		
-		// Collect all template arguments from param_map_
-		for (const auto& [param_name, param_arg] : param_map_) {
-			inst_args.push_back(param_arg);
+		if (!template_param_order_.empty()) {
+			// Use the preserved template parameter order for stricter correctness
+			for (std::string_view param_name : template_param_order_) {
+				auto it = param_map_.find(param_name);
+				if (it != param_map_.end()) {
+					inst_args.push_back(it->second);
+				}
+			}
+		} else {
+			// Fallback: iterate param_map_ in its internal order (less correct but functional)
+			for (const auto& [param_name, param_arg] : param_map_) {
+				inst_args.push_back(param_arg);
+			}
 		}
 		
 		// Also check pack_map_ for variadic template arguments
@@ -682,8 +692,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 		return ASTNode(&new_expr);
 	}
-	
+
 	// Old underscore-based name - look up by parameter name
+	std::string_view param_part = ns_name.substr(separator_pos + 1);
 	auto param_it = param_map_.find(param_part);
 	if (param_it == param_map_.end()) {
 		// Parameter not found in substitution map, return as-is
