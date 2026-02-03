@@ -11604,9 +11604,26 @@ private:
 					call_op.is_member_function = true;  // This is a member function call
 					
 					// Detect if returning struct by value (needs hidden return parameter for RVO)
+					// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
+					// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger structs use hidden parameter
 					bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
-					if (returns_struct_by_value) {
+					int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
+					bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > struct_return_threshold);
+					
+					if (needs_hidden_return_param) {
 						call_op.uses_return_slot = true;
+						call_op.return_slot = result_var;
+						
+						FLASH_LOG_FORMAT(Codegen, Debug,
+							"Binary operator overload returns large struct by value (size={} bits) - using return slot",
+							return_type.size_in_bits());
+					} else if (returns_struct_by_value) {
+						// Small struct return - explicitly set uses_return_slot to false
+						call_op.uses_return_slot = false;
+						
+						FLASH_LOG_FORMAT(Codegen, Debug,
+							"Binary operator overload returns small struct by value (size={} bits) - will return in RAX",
+							return_type.size_in_bits());
 					}
 					
 					// Add 'this' pointer as first argument
