@@ -6191,32 +6191,30 @@ private:
 			int struct_return_threshold = is_coff_format ? 64 : 128;
 			bool should_use_return_slot = is_struct_return && (return_size_bits > struct_return_threshold);
 			bool has_return_slot = call_op.return_slot.has_value();
-			bool requested_return_slot = call_op.uses_return_slot || has_return_slot;
+			bool return_slot_requested = call_op.uses_return_slot || has_return_slot;
 			
 			// Create a mutable copy to fix if needed
 			CallOp& mutable_call_op = const_cast<CallOp&>(call_op);
 			
-			if (requested_return_slot && !should_use_return_slot) {
-				FLASH_LOG_FORMAT(Codegen, Warning,
-					"DEFENSIVE FIX: CallOp requested return slot but struct size={} bits is ≤ threshold={} - correcting to false",
-					return_size_bits, struct_return_threshold);
-				mutable_call_op.uses_return_slot = false;
-				if (has_return_slot) {
-					mutable_call_op.return_slot.reset();
+			if (return_slot_requested != should_use_return_slot) {
+				if (return_slot_requested) {
+					FLASH_LOG_FORMAT(Codegen, Warning,
+						"DEFENSIVE FIX: CallOp requested return slot but struct size={} bits is ≤ threshold={} - disabling return slot",
+						return_size_bits, struct_return_threshold);
+				} else {
+					FLASH_LOG_FORMAT(Codegen, Warning,
+						"DEFENSIVE FIX: CallOp missing return slot but struct size={} bits is > threshold={} - enabling return slot",
+						return_size_bits, struct_return_threshold);
 				}
-			} else if (!requested_return_slot && should_use_return_slot) {
-				FLASH_LOG_FORMAT(Codegen, Warning,
-					"DEFENSIVE FIX: CallOp missing return slot but struct size={} bits is > threshold={} - correcting to true",
-					return_size_bits, struct_return_threshold);
-				mutable_call_op.uses_return_slot = true;
-				mutable_call_op.return_slot = call_op.result;
-			} else {
+
 				mutable_call_op.uses_return_slot = should_use_return_slot;
-				if (should_use_return_slot && !has_return_slot) {
+				if (should_use_return_slot) {
 					mutable_call_op.return_slot = call_op.result;
-				} else if (!should_use_return_slot && has_return_slot) {
+				} else {
 					mutable_call_op.return_slot.reset();
 				}
+			} else if (should_use_return_slot && !has_return_slot) {
+				mutable_call_op.return_slot = call_op.result;
 			}
 			
 			// For functions returning struct by value, prepare hidden return parameter

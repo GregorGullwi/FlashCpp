@@ -15749,22 +15749,22 @@ private:
 				"Member function call check: returns_struct={}, size={}, threshold={}, needs_hidden={}",
 				returns_struct_by_value, return_type.size_in_bits(), struct_return_threshold, needs_hidden_return_param);
 			
-		if (needs_hidden_return_param) {
-			call_op.uses_return_slot = true;
-			call_op.return_slot = ret_var;  // The result temp var serves as the return slot
-			call_op.return_type_index = return_type.type_index();
+			if (needs_hidden_return_param) {
+				call_op.uses_return_slot = true;
+				call_op.return_slot = ret_var;  // The result temp var serves as the return slot
+				call_op.return_type_index = return_type.type_index();
 				
 				FLASH_LOG_FORMAT(Codegen, Debug,
 					"Member function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
 					StringTable::getStringView(function_name), return_type.size_in_bits(), ret_var.var_number);
-		} else if (returns_struct_by_value) {
-			// Small struct return - explicitly set uses_return_slot to false
-			call_op.uses_return_slot = false;
-			call_op.return_slot.reset();
-			call_op.return_type_index = return_type.type_index();
-			FLASH_LOG_FORMAT(Codegen, Debug,
-				"Member function call {} returns small struct by value (size={} bits) - will return in RAX, uses_return_slot={}",
-				StringTable::getStringView(function_name), return_type.size_in_bits(), call_op.uses_return_slot);
+			} else if (returns_struct_by_value) {
+				// Small struct return - explicitly set uses_return_slot to false
+				call_op.uses_return_slot = false;
+				call_op.return_slot.reset();
+				call_op.return_type_index = return_type.type_index();
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Member function call {} returns small struct by value (size={} bits) - will return in RAX, uses_return_slot={}",
+					StringTable::getStringView(function_name), return_type.size_in_bits(), call_op.uses_return_slot);
 			}
 			
 			// Add the object as the first argument (this pointer)
