@@ -7830,6 +7830,7 @@ private:
 						call_op.function_name = get_mangled_name;
 						call_op.is_member_function = false;
 						call_op.uses_return_slot = false;
+						call_op.return_slot.reset();
 						
 						// Pass the hidden variable as argument
 						TypedValue arg;
@@ -9888,6 +9889,7 @@ private:
 							call_op.function_name = mangled_name;  // MangledName implicitly converts to StringHandle
 							call_op.is_variadic = false;
 							call_op.uses_return_slot = false;
+							call_op.return_slot.reset();
 							call_op.is_member_function = true;  // This is a member function call
 							
 							// Add 'this' pointer as first argument
@@ -11651,6 +11653,7 @@ private:
 					} else if (returns_struct_by_value) {
 						// Small struct return - explicitly set uses_return_slot to false
 						call_op.uses_return_slot = false;
+						call_op.return_slot.reset();
 						
 						FLASH_LOG_FORMAT(Codegen, Debug,
 							"Binary operator overload returns small struct by value (size={} bits) - will return in RAX",
@@ -11852,6 +11855,7 @@ private:
 								FLASH_LOG(Codegen, Debug, "Setting uses_return_slot=true for spaceship operator");
 							} else {
 								call_op.uses_return_slot = false;
+								call_op.return_slot.reset();
 								FLASH_LOG(Codegen, Debug, "Setting uses_return_slot=false for spaceship operator (small struct return in RAX)");
 							}
 							
@@ -14569,6 +14573,7 @@ private:
 				"Function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
 				function_name, return_type.size_in_bits(), ret_var.var_number);
 		} else if (returns_struct_by_value) {
+			call_op.return_slot.reset();
 			FLASH_LOG_FORMAT(Codegen, Debug,
 				"Function call {} returns small struct by value (size={} bits) - will return in RAX",
 				function_name, return_type.size_in_bits());
@@ -15744,21 +15749,22 @@ private:
 				"Member function call check: returns_struct={}, size={}, threshold={}, needs_hidden={}",
 				returns_struct_by_value, return_type.size_in_bits(), struct_return_threshold, needs_hidden_return_param);
 			
-			if (needs_hidden_return_param) {
-				call_op.uses_return_slot = true;
-				call_op.return_slot = ret_var;  // The result temp var serves as the return slot
-				call_op.return_type_index = return_type.type_index();
+		if (needs_hidden_return_param) {
+			call_op.uses_return_slot = true;
+			call_op.return_slot = ret_var;  // The result temp var serves as the return slot
+			call_op.return_type_index = return_type.type_index();
 				
 				FLASH_LOG_FORMAT(Codegen, Debug,
 					"Member function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
 					StringTable::getStringView(function_name), return_type.size_in_bits(), ret_var.var_number);
-			} else if (returns_struct_by_value) {
-				// Small struct return - explicitly set uses_return_slot to false
-				call_op.uses_return_slot = false;
-				call_op.return_type_index = return_type.type_index();
-				FLASH_LOG_FORMAT(Codegen, Debug,
-					"Member function call {} returns small struct by value (size={} bits) - will return in RAX, uses_return_slot={}",
-					StringTable::getStringView(function_name), return_type.size_in_bits(), call_op.uses_return_slot);
+		} else if (returns_struct_by_value) {
+			// Small struct return - explicitly set uses_return_slot to false
+			call_op.uses_return_slot = false;
+			call_op.return_slot.reset();
+			call_op.return_type_index = return_type.type_index();
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Member function call {} returns small struct by value (size={} bits) - will return in RAX, uses_return_slot={}",
+				StringTable::getStringView(function_name), return_type.size_in_bits(), call_op.uses_return_slot);
 			}
 			
 			// Add the object as the first argument (this pointer)
@@ -16968,6 +16974,7 @@ private:
 							call_op.function_name = mangled_name;
 							call_op.is_variadic = false;
 							call_op.uses_return_slot = false;
+							call_op.return_slot.reset();
 							call_op.is_member_function = true;
 							
 							// Add 'this' pointer as first argument

@@ -6190,21 +6190,33 @@ private:
 			constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 			int struct_return_threshold = is_coff_format ? 64 : 128;
 			bool should_use_return_slot = is_struct_return && (return_size_bits > struct_return_threshold);
+			bool has_return_slot = call_op.return_slot.has_value();
+			bool requested_return_slot = call_op.uses_return_slot || has_return_slot;
 			
 			// Create a mutable copy to fix if needed
 			CallOp& mutable_call_op = const_cast<CallOp&>(call_op);
 			
-			if (call_op.uses_return_slot && !should_use_return_slot) {
+			if (requested_return_slot && !should_use_return_slot) {
 				FLASH_LOG_FORMAT(Codegen, Warning,
-					"DEFENSIVE FIX: CallOp has uses_return_slot=true but struct size={} bits is ≤ threshold={} - correcting to false",
+					"DEFENSIVE FIX: CallOp requested return slot but struct size={} bits is ≤ threshold={} - correcting to false",
 					return_size_bits, struct_return_threshold);
 				mutable_call_op.uses_return_slot = false;
-			} else if (!call_op.uses_return_slot && should_use_return_slot) {
+				if (has_return_slot) {
+					mutable_call_op.return_slot.reset();
+				}
+			} else if (!requested_return_slot && should_use_return_slot) {
 				FLASH_LOG_FORMAT(Codegen, Warning,
-					"DEFENSIVE FIX: CallOp has uses_return_slot=false but struct size={} bits is > threshold={} - correcting to true",
+					"DEFENSIVE FIX: CallOp missing return slot but struct size={} bits is > threshold={} - correcting to true",
 					return_size_bits, struct_return_threshold);
 				mutable_call_op.uses_return_slot = true;
 				mutable_call_op.return_slot = call_op.result;
+			} else {
+				mutable_call_op.uses_return_slot = should_use_return_slot;
+				if (should_use_return_slot && !has_return_slot) {
+					mutable_call_op.return_slot = call_op.result;
+				} else if (!should_use_return_slot && has_return_slot) {
+					mutable_call_op.return_slot.reset();
+				}
 			}
 			
 			// For functions returning struct by value, prepare hidden return parameter
