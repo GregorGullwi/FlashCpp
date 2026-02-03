@@ -16,14 +16,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | static_assert constexpr evaluation (~155ms) |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Parses 650 templates (~270ms), unexpected semicolon in function body |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Base class `__ull_constant` not found in parse_numbers.h |
-| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Parses 500 templates (~200ms), nested out-of-line template member function (line 583) |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Parses 700+ templates (~284ms), unexpected semicolon at optional:475 |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Parses 550+ templates (~170ms), static_assert constexpr at parse_numbers.h:198 |
+| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Parses 500+ templates (~153ms), nested out-of-line template member function at any:583 |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
-| `<bit>` | N/A | ❌ Parse Error | Parse error in char_traits.h:391 (__builtin_strlen function lookup) |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Parses 600 templates (~240ms), parse error in char_traits.h:391 (__builtin_strlen function lookup) |
-| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Parses 600 templates (~248ms), parse error in char_traits.h:391 (__builtin_strlen function lookup) |
+| `<bit>` | N/A | ❌ Parse Error | Parse error in char_traits.h:512 (wmemcmp function lookup) |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Parses 650+ templates (~263ms), parse error in char_traits.h:512 (wmemcmp function lookup) |
+| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Parses 650+ templates (~262ms), parse error in char_traits.h:512 (wmemcmp function lookup) |
 | `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Test file missing |
 | `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Template complexity causes timeout |
@@ -32,7 +32,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Parse error in char_traits.h:391 (__builtin_strlen function lookup) |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Parse error in char_traits.h:512 (wmemcmp function lookup) |
 | `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Test file missing |
 | `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
@@ -52,7 +52,23 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
-**Note (2026-01-31 Latest Update - This PR):** Fixed three major blockers for standard library headers:
+**Note (2026-02-03 Latest Update - This PR):** Fixed three critical blockers affecting most standard library headers:
+1. **Type alias resolution in base classes** - When inheriting from `Template<T>::type` patterns, the parser now properly resolves the type alias to its underlying type instead of treating the qualified name as the base. Also added support for dependent template placeholders (e.g., `integral_constant$hash`) as base classes.
+2. **Nested type lookup for dependent placeholders** - When accessing `::type` on dependent template placeholders (e.g., `remove_cv$hash::type`), the parser now creates nested placeholders instead of failing with "Unknown nested type". This enables proper parsing of complex type trait expressions.
+3. **Builtin function overload resolution** - Added special case for `__builtin_*` functions to accept pointer arguments even when the exact pointer type doesn't match. This fixes `__builtin_strlen` and similar builtins where type aliases prevent exact type matching.
+- **Impact:**
+  - `<string>`, `<string_view>`, `<bit>`, `<iostream>` now parse 650+ templates and progress from type_traits:462 to char_traits.h:512 (wmemcmp)
+  - `<optional>` now parses 700+ templates and progresses to optional:475 (unexpected semicolon)
+  - `<any>` now parses 500+ templates and progresses to any:583 (nested out-of-line template member)
+  - `<variant>` now parses 550+ templates and progresses to parse_numbers.h:198 (static_assert constexpr)
+  - All headers that were blocked by `integral_constant::type` base class issues now progress significantly further
+- **Remaining issues:**
+  - Missing standard C library functions (wmemcmp, etc.) for wide character support
+  - Nested out-of-line template members (`Outer::Inner<T>::method`) not yet supported
+  - Static assert constexpr evaluation for type trait values
+  - Template complexity/performance for container headers
+
+**Note (2026-01-31 Latest Update):** Fixed three major blockers for standard library headers:
 1. **For loop initialization with type aliases** - Parser now recognizes type aliases (like `size_t`) in for loop initialization by checking `gTypesByName`. Previously only recognized language keywords as type names.
 2. **Inheriting constructors** - Parser now recognizes and handles `using BaseClass<T>::BaseClass;` syntax. Added support in `parse_member_type_alias` with lookahead to detect template arguments before `::`.
 3. **Out-of-line template member functions with pointer/reference return types** - Fixed `try_parse_out_of_line_template_member` to skip pointer and reference modifiers after the return type. This handles multi-line declarations like:
@@ -91,10 +107,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Note (2026-01-24 Latest Update):** Fixed `operator[]` parsing in template class bodies, brace initialization of structs with constructors but no data members, and throw expressions as unary operators. The `<compare>` header now fully compiles. Fixed union template parsing - union keyword now recognized in all template declaration paths. The `<optional>` header now progresses past line 204 and fails at line 141 with a different constexpr evaluation error.
 
 **Primary Remaining Blockers:**
-1. **Nested out-of-line template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported. Single-level out-of-line members (`Class<T>::method`) now work, but nested versions need additional parsing support. This affects `<any>` (line 583: `any::_Manager_internal<_Tp>::_S_manage`).
-2. **Type alias resolution for constexpr evaluation** - Templates like `is_integral<int>` inherit from `integral_constant<bool, true>::type`. While parsing now works, constexpr evaluation of `::value` through the inheritance chain fails. This affects `static_assert` statements in `<type_traits>`, `<ratio>`, `<variant>`.
-3. **Template complexity/performance** - Headers like `<vector>`, `<tuple>`, `<array>`, `<functional>`, `<map>`, `<set>`, `<span>`, `<ranges>` time out due to template instantiation complexity.
-4. **Builtin function lookup** - Functions like `__builtin_strlen` are not found during function lookup. This blocks `<string>`, `<string_view>`, `<iostream>`, `<bit>` at char_traits.h:391.
+1. **Missing standard C library functions** - Functions like `wmemcmp`, `wmemchr`, `wmemcpy` are not registered. This blocks `<string>`, `<string_view>`, `<iostream>`, `<bit>` at char_traits.h:512. Easy fix: register these functions similar to `__builtin_strlen`.
+2. **Nested out-of-line template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported. Single-level out-of-line members (`Class<T>::method`) now work, but nested versions need additional parsing support. This affects `<any>` (line 583: `any::_Manager_internal<_Tp>::_S_manage`).
+3. **Static assert constexpr evaluation** - Templates like `is_integral<int>` inherit from `integral_constant<bool, true>::type`. While parsing now works, constexpr evaluation of `::value` through the inheritance chain fails. This affects `static_assert` statements in `<type_traits>`, `<ratio>`, `<variant>`.
+4. **Template complexity/performance** - Headers like `<vector>`, `<tuple>`, `<array>`, `<functional>`, `<map>`, `<set>`, `<span>`, `<ranges>` time out due to template instantiation complexity.
 5. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
 
 **Fixes Applied (2026-01-31 This PR - For Loop Initialization with Type Aliases):**
