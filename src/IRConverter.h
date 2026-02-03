@@ -6182,35 +6182,13 @@ private:
 				result_offset, call_op.result.name(), call_op.result.var_number);
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle(call_op.result.name())].offset = result_offset;
 			
-			// DEFENSIVE FIX: Verify uses_return_slot is correct for small struct returns
-			// Windows x64 ABI: structs ≤64 bits return in RAX, larger use hidden parameter
-			// SystemV AMD64 ABI: structs ≤128 bits return in RAX/RDX, larger use hidden parameter
-			// This catches cases where uses_return_slot was incorrectly set to true
-			bool is_struct_return = (call_op.return_type == Type::Struct);
+			// Platform-specific format check for ABI differences
 			constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
-			int struct_return_threshold = is_coff_format ? 64 : 128;
-			bool should_use_return_slot = is_struct_return && (return_size_bits > struct_return_threshold);
-			
-			// Create a mutable copy to fix if needed
-			CallOp& mutable_call_op = const_cast<CallOp&>(call_op);
-			
-			if (call_op.uses_return_slot && !should_use_return_slot) {
-				FLASH_LOG_FORMAT(Codegen, Warning,
-					"DEFENSIVE FIX: CallOp has uses_return_slot=true but struct size={} bits is ≤ threshold={} - correcting to false",
-					return_size_bits, struct_return_threshold);
-				mutable_call_op.uses_return_slot = false;
-			} else if (!call_op.uses_return_slot && should_use_return_slot) {
-				FLASH_LOG_FORMAT(Codegen, Warning,
-					"DEFENSIVE FIX: CallOp has uses_return_slot=false but struct size={} bits is > threshold={} - correcting to true",
-					return_size_bits, struct_return_threshold);
-				mutable_call_op.uses_return_slot = true;
-				mutable_call_op.return_slot = call_op.result;
-			}
 			
 			// For functions returning struct by value, prepare hidden return parameter
 			// The return slot address will be passed as the first argument
 			int param_shift = 0;  // Tracks how many parameters to shift (for hidden return param)
-			if (mutable_call_op.uses_return_slot) {
+			if (call_op.usesReturnSlot()) {
 				param_shift = 1;  // Regular parameters shift by 1 to make room for hidden return param
 				
 				FLASH_LOG_FORMAT(Codegen, Debug,
@@ -6693,7 +6671,7 @@ private:
 			}
 			
 			// If function uses return slot, pass the address of the result location as hidden first parameter
-			if (call_op.uses_return_slot) {
+			if (call_op.usesReturnSlot()) {
 				// Load address of return slot (result_offset) into first integer parameter register
 				X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
 				
@@ -6756,7 +6734,7 @@ private:
 			
 			// Store return value - RAX for integers, XMM0 for floats
 			// For struct returns using return slot, the struct is already in place - no copy needed
-			if (call_op.return_type != Type::Void && !call_op.uses_return_slot) {
+			if (call_op.return_type != Type::Void && !call_op.usesReturnSlot()) {
 				if (is_floating_point_type(call_op.return_type)) {
 					// Float return value is in XMM0
 					bool is_float = (call_op.return_type == Type::Float);
@@ -6784,7 +6762,7 @@ private:
 						SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.return_type)}  // dest
 					);
 				}
-			} else if (call_op.uses_return_slot) {
+			} else if (call_op.usesReturnSlot()) {
 				FLASH_LOG_FORMAT(Codegen, Debug,
 					"Struct return using return slot - struct already constructed at offset {}",
 					result_offset);

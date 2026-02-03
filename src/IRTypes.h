@@ -988,7 +988,6 @@ struct CallOp {
 	TypeIndex return_type_index = 0;      // Type index for struct/class return types
 	bool is_member_function = false;      // 1 byte
 	bool is_variadic = false;             // 1 byte
-	bool uses_return_slot = false;        // 1 byte - True if using hidden return parameter for RVO
 	bool is_indirect_call = false;        // 1 byte - True if calling through function pointer/reference
 	bool returns_rvalue_reference = false; // 1 byte - True if function returns T&&
 	std::optional<TempVar> return_slot;   // Optional temp var representing the return slot location
@@ -996,6 +995,12 @@ struct CallOp {
 	// Helper to get function_name as StringHandle
 	StringHandle getFunctionName() const {
 		return function_name;
+	}
+	
+	// Helper to check if using hidden return parameter for RVO
+	// Returns true if return_slot is set (instead of duplicating this as a separate bool)
+	bool usesReturnSlot() const {
+		return return_slot.has_value();
 	}
 };
 
