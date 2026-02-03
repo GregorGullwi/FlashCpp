@@ -9482,7 +9482,40 @@ private:
 				.result = resultVar
 			};
 		
-			if (is_signed_integer_type(fromType)) {
+			// Determine whether to use sign extension or zero extension
+			bool use_sign_extend = false;
+			
+			// For literals, check if the value fits in the signed range
+			if (operands.size() >= 3 && std::holds_alternative<unsigned long long>(operands[2])) {
+				unsigned long long lit_value = std::get<unsigned long long>(operands[2]);
+				
+				// Determine the signed max value for the source size
+				unsigned long long signed_max = 0;
+				if (fromSize == 8) {
+					signed_max = std::numeric_limits<int8_t>::max();
+				} else if (fromSize == 16) {
+					signed_max = std::numeric_limits<int16_t>::max();
+				} else if (fromSize == 32) {
+					signed_max = std::numeric_limits<int32_t>::max();
+				} else if (fromSize == 64) {
+					signed_max = std::numeric_limits<int64_t>::max();
+				}
+				
+				// If the value exceeds the signed max, it should be treated as unsigned (zero-extend)
+				// Otherwise, use the type's signedness
+				if (lit_value <= signed_max) {
+					// Value fits in signed range, use type's signedness
+					use_sign_extend = is_signed_integer_type(fromType);
+				} else {
+					// Value doesn't fit in signed range - zero extend
+					use_sign_extend = false;
+				}
+			} else {
+				// For non-literal values (variables, TempVars), use the type's signedness
+				use_sign_extend = is_signed_integer_type(fromType);
+			}
+			
+			if (use_sign_extend) {
 				ir_.addInstruction(IrInstruction(IrOpcode::SignExtend, std::move(conv_op), source_token));
 			} else {
 				ir_.addInstruction(IrInstruction(IrOpcode::ZeroExtend, std::move(conv_op), source_token));
