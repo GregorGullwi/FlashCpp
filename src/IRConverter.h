@@ -6741,8 +6741,8 @@ private:
 					// SystemV AMD64 ABI: structs 9-16 bytes return in RAX (low 8 bytes) and RDX (high 8 bytes)
 					if (call_op.return_type == Type::Struct && return_size_bits > 64 && return_size_bits <= 128) {
 						// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
-						emitMovToFrame(X64Register::RAX, result_offset);  // Store low 8 bytes
-						emitMovToFrame(X64Register::RDX, result_offset + 8);  // Store high 8 bytes
+						emitMovToFrame(X64Register::RAX, result_offset, return_size_bits);  // Store low 8 bytes
+						emitMovToFrame(X64Register::RDX, result_offset + 8, return_size_bits - 64);  // Store high 8 bytes
 						FLASH_LOG_FORMAT(Codegen, Debug,
 							"Storing two-register struct return ({} bits): RAX->offset {}, RDX->offset {}",
 							return_size_bits, result_offset, result_offset + 8);
