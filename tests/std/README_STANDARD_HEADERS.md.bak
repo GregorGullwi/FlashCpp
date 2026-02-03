@@ -16,14 +16,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | static_assert constexpr evaluation (~155ms) |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Parses 700+ templates (~280ms), parse error at optional:564 (in_place_t parameter) |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Parses 700+ templates (~284ms), unexpected semicolon at optional:475 |
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Parses 550+ templates (~170ms), static_assert constexpr at parse_numbers.h:198 |
 | `<any>` | `test_std_any.cpp` | ❌ Parse Error | Parses 500+ templates (~153ms), nested out-of-line template member function at any:583 |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
-| `<bit>` | N/A | ❌ Parse Error | Progresses past char_traits.h (2026-02-03), likely blocked at similar point as string |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Parses 650+ templates (~263ms), progresses past char_traits.h:534 (2026-02-03) |
-| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Parses 650+ templates (~262ms), progresses to new_allocator.h:131 (2026-02-03) |
+| `<bit>` | N/A | ❌ Parse Error | Parse error in char_traits.h:512 (wmemcmp function lookup) |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Parses 650+ templates (~263ms), parse error in char_traits.h:512 (wmemcmp function lookup) |
+| `<string>` | `test_std_string.cpp` | ❌ Parse Error | Parses 650+ templates (~262ms), parse error in char_traits.h:512 (wmemcmp function lookup) |
 | `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Test file missing |
 | `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Template complexity causes timeout |
@@ -32,7 +32,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Progresses to c++locale.h:52 (2026-02-03) - __typeof keyword issue |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Parse error in char_traits.h:512 (wmemcmp function lookup) |
 | `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Test file missing |
 | `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
@@ -52,26 +52,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
-
-**Note (2026-02-03 Latest Update - This PR):** Fixed two critical blockers affecting string-related headers:
-1. **Wide character functions (wmemcmp, wmemchr, wmemcpy, wmemmove, wcslen)** - Added registration for all 5 wide character functions used by char_traits.h. Extended the builtin function special case in overload resolution to:
-   - Accept any number of overloads (not just 1) since standard library can have forward declarations
-   - Accept UserDefined types (template parameters) as compatible with primitive types for flexible matching
-   - Apply to functions starting with `wmem` or `wcs` in addition to `__builtin_`
-2. **Empty statements (null statements)** - Added support for standalone semicolons in statement context. This commonly occurs when macros expand to nothing but leave a semicolon (e.g., `__glibcxx_assert(x);` expands to `;`).
-- **Impact:**
-  - `<string>` now progresses from char_traits.h:512 (wmemcmp) to new_allocator.h:131 (static_assert for incomplete types)
-  - `<string_view>` now progresses past char_traits.h:534 (wmemchr) - similar progress to string
-  - `<iostream>` now progresses from char_traits.h:512 to c++locale.h:52 (__typeof keyword issue)
-  - `<optional>` now progresses from optional:475 (empty statement) to optional:564 (~700 templates parsed)
-  - `<bit>` also passes the wmemcmp/wmemchr blockers
-- **Remaining issues:**
-  - __typeof keyword parsing needed for iostream
-  - static_assert with incomplete types in allocator headers
-  - Nested out-of-line template members for <any>
-  - Static assert constexpr evaluation for <type_traits>, <ratio>, <variant>
-
-**Note (2026-02-03 Previous Update):** Fixed three critical blockers affecting most standard library headers:
+**Note (2026-02-03 Latest Update - This PR):** Fixed three critical blockers affecting most standard library headers:
 1. **Type alias resolution in base classes** - When inheriting from `Template<T>::type` patterns, the parser now properly resolves the type alias to its underlying type instead of treating the qualified name as the base. Also added support for dependent template placeholders (e.g., `integral_constant$hash`) as base classes.
 2. **Nested type lookup for dependent placeholders** - When accessing `::type` on dependent template placeholders (e.g., `remove_cv$hash::type`), the parser now creates nested placeholders instead of failing with "Unknown nested type". This enables proper parsing of complex type trait expressions.
 3. **Builtin function overload resolution** - Added special case for `__builtin_*` functions to accept pointer arguments even when the exact pointer type doesn't match. This fixes `__builtin_strlen` and similar builtins where type aliases prevent exact type matching.
