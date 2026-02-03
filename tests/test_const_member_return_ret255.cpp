@@ -1,6 +1,6 @@
 // Test const member function returning struct
 struct SimpleOrdering {
-    int value;
+    const int value;
     
     SimpleOrdering(int v) : value(v) {}
 };
@@ -17,5 +17,5 @@ struct Point {
 int main() {
     Point p1{1, 2};
     SimpleOrdering result = p1.test();
-    return result.value;
+    return result.value == -1 ? 255 : 0;
 }
