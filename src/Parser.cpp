@@ -3601,6 +3601,50 @@ ParseResult Parser::parse_declaration_or_function_definition()
 					} else {
 						return ParseResult::error("Failed to parse initializer expression", *current_token_);
 					}
+				} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
+					// Constructor-style initialization for comma-separated declaration: Type var1, var2(args)
+					Token paren_token = *peek_token(); // Save '(' token for called_from location
+					
+					// Parse the argument list
+					consume_token(); // consume '('
+					ChunkedVector<ASTNode> arguments;
+					
+					while (peek_token().has_value() && peek_token()->value() != ")") {
+						auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (arg_result.is_error()) {
+							return arg_result;
+						}
+						if (auto arg_node = arg_result.node()) {
+							arguments.push_back(*arg_node);
+						}
+						
+						if (peek_token().has_value() && peek_token()->value() == ",") {
+							consume_token(); // consume ','
+						} else {
+							break;
+						}
+					}
+					
+					if (!consume_punctuator(")")) {
+						return ParseResult::error("Expected ')' after constructor arguments", *current_token_);
+					}
+					
+					// Create a ConstructorCallNode representing the constructor call
+					ASTNode type_node_copy = next_decl.type_node();
+					auto ctor_call_node = ASTNode::emplace_node<ConstructorCallNode>(
+						type_node_copy, 
+						std::move(arguments),
+						paren_token
+					);
+					
+					next_initializer = ctor_call_node;
+				} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+					// Direct list initialization for comma-separated declaration: Type var1, var2{args}
+					ParseResult init_list_result = parse_brace_initializer(type_specifier);
+					if (init_list_result.is_error()) {
+						return init_list_result;
+					}
+					next_initializer = init_list_result.node();
 				}
 
 				// Create a variable declaration node for this additional variable
@@ -14799,6 +14843,21 @@ ParseResult Parser::parse_variable_declaration()
 					}
 					init_expr = init_expr_result.node();
 				}
+			} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "(") {
+				// Constructor-style initialization for comma-separated declaration: Type var1, var2(args)
+				auto init_result = parse_direct_initialization();
+				if (init_result.has_value()) {
+					init_expr = init_result;
+				} else {
+					return ParseResult::error("Failed to parse direct initialization", *current_token_);
+				}
+			} else if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator && peek_token()->value() == "{") {
+				// Direct list initialization for comma-separated declaration: Type var1, var2{args}
+				ParseResult init_list_result = parse_brace_initializer(type_specifier);
+				if (init_list_result.is_error()) {
+					return init_list_result;
+				}
+				init_expr = init_list_result.node();
 			}
 
 			// Add this declaration to the block
