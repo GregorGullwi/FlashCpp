@@ -1,0 +1,18 @@
+# Setup steps for GitHub Copilot agent environment
+# This file is read by Copilot to set up the development environment
+
+setup:
+  - name: Install debugging tools
+    run: |
+      sudo apt-get update -qq
+      sudo apt-get install -y gdb lldb
+  
+  - name: Install additional build tools
+    run: |
+      sudo apt-get install -y valgrind strace
+  
+  - name: Verify installations
+    run: |
+      gdb --version
+      lldb --version
+      valgrind --version

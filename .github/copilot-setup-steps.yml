@@ -1,18 +1,22 @@
-# Setup steps for GitHub Copilot agent environment
-# This file is read by Copilot to set up the development environment
+# Setup steps for GitHub Copilot agent environment (Windows)
+# This file is read by Copilot to set up the development environment on a Windows runner
 
 setup:
-  - name: Install debugging tools
+  - name: Verify MSVC and common debugging tools (minimal for hosted runner)
     run: |
-      sudo apt-get update -qq
-      sudo apt-get install -y gdb lldb
-  
-  - name: Install additional build tools
+      # Check for cl.exe (MSVC)
+      if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
+        cl.exe /?
+      } else {
+        Write-Output "MSVC (cl.exe) not found. windows-latest usually includes Visual Studio Build Tools. If you need to install them, run the visualstudio2022buildtools choco package with the VCTools workload."
+      }
+
+      # Check for gdb and WinDbg
+      if (Get-Command gdb -ErrorAction SilentlyContinue) { gdb --version } else { Write-Output "gdb not found (use WSL or an Ubuntu runner if needed)" }
+      if (Get-Command windbg -ErrorAction SilentlyContinue) { Write-Output "windbg installed" } else { Write-Output "windbg not found in PATH" }
+    shell: pwsh
+
+  - name: Notes
     run: |
-      sudo apt-get install -y valgrind strace
-  
-  - name: Verify installations
-    run: |
-      gdb --version
-      lldb --version
-      valgrind --version
+      Write-Output "Valgrind and strace are Linux-only tools and are not available on native Windows runners. Use WSL2 or ubuntu-latest if you require those tools."
+    shell: pwsh
