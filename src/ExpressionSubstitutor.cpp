@@ -620,8 +620,6 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 			return ASTNode(&new_expr);
 		}
-		FLASH_LOG_FORMAT(Templates, Warning, "Detected old underscore-based template name format, which is deprecated: {}", ns_name);
-		assert(false && "Old underscore-based template names are deprecated");
 	}
 	
 	// Extract the base template name (e.g., "R1")
@@ -703,6 +701,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		return ASTNode(&new_expr);
 	}
 	
+	FLASH_LOG_FORMAT(Templates, Warning, "Detected old underscore-based template name format, which is deprecated: {}", ns_name);
+	assert(false && "Old underscore-based template names are deprecated");
+
 	const TemplateTypeArg& substitution = param_it->second;
 	
 	FLASH_LOG(Templates, Debug, "  Found substitution: base_type=", (int)substitution.base_type, 
