@@ -2735,17 +2735,25 @@ private:
 		
 		// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this (pointer/reference returns are in RAX like regular pointers)
+		// Per Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
 		bool returns_struct_by_value = (ret_type.type() == Type::Struct && ret_type.pointer_depth() == 0 && !ret_type.is_reference());
-		func_decl_op.has_hidden_return_param = returns_struct_by_value;
+		bool needs_hidden_return_param = returns_struct_by_value && (ret_type.size_in_bits() > 64);
+		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 		
 		// Track return type index and hidden parameter flag for current function context
 		current_function_return_type_index_ = ret_type.type_index();
-		current_function_has_hidden_return_param_ = returns_struct_by_value;
+		current_function_has_hidden_return_param_ = needs_hidden_return_param;
 		
 		if (returns_struct_by_value) {
-			FLASH_LOG_FORMAT(Codegen, Debug,
-				"Function {} returns struct by value - will use hidden return parameter (RVO/NRVO)",
-				func_decl.identifier_token().value());
+			if (needs_hidden_return_param) {
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Function {} returns struct by value (size={} bits) - will use hidden return parameter (RVO/NRVO)",
+					func_decl.identifier_token().value(), ret_type.size_in_bits());
+			} else {
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Function {} returns small struct by value (size={} bits) - will return in RAX",
+					func_decl.identifier_token().value(), ret_type.size_in_bits());
+			}
 		}
 		
 		// Function name
@@ -14471,14 +14479,20 @@ private:
 		
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
 		// Exclude references - they return a pointer, not a struct by value
+		// Per Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
 		bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
-		if (returns_struct_by_value) {
+		bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > 64);
+		if (needs_hidden_return_param) {
 			call_op.uses_return_slot = true;
 			call_op.return_slot = ret_var;  // The result temp var serves as the return slot
 			
 			FLASH_LOG_FORMAT(Codegen, Debug,
-				"Function call {} returns struct by value - using return slot (temp_{})",
-				function_name, ret_var.var_number);
+				"Function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
+				function_name, return_type.size_in_bits(), ret_var.var_number);
+		} else if (returns_struct_by_value) {
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Function call {} returns small struct by value (size={} bits) - will return in RAX",
+				function_name, return_type.size_in_bits());
 		}
 		
 		// Set is_variadic based on function declaration (if available)
@@ -15639,15 +15653,22 @@ private:
 			call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
 			
 			// Detect if calling a member function that returns struct by value (needs hidden return parameter for RVO)
+			// Per Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
 			bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
-			if (returns_struct_by_value) {
+			bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > 64);
+			if (needs_hidden_return_param) {
 				call_op.uses_return_slot = true;
 				call_op.return_slot = ret_var;  // The result temp var serves as the return slot
 				call_op.return_type_index = return_type.type_index();
 				
 				FLASH_LOG_FORMAT(Codegen, Debug,
-					"Member function call {} returns struct by value - using return slot (temp_{})",
-					StringTable::getStringView(function_name), ret_var.var_number);
+					"Member function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
+					StringTable::getStringView(function_name), return_type.size_in_bits(), ret_var.var_number);
+			} else if (returns_struct_by_value) {
+				call_op.return_type_index = return_type.type_index();
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Member function call {} returns small struct by value (size={} bits) - will return in RAX",
+					StringTable::getStringView(function_name), return_type.size_in_bits());
 			}
 			
 			// Add the object as the first argument (this pointer)
@@ -20432,16 +20453,24 @@ private:
 		
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this
+		// Per Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
 		bool returns_struct_by_value = (lambda_info.return_type == Type::Struct && !lambda_info.returns_reference);
-		func_decl_op.has_hidden_return_param = returns_struct_by_value;
+		bool needs_hidden_return_param = returns_struct_by_value && (lambda_info.return_size > 64);
+		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 		
 		// Track hidden return parameter flag for current function context
-		current_function_has_hidden_return_param_ = returns_struct_by_value;
+		current_function_has_hidden_return_param_ = needs_hidden_return_param;
 		
 		if (returns_struct_by_value) {
-			FLASH_LOG_FORMAT(Codegen, Debug,
-				"Lambda operator() {} returns struct by value - will use hidden return parameter (RVO/NRVO)",
-				StringTable::getStringView(StringTable::getOrInternStringHandle(lambda_info.closure_type_name)));
+			if (needs_hidden_return_param) {
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Lambda operator() {} returns struct by value (size={} bits) - will use hidden return parameter (RVO/NRVO)",
+					lambda_info.closure_type_name, lambda_info.return_size);
+			} else {
+				FLASH_LOG_FORMAT(Codegen, Debug,
+					"Lambda operator() {} returns small struct by value (size={} bits) - will return in RAX",
+					lambda_info.closure_type_name, lambda_info.return_size);
+			}
 		}
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
@@ -20607,11 +20636,13 @@ private:
 		func_decl_op.is_variadic = false;
 		
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
+		// Per Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger structs use hidden parameter
 		bool returns_struct_by_value = (lambda_info.return_type == Type::Struct && !lambda_info.returns_reference);
-		func_decl_op.has_hidden_return_param = returns_struct_by_value;
+		bool needs_hidden_return_param = returns_struct_by_value && (lambda_info.return_size > 64);
+		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 		
 		// Track hidden return parameter flag for current function context
-		current_function_has_hidden_return_param_ = returns_struct_by_value;
+		current_function_has_hidden_return_param_ = needs_hidden_return_param;
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
 		TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);
