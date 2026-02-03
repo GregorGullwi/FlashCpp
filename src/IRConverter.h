@@ -7153,41 +7153,14 @@ private:
 					// Immediate value
 					unsigned long long value = std::get<unsigned long long>(paramValue);
 					
-					// For 32-bit parameters, use 32-bit MOV to properly sign-extend
+					// For 32-bit parameters, use 32-bit MOV to properly handle signed values
+					// For negative values stored as 64-bit unsigned, truncate to 32-bit
 					if (paramSize == 32) {
-						// mov r32, imm32 (zero-extends to 64-bit in x64 mode, which is fine for positive values)
-						// For negative values stored as 64-bit unsigned, truncate to 32-bit
 						uint32_t value32 = static_cast<uint32_t>(value);
-						uint8_t reg_num = static_cast<uint8_t>(target_reg);
-						
-						// Only use REX if we need extended registers (R8-R15)
-						if (reg_num >= 8) {
-							textSectionData.push_back(0x41); // REX.B for R8-R15
-							reg_num &= 0x07; // Use lower 3 bits for opcode
-						}
-						
-						// mov r32, imm32: opcode B8+r, imm32
-						textSectionData.push_back(0xB8 + reg_num);
-						textSectionData.push_back(static_cast<uint8_t>(value32 & 0xFF));
-						textSectionData.push_back(static_cast<uint8_t>((value32 >> 8) & 0xFF));
-						textSectionData.push_back(static_cast<uint8_t>((value32 >> 16) & 0xFF));
-						textSectionData.push_back(static_cast<uint8_t>((value32 >> 24) & 0xFF));
+						emitMovImm32(target_reg, value32);
 					} else {
 						// For 64-bit parameters or other sizes, use 64-bit MOV
-						uint8_t rex_prefix = 0x48;
-						if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-							rex_prefix |= (1 << 2);
-						}
-						textSectionData.push_back(rex_prefix);
-
-						if (static_cast<uint8_t>(target_reg) >= static_cast<uint8_t>(X64Register::R8)) {
-							textSectionData.back() |= (1 << 0);
-						}
-						textSectionData.push_back(0xB8 + (static_cast<uint8_t>(target_reg) & 0x07));
-						for (size_t j = 0; j < 8; ++j) {
-							textSectionData.push_back(static_cast<uint8_t>(value & 0xFF));
-							value >>= 8;
-						}
+						emitMovImm64(target_reg, value);
 					}
 				} else if (std::holds_alternative<TempVar>(paramValue)) {
 					// Load from temp variable
