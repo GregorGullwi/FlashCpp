@@ -11667,6 +11667,8 @@ private:
 
 		// Special handling for spaceship operator <=> on struct types
 		// This should be converted to a member function call: lhs.operator<=>(rhs)
+		FLASH_LOG_FORMAT(Codegen, Debug, "Binary operator check: op='{}', lhsType={}", op, static_cast<int>(lhsType));
+		
 		if (op == "<=>") {
 			FLASH_LOG_FORMAT(Codegen, Debug, "Spaceship operator detected: lhsType={}, is_struct={}", 
 				static_cast<int>(lhsType), lhsType == Type::Struct);
@@ -13588,6 +13590,8 @@ private:
 
 		const auto& decl_node = functionCallNode.function_declaration();
 		std::string_view func_name_view = decl_node.identifier_token().value();
+		
+		FLASH_LOG_FORMAT(Codegen, Debug, "=== generateFunctionCallIr: func_name={} ===", func_name_view);
 
 		// Check for compiler intrinsics and handle them specially
 		auto intrinsic_result = tryGenerateIntrinsicIr(func_name_view, functionCallNode);
@@ -14607,6 +14611,8 @@ private:
 	std::vector<IrOperand> generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
 		std::vector<IrOperand> irOperands;
 
+		FLASH_LOG(Codegen, Debug, "=== generateMemberFunctionCallIr START ===");
+		
 		// Get the object expression
 		ASTNode object_node = memberFunctionCallNode.object();
 
@@ -15685,6 +15691,11 @@ private:
 			bool returns_struct_by_value = (return_type.type() == Type::Struct && return_type.pointer_depth() == 0 && !return_type.is_reference());
 			int struct_return_threshold = context_->isLLP64() ? 64 : 128;  // Windows: 64 bits (8 bytes), Linux: 128 bits (16 bytes)
 			bool needs_hidden_return_param = returns_struct_by_value && (return_type.size_in_bits() > struct_return_threshold);
+			
+			FLASH_LOG_FORMAT(Codegen, Debug,
+				"Member function call check: returns_struct={}, size={}, threshold={}, needs_hidden={}",
+				returns_struct_by_value, return_type.size_in_bits(), struct_return_threshold, needs_hidden_return_param);
+			
 			if (needs_hidden_return_param) {
 				call_op.uses_return_slot = true;
 				call_op.return_slot = ret_var;  // The result temp var serves as the return slot
@@ -15694,10 +15705,12 @@ private:
 					"Member function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
 					StringTable::getStringView(function_name), return_type.size_in_bits(), ret_var.var_number);
 			} else if (returns_struct_by_value) {
+				// Small struct return - explicitly set uses_return_slot to false
+				call_op.uses_return_slot = false;
 				call_op.return_type_index = return_type.type_index();
 				FLASH_LOG_FORMAT(Codegen, Debug,
-					"Member function call {} returns small struct by value (size={} bits) - will return in RAX",
-					StringTable::getStringView(function_name), return_type.size_in_bits());
+					"Member function call {} returns small struct by value (size={} bits) - will return in RAX, uses_return_slot={}",
+					StringTable::getStringView(function_name), return_type.size_in_bits(), call_op.uses_return_slot);
 			}
 			
 			// Add the object as the first argument (this pointer)

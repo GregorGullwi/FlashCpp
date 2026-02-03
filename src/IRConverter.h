@@ -6182,10 +6182,35 @@ private:
 				result_offset, call_op.result.name(), call_op.result.var_number);
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle(call_op.result.name())].offset = result_offset;
 			
+			// DEFENSIVE FIX: Verify uses_return_slot is correct for small struct returns
+			// Windows x64 ABI: structs ≤64 bits return in RAX, larger use hidden parameter
+			// SystemV AMD64 ABI: structs ≤128 bits return in RAX/RDX, larger use hidden parameter
+			// This catches cases where uses_return_slot was incorrectly set to true
+			bool is_struct_return = (call_op.return_type == Type::Struct);
+			constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
+			int struct_return_threshold = is_coff_format ? 64 : 128;
+			bool should_use_return_slot = is_struct_return && (return_size_bits > struct_return_threshold);
+			
+			// Create a mutable copy to fix if needed
+			CallOp& mutable_call_op = const_cast<CallOp&>(call_op);
+			
+			if (call_op.uses_return_slot && !should_use_return_slot) {
+				FLASH_LOG_FORMAT(Codegen, Warning,
+					"DEFENSIVE FIX: CallOp has uses_return_slot=true but struct size={} bits is ≤ threshold={} - correcting to false",
+					return_size_bits, struct_return_threshold);
+				mutable_call_op.uses_return_slot = false;
+			} else if (!call_op.uses_return_slot && should_use_return_slot) {
+				FLASH_LOG_FORMAT(Codegen, Warning,
+					"DEFENSIVE FIX: CallOp has uses_return_slot=false but struct size={} bits is > threshold={} - correcting to true",
+					return_size_bits, struct_return_threshold);
+				mutable_call_op.uses_return_slot = true;
+				mutable_call_op.return_slot = call_op.result;
+			}
+			
 			// For functions returning struct by value, prepare hidden return parameter
 			// The return slot address will be passed as the first argument
 			int param_shift = 0;  // Tracks how many parameters to shift (for hidden return param)
-			if (call_op.uses_return_slot) {
+			if (mutable_call_op.uses_return_slot) {
 				param_shift = 1;  // Regular parameters shift by 1 to make room for hidden return param
 				
 				FLASH_LOG_FORMAT(Codegen, Debug,
@@ -6215,7 +6240,6 @@ private:
 			// Enhanced stack overflow logic: Track both int and float register usage independently
 			// to correctly identify which arguments overflow to stack
 			// For Windows variadic functions: ALL arguments must go on stack (in addition to registers)
-			constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 			bool variadic_needs_stack_args = call_op.is_variadic && is_coff_format;
 			
 			size_t temp_int_idx = 0;
