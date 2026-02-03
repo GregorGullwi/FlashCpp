@@ -5374,20 +5374,42 @@ ParseResult Parser::parse_struct_declaration()
 				qualified_builder.append(member_name);
 				std::string_view alias_name = qualified_builder.commit();
 				
+				const TypeInfo* alias_type_info = nullptr;
 				auto alias_it = gTypesByName.find(StringTable::getOrInternStringHandle(alias_name));
 				if (alias_it == gTypesByName.end()) {
 					// Try looking up through inheritance (e.g., wrapper<true_type>::type where type is inherited)
-					const TypeInfo* inherited_alias = lookup_inherited_type_alias(base_class_name, member_name);
-					if (inherited_alias == nullptr) {
+					alias_type_info = lookup_inherited_type_alias(base_class_name, member_name);
+					if (alias_type_info == nullptr) {
 						return ParseResult::error("Base class '" + std::string(alias_name) + "' not found", member_name_token.value_or(Token()));
 					}
-					// Use the inherited type alias - we need to get its qualified name
-					base_class_name = StringTable::getStringView(inherited_alias->name());
-					FLASH_LOG_FORMAT(Templates, Debug, "Resolved inherited member alias base to {}", base_class_name);
+					FLASH_LOG_FORMAT(Templates, Debug, "Found inherited member alias: {}", StringTable::getStringView(alias_type_info->name()));
 				} else {
-					base_class_name = alias_name;
-					FLASH_LOG_FORMAT(Templates, Debug, "Resolved member alias base to {}", base_class_name);
+					alias_type_info = alias_it->second;
+					FLASH_LOG_FORMAT(Templates, Debug, "Found direct member alias: {}", alias_name);
 				}
+				
+				// Resolve the type alias to its underlying type
+				// Type aliases have a type_index that points to the actual struct/class
+				const TypeInfo* resolved_type = alias_type_info;
+				size_t max_alias_depth = 10;  // Prevent infinite loops
+				while (resolved_type->type_index_ < gTypeInfo.size() && max_alias_depth-- > 0) {
+					const TypeInfo& underlying = gTypeInfo[resolved_type->type_index_];
+					// Stop if we're pointing to ourselves (not a valid alias)
+					if (&underlying == resolved_type) break;
+					
+					FLASH_LOG_FORMAT(Templates, Debug, "Resolving type alias '{}' -> underlying type_index={}, type={}", 
+					                 StringTable::getStringView(resolved_type->name()), 
+					                 resolved_type->type_index_, 
+					                 static_cast<int>(underlying.type_));
+					
+					resolved_type = &underlying;
+					// If we've reached a concrete struct type, we're done
+					if (underlying.type_ == Type::Struct) break;
+				}
+				
+				// Use the resolved underlying type name as the base class
+				base_class_name = StringTable::getStringView(resolved_type->name());
+				FLASH_LOG_FORMAT(Templates, Debug, "Resolved member alias base to underlying type: {}", base_class_name);
 				
 				if (member_name_token.has_value()) {
 					base_name_token = *member_name_token;
@@ -12193,6 +12215,26 @@ ParseResult Parser::parse_type_specifier()
 						if (arg.is_pack || arg.is_dependent) {
 							has_dependent_args = true;
 							break;
+						}
+					}
+				}
+				// Also check if the instantiated name itself contains dependent template arguments
+				// (e.g., remove_cv<remove_reference<T>::type> where the arg is a dependent placeholder)
+				if (!has_dependent_args) {
+					auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(instantiated_name));
+					if (type_it != gTypesByName.end()) {
+						const TypeInfo* type_info = type_it->second;
+						// Check if this instantiation has template arguments and any are dependent
+						if (type_info->isTemplateInstantiation()) {
+							const auto& template_arg_infos = type_info->templateArgs();
+							for (const auto& arg_info : template_arg_infos) {
+								// Check if argument is a UserDefined type (dependent placeholder)
+								if (arg_info.base_type == Type::UserDefined && arg_info.type_index < gTypeInfo.size()) {
+									has_dependent_args = true;
+									FLASH_LOG_FORMAT(Templates, Debug, "Instantiated name '{}' has dependent template arguments", instantiated_name);
+									break;
+								}
+							}
 						}
 					}
 				}
@@ -23409,6 +23451,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 										FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution_result.has_match, ", is_ambiguous=", resolution_result.is_ambiguous);
 										
+										// Special case for builtin functions that accept pointers: 
+										// If overload resolution fails but we have exactly 1 overload and 1 argument,
+										// and the argument is a pointer, allow the call anyway.
+										// This is needed for __builtin_strlen and similar functions where the parameter
+										// type (const char*) may not exactly match the argument type (const char_type*)
+										// when char_type is a typedef or template parameter.
+										if (!resolution_result.has_match && !resolution_result.is_ambiguous && 
+										    all_overloads.size() == 1 && arg_types.size() == 1 &&
+										    arg_types[0].is_pointer() &&
+										    (idenfifier_token.value().starts_with("__builtin_"))) {
+											FLASH_LOG(Parser, Debug, "Special case: allowing builtin function call with pointer argument");
+											resolution_result.has_match = true;
+											resolution_result.selected_overload = &all_overloads[0];
+										}
+										
 										if (resolution_result.is_ambiguous) {
 											return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
 										} else if (!resolution_result.has_match) {
@@ -25904,13 +25961,16 @@ ParseResult Parser::validate_and_add_base_class(
 	// Check if base class is a template parameter
 	bool is_template_param = is_base_class_template_parameter(base_class_name);
 	
-	// Allow Type::Struct for concrete types OR template parameters
-	if (!is_template_param && base_type_info->type_ != Type::Struct) {
+	// Check if base class is a dependent template placeholder (e.g., integral_constant$hash)
+	auto [is_dependent_placeholder, template_base] = isDependentTemplatePlaceholder(base_class_name);
+	
+	// Allow Type::Struct for concrete types OR template parameters OR dependent placeholders
+	if (!is_template_param && !is_dependent_placeholder && base_type_info->type_ != Type::Struct) {
 		return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", error_token);
 	}
 
-	// For template parameters, skip 'final' check and other concrete type validations
-	if (!is_template_param) {
+	// For template parameters or dependent placeholders, skip 'final' check and other concrete type validations
+	if (!is_template_param && !is_dependent_placeholder) {
 		// Check if base class is final
 		if (base_type_info->struct_info_ && base_type_info->struct_info_->is_final) {
 			return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", error_token);
