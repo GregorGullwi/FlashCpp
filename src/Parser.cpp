@@ -39184,12 +39184,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Use the filled template args for the rest of the function
 	const std::vector<TemplateTypeArg>& template_args_to_use = filled_template_args;
 
-// Build substitution maps for dependent template entities (used by deferred bases and decltype bases)
+	// Build substitution maps for dependent template entities (used by deferred bases and decltype bases)
 	std::unordered_map<std::string_view, TemplateTypeArg> name_substitution_map;
 	std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_substitution_map;
 	std::vector<std::string_view> template_param_order;
 	bool substitution_maps_initialized = false;
-auto ensure_substitution_maps = [&]() {
+	auto ensure_substitution_maps = [&]() {
 		if (substitution_maps_initialized) {
 			return;
 		}
@@ -39814,7 +39814,7 @@ auto ensure_substitution_maps = [&]() {
 			// Note: We can't use type_index because template parameters are cleaned up after parsing
 			ensure_substitution_maps();
 			
-// Use ExpressionSubstitutor to perform template parameter substitution
+			// Use ExpressionSubstitutor to perform template parameter substitution
 			FLASH_LOG(Templates, Debug, "Using ExpressionSubstitutor to substitute template parameters in decltype expression");
 			ExpressionSubstitutor substitutor(name_substitution_map, pack_substitution_map, *this, template_param_order);
 			ASTNode substituted_expr = substitutor.substitute(deferred_base.decltype_expression);
@@ -41498,17 +41498,20 @@ auto ensure_substitution_maps = [&]() {
 							);
 							// Copy default value if present
 							if (param_decl.has_default_value()) {
-// Substitute template parameters in the default value expression
-							std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-							std::vector<std::string_view> template_param_order;
-							for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
-								if (template_params[i].is<TemplateParameterNode>()) {
-									const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
-									param_map[template_param.name()] = template_args_to_use[i];
-									template_param_order.push_back(template_param.name());
+								// Substitute template parameters in the default value expression
+								std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+								bool fill_template_param_order = template_param_order.empty();
+								for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
+									if (template_params[i].is<TemplateParameterNode>()) {
+										const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
+										param_map[template_param.name()] = template_args_to_use[i];
+
+										if (fill_template_param_order) {
+											template_param_order.push_back(template_param.name());
+										}
+									}
 								}
-							}
-							ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
+								ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
 								std::optional<ASTNode> substituted_default = substitutor.substitute(param_decl.default_value());
 								if (substituted_default.has_value()) {
 									substituted_param_decl.as<DeclarationNode>().set_default_value(*substituted_default);
