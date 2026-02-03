@@ -119,15 +119,15 @@ public:
 	}
 	
 	T& operator[](size_t i) {
-		// If i is within inline storage that has been filled, use inline_data_
-		// Otherwise use overflow (handles case when i >= N)
+		// If i is within inline storage, use inline_data_
+		// Otherwise use overflow - index into overflow is (i - N) since inline storage holds exactly N elements
 		assert(i < size() && "Index out of bounds in InlineVector::operator[]");
-		return i < static_cast<size_t>(inline_count_) ? inline_data_[i] : overflow_[i - inline_count_];
+		return i < N ? inline_data_[i] : overflow_[i - N];
 	}
 	
 	const T& operator[](size_t i) const {
 		assert(i < size() && "Index out of bounds in InlineVector::operator[]");
-		return i < static_cast<size_t>(inline_count_) ? inline_data_[i] : overflow_[i - inline_count_];
+		return i < N ? inline_data_[i] : overflow_[i - N];
 	}
 	
 	T& back() {
@@ -181,8 +181,8 @@ public:
 		iterator_impl& operator--() { --idx_; return *this; }
 		iterator_impl operator--(int) { iterator_impl tmp = *this; --idx_; return tmp; }
 		
-		bool operator==(const iterator_impl& other) const { return idx_ == other.idx_; }
-		bool operator!=(const iterator_impl& other) const { return idx_ != other.idx_; }
+		bool operator==(const iterator_impl& other) const { return vec_ == other.vec_ && idx_ == other.idx_; }
+		bool operator!=(const iterator_impl& other) const { return vec_ != other.vec_ || idx_ != other.idx_; }
 		
 	private:
 		vec_type vec_;
