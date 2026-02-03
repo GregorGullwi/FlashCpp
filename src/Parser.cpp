@@ -12218,6 +12218,15 @@ ParseResult Parser::parse_type_specifier()
 						}
 					}
 				}
+				// Also check if the instantiated name itself is a dependent placeholder
+				// (e.g., remove_cv$hash from a previous template instantiation)
+				if (!has_dependent_args) {
+					auto [is_dependent_placeholder, _] = isDependentTemplatePlaceholder(instantiated_name);
+					if (is_dependent_placeholder) {
+						has_dependent_args = true;
+						FLASH_LOG_FORMAT(Templates, Debug, "Instantiated name '{}' is a dependent placeholder", instantiated_name);
+					}
+				}
 				
 				// Check for qualified name after template arguments: Template<T>::nested or Template<T>::type
 				if (peek_token().has_value() && peek_token()->value() == "::") {
