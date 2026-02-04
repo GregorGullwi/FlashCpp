@@ -587,25 +587,25 @@ public:
 								op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 							}
 						}
-					} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
-						const auto& id = std::get<IdentifierNode>(init_expr);
-						FLASH_LOG(Codegen, Debug, "Processing IdentifierNode '", id.name(), "' initializer for static member '", 
-						          qualified_name, "'");
-						// Evaluate the initializer expression
-						auto init_operands = visitExpressionNode(init_expr);
-						if (init_operands.size() >= 3) {
-							unsigned long long value = 0;
-							if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-								value = std::get<unsigned long long>(init_operands[2]);
-							} else if (std::holds_alternative<double>(init_operands[2])) {
-								double d = std::get<double>(init_operands[2]);
-								std::memcpy(&value, &d, sizeof(double));
+						} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
+							const auto& id = std::get<IdentifierNode>(init_expr);
+							FLASH_LOG(Codegen, Debug, "Processing IdentifierNode '", id.name(), "' initializer for static member '", 
+							          qualified_name, "'");
+							// Evaluate the initializer expression
+							auto init_operands = visitExpressionNode(init_expr);
+							if (init_operands.size() >= 3) {
+								unsigned long long value = 0;
+								if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+									value = std::get<unsigned long long>(init_operands[2]);
+								} else if (std::holds_alternative<double>(init_operands[2])) {
+									double d = std::get<double>(init_operands[2]);
+									std::memcpy(&value, &d, sizeof(double));
+								}
+								size_t byte_count = op.size_in_bits / 8;
+								for (size_t i = 0; i < byte_count; ++i) {
+									op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+								}
 							}
-							size_t byte_count = op.size_in_bits / 8;
-							for (size_t i = 0; i < byte_count; ++i) {
-								op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
-							}
-						}
 						} else {
 							unsigned long long evaluated_value = 0;
 							if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
