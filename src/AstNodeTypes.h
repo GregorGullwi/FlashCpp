@@ -1086,6 +1086,12 @@ struct TypeInfo
 		TypeIndex type_index = 0;        // For user-defined types
 		std::variant<int64_t, double, StringHandle> value = int64_t{0};  // For non-type arguments
 		bool is_value = false;           // true if this is a non-type argument
+		size_t pointer_depth = 0;        // Pointer indirection level
+		CVQualifier cv_qualifier = CVQualifier::None;  // cv-qualifiers on the argument
+		bool is_reference = false;
+		bool is_rvalue_reference = false;
+		bool is_array = false;
+		std::optional<size_t> array_size = std::nullopt;
 		
 		// Helper methods for value access
 		int64_t intValue() const { return std::holds_alternative<int64_t>(value) ? std::get<int64_t>(value) : 0; }

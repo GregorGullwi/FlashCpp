@@ -1015,17 +1015,38 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 
     // Then, check base class static members
     for (const auto& base : base_classes) {
-        if (base.type_index >= gTypeInfo.size()) {
-            continue;
-        }
+		if (base.type_index >= gTypeInfo.size()) {
+			continue;
+		}
 
-        const TypeInfo& base_type = gTypeInfo[base.type_index];
-        const StructTypeInfo* base_info = base_type.getStructInfo();
+		const TypeInfo* base_type = &gTypeInfo[base.type_index];
+		const StructTypeInfo* base_info = base_type->getStructInfo();
 
-        if (base_info) {
-            auto [base_static_member, owner_struct] = base_info->findStaticMemberRecursive(member_name);
-            if (base_static_member) {
-                // Found in base class - return it with its owner
+		// Follow typedef/alias chains to find the underlying struct info if needed
+		if (!base_info && base_type->isStruct()) {
+			constexpr size_t MAX_ALIAS_DEPTH = 64;
+			size_t depth = 0;
+			while (depth < MAX_ALIAS_DEPTH) {
+				if (base_type->type_index_ == 0 || base_type->type_index_ >= gTypeInfo.size()) {
+					break;
+				}
+				const TypeInfo* next = &gTypeInfo[base_type->type_index_];
+				if (next == base_type) {
+					break;
+				}
+				base_type = next;
+				base_info = base_type->getStructInfo();
+				if (base_info) {
+					break;
+				}
+				++depth;
+			}
+		}
+
+		if (base_info) {
+			auto [base_static_member, owner_struct] = base_info->findStaticMemberRecursive(member_name);
+			if (base_static_member) {
+				// Found in base class - return it with its owner
                 return { base_static_member, owner_struct };
             }
         }

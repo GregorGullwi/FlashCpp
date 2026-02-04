@@ -509,14 +509,22 @@ public:
 
 					// Check if static member has an initializer
 					op.is_initialized = static_member.initializer.has_value() || unresolved_identifier_initializer;
-					if (unresolved_identifier_initializer) {
-						FLASH_LOG(Codegen, Debug, "Initializer unresolved; zero-initializing static member '", qualified_name, "'");
+					auto zero_initialize = [&]() {
 						size_t byte_count = op.size_in_bits / 8;
 						for (size_t i = 0; i < byte_count; ++i) {
 							op.init_data.push_back(0);
 						}
+					};
+					if (unresolved_identifier_initializer) {
+						FLASH_LOG(Codegen, Debug, "Initializer unresolved; zero-initializing static member '", qualified_name, "'");
+						zero_initialize();
 					} else if (op.is_initialized) {
-					const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
+						if (!static_member.initializer->is<ExpressionNode>()) {
+							FLASH_LOG(Codegen, Error, "Static member initializer is not an expression for '", qualified_name, "', zero-initializing");
+							zero_initialize();
+							continue;
+						}
+						const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
 					
 					// Check for ConstructorCallNode (e.g., T() which becomes int() after substitution)
 					if (std::holds_alternative<ConstructorCallNode>(init_expr)) {
