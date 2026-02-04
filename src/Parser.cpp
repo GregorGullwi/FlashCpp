@@ -20800,6 +20800,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									if (member_func.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
 										// Found matching member function in base class
 										if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+											// Update identifierType to point to the base class function
+											gSymbolTable.insert(idenfifier_token.value(), member_func.function_decl);
+											identifierType = member_func.function_decl;
 											found_member_function_in_context = true;
 											FLASH_LOG_FORMAT(Parser, Debug, "EARLY CHECK: Detected base class member function call '{}' with implicit 'this'", idenfifier_token.value());
 											break;
