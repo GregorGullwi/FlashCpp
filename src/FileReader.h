@@ -2352,8 +2352,18 @@ private:
 		defines_["_GLIBCXX_CONST"] = DefineDirective{};  // Strip const attributes
 		defines_["_GLIBCXX_NORETURN"] = DefineDirective{};  // Strip noreturn attributes
 		defines_["_GLIBCXX_NOTHROW"] = DefineDirective{};  // Strip nothrow attributes
+		defines_["_GLIBCXX_NOEXCEPT"] = DefineDirective{ "noexcept", {} };  // Map to noexcept keyword
+		{
+			DefineDirective macro{ "noexcept(__VA_ARGS__)", { "__VA_ARGS__" } };
+			macro.is_function_like = true;
+			defines_["_GLIBCXX_NOEXCEPT_IF"] = std::move(macro);
+		}
 		defines_["_GLIBCXX_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // Enable constexpr
 		defines_["_GLIBCXX_USE_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // Enable constexpr
+		defines_["_GLIBCXX14_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++14 constexpr
+		defines_["_GLIBCXX17_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++17 constexpr
+		defines_["_GLIBCXX20_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++20 constexpr
+		defines_["_GLIBCXX23_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++23 constexpr
 		defines_["_GLIBCXX_ABI_TAG_CXX11"] = DefineDirective{};  // Strip ABI tags
 		
 		// MSVC C++ standard version feature flags (cumulative)
