@@ -4820,9 +4820,11 @@ ParseResult Parser::parse_struct_declaration()
 	// Skip C++11 attributes like [[deprecated]], [[nodiscard]], etc.
 	// These can appear between struct/class keyword and the name
 	// e.g., struct [[__deprecated__]] is_literal_type
+	// Also skips GCC attributes like __attribute__((__aligned__))
+	// e.g., struct __attribute__((__aligned__)) { }
 	skip_cpp_attributes();
 
-	// Parse struct name
+	// Parse struct name (optional for anonymous structs)
 	auto name_token = consume_token();
 	if (!name_token.has_value() || name_token->type() != Token::Type::Identifier) {
 		return ParseResult::error("Expected struct/class name", name_token.value_or(Token()));
@@ -5684,6 +5686,10 @@ ParseResult Parser::parse_struct_declaration()
 				SaveHandle saved_pos = save_token_position();
 				auto union_or_struct_keyword = consume_token(); // consume 'struct', 'class', or 'union'
 				bool is_union_keyword = (union_or_struct_keyword->value() == "union");
+				
+				// Skip attributes between struct/union keyword and opening brace (for anonymous structs)
+				// e.g., struct __attribute__((__aligned__)) { } member;
+				skip_cpp_attributes();
 				
 				if (peek_token().has_value() && peek_token()->value() == "{") {
 					// Pattern 1: Anonymous union/struct or named anonymous union/struct as a member
@@ -7049,6 +7055,10 @@ ParseResult Parser::parse_struct_declaration()
 	if (!consume_punctuator("}")) {
 		return ParseResult::error("Expected '}' at end of struct/class definition", *peek_token());
 	}
+
+	// Skip any attributes after struct/class closing brace (e.g., __attribute__((__deprecated__)))
+	// These must be skipped before trying to parse variable declarations
+	skip_cpp_attributes();
 
 	// Check for variable declarations after struct definition: struct Point { ... } p, q;
 	// Also handles: inline constexpr struct Name { ... } variable = {};
@@ -17568,6 +17578,9 @@ void Parser::skip_cpp_attributes()
 			break; // Not [[, stop
 		}
 	}
+	
+	// Also skip GCC-style attributes - they often appear together
+	skip_gcc_attributes();
 }
 
 // Skip GCC-style __attribute__((...)) specifications
@@ -18091,8 +18104,7 @@ Parser::AttributeInfo Parser::parse_attributes()
 {
 	AttributeInfo info;
 	
-	skip_cpp_attributes();  // C++ attributes don't affect linkage
-	skip_gcc_attributes();  // GCC __attribute__((...)) specifications
+	skip_cpp_attributes();  // C++ [[...]] and GCC __attribute__(...) specifications
 	info.linkage = parse_declspec_attributes();
 	info.calling_convention = parse_calling_convention();
 	
@@ -28765,6 +28777,9 @@ ParseResult Parser::parse_template_declaration() {
 			// Pop member function context
 			member_function_context_stack_.pop_back();
 
+			// Skip any attributes after struct/class definition (e.g., __attribute__((__deprecated__)))
+			skip_cpp_attributes();
+
 			// Expect semicolon
 			if (!consume_punctuator(";")) {
 				return ParseResult::error("Expected ';' after class declaration", *peek_token());
@@ -29938,6 +29953,9 @@ ParseResult Parser::parse_template_declaration() {
 			if (!struct_parsing_context_stack_.empty()) {
 				struct_parsing_context_stack_.pop_back();
 			}
+			
+			// Skip any attributes after struct/class definition (e.g., __attribute__((__deprecated__)))
+			skip_cpp_attributes();
 			
 			// Expect semicolon
 			if (!consume_punctuator(";")) {
@@ -32713,6 +32731,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		}
 		consume_token(); // consume '}'
 		
+		// Skip any attributes after struct/class definition (e.g., __attribute__((__deprecated__)))
+		skip_cpp_attributes();
+		
 		// Expect ';' to end struct declaration
 		if (!consume_punctuator(";")) {
 			return ParseResult::error("Expected ';' after struct declaration", *current_token_);
@@ -32996,6 +33017,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		return ParseResult::error("Expected '}' to close struct body", *current_token_);
 	}
 	consume_token(); // consume '}'
+
+	// Skip any attributes after struct/class definition (e.g., __attribute__((__deprecated__)))
+	skip_cpp_attributes();
 
 	// Expect ';' to end struct declaration
 	if (!consume_punctuator(";")) {
