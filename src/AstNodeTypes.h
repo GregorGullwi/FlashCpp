@@ -1084,12 +1084,12 @@ struct TypeInfo
 	struct TemplateArgInfo {
 		Type base_type = Type::Invalid;  // For primitive types
 		TypeIndex type_index = 0;        // For user-defined types
-		std::variant<int64_t, double, StringHandle> value = int64_t{0};  // For non-type arguments
-		bool is_value = false;           // true if this is a non-type argument
+		InlineVector<CVQualifier, 4> pointer_cv_qualifiers;
 		size_t pointer_depth = 0;        // Pointer indirection level
 		CVQualifier cv_qualifier = CVQualifier::None;  // cv-qualifiers on the argument
-		bool is_reference = false;
-		bool is_rvalue_reference = false;
+		ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
+		std::variant<int64_t, double, StringHandle> value = int64_t{0};  // For non-type arguments
+		bool is_value = false;           // true if this is a non-type argument
 		bool is_array = false;
 		std::optional<size_t> array_size = std::nullopt;
 		

@@ -121,6 +121,7 @@ struct TemplateTypeArg {
 	bool is_reference;
 	bool is_rvalue_reference;
 	uint8_t pointer_depth;  // 0 = not pointer, 1 = T*, 2 = T**, etc.
+	InlineVector<CVQualifier, 4> pointer_cv_qualifiers;  // CV for each pointer level
 	CVQualifier cv_qualifier;  // const/volatile qualifiers
 	bool is_array;
 	std::optional<size_t> array_size;  // Known array size if available
@@ -147,6 +148,7 @@ struct TemplateTypeArg {
 		, is_reference(false)
 		, is_rvalue_reference(false)
 		, pointer_depth(0)
+		, pointer_cv_qualifiers()
 		, cv_qualifier(CVQualifier::None)
 		, is_array(false)
 		, array_size(std::nullopt)
@@ -165,6 +167,7 @@ struct TemplateTypeArg {
 		, is_reference(type_spec.is_reference())
 		, is_rvalue_reference(type_spec.is_rvalue_reference())
 		, pointer_depth(type_spec.pointer_depth())
+		, pointer_cv_qualifiers()
 		, cv_qualifier(type_spec.cv_qualifier())
 		, is_array(type_spec.is_array())
 		, array_size(type_spec.array_size())
@@ -174,7 +177,11 @@ struct TemplateTypeArg {
 		, is_pack(false)
 		, is_dependent(false)
 		, is_template_template_arg(false)
-		, template_name_handle() {}
+		, template_name_handle() {
+		for (const auto& level : type_spec.pointer_levels()) {
+			pointer_cv_qualifiers.push_back(level.cv_qualifier);
+		}
+	}
 
 	// Constructor for non-type template parameters
 	explicit TemplateTypeArg(int64_t val)
@@ -183,16 +190,17 @@ struct TemplateTypeArg {
 		, is_reference(false)
 		, is_rvalue_reference(false)
 		, pointer_depth(0)
+		, pointer_cv_qualifiers()
 		, cv_qualifier(CVQualifier::None)
 		, is_array(false)
 		, array_size(std::nullopt)
-		, member_pointer_kind(MemberPointerKind::None)
-		, is_value(true)
-		, value(val)
-		, is_pack(false)
-		, is_dependent(false)
-		, is_template_template_arg(false)
-		, template_name_handle() {}
+			, member_pointer_kind(MemberPointerKind::None)
+			, is_value(true)
+			, value(val)
+			, is_pack(false)
+			, is_dependent(false)
+			, is_template_template_arg(false)
+			, template_name_handle() {}
 	
 	// Constructor for non-type template parameters with explicit type
 	TemplateTypeArg(int64_t val, Type type)
@@ -201,16 +209,17 @@ struct TemplateTypeArg {
 		, is_reference(false)
 		, is_rvalue_reference(false)
 		, pointer_depth(0)
+		, pointer_cv_qualifiers()
 		, cv_qualifier(CVQualifier::None)
 		, is_array(false)
 		, array_size(std::nullopt)
-		, member_pointer_kind(MemberPointerKind::None)
-		, is_value(true)
-		, value(val)
-		, is_pack(false)
-		, is_dependent(false)
-		, is_template_template_arg(false)
-		, template_name_handle() {}
+			, member_pointer_kind(MemberPointerKind::None)
+			, is_value(true)
+			, value(val)
+			, is_pack(false)
+			, is_dependent(false)
+			, is_template_template_arg(false)
+			, template_name_handle() {}
 	
 	bool operator==(const TemplateTypeArg& other) const {
 		// Only compare type_index for user-defined types (Struct, Enum, UserDefined)
@@ -232,6 +241,7 @@ struct TemplateTypeArg {
 		       is_reference == other.is_reference &&
 		       is_rvalue_reference == other.is_rvalue_reference &&
 		       pointer_depth == other.pointer_depth &&
+		       pointer_cv_qualifiers == other.pointer_cv_qualifiers &&
 		       cv_qualifier == other.cv_qualifier &&
 		       is_array == other.is_array &&
 		       array_size == other.array_size &&
@@ -615,6 +625,9 @@ inline TemplateTypeArg toTemplateTypeArg(const TemplateArgument& arg) {
 			result.is_reference = ts.is_reference();
 			result.is_rvalue_reference = ts.is_rvalue_reference();
 			result.pointer_depth = ts.pointer_levels().size();
+			for (const auto& level : ts.pointer_levels()) {
+				result.pointer_cv_qualifiers.push_back(level.cv_qualifier);
+			}
 			result.cv_qualifier = ts.cv_qualifier();
 			result.is_array = ts.is_array();
 			if (ts.is_array() && ts.array_size().has_value()) {
@@ -664,7 +677,13 @@ inline TemplateArgument toTemplateArgument(const TemplateTypeArg& arg) {
 		ts.set_type_index(arg.type_index);
 		
 		// Add pointer levels
-		ts.add_pointer_levels(arg.pointer_depth);
+		if (!arg.pointer_cv_qualifiers.empty()) {
+			for (const auto cv : arg.pointer_cv_qualifiers) {
+				ts.add_pointer_level(cv);
+			}
+		} else {
+			ts.add_pointer_levels(arg.pointer_depth);
+		}
 		
 		// Set reference type
 		ts.set_reference_qualifier(arg.reference_qualifier());

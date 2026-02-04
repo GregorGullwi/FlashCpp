@@ -2751,38 +2751,37 @@ public:
 			// This handles cases like is_pointer_impl<int*>::value where value is a static member
 			// Also handles type aliases like `using my_true = integral_constant<bool, true>; my_true::value`
 			NamespaceHandle ns_handle = qualified_id.namespace_handle();
-			const std::string full_name = qualified_id.full_name();
-			std::string struct_name;
+			StringHandle struct_handle;
 			
 			FLASH_LOG(ConstExpr, Debug, "ns_handle.isGlobal()=", ns_handle.isGlobal(), 
-			          ", qualified_id='", full_name, "'");
+			          ", qualified_id='", qualified_id.full_name(), "'");
 			
 			if (!ns_handle.isGlobal()) {
-				// Prefer the fully-qualified namespace string so template instantiations
-				// like std::is_integral<int> keep their full name.
-				struct_name = std::string(gNamespaceRegistry.getQualifiedName(ns_handle));
-				if (struct_name.empty()) {
-					struct_name = std::string(gNamespaceRegistry.getName(ns_handle));
+				struct_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
+				if (!struct_handle.isValid()) {
+					struct_handle = StringTable::getOrInternStringHandle(gNamespaceRegistry.getName(ns_handle));
 				}
 			}
 			
 			// If we still don't have a struct name, derive it from the qualified identifier.
 			// Example: "std::is_integral<int>::value" -> "std::is_integral<int>"
-			if (struct_name.empty()) {
+			if (!struct_handle.isValid()) {
+				const std::string full_name = qualified_id.full_name();
 				size_t last_scope_pos = full_name.rfind("::");
 				if (last_scope_pos != std::string::npos) {
-					struct_name = full_name.substr(0, last_scope_pos);
-					FLASH_LOG(ConstExpr, Debug, "Extracted struct_name='", struct_name, "' from full_name='", full_name, "'");
+					StringBuilder sb;
+					sb.append(std::string_view(full_name.data(), last_scope_pos));
+					auto struct_sv = sb.commit();
+					struct_handle = StringTable::getOrInternStringHandle(struct_sv);
+					FLASH_LOG(ConstExpr, Debug, "Extracted struct_name='", struct_sv, "' from full_name='", full_name, "'");
 				}
 			}
 			
-			if (!struct_name.empty()) {
-				StringHandle struct_handle = StringTable::getOrInternStringHandle(struct_name);
+			if (struct_handle.isValid()) {
+				FLASH_LOG(ConstExpr, Debug, "Looking up struct '", StringTable::getStringView(struct_handle), "' for member '", qualified_id.name(), "'");
 				
-				FLASH_LOG(ConstExpr, Debug, "Looking up struct '", struct_name, "' for member '", qualified_id.name(), "'");
-				
-					// Look up the struct in gTypesByName
-					auto struct_type_it = gTypesByName.find(struct_handle);
+				// Look up the struct in gTypesByName
+				auto struct_type_it = gTypesByName.find(struct_handle);
 					
 					// If not found directly, this might be a type alias
 					// Type aliases are registered with their alias name pointing to the underlying type
@@ -2838,7 +2837,7 @@ public:
 				if (struct_info) {
 					// Look for static member recursively (checks base classes too)
 					StringHandle member_handle = StringTable::getOrInternStringHandle(qualified_id.name());
-					FLASH_LOG(ConstExpr, Debug, "Static lookup in struct '", struct_name, "', bases=", struct_info->base_classes.size());
+					FLASH_LOG(ConstExpr, Debug, "Static lookup in struct '", StringTable::getStringView(struct_handle), "', bases=", struct_info->base_classes.size());
 					if (resolved_type_info) {
 						FLASH_LOG(ConstExpr, Debug, "Resolved type base template='", StringTable::getStringView(resolved_type_info->baseTemplateName()), "', template args=", resolved_type_info->template_args_.size());
 						for (size_t i = 0; i < resolved_type_info->template_args_.size(); ++i) {
@@ -2855,85 +2854,99 @@ public:
 					for (const auto& static_member : struct_info->static_members) {
 						FLASH_LOG(ConstExpr, Debug, "    static member name='", StringTable::getStringView(static_member.getName()), "'");
 					}
-						for (const auto& member : struct_info->members) {
-							FLASH_LOG(ConstExpr, Debug, "    member name='", StringTable::getStringView(member.name), "'");
-						}
+					for (const auto& member : struct_info->members) {
+						FLASH_LOG(ConstExpr, Debug, "    member name='", StringTable::getStringView(member.name), "'");
+					}
 						
-						auto evaluate_unary_trait_from_resolved = [&](std::string_view trait_name) -> std::optional<EvalResult> {
+						auto traitKindFromTemplateName = [](StringHandle template_name) -> std::optional<TypeTraitKind> {
+							std::string_view name = StringTable::getStringView(template_name);
+							if (name == "is_void") return TypeTraitKind::IsVoid;
+							if (name == "is_null_pointer" || name == "is_nullptr") return TypeTraitKind::IsNullptr;
+							if (name == "is_integral") return TypeTraitKind::IsIntegral;
+							if (name == "is_floating_point") return TypeTraitKind::IsFloatingPoint;
+							if (name == "is_array") return TypeTraitKind::IsArray;
+							if (name == "is_pointer") return TypeTraitKind::IsPointer;
+							if (name == "is_lvalue_reference") return TypeTraitKind::IsLvalueReference;
+							if (name == "is_rvalue_reference") return TypeTraitKind::IsRvalueReference;
+							if (name == "is_member_object_pointer") return TypeTraitKind::IsMemberObjectPointer;
+							if (name == "is_member_function_pointer") return TypeTraitKind::IsMemberFunctionPointer;
+							if (name == "is_enum") return TypeTraitKind::IsEnum;
+							if (name == "is_union") return TypeTraitKind::IsUnion;
+							if (name == "is_class") return TypeTraitKind::IsClass;
+							if (name == "is_function") return TypeTraitKind::IsFunction;
+							if (name == "is_reference") return TypeTraitKind::IsReference;
+							if (name == "is_arithmetic") return TypeTraitKind::IsArithmetic;
+							if (name == "is_fundamental") return TypeTraitKind::IsFundamental;
+							if (name == "is_object") return TypeTraitKind::IsObject;
+							if (name == "is_scalar") return TypeTraitKind::IsScalar;
+							if (name == "is_compound") return TypeTraitKind::IsCompound;
+							if (name == "is_const") return TypeTraitKind::IsConst;
+							if (name == "is_volatile") return TypeTraitKind::IsVolatile;
+							if (name == "is_signed") return TypeTraitKind::IsSigned;
+							if (name == "is_unsigned") return TypeTraitKind::IsUnsigned;
+							if (name == "is_bounded_array") return TypeTraitKind::IsBoundedArray;
+							if (name == "is_unbounded_array") return TypeTraitKind::IsUnboundedArray;
+							return std::nullopt;
+						};
+
+						struct TraitInput {
+							Type base_type;
+							TypeIndex type_index;
+							size_t pointer_depth;
+							ReferenceQualifier ref_qualifier;
+							CVQualifier cv;
+							bool is_array;
+							std::optional<size_t> array_size;
+							const TypeInfo* type_info;
+							const StructTypeInfo* struct_info;
+						};
+
+						auto evaluate_unary_trait_from_resolved = [&](StringHandle trait_template_name) -> std::optional<EvalResult> {
 							if (!resolved_type_info || resolved_type_info->template_args_.empty()) {
 								return std::nullopt;
 							}
 							
-							auto map_trait = [](std::string_view name) -> std::optional<TypeTraitKind> {
-								if (name == "is_void") return TypeTraitKind::IsVoid;
-								if (name == "is_null_pointer" || name == "is_nullptr") return TypeTraitKind::IsNullptr;
-								if (name == "is_integral") return TypeTraitKind::IsIntegral;
-								if (name == "is_floating_point") return TypeTraitKind::IsFloatingPoint;
-								if (name == "is_array") return TypeTraitKind::IsArray;
-								if (name == "is_pointer") return TypeTraitKind::IsPointer;
-								if (name == "is_lvalue_reference") return TypeTraitKind::IsLvalueReference;
-								if (name == "is_rvalue_reference") return TypeTraitKind::IsRvalueReference;
-								if (name == "is_member_object_pointer") return TypeTraitKind::IsMemberObjectPointer;
-								if (name == "is_member_function_pointer") return TypeTraitKind::IsMemberFunctionPointer;
-								if (name == "is_enum") return TypeTraitKind::IsEnum;
-								if (name == "is_union") return TypeTraitKind::IsUnion;
-								if (name == "is_class") return TypeTraitKind::IsClass;
-								if (name == "is_function") return TypeTraitKind::IsFunction;
-								if (name == "is_reference") return TypeTraitKind::IsReference;
-								if (name == "is_arithmetic") return TypeTraitKind::IsArithmetic;
-								if (name == "is_fundamental") return TypeTraitKind::IsFundamental;
-								if (name == "is_object") return TypeTraitKind::IsObject;
-								if (name == "is_scalar") return TypeTraitKind::IsScalar;
-								if (name == "is_compound") return TypeTraitKind::IsCompound;
-								if (name == "is_const") return TypeTraitKind::IsConst;
-								if (name == "is_volatile") return TypeTraitKind::IsVolatile;
-								if (name == "is_signed") return TypeTraitKind::IsSigned;
-								if (name == "is_unsigned") return TypeTraitKind::IsUnsigned;
-								if (name == "is_bounded_array") return TypeTraitKind::IsBoundedArray;
-								if (name == "is_unbounded_array") return TypeTraitKind::IsUnboundedArray;
-								return std::nullopt;
-							};
-							
-							auto trait_kind = map_trait(trait_name);
+							auto trait_kind = traitKindFromTemplateName(trait_template_name);
 							if (!trait_kind.has_value()) {
 								return std::nullopt;
 							}
 							
-							const auto& arg = resolved_type_info->template_args_[0];
-							Type base_type_for_trait = arg.base_type;
-							TypeIndex arg_type_index = arg.type_index;
-							size_t pointer_depth = arg.pointer_depth;
-							bool is_ref = arg.is_reference;
-							bool is_rvalue_ref = arg.is_rvalue_reference;
-							CVQualifier cv = arg.cv_qualifier;
-							bool is_array = arg.is_array;
-							std::optional<size_t> array_size = arg.array_size;
-							const TypeInfo* arg_type_info = nullptr;
-							const StructTypeInfo* arg_struct_info = nullptr;
+							const auto& arg_info = resolved_type_info->template_args_[0];
+							TraitInput input{
+								.base_type = arg_info.base_type,
+								.type_index = arg_info.type_index,
+								.pointer_depth = arg_info.pointer_depth ? arg_info.pointer_depth : arg_info.pointer_cv_qualifiers.size(),
+								.ref_qualifier = arg_info.ref_qualifier,
+								.cv = arg_info.cv_qualifier,
+								.is_array = arg_info.is_array,
+								.array_size = arg_info.array_size,
+								.type_info = nullptr,
+								.struct_info = nullptr
+							};
 							
-							if (arg_type_index > 0 && arg_type_index < gTypeInfo.size()) {
-								arg_type_info = &gTypeInfo[arg_type_index];
-								base_type_for_trait = arg_type_info->type_;
-								pointer_depth = arg_type_info->pointer_depth_;
-								is_ref = arg_type_info->is_reference_;
-								is_rvalue_ref = arg_type_info->is_rvalue_reference_;
-								arg_struct_info = arg_type_info->getStructInfo();
+							if (input.type_index > 0 && input.type_index < gTypeInfo.size()) {
+								input.type_info = &gTypeInfo[input.type_index];
+								input.base_type = input.type_info->type_;
+								input.pointer_depth = input.type_info->pointer_depth_;
+								input.ref_qualifier = input.type_info->is_rvalue_reference_
+									? ReferenceQualifier::RValueReference
+									: (input.type_info->is_reference_ ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
+								input.struct_info = input.type_info->getStructInfo();
 							}
 							
-							auto trait_result = evaluateTypeTrait(*trait_kind, base_type_for_trait, arg_type_index, is_ref, is_rvalue_ref, is_ref && !is_rvalue_ref, pointer_depth, cv, is_array, array_size, arg_type_info, arg_struct_info);
+							auto trait_result = evaluateTypeTrait(*trait_kind, input.base_type, input.type_index,
+								input.ref_qualifier != ReferenceQualifier::None,
+								input.ref_qualifier == ReferenceQualifier::RValueReference,
+								input.ref_qualifier == ReferenceQualifier::LValueReference,
+								input.pointer_depth, input.cv, input.is_array, input.array_size, input.type_info, input.struct_info);
 							if (trait_result.success) {
 								return trait_result.value ? EvalResult::from_bool(true) : EvalResult::from_bool(false);
 							}
 							
 							return std::nullopt;
 						};
-						auto evaluate_integral_constant_value = [](const TypeInfo& ti) -> std::optional<EvalResult> {
-							if (!ti.isTemplateInstantiation()) {
-								return std::nullopt;
-							}
-						
-						std::string_view base_name = StringTable::getStringView(ti.baseTemplateName());
-						if (base_name != "integral_constant" && base_name != "bool_constant" && base_name != "__bool_constant") {
+					auto evaluate_integral_constant_value = [](const TypeInfo& ti) -> std::optional<EvalResult> {
+						if (!ti.isTemplateInstantiation()) {
 							return std::nullopt;
 						}
 						
@@ -2952,7 +2965,6 @@ public:
 							FLASH_LOG(ConstExpr, Debug, "Integral constant synthesis failed: value arg is not non-type value");
 							return std::nullopt;
 						}
-						FLASH_LOG(ConstExpr, Debug, "Integral constant synthesis: base_name=", base_name, ", base_type=", static_cast<int>(value_arg.base_type), ", value=", value_arg.intValue());
 						
 						// Convert the stored value based on the template argument type
 						switch (value_arg.base_type) {
@@ -2978,7 +2990,7 @@ public:
 						const StringHandle value_handle = StringTable::getOrInternStringHandle("value");
 						if (!static_member && member_handle == value_handle) {
 							if (resolved_type_info) {
-								if (auto trait_value = evaluate_unary_trait_from_resolved(StringTable::getStringView(resolved_type_info->baseTemplateName()))) {
+								if (auto trait_value = evaluate_unary_trait_from_resolved(resolved_type_info->baseTemplateName())) {
 									FLASH_LOG(ConstExpr, Debug, "Synthesized value from unary trait evaluator for ", StringTable::getStringView(resolved_type_info->baseTemplateName()));
 									return *trait_value;
 								}
