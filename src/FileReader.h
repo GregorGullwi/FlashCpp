@@ -239,14 +239,6 @@ static const std::unordered_map<std::string_view, long> has_cpp_attribute_versio
 	{ "noreturn", 200809 },
 };
 
-static std::string_view extractNameBetweenParens(std::string_view sv) {
-	auto start = sv.find('(');
-	auto end = sv.rfind(')');
-	if (start != std::string_view::npos && end != std::string_view::npos && end > start) {
-		return sv.substr(start + 1, end - start - 1);
-	}
-	return {};
-}
 
 // Check if a line has an incomplete macro invocation (unmatched parentheses)
 // Returns true if there's an unmatched opening paren that could be from a macro
@@ -1743,27 +1735,97 @@ private:
 					keyword += iss.get();
 				}
 				if (keyword.find("__") == 0) {	// __ is reserved for the compiler
-					if (keyword.find("__has_include") == 0) {
+					if (keyword == "__has_include") {
+						// __has_include(<header>) or __has_include("header") - check if header exists
+						// Read the argument from the input stream
 						long exists = 0;
-						std::string_view include_name(keyword.data() + "__has_include(<"sv.length());
-						include_name.remove_suffix(2); // Remove trailing >)
-						for (const auto& include_dir : settings_.getIncludeDirs()) {
-							std::string include_file(include_dir);
-							include_file.append("/");
-							include_file.append(include_name);
-							if (std::filesystem::exists(include_file)) {
-								exists = 1;
-								break;
+						char include_name_buf[256] = {};
+						
+						// Skip whitespace and expect '('
+						iss >> std::ws;
+						if (iss.peek() == '(') {
+							iss.ignore(); // Consume '('
+							
+							// Skip whitespace after '('
+							iss >> std::ws;
+							
+							// Check for < or "
+							char quote_char = iss.peek();
+							char end_char = (quote_char == '<') ? '>' : '"';
+							
+							if (quote_char == '<' || quote_char == '"') {
+								iss.ignore(); // Consume opening < or "
+								
+								// Read the include name into buffer
+								size_t i = 0;
+								while (i < sizeof(include_name_buf) - 1 && iss && iss.peek() != end_char) {
+									include_name_buf[i++] = iss.get();
+								}
+								include_name_buf[i] = '\0';
+								
+								// Consume closing > or "
+								if (iss.peek() == end_char) {
+									iss.ignore();
+								}
+								
+								// Skip whitespace before ')'
+								iss >> std::ws;
+								
+								// Consume closing ')' if present
+								if (iss.peek() == ')') {
+									iss.ignore();
+								}
+								
+								std::string_view include_name(include_name_buf);
+								
+								// Check if the file exists in any include directory
+								for (const auto& include_dir : settings_.getIncludeDirs()) {
+									std::string include_file(include_dir);
+									include_file.append("/");
+									include_file.append(include_name);
+									if (std::filesystem::exists(include_file)) {
+										exists = 1;
+										break;
+									}
+								}
+								
+								if (settings_.isVerboseMode()) {
+									std::cout << "__has_include(" << quote_char << include_name << end_char << ") = " << exists << std::endl;
+								}
 							}
 						}
 						values.push(exists);
 					}
-					else if (keyword.find("__has_builtin") == 0) {
+					else if (keyword == "__has_builtin") {
 						// __has_builtin(__builtin_name) - check if a compiler builtin is supported
-						// Extract the builtin name from __has_builtin(__name)
+						// Read the argument from the input stream
 						long exists = 0;
-						std::string_view keyword_sv(keyword);
-						if (auto builtin_name = extractNameBetweenParens(keyword_sv); !builtin_name.empty()) {
+						char builtin_name_buf[128] = {};
+						
+						// Skip whitespace and expect '('
+						iss >> std::ws;
+						if (iss.peek() == '(') {
+							iss.ignore(); // Consume '('
+							
+							// Skip whitespace after '(' (allows "__has_builtin( __is_void)")
+							iss >> std::ws;
+							
+							// Read the builtin name into buffer
+							size_t i = 0;
+							while (i < sizeof(builtin_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
+								builtin_name_buf[i++] = iss.get();
+							}
+							builtin_name_buf[i] = '\0';
+							
+							// Skip whitespace before ')' (allows "__has_builtin(__is_void )")
+							iss >> std::ws;
+							
+							// Consume closing ')' if present
+							if (iss.peek() == ')') {
+								iss.ignore();
+							}
+							
+							std::string_view builtin_name(builtin_name_buf);
 							
 							// Set of all supported type trait and other compiler builtins
 							// This must match the builtins supported in Parser.cpp
@@ -1818,13 +1880,42 @@ private:
 						}
 						values.push(exists);
 					}
-					else if (keyword.find("__has_cpp_attribute") == 0) {
+					else if (keyword == "__has_cpp_attribute") {
+						// __has_cpp_attribute(attribute_name) - check C++ attribute support
+						// Read the argument from the input stream
 						long version = 0;
-						std::string_view keyword_sv(keyword);
-						if (auto attribute_name = extractNameBetweenParens(keyword_sv); !attribute_name.empty()) {
+						char attribute_name_buf[128] = {};
+						
+						// Skip whitespace and expect '('
+						iss >> std::ws;
+						if (iss.peek() == '(') {
+							iss.ignore(); // Consume '('
+							
+							// Skip whitespace after '('
+							iss >> std::ws;
+							
+							// Read the attribute name into buffer
+							size_t i = 0;
+							while (i < sizeof(attribute_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
+								attribute_name_buf[i++] = iss.get();
+							}
+							attribute_name_buf[i] = '\0';
+							
+							// Skip whitespace before ')'
+							iss >> std::ws;
+							
+							// Consume closing ')' if present
+							if (iss.peek() == ')') {
+								iss.ignore();
+							}
+							
+							std::string_view attribute_name(attribute_name_buf);
+							
+							// Check if the attribute is supported and get its version
 							if (auto attr_it = has_cpp_attribute_versions.find(attribute_name); attr_it != has_cpp_attribute_versions.end()) {
 								version = attr_it->second;
 							}
+							
 							if (settings_.isVerboseMode()) {
 								std::cout << "__has_cpp_attribute(" << attribute_name << ") = " << version << std::endl;
 							}
