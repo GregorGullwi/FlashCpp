@@ -1683,9 +1683,13 @@ private:
 		while (iss && eval_loop_guard-- > 0) {
 			char c = iss.peek();
 			if (isdigit(c)) {
+				// Manually consume only digit characters to avoid consuming operators
+				// Using iss >> str_value would read "123==456" as a single token
 				std::string str_value;
-				iss >> str_value;
-				long value = stol(str_value);
+				while (iss && isdigit(iss.peek())) {
+					str_value += iss.get();
+				}
+				long value = std::stol(str_value);
 				values.push(value);
 				if (settings_.isVerboseMode()) {
 					FLASH_LOG(Lexer, Trace, "  Pushed value: ", value, " (values.size=", values.size(), ")");
@@ -1725,8 +1729,11 @@ private:
 				}
 			}
 			else if (isalpha(c) || c == '_') {
+				// Manually consume only identifier characters to avoid consuming operators
 				std::string keyword;
-				iss >> keyword;
+				while (iss && (isalnum(iss.peek()) || iss.peek() == '_')) {
+					keyword += iss.get();
+				}
 				if (keyword.find("__") == 0) {	// __ is reserved for the compiler
 					if (keyword.find("__has_include") == 0) {
 						long exists = 0;
@@ -2189,11 +2196,6 @@ private:
 		defines_["__GNUC_PATCHLEVEL__"] = DefineDirective{ "0", {} };
 		defines_["__GNUG__"] = DefineDirective{ "12", {} };  // C++ compiler version
 		defines_["__restrict"] = DefineDirective{};  // Strip __restrict keyword (not supported yet)
-		
-		// Directly define __CORRECT_ISO_CPP_WCHAR_H_PROTO to enable C++ overloads in wchar.h
-		// This macro is normally defined when __cplusplus && __GNUC_PREREQ(4, 4) are true
-		// We define it directly because the preprocessor has issues with complex __GNUC_PREREQ macro expansion
-		defines_["__CORRECT_ISO_CPP_WCHAR_H_PROTO"] = DefineDirective{};
 		
 		// MSVC C++ standard version feature flags (cumulative)
 		defines_["_HAS_CXX17"] = DefineDirective{ "1", {} };  // C++17 features available
