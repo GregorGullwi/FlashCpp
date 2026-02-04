@@ -222,7 +222,9 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		
 		// If one type is still UserDefined after resolution attempt, accept as conversion
 		// This allows template parameter types to match concrete types during instantiation
-		if (from.type() == Type::UserDefined || to.type() == Type::UserDefined) {
+		// Use resolved types here to ensure that resolved typedefs still go through
+		// const-correctness checks (e.g., const MyInt* → void* where MyInt is typedef for int)
+		if (from_resolved == Type::UserDefined || to_resolved == Type::UserDefined) {
 			return TypeConversionResult::conversion();
 		}
 
