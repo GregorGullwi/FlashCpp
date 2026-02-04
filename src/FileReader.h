@@ -2353,11 +2353,20 @@ private:
 		defines_["_GLIBCXX_NORETURN"] = DefineDirective{};  // Strip noreturn attributes
 		defines_["_GLIBCXX_NOTHROW"] = DefineDirective{};  // Strip nothrow attributes
 		defines_["_GLIBCXX_NOEXCEPT"] = DefineDirective{ "noexcept", {} };  // Map to noexcept keyword
+		defines_["_GLIBCXX_USE_NOEXCEPT"] = DefineDirective{ "noexcept", {} };  // Map to noexcept keyword (C++11 mode)
 		{
 			DefineDirective macro{ "noexcept(__VA_ARGS__)", { "__VA_ARGS__" } };
 			macro.is_function_like = true;
 			defines_["_GLIBCXX_NOEXCEPT_IF"] = std::move(macro);
 		}
+		{
+			DefineDirective macro{ "noexcept(__VA_ARGS__)", { "__VA_ARGS__" } };
+			macro.is_function_like = true;
+			defines_["_GLIBCXX_NOEXCEPT_QUAL"] = std::move(macro);
+		}
+		defines_["_GLIBCXX_THROW_OR_ABORT"] = DefineDirective{};  // Strip exception specs
+		defines_["_GLIBCXX_TXN_SAFE"] = DefineDirective{};  // Strip transactional memory attributes
+		defines_["_GLIBCXX_TXN_SAFE_DYN"] = DefineDirective{};  // Strip transactional memory attributes
 		defines_["_GLIBCXX_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // Enable constexpr
 		defines_["_GLIBCXX_USE_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // Enable constexpr
 		defines_["_GLIBCXX14_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++14 constexpr
