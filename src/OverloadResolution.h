@@ -216,8 +216,21 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		Type to_resolved = resolve_type_alias(to.type(), to.type_index());
 
 		// Exact type match for pointers (after resolving aliases)
-		if (from_resolved == to_resolved) {
+		// Must also check const qualifiers to distinguish const T* from T*
+		if (from_resolved == to_resolved && from.is_const() == to.is_const()) {
 			return TypeConversionResult::exact_match();
+		}
+		
+		// If base types match but const qualifiers differ
+		if (from_resolved == to_resolved) {
+			// T* → const T* is allowed (qualification conversion - adding const)
+			if (!from.is_const() && to.is_const()) {
+				return TypeConversionResult::conversion();
+			}
+			// const T* → T* is NOT allowed (would remove const)
+			if (from.is_const() && !to.is_const()) {
+				return TypeConversionResult::no_match();
+			}
 		}
 		
 		// If one type is still UserDefined after resolution attempt, accept as conversion
@@ -312,9 +325,12 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		} else {
 			// 'from' is a reference, 'to' is not
 			// References can be converted to their base type (automatic dereferencing)
+			// When copying through a reference, const qualifiers don't matter
+			// (e.g., const T& can be copied to T)
 			if (from.type() == to.type()) {
 				return TypeConversionResult::exact_match();
 			}
+			// Try conversion of the referenced type to target type
 			return can_convert_type(from.type(), to.type());
 		}
 	}
