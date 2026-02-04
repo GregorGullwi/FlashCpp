@@ -55,6 +55,10 @@ struct DefineDirective {
 	std::string body;
 	std::vector<std::string> args;
 	bool is_function_like = false;  // True if this is a function-like macro (even if it has no named args, like ...)
+	
+	// Constructor that allows specifying is_function_like
+	DefineDirective(std::string body_val = "", std::vector<std::string> args_val = {}, bool function_like = false)
+		: body(std::move(body_val)), args(std::move(args_val)), is_function_like(function_like) {}
 };
 
 struct FunctionDirective {
@@ -2305,48 +2309,20 @@ private:
 		defines_["__extension__"] = DefineDirective{};  // Strip __extension__ keyword (GCC extension)
 		
 		// GCC libstdc++ macros
-		{
-			DefineDirective macro{ "", { "V" } };
-			macro.is_function_like = true;
-			defines_["_GLIBCXX_VISIBILITY"] = std::move(macro);
-		}
+		defines_["_GLIBCXX_VISIBILITY"] = DefineDirective{ "", { "V" }, true };
 		defines_["_GLIBCXX_BEGIN_NAMESPACE_VERSION"] = DefineDirective{};  // Inline namespace for versioning
 		defines_["_GLIBCXX_END_NAMESPACE_VERSION"] = DefineDirective{};  // Inline namespace for versioning
 		defines_["_GLIBCXX_DEPRECATED"] = DefineDirective{};  // Strip deprecated attributes
-		{
-			DefineDirective macro{ "", { "ALT" } };
-			macro.is_function_like = true;
-			defines_["_GLIBCXX_DEPRECATED_SUGGEST"] = std::move(macro);
-		}
+		defines_["_GLIBCXX_DEPRECATED_SUGGEST"] = DefineDirective{ "", { "ALT" }, true };
 		defines_["_GLIBCXX11_DEPRECATED"] = DefineDirective{};  // Strip C++11 deprecated attributes
-		{
-			DefineDirective macro{ "", { "ALT" } };
-			macro.is_function_like = true;
-			defines_["_GLIBCXX11_DEPRECATED_SUGGEST"] = std::move(macro);
-		}
+		defines_["_GLIBCXX11_DEPRECATED_SUGGEST"] = DefineDirective{ "", { "ALT" }, true };
 		defines_["_GLIBCXX14_DEPRECATED"] = DefineDirective{};  // Strip C++14 deprecated attributes
-		{
-			DefineDirective macro{ "", { "ALT" } };
-			macro.is_function_like = true;
-			defines_["_GLIBCXX14_DEPRECATED_SUGGEST"] = std::move(macro);
-		}
+		defines_["_GLIBCXX14_DEPRECATED_SUGGEST"] = DefineDirective{ "", { "ALT" }, true };
 		defines_["_GLIBCXX17_DEPRECATED"] = DefineDirective{};  // Strip C++17 deprecated attributes
-		{
-			DefineDirective macro{ "", { "ALT" } };
-			macro.is_function_like = true;
-			defines_["_GLIBCXX17_DEPRECATED_SUGGEST"] = std::move(macro);
-		}
-		{
-			DefineDirective macro{ "", { "MSG" } };
-			macro.is_function_like = true;
-			defines_["_GLIBCXX20_DEPRECATED"] = std::move(macro);
-		}
+		defines_["_GLIBCXX17_DEPRECATED_SUGGEST"] = DefineDirective{ "", { "ALT" }, true };
+		defines_["_GLIBCXX20_DEPRECATED"] = DefineDirective{ "", { "MSG" }, true };
 		defines_["_GLIBCXX23_DEPRECATED"] = DefineDirective{};  // Strip C++23 deprecated attributes
-		{
-			DefineDirective macro{ "", { "ALT" } };
-			macro.is_function_like = true;
-			defines_["_GLIBCXX23_DEPRECATED_SUGGEST"] = std::move(macro);
-		}
+		defines_["_GLIBCXX23_DEPRECATED_SUGGEST"] = DefineDirective{ "", { "ALT" }, true };
 		defines_["_GLIBCXX_NODISCARD"] = DefineDirective{};  // Strip nodiscard attributes
 		defines_["_GLIBCXX_PURE"] = DefineDirective{};  // Strip pure attributes
 		defines_["_GLIBCXX_CONST"] = DefineDirective{};  // Strip const attributes
@@ -2354,16 +2330,8 @@ private:
 		defines_["_GLIBCXX_NOTHROW"] = DefineDirective{};  // Strip nothrow attributes
 		defines_["_GLIBCXX_NOEXCEPT"] = DefineDirective{ "noexcept", {} };  // Map to noexcept keyword
 		defines_["_GLIBCXX_USE_NOEXCEPT"] = DefineDirective{ "noexcept", {} };  // Map to noexcept keyword (C++11 mode)
-		{
-			DefineDirective macro{ "noexcept(__VA_ARGS__)", { "__VA_ARGS__" } };
-			macro.is_function_like = true;
-			defines_["_GLIBCXX_NOEXCEPT_IF"] = std::move(macro);
-		}
-		{
-			DefineDirective macro{ "noexcept(__VA_ARGS__)", { "__VA_ARGS__" } };
-			macro.is_function_like = true;
-			defines_["_GLIBCXX_NOEXCEPT_QUAL"] = std::move(macro);
-		}
+		defines_["_GLIBCXX_NOEXCEPT_IF"] = DefineDirective{ "noexcept(__VA_ARGS__)", { "__VA_ARGS__" }, true };
+		defines_["_GLIBCXX_NOEXCEPT_QUAL"] = DefineDirective{ "noexcept(__VA_ARGS__)", { "__VA_ARGS__" }, true };
 		defines_["_GLIBCXX_THROW_OR_ABORT"] = DefineDirective{};  // Strip exception specs
 		defines_["_GLIBCXX_TXN_SAFE"] = DefineDirective{};  // Strip transactional memory attributes
 		defines_["_GLIBCXX_TXN_SAFE_DYN"] = DefineDirective{};  // Strip transactional memory attributes
