@@ -23638,41 +23638,42 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										                             idenfifier_token.value().starts_with("wcs");
 										if (!resolution_result.has_match && !resolution_result.is_ambiguous && 
 										    !all_overloads.empty() && is_builtin_or_c_func) {
-// Helper to get parameter count from an overload
-auto get_parameter_count = [](const ASTNode& node) -> size_t {
-if (node.is<FunctionDeclarationNode>()) {
-return node.as<FunctionDeclarationNode>().parameter_nodes().size();
-} else if (node.is<TemplateFunctionDeclarationNode>()) {
-const auto& func_decl = node.as<TemplateFunctionDeclarationNode>().function_declaration();
-if (func_decl.is<FunctionDeclarationNode>()) {
-return func_decl.as<FunctionDeclarationNode>().parameter_nodes().size();
-}
-}
-return 0;
-};
 
-// Check if all arguments are compatible (pointers or primitives)
-// and parameter count matches
-size_t param_count = get_parameter_count(all_overloads[0]);
-bool all_compatible = (arg_types.size() == param_count);
+											// Helper to get parameter count from an overload
+											auto get_parameter_count = [](const ASTNode& node) -> size_t {
+												if (node.is<FunctionDeclarationNode>()) {
+													return node.as<FunctionDeclarationNode>().parameter_nodes().size();
+												} else if (node.is<TemplateFunctionDeclarationNode>()) {
+													const auto& func_decl = node.as<TemplateFunctionDeclarationNode>().function_declaration();
+													if (func_decl.is<FunctionDeclarationNode>()) {
+														return func_decl.as<FunctionDeclarationNode>().parameter_nodes().size();
+													}
+												}
+												return 0;
+											};
 
-if (all_compatible) {
-for (const auto& arg_type : arg_types) {
-// Primitive types are Void through LongDouble in the Type enum
-bool is_primitive_or_user = ((arg_type.type() >= Type::Void) && arg_type.type() <= Type::LongDouble) || arg_type.type() == Type::UserDefined;
-if (!arg_type.is_pointer() && !is_primitive_or_user) {
-all_compatible = false;
-break;
-}
-}
-}
+											// Check if all arguments are compatible (pointers or primitives)
+											// and parameter count matches
+											size_t param_count = get_parameter_count(all_overloads[0]);
+											bool all_compatible = (arg_types.size() == param_count);
 
-if (all_compatible) {
-FLASH_LOG(Parser, Debug, "Special case: allowing builtin/C function call with compatible pointer/primitive arguments");
-resolution_result.has_match = true;
-resolution_result.selected_overload = &all_overloads[0];
-}
-}
+											if (all_compatible) {
+												for (const auto& arg_type : arg_types) {
+													// Primitive types are Void through LongDouble in the Type enum
+													bool is_primitive_or_user = ((arg_type.type() >= Type::Void) && arg_type.type() <= Type::LongDouble) || arg_type.type() == Type::UserDefined;
+													if (!arg_type.is_pointer() && !is_primitive_or_user) {
+														all_compatible = false;
+														break;
+													}
+												}
+											}
+
+											if (all_compatible) {
+												FLASH_LOG(Parser, Debug, "Special case: allowing builtin/C function call with compatible pointer/primitive arguments");
+												resolution_result.has_match = true;
+												resolution_result.selected_overload = &all_overloads[0];
+											}
+										}
 										
 										if (resolution_result.is_ambiguous) {
 											return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
