@@ -2332,6 +2332,8 @@ private:
 		defines_["_GLIBCXX_USE_NOEXCEPT"] = DefineDirective{ "noexcept", {} };  // Map to noexcept keyword (C++11 mode)
 		defines_["_GLIBCXX_NOEXCEPT_IF"] = DefineDirective{ "noexcept(_Cond)", { "_Cond" }, true };
 		defines_["_GLIBCXX_NOEXCEPT_QUAL"] = DefineDirective{ "noexcept(_Cond)", { "_Cond" }, true };
+		defines_["_GLIBCXX_NOEXCEPT_PARM"] = DefineDirective{};  // Strip noexcept parameter specifier
+		defines_["_GLIBCXX_THROW"] = DefineDirective{ "", { "_Spec" }, true };  // Strip old-style exception specifications throw(...)
 		defines_["_GLIBCXX_THROW_OR_ABORT"] = DefineDirective{};  // Strip exception specs
 		defines_["_GLIBCXX_TXN_SAFE"] = DefineDirective{};  // Strip transactional memory attributes
 		defines_["_GLIBCXX_TXN_SAFE_DYN"] = DefineDirective{};  // Strip transactional memory attributes
