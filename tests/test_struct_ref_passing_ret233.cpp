@@ -167,5 +167,5 @@ int main() {
     total += testStructReturn();       // 77
     
     // Total: 30 + 40 + 300 + 123 + 196 + 1515 + 77 = 2281
-    return total;
+    return total == 2281 ? 233 : 1;
 }
