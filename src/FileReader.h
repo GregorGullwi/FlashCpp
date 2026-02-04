@@ -1762,18 +1762,26 @@ private:
 						// __has_builtin(__builtin_name) - check if a compiler builtin is supported
 						// Read the argument from the input stream
 						long exists = 0;
-						std::string builtin_name;
+						char builtin_name_buf[128] = {};
 						
 						// Skip whitespace and expect '('
 						iss >> std::ws;
 						if (iss.peek() == '(') {
 							iss.ignore(); // Consume '('
 							
-							// Read the builtin name
-							iss >> builtin_name;
+							// Read the builtin name into buffer
+							size_t i = 0;
+							while (i < sizeof(builtin_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
+								builtin_name_buf[i++] = iss.get();
+							}
+							builtin_name_buf[i] = '\0';
 							
-							// Remove trailing ')' if present
-							builtin_name.erase(std::remove(builtin_name.begin(), builtin_name.end(), ')'), builtin_name.end());
+							// Consume closing ')' if present
+							if (iss.peek() == ')') {
+								iss.ignore();
+							}
+							
+							std::string_view builtin_name(builtin_name_buf);
 							
 							// Set of all supported type trait and other compiler builtins
 							// This must match the builtins supported in Parser.cpp
