@@ -1731,7 +1731,9 @@ private:
 			else if (isalpha(c) || c == '_') {
 				// Manually consume only identifier characters to avoid consuming operators
 				std::string keyword;
-				while (iss && (isalnum(iss.peek()) || iss.peek() == '_')) {
+				while (iss) {
+					char next = iss.peek();
+					if (!isalnum(next) && next != '_') break;
 					keyword += iss.get();
 				}
 				if (keyword.find("__") == 0) {	// __ is reserved for the compiler
