@@ -215,11 +215,16 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		Type from_resolved = resolve_type_alias(from.type(), from.type_index());
 		Type to_resolved = resolve_type_alias(to.type(), to.type_index());
 
-		// Helper to check if the pointee type is const (for const T*, the const is in pointer_levels_[0])
+		// Helper to check if the pointee type is const (for const T*, the const can be in two places)
+		// 1. In the base type (when parsed from source: const char*)
+		// 2. In pointer_levels_[0] (when constructed programmatically)
 		auto pointee_is_const = [](const TypeSpecifierNode& type_spec) -> bool {
 			if (type_spec.pointer_depth() == 0) return false;
+			// Check both base type const AND pointer level const
+			bool base_const = type_spec.is_const();
 			const auto& levels = type_spec.pointer_levels();
-			return (static_cast<uint8_t>(levels[0].cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
+			bool pointer_level_const = (static_cast<uint8_t>(levels[0].cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
+			return base_const || pointer_level_const;
 		};
 		
 		bool from_pointee_is_const = pointee_is_const(from);
