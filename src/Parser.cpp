@@ -14609,7 +14609,7 @@ ParseResult Parser::parse_statement_or_declaration()
 				// Check if we just parsed a loop by looking at recent context
 				// This is heuristic: if the semicolon is on the same line or very close,
 				// it's likely an accidental empty statement after a loop
-				FLASH_LOG(Parser, Warning, "Empty statement followed by a block. "
+				FLASH_LOG(General, Warning, "Empty statement followed by a block. "
 					"Did you mean to include the block in the loop/if statement? "
 					"Location: line ", semi_token.line(), ", column ", semi_token.column());
 			}
