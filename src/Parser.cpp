@@ -7050,6 +7050,10 @@ ParseResult Parser::parse_struct_declaration()
 		return ParseResult::error("Expected '}' at end of struct/class definition", *peek_token());
 	}
 
+	// Skip any attributes after struct/class closing brace (e.g., __attribute__((__deprecated__)))
+	// These must be skipped before trying to parse variable declarations
+	skip_gcc_attributes();
+
 	// Check for variable declarations after struct definition: struct Point { ... } p, q;
 	// Also handles: inline constexpr struct Name { ... } variable = {};
 	// And: struct S { ... } inline constexpr s{};  (C++17 inline variables)
@@ -28765,6 +28769,9 @@ ParseResult Parser::parse_template_declaration() {
 			// Pop member function context
 			member_function_context_stack_.pop_back();
 
+			// Skip any attributes after struct/class definition (e.g., __attribute__((__deprecated__)))
+			skip_gcc_attributes();
+
 			// Expect semicolon
 			if (!consume_punctuator(";")) {
 				return ParseResult::error("Expected ';' after class declaration", *peek_token());
@@ -29938,6 +29945,9 @@ ParseResult Parser::parse_template_declaration() {
 			if (!struct_parsing_context_stack_.empty()) {
 				struct_parsing_context_stack_.pop_back();
 			}
+			
+			// Skip any attributes after struct/class definition (e.g., __attribute__((__deprecated__)))
+			skip_gcc_attributes();
 			
 			// Expect semicolon
 			if (!consume_punctuator(";")) {
@@ -32713,6 +32723,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		}
 		consume_token(); // consume '}'
 		
+		// Skip any attributes after struct/class definition (e.g., __attribute__((__deprecated__)))
+		skip_gcc_attributes();
+		
 		// Expect ';' to end struct declaration
 		if (!consume_punctuator(";")) {
 			return ParseResult::error("Expected ';' after struct declaration", *current_token_);
@@ -32996,6 +33009,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		return ParseResult::error("Expected '}' to close struct body", *current_token_);
 	}
 	consume_token(); // consume '}'
+
+	// Skip any attributes after struct/class definition (e.g., __attribute__((__deprecated__)))
+	skip_gcc_attributes();
 
 	// Expect ';' to end struct declaration
 	if (!consume_punctuator(";")) {
