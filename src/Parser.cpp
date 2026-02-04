@@ -1004,176 +1004,9 @@ void Parser::register_builtin_functions() {
 	// Returns size_t (unsigned long on 64-bit platforms)
 	register_strlen_builtin("__builtin_strlen");
 	
-	// Helper lambda to register wide character string functions
-	// wcslen(const wchar_t*) - returns size_t
-	auto register_wcslen_builtin = [&](std::string_view name) {
-		// Create return type node (size_t = unsigned long on 64-bit)
-		Token type_token = dummy_token;
-		auto return_type_node = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, type_token);
-		
-		// Create function name token
-		Token func_token = dummy_token;
-		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
-		
-		// Create declaration node for the function
-		auto decl_node = emplace_node<DeclarationNode>(return_type_node, func_token);
-		
-		// Create function declaration node
-		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
-		
-		// Create parameter: const wchar_t* (wchar_t is Type::Int with 32 bits)
-		Token param_token = dummy_token;
-		auto param_type_node_ref = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, param_token);
-		param_type_node_ref.second.add_pointer_level(CVQualifier::Const);  // Make it const wchar_t*
-		auto param_decl = emplace_node<DeclarationNode>(param_type_node_ref.first, param_token);
-		func_decl_ref.add_parameter_node(param_decl);
-		
-		// Set extern "C" linkage
-		func_decl_ref.set_linkage(Linkage::C);
-		
-		// Register in global symbol table
-		gSymbolTable.insert(name, func_decl_node);
-	};
-	
-	// Helper lambda to register wide character memory functions with 3 parameters
-	// wmemcmp(const wchar_t*, const wchar_t*, size_t) - returns int
-	auto register_wmemcmp_builtin = [&](std::string_view name) {
-		// Create return type node (int)
-		Token type_token = dummy_token;
-		auto return_type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, type_token);
-		
-		// Create function name token
-		Token func_token = dummy_token;
-		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
-		
-		// Create declaration node for the function
-		auto decl_node = emplace_node<DeclarationNode>(return_type_node, func_token);
-		
-		// Create function declaration node
-		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
-		
-		// Create parameter 1: const wchar_t*
-		Token param1_token = dummy_token;
-		auto param1_type_node_ref = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, param1_token);
-		param1_type_node_ref.second.add_pointer_level(CVQualifier::Const);
-		auto param1_decl = emplace_node<DeclarationNode>(param1_type_node_ref.first, param1_token);
-		func_decl_ref.add_parameter_node(param1_decl);
-		
-		// Create parameter 2: const wchar_t*
-		Token param2_token = dummy_token;
-		auto param2_type_node_ref = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, param2_token);
-		param2_type_node_ref.second.add_pointer_level(CVQualifier::Const);
-		auto param2_decl = emplace_node<DeclarationNode>(param2_type_node_ref.first, param2_token);
-		func_decl_ref.add_parameter_node(param2_decl);
-		
-		// Create parameter 3: size_t
-		Token param3_token = dummy_token;
-		auto param3_type_node = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, param3_token);
-		auto param3_decl = emplace_node<DeclarationNode>(param3_type_node, param3_token);
-		func_decl_ref.add_parameter_node(param3_decl);
-		
-		// Set extern "C" linkage
-		func_decl_ref.set_linkage(Linkage::C);
-		
-		// Register in global symbol table
-		gSymbolTable.insert(name, func_decl_node);
-	};
-	
-	// Helper lambda to register wide character memory functions that return wchar_t*
-	// wmemchr(const wchar_t*, wchar_t, size_t) - returns wchar_t*
-	auto register_wmemchr_builtin = [&](std::string_view name) {
-		// Create return type node (wchar_t*)
-		Token type_token = dummy_token;
-		auto return_type_node_ref = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, type_token);
-		return_type_node_ref.second.add_pointer_level(CVQualifier::None);
-		
-		// Create function name token
-		Token func_token = dummy_token;
-		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
-		
-		// Create declaration node for the function
-		auto decl_node = emplace_node<DeclarationNode>(return_type_node_ref.first, func_token);
-		
-		// Create function declaration node
-		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
-		
-		// Create parameter 1: const wchar_t*
-		Token param1_token = dummy_token;
-		auto param1_type_node_ref = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, param1_token);
-		param1_type_node_ref.second.add_pointer_level(CVQualifier::Const);
-		auto param1_decl = emplace_node<DeclarationNode>(param1_type_node_ref.first, param1_token);
-		func_decl_ref.add_parameter_node(param1_decl);
-		
-		// Create parameter 2: wchar_t
-		Token param2_token = dummy_token;
-		auto param2_type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, param2_token);
-		auto param2_decl = emplace_node<DeclarationNode>(param2_type_node, param2_token);
-		func_decl_ref.add_parameter_node(param2_decl);
-		
-		// Create parameter 3: size_t
-		Token param3_token = dummy_token;
-		auto param3_type_node = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, param3_token);
-		auto param3_decl = emplace_node<DeclarationNode>(param3_type_node, param3_token);
-		func_decl_ref.add_parameter_node(param3_decl);
-		
-		// Set extern "C" linkage
-		func_decl_ref.set_linkage(Linkage::C);
-		
-		// Register in global symbol table
-		gSymbolTable.insert(name, func_decl_node);
-	};
-	
-	// Helper lambda to register wide character memory copy functions
-	// wmemcpy/wmemmove(wchar_t*, const wchar_t*, size_t) - returns wchar_t*
-	auto register_wmemcpy_builtin = [&](std::string_view name) {
-		// Create return type node (wchar_t*)
-		Token type_token = dummy_token;
-		auto return_type_node_ref = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, type_token);
-		return_type_node_ref.second.add_pointer_level(CVQualifier::None);
-		
-		// Create function name token
-		Token func_token = dummy_token;
-		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
-		
-		// Create declaration node for the function
-		auto decl_node = emplace_node<DeclarationNode>(return_type_node_ref.first, func_token);
-		
-		// Create function declaration node
-		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
-		
-		// Create parameter 1: wchar_t*
-		Token param1_token = dummy_token;
-		auto param1_type_node_ref = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, param1_token);
-		param1_type_node_ref.second.add_pointer_level(CVQualifier::None);
-		auto param1_decl = emplace_node<DeclarationNode>(param1_type_node_ref.first, param1_token);
-		func_decl_ref.add_parameter_node(param1_decl);
-		
-		// Create parameter 2: const wchar_t*
-		Token param2_token = dummy_token;
-		auto param2_type_node_ref = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, param2_token);
-		param2_type_node_ref.second.add_pointer_level(CVQualifier::Const);
-		auto param2_decl = emplace_node<DeclarationNode>(param2_type_node_ref.first, param2_token);
-		func_decl_ref.add_parameter_node(param2_decl);
-		
-		// Create parameter 3: size_t
-		Token param3_token = dummy_token;
-		auto param3_type_node = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, param3_token);
-		auto param3_decl = emplace_node<DeclarationNode>(param3_type_node, param3_token);
-		func_decl_ref.add_parameter_node(param3_decl);
-		
-		// Set extern "C" linkage
-		func_decl_ref.set_linkage(Linkage::C);
-		
-		// Register in global symbol table
-		gSymbolTable.insert(name, func_decl_node);
-	};
-	
-	// Register wide character functions
-	register_wcslen_builtin("wcslen");
-	register_wmemcmp_builtin("wmemcmp");
-	register_wmemchr_builtin("wmemchr");
-	register_wmemcpy_builtin("wmemcpy");
-	register_wmemcpy_builtin("wmemmove");
+	// Note: Wide character functions (wcslen, wmemcmp, wmemchr, wmemcpy, wmemmove) are provided
+	// by wchar.h and don't need explicit registration. The special case overload resolution
+	// in parse_unary_expression handles the type mismatch when template parameters are used.
 	
 	// Register std::terminate - no pre-computed mangled name, will be mangled with namespace context
 	// Note: Forward declarations inside functions don't capture namespace context,
@@ -14767,7 +14600,20 @@ ParseResult Parser::parse_statement_or_declaration()
 		std::string_view punct = current_token.value();
 		if (punct == ";") {
 			// Empty statement (null statement) - just consume the semicolon
+			Token semi_token = current_token;
 			consume_token();
+			
+			// Warning: Check if this empty statement comes after a loop and is followed by a block
+			// This is a common mistake: for(...); { ... } where the block is not part of the loop
+			if (peek_token().has_value() && peek_token()->value() == "{") {
+				// Check if we just parsed a loop by looking at recent context
+				// This is heuristic: if the semicolon is on the same line or very close,
+				// it's likely an accidental empty statement after a loop
+				FLASH_LOG(Parser, Warning, "Empty statement followed by a block. "
+					"Did you mean to include the block in the loop/if statement? "
+					"Location: line ", semi_token.line(), ", column ", semi_token.column());
+			}
+			
 			return ParseResult::success();
 		}
 		else if (punct == "[") {
