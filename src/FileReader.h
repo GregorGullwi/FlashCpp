@@ -2330,8 +2330,8 @@ private:
 		defines_["_GLIBCXX_NOTHROW"] = DefineDirective{};  // Strip nothrow attributes
 		defines_["_GLIBCXX_NOEXCEPT"] = DefineDirective{ "noexcept", {} };  // Map to noexcept keyword
 		defines_["_GLIBCXX_USE_NOEXCEPT"] = DefineDirective{ "noexcept", {} };  // Map to noexcept keyword (C++11 mode)
-		defines_["_GLIBCXX_NOEXCEPT_IF"] = DefineDirective{ "noexcept(__VA_ARGS__)", { "__VA_ARGS__" }, true };
-		defines_["_GLIBCXX_NOEXCEPT_QUAL"] = DefineDirective{ "noexcept(__VA_ARGS__)", { "__VA_ARGS__" }, true };
+		defines_["_GLIBCXX_NOEXCEPT_IF"] = DefineDirective{ "noexcept(_Cond)", { "_Cond" }, true };
+		defines_["_GLIBCXX_NOEXCEPT_QUAL"] = DefineDirective{ "noexcept(_Cond)", { "_Cond" }, true };
 		defines_["_GLIBCXX_THROW_OR_ABORT"] = DefineDirective{};  // Strip exception specs
 		defines_["_GLIBCXX_TXN_SAFE"] = DefineDirective{};  // Strip transactional memory attributes
 		defines_["_GLIBCXX_TXN_SAFE_DYN"] = DefineDirective{};  // Strip transactional memory attributes
