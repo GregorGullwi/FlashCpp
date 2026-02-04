@@ -1758,12 +1758,22 @@ private:
 						}
 						values.push(exists);
 					}
-					else if (keyword.find("__has_builtin") == 0) {
+					else if (keyword == "__has_builtin") {
 						// __has_builtin(__builtin_name) - check if a compiler builtin is supported
-						// Extract the builtin name from __has_builtin(__name)
+						// Read the argument from the input stream
 						long exists = 0;
-						std::string_view keyword_sv(keyword);
-						if (auto builtin_name = extractNameBetweenParens(keyword_sv); !builtin_name.empty()) {
+						std::string builtin_name;
+						
+						// Skip whitespace and expect '('
+						iss >> std::ws;
+						if (iss.peek() == '(') {
+							iss.ignore(); // Consume '('
+							
+							// Read the builtin name
+							iss >> builtin_name;
+							
+							// Remove trailing ')' if present
+							builtin_name.erase(std::remove(builtin_name.begin(), builtin_name.end(), ')'), builtin_name.end());
 							
 							// Set of all supported type trait and other compiler builtins
 							// This must match the builtins supported in Parser.cpp

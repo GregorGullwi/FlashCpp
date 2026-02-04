@@ -295,10 +295,8 @@ fi
 }
 
 echo ""
-# NOTE: Runtime crashes and return mismatches are currently disabled from failing the build
-# since test files are now named with clang's expected return values, which exposes FlashCpp bugs.
-# To re-enable these checks, add: && [ ${#RUNTIME_CRASH[@]} -eq 0 ] && [ ${#RETURN_MISMATCH[@]} -eq 0 ]
-if [ ${#COMPILE_FAIL[@]} -eq 0 ] && [ ${#LINK_FAIL[@]} -eq 0 ] && [ ${#FAIL_BAD[@]} -eq 0 ]; then
+# NOTE: Return value mismatches now fail the build since __has_builtin has been fixed
+if [ ${#COMPILE_FAIL[@]} -eq 0 ] && [ ${#LINK_FAIL[@]} -eq 0 ] && [ ${#FAIL_BAD[@]} -eq 0 ] && [ ${#RETURN_MISMATCH[@]} -eq 0 ]; then
     echo -e "${GREEN}RESULT: SUCCESS${NC}"
     exit 0
 else
