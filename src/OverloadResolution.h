@@ -197,13 +197,6 @@ inline Type resolve_type_alias(Type type, TypeIndex type_index) {
 // - Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 // This distinction is critical for matching lvalue refs vs rvalue refs in overloaded functions.
 inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
-	FLASH_LOG(Parser, Debug, "can_convert_type: from.type()=", (int)from.type(), ", from.is_ptr=", from.is_pointer(), 
-	          ", from.ptr_depth=", from.pointer_depth(), ", from.is_const=", from.is_const(), 
-	          ", from.is_ref=", from.is_reference(), ", from.is_lvalue_ref=", from.is_lvalue_reference(),
-	          " | to.type()=", (int)to.type(), ", to.is_ptr=", to.is_pointer(), 
-	          ", to.ptr_depth=", to.pointer_depth(), ", to.is_const=", to.is_const(),
-	          ", to.is_ref=", to.is_reference(), ", to.is_lvalue_ref=", to.is_lvalue_reference());
-	
 	// Check pointer-to-pointer compatibility FIRST
 	// This handles pointer types with lvalue/rvalue flags (which indicate value category, not actual reference types)
 	// Pointers with lvalue flags can still be passed to functions expecting pointer parameters
