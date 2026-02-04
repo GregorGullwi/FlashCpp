@@ -8,12 +8,12 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Validation Summary
 
-**Last Run:** 2026-01-30
+**Last Run:** 2026-02-04
 
-**Total files tested:** 961
-**Valid returns:** 960
-**Return mismatches:** 1
-**Runtime crashes:** 0 (3 expected crash handled correctly)
+**Total files tested:** 969
+**Valid returns:** 969
+**Return mismatches:** 0
+**Runtime crashes:** 0 (1 expected crash handled correctly)
 **Ignored files:** 0
 **Compile failures:** 0
 **Link failures:** 0
@@ -26,13 +26,11 @@ Many test files in the `tests/` directory follow the naming convention `test_nam
 
 ## Known Return Mismatches
 
-  test_ctad_struct_lifecycle_ret0.cpp - Destructor not called for template instantiations
+  None - All tests passing!
 
 ## Runtime Crashes
 
-  test_operator_addressof_overload_baseline_ret99.cpp (expected - operator& overload issue)
-  test_operator_addressof_resolved_ret100.cpp (expected - operator& resolution issue)
-  test_return_pointer_ret100.cpp (expected - pointer return issue)
+  test_exceptions_nested_ret0.cpp (expected - nested exception handling issue)
 
 ## Notes
 
