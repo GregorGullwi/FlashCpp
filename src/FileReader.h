@@ -2182,6 +2182,19 @@ private:
 		defines_["__STDCPP_THREADS__"] = DefineDirective{ "1", {} };
 		defines_["_LIBCPP_LITTLE_ENDIAN"] = DefineDirective{};
 		
+		// GCC compatibility macros (needed for standard library headers like wchar.h)
+		// These allow __GNUC_PREREQ checks to pass and expose C++ overloads
+		defines_["__GNUC__"] = DefineDirective{ "12", {} };  // GCC 12.x compatible
+		defines_["__GNUC_MINOR__"] = DefineDirective{ "2", {} };
+		defines_["__GNUC_PATCHLEVEL__"] = DefineDirective{ "0", {} };
+		defines_["__GNUG__"] = DefineDirective{ "12", {} };  // C++ compiler version
+		defines_["__restrict"] = DefineDirective{};  // Strip __restrict keyword (not supported yet)
+		
+		// Directly define __CORRECT_ISO_CPP_WCHAR_H_PROTO to enable C++ overloads in wchar.h
+		// This macro is normally defined when __cplusplus && __GNUC_PREREQ(4, 4) are true
+		// We define it directly because the preprocessor has issues with complex __GNUC_PREREQ macro expansion
+		defines_["__CORRECT_ISO_CPP_WCHAR_H_PROTO"] = DefineDirective{};
+		
 		// MSVC C++ standard version feature flags (cumulative)
 		defines_["_HAS_CXX17"] = DefineDirective{ "1", {} };  // C++17 features available
 		defines_["_HAS_CXX20"] = DefineDirective{ "1", {} };  // C++20 features available
