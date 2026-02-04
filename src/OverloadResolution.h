@@ -209,9 +209,36 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 			return TypeConversionResult::no_match();
 		}
 
-		// Exact type match for pointers
-		if (from.type() == to.type()) {
+		// Resolve type aliases for both types before comparing
+		// This handles cases where template parameters or typedefs resolve to the same underlying type
+		// For example: CharT* (where CharT=wchar_t) should match wchar_t*
+		Type from_resolved = resolve_type_alias(from.type(), from.type_index());
+		Type to_resolved = resolve_type_alias(to.type(), to.type_index());
+
+		// Exact type match for pointers (after resolving aliases)
+		// Must also check const qualifiers to distinguish const T* from T*
+		if (from_resolved == to_resolved && from.is_const() == to.is_const()) {
 			return TypeConversionResult::exact_match();
+		}
+		
+		// If base types match but const qualifiers differ
+		if (from_resolved == to_resolved) {
+			// T* → const T* is allowed (qualification conversion - adding const)
+			if (!from.is_const() && to.is_const()) {
+				return TypeConversionResult::conversion();
+			}
+			// const T* → T* is NOT allowed (would remove const)
+			if (from.is_const() && !to.is_const()) {
+				return TypeConversionResult::no_match();
+			}
+		}
+		
+		// If one type is still UserDefined after resolution attempt, accept as conversion
+		// This allows template parameter types to match concrete types during instantiation
+		// Use resolved types here to ensure that resolved typedefs still go through
+		// const-correctness checks (e.g., const MyInt* → void* where MyInt is typedef for int)
+		if (from_resolved == Type::UserDefined || to_resolved == Type::UserDefined) {
+			return TypeConversionResult::conversion();
 		}
 
 		// Pointer conversions: any pointer can implicitly convert to void*
@@ -223,7 +250,7 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		//   - T*       → void*        : allowed
 		// Note: For "const T*", the const applies to the pointed-to type (checked via is_const()),
 		//       while "T* const" would have const on the pointer level itself.
-		if (to.type() == Type::Void) {
+		if (to_resolved == Type::Void) {
 			// Check const-correctness for the pointed-to type
 			// from.is_const() checks if the pointee is const (e.g., "const char*")
 			// to.is_const() checks if the target pointee is const (e.g., "const void*")
@@ -298,9 +325,12 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		} else {
 			// 'from' is a reference, 'to' is not
 			// References can be converted to their base type (automatic dereferencing)
+			// When copying through a reference, const qualifiers don't matter
+			// (e.g., const T& can be copied to T)
 			if (from.type() == to.type()) {
 				return TypeConversionResult::exact_match();
 			}
+			// Try conversion of the referenced type to target type
 			return can_convert_type(from.type(), to.type());
 		}
 	}

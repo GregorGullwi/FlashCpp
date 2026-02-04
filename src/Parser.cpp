@@ -1004,6 +1004,10 @@ void Parser::register_builtin_functions() {
 	// Returns size_t (unsigned long on 64-bit platforms)
 	register_strlen_builtin("__builtin_strlen");
 	
+	// Note: Wide character functions (wcslen, wmemcmp, wmemchr, wmemcpy, wmemmove) are provided
+	// by wchar.h and don't need explicit registration. The special case overload resolution
+	// in parse_unary_expression handles the type mismatch when template parameters are used.
+	
 	// Register std::terminate - no pre-computed mangled name, will be mangled with namespace context
 	// Note: Forward declarations inside functions don't capture namespace context,
 	// so we register it globally without explicit mangling
@@ -14594,7 +14598,25 @@ ParseResult Parser::parse_statement_or_declaration()
 	else if (current_token.type() == Token::Type::Punctuator) {
 		// Handle lambda expressions and other expression statements starting with punctuators
 		std::string_view punct = current_token.value();
-		if (punct == "[") {
+		if (punct == ";") {
+			// Empty statement (null statement) - just consume the semicolon
+			Token semi_token = current_token;
+			consume_token();
+			
+			// Warning: Check if this empty statement comes after a loop and is followed by a block
+			// This is a common mistake: for(...); { ... } where the block is not part of the loop
+			if (peek_token().has_value() && peek_token()->value() == "{") {
+				// Check if we just parsed a loop by looking at recent context
+				// This is heuristic: if the semicolon is on the same line or very close,
+				// it's likely an accidental empty statement after a loop
+				FLASH_LOG(Parser, Warning, "Empty statement followed by a block. "
+					"Did you mean to include the block in the loop/if statement? "
+					"Location: line ", semi_token.line(), ", column ", semi_token.column());
+			}
+			
+			return ParseResult::success();
+		}
+		else if (punct == "[") {
 			// Lambda expression
 			return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		}
@@ -23450,21 +23472,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										auto resolution_result = resolve_overload(all_overloads, arg_types);
 
 										FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution_result.has_match, ", is_ambiguous=", resolution_result.is_ambiguous);
-										
-										// Special case for builtin functions that accept pointers: 
-										// If overload resolution fails but we have exactly 1 overload and 1 argument,
-										// and the argument is a pointer, allow the call anyway.
-										// This is needed for __builtin_strlen and similar functions where the parameter
-										// type (const char*) may not exactly match the argument type (const char_type*)
-										// when char_type is a typedef or template parameter.
-										if (!resolution_result.has_match && !resolution_result.is_ambiguous && 
-										    all_overloads.size() == 1 && arg_types.size() == 1 &&
-										    arg_types[0].is_pointer() &&
-										    (idenfifier_token.value().starts_with("__builtin_"))) {
-											FLASH_LOG(Parser, Debug, "Special case: allowing builtin function call with pointer argument");
-											resolution_result.has_match = true;
-											resolution_result.selected_overload = &all_overloads[0];
-										}
 										
 										if (resolution_result.is_ambiguous) {
 											return ParseResult::error("Ambiguous call to overloaded function '" + std::string(idenfifier_token.value()) + "'", idenfifier_token);
