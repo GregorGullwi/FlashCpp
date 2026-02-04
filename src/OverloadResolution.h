@@ -215,20 +215,35 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		Type from_resolved = resolve_type_alias(from.type(), from.type_index());
 		Type to_resolved = resolve_type_alias(to.type(), to.type_index());
 
+		// Helper to check if the pointee type is const (for const T*, the const can be in two places)
+		// 1. In the base type (when parsed from source: const char*)
+		// 2. In pointer_levels_[0] (when constructed programmatically)
+		auto pointee_is_const = [](const TypeSpecifierNode& type_spec) -> bool {
+			if (type_spec.pointer_depth() == 0) return false;
+			// Check both base type const AND pointer level const
+			bool base_const = type_spec.is_const();
+			const auto& levels = type_spec.pointer_levels();
+			bool pointer_level_const = (static_cast<uint8_t>(levels[0].cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
+			return base_const || pointer_level_const;
+		};
+		
+		bool from_pointee_is_const = pointee_is_const(from);
+		bool to_pointee_is_const = pointee_is_const(to);
+		
 		// Exact type match for pointers (after resolving aliases)
 		// Must also check const qualifiers to distinguish const T* from T*
-		if (from_resolved == to_resolved && from.is_const() == to.is_const()) {
+		if (from_resolved == to_resolved && from_pointee_is_const == to_pointee_is_const) {
 			return TypeConversionResult::exact_match();
 		}
 		
 		// If base types match but const qualifiers differ
 		if (from_resolved == to_resolved) {
 			// T* → const T* is allowed (qualification conversion - adding const)
-			if (!from.is_const() && to.is_const()) {
+			if (!from_pointee_is_const && to_pointee_is_const) {
 				return TypeConversionResult::conversion();
 			}
 			// const T* → T* is NOT allowed (would remove const)
-			if (from.is_const() && !to.is_const()) {
+			if (from_pointee_is_const && !to_pointee_is_const) {
 				return TypeConversionResult::no_match();
 			}
 		}
@@ -248,14 +263,14 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		//   - T*       → const void*  : allowed (adding const is safe)
 		//   - const T* → void*        : REJECTED (would violate const correctness)
 		//   - T*       → void*        : allowed
-		// Note: For "const T*", the const applies to the pointed-to type (checked via is_const()),
+		// Note: For "const T*", the const applies to the pointed-to type (checked via pointee const),
 		//       while "T* const" would have const on the pointer level itself.
 		if (to_resolved == Type::Void) {
 			// Check const-correctness for the pointed-to type
-			// from.is_const() checks if the pointee is const (e.g., "const char*")
-			// to.is_const() checks if the target pointee is const (e.g., "const void*")
+			// from_pointee_is_const checks if the pointee is const (e.g., "const char*")
+			// to_pointee_is_const checks if the target pointee is const (e.g., "const void*")
 			// Rule: const T* cannot convert to non-const void* (would violate const correctness)
-			if (from.is_const() && !to.is_const()) {
+			if (from_pointee_is_const && !to_pointee_is_const) {
 				return TypeConversionResult::no_match();
 			}
 			// All other cases are valid: T*→void*, T*→const void*, const T*→const void*
