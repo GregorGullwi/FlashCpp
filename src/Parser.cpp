@@ -20743,9 +20743,80 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		} else {
 			identifierType = lookup_symbol(StringTable::getOrInternStringHandle(idenfifier_token.value()));
 		}
-		
-		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}'", idenfifier_token.value(), identifierType.has_value() ? "found" : "not found", peek_token().has_value() ? peek_token()->value() : "N/A");
-		
+
+		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}', member_function_context_stack_ size={}",
+			idenfifier_token.value(), identifierType.has_value() ? "found" : "not found",
+			peek_token().has_value() ? peek_token()->value() : "N/A",
+			member_function_context_stack_.size());
+
+		// BUGFIX: Check if we're in a member function context and this identifier is a member function
+		// This handles the case where register_member_functions_in_scope already added the function to the symbol table
+		// so identifierType is set, but we still need to detect it as a member function call with implicit 'this'
+		// Declare this flag here so it's visible throughout the rest of the function
+		bool found_member_function_in_context = false;
+		if (!member_function_context_stack_.empty() && identifierType.has_value() &&
+		    identifierType->is<FunctionDeclarationNode>() && peek_token().has_value() && peek_token()->value() == "(") {
+			const auto& mf_ctx = member_function_context_stack_.back();
+			const StructDeclarationNode* struct_node = mf_ctx.struct_node;
+			if (struct_node) {
+				// Check if this function is a member function of the current struct
+				for (const auto& member_func : struct_node->member_functions()) {
+					if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
+						const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+						if (func_decl.decl_node().identifier_token().value() == idenfifier_token.value()) {
+							found_member_function_in_context = true;
+							FLASH_LOG_FORMAT(Parser, Debug, "EARLY CHECK: Detected member function call '{}' with implicit 'this'", idenfifier_token.value());
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		// BUGFIX: If we detected a member function call with implicit 'this', handle it here
+		// This must be done BEFORE the `if (!identifierType)` block, because identifierType IS set
+		if (found_member_function_in_context && peek_token().has_value() && peek_token()->value() == "(") {
+			FLASH_LOG_FORMAT(Parser, Debug, "Handling member function call '{}' with implicit 'this'", idenfifier_token.value());
+			consume_token(); // consume '('
+
+			// Parse function arguments
+			ChunkedVector<ASTNode> args;
+			while (current_token_.has_value() &&
+			       (current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")")) {
+				ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (argResult.is_error()) {
+					return argResult;
+				}
+				if (auto node = argResult.node()) {
+					args.push_back(*node);
+				}
+
+				if (current_token_.has_value() && current_token_->type() == Token::Type::Punctuator && current_token_->value() == ",") {
+					consume_token(); // consume ','
+				} else if (!current_token_.has_value() || current_token_->type() != Token::Type::Punctuator || current_token_->value() != ")") {
+					return ParseResult::error("Expected ',' or ')' in function arguments", *current_token_);
+				}
+			}
+
+			if (!consume_punctuator(")")) {
+				return ParseResult::error("Expected ')' after function arguments", *current_token_);
+			}
+
+			// Create implicit 'this' expression
+			Token this_token(Token::Type::Keyword, "this"sv, idenfifier_token.line(), idenfifier_token.column(), idenfifier_token.file_index());
+			auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
+
+			// Get the FunctionDeclarationNode
+			FunctionDeclarationNode& func_decl = const_cast<FunctionDeclarationNode&>(identifierType->as<FunctionDeclarationNode>());
+
+			// Create MemberFunctionCallNode with implicit 'this'
+			result = emplace_node<ExpressionNode>(
+				MemberFunctionCallNode(this_node, func_decl, std::move(args), idenfifier_token));
+
+			FLASH_LOG_FORMAT(Parser, Debug, "Created MemberFunctionCallNode for '{}'", idenfifier_token.value());
+			return ParseResult::success(*result);
+		}
+
 		// BUGFIX: If identifier not found in symbol table, check static members of current struct first.
 		// This handles cases like: static_assert(value == 42, "msg"); where value is a static member.
 		// Static members should be visible in expressions within the same struct.
@@ -21610,21 +21681,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Check if this is a member function call (identifier not found but matches a member function)
 			// This handles the complete-class context where member functions declared later can be called
 			// We need to track if we found a member function so we can create MemberFunctionCallNode with implicit 'this'
-			bool found_member_function_in_context = false;
 			if (!member_function_context_stack_.empty() && peek_token().has_value() && peek_token()->value() == "(") {
+				FLASH_LOG_FORMAT(Parser, Debug, "Checking member function context for '{}', stack size: {}",
+					idenfifier_token.value(), member_function_context_stack_.size());
 				const auto& mf_ctx = member_function_context_stack_.back();
 				const StructDeclarationNode* struct_node = mf_ctx.struct_node;
 				if (struct_node) {
+					FLASH_LOG_FORMAT(Parser, Debug, "Struct node available, member_functions count: {}",
+						struct_node->member_functions().size());
 					// Helper lambda to search for member function in a struct and its base classes
 					// Returns true if found and sets identifierType
 					bool found = false;
-					
+
 					// First, check the current struct's member functions
 					for (const auto& member_func : struct_node->member_functions()) {
 						if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
 							const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
+							FLASH_LOG_FORMAT(Parser, Debug, "Comparing '{}' with member function '{}'",
+								idenfifier_token.value(), func_decl.decl_node().identifier_token().value());
 							if (func_decl.decl_node().identifier_token().value() == idenfifier_token.value()) {
 								// Found matching member function - add it to symbol table and set identifierType
+								FLASH_LOG_FORMAT(Parser, Debug, "FOUND member function '{}' in context!", idenfifier_token.value());
 								gSymbolTable.insert(idenfifier_token.value(), member_func.function_declaration);
 								identifierType = member_func.function_declaration;
 								found = true;
@@ -21633,7 +21710,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							}
 						}
 					}
-					
+					FLASH_LOG_FORMAT(Parser, Debug, "After search: found={}, found_member_function_in_context={}",
+						found, found_member_function_in_context);
+
 					// If not found in current struct, search in base classes
 					if (!found) {
 						// Get the struct's base classes and search recursively
