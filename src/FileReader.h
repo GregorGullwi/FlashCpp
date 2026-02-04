@@ -2367,6 +2367,14 @@ private:
 		defines_["_GLIBCXX_THROW_OR_ABORT"] = DefineDirective{};  // Strip exception specs
 		defines_["_GLIBCXX_TXN_SAFE"] = DefineDirective{};  // Strip transactional memory attributes
 		defines_["_GLIBCXX_TXN_SAFE_DYN"] = DefineDirective{};  // Strip transactional memory attributes
+		defines_["_GLIBCXX_USE_CXX11_ABI"] = DefineDirective{ "1", {} };  // Use C++11 ABI for std::string and std::list
+		// C++11 ABI namespace macros (when _GLIBCXX_USE_CXX11_ABI is 1)
+		defines_["_GLIBCXX_NAMESPACE_CXX11"] = DefineDirective{ "__cxx11::", {} };
+		defines_["_GLIBCXX_BEGIN_NAMESPACE_CXX11"] = DefineDirective{ "namespace __cxx11 {", {} };
+		defines_["_GLIBCXX_END_NAMESPACE_CXX11"] = DefineDirective{ "}", {} };
+		defines_["_GLIBCXX_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{ "__cxx11::", {} };
+		defines_["_GLIBCXX_BEGIN_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{ "namespace __cxx11 {", {} };
+		defines_["_GLIBCXX_END_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{ "}", {} };
 		defines_["_GLIBCXX_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // Enable constexpr
 		defines_["_GLIBCXX_USE_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // Enable constexpr
 		defines_["_GLIBCXX14_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++14 constexpr

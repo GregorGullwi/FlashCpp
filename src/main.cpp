@@ -316,11 +316,17 @@ int main_impl(int argc, char *argv[]) {
     #if !defined(_WIN32) && !defined(_WIN64)
         const char* system_include_dirs[] = {
             "/usr/include/c++/14",
+            "/usr/include/c++/14/bits",  // For relative includes like unicode-data.h
             "/usr/include/x86_64-linux-gnu/c++/14",
+            "/usr/include/x86_64-linux-gnu/c++/14/bits",  // For relative includes
             "/usr/include/c++/13",
+            "/usr/include/c++/13/bits",
             "/usr/include/x86_64-linux-gnu/c++/13",
+            "/usr/include/x86_64-linux-gnu/c++/13/bits",
             "/usr/include/c++/12",
+            "/usr/include/c++/12/bits",
             "/usr/include/x86_64-linux-gnu/c++/12",
+            "/usr/include/x86_64-linux-gnu/c++/12/bits",
             "/usr/lib/llvm-18/lib/clang/18/include",  // Clang builtin headers (stddef.h, etc.)
             "/usr/lib/llvm-17/lib/clang/17/include",
             "/usr/lib/llvm-16/lib/clang/16/include",
