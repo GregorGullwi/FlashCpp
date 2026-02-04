@@ -2362,8 +2362,10 @@ private:
 		defines_["_GLIBCXX_USE_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // Enable constexpr
 		defines_["_GLIBCXX14_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++14 constexpr
 		defines_["_GLIBCXX17_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++17 constexpr
+		defines_["_GLIBCXX17_INLINE"] = DefineDirective{ "inline", {} };  // C++17 inline variables
 		defines_["_GLIBCXX20_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++20 constexpr
 		defines_["_GLIBCXX23_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++23 constexpr
+		defines_["_GLIBCXX_INLINE_VERSION"] = DefineDirective{ "0", {} };  // Inline namespace version (0 = no versioning)
 		defines_["_GLIBCXX_ABI_TAG_CXX11"] = DefineDirective{};  // Strip ABI tags
 		
 		// MSVC C++ standard version feature flags (cumulative)
