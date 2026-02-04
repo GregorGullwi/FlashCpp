@@ -1694,6 +1694,7 @@ private:
 					FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '", op_str, "' in preprocessor expression, in file ",
 									 filestack_.empty() ? "<unknown>" : filestack_.top().file_name,
 									" at line ", filestack_.empty() ? 0 : filestack_.top().line_number);
+					values.push(0);
 				}
 				else {
 					values.push(value);
@@ -1879,6 +1880,7 @@ private:
 						if (auto [ptr, ec] = std::from_chars(body.data(), body.data() + body.size(), value); ec != std::errc()) {
 							FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: ", keyword, "='", body, "' at ",
 								filestack_.top().file_name, ":", filestack_.top().line_number);
+							values.push(0);
 						}
 						else {
 							values.push(value);
