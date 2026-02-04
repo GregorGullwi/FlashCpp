@@ -20770,6 +20770,64 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 					}
 				}
+				
+				// If not found in current struct, search in base classes
+				if (!found_member_function_in_context) {
+					// Get the struct's base classes and search recursively
+					TypeIndex struct_type_index = mf_ctx.struct_type_index;
+					if (struct_type_index < gTypeInfo.size()) {
+						const TypeInfo& type_info = gTypeInfo[struct_type_index];
+						const StructTypeInfo* struct_info = type_info.getStructInfo();
+						if (struct_info) {
+							// Collect base classes to search (breadth-first to handle multiple inheritance)
+							std::vector<TypeIndex> base_classes_to_search;
+							for (const auto& base : struct_info->base_classes) {
+								base_classes_to_search.push_back(base.type_index);
+							}
+							
+							// Search through base classes
+							for (size_t i = 0; i < base_classes_to_search.size() && !found_member_function_in_context; ++i) {
+								TypeIndex base_idx = base_classes_to_search[i];
+								if (base_idx >= gTypeInfo.size()) continue;
+								
+								const TypeInfo& base_type_info = gTypeInfo[base_idx];
+								const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+								if (!base_struct_info) continue;
+								
+								// Check member functions in this base class
+								// StructMemberFunction has function_decl which is an ASTNode
+								for (const auto& member_func : base_struct_info->member_functions) {
+									if (member_func.getName() == StringTable::getOrInternStringHandle(idenfifier_token.value())) {
+										// Found matching member function in base class
+										if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+											// Update identifierType to point to the base class function
+											gSymbolTable.insert(idenfifier_token.value(), member_func.function_decl);
+											identifierType = member_func.function_decl;
+											found_member_function_in_context = true;
+											FLASH_LOG_FORMAT(Parser, Debug, "EARLY CHECK: Detected base class member function call '{}' with implicit 'this'", idenfifier_token.value());
+											break;
+										}
+									}
+								}
+								
+								// Add this base's base classes to search list (for multi-level inheritance)
+								for (const auto& nested_base : base_struct_info->base_classes) {
+									// Avoid duplicates (relevant for diamond inheritance)
+									bool already_in_list = false;
+									for (TypeIndex existing : base_classes_to_search) {
+										if (existing == nested_base.type_index) {
+											already_in_list = true;
+											break;
+										}
+									}
+									if (!already_in_list) {
+										base_classes_to_search.push_back(nested_base.type_index);
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 		}
 
