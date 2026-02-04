@@ -1769,12 +1769,18 @@ private:
 						if (iss.peek() == '(') {
 							iss.ignore(); // Consume '('
 							
+							// Skip whitespace after '(' (allows "__has_builtin( __is_void)")
+							iss >> std::ws;
+							
 							// Read the builtin name into buffer
 							size_t i = 0;
 							while (i < sizeof(builtin_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
 								builtin_name_buf[i++] = iss.get();
 							}
 							builtin_name_buf[i] = '\0';
+							
+							// Skip whitespace before ')' (allows "__has_builtin(__is_void )")
+							iss >> std::ws;
 							
 							// Consume closing ')' if present
 							if (iss.peek() == ')') {
