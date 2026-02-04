@@ -1683,11 +1683,20 @@ private:
 		while (iss && eval_loop_guard-- > 0) {
 			char c = iss.peek();
 			if (isdigit(c)) {
-				std::string str_value;
-				iss >> str_value;
-				long value = stol(str_value);
-				values.push(value);
-				if (settings_.isVerboseMode()) {
+				// Manually consume only digit characters to avoid consuming operators
+				// Using iss >> str_value would read "123==456" as a single token
+				op_str.resize(0);
+				while (iss && isdigit(iss.peek())) {
+					op_str += iss.get();
+				}
+				long value = 0;
+				if (auto [ptr, ec] = std::from_chars(op_str.data(), op_str.data() + op_str.size(), value); ec != std::errc()) {
+					FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '", op_str, "' in preprocessor expression, in file ",
+									 filestack_.empty() ? "<unknown>" : filestack_.top().file_name,
+									" at line ", filestack_.empty() ? 0 : filestack_.top().line_number);
+				}
+				else {
+					values.push(value);
 					FLASH_LOG(Lexer, Trace, "  Pushed value: ", value, " (values.size=", values.size(), ")");
 				}
 			}
@@ -1725,8 +1734,13 @@ private:
 				}
 			}
 			else if (isalpha(c) || c == '_') {
+				// Manually consume only identifier characters to avoid consuming operators
 				std::string keyword;
-				iss >> keyword;
+				while (iss) {
+					char next = iss.peek();
+					if (!isalnum(next) && next != '_') break;
+					keyword += iss.get();
+				}
 				if (keyword.find("__") == 0) {	// __ is reserved for the compiler
 					if (keyword.find("__has_include") == 0) {
 						long exists = 0;
@@ -1860,9 +1874,15 @@ private:
 				else if (auto define_it = defines_.find(keyword); define_it != defines_.end()) {
 					// convert the value to an int
 					const auto& body = define_it->second.getBody();
-					if (body.size() == 1) {
-						long value = stol(body);
-						values.push(value);
+					if (!body.empty()) {
+						long value = 0;
+						if (auto [ptr, ec] = std::from_chars(body.data(), body.data() + body.size(), value); ec != std::errc()) {
+							FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: ", keyword, "='", body, "' at ",
+								filestack_.top().file_name, ":", filestack_.top().line_number);
+						}
+						else {
+							values.push(value);
+						}
 					}
 					else {
 						if (settings_.isVerboseMode()) {
@@ -2181,6 +2201,14 @@ private:
 		defines_["__STDC_HOSTED__"] = DefineDirective{ "1", {} };
 		defines_["__STDCPP_THREADS__"] = DefineDirective{ "1", {} };
 		defines_["_LIBCPP_LITTLE_ENDIAN"] = DefineDirective{};
+		
+		// GCC compatibility macros (needed for standard library headers like wchar.h)
+		// These allow __GNUC_PREREQ checks to pass and expose C++ overloads
+		defines_["__GNUC__"] = DefineDirective{ "12", {} };  // GCC 12.x compatible
+		defines_["__GNUC_MINOR__"] = DefineDirective{ "2", {} };
+		defines_["__GNUC_PATCHLEVEL__"] = DefineDirective{ "0", {} };
+		defines_["__GNUG__"] = DefineDirective{ "12", {} };  // C++ compiler version
+		defines_["__restrict"] = DefineDirective{};  // Strip __restrict keyword (not supported yet)
 		
 		// MSVC C++ standard version feature flags (cumulative)
 		defines_["_HAS_CXX17"] = DefineDirective{ "1", {} };  // C++17 features available
