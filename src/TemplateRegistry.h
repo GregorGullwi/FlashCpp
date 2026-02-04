@@ -194,13 +194,13 @@ struct TemplateTypeArg {
 		, cv_qualifier(CVQualifier::None)
 		, is_array(false)
 		, array_size(std::nullopt)
-			, member_pointer_kind(MemberPointerKind::None)
-			, is_value(true)
-			, value(val)
-			, is_pack(false)
-			, is_dependent(false)
-			, is_template_template_arg(false)
-			, template_name_handle() {}
+		, member_pointer_kind(MemberPointerKind::None)
+		, is_value(true)
+		, value(val)
+		, is_pack(false)
+		, is_dependent(false)
+		, is_template_template_arg(false)
+		, template_name_handle() {}
 	
 	// Constructor for non-type template parameters with explicit type
 	TemplateTypeArg(int64_t val, Type type)
@@ -213,13 +213,13 @@ struct TemplateTypeArg {
 		, cv_qualifier(CVQualifier::None)
 		, is_array(false)
 		, array_size(std::nullopt)
-			, member_pointer_kind(MemberPointerKind::None)
-			, is_value(true)
-			, value(val)
-			, is_pack(false)
-			, is_dependent(false)
-			, is_template_template_arg(false)
-			, template_name_handle() {}
+		, member_pointer_kind(MemberPointerKind::None)
+		, is_value(true)
+		, value(val)
+		, is_pack(false)
+		, is_dependent(false)
+		, is_template_template_arg(false)
+		, template_name_handle() {}
 	
 	bool operator==(const TemplateTypeArg& other) const {
 		// Only compare type_index for user-defined types (Struct, Enum, UserDefined)
@@ -625,6 +625,7 @@ inline TemplateTypeArg toTemplateTypeArg(const TemplateArgument& arg) {
 			result.is_reference = ts.is_reference();
 			result.is_rvalue_reference = ts.is_rvalue_reference();
 			result.pointer_depth = ts.pointer_levels().size();
+			result.pointer_cv_qualifiers.reserve(ts.pointer_levels().size());
 			for (const auto& level : ts.pointer_levels()) {
 				result.pointer_cv_qualifiers.push_back(level.cv_qualifier);
 			}
