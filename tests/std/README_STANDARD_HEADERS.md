@@ -7,18 +7,18 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~29ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Parse Error | Parses 250 templates (~70ms), `_Require<...>` SFINAE return type (2026-02-04) |
+| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Parse Error | Parses 400 templates (~115ms), static_assert constexpr evaluation (2026-02-04) |
 | `<compare>` | N/A | ✅ Compiled | ~258ms (2026-01-24: Fixed with operator[], brace-init, and throw expression fixes) |
 | `<version>` | N/A | ✅ Compiled | ~17ms |
 | `<source_location>` | N/A | ✅ Compiled | ~17ms |
 | `<numbers>` | N/A | ✅ Compiled | ~33ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
-| `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | Parses 250 templates (~70ms), blocked by type_traits (2026-02-04) |
+| `<ratio>` | `test_std_ratio.cpp` | ❌ Parse Error | Parses 500 templates (~147ms), nested type resolution issue (2026-02-04) |
 | `<vector>` | `test_std_vector.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<tuple>` | `test_std_tuple.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Parses 250 templates (~70ms), blocked by type_traits (2026-02-04) |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Parses 550+ templates (~170ms), static_assert constexpr at parse_numbers.h:198 |
-| `<any>` | `test_std_any.cpp` | ❌ Parse Error | Parses 500+ templates (~153ms), nested out-of-line template member function at any:583 |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Parses 400 templates (~120ms), __builtin_strlen at typeinfo:122 (2026-02-04) |
+| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Parses 500 templates (~162ms), static_assert constexpr at parse_numbers.h:198 (2026-02-04) |
+| `<any>` | `test_std_any.cpp` | ❌ Parse Error | __builtin_strlen at typeinfo:122 (2026-02-04) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
 | `<bit>` | N/A | ❌ Parse Error | Progresses past char_traits.h (2026-02-03), likely blocked at similar point as string |
@@ -32,12 +32,12 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Progresses to c++locale.h:52 (2026-02-03) - __typeof keyword issue |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Preprocesses successfully (93k lines), parsing stringfwd.h (2026-02-04) |
 | `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Test file missing |
 | `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
-| `<typeinfo>` | N/A | ✅ Compiled | ~18ms |
+| `<typeinfo>` | N/A | ❌ Parse Error | __builtin_strlen at typeinfo:122 (2026-02-04) |
 | `<typeindex>` | N/A | ❌ Parse Error | Out-of-line template member functions |
 | `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
 | `<csignal>` | N/A | ✅ Compiled | ~22ms |
@@ -53,7 +53,33 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
 
-**Note (2026-02-04 Latest Update - This PR):** Fixed critical blockers related to GCC libstdc++ compatibility:
+**Note (2026-02-04 Latest Update - This PR):** Fixed critical blockers for GCC libstdc++ headers - added missing macros:
+1. **GLIBCXX noexcept and constexpr macros** - Added all missing libstdc++ function/variable specifier macros:
+   - `_GLIBCXX_NOEXCEPT`, `_GLIBCXX_USE_NOEXCEPT` - Map to `noexcept` keyword
+   - `_GLIBCXX_NOEXCEPT_IF`, `_GLIBCXX_NOEXCEPT_QUAL` - Function-like macros for conditional noexcept
+   - `_GLIBCXX14/17/20/23_CONSTEXPR` - Version-specific constexpr macros (all map to `constexpr`)
+   - `_GLIBCXX17_INLINE`, `_GLIBCXX_INLINE_VERSION` - Inline variable support
+   - `_GLIBCXX_THROW_OR_ABORT`, `_GLIBCXX_TXN_SAFE`, `_GLIBCXX_TXN_SAFE_DYN` - Strip exception/transaction specs
+2. **GLIBCXX C++11 ABI namespace macros** - Added support for the modern C++11 ABI:
+   - `_GLIBCXX_USE_CXX11_ABI=1` - Use C++11 ABI for std::string and std::list
+   - `_GLIBCXX_BEGIN/END_NAMESPACE_CXX11` - Inline namespace `__cxx11` support
+   - `_GLIBCXX_NAMESPACE_CXX11`, `_GLIBCXX_NAMESPACE_LDBL_OR_CXX11` - Namespace prefix macros
+3. **Include path fixes** - Added `/usr/include/c++/*/bits` directories to resolve relative includes:
+   - Fixes `#include "unicode-data.h"` and similar relative includes within standard library headers
+   - Workaround for preprocessor not searching in current file's directory for quoted includes
+- **Impact:**
+  - `<type_traits>` now parses **400 templates** in 115ms (was 250 templates, 60% improvement)
+  - `<optional>` now parses **400 templates** in 120ms and progresses past `<exception>` to `typeinfo:122`
+  - `<variant>` now parses **500 templates** in 162ms, same blocker (static_assert constexpr)
+  - `<ratio>` now parses **500 templates** in 147ms (was 250 templates, 100% improvement)
+  - `<any>` now progresses past `<exception>` to `typeinfo:122` (__builtin_strlen blocker)
+  - `<iostream>` now **preprocesses successfully** (93k lines) - major milestone!
+- **Current Blockers:**
+  - **__builtin_strlen** - Many headers blocked by missing builtin function at `typeinfo:122`
+  - **static_assert constexpr evaluation** - Headers like `<type_traits>`, `<variant>` can't evaluate type trait values
+  - **Nested type resolution** - Template metaprogramming patterns like `__ratio_add_impl::type` fail
+
+**Note (2026-02-04 Previous Update - Prior PR):** Fixed critical blockers related to GCC libstdc++ compatibility:
 1. **GLIBCXX preprocessor macros** - Added comprehensive set of libstdc++ macros that were missing:
    - `_GLIBCXX_VISIBILITY(V)`, `_GLIBCXX_BEGIN/END_NAMESPACE_VERSION` - Strip visibility and namespace attributes
    - `_GLIBCXX_DEPRECATED*`, `_GLIBCXX11/14/17/20/23_DEPRECATED*` - Strip deprecated attributes (C++11-23)
@@ -153,9 +179,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Note (2026-01-24 Latest Update):** Fixed `operator[]` parsing in template class bodies, brace initialization of structs with constructors but no data members, and throw expressions as unary operators. The `<compare>` header now fully compiles. Fixed union template parsing - union keyword now recognized in all template declaration paths. The `<optional>` header now progresses past line 204 and fails at line 141 with a different constexpr evaluation error.
 
 **Primary Remaining Blockers:**
-1. **Missing standard C library functions** - Functions like `wmemcmp`, `wmemchr`, `wmemcpy` are not registered. This blocks `<string>`, `<string_view>`, `<iostream>`, `<bit>` at char_traits.h:512. Easy fix: register these functions similar to `__builtin_strlen`.
-2. **Nested out-of-line template member functions** - Patterns like `template<typename T> void Outer::Inner<T>::method()` are not supported. Single-level out-of-line members (`Class<T>::method`) now work, but nested versions need additional parsing support. This affects `<any>` (line 583: `any::_Manager_internal<_Tp>::_S_manage`).
-3. **Static assert constexpr evaluation** - Templates like `is_integral<int>` inherit from `integral_constant<bool, true>::type`. While parsing now works, constexpr evaluation of `::value` through the inheritance chain fails. This affects `static_assert` statements in `<type_traits>`, `<ratio>`, `<variant>`.
+1. **Missing builtin functions** - `__builtin_strlen` and similar functions are not properly registered/handled. This blocks `<typeinfo>`, `<any>`, `<optional>` at typeinfo:122. The function is called with `const char*` from `name()` but overload resolution fails.
+2. **Static assert constexpr evaluation** - Templates like `is_integral<int>` inherit from `integral_constant<bool, true>::type`. While parsing works, constexpr evaluation of `::value` through the inheritance chain fails. This affects `<type_traits>`, `<ratio>`, `<variant>` with static_assert statements.
+3. **Nested type resolution in templates** - Complex template metaprogramming patterns like `typename __ratio_add_impl<...>::type` fail during instantiation. The template is instantiated with a mangled name but nested type lookup fails. This affects `<ratio>` and similar metaprogramming-heavy headers.
 4. **Template complexity/performance** - Headers like `<vector>`, `<tuple>`, `<array>`, `<functional>`, `<map>`, `<set>`, `<span>`, `<ranges>` time out due to template instantiation complexity.
 5. **Missing pthread types** - `<atomic>` and `<barrier>` need pthread support
 
