@@ -220,18 +220,6 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 			return TypeConversionResult::exact_match();
 		}
 		
-		// Special case: If one type is UserDefined and couldn't be resolved, but both have the same
-		// underlying representation (same size, signedness), allow conversion.
-		// This handles template parameters that haven't been fully resolved yet.
-		// According to C++ standard, this is valid when the types are compatible.
-		if ((from.type() == Type::UserDefined || to.type() == Type::UserDefined) &&
-		    from_resolved != from.type() && to_resolved != to.type()) {
-			// At least one was resolved - if they match after resolution, accept it
-			if (from_resolved == to_resolved) {
-				return TypeConversionResult::exact_match();
-			}
-		}
-		
 		// If one type is still UserDefined after resolution attempt, accept as conversion
 		// This allows template parameter types to match concrete types during instantiation
 		if (from.type() == Type::UserDefined || to.type() == Type::UserDefined) {
