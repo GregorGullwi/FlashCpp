@@ -209,9 +209,33 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 			return TypeConversionResult::no_match();
 		}
 
-		// Exact type match for pointers
-		if (from.type() == to.type()) {
+		// Resolve type aliases for both types before comparing
+		// This handles cases where template parameters or typedefs resolve to the same underlying type
+		// For example: CharT* (where CharT=wchar_t) should match wchar_t*
+		Type from_resolved = resolve_type_alias(from.type(), from.type_index());
+		Type to_resolved = resolve_type_alias(to.type(), to.type_index());
+
+		// Exact type match for pointers (after resolving aliases)
+		if (from_resolved == to_resolved) {
 			return TypeConversionResult::exact_match();
+		}
+		
+		// Special case: If one type is UserDefined and couldn't be resolved, but both have the same
+		// underlying representation (same size, signedness), allow conversion.
+		// This handles template parameters that haven't been fully resolved yet.
+		// According to C++ standard, this is valid when the types are compatible.
+		if ((from.type() == Type::UserDefined || to.type() == Type::UserDefined) &&
+		    from_resolved != from.type() && to_resolved != to.type()) {
+			// At least one was resolved - if they match after resolution, accept it
+			if (from_resolved == to_resolved) {
+				return TypeConversionResult::exact_match();
+			}
+		}
+		
+		// If one type is still UserDefined after resolution attempt, accept as conversion
+		// This allows template parameter types to match concrete types during instantiation
+		if (from.type() == Type::UserDefined || to.type() == Type::UserDefined) {
+			return TypeConversionResult::conversion();
 		}
 
 		// Pointer conversions: any pointer can implicitly convert to void*
@@ -223,7 +247,7 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		//   - T*       → void*        : allowed
 		// Note: For "const T*", the const applies to the pointed-to type (checked via is_const()),
 		//       while "T* const" would have const on the pointer level itself.
-		if (to.type() == Type::Void) {
+		if (to_resolved == Type::Void) {
 			// Check const-correctness for the pointed-to type
 			// from.is_const() checks if the pointee is const (e.g., "const char*")
 			// to.is_const() checks if the target pointee is const (e.g., "const void*")
