@@ -2331,8 +2331,8 @@ private:
 		defines_["_GLIBCXX_NOEXCEPT"] = DefineDirective{ "noexcept", {} };  // Map to noexcept keyword
 		defines_["_GLIBCXX_USE_NOEXCEPT"] = DefineDirective{ "noexcept", {} };  // Map to noexcept keyword (C++11 mode)
 		defines_["_GLIBCXX_NOEXCEPT_IF"] = DefineDirective{ "noexcept(_Cond)", { "_Cond" }, true };
-		defines_["_GLIBCXX_NOEXCEPT_QUAL"] = DefineDirective{ "noexcept(_Cond)", { "_Cond" }, true };
-		defines_["_GLIBCXX_NOEXCEPT_PARM"] = DefineDirective{};  // Strip noexcept parameter specifier
+		defines_["_GLIBCXX_NOEXCEPT_QUAL"] = DefineDirective{};  // Strip noexcept qualifier (works with _GLIBCXX_NOEXCEPT_PARM)
+		defines_["_GLIBCXX_NOEXCEPT_PARM"] = DefineDirective{};  // Strip noexcept parameter specifier (works with _GLIBCXX_NOEXCEPT_QUAL)
 		defines_["_GLIBCXX_THROW"] = DefineDirective{ "", { "_Spec" }, true };  // Strip old-style exception specifications throw(...)
 		defines_["_GLIBCXX_THROW_OR_ABORT"] = DefineDirective{};  // Strip exception specs
 		defines_["_GLIBCXX_TXN_SAFE"] = DefineDirective{};  // Strip transactional memory attributes
@@ -2345,6 +2345,9 @@ private:
 		defines_["_GLIBCXX_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{ "__cxx11::", {} };
 		defines_["_GLIBCXX_BEGIN_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{ "namespace __cxx11 {", {} };
 		defines_["_GLIBCXX_END_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{ "}", {} };
+		// Container namespace macros (for std::list iterators)
+		defines_["_GLIBCXX_BEGIN_NAMESPACE_CONTAINER"] = DefineDirective{};  // Strip container namespace
+		defines_["_GLIBCXX_END_NAMESPACE_CONTAINER"] = DefineDirective{};  // Strip container namespace
 		defines_["_GLIBCXX_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // Enable constexpr
 		defines_["_GLIBCXX_USE_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // Enable constexpr
 		defines_["_GLIBCXX14_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++14 constexpr
