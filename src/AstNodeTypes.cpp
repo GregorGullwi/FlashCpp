@@ -174,6 +174,10 @@ bool is_integer_type(Type type) {
     switch (type) {
         case Type::Char:
         case Type::UnsignedChar:
+        case Type::WChar:      // wchar_t is an integer type
+        case Type::Char8:      // char8_t is an integer type (C++20)
+        case Type::Char16:     // char16_t is an integer type
+        case Type::Char32:     // char32_t is an integer type
         case Type::Short:
         case Type::UnsignedShort:
         case Type::Int:
@@ -286,7 +290,14 @@ int get_type_size_bits(Type type) {
             return 8;
         case Type::Char:
         case Type::UnsignedChar:
+        case Type::Char8:      // char8_t is always 8 bits
             return 8;
+        case Type::Char16:     // char16_t is always 16 bits
+            return 16;
+        case Type::Char32:     // char32_t is always 32 bits
+            return 32;
+        case Type::WChar:
+            return get_wchar_size_bits();  // Target-dependent: 16 bits (LLP64) or 32 bits (LP64)
         case Type::Short:
         case Type::UnsignedShort:
             return 16;
@@ -320,12 +331,22 @@ Type promote_integer_type(Type type) {
         case Type::Bool:
         case Type::Char:
         case Type::Short:
+        case Type::Char8:      // char8_t (8-bit unsigned) promotes to int
+        case Type::Char16:     // char16_t (16-bit unsigned) promotes to int
             return Type::Int;
         case Type::UnsignedChar:
         case Type::UnsignedShort:
             // If int can represent all values of the original type, promote to int
             // Otherwise promote to unsigned int (but for char/short, int is always sufficient)
             return Type::Int;
+        case Type::WChar:
+            // wchar_t promotion is target-dependent:
+            // On Windows (16-bit): promotes to int
+            // On Linux (32-bit): doesn't promote (same size as int)
+            return (get_wchar_size_bits() < 32) ? Type::Int : Type::WChar;
+        case Type::Char32:
+            // char32_t (32-bit) doesn't promote - same size as int
+            return Type::Char32;
         default:
             // Types int and larger don't get promoted
             return type;
@@ -478,6 +499,10 @@ static const std::string& type_to_string(Type type, TypeQualifier qualifier) {
         case Type::Bool: result += "bool"; break;
         case Type::Char: result += "char"; break;
         case Type::UnsignedChar: result += "unsigned char"; break;
+        case Type::WChar: result += "wchar_t"; break;
+        case Type::Char8: result += "char8_t"; break;
+        case Type::Char16: result += "char16_t"; break;
+        case Type::Char32: result += "char32_t"; break;
         case Type::Short: result += "short"; break;
         case Type::UnsignedShort: result += "unsigned short"; break;
         case Type::Int: result += "int"; break;
