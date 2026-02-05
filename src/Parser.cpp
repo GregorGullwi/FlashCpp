@@ -1690,6 +1690,35 @@ ParseResult Parser::parse_type_and_name() {
         type_spec.add_pointer_level(ptr_cv);
     }
 
+    // Second function pointer check: after pointer levels have been consumed.
+    // This handles patterns like: void *(*callback)(void *)
+    // After parsing 'void' as type and '*' as pointer level (making void*),
+    // we now see '(' which starts a function pointer declarator.
+    if (type_spec.pointer_depth() > 0 && peek_token().has_value() && peek_token()->value() == "(") {
+        SaveHandle saved_pos = save_token_position();
+        consume_token(); // consume '('
+
+        parse_calling_convention();
+
+        if (peek_token().has_value() && peek_token()->value() == "*") {
+            // Looks like a function pointer with pointer return type: type* (*name)(params)
+            restore_token_position(saved_pos);
+            auto result = parse_declarator(type_spec, Linkage::None);
+            if (!result.is_error()) {
+                if (auto decl_node = result.node()) {
+                    if (decl_node->is<DeclarationNode>() && custom_alignment.has_value()) {
+                        decl_node->as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+                    }
+                }
+                discard_saved_token(saved_pos);
+                return result;
+            }
+            restore_token_position(saved_pos);
+        } else {
+            restore_token_position(saved_pos);
+        }
+    }
+
     // Parse postfix cv-qualifiers before references: Type const& or Type volatile&
     // This handles C++ postfix const/volatile syntax like: __nonesuch const&
     CVQualifier postfix_cv = parse_cv_qualifiers();
