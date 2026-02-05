@@ -1064,11 +1064,7 @@ public:
 	void registerTemplate(std::string_view name, ASTNode template_node) {
 		std::string key(name);
 		templates_[key].push_back(template_node);
-		// Also register without leading std:: for nested __gnu_cxx parsed inside std
-		if (key.rfind("std::__gnu_cxx::", 0) == 0) {
-			std::string alt = key.substr(strlen("std::"));
-			templates_[alt].push_back(template_node);
-		}
+		FLASH_LOG_FORMAT(Templates, Debug, "Registering template '{}'", name);
 	}
 
 	// Register template parameter names for a template
@@ -1152,23 +1148,10 @@ public:
 		// Heterogeneous lookup - string_view accepted directly
 		auto it = templates_.find(name);
 		if (it != templates_.end() && !it->second.empty()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "lookupTemplate hit '{}' ({} overloads)", name, it->second.size());
 			return it->second.front();  // Return first overload
 		}
-		// Fallback for libstdc++ layout where __gnu_cxx may be parsed as nested under std (or vice versa)
-		if (name.starts_with("__gnu_cxx::")) {
-			std::string alt = "std::";
-			alt += name;
-			auto alt_it = templates_.find(alt);
-			if (alt_it != templates_.end() && !alt_it->second.empty()) {
-				return alt_it->second.front();
-			}
-		} else if (name.starts_with("std::__gnu_cxx::")) {
-			std::string alt(name.substr(strlen("std::")));
-			auto alt_it = templates_.find(alt);
-			if (alt_it != templates_.end() && !alt_it->second.empty()) {
-				return alt_it->second.front();
-			}
-		}
+		FLASH_LOG_FORMAT(Templates, Debug, "lookupTemplate miss '{}'", name);
 		return std::nullopt;
 	}
 	
