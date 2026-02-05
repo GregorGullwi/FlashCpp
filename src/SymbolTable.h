@@ -13,6 +13,7 @@
 #include "Log.h"
 #include "ChunkedString.h"
 #include "NamespaceRegistry.h"
+#include "TemplateRegistry.h"
 
 enum class ScopeType {
 	Global,
@@ -564,6 +565,18 @@ public:
 		}
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
 
+		// If this using-import refers to a primary template in another namespace, register an alias
+		NamespaceHandle current_ns = get_current_namespace_handle();
+		if (current_ns != namespace_handle) {
+			StringHandle orig_handle = StringTable::getOrInternStringHandle(original_name);
+			StringHandle qualified_source = gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, orig_handle);
+			if (auto tmpl = gTemplateRegistry.lookupTemplate(StringTable::getStringView(qualified_source))) {
+				StringHandle local_handle = StringTable::getOrInternStringHandle(local_name);
+				StringHandle qualified_target = gNamespaceRegistry.buildQualifiedIdentifier(current_ns, local_handle);
+				gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_target), *tmpl);
+			}
+		}
+
 		// Also materialize the referenced symbol into the current scope for faster/unambiguous lookup
 		auto resolved = lookup_qualified(namespace_handle, orig_name);
 		if (resolved.has_value()) {
@@ -582,6 +595,17 @@ public:
 		std::string_view key = intern_string(local_name);
 		std::string_view orig_name = intern_string(original_name);
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
+
+		NamespaceHandle current_ns = get_current_namespace_handle();
+		if (current_ns != namespace_handle) {
+			StringHandle orig_handle = StringTable::getOrInternStringHandle(original_name);
+			StringHandle qualified_source = gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, orig_handle);
+			if (auto tmpl = gTemplateRegistry.lookupTemplate(StringTable::getStringView(qualified_source))) {
+				StringHandle local_handle = StringTable::getOrInternStringHandle(local_name);
+				StringHandle qualified_target = gNamespaceRegistry.buildQualifiedIdentifier(current_ns, local_handle);
+				gTemplateRegistry.registerTemplate(StringTable::getStringView(qualified_target), *tmpl);
+			}
+		}
 
 		// Also materialize the referenced symbol into the current scope for faster/unambiguous lookup
 		auto resolved = lookup_qualified(namespace_handle, orig_name);

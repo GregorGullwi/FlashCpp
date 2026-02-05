@@ -1379,7 +1379,12 @@ public:
 		
 		// Check type index for user-defined types
 		if (type_ == Type::UserDefined || type_ == Type::Struct) {
-			if (type_index_ != other.type_index_) return false;
+			if (type_index_ != other.type_index_) {
+				// Be lenient for dependent/alias types: treat as match when the identifier tokens are the same
+				if (token_.value() != other.token_.value()) {
+					return false;
+				}
+			}
 		}
 		
 		// For function signature matching, top-level CV qualifiers on value types are ignored
