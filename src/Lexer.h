@@ -91,6 +91,17 @@ public:
 					return consume_operator();
 				}
 			}
+			else if (c == 'L' && cursor_ + 1 < source_size_ && (source_[cursor_ + 1] == '\"' || source_[cursor_ + 1] == '\'')) {
+				// Wide string/character literals (L"..." or L'...')
+				size_t start = cursor_;
+				++cursor_;
+				++column_;
+				if (source_[cursor_] == '\"') {
+					return consume_prefixed_string_literal(start);
+				} else {
+					return consume_prefixed_character_literal(start);
+				}
+			}
 			else if (std::isalpha(c) || c == '_') {
 				return consume_identifier_or_keyword();
 			}
@@ -436,6 +447,59 @@ private:
 		else {
 			// Handle unterminated character literal error
 			// ...
+		}
+
+		std::string_view value = source_.substr(start, cursor_ - start);
+		return Token(Token::Type::CharacterLiteral, value, line_, column_,
+			current_file_index_);
+	}
+
+	Token consume_prefixed_string_literal(size_t start) {
+		// Assumes current cursor_ is at opening quote after prefix
+		++cursor_;
+		++column_;
+
+		while (cursor_ < source_size_ && source_[cursor_] != '\"') {
+			if (source_[cursor_] == '\\') {
+				// skip escape sequence
+			}
+			++cursor_;
+			++column_;
+		}
+
+		if (cursor_ < source_size_ && source_[cursor_] == '\"') {
+			++cursor_;
+			++column_;
+		}
+
+		std::string_view value = source_.substr(start, cursor_ - start);
+		return Token(Token::Type::StringLiteral, value, line_, column_,
+			current_file_index_);
+	}
+
+	Token consume_prefixed_character_literal(size_t start) {
+		// Assumes current cursor_ is at opening quote after prefix
+		++cursor_;  // skip opening '
+		++column_;
+
+		while (cursor_ < source_size_ && source_[cursor_] != '\'') {
+			if (source_[cursor_] == '\\') {
+				++cursor_;
+				++column_;
+				if (cursor_ < source_size_) {
+					++cursor_;
+					++column_;
+				}
+			}
+			else {
+				++cursor_;
+				++column_;
+			}
+		}
+
+		if (cursor_ < source_size_ && source_[cursor_] == '\'') {
+			++cursor_;
+			++column_;
 		}
 
 		std::string_view value = source_.substr(start, cursor_ - start);
