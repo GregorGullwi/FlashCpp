@@ -460,7 +460,6 @@ private:
 		++column_;
 
 		while (cursor_ < source_size_ && source_[cursor_] != '\"') {
-		while (cursor_ < source_size_ && source_[cursor_] != '\"') {
 			if (source_[cursor_] == '\\') {
 				// skip escape sequence
 				++cursor_;
@@ -474,7 +473,6 @@ private:
 				++cursor_;
 				++column_;
 			}
-		}
 		}
 
 		if (cursor_ < source_size_ && source_[cursor_] == '\"') {
