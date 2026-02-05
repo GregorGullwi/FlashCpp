@@ -1375,7 +1375,15 @@ public:
 	// Returns true if they represent the same type signature
 	bool matches_signature(const TypeSpecifierNode& other) const {
 		// Check basic type
-		if (type_ != other.type_) return false;
+		if (type_ != other.type_) {
+			// Be lenient for typedef/alias cases where the underlying size and indirection match
+			bool same_size = size_ != 0 && other.size_ != 0 && size_ == other.size_;
+			bool same_indirection = pointer_levels_.size() == other.pointer_levels_.size()
+				&& reference_qualifier_ == other.reference_qualifier_;
+			if (!(same_size && same_indirection)) {
+				return false;
+			}
+		}
 		
 		// Check type index for user-defined types
 		if (type_ == Type::UserDefined || type_ == Type::Struct) {
