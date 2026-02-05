@@ -20,11 +20,10 @@ int main() {
     
     // Verify the values are assigned correctly
     // Using simple arithmetic to ensure the types work
-    char8_t c8_sum = c8 + 1;
-    char16_t c16_sum = c16 + 1;
-    char32_t c32_sum = c32 + 1;
-    wchar_t wc_sum = wc + 1;
+    int result = 0;
+    result = result + c8 + c16 + c32 + wc;
+    result = result + c8_max + c16_max;
     
-    // All assignments succeeded
+    // All assignments and arithmetic succeeded
     return 0;
 }
