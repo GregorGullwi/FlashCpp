@@ -74,10 +74,10 @@ public:
 	}
 
 	// Compiler compatibility mode - controls which compiler's builtin macros to use
-	// Default is MSVC for Windows builds
+	// Default is auto-detected: MSVC for Windows builds, GCC for Linux/Unix builds
 	enum class CompilerMode {
-		MSVC,    // Microsoft Visual C++ (default)
-		GCC      // GCC/Clang (Linux/macOS)
+		MSVC,    // Microsoft Visual C++ (Windows default)
+		GCC      // GCC/Clang (Linux/Unix default)
 	};
 
 	CompilerMode getCompilerMode() const {
@@ -264,8 +264,13 @@ private:
 	bool preprocessorOnlyMode_ = false; // Added member variable for -E option
 	bool disableAccessControl_ = false; // Disable access control checking (for debugging)
 	bool enableLazyTemplateInstantiation_ = true; // Enable lazy template member instantiation (default: on)
-	CompilerMode compilerMode_ = CompilerMode::MSVC;  // Default to MSVC mode
-	ManglingStyle manglingStyle_ = 
+	CompilerMode compilerMode_ =
+#if defined(_WIN32) || defined(_WIN64)
+		CompilerMode::MSVC;  // Windows default
+#else
+		CompilerMode::GCC;   // Linux/Unix default
+#endif
+	ManglingStyle manglingStyle_ =
 #if defined(_WIN32) || defined(_WIN64)
 		ManglingStyle::MSVC;  // Windows default
 #else
