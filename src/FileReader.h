@@ -1648,8 +1648,9 @@ private:
 		ops.pop();
 	}
 
-	bool parseIntegerLiteral(std::istringstream& iss, long& value) {
+	bool parseIntegerLiteral(std::istringstream& iss, long& value, std::string* out_literal = nullptr) {
 		std::string literal;
+		iss >> std::ws;  // Skip leading whitespace
 		int base = 10;
 
 		if (iss.peek() == '0') {
@@ -1668,13 +1669,18 @@ private:
 		}
 
 		auto is_digit_char = [&](char c) {
-			int is_separator = static_cast<int>(c == '\'');
-			if (base <= 10) return static_cast<int>(c >= '0') + static_cast<int>(c < ('0' + base)) + is_separator > 0;
-			return (std::isdigit(c) + static_cast<int>(c >= 'a' && c <= 'f') + static_cast<int>(c >= 'A' && c <= 'F') + is_separator) > 0;
+			if (c == '\'') return true; // digit separator
+			switch (base) {
+				case 2:  return c == '0' || c == '1';
+				case 8:  return c >= '0' && c <= '7';
+				case 10: return static_cast<bool>(std::isdigit(static_cast<unsigned char>(c)));
+				case 16: return static_cast<bool>(std::isxdigit(static_cast<unsigned char>(c)));
+				default: return false;
+			}
 		};
 
 		while (iss && is_digit_char(iss.peek())) {
-			if (iss.peek()=='\'') {
+			if (iss.peek() == '\'') {
 				iss.get();
 				continue;
 			}
@@ -1692,6 +1698,7 @@ private:
 										 value,
 										 base);
 
+		if (out_literal) *out_literal = literal;
 		return ec == std::errc() &&
 			   ptr == literal.data()+literal.size();
 	}
@@ -1728,8 +1735,9 @@ private:
 			char c = iss.peek();
 			if (isdigit(c)) {
 				long value = 0;
-				if (!parseIntegerLiteral(iss, value)) {
-					FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '", op_str, "' in preprocessor expression, in file ",
+				std::string literal;
+				if (!parseIntegerLiteral(iss, value, &literal)) {
+					FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '", literal, "' in preprocessor expression, in file ",
 									 filestack_.empty() ? "<unknown>" : filestack_.top().file_name,
 									" at line ", filestack_.empty() ? 0 : filestack_.top().line_number);
 					values.push(0);
@@ -2005,8 +2013,9 @@ private:
 					if (!body.empty()) {
 						long value = 0;
 						std::istringstream body_iss(body);
-						if (!parseIntegerLiteral(body_iss, value)) {
-							FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: ", keyword, "='", body, "' at ",
+						std::string literal;
+						if (!parseIntegerLiteral(body_iss, value, &literal)) {
+							FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: ", keyword, "='", body, "' literal='", literal, "' at ",
 								filestack_.top().file_name, ":", filestack_.top().line_number);
 							values.push(0);
 						}
