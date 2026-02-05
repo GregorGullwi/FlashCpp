@@ -1648,6 +1648,37 @@ private:
 		ops.pop();
 	}
 
+	bool parseIntegerLiteral(std::string_view literal, long& value) {
+		// Drop standard integer suffixes
+		while (!literal.empty()) {
+			char last = literal.back();
+			if (last == 'u' || last == 'U' || last == 'l' || last == 'L') {
+				literal.remove_suffix(1);
+			} else {
+				break;
+			}
+		}
+
+		// Remove C++ digit separators (single quote)
+		std::string sanitized;
+		sanitized.reserve(literal.size());
+		for (char c : literal) {
+			if (c != '\'') sanitized.push_back(c);
+		}
+
+		int base = 10;
+		if (sanitized.size() > 2 && sanitized[0] == '0' && (sanitized[1] == 'x' || sanitized[1] == 'X')) {
+			base = 16;
+		} else if (sanitized.size() > 2 && sanitized[0] == '0' && (sanitized[1] == 'b' || sanitized[1] == 'B')) {
+			base = 2;
+		} else if (sanitized.size() > 1 && sanitized[0] == '0') {
+			base = 8;
+		}
+
+		auto [ptr, ec] = std::from_chars(sanitized.data(), sanitized.data() + sanitized.size(), value, base);
+		return ec == std::errc();
+	}
+
 	long evaluate_expression(std::istringstream& iss) {
 		if (settings_.isVerboseMode()) {
 			// Save position and read entire expression for debug
@@ -1679,36 +1710,14 @@ private:
 		while (iss && eval_loop_guard-- > 0) {
 			char c = iss.peek();
 			if (isdigit(c)) {
-				// Consume the full integer literal, including base prefixes and suffixes like ULL
+				// Consume the full integer literal, including base prefixes and digit separators (')
 				op_str.resize(0);
-				while (iss && (std::isalnum(iss.peek()) || iss.peek() == 'x' || iss.peek() == 'X' || iss.peek() == 'b' || iss.peek() == 'B' || iss.peek() == '_')) {
+				while (iss && (std::isalnum(iss.peek()) || iss.peek() == 'x' || iss.peek() == 'X' || iss.peek() == 'b' || iss.peek() == 'B' || iss.peek() == '\'')) {
 					op_str += iss.get();
 				}
 
-				// Strip integer suffixes (u/U/l/L) from the end
-				std::string_view number_sv(op_str);
-				while (!number_sv.empty()) {
-					char last = number_sv.back();
-					if (last == 'u' || last == 'U' || last == 'l' || last == 'L') {
-						number_sv.remove_suffix(1);
-					} else {
-						break;
-					}
-				}
-
-				int base = 10;
-				if (number_sv.size() > 2 && number_sv[0] == '0' && (number_sv[1] == 'x' || number_sv[1] == 'X')) {
-					base = 16;
-					number_sv.remove_prefix(2);
-				} else if (number_sv.size() > 2 && number_sv[0] == '0' && (number_sv[1] == 'b' || number_sv[1] == 'B')) {
-					base = 2;
-					number_sv.remove_prefix(2);
-				} else if (number_sv.size() > 1 && number_sv[0] == '0') {
-					base = 8;
-				}
-
 				long value = 0;
-				if (auto [ptr, ec] = std::from_chars(number_sv.data(), number_sv.data() + number_sv.size(), value, base); ec != std::errc()) {
+				if (!parseIntegerLiteral(op_str, value)) {
 					FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '", op_str, "' in preprocessor expression, in file ",
 									 filestack_.empty() ? "<unknown>" : filestack_.top().file_name,
 									" at line ", filestack_.empty() ? 0 : filestack_.top().line_number);
@@ -1984,7 +1993,7 @@ private:
 					const auto& body = define_it->second.getBody();
 					if (!body.empty()) {
 						long value = 0;
-						if (auto [ptr, ec] = std::from_chars(body.data(), body.data() + body.size(), value); ec != std::errc()) {
+						if (!parseIntegerLiteral(body, value)) {
 							FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: ", keyword, "='", body, "' at ",
 								filestack_.top().file_name, ":", filestack_.top().line_number);
 							values.push(0);
