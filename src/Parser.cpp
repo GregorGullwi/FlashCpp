@@ -1013,12 +1013,14 @@ void Parser::register_builtin_functions() {
 	register_strlen_builtin("__builtin_strlen");
 	
 	// Wide memory/character functions used by libstdc++
+	// Wide memory/character functions used by libstdc++
 	{
 		// wmemchr(const wchar_t*, wchar_t, size_t) -> wchar_t*
 		Token ret_tok = dummy_token;
-		auto ret_type = emplace_node<TypeSpecifierNode>(Type::UnsignedLongLong, TypeQualifier::None, 64, ret_tok);
+		auto [ret_node, ret_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, ret_tok);
+		ret_ref.add_pointer_level(CVQualifier::None);
 		Token name_tok = Token(Token::Type::Identifier, "wmemchr"sv, 0, 0, 0);
-		auto decl_node = emplace_node<DeclarationNode>(ret_type, name_tok);
+		auto decl_node = emplace_node<DeclarationNode>(ret_node, name_tok);
 		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
 		auto [p1_node, p1_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
 		p1_ref.add_pointer_level(CVQualifier::Const);
@@ -1033,9 +1035,10 @@ void Parser::register_builtin_functions() {
 	{
 		// wmemcpy(wchar_t*, const wchar_t*, size_t) -> wchar_t*
 		Token ret_tok = dummy_token;
-		auto ret_type = emplace_node<TypeSpecifierNode>(Type::UnsignedLongLong, TypeQualifier::None, 64, ret_tok);
+		auto [ret_node, ret_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, ret_tok);
+		ret_ref.add_pointer_level(CVQualifier::None);
 		Token name_tok = Token(Token::Type::Identifier, "wmemcpy"sv, 0, 0, 0);
-		auto decl_node = emplace_node<DeclarationNode>(ret_type, name_tok);
+		auto decl_node = emplace_node<DeclarationNode>(ret_node, name_tok);
 		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
 		auto [p1_node, p1_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
 		p1_ref.add_pointer_level(CVQualifier::None);
@@ -1051,9 +1054,10 @@ void Parser::register_builtin_functions() {
 	{
 		// wmemmove(wchar_t*, const wchar_t*, size_t) -> wchar_t*
 		Token ret_tok = dummy_token;
-		auto ret_type = emplace_node<TypeSpecifierNode>(Type::UnsignedLongLong, TypeQualifier::None, 64, ret_tok);
+		auto [ret_node, ret_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, ret_tok);
+		ret_ref.add_pointer_level(CVQualifier::None);
 		Token name_tok = Token(Token::Type::Identifier, "wmemmove"sv, 0, 0, 0);
-		auto decl_node = emplace_node<DeclarationNode>(ret_type, name_tok);
+		auto decl_node = emplace_node<DeclarationNode>(ret_node, name_tok);
 		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
 		auto [p1_node, p1_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
 		p1_ref.add_pointer_level(CVQualifier::None);
@@ -2343,8 +2347,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
         // Parse CV-qualifiers after the * (if any)
         CVQualifier ptr_cv = parse_cv_qualifiers();
-        skip_cpp_attributes();   // Handle [[...]] attributes on the pointer declarator
-        skip_gcc_attributes();   // Handle __attribute__((...)) placed between * and identifier
+        skip_cpp_attributes();   // Handle [[...]] / __attribute__((...)) on the pointer declarator
 
         // Check for unnamed function pointer parameter: type (*)(params)
         // In this case, after '*' we immediately see ')' instead of an identifier
@@ -24227,9 +24230,6 @@ ParseResult Parser::parse_for_loop() {
                     try_as_declaration = true;
                 } else if (peek_token(1).has_value() && peek_token(1)->value() == "::") {
                     // Treat Identifier followed by :: as a potential qualified type name
-                    try_as_declaration = true;
-                } else {
-                    // In namespaces, types may be brought in unqualified (e.g., size_t inside std)
                     try_as_declaration = true;
                 }
             }
