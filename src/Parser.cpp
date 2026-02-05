@@ -11099,10 +11099,10 @@ ParseResult Parser::parse_type_specifier()
 	
 	auto current_token_opt = peek_token();
 
-	// Check for decltype or __typeof__ FIRST, before any other checks
-	// __typeof__ is a GCC extension that works like decltype
+	// Check for decltype or __typeof__/__typeof FIRST, before any other checks
+	// __typeof__ and __typeof are GCC extensions that work like decltype
 	if (current_token_opt.has_value() && 
-	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__")) {
+	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__" || current_token_opt->value() == "__typeof")) {
 		return parse_decltype_specifier();
 	}
 
@@ -11135,12 +11135,12 @@ ParseResult Parser::parse_type_specifier()
 		}
 	}
 
-	// Check for decltype or __typeof__ after function specifiers (e.g., static decltype(...))
+	// Check for decltype or __typeof__/__typeof after function specifiers (e.g., static decltype(...))
 	// This check MUST come after skipping function specifiers to handle patterns like:
 	// "static decltype(_S_test_2<_Tp, _Up>(0))" which appear in standard library headers
-	// __typeof__ is a GCC extension that works like decltype
+	// __typeof__ and __typeof are GCC extensions that work like decltype
 	if (current_token_opt.has_value() && 
-	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__")) {
+	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__" || current_token_opt->value() == "__typeof")) {
 		return parse_decltype_specifier();
 	}
 
@@ -13144,6 +13144,9 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 				}
 			}
 		}
+
+		// Skip GCC attributes on parameters (e.g., __attribute__((__unused__)))
+		skip_gcc_attributes();
 
 		if (consume_punctuator(",")) {
 			// After a comma, check if the next token is '...' for variadic parameters

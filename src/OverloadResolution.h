@@ -253,6 +253,10 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 		// Use resolved types here to ensure that resolved typedefs still go through
 		// const-correctness checks (e.g., const MyInt* → void* where MyInt is typedef for int)
 		if (from_resolved == Type::UserDefined || to_resolved == Type::UserDefined) {
+			// Still enforce const-correctness: const T* → T* is not allowed
+			if (from_pointee_is_const && !to_pointee_is_const) {
+				return TypeConversionResult::no_match();
+			}
 			return TypeConversionResult::conversion();
 		}
 
@@ -293,7 +297,9 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				FLASH_LOG(Parser, Debug, "can_convert_type: both are references. from_is_rvalue=", from_is_rvalue, ", to_is_rvalue=", to_is_rvalue, ", from.type()=", (int)from.type(), ", to.type()=", (int)to.type(), ", from.type_index()=", from.type_index(), ", to.type_index()=", to.type_index());
 				
 				// Exact match: both lvalue ref or both rvalue ref, same base type
-				if (from_is_rvalue == to_is_rvalue && from.type() == to.type()) {
+				Type from_base = resolve_type_alias(from.type(), from.type_index());
+				Type to_base = resolve_type_alias(to.type(), to.type_index());
+				if (from_is_rvalue == to_is_rvalue && from_base == to_base) {
 					return TypeConversionResult::exact_match();
 				}
 				
@@ -307,11 +313,13 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 				bool to_is_rvalue = to.is_rvalue_reference();
 				bool to_is_const = to.is_const();
 				
-				// Check if base types are compatible
-				bool types_match = (from.type() == to.type());
+				// Check if base types are compatible (resolve aliases like char_type → wchar_t)
+				Type from_base = resolve_type_alias(from.type(), from.type_index());
+				Type to_base = resolve_type_alias(to.type(), to.type_index());
+				bool types_match = (from_base == to_base);
 				if (!types_match) {
 					// Allow conversions for const lvalue refs only
-					auto conversion = can_convert_type(from.type(), to.type());
+					auto conversion = can_convert_type(from_base, to_base);
 					if (!to_is_rvalue && to_is_const && conversion.is_valid) {
 						// Const lvalue ref can bind to values that can be converted
 						return conversion;
@@ -342,11 +350,21 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 			// References can be converted to their base type (automatic dereferencing)
 			// When copying through a reference, const qualifiers don't matter
 			// (e.g., const T& can be copied to T)
-			if (from.type() == to.type()) {
+			
+			// Resolve type aliases before comparing (e.g., char_type → wchar_t)
+			Type from_resolved = resolve_type_alias(from.type(), from.type_index());
+			Type to_resolved = resolve_type_alias(to.type(), to.type_index());
+			
+			if (from_resolved == to_resolved) {
 				return TypeConversionResult::exact_match();
 			}
+			// If one type is still UserDefined after resolution attempt, accept as conversion
+			// This handles unresolved template parameter type aliases
+			if (from_resolved == Type::UserDefined || to_resolved == Type::UserDefined) {
+				return TypeConversionResult::conversion();
+			}
 			// Try conversion of the referenced type to target type
-			return can_convert_type(from.type(), to.type());
+			return can_convert_type(from_resolved, to_resolved);
 		}
 	}
 
