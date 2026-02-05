@@ -11273,10 +11273,15 @@ ParseResult Parser::parse_type_specifier()
 			consume_token();
 			current_token_opt = peek_token();
 		}
-		// C99/C11 complex type specifier - consume and ignore for now
-		// _Complex float, _Complex double, etc.
+		// C99/C11 complex type specifiers - consume and ignore for now
+		// _Complex float, _Complex double, __complex__ double, etc.
 		// FlashCpp doesn't yet support complex arithmetic, so we treat it as the base type
-		else if (token_value == "_Complex") {
+		else if (token_value == "_Complex" || token_value == "__complex__") {
+			consume_token();
+			current_token_opt = peek_token();
+		}
+		// C99 imaginary type specifier - consume and ignore (rarely used, GCC doesn't fully support it)
+		else if (token_value == "_Imaginary") {
 			consume_token();
 			current_token_opt = peek_token();
 		}
@@ -17072,6 +17077,32 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			UnaryOperatorNode(addressof_token, *arg_result.node(), true, true));
 		
 		return ParseResult::success(addressof_expr);
+	}
+
+	// Check for GCC complex number operators: __real__ and __imag__
+	// These extract the real or imaginary part of a complex number (used in libstdc++ <complex>)
+	// Since FlashCpp doesn't support complex arithmetic, treat them as identity operators
+	if (current_token_->type() == Token::Type::Identifier) {
+		std::string_view val = current_token_->value();
+		if (val == "__real__" || val == "__imag__") {
+			Token operator_token = *current_token_;
+			consume_token();
+
+			// Parse the operand
+			ParseResult operand_result = parse_unary_expression(ExpressionContext::Normal);
+			if (operand_result.is_error()) {
+				return operand_result;
+			}
+
+			if (auto operand_node = operand_result.node()) {
+				// For now, treat __real__ and __imag__ as identity operators
+				// since we don't support complex numbers yet
+				// In the future, these would extract the respective components
+				return ParseResult::success(*operand_node);
+			}
+
+			return ParseResult::error("Expected operand after " + std::string(val), operator_token);
+		}
 	}
 
 	// Check if the current token is a unary operator
