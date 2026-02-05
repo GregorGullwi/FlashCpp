@@ -11440,6 +11440,18 @@ ParseResult Parser::parse_type_specifier()
 				type_size = 64;
 			}
 		}
+		else if (long_count == 2) {
+			if (type == Type::Int) {
+				// "long long int" -> long long
+				type = Type::LongLong;
+				type_size = 64;
+			}
+			else if (type == Type::UnsignedInt) {
+				// "unsigned long long int" or "long long unsigned int" -> unsigned long long
+				type = Type::UnsignedLongLong;
+				type_size = 64;
+			}
+		}
 
 		consume_token();
 
