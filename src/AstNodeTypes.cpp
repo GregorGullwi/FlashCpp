@@ -137,12 +137,13 @@ void initialize_native_types() {
     auto& uint_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uint"sv), Type::UnsignedInt, gTypeInfo.size());
     gNativeTypes[Type::UnsignedInt] = &uint_type;
 
-    auto& long_type = gTypeInfo.emplace_back(StringTable::createStringHandle("long"sv), Type::Long, gTypeInfo.size());
-    gNativeTypes[Type::Long] = &long_type;
+	auto& long_type = gTypeInfo.emplace_back(StringTable::createStringHandle("long"sv), Type::Long, gTypeInfo.size());
+	long_type.type_size_ = get_type_size_bits(Type::Long);
+	gNativeTypes[Type::Long] = &long_type;
 
-    auto& ulong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulong"sv), Type::UnsignedLong, gTypeInfo.size());
-    ulong_type.type_size_ = get_type_size_bits(Type::UnsignedLong);
-    gNativeTypes[Type::UnsignedLong] = &ulong_type;
+	auto& ulong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulong"sv), Type::UnsignedLong, gTypeInfo.size());
+	ulong_type.type_size_ = get_type_size_bits(Type::UnsignedLong);
+	gNativeTypes[Type::UnsignedLong] = &ulong_type;
 
     auto& longlong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longlong"sv), Type::LongLong, gTypeInfo.size());
     gNativeTypes[Type::LongLong] = &longlong_type;
