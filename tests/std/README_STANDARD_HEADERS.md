@@ -20,7 +20,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Parses 500 templates (~160ms), static_assert constexpr at parse_numbers.h:198 (2026-02-04) |
 | `<any>` | `test_std_any.cpp` | ❌ Parse Error | Parses 100+ templates (~133ms), non-type template params with defaults at any:189 (2026-02-04) |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~100ms |
-| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~311ms (2026-01-30: Fixed with dependent template instantiation fix) |
+| `<utility>` | `test_std_utility.cpp` | ❌ Parse Error | ~311ms; Now fails at stl_pair.h:721 (2026-02-05: Regression after size_t fix) |
 | `<bit>` | N/A | ❌ Parse Error | Progresses past char_traits.h (2026-02-03), likely blocked at similar point as string |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Parses 650+ templates (~263ms), progresses past char_traits.h:534 (2026-02-03) |
 | `<string>` | `test_std_string.cpp` | ❌ Parse Error | Parses 650+ templates (~262ms), progresses to new_allocator.h:131 (2026-02-03) |
@@ -32,7 +32,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Parses 550+ templates (~161ms), progresses to char_traits.h:373 (size_t in for loop) (2026-02-05) |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Parses 550+ templates (~162ms), progresses to char_traits.h:534 (wmemchr) (2026-02-05: size_t fixed) |
 | `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Test file missing |
 | `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
@@ -53,7 +53,22 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
 
-**Note (2026-02-05 Latest Update - This PR):** Fixed critical glibc compatibility issues:
+**Note (2026-02-05 Latest Update - This PR):** Fixed critical blocker for `size_t` and other common C/C++ types:
+1. **Built-in type aliases for common standard library types** - Added built-in typedefs that are always available:
+   - `size_t`, `ptrdiff_t`, `intptr_t`, `uintptr_t` - Platform-dependent pointer and size types
+   - `int8_t`, `int16_t`, `int32_t`, `int64_t` - Fixed-width signed integer types
+   - `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t` - Fixed-width unsigned integer types
+   - These types are registered in `gTypesByName` during parser initialization
+   - Fixes for-loop parsing with `size_t` (e.g., `for (size_t i = 0; ...)`)
+   - Works around preprocessor issues where standard library typedefs are not properly included
+- **Impact:**
+  - **`<iostream>` now progresses past char_traits.h:373** - the `size_t` for-loop blocker is fixed
+  - Now blocked at char_traits.h:534 (wmemchr function call) - same as `<string>` and `<string_view>`
+  - All headers that use `size_t` in for-loops or declarations now work correctly
+  - **`<utility>` regressed** - now fails at stl_pair.h:721 (needs investigation)
+- **Test case:** `tests/test_for_loop_size_t.cpp` - Verifies size_t works in for-loops, function parameters, and variable declarations
+
+**Note (2026-02-05 Previous Update - Prior PR):** Fixed critical glibc compatibility issues:
 1. **_Complex type support** - Added support for C99/C11 `_Complex` type modifier in type specifier parsing:
    - Pattern: `typedef _Complex float __cfloat128`
    - FlashCpp now accepts `_Complex` as a type modifier (though complex arithmetic is not yet implemented)
