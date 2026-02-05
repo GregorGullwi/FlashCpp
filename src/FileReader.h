@@ -2005,8 +2005,8 @@ private:
 					const auto& body = define_it->second.getBody();
 					if (!body.empty()) {
 						long value = 0;
-						std::istringstream iss(body);
-						if (!parseIntegerLiteral(iss, value)) {
+						std::istringstream body_iss(body);
+						if (!parseIntegerLiteral(body_iss, value)) {
 							FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: ", keyword, "='", body, "' at ",
 								filestack_.top().file_name, ":", filestack_.top().line_number);
 							values.push(0);
