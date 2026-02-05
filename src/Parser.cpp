@@ -28513,7 +28513,25 @@ ParseResult Parser::parse_template_declaration() {
 				// Check for constructor (identifier matching template name followed by '(')
 				// In full specializations, the constructor uses the base template name (e.g., "Calculator"),
 				// not the instantiated name (e.g., "Calculator_int")
+				// Must skip specifiers like constexpr, explicit, inline first
 				SaveHandle saved_pos = save_token_position();
+				bool found_constructor = false;
+				bool ctor_is_constexpr = false;
+				bool ctor_is_explicit = false;
+				{
+					// Skip declaration specifiers (constexpr, inline, etc.)
+					auto specs = parse_declaration_specifiers();
+					ctor_is_constexpr = specs.is_constexpr;
+					// Also skip 'explicit' which is constructor-specific
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+					       peek_token()->value() == "explicit") {
+						ctor_is_explicit = true;
+						consume_token();
+						if (peek_token().has_value() && peek_token()->value() == "(") {
+							skip_balanced_parens(); // explicit(condition)
+						}
+					}
+				}
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
 				    peek_token()->value() == template_name) {
 					// Look ahead to see if this is a constructor
@@ -28527,9 +28545,14 @@ ParseResult Parser::parse_template_declaration() {
 					if (peek_token().has_value() && peek_token()->value() == "(") {
 						// Discard saved position since we're using this as a constructor
 						discard_saved_token(saved_pos);
+						found_constructor = true;
 						
 						// This is a constructor - use instantiated_name as the struct name
 						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(ctor_name));
+						
+						// Apply specifiers detected during lookahead
+						ctor_ref.set_constexpr(ctor_is_constexpr);
+						ctor_ref.set_explicit(ctor_is_explicit);
 						
 						// Parse parameters using unified parse_parameter_list (Phase 1)
 						FlashCpp::ParsedParameterList params;
@@ -28735,8 +28758,11 @@ ParseResult Parser::parse_template_declaration() {
 						restore_token_position(saved_pos);
 					}
 				} else {
-					discard_saved_token(saved_pos);
+					// Not a constructor (identifier didn't match), restore position
+					// to before specifiers were consumed during lookahead
+					restore_token_position(saved_pos);
 				}
+				if (found_constructor) continue;
 
 					// Parse member declaration (use same logic as regular struct parsing)
 				auto member_result = parse_type_and_name();
