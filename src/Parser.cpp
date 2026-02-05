@@ -13128,6 +13128,23 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 	}
 
 	while (!consume_punctuator(")")) {
+		// Handle C-style (void) parameter list meaning "no parameters"
+		// In C/C++, f(void) is equivalent to f()
+		if (out_params.parameters.empty() && peek_token().has_value() &&
+		    peek_token()->type() == Token::Type::Keyword && peek_token()->value() == "void") {
+			// Check if this is exactly "(void)" - void followed by ')'
+			SaveHandle void_check = save_token_position();
+			consume_token(); // consume 'void'
+			if (peek_token().has_value() && peek_token()->value() == ")") {
+				// This is (void) - empty parameter list
+				discard_saved_token(void_check);
+				consume_token(); // consume ')'
+				break;
+			}
+			// Not (void), restore and continue with normal parameter parsing
+			restore_token_position(void_check);
+		}
+
 		// Check for variadic parameter (...)
 		if (peek_token().has_value() && peek_token()->value() == "...") {
 			consume_token(); // consume '...'
