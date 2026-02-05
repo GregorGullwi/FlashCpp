@@ -243,10 +243,21 @@ int main_impl(int argc, char *argv[]) {
         FLASH_LOG(General, Info, "Exception handling disabled by -fno-exceptions flag");
     }
     
-    // Compiler mode - default is MSVC, use -fgcc-compat or -fclang-compat for GCC/Clang mode
+    // Compiler mode - controls which compiler's builtin macros to use
+    // Auto-detect based on platform, but allow override with -fgcc-compat or -fclang-compat
     // Enables compiler-specific builtin macros like __SIZE_TYPE__, __PTRDIFF_TYPE__, etc.
     if (argsparser.hasFlag("fgcc-compat"sv) || argsparser.hasFlag("fclang-compat"sv)) {
         context.setCompilerMode(CompileContext::CompilerMode::GCC);
+        FLASH_LOG(General, Debug, "Using GCC/Clang compiler mode (forced by flag)"sv);
+    } else {
+        // Auto-detect based on host platform (matches mangling style detection)
+        #if defined(_WIN32) || defined(_WIN64)
+            context.setCompilerMode(CompileContext::CompilerMode::MSVC);
+            FLASH_LOG(General, Debug, "Auto-detected compiler mode: MSVC (Windows)"sv);
+        #else
+            context.setCompilerMode(CompileContext::CompilerMode::GCC);
+            FLASH_LOG(General, Debug, "Auto-detected compiler mode: GCC (Linux/Unix)"sv);
+        #endif
     }
 
     // Name mangling style - auto-detected by platform but can be overridden

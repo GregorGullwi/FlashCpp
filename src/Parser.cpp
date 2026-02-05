@@ -11419,11 +11419,23 @@ ParseResult Parser::parse_type_specifier()
 			if (type == Type::Float) {
 				type_size = sizeof(long double);
 			}
+			else if (type == Type::Int) {
+				// "long int" -> long
+				type = Type::Long;
+				type_size = get_type_size_bits(Type::Long);
+			}
+			else if (type == Type::UnsignedInt) {
+				// "long unsigned int" or "unsigned long int" -> unsigned long
+				type = Type::UnsignedLong;
+				type_size = get_type_size_bits(Type::UnsignedLong);
+			}
 			else if (type == Type::Long) {
+				// "long long" -> long long
 				type = Type::LongLong;
 				type_size = 64;
 			}
 			else if (type == Type::UnsignedLong) {
+				// "long long unsigned" or "unsigned long long" -> unsigned long long
 				type = Type::UnsignedLongLong;
 				type_size = 64;
 			}
