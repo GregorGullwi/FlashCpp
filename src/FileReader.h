@@ -1667,18 +1667,17 @@ private:
 			}
 		}
 
-		auto is_digit = [&](char c) {
-			if (base <= 10) return c >= '0' && c < '0' + base;
-			return std::isdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+		auto is_digit_char = [&](char c) {
+			int is_separator = static_cast<int>(c == '\'');
+			if (base <= 10) return static_cast<int>(c >= '0') + static_cast<int>(c < ('0' + base)) + is_separator > 0;
+			return (std::isdigit(c) + static_cast<int>(c >= 'a' && c <= 'f') + static_cast<int>(c >= 'A' && c <= 'F') + is_separator) > 0;
 		};
 
-		while (iss && (std::isdigit(iss.peek()) || iss.peek()=='\'')) {
+		while (iss && is_digit_char(iss.peek())) {
 			if (iss.peek()=='\'') {
 				iss.get();
 				continue;
 			}
-			if (!is_digit(iss.peek()))
-				return false;
 			literal += iss.get();
 		}
 
