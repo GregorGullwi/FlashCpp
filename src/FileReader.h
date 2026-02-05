@@ -1788,25 +1788,14 @@ private:
 					if (!isalnum(next) && next != '_') break;
 					keyword += iss.get();
 				}
-				if (keyword.find("defined") == 0) {
+				if (keyword == "defined") {
 					std::string symbol;
 					bool has_parenthesis = false;
-
-					if (keyword == "defined") {
-						if (iss.peek() == '(') {
-							iss.ignore(); // Consume the '('
-							has_parenthesis = true;
-						}
-						iss >> symbol;
-					}
-					else { // "defined(" is part of the keyword string
+					if (iss.peek() == '(') {
+						iss.ignore(); // Consume the '('
 						has_parenthesis = true;
-						if (keyword.size() > "defined("sv.length())
-							symbol = keyword.substr(8);
-						else
-							iss >> symbol;
 					}
-
+					iss >> symbol;
 					if (has_parenthesis) {
 						// The symbol may have ')' at the end if it was read by >> operator
 						// Remove ')' from the symbol, but don't call ignore() because >> already consumed it
