@@ -25,15 +25,15 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Parse Error | Parses 650+ templates (~263ms), progresses past char_traits.h:534 (2026-02-03) |
 | `<string>` | `test_std_string.cpp` | ❌ Parse Error | Parses 650+ templates (~262ms), progresses to new_allocator.h:131 (2026-02-03) |
 | `<array>` | `test_std_array.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Test file missing |
+| `<memory>` | `test_std_memory.cpp` | ❌ Include Error | Missing internal header: execution_defs.h |
 | `<functional>` | `test_std_functional.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Include Error | Test file missing |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Parse Error | Fails at stl_pair.h:721 (same as utility) |
 | `<map>` | `test_std_map.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Parses 550+ templates (~162ms), progresses to char_traits.h:534 (wmemchr) (2026-02-05: size_t fixed) |
-| `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Test file missing |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Parse Error | Includes `<ratio>`, fails at ratio:495 (nested type resolution) |
 | `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
