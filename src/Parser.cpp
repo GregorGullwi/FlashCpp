@@ -21,6 +21,8 @@
 #include "ChunkedString.h"
 #include "Log.h"
 
+static const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle);
+
 // Break into the debugger only on Windows
 #if defined(_WIN32) || defined(_WIN64)
     #ifndef NOMINMAX
@@ -1011,6 +1013,95 @@ void Parser::register_builtin_functions() {
 	// __builtin_strlen(const char*) - returns length of string
 	// Returns size_t (unsigned long on 64-bit platforms)
 	register_strlen_builtin("__builtin_strlen");
+	
+	// Wide character/memory functions required by libstdc++ char_traits
+	auto make_wchar_type = [&](CVQualifier ptr_cv = CVQualifier::None, bool add_ptr = false) {
+		Token type_token = dummy_token;
+		auto [node, ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, type_token); // wchar_t treated as 32-bit int
+		if (add_ptr) {
+			ref.add_pointer_level(ptr_cv);
+		}
+		return node;
+	};
+
+	auto register_wmemchr = [&](std::string_view name) {
+		if (gSymbolTable.lookup(name).has_value()) return;
+		Token func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
+		auto return_type = make_wchar_type(CVQualifier::Const, true);  // const wchar_t*
+		auto decl_node = emplace_node<DeclarationNode>(return_type, func_token);
+		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
+
+		// const wchar_t* s
+		Token param_tok = dummy_token;
+		auto param_type = make_wchar_type(CVQualifier::Const, true);
+		auto param_decl = emplace_node<DeclarationNode>(param_type, param_tok);
+		func_decl_ref.add_parameter_node(param_decl);
+
+		// wchar_t c (represented as int)
+		auto char_param = emplace_node<DeclarationNode>(make_wchar_type(), param_tok);
+		func_decl_ref.add_parameter_node(char_param);
+
+		// size_t n (unsigned long)
+		auto size_param_type = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, param_tok);
+		auto size_param = emplace_node<DeclarationNode>(size_param_type, param_tok);
+		func_decl_ref.add_parameter_node(size_param);
+
+		func_decl_ref.set_linkage(Linkage::C);
+		gSymbolTable.insert(name, func_decl_node);
+		// Also register in std namespace for unqualified lookup inside std::char_traits
+		NamespaceHandle std_handle = gNamespaceRegistry.getOrCreateNamespace(NamespaceRegistry::GLOBAL_NAMESPACE, StringTable::getOrInternStringHandle("std"));
+		gSymbolTable.enter_namespace(std_handle);
+		gSymbolTable.insert(name, func_decl_node);
+		gSymbolTable.exit_scope();
+	};
+
+	auto register_wmem_op = [&](std::string_view name, bool returns_ptr, bool move_variant) {
+		if (gSymbolTable.lookup(name).has_value()) return;
+		Token func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
+		auto return_type = returns_ptr ? make_wchar_type(CVQualifier::None, true)
+		                               : emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
+		auto decl_node = emplace_node<DeclarationNode>(return_type, func_token);
+		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
+
+		Token param_tok = dummy_token;
+		if (returns_ptr) {
+			// dest wchar_t*
+			func_decl_ref.add_parameter_node(emplace_node<DeclarationNode>(make_wchar_type(CVQualifier::None, true), param_tok));
+		} else {
+			// first const wchar_t*
+			func_decl_ref.add_parameter_node(emplace_node<DeclarationNode>(make_wchar_type(CVQualifier::Const, true), param_tok));
+		}
+
+		// source const wchar_t*
+		func_decl_ref.add_parameter_node(emplace_node<DeclarationNode>(make_wchar_type(CVQualifier::Const, true), param_tok));
+
+		if (returns_ptr && move_variant) {
+			// For wmemmove, dest first param already added; src above
+		} else if (returns_ptr) {
+			// For wmemcpy, dest first param already added; src above
+		} else {
+			// For wmemcmp, second const wchar_t* already added above
+		}
+
+		// size_t n
+		auto size_param_type = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, param_tok);
+		func_decl_ref.add_parameter_node(emplace_node<DeclarationNode>(size_param_type, param_tok));
+
+		func_decl_ref.set_linkage(Linkage::C);
+		gSymbolTable.insert(name, func_decl_node);
+		NamespaceHandle std_handle = gNamespaceRegistry.getOrCreateNamespace(NamespaceRegistry::GLOBAL_NAMESPACE, StringTable::getOrInternStringHandle("std"));
+		gSymbolTable.enter_namespace(std_handle);
+		gSymbolTable.insert(name, func_decl_node);
+		gSymbolTable.exit_scope();
+	};
+
+	register_wmemchr("wmemchr");
+	// wmemcmp(const wchar_t*, const wchar_t*, size_t) -> int
+	register_wmem_op("wmemcmp", /*returns_ptr=*/false, /*move_variant=*/false);
+	// wmemcpy(wchar_t*, const wchar_t*, size_t) -> wchar_t*
+	register_wmem_op("wmemcpy", /*returns_ptr=*/true, /*move_variant=*/false);
+	// wmemmove(wchar_t*, const wchar_t*, size_t) -> wchar_t*
+	register_wmem_op("wmemmove", /*returns_ptr=*/true, /*move_variant=*/true);
 	
 	// Wide memory/character functions used by libstdc++
 	
@@ -12793,12 +12884,13 @@ ParseResult Parser::parse_type_specifier()
 			}
 		}
 
-		// Check if this is a registered struct type
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
-		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+        // Check if this is a registered struct type (considering current namespace context)
+        StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
+        const TypeInfo* type_info_ctx = lookupTypeInCurrentContext(type_name_handle);
+        if (type_info_ctx && type_info_ctx->isStruct()) {
 			// This is a struct type (or a typedef to a struct type)
-			const TypeInfo* original_type_info = type_it->second;  // Keep reference to original for checking ref qualifiers
-			const TypeInfo* struct_type_info = type_it->second;
+			const TypeInfo* original_type_info = type_info_ctx;  // Keep reference to original for checking ref qualifiers
+			const TypeInfo* struct_type_info = type_info_ctx;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 			// If this is a typedef to a struct (no struct_info but has type_index pointing to the actual struct),
@@ -12840,9 +12932,9 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		// Check if this is a registered enum type
-		if (type_it != gTypesByName.end() && type_it->second->isEnum()) {
+		if (type_info_ctx && type_info_ctx->isEnum()) {
 			// This is an enum type
-			const TypeInfo* enum_type_info = type_it->second;
+			const TypeInfo* enum_type_info = type_info_ctx;
 			const EnumTypeInfo* enum_info = enum_type_info->getEnumInfo();
 
 			if (enum_info) {
@@ -12859,37 +12951,37 @@ ParseResult Parser::parse_type_specifier()
 		// Look up the type_index if it's a registered type
 		TypeIndex user_type_index = 0;
 		Type resolved_type = Type::UserDefined;
-		if (type_it != gTypesByName.end()) {
-			user_type_index = type_it->second->type_index_;
+		if (type_info_ctx) {
+			user_type_index = type_info_ctx->type_index_;
 			// If this is a typedef (has a stored type and size, but is not a struct/enum), use the underlying type
-			bool is_typedef = (type_it->second->type_size_ > 0 && !type_it->second->isStruct() && !type_it->second->isEnum());
+			bool is_typedef = (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
 			// Also consider function pointer/reference type aliases as typedefs (they may have size 0 but have function_signature)
-			if (!is_typedef && type_it->second->function_signature_.has_value()) {
+			if (!is_typedef && type_info_ctx->function_signature_.has_value()) {
 				is_typedef = true;
 			}
 			// Also consider reference type aliases as typedefs (they may have size 0 but have reference qualifiers)
 			// This is critical for std::move's ReturnType which is typename remove_reference<T>::type&&
-			if (!is_typedef && type_it->second->is_reference_) {
+			if (!is_typedef && type_info_ctx->is_reference_) {
 				is_typedef = true;
 			}
 			if (is_typedef) {
-				resolved_type = type_it->second->type_;
-				type_size = type_it->second->type_size_;
+				resolved_type = type_info_ctx->type_;
+				type_size = type_info_ctx->type_size_;
 				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
 					resolved_type, user_type_index, type_size, type_name_token, cv_qualifier);
-				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(type_it->second->pointer_depth_);
+				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(type_info_ctx->pointer_depth_);
 				// Add reference qualifiers from typedef
-				if (type_it->second->is_reference_) {
-					if (type_it->second->is_rvalue_reference_) {
+				if (type_info_ctx->is_reference_) {
+					if (type_info_ctx->is_rvalue_reference_) {
 						type_spec_node.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
 					} else {
 						type_spec_node.as<TypeSpecifierNode>().set_lvalue_reference(true);  // lvalue reference
 					}
 				}
 				// Copy function signature for function pointer/reference type aliases
-				if (type_it->second->function_signature_.has_value()) {
-					type_spec_node.as<TypeSpecifierNode>().set_function_signature(type_it->second->function_signature_.value());
+				if (type_info_ctx->function_signature_.has_value()) {
+					type_spec_node.as<TypeSpecifierNode>().set_function_signature(type_info_ctx->function_signature_.value());
 				}
 				return ParseResult::success(type_spec_node);
 			} else if (user_type_index < gTypeInfo.size()) {
@@ -14509,11 +14601,11 @@ ParseResult Parser::parse_statement_or_declaration()
 		}
 		restore_token_position(saved_pos);
 		
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
-		if (type_it != gTypesByName.end()) {
+		auto type_info_ctx = lookupTypeInCurrentContext(StringTable::getOrInternStringHandle(type_name));
+		if (type_info_ctx) {
 			// Check if it's a struct, enum, or typedef (but not a struct/enum that happens to have type_size_ set)
-			bool is_typedef = (type_it->second->type_size_ > 0 && !type_it->second->isStruct() && !type_it->second->isEnum());
-			if (type_it->second->isStruct() || type_it->second->isEnum() || is_typedef) {
+			bool is_typedef = (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
+			if (type_info_ctx->isStruct() || type_info_ctx->isEnum() || is_typedef) {
 				// Need to check if this is a functional cast / temporary construction 
 				// followed by a member access, like: TypeName(args).member()
 				// vs a variable declaration: TypeName varname(args);
@@ -24151,7 +24243,7 @@ ParseResult Parser::parse_for_loop() {
             } else if (peek_token()->type() == Token::Type::Identifier) {
                 // Check if it's a known type name (e.g., size_t, string, etc.) or a qualified type (std::size_t)
                 StringHandle type_handle = StringTable::getOrInternStringHandle(peek_token()->value());
-                if (gTypesByName.find(type_handle) != gTypesByName.end()) {
+                if (lookupTypeInCurrentContext(type_handle)) {
                     try_as_declaration = true;
                 } else if (peek_token(1).has_value() && peek_token(1)->value() == "::") {
                     // Treat Identifier followed by :: as a potential qualified type name
@@ -44960,4 +45052,58 @@ std::string_view Parser::extract_base_template_name_by_stripping(std::string_vie
 	}
 	
 	return {};  // Not found
+}
+// Helper: resolve a type name within the current namespace context (including using directives)
+static const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
+	// Direct lookup (unqualified)
+	auto it = gTypesByName.find(type_handle);
+	if (it != gTypesByName.end()) {
+		return it->second;
+	}
+
+	// Walk current namespace chain outward (e.g., std::foo, ::foo)
+	NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
+	while (ns_handle.isValid()) {
+		StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, type_handle);
+		auto q_it = gTypesByName.find(qualified);
+		if (q_it != gTypesByName.end()) {
+			return q_it->second;
+		}
+		if (ns_handle.isGlobal()) {
+			break;
+		}
+		ns_handle = gNamespaceRegistry.getParent(ns_handle);
+	}
+
+	// using directives
+	for (NamespaceHandle using_ns : gSymbolTable.get_current_using_directive_handles()) {
+		if (!using_ns.isValid()) continue;
+		StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(using_ns, type_handle);
+		auto u_it = gTypesByName.find(qualified);
+		if (u_it != gTypesByName.end()) {
+			return u_it->second;
+		}
+	}
+
+	// Fallback: unique suffix match (e.g., std::size_t when current namespace context is unavailable)
+	std::string_view type_name_sv = StringTable::getStringView(type_handle);
+	const TypeInfo* suffix_match = nullptr;
+	for (const auto& [handle, info] : gTypesByName) {
+		std::string_view full_name = StringTable::getStringView(handle);
+		if (full_name.size() <= type_name_sv.size() + 2) continue;
+		if (!full_name.ends_with(type_name_sv)) continue;
+		size_t prefix_pos = full_name.size() - type_name_sv.size();
+		if (prefix_pos < 2 || full_name[prefix_pos - 2] != ':' || full_name[prefix_pos - 1] != ':') continue;
+		if (suffix_match && suffix_match != info) {
+			// Ambiguous - multiple matches
+			suffix_match = nullptr;
+			break;
+		}
+		suffix_match = info;
+	}
+	if (suffix_match) {
+		return suffix_match;
+	}
+
+	return nullptr;
 }

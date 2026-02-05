@@ -141,6 +141,7 @@ void initialize_native_types() {
     gNativeTypes[Type::Long] = &long_type;
 
     auto& ulong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulong"sv), Type::UnsignedLong, gTypeInfo.size());
+    ulong_type.type_size_ = get_type_size_bits(Type::UnsignedLong);
     gNativeTypes[Type::UnsignedLong] = &ulong_type;
 
     auto& longlong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longlong"sv), Type::LongLong, gTypeInfo.size());
