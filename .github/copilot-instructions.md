@@ -39,3 +39,9 @@ Control log verbosity at runtime using command-line options:
 - `--log-level=category:level` — Set log level for a specific category (e.g., Parser:trace, Codegen:debug)
 To show IR, use `--log-level=Codegen:debug`
 Available categories: General, Parser, Lexer, Templates, Symbols, Types, Codegen, Scope, Mangling, All
+
+## Implementation Guidelines
+* If you find an error with a macro definition that starts with a single underscore(_): This is often a sign of something else gone wrong in the preprocessor. Investigate the root cause! What does the C++20 standard say and define?
+* If a needed change requires an architectural edit: Make a plan in form of a todo list.
+* If you discover bugs in the compiler: document it as a todo or add it to docs/KNOWN_ISSUES.md
+* If you fix a bug, make a test first in the tests/folder that demonstrates that behavior and submit it. Append a _retX.cpp to the file name and make the return value dependent on the non-buggy behavior, so we can easily test if the bug appears again later.
