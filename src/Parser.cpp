@@ -21,6 +21,8 @@
 #include "ChunkedString.h"
 #include "Log.h"
 
+static const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle);
+
 // Break into the debugger only on Windows
 #if defined(_WIN32) || defined(_WIN64)
     #ifndef NOMINMAX
@@ -1012,11 +1014,8 @@ void Parser::register_builtin_functions() {
 	// Returns size_t (unsigned long on 64-bit platforms)
 	register_strlen_builtin("__builtin_strlen");
 	
-	// Wide memory/character functions used by libstdc++
-	
-	// Note: Wide character functions (wcslen, wmemcmp, wmemchr, wmemcpy, wmemmove) are provided
-	// by wchar.h and don't need explicit registration. The special case overload resolution
-	// in parse_unary_expression handles the type mismatch when template parameters are used.
+	// Wide memory/character functions are provided by the C library headers.
+	// No manual registration here—declarations should come from the standard headers.
 	
 	// Register std::terminate - no pre-computed mangled name, will be mangled with namespace context
 	// Note: Forward declarations inside functions don't capture namespace context,
@@ -10895,10 +10894,10 @@ std::optional<std::pair<Type, unsigned char>> Parser::get_builtin_type_info(std:
 		{"void", {Type::Void, 0}},
 		{"bool", {Type::Bool, 8}},
 		{"char", {Type::Char, 8}},
-		{"wchar_t", {Type::Int, 32}},
-		{"char8_t", {Type::UnsignedChar, 8}},
-		{"char16_t", {Type::UnsignedShort, 16}},
-		{"char32_t", {Type::UnsignedInt, 32}},
+		// Note: "wchar_t" is handled specially below due to target-dependent size (16 on Windows, 32 on Linux)
+		{"char8_t", {Type::Char8, 8}},         // C++20 UTF-8 character type
+		{"char16_t", {Type::Char16, 16}},      // C++11 UTF-16 character type
+		{"char32_t", {Type::Char32, 32}},      // C++11 UTF-32 character type
 		{"short", {Type::Short, 16}},
 		{"int", {Type::Int, 32}},
 		// Note: "long" is handled specially below due to target-dependent size
@@ -10911,11 +10910,17 @@ std::optional<std::pair<Type, unsigned char>> Parser::get_builtin_type_info(std:
 		{"signed", {Type::Int, 32}},  // signed without type defaults to int
 		{"unsigned", {Type::UnsignedInt, 32}},  // unsigned without type defaults to unsigned int
 	};
-	
+
 	// Handle "long" specially since its size depends on target data model
 	// Windows (LLP64): long = 32 bits, Linux/Unix (LP64): long = 64 bits
 	if (type_name == "long") {
 		return std::make_pair(Type::Long, static_cast<unsigned char>(get_type_size_bits(Type::Long)));
+	}
+
+	// Handle "wchar_t" specially since its size depends on target
+	// Windows (LLP64): wchar_t = 16 bits unsigned, Linux (LP64): wchar_t = 32 bits signed
+	if (type_name == "wchar_t") {
+		return std::make_pair(Type::WChar, static_cast<unsigned char>(get_wchar_size_bits()));
 	}
 	
 	auto it = builtin_types.find(type_name);
@@ -11316,16 +11321,16 @@ ParseResult Parser::parse_type_specifier()
 		// Continue parsing the actual type after typename
 	}
 
-	// Static type map for most types. "long" is handled specially below.
+	// Static type map for most types. "long" and "wchar_t" are handled specially below.
 	static const std::unordered_map<std::string_view, std::tuple<Type, size_t>>
 		type_map = {
 				{"void", {Type::Void, 0}},
 				{"bool", {Type::Bool, 8}},
 				{"char", {Type::Char, 8}},
-				{"wchar_t", {Type::Int, 32}},  // wchar_t is typically 32-bit on Linux
-				{"char8_t", {Type::UnsignedChar, 8}},  // C++20 UTF-8 character type
-				{"char16_t", {Type::UnsignedShort, 16}},  // C++11 UTF-16 character type
-				{"char32_t", {Type::UnsignedInt, 32}},  // C++11 UTF-32 character type
+				// Note: "wchar_t" is handled specially due to target-dependent size (16 on Windows, 32 on Linux)
+				{"char8_t", {Type::Char8, 8}},         // C++20 UTF-8 character type
+				{"char16_t", {Type::Char16, 16}},      // C++11 UTF-16 character type
+				{"char32_t", {Type::Char32, 32}},      // C++11 UTF-32 character type
 				{"short", {Type::Short, 16}},
 				{"int", {Type::Int, 32}},
 				// Note: "long" is handled specially due to target-dependent size
@@ -11349,6 +11354,11 @@ ParseResult Parser::parse_type_specifier()
 		if (current_token_opt->value() == "long") {
 			type = Type::Long;
 			type_size = get_type_size_bits(Type::Long);
+			has_explicit_type = true;
+		// Handle "wchar_t" specially due to target-dependent size (16 on Windows, 32 on Linux)
+		} else if (current_token_opt->value() == "wchar_t") {
+			type = Type::WChar;
+			type_size = get_wchar_size_bits();
 			has_explicit_type = true;
 		} else {
 			const auto& it = type_map.find(current_token_opt->value());
@@ -12793,12 +12803,13 @@ ParseResult Parser::parse_type_specifier()
 			}
 		}
 
-		// Check if this is a registered struct type
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
-		if (type_it != gTypesByName.end() && type_it->second->isStruct()) {
+        // Check if this is a registered struct type (considering current namespace context)
+        StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
+        const TypeInfo* type_info_ctx = lookupTypeInCurrentContext(type_name_handle);
+        if (type_info_ctx && type_info_ctx->isStruct()) {
 			// This is a struct type (or a typedef to a struct type)
-			const TypeInfo* original_type_info = type_it->second;  // Keep reference to original for checking ref qualifiers
-			const TypeInfo* struct_type_info = type_it->second;
+			const TypeInfo* original_type_info = type_info_ctx;  // Keep reference to original for checking ref qualifiers
+			const TypeInfo* struct_type_info = type_info_ctx;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 			// If this is a typedef to a struct (no struct_info but has type_index pointing to the actual struct),
@@ -12840,9 +12851,9 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		// Check if this is a registered enum type
-		if (type_it != gTypesByName.end() && type_it->second->isEnum()) {
+		if (type_info_ctx && type_info_ctx->isEnum()) {
 			// This is an enum type
-			const TypeInfo* enum_type_info = type_it->second;
+			const TypeInfo* enum_type_info = type_info_ctx;
 			const EnumTypeInfo* enum_info = enum_type_info->getEnumInfo();
 
 			if (enum_info) {
@@ -12859,37 +12870,37 @@ ParseResult Parser::parse_type_specifier()
 		// Look up the type_index if it's a registered type
 		TypeIndex user_type_index = 0;
 		Type resolved_type = Type::UserDefined;
-		if (type_it != gTypesByName.end()) {
-			user_type_index = type_it->second->type_index_;
+		if (type_info_ctx) {
+			user_type_index = type_info_ctx->type_index_;
 			// If this is a typedef (has a stored type and size, but is not a struct/enum), use the underlying type
-			bool is_typedef = (type_it->second->type_size_ > 0 && !type_it->second->isStruct() && !type_it->second->isEnum());
+			bool is_typedef = (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
 			// Also consider function pointer/reference type aliases as typedefs (they may have size 0 but have function_signature)
-			if (!is_typedef && type_it->second->function_signature_.has_value()) {
+			if (!is_typedef && type_info_ctx->function_signature_.has_value()) {
 				is_typedef = true;
 			}
 			// Also consider reference type aliases as typedefs (they may have size 0 but have reference qualifiers)
 			// This is critical for std::move's ReturnType which is typename remove_reference<T>::type&&
-			if (!is_typedef && type_it->second->is_reference_) {
+			if (!is_typedef && type_info_ctx->is_reference_) {
 				is_typedef = true;
 			}
 			if (is_typedef) {
-				resolved_type = type_it->second->type_;
-				type_size = type_it->second->type_size_;
+				resolved_type = type_info_ctx->type_;
+				type_size = type_info_ctx->type_size_;
 				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
 					resolved_type, user_type_index, type_size, type_name_token, cv_qualifier);
-				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(type_it->second->pointer_depth_);
+				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(type_info_ctx->pointer_depth_);
 				// Add reference qualifiers from typedef
-				if (type_it->second->is_reference_) {
-					if (type_it->second->is_rvalue_reference_) {
+				if (type_info_ctx->is_reference_) {
+					if (type_info_ctx->is_rvalue_reference_) {
 						type_spec_node.as<TypeSpecifierNode>().set_reference(true);  // rvalue reference
 					} else {
 						type_spec_node.as<TypeSpecifierNode>().set_lvalue_reference(true);  // lvalue reference
 					}
 				}
 				// Copy function signature for function pointer/reference type aliases
-				if (type_it->second->function_signature_.has_value()) {
-					type_spec_node.as<TypeSpecifierNode>().set_function_signature(type_it->second->function_signature_.value());
+				if (type_info_ctx->function_signature_.has_value()) {
+					type_spec_node.as<TypeSpecifierNode>().set_function_signature(type_info_ctx->function_signature_.value());
 				}
 				return ParseResult::success(type_spec_node);
 			} else if (user_type_index < gTypeInfo.size()) {
@@ -14509,11 +14520,11 @@ ParseResult Parser::parse_statement_or_declaration()
 		}
 		restore_token_position(saved_pos);
 		
-		auto type_it = gTypesByName.find(StringTable::getOrInternStringHandle(type_name));
-		if (type_it != gTypesByName.end()) {
+		auto type_info_ctx = lookupTypeInCurrentContext(StringTable::getOrInternStringHandle(type_name));
+		if (type_info_ctx) {
 			// Check if it's a struct, enum, or typedef (but not a struct/enum that happens to have type_size_ set)
-			bool is_typedef = (type_it->second->type_size_ > 0 && !type_it->second->isStruct() && !type_it->second->isEnum());
-			if (type_it->second->isStruct() || type_it->second->isEnum() || is_typedef) {
+			bool is_typedef = (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
+			if (type_info_ctx->isStruct() || type_info_ctx->isEnum() || is_typedef) {
 				// Need to check if this is a functional cast / temporary construction 
 				// followed by a member access, like: TypeName(args).member()
 				// vs a variable declaration: TypeName varname(args);
@@ -23793,19 +23804,47 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Parse character literal and convert to numeric value
 		std::string_view value = current_token_->value();
 
-		// Character literal format: 'x' or '\x'
-		// Remove the surrounding quotes
-		if (value.size() < 3) {
+		// Character literal format:
+		// - Regular: 'x' or '\x' (char_offset = 1)
+		// - Wide: L'x' or L'\x' (char_offset = 2)
+		// - char8_t: u8'x' (char_offset = 3)
+		// - char16_t: u'x' (char_offset = 2)
+		// - char32_t: U'x' (char_offset = 2)
+		size_t char_offset = 1;  // Default: regular char literal 'x'
+		Type char_type = Type::Char;
+		int char_size_bits = 8;
+
+		// Check for prefix (wide character literals)
+		if (value.size() > 0 && value[0] == 'L') {
+			char_offset = 2;  // L'x'
+			char_type = Type::WChar;
+			char_size_bits = get_wchar_size_bits();
+		} else if (value.size() > 1 && value[0] == 'u' && value[1] == '8') {
+			char_offset = 3;  // u8'x'
+			char_type = Type::Char8;
+			char_size_bits = 8;
+		} else if (value.size() > 0 && value[0] == 'u') {
+			char_offset = 2;  // u'x'
+			char_type = Type::Char16;
+			char_size_bits = 16;
+		} else if (value.size() > 0 && value[0] == 'U') {
+			char_offset = 2;  // U'x'
+			char_type = Type::Char32;
+			char_size_bits = 32;
+		}
+
+		// Minimum size check: prefix + quote + char + quote
+		if (value.size() < char_offset + 2) {
 			return ParseResult::error("Invalid character literal", *current_token_);
 		}
 
-		char char_value = 0;
-		if (value[1] == '\\') {
+		uint32_t char_value = 0;  // Use uint32_t for wide chars
+		if (value[char_offset] == '\\') {
 			// Escape sequence
-			if (value.size() < 4) {
+			if (value.size() < char_offset + 3) {
 				return ParseResult::error("Invalid escape sequence in character literal", *current_token_);
 			}
-			char escape_char = value[2];
+			char escape_char = value[char_offset + 1];
 			switch (escape_char) {
 				case 'n': char_value = '\n'; break;
 				case 't': char_value = '\t'; break;
@@ -23820,13 +23859,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 		else {
 			// Single character
-			char_value = value[1];
+			char_value = static_cast<unsigned char>(value[char_offset]);
 		}
 
 		// Create a numeric literal node with the character's value
 		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_,
-			static_cast<unsigned long long>(static_cast<unsigned char>(char_value)),
-			Type::Char, TypeQualifier::None, 8));
+			static_cast<unsigned long long>(char_value),
+			char_type, TypeQualifier::None, char_size_bits));
 		consume_token();
 	}
 	else if (current_token_->type() == Token::Type::Keyword &&
@@ -24151,7 +24190,7 @@ ParseResult Parser::parse_for_loop() {
             } else if (peek_token()->type() == Token::Type::Identifier) {
                 // Check if it's a known type name (e.g., size_t, string, etc.) or a qualified type (std::size_t)
                 StringHandle type_handle = StringTable::getOrInternStringHandle(peek_token()->value());
-                if (gTypesByName.find(type_handle) != gTypesByName.end()) {
+                if (lookupTypeInCurrentContext(type_handle)) {
                     try_as_declaration = true;
                 } else if (peek_token(1).has_value() && peek_token(1)->value() == "::") {
                     // Treat Identifier followed by :: as a potential qualified type name
@@ -26482,7 +26521,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				// Handle array-to-pointer decay
 				// When an array is used in an expression (except with sizeof, &, etc.),
 				// it decays to a pointer to its first element
-				if (decl->array_size().has_value()) {
+				// Use is_array() which handles both sized arrays (int arr[5]) and
+				// unsized arrays (int arr[] = {...}) where is_unsized_array_ is true
+				if (decl->is_array()) {
 					// This is an array declaration - decay to pointer
 					// Create a new TypeSpecifierNode with one level of pointer
 					TypeSpecifierNode pointer_type = type;
@@ -44960,4 +45001,58 @@ std::string_view Parser::extract_base_template_name_by_stripping(std::string_vie
 	}
 	
 	return {};  // Not found
+}
+// Helper: resolve a type name within the current namespace context (including using directives)
+static const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
+	// Direct lookup (unqualified)
+	auto it = gTypesByName.find(type_handle);
+	if (it != gTypesByName.end()) {
+		return it->second;
+	}
+
+	// Walk current namespace chain outward (e.g., std::foo, ::foo)
+	NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
+	while (ns_handle.isValid()) {
+		StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, type_handle);
+		auto q_it = gTypesByName.find(qualified);
+		if (q_it != gTypesByName.end()) {
+			return q_it->second;
+		}
+		if (ns_handle.isGlobal()) {
+			break;
+		}
+		ns_handle = gNamespaceRegistry.getParent(ns_handle);
+	}
+
+	// using directives
+	for (NamespaceHandle using_ns : gSymbolTable.get_current_using_directive_handles()) {
+		if (!using_ns.isValid()) continue;
+		StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(using_ns, type_handle);
+		auto u_it = gTypesByName.find(qualified);
+		if (u_it != gTypesByName.end()) {
+			return u_it->second;
+		}
+	}
+
+	// Fallback: unique suffix match (e.g., std::size_t when current namespace context is unavailable)
+	std::string_view type_name_sv = StringTable::getStringView(type_handle);
+	const TypeInfo* suffix_match = nullptr;
+	for (const auto& [handle, info] : gTypesByName) {
+		std::string_view full_name = StringTable::getStringView(handle);
+		if (full_name.size() <= type_name_sv.size() + 2) continue;
+		if (!full_name.ends_with(type_name_sv)) continue;
+		size_t prefix_pos = full_name.size() - type_name_sv.size();
+		if (prefix_pos < 2 || full_name[prefix_pos - 2] != ':' || full_name[prefix_pos - 1] != ':') continue;
+		if (suffix_match && suffix_match != info) {
+			// Ambiguous - multiple matches
+			suffix_match = nullptr;
+			break;
+		}
+		suffix_match = info;
+	}
+	if (suffix_match) {
+		return suffix_match;
+	}
+
+	return nullptr;
 }

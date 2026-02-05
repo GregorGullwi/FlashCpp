@@ -155,6 +155,10 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		case Type::Bool: output += "_N"; break;  // bool
 		case Type::Char: output += 'D'; break;   // char
 		case Type::UnsignedChar: output += 'E'; break;  // unsigned char
+		case Type::WChar: output += "_W"; break;  // wchar_t (MSVC native type)
+		case Type::Char8: output += "_Q"; break;  // char8_t (C++20)
+		case Type::Char16: output += "_S"; break;  // char16_t
+		case Type::Char32: output += "_U"; break;  // char32_t
 		case Type::Short: output += 'F'; break;  // short
 		case Type::UnsignedShort: output += 'G'; break;  // unsigned short
 		case Type::Int: output += 'H'; break;    // int
@@ -256,6 +260,10 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 			}
 			break;
 		case Type::UnsignedChar: output += 'h'; break;
+		case Type::WChar:      output += 'w'; break;   // wchar_t
+		case Type::Char8:      output += "Du"; break;  // char8_t (C++20)
+		case Type::Char16:     output += "Ds"; break;  // char16_t
+		case Type::Char32:     output += "Di"; break;  // char32_t
 		case Type::Short:      output += 's'; break;
 		case Type::UnsignedShort: output += 't'; break;
 		case Type::Int:        output += 'i'; break;

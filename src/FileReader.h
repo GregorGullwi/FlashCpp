@@ -2393,6 +2393,7 @@ private:
 		defines_["_GLIBCXX23_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++23 constexpr
 		defines_["_GLIBCXX_INLINE_VERSION"] = DefineDirective{ "0", {} };  // Inline namespace version (0 = no versioning)
 		defines_["_GLIBCXX_ABI_TAG_CXX11"] = DefineDirective{};  // Strip ABI tags
+		defines_["_GLIBCXX_USE_WCHAR_T"] = DefineDirective{ "1", {} };  // Enable wchar_t support and wide char functions
 		
 		// MSVC C++ standard version feature flags (cumulative)
 		defines_["_HAS_CXX17"] = DefineDirective{ "1", {} };  // C++17 features available

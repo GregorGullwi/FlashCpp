@@ -13,6 +13,7 @@
 #include "Log.h"
 #include "ChunkedString.h"
 #include "NamespaceRegistry.h"
+#include "TemplateRegistry.h"
 
 enum class ScopeType {
 	Global,
@@ -502,6 +503,14 @@ public:
 		if (ns_handle.isValid() && !ns_handle.isGlobal()) {
 			const NamespaceEntry& entry = gNamespaceRegistry.getEntry(ns_handle);
 			scope.namespace_name = entry.name;
+			// Preload existing namespace symbols so unqualified lookup works when re-entering
+			auto ns_it = namespace_symbols_.find(ns_handle);
+			if (ns_it != namespace_symbols_.end()) {
+				for (const auto& [id_handle, nodes] : ns_it->second) {
+					std::string_view key = intern_string(StringTable::getStringView(id_handle));
+					scope.symbols[key] = nodes;
+				}
+			}
 		}
 		symbol_table_stack_.push_back(std::move(scope));
 	}

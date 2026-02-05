@@ -137,11 +137,13 @@ void initialize_native_types() {
     auto& uint_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uint"sv), Type::UnsignedInt, gTypeInfo.size());
     gNativeTypes[Type::UnsignedInt] = &uint_type;
 
-    auto& long_type = gTypeInfo.emplace_back(StringTable::createStringHandle("long"sv), Type::Long, gTypeInfo.size());
-    gNativeTypes[Type::Long] = &long_type;
+	auto& long_type = gTypeInfo.emplace_back(StringTable::createStringHandle("long"sv), Type::Long, gTypeInfo.size());
+	long_type.type_size_ = get_type_size_bits(Type::Long);
+	gNativeTypes[Type::Long] = &long_type;
 
-    auto& ulong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulong"sv), Type::UnsignedLong, gTypeInfo.size());
-    gNativeTypes[Type::UnsignedLong] = &ulong_type;
+	auto& ulong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulong"sv), Type::UnsignedLong, gTypeInfo.size());
+	ulong_type.type_size_ = get_type_size_bits(Type::UnsignedLong);
+	gNativeTypes[Type::UnsignedLong] = &ulong_type;
 
     auto& longlong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longlong"sv), Type::LongLong, gTypeInfo.size());
     gNativeTypes[Type::LongLong] = &longlong_type;
@@ -172,6 +174,10 @@ bool is_integer_type(Type type) {
     switch (type) {
         case Type::Char:
         case Type::UnsignedChar:
+        case Type::WChar:      // wchar_t is an integer type
+        case Type::Char8:      // char8_t is an integer type (C++20)
+        case Type::Char16:     // char16_t is an integer type
+        case Type::Char32:     // char32_t is an integer type
         case Type::Short:
         case Type::UnsignedShort:
         case Type::Int:
@@ -214,6 +220,8 @@ bool is_signed_integer_type(Type type) {
         case Type::Long:
         case Type::LongLong:
             return true;
+        case Type::WChar:
+            return g_target_data_model != TargetDataModel::LLP64;  // signed on Linux
         default:
             return false;
     }
@@ -227,6 +235,12 @@ bool is_unsigned_integer_type(Type type) {
         case Type::UnsignedLong:
         case Type::UnsignedLongLong:
             return true;
+        case Type::Char8:
+        case Type::Char16:
+        case Type::Char32:
+            return true;
+        case Type::WChar:
+            return g_target_data_model == TargetDataModel::LLP64;  // unsigned on Windows
         default:
             return false;
     }
@@ -259,6 +273,15 @@ int get_integer_rank(Type type) {
         case Type::LongLong:
         case Type::UnsignedLongLong:
             return 5;
+        case Type::Char8:
+            return 1;  // Same rank as unsigned char
+        case Type::Char16:
+            return 2;  // Same rank as uint_least16_t (short)
+        case Type::Char32:
+            return 3;  // Same rank as uint_least32_t (int)
+        case Type::WChar:
+            // wchar_t rank is target-dependent: 16-bit on LLP64/Windows x64 (rank 2), 32-bit on LP64/Unix-like systems (rank 3)
+            return (g_target_data_model == TargetDataModel::LLP64) ? 2 : 3;
         default:
             return -1;  // Invalid/unknown type
     }
@@ -284,7 +307,14 @@ int get_type_size_bits(Type type) {
             return 8;
         case Type::Char:
         case Type::UnsignedChar:
+        case Type::Char8:      // char8_t is always 8 bits
             return 8;
+        case Type::Char16:     // char16_t is always 16 bits
+            return 16;
+        case Type::Char32:     // char32_t is always 32 bits
+            return 32;
+        case Type::WChar:
+            return get_wchar_size_bits();  // Target-dependent: 16 bits (LLP64) or 32 bits (LP64)
         case Type::Short:
         case Type::UnsignedShort:
             return 16;
@@ -318,12 +348,22 @@ Type promote_integer_type(Type type) {
         case Type::Bool:
         case Type::Char:
         case Type::Short:
+        case Type::Char8:      // char8_t (8-bit unsigned) promotes to int
+        case Type::Char16:     // char16_t (16-bit unsigned) promotes to int
             return Type::Int;
         case Type::UnsignedChar:
         case Type::UnsignedShort:
             // If int can represent all values of the original type, promote to int
             // Otherwise promote to unsigned int (but for char/short, int is always sufficient)
             return Type::Int;
+        case Type::WChar:
+            // wchar_t promotion is target-dependent:
+            // On Windows (16-bit): promotes to int
+            // On Linux (32-bit): doesn't promote (same size as int)
+            return (get_wchar_size_bits() < 32) ? Type::Int : Type::WChar;
+        case Type::Char32:
+            // char32_t (32-bit) doesn't promote - same size as int
+            return Type::Char32;
         default:
             // Types int and larger don't get promoted
             return type;
@@ -476,6 +516,10 @@ static const std::string& type_to_string(Type type, TypeQualifier qualifier) {
         case Type::Bool: result += "bool"; break;
         case Type::Char: result += "char"; break;
         case Type::UnsignedChar: result += "unsigned char"; break;
+        case Type::WChar: result += "wchar_t"; break;
+        case Type::Char8: result += "char8_t"; break;
+        case Type::Char16: result += "char16_t"; break;
+        case Type::Char32: result += "char32_t"; break;
         case Type::Short: result += "short"; break;
         case Type::UnsignedShort: result += "unsigned short"; break;
         case Type::Int: result += "int"; break;

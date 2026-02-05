@@ -106,11 +106,27 @@ enum class ReferenceQualifier : uint8_t {
 	RValueReference = 1 << 1,  // &&
 };
 
+// Target data model - controls the size of 'long' and 'wchar_t' types
+// Windows uses LLP64: long is 32-bit, wchar_t is 16-bit unsigned
+// Linux/Unix uses LP64: long is 64-bit, wchar_t is 32-bit signed
+enum class TargetDataModel {
+	LLP64,     // Windows x64: long = 32 bits, wchar_t = 16 bits unsigned (COFF)
+	LP64       // Linux/Unix x64: long = 64 bits, wchar_t = 32 bits signed (ELF)
+};
+
+// Global data model setting - set by main.cpp based on target platform
+// Default is platform-dependent
+extern TargetDataModel g_target_data_model;
+
 enum class Type : int_fast16_t {
 	Void,
 	Bool,
 	Char,
 	UnsignedChar,
+	WChar,             // wchar_t - distinct built-in type (mangled as 'w')
+	Char8,             // char8_t (C++20) - distinct built-in type (mangled as 'Du')
+	Char16,            // char16_t (C++11) - distinct built-in type (mangled as 'Ds')
+	Char32,            // char32_t (C++11) - distinct built-in type (mangled as 'Di')
 	Short,
 	UnsignedShort,
 	Int,
@@ -152,6 +168,10 @@ inline std::string_view getTypeName(Type t) {
 		case Type::UnsignedShort: return "unsigned short";
 		case Type::Char: return "char";
 		case Type::UnsignedChar: return "unsigned char";
+		case Type::WChar: return "wchar_t";
+		case Type::Char8: return "char8_t";
+		case Type::Char16: return "char16_t";
+		case Type::Char32: return "char32_t";
 		case Type::Bool: return "bool";
 		case Type::Float: return "float";
 		case Type::Double: return "double";
@@ -171,9 +191,15 @@ inline bool isSignedType(Type t) {
 		case Type::Long:
 		case Type::LongLong:
 			return true;
+		// wchar_t is target-dependent: signed on Linux (LP64), unsigned on Windows (LLP64)
+		case Type::WChar:
+			return g_target_data_model != TargetDataModel::LLP64;  // signed on LP64, unsigned on LLP64
 		// Explicitly unsigned types
 		case Type::Bool:
 		case Type::UnsignedChar:
+		case Type::Char8:     // char8_t is always unsigned (C++20)
+		case Type::Char16:    // char16_t is always unsigned
+		case Type::Char32:    // char32_t is always unsigned
 		case Type::UnsignedShort:
 		case Type::UnsignedInt:
 		case Type::UnsignedLong:
@@ -1211,21 +1237,14 @@ bool is_struct_type(Type type);  // Check if type is Struct or UserDefined
 int get_integer_rank(Type type);
 int get_floating_point_rank(Type type);
 
-// Target data model - controls the size of 'long' type
-// Windows uses LLP64: long is 32-bit, long long is 64-bit
-// Linux/Unix uses LP64: long is 64-bit, long long is 64-bit
-enum class TargetDataModel {
-	LLP64,     // Windows x64: long = 32 bits (COFF)
-	LP64       // Linux/Unix x64: long = 64 bits (ELF)
-};
-
-// Global data model setting - set by main.cpp based on target platform
-// Default is platform-dependent
-extern TargetDataModel g_target_data_model;
-
 // Get the size of 'long' in bits based on the target data model
 inline int get_long_size_bits() {
 	return (g_target_data_model == TargetDataModel::LLP64) ? 32 : 64;
+}
+
+// wchar_t is 16-bit unsigned on Windows (LLP64), 32-bit signed on Linux (LP64)
+inline int get_wchar_size_bits() {
+	return (g_target_data_model == TargetDataModel::LLP64) ? 16 : 32;
 }
 
 int get_type_size_bits(Type type);
@@ -1375,11 +1394,24 @@ public:
 	// Returns true if they represent the same type signature
 	bool matches_signature(const TypeSpecifierNode& other) const {
 		// Check basic type
-		if (type_ != other.type_) return false;
+		if (type_ != other.type_) {
+			// Be lenient for typedef/alias cases where the underlying size and indirection match
+			bool same_size = size_ != 0 && other.size_ != 0 && size_ == other.size_;
+			bool same_indirection = pointer_levels_.size() == other.pointer_levels_.size()
+				&& reference_qualifier_ == other.reference_qualifier_;
+			if (!(same_size && same_indirection)) {
+				return false;
+			}
+		}
 		
 		// Check type index for user-defined types
 		if (type_ == Type::UserDefined || type_ == Type::Struct) {
-			if (type_index_ != other.type_index_) return false;
+			if (type_index_ != other.type_index_) {
+				// Be lenient for dependent/alias types: treat as match when the identifier tokens are the same
+				if (token_.value() != other.token_.value()) {
+					return false;
+				}
+			}
 		}
 		
 		// For function signature matching, top-level CV qualifiers on value types are ignored
