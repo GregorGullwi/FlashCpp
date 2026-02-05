@@ -2038,8 +2038,10 @@ ParseResult Parser::parse_type_and_name() {
                 peek_token().has_value() ? std::string(peek_token()->value()) : "N/A");
             if (peek_token().has_value()) {
                 auto next = peek_token()->value();
-                if (next == "," || next == ")" || next == "=" || next == "[") {
-                    // This is an unnamed parameter - create a synthetic empty identifier
+                if (next == "," || next == ")" || next == "=" || next == "[" ||
+                    next == ":" || next == ";") {
+                    // This is an unnamed parameter/member - create a synthetic empty identifier
+                    // ':' handles unnamed bitfields (e.g., int :32;) and ';' handles unnamed members
                     FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Unnamed parameter detected, next={}", std::string(next));
                     identifier_token = Token(Token::Type::Identifier, ""sv,
                                             current_token_->line(), current_token_->column(),
@@ -6889,6 +6891,19 @@ ParseResult Parser::parse_struct_declaration()
 			const DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
 			const TypeSpecifierNode& type_spec = decl_node.type_node().as<TypeSpecifierNode>();
 
+			// Handle bitfield declarations: int x : 5; or unnamed: int : 32;
+			// Bitfields specify a width in bits after ':' and before ';'
+			if (peek_token().has_value() && peek_token()->value() == ":") {
+				consume_token(); // consume ':'
+				// Parse the bitfield width expression (usually a numeric literal)
+				auto width_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (width_result.is_error()) {
+					return width_result;
+				}
+				// Skip the bitfield width - treat as regular member for struct layout purposes
+				// The member is already added with the correct type
+			}
+
 			// Check for direct brace initialization: C c1{ 1 };
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Punctuator &&
 			    peek_token()->value() == "{") {
@@ -11592,6 +11607,26 @@ ParseResult Parser::parse_type_specifier()
 		type_size = 0;  // Unknown size until defined
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
 			Type::Struct, forward_decl_type.type_index_, type_size, type_name_token, cv_qualifier));
+	}
+	// Handle __builtin_va_list and __gnuc_va_list as GCC builtin types
+	// These are used in <cstdarg> and libstdc++ headers for variadic argument handling.
+	// They are registered as user-defined types in initialize_native_types().
+	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Identifier &&
+	         (current_token_opt->value() == "__builtin_va_list" || current_token_opt->value() == "__gnuc_va_list")) {
+		Token va_list_token = *current_token_opt;
+		consume_token();
+		auto type_name_handle = StringTable::getOrInternStringHandle(va_list_token.value());
+		auto type_it = gTypesByName.find(type_name_handle);
+		if (type_it != gTypesByName.end()) {
+			return ParseResult::success(emplace_node<TypeSpecifierNode>(
+				Type::UserDefined, TypeQualifier::None,
+				static_cast<int>(type_it->second->type_size_),
+				va_list_token, cv_qualifier));
+		}
+		// Fallback: treat as void*
+		TypeSpecifierNode va_list_type(Type::Void, TypeQualifier::None, 0, va_list_token, cv_qualifier);
+		va_list_type.add_pointer_level();
+		return ParseResult::success(emplace_node<TypeSpecifierNode>(va_list_type));
 	}
 	else if (current_token_opt.has_value() && current_token_opt->type() == Token::Type::Identifier) {
 		// Handle user-defined type (struct, class, or other user-defined types)
@@ -26559,6 +26594,16 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				}
 
 				return type;
+			}
+			// Handle function identifiers: __typeof(func) / decltype(func) should
+			// return the function's return type. GCC's __typeof on a function name
+			// yields the function type, but for practical purposes (libstdc++ usage
+			// like 'extern "C" __typeof(uselocale) __uselocale;'), returning the
+			// return type allows parsing to continue past these declarations.
+			if (symbol->is<FunctionDeclarationNode>()) {
+				const auto& func = symbol->as<FunctionDeclarationNode>();
+				const TypeSpecifierNode& ret_type = func.decl_node().type_node().as<TypeSpecifierNode>();
+				return ret_type;
 			}
 		}
 	}

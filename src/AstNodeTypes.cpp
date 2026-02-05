@@ -168,6 +168,20 @@ void initialize_native_types() {
 
     auto& member_function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("member_function_pointer"sv), Type::MemberFunctionPointer, gTypeInfo.size());
     gNativeTypes[Type::MemberFunctionPointer] = &member_function_pointer_type;
+
+    // Register GCC builtin types used by libstdc++ headers
+    // __builtin_va_list is the compiler's internal va_list type (a struct array on x86-64).
+    // We register it as a user-defined type so lookupTypeInCurrentContext finds it,
+    // allowing declarations like '__builtin_va_list args;' to parse correctly.
+    auto va_list_handle = StringTable::createStringHandle("__builtin_va_list"sv);
+    auto& va_list_type_info = gTypeInfo.emplace_back(va_list_handle, Type::UserDefined, gTypeInfo.size());
+    va_list_type_info.type_size_ = 64;  // Pointer-sized opaque handle
+    gTypesByName.emplace(va_list_handle, &va_list_type_info);
+
+    auto gnuc_va_list_handle = StringTable::createStringHandle("__gnuc_va_list"sv);
+    auto& gnuc_va_list_type_info = gTypeInfo.emplace_back(gnuc_va_list_handle, Type::UserDefined, gTypeInfo.size());
+    gnuc_va_list_type_info.type_size_ = 64;
+    gTypesByName.emplace(gnuc_va_list_handle, &gnuc_va_list_type_info);
 }
 
 bool is_integer_type(Type type) {
