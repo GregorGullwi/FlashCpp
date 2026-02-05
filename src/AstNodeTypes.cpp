@@ -166,6 +166,81 @@ void initialize_native_types() {
 
     auto& member_function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("member_function_pointer"sv), Type::MemberFunctionPointer, gTypeInfo.size());
     gNativeTypes[Type::MemberFunctionPointer] = &member_function_pointer_type;
+
+    // Add common C/C++ standard library typedefs as built-in type aliases
+    // These are commonly used types that may not be properly included due to preprocessor issues
+    // On 64-bit systems (Linux LP64 and Windows LLP64):
+    // - size_t = unsigned long (Linux) or unsigned long long (Windows)
+    // - ptrdiff_t = long (Linux) or long long (Windows)
+    // - intptr_t/uintptr_t = long/unsigned long (Linux) or long long/unsigned long long (Windows)
+    
+    // size_t: unsigned integer type for sizeof operator
+    // Use UnsignedLong on Linux (LP64) and UnsignedLongLong on Windows (LLP64)
+    Type size_t_base_type;
+#ifdef __linux__
+    size_t_base_type = Type::UnsignedLong;  // LP64: size_t = unsigned long (64-bit)
+#else
+    size_t_base_type = Type::UnsignedLongLong;  // LLP64: size_t = unsigned long long (64-bit)
+#endif
+    auto& size_t_type = gTypeInfo.emplace_back(StringTable::createStringHandle("size_t"sv), size_t_base_type, gTypeInfo.size());
+    size_t_type.type_size_ = static_cast<int>(get_type_size_bits(size_t_base_type));
+    gTypesByName[size_t_type.name_] = &size_t_type;
+
+    // ptrdiff_t: signed integer type for pointer arithmetic
+    Type ptrdiff_t_base_type;
+#ifdef __linux__
+    ptrdiff_t_base_type = Type::Long;  // LP64: ptrdiff_t = long (64-bit)
+#else
+    ptrdiff_t_base_type = Type::LongLong;  // LLP64: ptrdiff_t = long long (64-bit)
+#endif
+    auto& ptrdiff_t_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ptrdiff_t"sv), ptrdiff_t_base_type, gTypeInfo.size());
+    ptrdiff_t_type.type_size_ = static_cast<int>(get_type_size_bits(ptrdiff_t_base_type));
+    gTypesByName[ptrdiff_t_type.name_] = &ptrdiff_t_type;
+
+    // intptr_t: signed integer type capable of holding a pointer
+    auto& intptr_t_type = gTypeInfo.emplace_back(StringTable::createStringHandle("intptr_t"sv), ptrdiff_t_base_type, gTypeInfo.size());
+    intptr_t_type.type_size_ = static_cast<int>(get_type_size_bits(ptrdiff_t_base_type));
+    gTypesByName[intptr_t_type.name_] = &intptr_t_type;
+
+    // uintptr_t: unsigned integer type capable of holding a pointer
+    auto& uintptr_t_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uintptr_t"sv), size_t_base_type, gTypeInfo.size());
+    uintptr_t_type.type_size_ = static_cast<int>(get_type_size_bits(size_t_base_type));
+    gTypesByName[uintptr_t_type.name_] = &uintptr_t_type;
+
+    // Fixed-width integer types from <cstdint>
+    // int8_t, int16_t, int32_t, int64_t
+    auto& int8_t_type = gTypeInfo.emplace_back(StringTable::createStringHandle("int8_t"sv), Type::Char, gTypeInfo.size());
+    int8_t_type.type_size_ = 8;
+    gTypesByName[int8_t_type.name_] = &int8_t_type;
+
+    auto& int16_t_type = gTypeInfo.emplace_back(StringTable::createStringHandle("int16_t"sv), Type::Short, gTypeInfo.size());
+    int16_t_type.type_size_ = 16;
+    gTypesByName[int16_t_type.name_] = &int16_t_type;
+
+    auto& int32_t_type = gTypeInfo.emplace_back(StringTable::createStringHandle("int32_t"sv), Type::Int, gTypeInfo.size());
+    int32_t_type.type_size_ = 32;
+    gTypesByName[int32_t_type.name_] = &int32_t_type;
+
+    auto& int64_t_type = gTypeInfo.emplace_back(StringTable::createStringHandle("int64_t"sv), Type::LongLong, gTypeInfo.size());
+    int64_t_type.type_size_ = 64;
+    gTypesByName[int64_t_type.name_] = &int64_t_type;
+
+    // uint8_t, uint16_t, uint32_t, uint64_t
+    auto& uint8_t_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uint8_t"sv), Type::UnsignedChar, gTypeInfo.size());
+    uint8_t_type.type_size_ = 8;
+    gTypesByName[uint8_t_type.name_] = &uint8_t_type;
+
+    auto& uint16_t_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uint16_t"sv), Type::UnsignedShort, gTypeInfo.size());
+    uint16_t_type.type_size_ = 16;
+    gTypesByName[uint16_t_type.name_] = &uint16_t_type;
+
+    auto& uint32_t_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uint32_t"sv), Type::UnsignedInt, gTypeInfo.size());
+    uint32_t_type.type_size_ = 32;
+    gTypesByName[uint32_t_type.name_] = &uint32_t_type;
+
+    auto& uint64_t_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uint64_t"sv), Type::UnsignedLongLong, gTypeInfo.size());
+    uint64_t_type.type_size_ = 64;
+    gTypesByName[uint64_t_type.name_] = &uint64_t_type;
 }
 
 bool is_integer_type(Type type) {
