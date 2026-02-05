@@ -936,3 +936,73 @@ std::initializer_list<int> two = {ptr, 2};  // Works - matches member count
 ## See Also
 
 - [`STANDARD_HEADERS_MISSING_FEATURES.md`](./STANDARD_HEADERS_MISSING_FEATURES.md) - Detailed analysis of missing features and implementation history
+
+---
+
+## Update: February 2026
+
+### Fixes Applied
+
+1. **Overload Resolution: Type Alias Resolution in Reference/Pointer Contexts**
+   - Fixed `UserDefined` type aliases (e.g., `char_type = wchar_t`) not being resolved in reference-to-value, both-references, and non-ref-to-ref conversion paths during overload resolution.
+   - Added const-correctness enforcement for `UserDefined` pointer types (prevents `const T*` → `T*` when T is an unresolved alias).
+   - **Impact**: Unblocks `wmemchr` overload resolution in `<string>`, `<string_view>`, and `<iostream>` (previously blocked at `char_traits.h:534`).
+
+2. **`__typeof` Keyword Support**
+   - Added `__typeof` (without trailing underscores) as an alternate spelling of `__typeof__`, matching GCC behavior.
+   - **Impact**: Partial progress on `<iostream>` (c++locale.h uses `extern "C" __typeof(uselocale) __uselocale;`).
+
+3. **GCC `__attribute__` on Function Parameters**
+   - Added skipping of `__attribute__((...))` on function parameters (e.g., `size_type __n __attribute__((__unused__))`).
+   - **Impact**: Unblocks `<string>` past `new_allocator.h:156`.
+
+4. **Constructor Detection in Full Template Specializations**
+   - Fixed constructor detection in `template<> struct` bodies to skip specifiers (`constexpr`, `explicit`, `inline`) before checking for the constructor name.
+   - **Impact**: Unblocks `<coroutine>` past `coroutine:102` (constructor of `coroutine_handle<void>`).
+
+5. **`_GNU_SOURCE` Predefined Macro**
+   - Added `_GNU_SOURCE` as a predefined macro in GCC mode (matching Clang/GCC behavior on Linux).
+   - **Impact**: Enables POSIX features like `uselocale` in glibc headers, needed by `<iostream>`.
+
+### Current Header Status (Post-Fix)
+
+| Header | Status | First Error (if any) |
+|--------|--------|---------------------|
+| `<limits>` | ✅ Compiles | - |
+| `<type_traits>` | ✅ Compiles | - |
+| `<compare>` | ✅ Compiles | - |
+| `<version>` | ✅ Compiles | - |
+| `<source_location>` | ✅ Compiles | - |
+| `<numbers>` | ✅ Compiles | - |
+| `<initializer_list>` | ✅ Compiles | - |
+| `<new>` | ✅ Compiles | - |
+| `<exception>` | ✅ Compiles | - |
+| `<typeinfo>` | ✅ Compiles | - |
+| `<typeindex>` | ✅ Compiles | - |
+| `<csetjmp>` | ✅ Compiles | - |
+| `<csignal>` | ✅ Compiles | - |
+| `<stdfloat>` | ✅ Compiles | - |
+| `<spanstream>` | ✅ Compiles | - |
+| `<print>` | ✅ Compiles | - |
+| `<expected>` | ✅ Compiles | - |
+| `<text_encoding>` | ✅ Compiles | - |
+| `<stacktrace>` | ✅ Compiles | - |
+| `<concepts>` | ✅ Compiles | - |
+| `<utility>` | ✅ Compiles | - |
+| `<bit>` | ✅ Compiles | - |
+| `<ratio>` | ❌ Crash | malloc assertion failure (heap corruption) |
+| `<optional>` | ❌ Fails | optional:564 - `Expected identifier token` at `in_place_t` unnamed param |
+| `<variant>` | ❌ Fails | parse_numbers.h:198 - `static_assert` constexpr evaluation |
+| `<any>` | ❌ Fails | any:583 - `Expected type specifier` (out-of-line template member) |
+| `<string_view>` | ❌ Timeout | Likely needs performance work on template instantiation |
+| `<string>` | ❌ Fails | new_allocator.h:131 - `static_assert failed: cannot allocate incomplete types` |
+| `<iostream>` | ❌ Fails | c++locale.h:52 - `__typeof(uselocale)` function type deduction not yet supported |
+| `<coroutine>` | ❌ Fails | coroutine:127 - `operator bool()` conversion operator in full specialization |
+| `<atomic>` | ❌ Fails | pthread.h:205 - `Missing identifier` |
+
+### Remaining Blockers
+
+1. **`__typeof` for function types**: `__typeof(uselocale)` needs to resolve function types from the symbol table (blocks `<iostream>`).
+2. **Conversion operators in full specializations**: `operator bool()` not recognized in `template<> struct` bodies (blocks `<coroutine>`).
+3. **`in_place_t` unnamed parameter context**: The parser fails in specific template contexts when encountering unnamed parameters (blocks `<optional>`).
+4. **Template instantiation performance**: `<string_view>` times out due to heavy template instantiation.

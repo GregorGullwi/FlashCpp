@@ -2597,6 +2597,9 @@ private:
 
 			// GCC/Clang specific predefined macros
 			defines_["__STRICT_ANSI__"] = DefineDirective{ "1", {} };
+			// _GNU_SOURCE enables POSIX/GNU features in glibc headers (e.g., uselocale in locale.h)
+			// Both Clang and GCC define this by default on Linux, even with -std=c++20
+			defines_["_GNU_SOURCE"] = DefineDirective{ "1", {} };
 			if (settings_.getDataModel() == CompileContext::DataModel::LP64) {
 				defines_["__ELF__"] = DefineDirective{ "1", {} };
 			}

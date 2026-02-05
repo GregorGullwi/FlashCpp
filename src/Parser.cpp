@@ -11099,10 +11099,10 @@ ParseResult Parser::parse_type_specifier()
 	
 	auto current_token_opt = peek_token();
 
-	// Check for decltype or __typeof__ FIRST, before any other checks
-	// __typeof__ is a GCC extension that works like decltype
+	// Check for decltype or __typeof__/__typeof FIRST, before any other checks
+	// __typeof__ and __typeof are GCC extensions that work like decltype
 	if (current_token_opt.has_value() && 
-	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__")) {
+	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__" || current_token_opt->value() == "__typeof")) {
 		return parse_decltype_specifier();
 	}
 
@@ -11135,12 +11135,12 @@ ParseResult Parser::parse_type_specifier()
 		}
 	}
 
-	// Check for decltype or __typeof__ after function specifiers (e.g., static decltype(...))
+	// Check for decltype or __typeof__/__typeof after function specifiers (e.g., static decltype(...))
 	// This check MUST come after skipping function specifiers to handle patterns like:
 	// "static decltype(_S_test_2<_Tp, _Up>(0))" which appear in standard library headers
-	// __typeof__ is a GCC extension that works like decltype
+	// __typeof__ and __typeof are GCC extensions that work like decltype
 	if (current_token_opt.has_value() && 
-	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__")) {
+	    (current_token_opt->value() == "decltype" || current_token_opt->value() == "__typeof__" || current_token_opt->value() == "__typeof")) {
 		return parse_decltype_specifier();
 	}
 
@@ -13144,6 +13144,9 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 				}
 			}
 		}
+
+		// Skip GCC attributes on parameters (e.g., __attribute__((__unused__)))
+		skip_gcc_attributes();
 
 		if (consume_punctuator(",")) {
 			// After a comma, check if the next token is '...' for variadic parameters
@@ -28510,7 +28513,25 @@ ParseResult Parser::parse_template_declaration() {
 				// Check for constructor (identifier matching template name followed by '(')
 				// In full specializations, the constructor uses the base template name (e.g., "Calculator"),
 				// not the instantiated name (e.g., "Calculator_int")
+				// Must skip specifiers like constexpr, explicit, inline first
 				SaveHandle saved_pos = save_token_position();
+				bool found_constructor = false;
+				bool ctor_is_constexpr = false;
+				bool ctor_is_explicit = false;
+				{
+					// Skip declaration specifiers (constexpr, inline, etc.)
+					auto specs = parse_declaration_specifiers();
+					ctor_is_constexpr = specs.is_constexpr;
+					// Also skip 'explicit' which is constructor-specific
+					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
+					       peek_token()->value() == "explicit") {
+						ctor_is_explicit = true;
+						consume_token();
+						if (peek_token().has_value() && peek_token()->value() == "(") {
+							skip_balanced_parens(); // explicit(condition)
+						}
+					}
+				}
 				if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier &&
 				    peek_token()->value() == template_name) {
 					// Look ahead to see if this is a constructor
@@ -28524,9 +28545,14 @@ ParseResult Parser::parse_template_declaration() {
 					if (peek_token().has_value() && peek_token()->value() == "(") {
 						// Discard saved position since we're using this as a constructor
 						discard_saved_token(saved_pos);
+						found_constructor = true;
 						
 						// This is a constructor - use instantiated_name as the struct name
 						auto [ctor_node, ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(ctor_name));
+						
+						// Apply specifiers detected during lookahead
+						ctor_ref.set_constexpr(ctor_is_constexpr);
+						ctor_ref.set_explicit(ctor_is_explicit);
 						
 						// Parse parameters using unified parse_parameter_list (Phase 1)
 						FlashCpp::ParsedParameterList params;
@@ -28732,8 +28758,11 @@ ParseResult Parser::parse_template_declaration() {
 						restore_token_position(saved_pos);
 					}
 				} else {
-					discard_saved_token(saved_pos);
+					// Not a constructor (identifier didn't match), restore position
+					// to before specifiers were consumed during lookahead
+					restore_token_position(saved_pos);
 				}
+				if (found_constructor) continue;
 
 					// Parse member declaration (use same logic as regular struct parsing)
 				auto member_result = parse_type_and_name();
