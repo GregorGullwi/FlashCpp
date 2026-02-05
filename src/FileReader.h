@@ -1648,6 +1648,61 @@ private:
 		ops.pop();
 	}
 
+	bool parseIntegerLiteral(std::istringstream& iss, long& value, std::string* out_literal = nullptr) {
+		std::string literal;
+		iss >> std::ws;  // Skip leading whitespace
+		int base = 10;
+
+		if (iss.peek() == '0') {
+			iss.get();
+			char next = iss.peek();
+			if (next == 'x' || next == 'X') {
+				base = 16;
+				iss.get();
+			} else if (next == 'b' || next == 'B') {
+				base = 2;
+				iss.get();
+			} else {
+				base = 8;
+				literal.push_back('0');
+			}
+		}
+
+		auto is_digit_char = [&](char c) {
+			if (c == '\'') return true; // digit separator
+			switch (base) {
+				case 2:  return c == '0' || c == '1';
+				case 8:  return c >= '0' && c <= '7';
+				case 10: return static_cast<bool>(std::isdigit(static_cast<unsigned char>(c)));
+				case 16: return static_cast<bool>(std::isxdigit(static_cast<unsigned char>(c)));
+				default: return false;
+			}
+		};
+
+		while (iss && is_digit_char(iss.peek())) {
+			if (iss.peek() == '\'') {
+				iss.get();
+				continue;
+			}
+			literal += iss.get();
+		}
+
+		if (literal.empty())
+			return false;
+
+		while (iss && (iss.peek()=='u'||iss.peek()=='U'||iss.peek()=='l'||iss.peek()=='L'))
+			iss.get();
+
+		auto [ptr, ec] = std::from_chars(literal.data(),
+										 literal.data()+literal.size(),
+										 value,
+										 base);
+
+		if (out_literal) *out_literal = literal;
+		return ec == std::errc() &&
+			   ptr == literal.data()+literal.size();
+	}
+
 	long evaluate_expression(std::istringstream& iss) {
 		if (settings_.isVerboseMode()) {
 			// Save position and read entire expression for debug
@@ -1679,15 +1734,10 @@ private:
 		while (iss && eval_loop_guard-- > 0) {
 			char c = iss.peek();
 			if (isdigit(c)) {
-				// Manually consume only digit characters to avoid consuming operators
-				// Using iss >> str_value would read "123==456" as a single token
-				op_str.resize(0);
-				while (iss && isdigit(iss.peek())) {
-					op_str += iss.get();
-				}
 				long value = 0;
-				if (auto [ptr, ec] = std::from_chars(op_str.data(), op_str.data() + op_str.size(), value); ec != std::errc()) {
-					FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '", op_str, "' in preprocessor expression, in file ",
+				std::string literal;
+				if (!parseIntegerLiteral(iss, value, &literal)) {
+					FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '", literal, "' in preprocessor expression, in file ",
 									 filestack_.empty() ? "<unknown>" : filestack_.top().file_name,
 									" at line ", filestack_.empty() ? 0 : filestack_.top().line_number);
 					values.push(0);
@@ -1738,222 +1788,14 @@ private:
 					if (!isalnum(next) && next != '_') break;
 					keyword += iss.get();
 				}
-				if (keyword.find("__") == 0) {	// __ is reserved for the compiler
-					if (keyword == "__has_include") {
-						// __has_include(<header>) or __has_include("header") - check if header exists
-						// Read the argument from the input stream
-						long exists = 0;
-						char include_name_buf[256] = {};
-						
-						// Skip whitespace and expect '('
-						iss >> std::ws;
-						if (iss.peek() == '(') {
-							iss.ignore(); // Consume '('
-							
-							// Skip whitespace after '('
-							iss >> std::ws;
-							
-							// Check for < or "
-							char quote_char = iss.peek();
-							char end_char = (quote_char == '<') ? '>' : '"';
-							
-							if (quote_char == '<' || quote_char == '"') {
-								iss.ignore(); // Consume opening < or "
-								
-								// Read the include name into buffer
-								size_t i = 0;
-								while (i < sizeof(include_name_buf) - 1 && iss && iss.peek() != end_char) {
-									include_name_buf[i++] = iss.get();
-								}
-								include_name_buf[i] = '\0';
-								
-								// Consume closing > or "
-								if (iss.peek() == end_char) {
-									iss.ignore();
-								}
-								
-								// Skip whitespace before ')'
-								iss >> std::ws;
-								
-								// Consume closing ')' if present
-								if (iss.peek() == ')') {
-									iss.ignore();
-								}
-								
-								std::string_view include_name(include_name_buf);
-								
-								// Check if the file exists in any include directory
-								for (const auto& include_dir : settings_.getIncludeDirs()) {
-									std::string include_file(include_dir);
-									include_file.append("/");
-									include_file.append(include_name);
-									if (std::filesystem::exists(include_file)) {
-										exists = 1;
-										break;
-									}
-								}
-								
-								if (settings_.isVerboseMode()) {
-									std::cout << "__has_include(" << quote_char << include_name << end_char << ") = " << exists << std::endl;
-								}
-							}
-						}
-						values.push(exists);
-					}
-					else if (keyword == "__has_builtin") {
-						// __has_builtin(__builtin_name) - check if a compiler builtin is supported
-						// Read the argument from the input stream
-						long exists = 0;
-						char builtin_name_buf[128] = {};
-						
-						// Skip whitespace and expect '('
-						iss >> std::ws;
-						if (iss.peek() == '(') {
-							iss.ignore(); // Consume '('
-							
-							// Skip whitespace after '(' (allows "__has_builtin( __is_void)")
-							iss >> std::ws;
-							
-							// Read the builtin name into buffer
-							size_t i = 0;
-							while (i < sizeof(builtin_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
-								builtin_name_buf[i++] = iss.get();
-							}
-							builtin_name_buf[i] = '\0';
-							
-							// Skip whitespace before ')' (allows "__has_builtin(__is_void )")
-							iss >> std::ws;
-							
-							// Consume closing ')' if present
-							if (iss.peek() == ')') {
-								iss.ignore();
-							}
-							
-							std::string_view builtin_name(builtin_name_buf);
-							
-							// Set of all supported type trait and other compiler builtins
-							// This must match the builtins supported in Parser.cpp
-							static const std::unordered_set<std::string_view> supported_builtins = {
-								// Type category traits
-								"__is_void", "__is_nullptr", "__is_integral", "__is_floating_point",
-								"__is_array", "__is_pointer", "__is_lvalue_reference", "__is_rvalue_reference",
-								"__is_member_object_pointer", "__is_member_function_pointer",
-								"__is_enum", "__is_union", "__is_class", "__is_function",
-								// Composite type category traits
-								"__is_reference", "__is_arithmetic", "__is_fundamental",
-								"__is_object", "__is_scalar", "__is_compound",
-								// Type relationship traits
-								"__is_base_of", "__is_same", "__is_convertible", "__is_nothrow_convertible",
-								// Type property traits
-								"__is_polymorphic", "__is_final", "__is_abstract", "__is_empty",
-								"__is_aggregate", "__is_standard_layout",
-								"__has_unique_object_representations",
-								"__is_trivially_copyable", "__is_trivial", "__is_pod",
-								"__is_const", "__is_volatile", "__is_signed", "__is_unsigned",
-								"__is_bounded_array", "__is_unbounded_array",
-								// Type construction/destruction traits
-								"__is_constructible", "__is_trivially_constructible", "__is_nothrow_constructible",
-								"__is_assignable", "__is_trivially_assignable", "__is_nothrow_assignable",
-								"__is_destructible", "__is_trivially_destructible", "__is_nothrow_destructible",
-								"__has_trivial_destructor",  // GCC/Clang intrinsic, equivalent to __is_trivially_destructible
-								// Layout traits
-								"__is_layout_compatible", "__is_pointer_interconvertible_base_of",
-								// Constant evaluation
-								"__is_constant_evaluated",
-								// Virtual destructor check
-								"__has_virtual_destructor",
-								// Builtin functions
-								"__builtin_addressof", "__builtin_unreachable", "__builtin_assume",
-								"__builtin_expect", "__builtin_launder",
-								// Type modification - NOT YET IMPLEMENTED, using template fallbacks
-								// "__remove_cv", "__remove_cvref", "__remove_reference",
-								// "__add_lvalue_reference", "__add_rvalue_reference",
-								// "__add_pointer", "__decay",
-								// "__make_signed", "__make_unsigned",
-								// Type inspection
-								"__underlying_type",
-								// Pack and tuple support
-								"__type_pack_element"
-							};
-							
-							exists = supported_builtins.count(builtin_name) > 0 ? 1 : 0;
-							
-							if (settings_.isVerboseMode()) {
-								std::cout << "__has_builtin(" << builtin_name << ") = " << exists << std::endl;
-							}
-						}
-						values.push(exists);
-					}
-					else if (keyword == "__has_cpp_attribute") {
-						// __has_cpp_attribute(attribute_name) - check C++ attribute support
-						// Read the argument from the input stream
-						long version = 0;
-						char attribute_name_buf[128] = {};
-						
-						// Skip whitespace and expect '('
-						iss >> std::ws;
-						if (iss.peek() == '(') {
-							iss.ignore(); // Consume '('
-							
-							// Skip whitespace after '('
-							iss >> std::ws;
-							
-							// Read the attribute name into buffer
-							size_t i = 0;
-							while (i < sizeof(attribute_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
-								attribute_name_buf[i++] = iss.get();
-							}
-							attribute_name_buf[i] = '\0';
-							
-							// Skip whitespace before ')'
-							iss >> std::ws;
-							
-							// Consume closing ')' if present
-							if (iss.peek() == ')') {
-								iss.ignore();
-							}
-							
-							std::string_view attribute_name(attribute_name_buf);
-							
-							// Check if the attribute is supported and get its version
-							if (auto attr_it = has_cpp_attribute_versions.find(attribute_name); attr_it != has_cpp_attribute_versions.end()) {
-								version = attr_it->second;
-							}
-							
-							if (settings_.isVerboseMode()) {
-								std::cout << "__has_cpp_attribute(" << attribute_name << ") = " << version << std::endl;
-							}
-						}
-						values.push(version);
-					}
-					else {
-						// Unknown __ identifier (like __cpp_exceptions, __SANITIZE_THREAD__, etc.)
-						// Treat as 0 (undefined) per C++ preprocessor rules
-						if (settings_.isVerboseMode()) {
-							std::cout << "Unknown __ identifier in #if directive: " << keyword << " (treating as 0)" << std::endl;
-						}
-						values.push(0);
-					}
-				}
-				else if (keyword.find("defined") == 0) {
+				if (keyword == "defined") {
 					std::string symbol;
 					bool has_parenthesis = false;
-
-					if (keyword == "defined") {
-						if (iss.peek() == '(') {
-							iss.ignore(); // Consume the '('
-							has_parenthesis = true;
-						}
-						iss >> symbol;
-					}
-					else { // "defined(" is part of the keyword string
+					if (iss.peek() == '(') {
+						iss.ignore(); // Consume the '('
 						has_parenthesis = true;
-						if (keyword.size() > "defined("sv.length())
-							symbol = keyword.substr(8);
-						else
-							iss >> symbol;
 					}
-
+					iss >> symbol;
 					if (has_parenthesis) {
 						// The symbol may have ')' at the end if it was read by >> operator
 						// Remove ')' from the symbol, but don't call ignore() because >> already consumed it
@@ -1967,13 +1809,202 @@ private:
 						// Don't print stream state here anymore since it was misleading
 					}
 				}
+				else if (keyword == "__has_include") {
+					// __has_include(<header>) or __has_include("header") - check if header exists
+					// Read the argument from the input stream
+					long exists = 0;
+					char include_name_buf[256] = {};
+					
+					// Skip whitespace and expect '('
+					iss >> std::ws;
+					if (iss.peek() == '(') {
+						iss.ignore(); // Consume '('
+						
+						// Skip whitespace after '('
+						iss >> std::ws;
+						
+						// Check for < or "
+						char quote_char = iss.peek();
+						char end_char = (quote_char == '<') ? '>' : '"';
+						
+						if (quote_char == '<' || quote_char == '"') {
+							iss.ignore(); // Consume opening < or "
+							
+							// Read the include name into buffer
+							size_t i = 0;
+							while (i < sizeof(include_name_buf) - 1 && iss && iss.peek() != end_char) {
+								include_name_buf[i++] = iss.get();
+							}
+							include_name_buf[i] = '\0';
+							
+							// Consume closing > or "
+							if (iss.peek() == end_char) {
+								iss.ignore();
+							}
+							
+							// Skip whitespace before ')'
+							iss >> std::ws;
+							
+							// Consume closing ')' if present
+							if (iss.peek() == ')') {
+								iss.ignore();
+							}
+							
+							std::string_view include_name(include_name_buf);
+							
+							// Check if the file exists in any include directory
+							for (const auto& include_dir : settings_.getIncludeDirs()) {
+								std::string include_file(include_dir);
+								include_file.append("/");
+								include_file.append(include_name);
+								if (std::filesystem::exists(include_file)) {
+									exists = 1;
+									break;
+								}
+							}
+							
+							if (settings_.isVerboseMode()) {
+								std::cout << "__has_include(" << quote_char << include_name << end_char << ") = " << exists << std::endl;
+							}
+						}
+					}
+					values.push(exists);
+				}
+				else if (keyword == "__has_builtin") {
+					// __has_builtin(__builtin_name) - check if a compiler builtin is supported
+					// Read the argument from the input stream
+					long exists = 0;
+					char builtin_name_buf[128] = {};
+					
+					// Skip whitespace and expect '('
+					iss >> std::ws;
+					if (iss.peek() == '(') {
+						iss.ignore(); // Consume '('
+						
+						// Skip whitespace after '(' (allows "__has_builtin( __is_void)")
+						iss >> std::ws;
+						
+						// Read the builtin name into buffer
+						size_t i = 0;
+						while (i < sizeof(builtin_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
+							builtin_name_buf[i++] = iss.get();
+						}
+						builtin_name_buf[i] = '\0';
+						
+						// Skip whitespace before ')' (allows "__has_builtin(__is_void )")
+						iss >> std::ws;
+						
+						// Consume closing ')' if present
+						if (iss.peek() == ')') {
+							iss.ignore();
+						}
+						
+						std::string_view builtin_name(builtin_name_buf);
+						
+						// Set of all supported type trait and other compiler builtins
+						// This must match the builtins supported in Parser.cpp
+						static const std::unordered_set<std::string_view> supported_builtins = {
+							// Type category traits
+							"__is_void", "__is_nullptr", "__is_integral", "__is_floating_point",
+							"__is_array", "__is_pointer", "__is_lvalue_reference", "__is_rvalue_reference",
+							"__is_member_object_pointer", "__is_member_function_pointer",
+							"__is_enum", "__is_union", "__is_class", "__is_function",
+							// Composite type category traits
+							"__is_reference", "__is_arithmetic", "__is_fundamental",
+							"__is_object", "__is_scalar", "__is_compound",
+							// Type relationship traits
+							"__is_base_of", "__is_same", "__is_convertible", "__is_nothrow_convertible",
+							// Type property traits
+							"__is_polymorphic", "__is_final", "__is_abstract", "__is_empty",
+							"__is_aggregate", "__is_standard_layout",
+							"__has_unique_object_representations",
+							"__is_trivially_copyable", "__is_trivial", "__is_pod",
+							"__is_const", "__is_volatile", "__is_signed", "__is_unsigned",
+							"__is_bounded_array", "__is_unbounded_array",
+							// Type construction/destruction traits
+							"__is_constructible", "__is_trivially_constructible", "__is_nothrow_constructible",
+							"__is_assignable", "__is_trivially_assignable", "__is_nothrow_assignable",
+							"__is_destructible", "__is_trivially_destructible", "__is_nothrow_destructible",
+							"__has_trivial_destructor",  // GCC/Clang intrinsic, equivalent to __is_trivially_destructible
+							// Layout traits
+							"__is_layout_compatible", "__is_pointer_interconvertible_base_of",
+							// Constant evaluation
+							"__is_constant_evaluated",
+							// Virtual destructor check
+							"__has_virtual_destructor",
+							// Builtin functions
+							"__builtin_addressof", "__builtin_unreachable", "__builtin_assume",
+							"__builtin_expect", "__builtin_launder",
+							// Type modification - NOT YET IMPLEMENTED, using template fallbacks
+							// "__remove_cv", "__remove_cvref", "__remove_reference",
+							// "__add_lvalue_reference", "__add_rvalue_reference",
+							// "__add_pointer", "__decay",
+							// "__make_signed", "__make_unsigned",
+							// Type inspection
+							"__underlying_type",
+							// Pack and tuple support
+							"__type_pack_element"
+						};
+						
+						exists = supported_builtins.count(builtin_name) > 0 ? 1 : 0;
+						
+						if (settings_.isVerboseMode()) {
+							std::cout << "__has_builtin(" << builtin_name << ") = " << exists << std::endl;
+						}
+					}
+					values.push(exists);
+				}
+				else if (keyword == "__has_cpp_attribute") {
+					// __has_cpp_attribute(attribute_name) - check C++ attribute support
+					// Read the argument from the input stream
+					long version = 0;
+					char attribute_name_buf[128] = {};
+					
+					// Skip whitespace and expect '('
+					iss >> std::ws;
+					if (iss.peek() == '(') {
+						iss.ignore(); // Consume '('
+						
+						// Skip whitespace after '('
+						iss >> std::ws;
+						
+						// Read the attribute name into buffer
+						size_t i = 0;
+						while (i < sizeof(attribute_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
+							attribute_name_buf[i++] = iss.get();
+						}
+						attribute_name_buf[i] = '\0';
+						
+						// Skip whitespace before ')'
+						iss >> std::ws;
+						
+						// Consume closing ')' if present
+						if (iss.peek() == ')') {
+							iss.ignore();
+						}
+						
+						std::string_view attribute_name(attribute_name_buf);
+						
+						// Check if the attribute is supported and get its version
+						if (auto attr_it = has_cpp_attribute_versions.find(attribute_name); attr_it != has_cpp_attribute_versions.end()) {
+							version = attr_it->second;
+						}
+						
+						if (settings_.isVerboseMode()) {
+							std::cout << "__has_cpp_attribute(" << attribute_name << ") = " << version << std::endl;
+						}
+					}
+					values.push(version);
+				}
 				else if (auto define_it = defines_.find(keyword); define_it != defines_.end()) {
 					// convert the value to an int
 					const auto& body = define_it->second.getBody();
 					if (!body.empty()) {
 						long value = 0;
-						if (auto [ptr, ec] = std::from_chars(body.data(), body.data() + body.size(), value); ec != std::errc()) {
-							FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: ", keyword, "='", body, "' at ",
+						std::istringstream body_iss(body);
+						std::string literal;
+						if (!parseIntegerLiteral(body_iss, value, &literal)) {
+							FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: ", keyword, "='", body, "' literal='", literal, "' at ",
 								filestack_.top().file_name, ":", filestack_.top().line_number);
 							values.push(0);
 						}
