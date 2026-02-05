@@ -1648,35 +1648,53 @@ private:
 		ops.pop();
 	}
 
-	bool parseIntegerLiteral(std::string_view literal, long& value) {
-		// Drop standard integer suffixes
-		while (!literal.empty()) {
-			char last = literal.back();
-			if (last == 'u' || last == 'U' || last == 'l' || last == 'L') {
-				literal.remove_suffix(1);
+	bool parseIntegerLiteral(std::istringstream& iss, long& value) {
+		std::string literal;
+		int base = 10;
+
+		if (iss.peek() == '0') {
+			iss.get();
+			char next = iss.peek();
+			if (next == 'x' || next == 'X') {
+				base = 16;
+				iss.get();
+			} else if (next == 'b' || next == 'B') {
+				base = 2;
+				iss.get();
 			} else {
-				break;
+				base = 8;
+				literal.push_back('0');
 			}
 		}
 
-		// Remove C++ digit separators (single quote)
-		std::string sanitized;
-		sanitized.reserve(literal.size());
-		for (char c : literal) {
-			if (c != '\'') sanitized.push_back(c);
+		auto is_digit = [&](char c) {
+			if (base <= 10) return c >= '0' && c < '0' + base;
+			return std::isdigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+		};
+
+		while (iss && (std::isdigit(iss.peek()) || iss.peek()=='\'')) {
+			if (iss.peek()=='\'') {
+				iss.get();
+				continue;
+			}
+			if (!is_digit(iss.peek()))
+				return false;
+			literal += iss.get();
 		}
 
-		int base = 10;
-		if (sanitized.size() > 2 && sanitized[0] == '0' && (sanitized[1] == 'x' || sanitized[1] == 'X')) {
-			base = 16;
-		} else if (sanitized.size() > 2 && sanitized[0] == '0' && (sanitized[1] == 'b' || sanitized[1] == 'B')) {
-			base = 2;
-		} else if (sanitized.size() > 1 && sanitized[0] == '0') {
-			base = 8;
-		}
+		if (literal.empty())
+			return false;
 
-		auto [ptr, ec] = std::from_chars(sanitized.data(), sanitized.data() + sanitized.size(), value, base);
-		return ec == std::errc();
+		while (iss && (iss.peek()=='u'||iss.peek()=='U'||iss.peek()=='l'||iss.peek()=='L'))
+			iss.get();
+
+		auto [ptr, ec] = std::from_chars(literal.data(),
+										 literal.data()+literal.size(),
+										 value,
+										 base);
+
+		return ec == std::errc() &&
+			   ptr == literal.data()+literal.size();
 	}
 
 	long evaluate_expression(std::istringstream& iss) {
@@ -1710,14 +1728,8 @@ private:
 		while (iss && eval_loop_guard-- > 0) {
 			char c = iss.peek();
 			if (isdigit(c)) {
-				// Consume the full integer literal, including base prefixes and digit separators (')
-				op_str.resize(0);
-				while (iss && (std::isalnum(iss.peek()) || iss.peek() == 'x' || iss.peek() == 'X' || iss.peek() == 'b' || iss.peek() == 'B' || iss.peek() == '\'')) {
-					op_str += iss.get();
-				}
-
 				long value = 0;
-				if (!parseIntegerLiteral(op_str, value)) {
+				if (!parseIntegerLiteral(iss, value)) {
 					FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '", op_str, "' in preprocessor expression, in file ",
 									 filestack_.empty() ? "<unknown>" : filestack_.top().file_name,
 									" at line ", filestack_.empty() ? 0 : filestack_.top().line_number);
@@ -1993,7 +2005,8 @@ private:
 					const auto& body = define_it->second.getBody();
 					if (!body.empty()) {
 						long value = 0;
-						if (!parseIntegerLiteral(body, value)) {
+						std::istringstream iss(body);
+						if (!parseIntegerLiteral(iss, value)) {
 							FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: ", keyword, "='", body, "' at ",
 								filestack_.top().file_name, ":", filestack_.top().line_number);
 							values.push(0);
