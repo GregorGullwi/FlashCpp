@@ -1064,7 +1064,6 @@ public:
 	void registerTemplate(std::string_view name, ASTNode template_node) {
 		std::string key(name);
 		templates_[key].push_back(template_node);
-		FLASH_LOG_FORMAT(Templates, Debug, "Registering template '{}'", name);
 	}
 
 	// Register template parameter names for a template
@@ -1148,10 +1147,8 @@ public:
 		// Heterogeneous lookup - string_view accepted directly
 		auto it = templates_.find(name);
 		if (it != templates_.end() && !it->second.empty()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "lookupTemplate hit '{}' ({} overloads)", name, it->second.size());
 			return it->second.front();  // Return first overload
 		}
-		FLASH_LOG_FORMAT(Templates, Debug, "lookupTemplate miss '{}'", name);
 		return std::nullopt;
 	}
 	

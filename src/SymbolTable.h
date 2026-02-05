@@ -103,11 +103,6 @@ public:
 		// First, try to find the identifier without interning
 		auto it = current_scope.symbols.find(identifier);
 
-		if (identifier == "wmemchr" || identifier == "wmemcmp" || identifier == "wmemcpy" || identifier == "wmemmove") {
-			FLASH_LOG_FORMAT(Symbols, Debug, "Insert '{}' in scope type {} level {}", identifier,
-			                 static_cast<int>(current_scope.scope_type), current_scope.scope_handle.scope_level);
-		}
-
 		// If this is a new identifier, intern it and create a new vector
 		if (it == current_scope.symbols.end()) {
 			std::string_view key = intern_string(identifier);
@@ -246,10 +241,6 @@ public:
 		// First, try to find the identifier without interning
 		auto it = global_scope.symbols.find(identifier);
 
-		if (identifier == "wmemchr" || identifier == "wmemcmp" || identifier == "wmemcpy" || identifier == "wmemmove") {
-			FLASH_LOG_FORMAT(Symbols, Debug, "InsertGlobal '{}' in scope level 0", identifier);
-		}
-
 		// If this is a new identifier, intern it and create a new vector
 		if (it == global_scope.symbols.end()) {
 			std::string_view key = intern_string(identifier);
@@ -322,7 +313,6 @@ public:
 			auto using_handle_it = scope.using_declarations_handles.find(identifier);
 			if (using_handle_it != scope.using_declarations_handles.end()) {
 				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
-				FLASH_LOG_FORMAT(Symbols, Debug, "lookup using-decl '{}' -> ns {} '{}'", identifier, using_namespace_handle.index, original_name);
 				auto result = lookup_qualified(using_namespace_handle, original_name);
 				if (result.has_value()) {
 					return result;
@@ -398,7 +388,6 @@ public:
 			auto using_handle_it = scope.using_declarations_handles.find(identifier);
 			if (using_handle_it != scope.using_declarations_handles.end()) {
 				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
-				FLASH_LOG_FORMAT(Symbols, Debug, "lookup_all using-decl '{}' -> ns {} '{}'", identifier, using_namespace_handle.index, original_name);
 				auto result = lookup_qualified_all(using_namespace_handle, original_name);
 				if (!result.empty()) {
 					return result;
@@ -575,8 +564,6 @@ public:
 			return;
 		}
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
-		FLASH_LOG_FORMAT(Symbols, Debug, "Using declaration added: local '{}' -> ns {} name '{}'",
-		                 local_name, namespace_handle.index, original_name);
 
 		// Also materialize the referenced symbol into the current scope for faster/unambiguous lookup
 		auto resolved = lookup_qualified(namespace_handle, orig_name);
@@ -596,8 +583,6 @@ public:
 		std::string_view key = intern_string(local_name);
 		std::string_view orig_name = intern_string(original_name);
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
-		FLASH_LOG_FORMAT(Symbols, Debug, "Using declaration added: local '{}' -> ns {} name '{}'",
-		                 local_name, namespace_handle.index, original_name);
 
 		// Also materialize the referenced symbol into the current scope for faster/unambiguous lookup
 		auto resolved = lookup_qualified(namespace_handle, orig_name);
