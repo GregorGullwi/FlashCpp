@@ -10894,10 +10894,10 @@ std::optional<std::pair<Type, unsigned char>> Parser::get_builtin_type_info(std:
 		{"void", {Type::Void, 0}},
 		{"bool", {Type::Bool, 8}},
 		{"char", {Type::Char, 8}},
-		{"wchar_t", {Type::Int, 32}},
-		{"char8_t", {Type::UnsignedChar, 8}},
-		{"char16_t", {Type::UnsignedShort, 16}},
-		{"char32_t", {Type::UnsignedInt, 32}},
+		// Note: "wchar_t" is handled specially below due to target-dependent size (16 on Windows, 32 on Linux)
+		{"char8_t", {Type::Char8, 8}},         // C++20 UTF-8 character type
+		{"char16_t", {Type::Char16, 16}},      // C++11 UTF-16 character type
+		{"char32_t", {Type::Char32, 32}},      // C++11 UTF-32 character type
 		{"short", {Type::Short, 16}},
 		{"int", {Type::Int, 32}},
 		// Note: "long" is handled specially below due to target-dependent size
@@ -10910,11 +10910,17 @@ std::optional<std::pair<Type, unsigned char>> Parser::get_builtin_type_info(std:
 		{"signed", {Type::Int, 32}},  // signed without type defaults to int
 		{"unsigned", {Type::UnsignedInt, 32}},  // unsigned without type defaults to unsigned int
 	};
-	
+
 	// Handle "long" specially since its size depends on target data model
 	// Windows (LLP64): long = 32 bits, Linux/Unix (LP64): long = 64 bits
 	if (type_name == "long") {
 		return std::make_pair(Type::Long, static_cast<unsigned char>(get_type_size_bits(Type::Long)));
+	}
+
+	// Handle "wchar_t" specially since its size depends on target
+	// Windows (LLP64): wchar_t = 16 bits unsigned, Linux (LP64): wchar_t = 32 bits signed
+	if (type_name == "wchar_t") {
+		return std::make_pair(Type::WChar, static_cast<unsigned char>(get_wchar_size_bits()));
 	}
 	
 	auto it = builtin_types.find(type_name);
@@ -11315,16 +11321,16 @@ ParseResult Parser::parse_type_specifier()
 		// Continue parsing the actual type after typename
 	}
 
-	// Static type map for most types. "long" is handled specially below.
+	// Static type map for most types. "long" and "wchar_t" are handled specially below.
 	static const std::unordered_map<std::string_view, std::tuple<Type, size_t>>
 		type_map = {
 				{"void", {Type::Void, 0}},
 				{"bool", {Type::Bool, 8}},
 				{"char", {Type::Char, 8}},
-				{"wchar_t", {Type::Int, 32}},  // wchar_t is typically 32-bit on Linux
-				{"char8_t", {Type::UnsignedChar, 8}},  // C++20 UTF-8 character type
-				{"char16_t", {Type::UnsignedShort, 16}},  // C++11 UTF-16 character type
-				{"char32_t", {Type::UnsignedInt, 32}},  // C++11 UTF-32 character type
+				// Note: "wchar_t" is handled specially due to target-dependent size (16 on Windows, 32 on Linux)
+				{"char8_t", {Type::Char8, 8}},         // C++20 UTF-8 character type
+				{"char16_t", {Type::Char16, 16}},      // C++11 UTF-16 character type
+				{"char32_t", {Type::Char32, 32}},      // C++11 UTF-32 character type
 				{"short", {Type::Short, 16}},
 				{"int", {Type::Int, 32}},
 				// Note: "long" is handled specially due to target-dependent size
@@ -11348,6 +11354,11 @@ ParseResult Parser::parse_type_specifier()
 		if (current_token_opt->value() == "long") {
 			type = Type::Long;
 			type_size = get_type_size_bits(Type::Long);
+			has_explicit_type = true;
+		// Handle "wchar_t" specially due to target-dependent size (16 on Windows, 32 on Linux)
+		} else if (current_token_opt->value() == "wchar_t") {
+			type = Type::WChar;
+			type_size = get_wchar_size_bits();
 			has_explicit_type = true;
 		} else {
 			const auto& it = type_map.find(current_token_opt->value());
@@ -23793,19 +23804,47 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Parse character literal and convert to numeric value
 		std::string_view value = current_token_->value();
 
-		// Character literal format: 'x' or '\x'
-		// Remove the surrounding quotes
-		if (value.size() < 3) {
+		// Character literal format:
+		// - Regular: 'x' or '\x' (char_offset = 1)
+		// - Wide: L'x' or L'\x' (char_offset = 2)
+		// - char8_t: u8'x' (char_offset = 3)
+		// - char16_t: u'x' (char_offset = 2)
+		// - char32_t: U'x' (char_offset = 2)
+		size_t char_offset = 1;  // Default: regular char literal 'x'
+		Type char_type = Type::Char;
+		int char_size_bits = 8;
+
+		// Check for prefix (wide character literals)
+		if (value.size() > 0 && value[0] == 'L') {
+			char_offset = 2;  // L'x'
+			char_type = Type::WChar;
+			char_size_bits = get_wchar_size_bits();
+		} else if (value.size() > 1 && value[0] == 'u' && value[1] == '8') {
+			char_offset = 3;  // u8'x'
+			char_type = Type::Char8;
+			char_size_bits = 8;
+		} else if (value.size() > 0 && value[0] == 'u') {
+			char_offset = 2;  // u'x'
+			char_type = Type::Char16;
+			char_size_bits = 16;
+		} else if (value.size() > 0 && value[0] == 'U') {
+			char_offset = 2;  // U'x'
+			char_type = Type::Char32;
+			char_size_bits = 32;
+		}
+
+		// Minimum size check: prefix + quote + char + quote
+		if (value.size() < char_offset + 2) {
 			return ParseResult::error("Invalid character literal", *current_token_);
 		}
 
-		char char_value = 0;
-		if (value[1] == '\\') {
+		uint32_t char_value = 0;  // Use uint32_t for wide chars
+		if (value[char_offset] == '\\') {
 			// Escape sequence
-			if (value.size() < 4) {
+			if (value.size() < char_offset + 3) {
 				return ParseResult::error("Invalid escape sequence in character literal", *current_token_);
 			}
-			char escape_char = value[2];
+			char escape_char = value[char_offset + 1];
 			switch (escape_char) {
 				case 'n': char_value = '\n'; break;
 				case 't': char_value = '\t'; break;
@@ -23820,13 +23859,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		}
 		else {
 			// Single character
-			char_value = value[1];
+			char_value = static_cast<unsigned char>(value[char_offset]);
 		}
 
 		// Create a numeric literal node with the character's value
 		result = emplace_node<ExpressionNode>(NumericLiteralNode(*current_token_,
-			static_cast<unsigned long long>(static_cast<unsigned char>(char_value)),
-			Type::Char, TypeQualifier::None, 8));
+			static_cast<unsigned long long>(char_value),
+			char_type, TypeQualifier::None, char_size_bits));
 		consume_token();
 	}
 	else if (current_token_->type() == Token::Type::Keyword &&
@@ -26482,7 +26521,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				// Handle array-to-pointer decay
 				// When an array is used in an expression (except with sizeof, &, etc.),
 				// it decays to a pointer to its first element
-				if (decl->array_size().has_value()) {
+				// Use is_array() which handles both sized arrays (int arr[5]) and
+				// unsized arrays (int arr[] = {...}) where is_unsized_array_ is true
+				if (decl->is_array()) {
 					// This is an array declaration - decay to pointer
 					// Create a new TypeSpecifierNode with one level of pointer
 					TypeSpecifierNode pointer_type = type;
