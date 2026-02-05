@@ -220,6 +220,8 @@ bool is_signed_integer_type(Type type) {
         case Type::Long:
         case Type::LongLong:
             return true;
+        case Type::WChar:
+            return g_target_data_model != TargetDataModel::LLP64;  // signed on Linux
         default:
             return false;
     }
@@ -233,6 +235,12 @@ bool is_unsigned_integer_type(Type type) {
         case Type::UnsignedLong:
         case Type::UnsignedLongLong:
             return true;
+        case Type::Char8:
+        case Type::Char16:
+        case Type::Char32:
+            return true;
+        case Type::WChar:
+            return g_target_data_model == TargetDataModel::LLP64;  // unsigned on Windows
         default:
             return false;
     }
