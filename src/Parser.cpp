@@ -940,6 +940,7 @@ void Parser::register_builtin_functions() {
 		gSymbolTable.insert(name, func_decl_node);
 	};
 	
+	
 	// Register variadic argument intrinsics (support both __va_start and __builtin_va_start)
 	// __builtin_va_start(va_list*, last_param) - Clang-style
 	// __va_start(va_list*, last_param) - MSVC-style (legacy)
@@ -1010,6 +1011,79 @@ void Parser::register_builtin_functions() {
 	// __builtin_strlen(const char*) - returns length of string
 	// Returns size_t (unsigned long on 64-bit platforms)
 	register_strlen_builtin("__builtin_strlen");
+	
+	// Wide memory/character functions used by libstdc++
+	{
+		// wmemchr(const wchar_t*, wchar_t, size_t) -> wchar_t*
+		Token ret_tok = dummy_token;
+		auto ret_type = emplace_node<TypeSpecifierNode>(Type::UnsignedLongLong, TypeQualifier::None, 64, ret_tok);
+		Token name_tok = Token(Token::Type::Identifier, "wmemchr"sv, 0, 0, 0);
+		auto decl_node = emplace_node<DeclarationNode>(ret_type, name_tok);
+		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
+		auto [p1_node, p1_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
+		p1_ref.add_pointer_level(CVQualifier::Const);
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(p1_node, dummy_token));
+		auto p2 = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(p2, dummy_token));
+		auto p3 = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, dummy_token);
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(p3, dummy_token));
+		func_ref.set_linkage(Linkage::C);
+		gSymbolTable.insert("wmemchr"sv, func_node);
+	}
+	{
+		// wmemcpy(wchar_t*, const wchar_t*, size_t) -> wchar_t*
+		Token ret_tok = dummy_token;
+		auto ret_type = emplace_node<TypeSpecifierNode>(Type::UnsignedLongLong, TypeQualifier::None, 64, ret_tok);
+		Token name_tok = Token(Token::Type::Identifier, "wmemcpy"sv, 0, 0, 0);
+		auto decl_node = emplace_node<DeclarationNode>(ret_type, name_tok);
+		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
+		auto [p1_node, p1_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
+		p1_ref.add_pointer_level(CVQualifier::None);
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(p1_node, dummy_token));
+		auto [p2_node, p2_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
+		p2_ref.add_pointer_level(CVQualifier::Const);
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(p2_node, dummy_token));
+		auto p3 = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, dummy_token);
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(p3, dummy_token));
+		func_ref.set_linkage(Linkage::C);
+		gSymbolTable.insert("wmemcpy"sv, func_node);
+	}
+	{
+		// wmemmove(wchar_t*, const wchar_t*, size_t) -> wchar_t*
+		Token ret_tok = dummy_token;
+		auto ret_type = emplace_node<TypeSpecifierNode>(Type::UnsignedLongLong, TypeQualifier::None, 64, ret_tok);
+		Token name_tok = Token(Token::Type::Identifier, "wmemmove"sv, 0, 0, 0);
+		auto decl_node = emplace_node<DeclarationNode>(ret_type, name_tok);
+		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
+		auto [p1_node, p1_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
+		p1_ref.add_pointer_level(CVQualifier::None);
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(p1_node, dummy_token));
+		auto [p2_node, p2_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
+		p2_ref.add_pointer_level(CVQualifier::Const);
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(p2_node, dummy_token));
+		auto p3 = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, dummy_token);
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(p3, dummy_token));
+		func_ref.set_linkage(Linkage::C);
+		gSymbolTable.insert("wmemmove"sv, func_node);
+	}
+	{
+		// wmemcmp(const wchar_t*, const wchar_t*, size_t) -> int
+		Token ret_tok = dummy_token;
+		auto ret_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, ret_tok);
+		Token name_tok = Token(Token::Type::Identifier, "wmemcmp"sv, 0, 0, 0);
+		auto decl_node = emplace_node<DeclarationNode>(ret_type, name_tok);
+		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
+		auto [p1_node, p1_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
+		p1_ref.add_pointer_level(CVQualifier::Const);
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(p1_node, dummy_token));
+		auto [p2_node, p2_ref] = emplace_node_ref<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, dummy_token);
+		p2_ref.add_pointer_level(CVQualifier::Const);
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(p2_node, dummy_token));
+		auto p3 = emplace_node<TypeSpecifierNode>(Type::UnsignedLong, TypeQualifier::None, 64, dummy_token);
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(p3, dummy_token));
+		func_ref.set_linkage(Linkage::C);
+		gSymbolTable.insert("wmemcmp"sv, func_node);
+	}
 	
 	// Note: Wide character functions (wcslen, wmemcmp, wmemchr, wmemcpy, wmemmove) are provided
 	// by wchar.h and don't need explicit registration. The special case overload resolution
@@ -2269,6 +2343,8 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
         // Parse CV-qualifiers after the * (if any)
         CVQualifier ptr_cv = parse_cv_qualifiers();
+        skip_cpp_attributes();   // Handle [[...]] attributes on the pointer declarator
+        skip_gcc_attributes();   // Handle __attribute__((...)) placed between * and identifier
 
         // Check for unnamed function pointer parameter: type (*)(params)
         // In this case, after '*' we immediately see ')' instead of an identifier
@@ -9538,6 +9614,8 @@ ParseResult Parser::parse_typedef_declaration()
 			consume_token(); // consume '*'
 			
 			// Now expect the alias name identifier
+			skip_cpp_attributes();
+			skip_gcc_attributes();
 			if (peek_token().has_value() && peek_token()->type() == Token::Type::Identifier) {
 				function_pointer_alias_name = peek_token()->value();
 				consume_token(); // consume alias name
@@ -24143,9 +24221,15 @@ ParseResult Parser::parse_for_loop() {
                     try_as_declaration = true;
                 }
             } else if (peek_token()->type() == Token::Type::Identifier) {
-                // Check if it's a known type name (e.g., size_t, string, etc.)
+                // Check if it's a known type name (e.g., size_t, string, etc.) or a qualified type (std::size_t)
                 StringHandle type_handle = StringTable::getOrInternStringHandle(peek_token()->value());
                 if (gTypesByName.find(type_handle) != gTypesByName.end()) {
+                    try_as_declaration = true;
+                } else if (peek_token(1).has_value() && peek_token(1)->value() == "::") {
+                    // Treat Identifier followed by :: as a potential qualified type name
+                    try_as_declaration = true;
+                } else {
+                    // In namespaces, types may be brought in unqualified (e.g., size_t inside std)
                     try_as_declaration = true;
                 }
             }
@@ -24153,11 +24237,19 @@ ParseResult Parser::parse_for_loop() {
         
         if (try_as_declaration) {
             // Handle variable declaration
+            SaveHandle decl_saved = save_token_position();
             ParseResult init = parse_variable_declaration();
             if (init.is_error()) {
-                return init;
+                // Not a declaration, backtrack and try as expression instead
+                restore_token_position(decl_saved);
+                ParseResult expr_init = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+                if (expr_init.is_error()) {
+                    return expr_init;
+                }
+                init_statement = expr_init.node();
+            } else {
+                init_statement = init.node();
             }
-            init_statement = init.node();
         } else {
             // Try parsing as expression
             ParseResult init = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
