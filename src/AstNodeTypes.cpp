@@ -272,7 +272,7 @@ int get_integer_rank(Type type) {
         case Type::Char32:
             return 3;  // Same rank as uint_least32_t (int)
         case Type::WChar:
-            // wchar_t rank is target-dependent: 16-bit on Windows (rank 2), 32-bit on Linux (rank 3)
+            // wchar_t rank is target-dependent: 16-bit on LLP64/Windows x64 (rank 2), 32-bit on LP64/Unix-like systems (rank 3)
             return (g_target_data_model == TargetDataModel::LLP64) ? 2 : 3;
         default:
             return -1;  // Invalid/unknown type
