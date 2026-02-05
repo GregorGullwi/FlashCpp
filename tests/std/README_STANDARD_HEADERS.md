@@ -32,13 +32,13 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<set>` | `test_std_set.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<span>` | `test_std_span.cpp` | ⏱️ Timeout | Template complexity causes timeout |
 | `<ranges>` | `test_std_ranges.cpp` | ⏱️ Timeout | Template complexity causes timeout |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Preprocesses successfully (93k lines), parsing stringfwd.h (2026-02-04) |
+| `<iostream>` | `test_std_iostream.cpp` | ❌ Parse Error | Parses 550+ templates (~161ms), progresses to char_traits.h:373 (size_t in for loop) (2026-02-05) |
 | `<chrono>` | `test_std_chrono.cpp` | ❌ Include Error | Test file missing |
 | `<atomic>` | N/A | ❌ Parse Error | Missing `pthread_t` identifier (pthreads types) |
 | `<new>` | N/A | ✅ Compiled | ~18ms |
 | `<exception>` | N/A | ✅ Compiled | ~43ms |
-| `<typeinfo>` | N/A | ❌ Parse Error | Out-of-line function pointer parameters (2026-02-04) |
-| `<typeindex>` | N/A | ❌ Parse Error | Out-of-line template member functions |
+| `<typeinfo>` | N/A | ✅ Compiled | ~43ms (2026-02-05: Fixed with _Complex and __asm support) |
+| `<typeindex>` | N/A | ✅ Compiled | ~43ms (2026-02-05: Fixed with _Complex and __asm support) |
 | `<csetjmp>` | N/A | ✅ Compiled | ~16ms |
 | `<csignal>` | N/A | ✅ Compiled | ~22ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~14ms (C++23) |
@@ -52,6 +52,29 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | ⏱️ Timeout (60s) | 💥 Crash
 
+
+**Note (2026-02-05 Latest Update - This PR):** Fixed critical glibc compatibility issues:
+1. **_Complex type support** - Added support for C99/C11 `_Complex` type modifier in type specifier parsing:
+   - Pattern: `typedef _Complex float __cfloat128`
+   - FlashCpp now accepts `_Complex` as a type modifier (though complex arithmetic is not yet implemented)
+   - Treats `_Complex T` as equivalent to `T` for parsing purposes
+2. **__asm symbol renaming directive support** - Added preprocessor macros to strip `__asm` and `__asm__` directives:
+   - Pattern: `extern wchar_t *wcschr() __asm ("wcschr");`
+   - Pattern: `extern int vfwscanf() __asm__ ("__USER_LABEL_PREFIX__" "__isoc99_vfwscanf");`
+   - These are GCC extensions to specify linker symbol names
+   - FlashCpp strips these via preprocessor macros to avoid parse errors
+3. **GCC attributes in typedef declarations** - Added attribute skipping before semicolon in typedef:
+   - Pattern: `typedef _Complex float __cfloat128 __attribute__ ((__mode__ (__TC__)));`
+   - Parser now calls `skip_cpp_attributes()` before expecting semicolon in typedef declarations
+- **Impact:**
+  - **`<typeinfo>` now compiles successfully** - was blocked by `_Complex` and `__asm` issues
+  - **`<typeindex>` now compiles successfully** - was blocked by `_Complex` and `__asm` issues
+  - **`<iostream>` now progresses to char_traits.h:373** - parses 550+ templates in 161ms, now blocked by `size_t` in for loop (existing issue)
+  - All glibc headers that use `_Complex` types or `__asm` directives now parse correctly
+- **Remaining Blockers:**
+  - **For loop with type aliases** - `for (size_t __i = 0; ...)` pattern still needs fixing (documented as fixed in prior PR but may need additional work)
+  - **static_assert constexpr evaluation** - Still blocking `<variant>` at parse_numbers.h:198
+  - **Nested type resolution** - Still blocking `<ratio>` at ratio:495
 
 **Note (2026-02-04 Latest Update - This PR):** Fixed critical __builtin_strlen blocker and added missing GLIBCXX macros:
 1. **__builtin_strlen overload resolution** - Fixed pointer const checking in overload resolution:
