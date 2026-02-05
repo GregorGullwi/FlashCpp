@@ -9672,6 +9672,10 @@ ParseResult Parser::parse_typedef_declaration()
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
 	}
 
+	// Skip any GCC attributes that might appear before the semicolon
+	// e.g., typedef _Complex float __cfloat128 __attribute__ ((__mode__ (__TC__)));
+	skip_cpp_attributes();
+
 	// Expect semicolon
 	if (!consume_punctuator(";")) {
 		return ParseResult::error("Expected ';' after typedef declaration", *current_token_);
@@ -11266,6 +11270,13 @@ ParseResult Parser::parse_type_specifier()
 		}
 		else if (token_value == "unsigned") {
 			qualifier = TypeQualifier::Unsigned;
+			consume_token();
+			current_token_opt = peek_token();
+		}
+		// C99/C11 complex type specifier - consume and ignore for now
+		// _Complex float, _Complex double, etc.
+		// FlashCpp doesn't yet support complex arithmetic, so we treat it as the base type
+		else if (token_value == "_Complex") {
 			consume_token();
 			current_token_opt = peek_token();
 		}
