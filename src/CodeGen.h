@@ -509,14 +509,21 @@ public:
 
 					// Check if static member has an initializer
 					op.is_initialized = static_member.initializer.has_value() || unresolved_identifier_initializer;
-					if (unresolved_identifier_initializer) {
-						FLASH_LOG(Codegen, Debug, "Initializer unresolved; zero-initializing static member '", qualified_name, "'");
+					auto zero_initialize = [&]() {
 						size_t byte_count = op.size_in_bits / 8;
 						for (size_t i = 0; i < byte_count; ++i) {
 							op.init_data.push_back(0);
 						}
-					} else if (op.is_initialized) {
-					const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
+					};
+						if (unresolved_identifier_initializer) {
+							FLASH_LOG(Codegen, Debug, "Initializer unresolved; zero-initializing static member '", qualified_name, "'");
+							zero_initialize();
+						} else if (op.is_initialized) {
+							if (!static_member.initializer->is<ExpressionNode>()) {
+								FLASH_LOG(Codegen, Error, "Static member initializer is not an expression for '", qualified_name, "', zero-initializing");
+								zero_initialize();
+							} else {
+							const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
 					
 					// Check for ConstructorCallNode (e.g., T() which becomes int() after substitution)
 					if (std::holds_alternative<ConstructorCallNode>(init_expr)) {
@@ -580,37 +587,38 @@ public:
 								op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 							}
 						}
-					} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
-						const auto& id = std::get<IdentifierNode>(init_expr);
-						FLASH_LOG(Codegen, Debug, "Processing IdentifierNode '", id.name(), "' initializer for static member '", 
-						          qualified_name, "'");
-						// Evaluate the initializer expression
-						auto init_operands = visitExpressionNode(init_expr);
-						if (init_operands.size() >= 3) {
-							unsigned long long value = 0;
-							if (std::holds_alternative<unsigned long long>(init_operands[2])) {
-								value = std::get<unsigned long long>(init_operands[2]);
-							} else if (std::holds_alternative<double>(init_operands[2])) {
-								double d = std::get<double>(init_operands[2]);
-								std::memcpy(&value, &d, sizeof(double));
+						} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
+							const auto& id = std::get<IdentifierNode>(init_expr);
+							FLASH_LOG(Codegen, Debug, "Processing IdentifierNode '", id.name(), "' initializer for static member '", 
+							          qualified_name, "'");
+							// Evaluate the initializer expression
+							auto init_operands = visitExpressionNode(init_expr);
+							if (init_operands.size() >= 3) {
+								unsigned long long value = 0;
+								if (std::holds_alternative<unsigned long long>(init_operands[2])) {
+									value = std::get<unsigned long long>(init_operands[2]);
+								} else if (std::holds_alternative<double>(init_operands[2])) {
+									double d = std::get<double>(init_operands[2]);
+									std::memcpy(&value, &d, sizeof(double));
+								}
+								size_t byte_count = op.size_in_bits / 8;
+								for (size_t i = 0; i < byte_count; ++i) {
+									op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+								}
 							}
-							size_t byte_count = op.size_in_bits / 8;
-							for (size_t i = 0; i < byte_count; ++i) {
-								op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
-							}
-						}
-					} else {
-						unsigned long long evaluated_value = 0;
-						if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
-							FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for static member '", 
-							          qualified_name, "' = ", evaluated_value);
-							append_bytes(evaluated_value, op.size_in_bits, op.init_data);
 						} else {
-							FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '", 
-							          qualified_name, "' - skipping evaluation");
-							// For unknown expression types, skip evaluation to avoid crashes
-							// Initialize to zero as a safe default
-							append_bytes(0, op.size_in_bits, op.init_data);
+							unsigned long long evaluated_value = 0;
+							if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
+								FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for static member '", 
+								          qualified_name, "' = ", evaluated_value);
+								append_bytes(evaluated_value, op.size_in_bits, op.init_data);
+							} else {
+								FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '", 
+								          qualified_name, "' - skipping evaluation");
+								// For unknown expression types, skip evaluation to avoid crashes
+								// Initialize to zero as a safe default
+								append_bytes(0, op.size_in_bits, op.init_data);
+							}
 						}
 					}
 				}

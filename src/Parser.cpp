@@ -141,6 +141,13 @@ static InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const
 		TypeInfo::TemplateArgInfo info;
 		info.base_type = arg.base_type;
 		info.type_index = arg.type_index;
+		info.pointer_depth = arg.pointer_depth;
+		info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
+		info.ref_qualifier = arg.is_rvalue_reference ? ReferenceQualifier::RValueReference
+		                                             : (arg.is_reference ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
+		info.cv_qualifier = arg.cv_qualifier;
+		info.is_array = arg.is_array;
+		info.array_size = arg.array_size;
 		info.value = arg.value;
 		info.is_value = arg.is_value;
 		result.push_back(info);

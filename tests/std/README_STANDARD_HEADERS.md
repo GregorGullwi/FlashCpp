@@ -7,7 +7,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~29ms |
-| `<type_traits>` | `test_std_type_traits.cpp` | ❌ Parse Error | Parses 400 templates (~115ms), static_assert constexpr evaluation (2026-02-04) |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~187ms; unary trait constants synthesized (2026-02-04, emits zero-init logs for integral_constant::value) |
 | `<compare>` | N/A | ✅ Compiled | ~258ms (2026-01-24: Fixed with operator[], brace-init, and throw expression fixes) |
 | `<version>` | N/A | ✅ Compiled | ~17ms |
 | `<source_location>` | N/A | ✅ Compiled | ~17ms |
@@ -138,11 +138,17 @@ This directory contains test files for C++ standard library headers to assess Fl
   - `<iostream>` now progresses from char_traits.h:512 to c++locale.h:52 (__typeof keyword issue)
   - `<optional>` now progresses from optional:475 (empty statement) to optional:564 (~700 templates parsed)
   - `<bit>` also passes the wmemcmp/wmemchr blockers
-- **Remaining issues:**
+ - **Remaining issues:**
   - __typeof keyword parsing needed for iostream
   - static_assert with incomplete types in allocator headers
   - Nested out-of-line template members for <any>
   - Static assert constexpr evaluation for <type_traits>, <ratio>, <variant>
+
+**Note (2026-02-04 Additional Update - This PR):** Added constexpr trait synthesis and safer codegen handling.
+1. **Template argument metadata preserved** - `TypeInfo::TemplateArgInfo` now keeps pointer depth, references, cv, and array flags so instantiated traits retain full type shape.
+2. **Constexpr unary trait synthesis** - Qualified-id evaluation now derives `integral_constant::value` from unary standard traits (is_integral, is_pointer, etc.) even when static members aren't registered, covering libstdc++'s `*_v` helpers.
+3. **Codegen guard for malformed static initializers** - Static members with non-expression initializers are zero-initialized instead of crashing (`std::bad_any_cast`), matching the libstdc++ integral_constant patterns.
+- **Impact:** `<type_traits>` now compiles successfully; other headers still blocked at prior points (`<ratio>` unknown nested type in `__ratio_add_impl::type`; `<optional>` unnamed parameter/arg count mismatch; `<any>` non-type template parameter defaults).
 
 **Note (2026-02-03 Previous Update):** Fixed three critical blockers affecting most standard library headers:
 1. **Type alias resolution in base classes** - When inheriting from `Template<T>::type` patterns, the parser now properly resolves the type alias to its underlying type instead of treating the qualified name as the base. Also added support for dependent template placeholders (e.g., `integral_constant$hash`) as base classes.
