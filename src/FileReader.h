@@ -1699,8 +1699,10 @@ private:
 				int base = 10;
 				if (number_sv.size() > 2 && number_sv[0] == '0' && (number_sv[1] == 'x' || number_sv[1] == 'X')) {
 					base = 16;
+					number_sv.remove_prefix(2);
 				} else if (number_sv.size() > 2 && number_sv[0] == '0' && (number_sv[1] == 'b' || number_sv[1] == 'B')) {
 					base = 2;
+					number_sv.remove_prefix(2);
 				} else if (number_sv.size() > 1 && number_sv[0] == '0') {
 					base = 8;
 				}
