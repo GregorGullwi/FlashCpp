@@ -6219,32 +6219,7 @@ ParseResult Parser::parse_struct_declaration()
 		}
 
 		// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
-		bool is_member_constexpr = false;
-		[[maybe_unused]] bool is_member_consteval = false;
-		[[maybe_unused]] bool is_member_inline = false;
-		[[maybe_unused]] bool is_member_explicit = false;
-		while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-			std::string_view kw = peek_token()->value();
-			if (kw == "constexpr") {
-				is_member_constexpr = true;
-				consume_token();
-			} else if (kw == "consteval") {
-				is_member_consteval = true;
-				consume_token();
-			} else if (kw == "inline") {
-				is_member_inline = true;
-				consume_token();
-			} else if (kw == "explicit") {
-				is_member_explicit = true;
-				consume_token();
-				// C++20 explicit(condition) - skip the condition expression
-				if (peek_token().has_value() && peek_token()->value() == "(") {
-					skip_balanced_parens();
-				}
-			} else {
-				break;
-			}
-		}
+		auto member_specs = parse_member_leading_specifiers();
 
 		// Check for constructor (identifier matching struct name followed by '(')
 		// Save position BEFORE checking to allow restoration if not a constructor
@@ -6735,7 +6710,7 @@ ParseResult Parser::parse_struct_declaration()
 			}
 
 			// Mark as constexpr if the constexpr keyword was present
-			member_func_ref.set_is_constexpr(is_member_constexpr);
+			member_func_ref.set_is_constexpr(member_specs & FlashCpp::MLS_Constexpr);
 
 			// Use unified trailing specifiers parsing (Phase 2)
 			// This handles: const, volatile, &, &&, noexcept, override, final, = 0, = default, = delete
@@ -13452,6 +13427,38 @@ std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
 	}
 	
 	return result;
+}
+
+// Consume leading specifiers (constexpr, consteval, inline, explicit, virtual) before a member declaration.
+// Handles explicit(condition) syntax. Returns a bitmask of MemberLeadingSpecifiers flags.
+FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
+	using enum FlashCpp::MemberLeadingSpecifiers;
+	FlashCpp::MemberLeadingSpecifiers specs = MLS_None;
+	while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
+		std::string_view kw = peek_token()->value();
+		if (kw == "constexpr") {
+			specs |= MLS_Constexpr;
+			consume_token();
+		} else if (kw == "consteval") {
+			specs |= MLS_Consteval;
+			consume_token();
+		} else if (kw == "inline") {
+			specs |= MLS_Inline;
+			consume_token();
+		} else if (kw == "explicit") {
+			specs |= MLS_Explicit;
+			consume_token();
+			if (peek_token().has_value() && peek_token()->value() == "(") {
+				skip_balanced_parens(); // explicit(condition)
+			}
+		} else if (kw == "virtual") {
+			specs |= MLS_Virtual;
+			consume_token();
+		} else {
+			break;
+		}
+	}
+	return specs;
 }
 
 // Phase 2: Unified trailing specifiers parsing
@@ -28849,39 +28856,11 @@ ParseResult Parser::parse_template_declaration() {
 				// Conversion operators don't have a return type, so we need to detect them early
 				// Skip specifiers (constexpr, explicit, inline) first, then check for 'operator'
 				ParseResult member_result;
-				// Track specifiers that can precede conversion operators
-				bool conv_is_constexpr = false;
-				bool conv_is_consteval = false;
-				bool conv_is_inline = false;
-				bool conv_is_explicit = false;
-				bool conv_is_virtual = false;
+				FlashCpp::MemberLeadingSpecifiers conv_specs;
 				{
 					SaveHandle conv_saved = save_token_position();
 					bool found_conversion_op = false;
-					while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-						std::string_view kw = peek_token()->value();
-						if (kw == "constexpr") {
-							conv_is_constexpr = true;
-							consume_token();
-						} else if (kw == "consteval") {
-							conv_is_consteval = true;
-							consume_token();
-						} else if (kw == "inline") {
-							conv_is_inline = true;
-							consume_token();
-						} else if (kw == "explicit") {
-							conv_is_explicit = true;
-							consume_token();
-							if (peek_token().has_value() && peek_token()->value() == "(") {
-								skip_balanced_parens(); // explicit(condition)
-							}
-						} else if (kw == "virtual") {
-							conv_is_virtual = true;
-							consume_token();
-						} else {
-							break;
-						}
-					}
+					conv_specs = parse_member_leading_specifiers();
 					if (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword &&
 					    peek_token()->value() == "operator") {
 						// Check if this is a conversion operator (not operator() or operator<< etc.)
@@ -28980,10 +28959,9 @@ ParseResult Parser::parse_template_declaration() {
 					}
 
 					// Apply leading specifiers to the member function
-					member_func_ref.set_is_constexpr(conv_is_constexpr);
-					member_func_ref.set_is_consteval(conv_is_consteval);
-					member_func_ref.set_inline_always(conv_is_inline);
-					(void)conv_is_explicit; // explicit on conversion ops not yet tracked on FunctionDeclarationNode
+					member_func_ref.set_is_constexpr(conv_specs & FlashCpp::MLS_Constexpr);
+					member_func_ref.set_is_consteval(conv_specs & FlashCpp::MLS_Consteval);
+					member_func_ref.set_inline_always(conv_specs & FlashCpp::MLS_Inline);
 
 					// Parse trailing specifiers (const, volatile, &, &&, noexcept, override, final)
 					FlashCpp::MemberQualifiers member_quals;
@@ -29027,7 +29005,7 @@ ParseResult Parser::parse_template_declaration() {
 					struct_ref.add_member_function(
 						member_func_node,
 						current_access,
-						conv_is_virtual || func_specs.is_virtual,
+						!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
 						func_specs.is_pure_virtual,
 						func_specs.is_override,
 						func_specs.is_final
@@ -29743,33 +29721,7 @@ ParseResult Parser::parse_template_declaration() {
 				}
 				
 				// Check for constexpr, consteval, inline, explicit specifiers (can appear on constructors and member functions)
-				// This mirrors the handling in regular struct parsing
-				[[maybe_unused]] bool is_member_constexpr = false;
-				[[maybe_unused]] bool is_member_consteval = false;
-				[[maybe_unused]] bool is_member_inline = false;
-				[[maybe_unused]] bool is_member_explicit = false;
-				while (peek_token().has_value() && peek_token()->type() == Token::Type::Keyword) {
-					std::string_view kw = peek_token()->value();
-					if (kw == "constexpr") {
-						is_member_constexpr = true;
-						consume_token();
-					} else if (kw == "consteval") {
-						is_member_consteval = true;
-						consume_token();
-					} else if (kw == "inline") {
-						is_member_inline = true;
-						consume_token();
-					} else if (kw == "explicit") {
-						is_member_explicit = true;
-						consume_token();
-						// C++20 explicit(condition) - skip the condition expression
-						if (peek_token().has_value() && peek_token()->value() == "(") {
-							skip_balanced_parens();
-						}
-					} else {
-						break;
-					}
-				}
+				[[maybe_unused]] auto partial_member_specs = parse_member_leading_specifiers();
 				
 				// Check for constructor (identifier matching template name followed by '('
 				// In partial specializations, the constructor uses the base template name (e.g., "Calculator"),

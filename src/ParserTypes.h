@@ -99,6 +99,23 @@ struct FunctionSpecifiers {
 	bool is_implicit = false;      // Compiler-generated (implicit copy ctor, operator=, etc.)
 };
 
+// Leading specifiers on struct/class members (before the declaration)
+// Used for constructors, conversion operators, and member functions
+enum MemberLeadingSpecifiers : uint8_t {
+	MLS_None      = 0,
+	MLS_Constexpr = 1 << 0,
+	MLS_Consteval = 1 << 1,
+	MLS_Inline    = 1 << 2,
+	MLS_Explicit  = 1 << 3,
+	MLS_Virtual   = 1 << 4,
+};
+inline MemberLeadingSpecifiers operator|(MemberLeadingSpecifiers a, MemberLeadingSpecifiers b) {
+	return static_cast<MemberLeadingSpecifiers>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+inline MemberLeadingSpecifiers& operator|=(MemberLeadingSpecifiers& a, MemberLeadingSpecifiers b) {
+	return a = a | b;
+}
+
 // Storage and linkage specifiers
 struct StorageSpecifiers {
 	bool is_static = false;
