@@ -67,7 +67,8 @@ public:
 
 		// std::ifstream(const char*) expects a null-terminated path; string_view::data() is not guaranteed
 		// to be null-terminated.
-		std::ifstream stream(std::string(file));
+		std::string file_str(file);
+		std::ifstream stream(file_str);
 		if (!stream.is_open()) {
 			current_file_index_ = saved_file_index;  // Restore on error
 			current_parent_line_ = saved_parent_line;
